@@ -26,6 +26,10 @@ import {
   type SessionRoleBinding,
 } from "../src/session-role-binding.js";
 import type { SessionTurnAuthoritySession } from "../src/session-turn-communication-authority.js";
+import {
+  assertWorkItemEventPayloadWithinLimit,
+  type WorkItemCreatedEventPayload,
+} from "../src/work-item.js";
 import { normalizeProviderId } from "../src/model-catalog.js";
 import {
   parseCharacterRuntimeSnapshotJson,
@@ -1144,6 +1148,7 @@ export class SessionStorageV6 {
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      this.deleteTerminalRootWorkItemsForSessions(uniqueSessionIds);
       const auxiliarySessionIds = this.listAuxiliarySessionIdsForParentsIfTableExists(uniqueSessionIds);
       deleteAuditEventsForSessionTargets(this.db, {
         sessionIds: uniqueSessionIds,
@@ -1167,6 +1172,9 @@ export class SessionStorageV6 {
   clearSessions(): void {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      const sessionIds = (this.db.prepare("SELECT id FROM sessions_v6").all() as SessionIdRow[])
+        .map((row) => row.id);
+      this.deleteTerminalRootWorkItemsForSessions(sessionIds);
       deleteAuditEventsForSessionTargets(this.db, { allSessionTargets: true });
       this.db.exec("DELETE FROM session_messages_v6;");
       this.db.exec("DELETE FROM session_role_bindings_v6 WHERE delegation_depth = 2;");
@@ -1391,6 +1399,8 @@ export class SessionStorageV6 {
       );
     }
 
+    this.ensureRootWorkItem(session);
+
     const existingArtifactBodies = new Map(
       (this.db.prepare(`
         SELECT seq, artifact_body
@@ -1435,6 +1445,91 @@ export class SessionStorageV6 {
     if (!columns.has("artifact_body")) {
       this.db.exec("ALTER TABLE session_messages_v6 ADD COLUMN artifact_body TEXT;");
     }
+  }
+
+  private ensureRootWorkItem(session: Session): void {
+    const binding = session.roleBinding;
+    const isEligibleRoot = session.sessionKind === "default"
+      && binding !== null
+      && (binding.sessionRole === "standalone" || binding.sessionRole === "overall-coordinator")
+      && binding.rootSessionId === session.id
+      && binding.parentSessionId === null
+      && binding.delegationDepth === 0;
+    if (!isEligibleRoot) return;
+
+    const existing = this.db.prepare(`
+      SELECT id, creator_session_id, target_session_id, parent_work_item_id
+      FROM work_items_v6
+      WHERE kind = 'root' AND root_session_id = ?
+    `).get(session.id) as {
+      id: string;
+      creator_session_id: string;
+      target_session_id: string;
+      parent_work_item_id: string | null;
+    } | undefined;
+    if (existing) {
+      if (
+        existing.creator_session_id !== session.id
+        || existing.target_session_id !== session.id
+        || existing.parent_work_item_id !== null
+      ) {
+        throw new Error(`Root Work Item binding is invalid: ${existing.id}`);
+      }
+      return;
+    }
+
+    const workItemId = `root-work-item:${session.id}`;
+    const sourceIdentity = {
+      workspace: session.workspacePath.trim() || null,
+      repository: null,
+      branch: session.branch.trim() || null,
+      base: null,
+      head: null,
+    };
+    const payload: WorkItemCreatedEventPayload = {
+      kind: "root",
+      rootSessionId: session.id,
+      creatorSessionId: session.id,
+      targetSessionId: session.id,
+      parentWorkItemId: null,
+      sourceIdentity,
+      contract: {
+        goal: session.taskTitle,
+        scope: "",
+        completionCriteria: "",
+        authority: "",
+      },
+      progress: {
+        progressSummary: "",
+        blockers: [],
+        nextAction: "",
+      },
+      state: "pending",
+      result: null,
+    };
+    assertWorkItemEventPayloadWithinLimit("created", payload);
+    this.db.prepare(`
+      INSERT INTO work_items_v6 (
+        id, kind, contract_revision, root_session_id, creator_session_id,
+        target_session_id, parent_work_item_id, goal, scope, completion_criteria,
+        authority, source_identity_json, state, revision, progress_summary,
+        blockers_json, next_action, result_json, created_at, updated_at
+      ) VALUES (?, 'root', 2, ?, ?, ?, NULL, ?, '', '', '', ?, 'pending', 1, '', '[]', '', NULL, ?, ?)
+    `).run(
+      workItemId,
+      session.id,
+      session.id,
+      session.id,
+      session.taskTitle,
+      JSON.stringify(sourceIdentity),
+      session.updatedAt,
+      session.updatedAt,
+    );
+    this.db.prepare(`
+      INSERT INTO work_item_events_v6 (
+        work_item_id, revision, event_type, actor_session_id, payload_json, created_at
+      ) VALUES (?, 1, 'created', ?, ?, ?)
+    `).run(workItemId, session.id, JSON.stringify(payload), session.updatedAt);
   }
 
   private rowToSessionSummaryProjection(row: SessionV6SummaryRow): SessionSummary {
@@ -1595,6 +1690,8 @@ export class SessionStorageV6 {
       return;
     }
 
+    this.deleteTerminalRootWorkItemsForSessions(uniqueSessionIds);
+
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
     for (const delegationDepth of [2, 1, 0]) {
       this.db.prepare(`
@@ -1603,6 +1700,110 @@ export class SessionStorageV6 {
       `).run(...uniqueSessionIds, delegationDepth);
     }
     this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
+  }
+
+  private deleteTerminalRootWorkItemsForSessions(sessionIds: readonly string[]): void {
+    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    if (uniqueSessionIds.length === 0) return;
+    const placeholders = uniqueSessionIds.map(() => "?").join(", ");
+
+    const protectedItem = this.db.prepare(`
+      SELECT item.id
+      FROM work_items_v6 AS item
+      WHERE (
+        item.root_session_id IN (${placeholders})
+        OR item.creator_session_id IN (${placeholders})
+        OR item.target_session_id IN (${placeholders})
+      )
+        AND (
+          item.state IN ('pending', 'in_progress', 'waiting')
+          OR (
+            item.kind = 'delegated'
+            AND item.parent_work_item_id IS NULL
+            AND item.state <> 'canceled'
+            AND (
+              item.result_json IS NULL
+              OR NOT EXISTS (
+                SELECT 1
+                FROM work_items_v6 AS root_item
+                WHERE root_item.kind = 'root'
+                  AND root_item.root_session_id = item.root_session_id
+                  AND root_item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
+              )
+            )
+          )
+          OR (
+            item.kind = 'delegated'
+            AND item.parent_work_item_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM work_item_aggregation_decisions_v6 AS decision
+              WHERE decision.child_work_item_id = item.id
+                AND decision.child_revision = item.revision
+            )
+          )
+        )
+      LIMIT 1
+    `).get(...uniqueSessionIds, ...uniqueSessionIds, ...uniqueSessionIds) as { id?: unknown } | undefined;
+    if (typeof protectedItem?.id === "string") {
+      throw new Error(`WORK_ITEM_SESSION_PROTECTED: ${protectedItem.id}`);
+    }
+
+    const cleanupRows = this.db.prepare(`
+      SELECT item.id
+      FROM work_items_v6 AS item
+      WHERE (
+        item.root_session_id IN (${placeholders})
+        OR item.creator_session_id IN (${placeholders})
+        OR item.target_session_id IN (${placeholders})
+      )
+        AND item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
+        AND (
+          item.kind = 'root'
+          OR (
+            item.parent_work_item_id IS NULL
+            AND (
+              item.state = 'canceled'
+              OR (
+                item.result_json IS NOT NULL
+                AND EXISTS (
+                  SELECT 1
+                  FROM work_items_v6 AS root_item
+                  WHERE root_item.kind = 'root'
+                    AND root_item.root_session_id = item.root_session_id
+                    AND root_item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
+                )
+              )
+            )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM work_item_aggregation_decisions_v6 AS decision
+            WHERE decision.child_work_item_id = item.id
+              AND decision.child_revision = item.revision
+          )
+        )
+    `).all(...uniqueSessionIds, ...uniqueSessionIds, ...uniqueSessionIds) as Array<{ id: string }>;
+    const cleanupWorkItemIds = cleanupRows.map((row) => row.id);
+    if (cleanupWorkItemIds.length === 0) return;
+    const itemPlaceholders = cleanupWorkItemIds.map(() => "?").join(", ");
+
+    this.db.prepare(`DELETE FROM work_item_execution_associations_v6 WHERE work_item_id IN (${itemPlaceholders})`)
+      .run(...cleanupWorkItemIds);
+    this.db.prepare(`
+      DELETE FROM work_item_aggregation_idempotency_v6
+      WHERE child_work_item_id IN (${itemPlaceholders})
+        OR replacement_work_item_id IN (${itemPlaceholders})
+    `).run(...cleanupWorkItemIds, ...cleanupWorkItemIds);
+    this.db.prepare(`
+      DELETE FROM work_item_aggregation_decisions_v6
+      WHERE parent_work_item_id IN (${itemPlaceholders})
+        OR child_work_item_id IN (${itemPlaceholders})
+        OR replacement_work_item_id IN (${itemPlaceholders})
+    `).run(...cleanupWorkItemIds, ...cleanupWorkItemIds, ...cleanupWorkItemIds);
+    this.db.prepare(`DELETE FROM work_item_aggregations_v6 WHERE parent_work_item_id IN (${itemPlaceholders})`)
+      .run(...cleanupWorkItemIds);
+    this.db.prepare(`DELETE FROM work_items_v6 WHERE id IN (${itemPlaceholders})`).run(...cleanupWorkItemIds);
   }
 
   private listAuxiliarySessionIdsForParentsIfTableExists(parentSessionIds: readonly string[]): string[] {

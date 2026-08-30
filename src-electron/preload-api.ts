@@ -80,6 +80,10 @@ import {
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_GET_ROOT_WORK_ITEM_CHANNEL,
+  WITHMATE_LIST_ROOT_WORK_ITEM_HISTORY_CHANNEL,
+  WITHMATE_REVISE_ROOT_WORK_ITEM_CHANNEL,
+  WITHMATE_APPEND_ROOT_WORK_ITEM_HISTORY_CHANNEL,
   WITHMATE_LIST_SESSION_SCHEDULES_CHANNEL,
   WITHMATE_GET_SESSION_SCHEDULE_CHANNEL,
   WITHMATE_CREATE_SESSION_SCHEDULE_CHANNEL,
@@ -366,6 +370,18 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     getSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_CHANNEL, sessionId);
+    },
+    getRootWorkItem(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_ROOT_WORK_ITEM_CHANNEL, sessionId);
+    },
+    listRootWorkItemHistory(sessionId, limit) {
+      return ipcRenderer.invoke(WITHMATE_LIST_ROOT_WORK_ITEM_HISTORY_CHANNEL, sessionId, limit);
+    },
+    reviseRootWorkItem(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_REVISE_ROOT_WORK_ITEM_CHANNEL, sessionId, request);
+    },
+    appendRootWorkItemHistory(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_APPEND_ROOT_WORK_ITEM_HISTORY_CHANNEL, sessionId, request);
     },
     validateSessionWorkspace(sessionId) {
       return ipcRenderer.invoke(WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL, sessionId);

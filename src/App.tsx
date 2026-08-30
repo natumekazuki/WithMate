@@ -36,6 +36,11 @@ import {
 } from "./runtime-option-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
+import type { RootWorkItem, WorkItemEvent } from "./work-item.js";
+import {
+  RootWorkItemEditorSaveError,
+  saveRootWorkItemEditor,
+} from "./root-work-item-editor-mutation.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import { startOpenCompanionReviewWindowIdsSubscription } from "./open-companion-review-window-subscription.js";
 import { startRelatedSessionDetailsSubscription } from "./related-session-details-subscription.js";
@@ -85,6 +90,7 @@ import {
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   type ContextPaneTabKey,
+  isRootWorkItemContextEligible,
   resolveAvailableContextPaneTabs,
 } from "./session-ui-projection.js";
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
@@ -493,6 +499,33 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
   ].join("\u001b");
 }
 
+type RootWorkItemUiState = {
+  ownerSessionId: string | null;
+  item: RootWorkItem | null;
+  history: readonly WorkItemEvent[];
+  loading: boolean;
+  errorMessage: string | null;
+};
+
+const ROOT_WORK_ITEM_HISTORY_LIMIT = 100;
+
+function rootWorkItemEventSummary(event: WorkItemEvent): string | undefined {
+  switch (event.type) {
+    case "created":
+    case "migration_baseline":
+      return event.payload.contract.goal || undefined;
+    case "contract_revised":
+      return event.payload.after.goal || undefined;
+    case "progress":
+    case "handoff":
+      return event.payload.progressSummary || undefined;
+    case "state_transitioned":
+      return `${event.payload.from} → ${event.payload.to}`;
+    case "result_reported":
+      return event.payload.result.summary || undefined;
+  }
+}
+
 export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
@@ -575,6 +608,16 @@ export default function AgentSessionWindowApp() {
     ownerSessionId: null,
     telemetry: null,
   });
+  const [rootWorkItemState, setRootWorkItemState] = useState<RootWorkItemUiState>({
+    ownerSessionId: null,
+    item: null,
+    history: [],
+    loading: false,
+    errorMessage: null,
+  });
+  const rootWorkItemFetchRevisionRef = useRef(0);
+  const rootWorkItemMutationPendingRef = useRef(false);
+  const [isRootWorkItemMutationPending, setIsRootWorkItemMutationPending] = useState(false);
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
@@ -947,6 +990,7 @@ export default function AgentSessionWindowApp() {
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
     [selectedId, sessions],
   );
+  const selectedSessionSupportsRootWorkItem = isRootWorkItemContextEligible(selectedSession);
   useEffect(() => {
     const sessionId = selectedSession?.id;
     if (!withmateApi || !sessionId) {
@@ -1047,6 +1091,176 @@ export default function AgentSessionWindowApp() {
     [companionSessions, openCompanionReviewWindowIds],
   );
   const selectedSessionId = selectedSession?.id ?? null;
+  const selectedSessionIdRef = useRef(selectedSessionId);
+  useEffect(() => {
+    selectedSessionIdRef.current = selectedSessionId;
+  }, [selectedSessionId]);
+  const refreshRootWorkItem = useCallback(async (sessionId: string): Promise<RootWorkItem | null> => {
+    if (!withmateApi) return null;
+    const requestRevision = ++rootWorkItemFetchRevisionRef.current;
+    setRootWorkItemState((current) => current.ownerSessionId === sessionId
+      ? { ...current, loading: true, errorMessage: null }
+      : {
+          ownerSessionId: sessionId,
+          item: null,
+          history: [],
+          loading: true,
+          errorMessage: null,
+        });
+    try {
+      const item = await withmateApi.getRootWorkItem(sessionId);
+      if (!item) throw new Error("Root WorkItem was not found for the selected Session.");
+      const history = await withmateApi.listRootWorkItemHistory(sessionId, ROOT_WORK_ITEM_HISTORY_LIMIT);
+      if (requestRevision !== rootWorkItemFetchRevisionRef.current) return null;
+      setRootWorkItemState({
+        ownerSessionId: sessionId,
+        item,
+        history,
+        loading: false,
+        errorMessage: null,
+      });
+      return item;
+    } catch (error) {
+      if (requestRevision !== rootWorkItemFetchRevisionRef.current) return null;
+      const errorMessage = error instanceof Error ? error.message : "Root WorkItem could not be loaded.";
+      setRootWorkItemState((current) => ({
+        ownerSessionId: sessionId,
+        item: current.ownerSessionId === sessionId ? current.item : null,
+        history: current.ownerSessionId === sessionId ? current.history : [],
+        loading: false,
+        errorMessage,
+      }));
+      console.error(error);
+      return null;
+    }
+  }, [withmateApi]);
+
+  useEffect(() => {
+    if (!withmateApi || !selectedSessionId || !selectedSessionSupportsRootWorkItem) {
+      rootWorkItemFetchRevisionRef.current += 1;
+      setRootWorkItemState({
+        ownerSessionId: null,
+        item: null,
+        history: [],
+        loading: false,
+        errorMessage: null,
+      });
+      return;
+    }
+    void refreshRootWorkItem(selectedSessionId);
+    const unsubscribe = withmateApi.subscribeSessionInvalidation((payload) => {
+      if (payload.scope === "ids" && !payload.sessionIds.includes(selectedSessionId)) return;
+      void refreshRootWorkItem(selectedSessionId);
+    });
+    return () => {
+      rootWorkItemFetchRevisionRef.current += 1;
+      unsubscribe();
+    };
+  }, [refreshRootWorkItem, selectedSessionId, selectedSessionSupportsRootWorkItem, withmateApi]);
+
+  const handleReviseRootWorkItem = useCallback(async (input: {
+    expectedRevision: number;
+    goal: string;
+    scope: string;
+    completionCriteria: string;
+    authority: string;
+    progressSummary: string;
+    blockers: string[];
+    nextAction: string;
+  }): Promise<boolean> => {
+    if (
+      !withmateApi
+      || !selectedSessionId
+      || rootWorkItemState.ownerSessionId !== selectedSessionId
+      || !rootWorkItemState.item
+      || rootWorkItemMutationPendingRef.current
+    ) return false;
+    if (rootWorkItemState.item.revision !== input.expectedRevision) {
+      setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
+        ? { ...state, errorMessage: "別の操作でRoot WorkItemが更新されました。最新版を読み込んでから保存してください。" }
+        : state);
+      return false;
+    }
+    rootWorkItemMutationPendingRef.current = true;
+    setIsRootWorkItemMutationPending(true);
+    try {
+      const current = await saveRootWorkItemEditor(rootWorkItemState.item, input, {
+        revise: (request) => withmateApi.reviseRootWorkItem(selectedSessionId, request),
+        appendProgress: (request) => withmateApi.appendRootWorkItemHistory(selectedSessionId, request),
+        createIdempotencyKey: () => crypto.randomUUID(),
+      });
+      setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
+        ? { ...state, item: current, errorMessage: null }
+        : state);
+      if (selectedSessionIdRef.current === selectedSessionId) {
+        await refreshRootWorkItem(selectedSessionId);
+      }
+      return true;
+    } catch (error) {
+      console.error(error);
+      const failureMessage = error instanceof Error ? error.message : "Root WorkItemの更新に失敗しました。";
+      const errorMessage = error instanceof RootWorkItemEditorSaveError && error.contractRevisionCommitted
+        ? `契約改訂は保存されましたが、進捗の保存に失敗しました。入力内容を残しています。${failureMessage}`
+        : failureMessage;
+      if (selectedSessionIdRef.current === selectedSessionId) {
+        await refreshRootWorkItem(selectedSessionId);
+        setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
+          ? { ...state, errorMessage }
+          : state);
+      }
+      return false;
+    } finally {
+      rootWorkItemMutationPendingRef.current = false;
+      setIsRootWorkItemMutationPending(false);
+    }
+  }, [refreshRootWorkItem, rootWorkItemState, selectedSessionId, withmateApi]);
+
+  const handleHandoffRootWorkItem = useCallback(async (): Promise<void> => {
+    if (
+      !withmateApi
+      || !selectedSessionId
+      || rootWorkItemState.ownerSessionId !== selectedSessionId
+      || !rootWorkItemState.item
+      || rootWorkItemMutationPendingRef.current
+    ) return;
+    const current = rootWorkItemState.item;
+    if (!current.progressSummary.trim() || !current.nextAction.trim()) {
+      setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
+        ? { ...state, errorMessage: "progressSummaryとnextActionを改訂してから引き継ぎを記録してください。" }
+        : state);
+      return;
+    }
+    rootWorkItemMutationPendingRef.current = true;
+    setIsRootWorkItemMutationPending(true);
+    try {
+      const item = await withmateApi.appendRootWorkItemHistory(selectedSessionId, {
+        type: "handoff",
+        summary: current.progressSummary,
+        blockers: current.blockers,
+        nextAction: current.nextAction,
+        expectedRevision: current.revision,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
+        ? { ...state, item, errorMessage: null }
+        : state);
+      if (selectedSessionIdRef.current === selectedSessionId) {
+        await refreshRootWorkItem(selectedSessionId);
+      }
+    } catch (error) {
+      console.error(error);
+      const errorMessage = error instanceof Error ? error.message : "Root WorkItemの引き継ぎ記録に失敗しました。";
+      if (selectedSessionIdRef.current === selectedSessionId) {
+        await refreshRootWorkItem(selectedSessionId);
+        setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
+          ? { ...state, errorMessage }
+          : state);
+      }
+    } finally {
+      rootWorkItemMutationPendingRef.current = false;
+      setIsRootWorkItemMutationPending(false);
+    }
+  }, [refreshRootWorkItem, rootWorkItemState, selectedSessionId, withmateApi]);
   const validateSessionWorkspace = useCallback(async (session: Session): Promise<boolean> => {
     if (!withmateApi) {
       return false;
@@ -2171,14 +2385,37 @@ export default function AgentSessionWindowApp() {
   const hasLiveRunReasoningText = liveRunReasoningText.trim().length > 0;
   const hasReasoningCapability =
     availableReasoningEfforts.length > 0 || Boolean(selectedSession?.reasoningEffort);
+  const selectedRootWorkItem = rootWorkItemState.ownerSessionId === selectedSessionId
+    ? rootWorkItemState.item
+    : null;
+  const showRootWorkItemTab = selectedSessionSupportsRootWorkItem;
+  const selectedRootWorkItemLoading = showRootWorkItemTab
+    && (rootWorkItemState.ownerSessionId !== selectedSessionId || rootWorkItemState.loading);
+  const selectedRootWorkItemHistory = useMemo(() => (
+    rootWorkItemState.ownerSessionId === selectedSessionId
+      ? rootWorkItemState.history.map((event) => ({
+          revision: event.revision,
+          eventType: event.type,
+          occurredAt: event.createdAt,
+          summary: rootWorkItemEventSummary(event),
+        }))
+      : []
+  ), [rootWorkItemState.history, rootWorkItemState.ownerSessionId, selectedSessionId]);
   const availableContextPaneTabs = useMemo(
     () => resolveAvailableContextPaneTabs({
       isCopilotSession,
       hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
       hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
+      showRootWorkItemTab,
     }),
-    [hasLiveRunReasoningText, hasReasoningCapability, isCopilotSession, selectedCompanionGroupMonitorEntries.length],
+    [
+      hasLiveRunReasoningText,
+      hasReasoningCapability,
+      isCopilotSession,
+      selectedCompanionGroupMonitorEntries.length,
+      showRootWorkItemTab,
+    ],
   );
 
   const hasInProgressLiveRunStep = useMemo(
@@ -4350,6 +4587,18 @@ export default function AgentSessionWindowApp() {
         selectedCopilotQuotaResetLabel,
         selectedSessionContextTelemetry,
         selectedSessionContextTelemetryProjection,
+        rootWorkItem: selectedRootWorkItem,
+        rootWorkItemHistory: selectedRootWorkItemHistory,
+        rootWorkItemLoading: selectedRootWorkItemLoading,
+        rootWorkItemErrorMessage: rootWorkItemState.ownerSessionId === selectedSessionId
+          ? rootWorkItemState.errorMessage
+          : null,
+        isRootWorkItemMutationPending,
+        onRetryRootWorkItem: async () => {
+          if (selectedSessionId) await refreshRootWorkItem(selectedSessionId);
+        },
+        onReviseRootWorkItem: handleReviseRootWorkItem,
+        onHandoffRootWorkItem: handleHandoffRootWorkItem,
         selectedContextEmptyText,
         latestCommandEmptyText,
         selectedDiff,

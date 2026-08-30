@@ -52,6 +52,9 @@ withmate-session turn cancel --json '{"sessionId":"SESSION_ID","executionId":"EX
 ```powershell
 withmate-session work create --json '{"targetSessionId":"TARGET_SESSION_ID","goal":"実装を完了する","scope":"対象moduleのみ","completionCriteria":"targeted testが成功する","authority":"対象Worktree内の変更と検証","sourceIdentity":{"workspace":null,"repository":null,"branch":null,"base":null,"head":null},"idempotencyKey":"work-create-001"}'
 withmate-session work transition --json '{"workItemId":"WORK_ITEM_ID","state":"in_progress","expectedRevision":1,"idempotencyKey":"work-start-001"}'
+withmate-session work revise --json '{"workItemId":"ROOT_WORK_ITEM_ID","goal":"実装を完了する","scope":"対象moduleのみ","completionCriteria":"全検証が成功する","authority":"対象Worktree内の変更と検証","expectedRevision":1,"idempotencyKey":"root-revise-001"}'
+withmate-session work history append --json '{"workItemId":"ROOT_WORK_ITEM_ID","type":"handoff","summary":"公開adapterまで完了","blockers":[],"nextAction":"全体検証を実行する","expectedRevision":2,"idempotencyKey":"root-handoff-001"}'
+withmate-session work history list --json '{"workItemId":"ROOT_WORK_ITEM_ID","limit":50}'
 ```
 
 `turn run`または`turn enqueue`のtop-levelへ任意の`workItemId`を指定すると、root、target、active state、actor authorityをexecution作成前に検証し、関連付けを保存する。`workItemId`はTurnのidempotency fingerprintへ含まれるため、同じkeyで関連先だけを変更するとconflictになる。executionのterminal stateはWork Itemを暗黙に完了させない。target Sessionが`work result`で`completed`、`partially_completed`、`failed`のstateとstrict resultを同時に報告する。creator Sessionは非terminal Work Itemを`work cancel`で取消せる。全mutationはcurrent `expectedRevision`とidempotency keyを要求する。
@@ -158,7 +161,7 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは計35操作で、Work Item集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`を含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは計38操作で、Root WorkItemの`work.revise`、`work.history.append`、`work.history.list`と、Work Item集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`を含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
 
 ## Coordination event
 

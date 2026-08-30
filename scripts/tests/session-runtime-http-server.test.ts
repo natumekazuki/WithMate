@@ -8,6 +8,7 @@ import {
   SESSION_RUNTIME_MAX_BODY_BYTES,
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+  createSessionRuntimeError,
   createSessionRuntimeResult,
 } from "../../src/session-external-runtime-contract.js";
 import {
@@ -75,6 +76,15 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   },
   "work.list": {},
   "work.get": { workItemId: "work-1" },
+  "work.revise": {
+    workItemId: "work-1", goal: "goal", scope: "scope", completionCriteria: "done", authority: "local",
+    expectedRevision: 1, idempotencyKey: "work-revise-key",
+  },
+  "work.history.append": {
+    workItemId: "work-1", type: "progress", summary: "started", blockers: [], nextAction: "continue",
+    expectedRevision: 1, idempotencyKey: "work-history-append-key",
+  },
+  "work.history.list": { workItemId: "work-1", limit: 50 },
   "work.transition": { workItemId: "work-1", state: "in_progress", expectedRevision: 1, idempotencyKey: "work-transition-key" },
   "work.result": {
     workItemId: "work-1", state: "completed", expectedRevision: 2, idempotencyKey: "work-result-key",
@@ -459,6 +469,44 @@ test("AGG-QUERY-05: aggregation list limit超過はHTTP 413でhandler前に拒�
     assert.equal(response.status, 413);
     assert.equal(JSON.parse(response.body).error.code, "LIMIT_EXCEEDED");
     assert.equal(invoked, false);
+  } finally {
+    await server.stop();
+  }
+});
+
+// @test-value v1
+// kind = "contract"
+// claim = "Root WorkItemをaggregation parentへ指定した構造違反はHTTP 409のnot_applied errorとして返る"
+// oracle = { type = "contract", ref = "docs/design/session-external-runtime.md#Work Item contract" }
+// failure_mode = "WORK_ITEM_AGGREGATION_PARENT_INVALIDがgeneric HTTP 400または500へ崩れ、CLI・MCP consumerが修正可能な構造競合として扱えない"
+// scope = "Session runtime HTTP Work Item aggregation error mapping"
+// lifecycle = "permanent"
+// distinction = "input sizeのpre-dispatch 413ではなくapplicationが返したroot aggregation parent拒否の409 mappingを観測する"
+// @end-test-value
+test("ROOT-PARENT-01: root aggregation parent拒否をHTTP 409へ写像する", async () => {
+  const server = createSessionRuntimeHttpServer({
+    ...boundServerOptions,
+    handle: async () => createSessionRuntimeError({
+      code: "WORK_ITEM_AGGREGATION_PARENT_INVALID",
+      message: "Only a delegated Work Item can own an aggregation.",
+      details: { parentWorkItemId: "root-work" },
+    }),
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const body = JSON.stringify({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "work.aggregation.get",
+      input: { parentWorkItemId: "root-work" },
+    });
+    const response = await post(address.port, exchangePayload("mcp", body));
+    const error = JSON.parse(response.body).error;
+    assert.equal(response.status, 409);
+    assert.equal(error.code, "WORK_ITEM_AGGREGATION_PARENT_INVALID");
+    assert.equal(error.effect, "not_applied");
+    assert.deepEqual(error.details, { parentWorkItemId: "root-work" });
   } finally {
     await server.stop();
   }

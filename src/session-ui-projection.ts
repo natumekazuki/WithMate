@@ -8,10 +8,11 @@ import type {
   SessionContextTelemetry,
 } from "./app-state.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
+import type { Session } from "./session-state.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
-export type ContextPaneTabKey = "latest-command" | "reasoning" | "tasks" | "companion-group";
+export type ContextPaneTabKey = "latest-command" | "reasoning" | "tasks" | "companion-group" | "work-item";
 
-export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "reasoning", "tasks", "companion-group"];
+export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "reasoning", "tasks", "companion-group", "work-item"];
 
 export type LatestCommandView = {
   status: string;
@@ -355,6 +356,8 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
       return "Tasks";
     case "companion-group":
       return "CompanionGroup";
+    case "work-item":
+      return "WorkItem";
     default:
       return tab;
   }
@@ -365,11 +368,13 @@ export function resolveAvailableContextPaneTabs({
   hasCompanionGroupMonitor = false,
   hasReasoningCapability = false,
   hasReasoningText = false,
+  showRootWorkItemTab = false,
 }: {
   isCopilotSession: boolean;
   hasCompanionGroupMonitor?: boolean;
   hasReasoningCapability?: boolean;
   hasReasoningText?: boolean;
+  showRootWorkItemTab?: boolean;
 }): ContextPaneTabKey[] {
   return CONTEXT_PANE_TAB_ORDER.filter((tab) => {
     if (tab === "reasoning") {
@@ -384,8 +389,24 @@ export function resolveAvailableContextPaneTabs({
       return hasCompanionGroupMonitor;
     }
 
+    if (tab === "work-item") {
+      return showRootWorkItemTab;
+    }
+
     return true;
   });
+}
+
+export function isRootWorkItemContextEligible(
+  session: Pick<Session, "id" | "sessionKind" | "roleBinding"> | null,
+): boolean {
+  const binding = session?.roleBinding;
+  if (!session || !binding) return false;
+  return session.sessionKind !== "character-authoring"
+    && binding.rootSessionId === session.id
+    && binding.parentSessionId === null
+    && binding.delegationDepth === 0
+    && (binding.sessionRole === "standalone" || binding.sessionRole === "overall-coordinator");
 }
 
 export function cycleContextPaneTab(

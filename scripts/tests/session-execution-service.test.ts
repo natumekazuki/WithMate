@@ -130,11 +130,11 @@ async function createFixture(options: {
     },
     createExecutionId() {
       executionIndex += 1;
-      return `execution-${executionIndex}`;
+      return "execution-" + executionIndex;
     },
     currentTimestamp() {
       timestampIndex += 1;
-      return `2026-08-10T00:00:${String(timestampIndex).padStart(2, "0")}.000Z`;
+      return "2026-08-10T00:00:" + String(timestampIndex).padStart(2, "0") + ".000Z";
     },
     resolveIdempotencyExpiresAt() {
       return "2026-08-11T00:00:00.000Z";
@@ -165,9 +165,9 @@ async function createFixture(options: {
 function createInput(index: number, sessionId = "session-1") {
   return {
     sessionId,
-    request: { userMessage: `message-${index}` },
-    idempotencyKey: `key-${index}`,
-    requestFingerprint: `fingerprint-${index}`,
+    request: { userMessage: "message-" + index },
+    idempotencyKey: "key-" + index,
+    requestFingerprint: "fingerprint-" + index,
   };
 }
 
@@ -253,16 +253,25 @@ describe("SessionExecutionService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "runとenqueueはrevision 2のdelegated WorkItem bindingを検証してexecution associationを同じacceptance境界へ保存する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#実行関連付けと再開" }
+  // failure_mode = "schema revision追加後にdelegated WorkItem associationが拒否されるかexecutionだけが保存される"
+  // scope = "SessionExecutionService WorkItem association admission"
+  // lifecycle = "permanent"
+  // distinction = "runとenqueueの双方をreal SQLiteのdelegated rowへ関連付けて観測する"
+  // @end-test-value
   it("WORK-EXEC-05: runとenqueueは検証済みWork Item associationをexecutionと同時保存する", async () => {
     const fixture = await createFixture();
     const db = new DatabaseSync(fixture.dbPath);
     try {
       const insertWorkItem = db.prepare(`
         INSERT INTO work_items_v6 (
-          id, contract_revision, root_session_id, creator_session_id, target_session_id,
+          id, kind, contract_revision, root_session_id, creator_session_id, target_session_id,
           parent_work_item_id, goal, scope, completion_criteria, authority,
           source_identity_json, state, revision, created_at, updated_at
-        ) VALUES (?, 1, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'pending', 1, ?, ?)
+        ) VALUES (?, 'delegated', 2, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'pending', 1, ?, ?)
       `);
       const commonValues = [
         "goal",

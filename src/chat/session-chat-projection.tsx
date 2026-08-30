@@ -134,6 +134,14 @@ export type AgentSessionChatProjectionInput = {
   selectedCopilotQuotaResetLabel: string;
   selectedSessionContextTelemetry: SessionContextPaneProps["selectedSessionContextTelemetry"];
   selectedSessionContextTelemetryProjection: SessionContextPaneProps["selectedSessionContextTelemetryProjection"];
+  rootWorkItem: SessionContextPaneProps["rootWorkItem"];
+  rootWorkItemHistory: SessionContextPaneProps["rootWorkItemHistory"];
+  rootWorkItemLoading: SessionContextPaneProps["rootWorkItemLoading"];
+  rootWorkItemErrorMessage: SessionContextPaneProps["rootWorkItemErrorMessage"];
+  isRootWorkItemMutationPending: SessionContextPaneProps["isRootWorkItemMutationPending"];
+  onRetryRootWorkItem: SessionContextPaneProps["onRetryRootWorkItem"];
+  onReviseRootWorkItem: SessionContextPaneProps["onReviseRootWorkItem"];
+  onHandoffRootWorkItem: SessionContextPaneProps["onHandoffRootWorkItem"];
   selectedContextEmptyText: string;
   latestCommandEmptyText: string;
   selectedDiff: DiffPreviewPayload | null;
@@ -404,6 +412,14 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     selectedCopilotQuotaResetLabel: input.selectedCopilotQuotaResetLabel,
     selectedSessionContextTelemetry: input.selectedSessionContextTelemetry,
     selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
+    rootWorkItem: input.rootWorkItem,
+    rootWorkItemHistory: input.rootWorkItemHistory,
+    rootWorkItemLoading: input.rootWorkItemLoading,
+    rootWorkItemErrorMessage: input.rootWorkItemErrorMessage,
+    isRootWorkItemMutationPending: input.isRootWorkItemMutationPending,
+    onRetryRootWorkItem: input.onRetryRootWorkItem,
+    onReviseRootWorkItem: input.onReviseRootWorkItem,
+    onHandoffRootWorkItem: input.onHandoffRootWorkItem,
     contextEmptyText: input.selectedContextEmptyText,
     latestCommandEmptyText: input.latestCommandEmptyText,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
