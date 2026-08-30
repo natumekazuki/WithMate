@@ -1,6 +1,7 @@
 import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import * as properLockfile from "proper-lockfile";
 
 import {
   buildWithMateMemoryDiscoveryGenerationFileName,
@@ -34,6 +35,7 @@ import {
   listRuntimeDiscoveryRegistryEntries,
   publishRuntimeDiscoveryEntry,
   readRuntimeDiscoveryCredential,
+  type RuntimeDiscoveryRegistryRecord,
   type RuntimeDiscoveryRegistryPublication,
   type RuntimePathSecurity,
   type RuntimePathTargetKind,
@@ -130,12 +132,19 @@ type PublishedMemoryV6DiscoveryFile = {
   runtimeGenerationId: string;
   /** @deprecated This value has runtime-generation semantics. */
   runtimeInstanceId: string;
-  cleanup(): Promise<void>;
+  cleanup(replacement?: LegacyPointerReplacement): Promise<void>;
+};
+
+type LegacyPointerReplacement = {
+  runtimeGenerationId: string;
+  validateBeforeCommit: () => Promise<boolean>;
 };
 
 export const WITHMATE_MEMORY_LEGACY_GENERATION_MAX_FILES = 128;
 
 const LEGACY_GENERATION_FILE_PATTERN = /^memory-v6-(cli|mcp)\.([0-9a-f]{64})\.json$/;
+const LEGACY_POINTER_LOCK_FILE_NAME = ".memory-v6-legacy-pointer.lock";
+const LEGACY_POINTER_LOCK_STALE_MS = 20_000;
 
 export type MaintainMemoryV6LegacyDiscoveryArtifactsOptions = {
   runtimeDirectoryPath: string;
@@ -166,8 +175,32 @@ type LegacyGenerationArtifact = {
 
 async function cleanupLegacyDiscoveryProjection(
   projection: PublishedMemoryV6DiscoveryFile | null,
+  replacement?: LegacyPointerReplacement,
 ): Promise<void> {
-  await projection?.cleanup();
+  await projection?.cleanup(replacement);
+}
+
+async function withLegacyPointerLock<T>(
+  runtimeDirectoryPath: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const release = await properLockfile.lock(runtimeDirectoryPath, {
+    realpath: false,
+    lockfilePath: path.join(runtimeDirectoryPath, LEGACY_POINTER_LOCK_FILE_NAME),
+    stale: LEGACY_POINTER_LOCK_STALE_MS,
+    update: LEGACY_POINTER_LOCK_STALE_MS / 4,
+    retries: {
+      retries: 500,
+      factor: 1,
+      minTimeout: 50,
+      maxTimeout: 50,
+    },
+  });
+  try {
+    return await operation();
+  } finally {
+    await release();
+  }
 }
 
 async function chmodRuntimePath(filePath: string, mode: number): Promise<void> {
@@ -271,7 +304,7 @@ function legacyGenerationDigest(runtimeGenerationId: string): string {
   return match[2];
 }
 
-async function readCurrentLegacyGenerationDigest(runtimeDirectoryPath: string): Promise<string | null> {
+async function readCurrentLegacyRuntimeGenerationId(runtimeDirectoryPath: string): Promise<string | null> {
   const pointerPath = path.join(runtimeDirectoryPath, WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME);
   try {
     const stats = await lstat(pointerPath);
@@ -284,13 +317,18 @@ async function readCurrentLegacyGenerationDigest(runtimeDirectoryPath: string): 
       || !pointer.runtimeInstanceId) {
       return null;
     }
-    return legacyGenerationDigest(pointer.runtimeInstanceId);
+    return pointer.runtimeInstanceId;
   } catch (error) {
     if (isMissingFileError(error) || error instanceof SyntaxError) {
       return null;
     }
     throw error;
   }
+}
+
+async function readCurrentLegacyGenerationDigest(runtimeDirectoryPath: string): Promise<string | null> {
+  const runtimeGenerationId = await readCurrentLegacyRuntimeGenerationId(runtimeDirectoryPath);
+  return runtimeGenerationId ? legacyGenerationDigest(runtimeGenerationId) : null;
 }
 
 async function listLegacyGenerationArtifacts(
@@ -675,8 +713,10 @@ export async function publishMemoryV6DiscoveryFile(
     }));
 
     pointerTemporaryFilePath = await prepareDiscoveryPairPointer(discoveryFilePath, runtimeGenerationId, security);
-    await options.beforePairCommit?.();
-    await rename(pointerTemporaryFilePath, discoveryFilePath);
+    await withLegacyPointerLock(runtimeDirectoryPath, async () => {
+      await options.beforePairCommit?.();
+      await rename(pointerTemporaryFilePath!, discoveryFilePath);
+    });
     pointerTemporaryFilePath = null;
   } catch (error) {
     await Promise.all([
@@ -694,8 +734,41 @@ export async function publishMemoryV6DiscoveryFile(
     ...(options.applicationInstanceId ? { applicationInstanceId: options.applicationInstanceId } : {}),
     runtimeGenerationId,
     runtimeInstanceId: runtimeGenerationId,
-    async cleanup(): Promise<void> {
+    async cleanup(replacement?: LegacyPointerReplacement): Promise<void> {
       await options.beforeCleanup?.();
+      let replacementPointerTemporaryFilePath: string | null = null;
+      if (replacement) {
+        replacementPointerTemporaryFilePath = await prepareDiscoveryPairPointer(
+          discoveryFilePath,
+          replacement.runtimeGenerationId,
+          security,
+        );
+      }
+      try {
+        await withLegacyPointerLock(runtimeDirectoryPath, async () => {
+          const currentRuntimeGenerationId = await readCurrentLegacyRuntimeGenerationId(
+            runtimeDirectoryPath,
+          );
+          if (currentRuntimeGenerationId !== null
+            && currentRuntimeGenerationId !== runtimeGenerationId) {
+            return;
+          }
+          if (replacementPointerTemporaryFilePath
+            && await replacement!.validateBeforeCommit()) {
+            await rename(replacementPointerTemporaryFilePath, discoveryFilePath);
+            replacementPointerTemporaryFilePath = null;
+          } else if (currentRuntimeGenerationId === runtimeGenerationId) {
+            await rm(discoveryFilePath, { force: true });
+          }
+          if (await readCurrentLegacyRuntimeGenerationId(runtimeDirectoryPath) === runtimeGenerationId) {
+            throw new Error("Legacy Memory discovery pointer cleanup did not commit.");
+          }
+        });
+      } finally {
+        if (replacementPointerTemporaryFilePath) {
+          await rm(replacementPointerTemporaryFilePath, { force: true }).catch(() => undefined);
+        }
+      }
       await Promise.all(generationFilePaths.map((filePath) => rm(filePath, { force: true })));
     },
   };
@@ -822,6 +895,117 @@ async function challengeMemoryRuntimeRegistryEntry(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function legacyArtifactMatchesRegistryRecord(
+  artifact: LegacyGenerationArtifact,
+  record: RuntimeDiscoveryRegistryRecord,
+): Promise<boolean> {
+  try {
+    const document = JSON.parse(
+      await readFile(artifact.filePath, "utf8"),
+    ) as Partial<WithMateMemoryDiscoveryDocument>;
+    const runtimeGenerationId = document.runtimeGenerationId ?? document.runtimeInstanceId;
+    return document.schemaVersion === WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION
+      && document.adapter === artifact.adapter
+      && document.applicationInstanceId === record.entry.applicationInstanceId
+      && runtimeGenerationId === record.entry.runtimeGenerationId
+      && document.runtimeInstanceId === record.entry.runtimeGenerationId
+      && legacyGenerationDigest(record.entry.runtimeGenerationId) === artifact.digest;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveLegacyPointerReplacement(input: {
+  runtimeDirectoryPath: string;
+  registryDirectoryPath?: string;
+  currentRuntimeGenerationId: string;
+  limits?: Partial<RuntimeDiscoveryRegistryLimits>;
+  fetch: typeof fetch;
+}): Promise<RuntimeDiscoveryRegistryRecord | null> {
+  const snapshot = await listRuntimeDiscoveryRegistryEntries(
+    input.registryDirectoryPath,
+    input.limits,
+  );
+  const artifacts = await listLegacyGenerationArtifacts(input.runtimeDirectoryPath);
+  const candidates: RuntimeDiscoveryRegistryRecord[] = [];
+  const records = snapshot.records
+    .filter((record) => record.entry.runtimeKind === "memory"
+      && record.entry.runtimeGenerationId !== input.currentRuntimeGenerationId)
+    .sort((left, right) => {
+      const applicationOrder = left.entry.applicationInstanceId.localeCompare(
+        right.entry.applicationInstanceId,
+      );
+      return applicationOrder !== 0
+        ? applicationOrder
+        : left.entry.runtimeGenerationId.localeCompare(right.entry.runtimeGenerationId);
+    });
+
+  for (const record of records) {
+    if (!await challengeMemoryRuntimeRegistryEntry(
+      record.entry,
+      record.slotDirectoryPath,
+      input.fetch,
+    )) {
+      continue;
+    }
+    const digest = legacyGenerationDigest(record.entry.runtimeGenerationId);
+    const pair = artifacts.filter((artifact) => artifact.digest === digest);
+    if (pair.length !== 2
+      || !pair.some((artifact) => artifact.adapter === "cli")
+      || !pair.some((artifact) => artifact.adapter === "mcp")) {
+      continue;
+    }
+    let pairIsActive = true;
+    for (const artifact of pair) {
+      if (!await legacyArtifactMatchesRegistryRecord(artifact, record)
+        || !await challengeLegacyMemoryGenerationArtifact(artifact, input.fetch)) {
+        pairIsActive = false;
+        break;
+      }
+    }
+    if (pairIsActive) {
+      candidates.push(record);
+    }
+  }
+
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+async function validateLegacyPointerReplacementBeforeCommit(input: {
+  replacement: RuntimeDiscoveryRegistryRecord;
+  runtimeDirectoryPath: string;
+  registryDirectoryPath?: string;
+  limits?: Partial<RuntimeDiscoveryRegistryLimits>;
+}): Promise<boolean> {
+  const snapshot = await listRuntimeDiscoveryRegistryEntries(
+    input.registryDirectoryPath,
+    input.limits,
+  );
+  const current = snapshot.records.find((record) => (
+    record.entry.applicationInstanceId === input.replacement.entry.applicationInstanceId
+    && record.entry.runtimeKind === input.replacement.entry.runtimeKind
+    && record.entry.runtimeGenerationId === input.replacement.entry.runtimeGenerationId
+    && record.entry.publicationId === input.replacement.entry.publicationId
+  ));
+  if (!current) {
+    return false;
+  }
+  const digest = legacyGenerationDigest(current.entry.runtimeGenerationId);
+  const pair = (await listLegacyGenerationArtifacts(input.runtimeDirectoryPath))
+    .filter((artifact) => artifact.digest === digest);
+  if (pair.length !== 2
+    || !pair.some((artifact) => artifact.adapter === "cli")
+    || !pair.some((artifact) => artifact.adapter === "mcp")) {
+    return false;
+  }
+  for (const artifact of pair) {
+    if (!await legacyArtifactMatchesRegistryRecord(artifact, current)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export async function startMemoryV6RuntimeApi(
@@ -1080,8 +1264,22 @@ export async function startMemoryV6RuntimeApi(
       characterContextService,
       async stop(): Promise<void> {
         const cleanupErrors: unknown[] = [];
+        let legacyReplacement: RuntimeDiscoveryRegistryRecord | null = null;
         try {
           await registryPublication?.unpublish();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          if (legacyDiscoveryFile) {
+            legacyReplacement = await resolveLegacyPointerReplacement({
+              runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
+              ...(options.registryDirectoryPath ? { registryDirectoryPath: options.registryDirectoryPath } : {}),
+              currentRuntimeGenerationId: runtimeGenerationId,
+              ...(options.runtimeDiscoveryLimits ? { limits: options.runtimeDiscoveryLimits } : {}),
+              fetch: options.fetch ?? fetch,
+            });
+          }
         } catch (error) {
           cleanupErrors.push(error);
         }
@@ -1096,7 +1294,20 @@ export async function startMemoryV6RuntimeApi(
           cleanupErrors.push(error);
         }
         try {
-          await cleanupLegacyDiscoveryProjection(legacyDiscoveryFile);
+          await cleanupLegacyDiscoveryProjection(
+            legacyDiscoveryFile,
+            legacyReplacement
+              ? {
+                runtimeGenerationId: legacyReplacement.entry.runtimeGenerationId,
+                validateBeforeCommit: () => validateLegacyPointerReplacementBeforeCommit({
+                  replacement: legacyReplacement!,
+                  runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
+                  ...(options.registryDirectoryPath ? { registryDirectoryPath: options.registryDirectoryPath } : {}),
+                  ...(options.runtimeDiscoveryLimits ? { limits: options.runtimeDiscoveryLimits } : {}),
+                }),
+              }
+              : undefined,
+          );
         } catch (error) {
           cleanupErrors.push(error);
         }

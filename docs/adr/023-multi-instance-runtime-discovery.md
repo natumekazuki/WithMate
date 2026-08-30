@@ -24,7 +24,8 @@ MemoryとSessionは異なるadapter runtimeを持つが、OSユーザー単位�
 - heartbeatは既定5秒、stale thresholdは20秒、capacity cleanup graceは60秒、retentionは24時間、entry上限は64件とする。lease期限切れだけではstaleにせず、operation前のidentity challengeも省略しない。lease期限切れかつchallenge失敗のentryだけをstaleとする。PID存在だけでactiveへ戻さない。
 - publish前にstale entryと参照されないgenerationをboundedに回収する。freshまたはchallenge成功したentryはcapacity pressureでも削除しない。上限を下げられない場合はcredential公開前にregistry capacity errorで失敗する。
 - cleanupは自分のidentity tuple（application instance、runtime generation、adapter kind）とgenerationだけを対象とする。正常終了はunpublish、listener停止、自generation削除の順序で行い、ownerでないruntimeのcleanupはactive集合を変更しない。commit後に結果が不明な場合は同じtupleをread-backして公開状態を判定する。
-- 固定slotのowner確認、heartbeat更新、retire、unpublish、publish claim、rollbackはOSユーザー共通のcross-process mutation lock内で直列化する。process crashで残ったlockはstale threshold後に回収し、owner確認後のslot再利用で別publicationを変更しない。
+- 固定slotのowner確認、heartbeat commit、retire、unpublish、publish claim、rollbackはOSユーザー共通のcross-process mutation lock内で直列化する。heartbeatのtemporary entry作成、ACL適用、network challengeはlock外で行い、lock区間はowner再確認、atomic rename、read-backだけに限定する。process crashで残ったlockはstale threshold後に回収し、owner確認後のslot再利用で別publicationを変更しない。
+- legacy pointerのpublishとcleanupはMemory adapter所有のprocess間lockで直列化する。cleanup対象generationをpointerが指す場合、またはpointerが未公開の場合は、canonical registry entry、identity challenge、CLI/MCP両generation documentが一致する生存候補が一意なときだけ、そのgenerationへatomic handoffしてから自generation pairを削除する。候補が0件または複数ならpointerを削除し、起動順やlast writerで暗黙選択しない。pointerが別generationへ更新済みなら変更しない。
 
 ### Selection and binding
 
@@ -42,7 +43,7 @@ MemoryとSessionは異なるadapter runtimeを持つが、OSユーザー単位�
 
 - instanceの起動、正常終了、crash、後発runtimeのcleanupが別instanceのCLI/MCP接続を無効化しない。operatorが候補を暗黙に選べない場合は、利用者が識別可能なambiguous errorで明示選択できる。
 - MemoryとSessionはregistryのidentity/lease/selection境界を共有できるが、credentialとgenerationはadapter単位で独立する。6.4.0ではSession runtimeへこのregistry core、owner cleanup、bound exact selection、safe diagnosticsを論理移植し、Session固有generationを追加する。MemoryのgenerationをSessionへ同期・共有するmigrationは行わない。
-- 6.3.25ではlegacy pointerを残すため旧CLIとの互換性を保てる。ただし新resolverのcanonical sourceはregistryであり、legacy pointerの削除releaseは別判断とする。
+- 6.3.25ではlegacy pointerを残し、activeなlegacy候補が一意な場合は逆順終了でも旧CLIとの互換性を保つ。複数候補を旧CLIが明示選択する契約は追加せず、曖昧な場合はpointerを公開しない。新resolverのcanonical sourceはregistryであり、legacy pointerの削除releaseは別判断とする。
 
 ## Alternatives
 

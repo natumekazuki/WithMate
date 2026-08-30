@@ -403,6 +403,21 @@ async function writeExclusiveSecureFile(
   contents: string | Uint8Array,
   security: RuntimePathSecurity,
 ): Promise<void> {
+  await writeExclusiveFileWithReadBack(targetPath, contents);
+  await applyPathSecurity(targetPath, "file", security);
+  const stats = await lstat(targetPath);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new RuntimeDiscoveryRegistryError(
+      "registry_security",
+      "Runtime registry file is unsafe.",
+    );
+  }
+}
+
+async function writeExclusiveFileWithReadBack(
+  targetPath: string,
+  contents: string | Uint8Array,
+): Promise<void> {
   const handle = await open(targetPath, "wx", 0o600);
   try {
     await handle.writeFile(contents);
@@ -412,14 +427,6 @@ async function writeExclusiveSecureFile(
   }
   const writtenStats = await lstat(targetPath);
   if (!writtenStats.isFile() || writtenStats.isSymbolicLink()) {
-    throw new RuntimeDiscoveryRegistryError(
-      "registry_security",
-      "Runtime registry file is unsafe.",
-    );
-  }
-  await applyPathSecurity(targetPath, "file", security);
-  const stats = await lstat(targetPath);
-  if (!stats.isFile() || stats.isSymbolicLink()) {
     throw new RuntimeDiscoveryRegistryError(
       "registry_security",
       "Runtime registry file is unsafe.",
@@ -438,27 +445,26 @@ async function writeExclusiveSecureFile(
   }
 }
 
-async function replaceEntryAtomically(
+async function prepareEntryReplacement(
   slotDirectoryPath: string,
   entry: RuntimeDiscoveryRegistryEntry,
-  security: RuntimePathSecurity,
-): Promise<void> {
+): Promise<string> {
   const temporaryFilePath = path.join(
     slotDirectoryPath,
     `entry-${randomUUID()}.tmp`,
   );
   try {
-    await writeExclusiveSecureFile(
+    // The slot directory was secured and read back before publication. Files
+    // created inside it inherit that ACL, so heartbeat does not launch the
+    // platform ACL helper while holding the OS-user mutation lock.
+    await writeExclusiveFileWithReadBack(
       temporaryFilePath,
       serializeEntry(entry),
-      security,
     );
-    await rename(
-      temporaryFilePath,
-      path.join(slotDirectoryPath, RUNTIME_DISCOVERY_ENTRY_FILE_NAME),
-    );
-  } finally {
+    return temporaryFilePath;
+  } catch (error) {
     await rm(temporaryFilePath, { force: true }).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -720,7 +726,6 @@ async function findExactRecord(
 function createPublicationHandle(args: {
   layout: RegistryLayout;
   record: RuntimeDiscoveryRegistryRecord;
-  security: RuntimePathSecurity;
   clock: RuntimeDiscoveryClock;
   timers: RuntimeDiscoveryTimers;
   limits: RuntimeDiscoveryRegistryLimits;
@@ -752,36 +757,61 @@ function createPublicationHandle(args: {
   };
 
   const refreshHeartbeat = async (): Promise<boolean> =>
-    runSerialized(() =>
-      withRegistryMutationLock(
-        args.layout,
-        "heartbeat",
-        args.mutationObserver,
-        async () => {
-          if (unpublished) {
-            return false;
-          }
-          const readBack = await readRecordFromSlot(
-            args.layout.activeDirectoryPath,
-            args.record.slotName,
-          );
-          if (!readBack.record || !isOwnedEntry(readBack.record.entry)) {
-            return false;
-          }
-          const nextEntry = {
-            ...readBack.record.entry,
-            lease: { heartbeatAt: args.clock.now().toISOString() },
-          };
-          await replaceEntryAtomically(
-            readBack.record.slotDirectoryPath,
-            nextEntry,
-            args.security,
-          );
-          currentEntry = nextEntry;
-          return true;
-        },
-      ),
-    );
+    runSerialized(async () => {
+      if (unpublished) {
+        return false;
+      }
+      const nextEntry = {
+        ...currentEntry,
+        lease: { heartbeatAt: args.clock.now().toISOString() },
+      };
+      const temporaryFilePath = await prepareEntryReplacement(
+        args.record.slotDirectoryPath,
+        nextEntry,
+      );
+      try {
+        return await withRegistryMutationLock(
+          args.layout,
+          "heartbeat",
+          args.mutationObserver,
+          async () => {
+            if (unpublished) {
+              return false;
+            }
+            const readBack = await readRecordFromSlot(
+              args.layout.activeDirectoryPath,
+              args.record.slotName,
+            );
+            if (!readBack.record || !isOwnedEntry(readBack.record.entry)) {
+              return false;
+            }
+            await rename(
+              temporaryFilePath,
+              path.join(
+                readBack.record.slotDirectoryPath,
+                RUNTIME_DISCOVERY_ENTRY_FILE_NAME,
+              ),
+            );
+            const committed = await readRecordFromSlot(
+              args.layout.activeDirectoryPath,
+              args.record.slotName,
+            );
+            if (!committed.record
+              || !isOwnedEntry(committed.record.entry)
+              || committed.record.entry.lease.heartbeatAt !== nextEntry.lease.heartbeatAt) {
+              throw new RuntimeDiscoveryRegistryError(
+                "registry_io",
+                "Runtime registry heartbeat read-back failed.",
+              );
+            }
+            currentEntry = committed.record.entry;
+            return true;
+          },
+        );
+      } finally {
+        await rm(temporaryFilePath, { force: true }).catch(() => undefined);
+      }
+    });
 
   const stopHeartbeat = async (): Promise<void> => {
     if (heartbeatHandle) {
@@ -1038,11 +1068,6 @@ export async function publishRuntimeDiscoveryEntry(
               (await credentialsMatch(exactAfterFailure, credentialDocuments))
             ) {
               claimedSlotPath = exactAfterFailure.slotDirectoryPath;
-              await applyPathSecurity(
-                claimedSlotPath,
-                "directory",
-                options.security,
-              );
               const readBackAfterFailure = await readRecordFromSlot(
                 layout.activeDirectoryPath,
                 exactAfterFailure.slotName,
@@ -1074,11 +1099,6 @@ export async function publishRuntimeDiscoveryEntry(
             }
             throw error;
           }
-          await applyPathSecurity(
-            slotDirectoryPath,
-            "directory",
-            options.security,
-          );
           const securedSlotStats = await lstat(slotDirectoryPath);
           if (
             !securedSlotStats.isDirectory() ||
@@ -1170,7 +1190,6 @@ export async function publishRuntimeDiscoveryEntry(
   return createPublicationHandle({
     layout,
     record: committedRecord,
-    security: options.security,
     clock,
     timers,
     limits,

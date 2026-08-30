@@ -539,7 +539,7 @@ retrieval ranking、暗黙target注入、毎turn prompt注入は行わない。
 bindingなしの外部CLIによるappend / forgetではMemory entryの`source.sessionId`を`null`として保存する。WithMateが起動したagent executionからbinding付きで操作する場合は、runtimeが解決したactor Sessionをsourceとidempotency principalへ保存する。
 `--self` flagは採用しない。
 current CLIは`WITHMATE_MEMORY_API_URL`、OSユーザー共通runtime registry、または互換用runtime discovery fileからlocalhost APIを発見する。registryは複数のactive entryを正本とし、selectorなしではactive候補が一意な場合だけ選択する。複数候補は`WITHMATE_RUNTIME_AMBIGUOUS`を返し、`--instance <applicationInstanceId>`で明示選択できる。
-registry entryはsafe metadataとhash化したcredential参照だけを保持する。credential documentはapplication instanceとMemory固有runtime generationを分離して持つ。legacy discovery fileは`withmate-memory-discovery-v1` documentとして`baseUrl`、credential、`applicationInstanceId`、`runtimeGenerationId`、legacy aliasの`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。
+registry entryはsafe metadataとhash化したcredential参照だけを保持する。credential documentはapplication instanceとMemory固有runtime generationを分離して持つ。legacy generation fileは`withmate-memory-discovery-v2` documentとして`baseUrl`、credential、`applicationInstanceId`、`runtimeGenerationId`、legacy aliasの`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。`memory-v6.current.json`はgenerationを指すpair pointerであり、canonical registryのactive候補が一意な場合だけcleanup時にchallenge済みgenerationへhandoffする。
 `--api-url`または`WITHMATE_MEMORY_API_URL`で明示したURLがloopback HTTP URLでない場合、CLIはusage errorで終了し、discovery fileへfallbackしない。
 Windows registry rootは`%LOCALAPPDATA%\WithMate\runtime-discovery\v1`とする。既定のlegacy discovery fileは`WITHMATE_MEMORY_RUNTIME_DIR`があればその直下、なければOS temp配下のuser-specific runtime directoryに置く。
 app側writerはruntime directoryをOS userだけが読める権限で作成し、POSIXではsymlink directory、他user所有、group / other readableなdirectoryを拒否または修正する。discovery fileは0600相当でexclusive temporary fileから置き換える。
@@ -890,7 +890,7 @@ foundationではMemory Management Windowを戻さない。
 
 最小UI:
 
-- Settings DiagnosticsにMemory API状態を表示する。current実装ではruntime APIのrunning / stopped / failed、baseUrl、DB path、discovery file path、secret有無だけをread-onlyで返す。
+- Settings DiagnosticsにMemory API状態を表示する。current実装ではruntime APIのrunning / stopped / failed、application instance、Memory runtime generation、build channel、discovery publish状態だけをread-onlyで返し、endpoint、DB path、discovery file path、secret有無は投影しない。
 - global Skill install状態を表示する。current実装では直近managed Skill sync結果をproviderごとに表示し、unpackaged / collision / failed / unconfiguredを区別する。
 - last error summaryを表示する。current実装ではruntime起動/停止とSkill sync失敗の直近errorを最大3件保持する。
 - runtime API secret、discovery documentのsecret値はdiagnostics stateへ含めない。UIにはsecret値を表示しない。

@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, readdir, rm, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import {
   listRuntimeDiscoveryRegistryEntries,
   maintainRuntimeDiscoveryRegistry,
   publishRuntimeDiscoveryEntry,
   readRuntimeDiscoveryCredential,
+  resolveRuntimeDiscoveryMutationLockFilePath,
 } from "../../src/runtime-discovery/runtime-discovery-registry.js";
 import {
   RuntimeDiscoveryClock,
@@ -398,18 +402,22 @@ test("security callback失敗時はpublication artifactをrollbackする", async
 
 // @test-value v1
 // kind = "invariant"
-// claim = "heartbeatはfake clockでleaseを更新し、停止後は再作成しない"
+// claim = "heartbeatは保護済みslot内でACL処理を再実行せずleaseをatomic更新する"
 // oracle = { type = "adr", ref = "ADR-023" }
-// failure_mode = "heartbeat停止後に旧handleがentryを復活させる"
+// failure_mode = "5秒周期のheartbeatがACL helperを起動して共通lockを長時間占有し、fresh runtimeをstale化する"
 // scope = "runtime-discovery-registry"
 // lifecycle = "permanent"
 // @end-test-value
-test("heartbeatはfake clockでleaseを更新する", async () =>
+test("heartbeatはACL処理を再実行せずfake clockのleaseを更新する", async () =>
   withRoot(async (root) => {
     let now = 0;
     let callback: (() => void) | undefined;
+    let securityCallCount = 0;
     const publication = await publishRuntimeDiscoveryEntry({
       ...options(root, UUIDS[0], UUIDS[1], now),
+      security: async () => {
+        securityCallCount += 1;
+      },
       clock: { now: () => new Date(now) },
       timers: {
         setInterval: (cb) => {
@@ -419,11 +427,13 @@ test("heartbeatはfake clockでleaseを更新する", async () =>
         clearInterval: () => undefined,
       },
     });
+    const securityCallCountAfterPublish = securityCallCount;
     now = 5_000;
     callback?.();
     await publication.refreshHeartbeat();
     const record = (await listRuntimeDiscoveryRegistryEntries(root)).records[0];
     assert.equal(record.entry.lease.heartbeatAt, iso(now));
+    assert.equal(securityCallCount, securityCallCountAfterPublish);
     await publication.unpublish();
     await publication.cleanupGeneration();
   }));
@@ -454,4 +464,101 @@ test("retired artifact回収はretention境界でboundedになる", async () =>
     });
     assert.ok(result.removedRetiredArtifacts >= 1);
     assert.equal((await readdir(retired)).length, 0);
+  }));
+
+// @test-value v1
+// kind = "regression"
+// claim = "別processがmutation lock保持中にcrashしてもstale lock回収後のpublisherは完全なentryを公開できる"
+// oracle = { type = "adr", ref = "ADR-023 cross-process mutation lock recovery" }
+// failure_mode = "crashしたprocessのlockが残留し、同じOSユーザーの全runtime publishとheartbeatを永久に停止させる"
+// scope = "runtime-discovery-registry-mutation-lock"
+// lifecycle = "permanent"
+// distinction = "同一Node process内のbarrierではなく、独立child processの強制終了とlock mtime expiryを通る"
+// @end-test-value
+test("別process crash後にstale mutation lockを回収してpublishできる", async () =>
+  withRoot(async (root) => {
+    const moduleUrl = pathToFileURL(path.resolve(
+      "src/runtime-discovery/runtime-discovery-registry.ts",
+    )).href;
+    const childSource = [
+      "const registry = await import(process.argv[1]);",
+      "await registry.publishRuntimeDiscoveryEntry({",
+      "  rootDirectoryPath: process.argv[2],",
+      "  security: async () => undefined,",
+      "  identity: { applicationInstanceId: process.argv[3], runtimeKind: 'memory', runtimeGenerationId: process.argv[4] },",
+      "  buildChannel: 'development',",
+      "  process: { pid: process.pid, startedAt: new Date(0).toISOString() },",
+      "  credentialDocuments: [{ adapterKind: 'cli', document: { marker: 'child' } }],",
+      "  challenge: async () => false,",
+      "  timers: { setInterval: () => ({}), clearInterval: () => undefined },",
+      "  mutationObserver: async (kind) => {",
+      "    if (kind === 'publish') {",
+      "      process.stdout.write('LOCKED\\n');",
+      "      await new Promise(() => { setInterval(() => undefined, 1000); });",
+      "    }",
+      "  },",
+      "});",
+    ].join("\n");
+    const child = spawn(process.execPath, [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      childSource,
+      moduleUrl,
+      root,
+      UUIDS[0],
+      UUIDS[1],
+    ], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    let stderr = "";
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    await new Promise<void>((resolve, reject) => {
+      child.stdout.on("data", (chunk: string) => {
+        if (chunk.includes("LOCKED")) {
+          resolve();
+        }
+      });
+      child.once("exit", (code) => {
+        reject(new Error("lock holder exited before acquiring the lock: " + code + " " + stderr));
+      });
+      child.once("error", reject);
+    });
+
+    const exitPromise = once(child, "exit");
+    if (process.platform === "win32") {
+      const killed = spawnSync("taskkill", [
+        "/PID",
+        String(child.pid),
+        "/T",
+        "/F",
+      ], { windowsHide: true });
+      assert.equal(killed.status, 0, killed.stderr?.toString("utf8"));
+    } else {
+      assert.equal(child.kill("SIGKILL"), true);
+    }
+    await exitPromise;
+    const expiredAt = new Date(Date.now() - 60_000);
+    await utimes(
+      resolveRuntimeDiscoveryMutationLockFilePath(root),
+      expiredAt,
+      expiredAt,
+    );
+
+    const replacement = await publishRuntimeDiscoveryEntry(
+      options(root, UUIDS[2], UUIDS[3]),
+    );
+    const snapshot = await listRuntimeDiscoveryRegistryEntries(root);
+    assert.equal(snapshot.records.length, 1);
+    assert.equal(snapshot.records[0].entry.applicationInstanceId, UUIDS[2]);
+    assert.ok(await readRuntimeDiscoveryCredential(snapshot.records[0], "cli"));
+    await replacement.unpublish();
+    await replacement.cleanupGeneration();
   }));
