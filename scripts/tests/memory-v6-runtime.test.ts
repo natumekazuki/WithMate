@@ -987,6 +987,99 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
   });
 
   // @test-value v1
+  // kind = "invariant"
+  // claim = "registry publication failureのrollbackとpointer復元は同じmutation lock内で完了し、別runtimeを割り込ませない"
+  // oracle = { type = "adr", ref = "ADR-023 legacy pointer publication rollback" }
+  // failure_mode = "Bのpublish失敗後、pointer Aの復元前にCがpublishされ、AとCがactiveなのにpointer Aを公開する"
+  // scope = "memory-legacy-projection-publication-rollback"
+  // lifecycle = "permanent"
+  // distinction = "単独failureの復元ではなく、rollback中に別publisherがlock取得を試みる競合を同期点で観測する"
+  // @end-test-value
+  it("registry publication rollback中は別runtimeを割り込ませない", async () => {
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const registryDirectoryPath = path.join(runtimeDirectoryPath, "registry");
+    const userDataPaths = await Promise.all([0, 1, 2].map(() => (
+      mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"))
+    )));
+    let runtimeA: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    let runtimeC: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    let releaseRuntimeBRollback = () => undefined;
+    let markRuntimeBRollbackReady = () => undefined;
+    const runtimeBRollbackReady = new Promise<void>((resolve) => {
+      markRuntimeBRollbackReady = resolve;
+    });
+    const runtimeBRollbackBarrier = new Promise<void>((resolve) => {
+      releaseRuntimeBRollback = resolve;
+    });
+    let markRuntimeCLockAttempted = () => undefined;
+    const runtimeCLockAttempted = new Promise<void>((resolve) => {
+      markRuntimeCLockAttempted = resolve;
+    });
+    let runtimeCCommitStarted = false;
+    try {
+      runtimeA = await startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[0],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_A,
+        buildChannel: "installed",
+        registryDirectoryPath,
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+      });
+      const runtimeBStart = startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[1],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_B,
+        buildChannel: "development",
+        registryDirectoryPath,
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+        beforeRuntimeRegistryPublicationCommit: async () => {
+          throw new Error("injected registry publication failure");
+        },
+        beforeRuntimeRegistryPublicationRollback: async () => {
+          markRuntimeBRollbackReady();
+          await runtimeBRollbackBarrier;
+        },
+      });
+      await runtimeBRollbackReady;
+      const runtimeCStart = startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[2],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_C,
+        buildChannel: "development",
+        registryDirectoryPath,
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+        beforeRuntimeRegistryPublicationLock: async () => {
+          markRuntimeCLockAttempted();
+        },
+        beforeRuntimeRegistryPublicationCommit: async () => {
+          runtimeCCommitStarted = true;
+        },
+      });
+      await runtimeCLockAttempted;
+      assert.equal(runtimeCCommitStarted, false);
+
+      releaseRuntimeBRollback();
+      await assert.rejects(() => runtimeBStart);
+      runtimeC = await runtimeCStart;
+      assert.equal(runtimeCCommitStarted, true);
+      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6.current.json")));
+      const snapshot = await listRuntimeDiscoveryRegistryEntries(registryDirectoryPath);
+      assert.deepEqual(
+        snapshot.records.map((record) => record.entry.applicationInstanceId).sort(),
+        [TEST_APPLICATION_INSTANCE_A, TEST_APPLICATION_INSTANCE_C].sort(),
+      );
+    } finally {
+      releaseRuntimeBRollback();
+      await runtimeC?.stop().catch(() => undefined);
+      await runtimeA?.stop().catch(() => undefined);
+      await Promise.all(userDataPaths.map((userDataPath) => (
+        rm(userDataPath, { recursive: true, force: true })
+      )));
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
   // kind = "compatibility"
   // claim = "legacy handoffはfreshな候補をregistry credential状態にかかわらずactive集合へ含め、複数ならpointerを公開しない"
   // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }

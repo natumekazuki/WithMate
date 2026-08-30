@@ -114,6 +114,8 @@ export type StartMemoryV6RuntimeApiOptions = {
   beforeRuntimeRegistryPublicationCommit?: () => Promise<void>;
   /** Test-only observation point immediately before waiting for registry publication. */
   beforeRuntimeRegistryPublicationLock?: () => Promise<void>;
+  /** Test-only barrier while publication rollback still owns the registry lock. */
+  beforeRuntimeRegistryPublicationRollback?: () => Promise<void>;
 };
 
 export type PublishMemoryV6DiscoveryFileOptions = {
@@ -1399,6 +1401,7 @@ export async function startMemoryV6RuntimeApi(
       afterPublicationRollback: () => withLegacyPointerLock(
         legacyPaths.runtimeDirectoryPath,
         async () => {
+          await options.beforeRuntimeRegistryPublicationRollback?.();
           if (!legacyPointerBeforeRegistryPublication
             || await readCurrentLegacyRuntimeGenerationId(legacyPaths.runtimeDirectoryPath) !== null) {
             return;
