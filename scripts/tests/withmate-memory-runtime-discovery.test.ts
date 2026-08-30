@@ -22,6 +22,7 @@ import {
   WithMateMemoryRuntimeExchangeError,
 } from "../withmate-memory-runtime-client.js";
 import {
+  listRuntimeDiscoveryRegistryEntries,
   publishRuntimeDiscoveryEntry,
   type RuntimeDiscoveryRegistryPublication,
 } from "../../src/runtime-discovery/runtime-discovery-registry.js";
@@ -116,22 +117,87 @@ function statusFetch(applicationInstanceId: string, runtimeGenerationId: string,
   });
 
 // @test-value v1
-// kind = "invariant"
-// claim = "applicationInstanceId selectorは対象instanceだけを選択する"
+// kind = "security"
+// claim = "credentialを解決できないactive entryもunbound resolverの選択集合へ残り、active候補が複数ならambiguousになる"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "selector指定時に別instanceへ接続する"
+// failure_mode = "一方のcredential不正を理由にactive候補を除外し、別instanceへ暗黙接続する"
+// scope = "memory-runtime-resolver"
+// lifecycle = "permanent"
+// distinction = "両credentialが利用可能な通常の複数候補ではなく、一方のcredentialだけが解決不能なactive集合を扱う"
+// @end-test-value
+it("credential不正のactive候補があっても別instanceを暗黙選択しない", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "wm-discovery-test-"));
+  const a = await publishMemory(root, ids(), "http://127.0.0.1:39001");
+  const b = await publishMemory(root, ids(), "http://127.0.0.1:39002");
+  try {
+    const snapshot = await listRuntimeDiscoveryRegistryEntries(root);
+    const bRecord = snapshot.records.find((record) => (
+      record.entry.applicationInstanceId === b.identity.applicationInstanceId
+    ));
+    assert.ok(bRecord);
+    const credentialFileName = bRecord.entry.adapters.find(
+      (adapter) => adapter.adapterKind === "cli",
+    )?.credentialFileName;
+    assert.ok(credentialFileName);
+    await writeFile(path.join(bRecord.slotDirectoryPath, credentialFileName), "{}\n", "utf8");
+
+    const result = await resolveWithMateMemoryApi({
+      adapter: "cli",
+      registryRootDirectoryPath: root,
+      legacyDiscoveryFilePath: path.join(root, "missing-legacy-pointer.json"),
+      env: unboundEnv,
+    });
+    assert.equal(result.kind, "error");
+    if (result.kind === "error") {
+      assert.equal(result.code, "runtime_ambiguous");
+      assert.equal(result.candidates.filter((candidate) => candidate.active).length, 2);
+    }
+  } finally {
+    await a.publication.unpublish();
+    await b.publication.unpublish();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "applicationInstanceId selectorはexpired候補のうち対象instanceだけをidentity challengeする"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "selector指定時に非対象instanceへchallenge通信する、または別instanceへ接続する"
 // scope = "memory-runtime-resolver"
 // lifecycle = "permanent"
 // @end-test-value
 it("--instance相当のselectorは指定候補だけをchallengeする", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "wm-discovery-test-"));
-    const a = await publishMemory(root); const b = await publishMemory(root);
-    try {
-      const result = await resolveWithMateMemoryApi({ adapter: "cli", registryRootDirectoryPath: root, env: unboundEnv, applicationInstanceId: a.identity.applicationInstanceId });
-      assert.equal(result.kind, "selected");
-      if (result.kind === "selected") assert.equal(result.candidate.applicationInstanceId, a.identity.applicationInstanceId);
-    } finally { await a.publication.unpublish(); await b.publication.unpublish(); await rm(root, { recursive: true, force: true }); }
-  });
+  const root = await mkdtemp(path.join(tmpdir(), "wm-discovery-test-"));
+  const a = await publishMemory(root, ids(), "http://127.0.0.1:39001");
+  const b = await publishMemory(root, ids(), "http://127.0.0.1:39002");
+  const challengedBaseUrls: string[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    challengedBaseUrls.push(new URL(String(input)).origin);
+    return statusFetch(a.identity.applicationInstanceId, a.identity.runtimeGenerationId)(input);
+  }) as typeof fetch;
+  try {
+    const result = await resolveWithMateMemoryApi({
+      adapter: "cli",
+      registryRootDirectoryPath: root,
+      legacyDiscoveryFilePath: path.join(root, "missing-legacy-pointer.json"),
+      env: unboundEnv,
+      applicationInstanceId: a.identity.applicationInstanceId,
+      clock: { now: () => new Date(BASE_TIME.getTime() + 30_000) },
+      fetch: fetchImpl,
+    });
+    assert.equal(result.kind, "selected");
+    if (result.kind === "selected") {
+      assert.equal(result.candidate.applicationInstanceId, a.identity.applicationInstanceId);
+    }
+    assert.deepEqual(challengedBaseUrls, [a.baseUrl]);
+    assert.notEqual(a.baseUrl, b.baseUrl);
+  } finally {
+    await a.publication.unpublish();
+    await b.publication.unpublish();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 // @test-value v1
 // kind = "security"

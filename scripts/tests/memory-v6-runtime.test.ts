@@ -642,13 +642,13 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
 
   // @test-value v1
   // kind = "compatibility"
-  // claim = "legacy pointer projectionが後発runtimeを指す場合、先発runtimeのowner cleanupは後発generationを削除しない"
-  // oracle = { type = "adr", ref = "ADR-023 legacy pointer compatibility" }
-  // failure_mode = "先発runtimeのcleanupがpointer ownerでない後発runtimeのgenerationを削除する"
-  // scope = "memory-legacy-projection-owner-cleanup"
+  // claim = "複数active runtimeの間はlegacy pointerを公開せず、一方の正常終了で一意になったruntimeだけを再投影する"
+  // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }
+  // failure_mode = "A稼働中にBを起動するとlegacy pointerがBへlast-writer更新され、旧CLIがBへ暗黙接続する"
+  // scope = "memory-legacy-projection-publish"
   // lifecycle = "permanent"
   // @end-test-value
-  it("別runtimeが同じlegacy directoryへpublishした後に先行runtimeを停止しても後発generationを残す", async () => {
+  it("複数runtime起動中はlegacy pointerを削除し一意へ収束後に残存runtimeを再投影する", async () => {
     const firstUserDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
     const secondUserDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
@@ -663,6 +663,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         runtimeDirectoryPath,
       });
       const firstDiscovery = (await readDiscoveryProjection(firstRuntime.discoveryFilePath)).document;
+      const firstGeneration = firstRuntime.runtimeGenerationId;
       secondRuntime = await startMemoryV6RuntimeApi({
         userDataPath: secondUserDataPath,
         applicationInstanceId: TEST_APPLICATION_INSTANCE_B,
@@ -670,16 +671,25 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
         runtimeDirectoryPath,
       });
-      const secondDiscovery = (await readDiscoveryProjection(secondRuntime.discoveryFilePath)).document;
+      const secondGeneration = secondRuntime.runtimeGenerationId;
 
-      assert.notEqual(firstDiscovery.runtimeInstanceId, secondDiscovery.runtimeInstanceId);
-      assert.equal(secondDiscovery.baseUrl, secondRuntime.baseUrl);
+      assert.notEqual(firstGeneration, secondGeneration);
+      await assert.rejects(() => stat(secondRuntime!.discoveryFilePath));
+      await stat(path.join(
+        runtimeDirectoryPath,
+        buildWithMateMemoryDiscoveryGenerationFileName("cli", firstGeneration),
+      ));
+      await stat(path.join(
+        runtimeDirectoryPath,
+        buildWithMateMemoryDiscoveryGenerationFileName("cli", secondGeneration),
+      ));
 
       await firstRuntime.stop();
       firstRuntime = null;
       const remaining = (await readDiscoveryProjection(secondRuntime.discoveryFilePath)).document;
-      assert.equal(remaining.runtimeInstanceId, secondDiscovery.runtimeInstanceId);
+      assert.equal(remaining.runtimeInstanceId, secondGeneration);
       assert.equal(remaining.baseUrl, secondRuntime.baseUrl);
+      assert.equal(firstDiscovery.runtimeInstanceId, firstGeneration);
     } finally {
       await firstRuntime?.stop().catch(() => undefined);
       await secondRuntime?.stop().catch(() => undefined);
@@ -691,9 +701,9 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
 
   // @test-value v1
   // kind = "compatibility"
-  // claim = "後発runtimeの正常終了時にlegacy pointerはchallenge済みの一意な先発runtimeへhandoffしてから後発generationを削除する"
+  // claim = "後発runtimeの正常終了でactive集合が先発runtime一件へ収束すると、legacy pointerをそのruntimeへ再投影してから後発generationを削除する"
   // oracle = { type = "adr", ref = "ADR-023 legacy pointer owner-aware handoff" }
-  // failure_mode = "A、Bの順に起動してBを終了するとpointerだけがBを指し続け、稼働中Aを旧CLI/MCPが発見できない"
+  // failure_mode = "A、Bの稼働中に非公開となったpointerがB終了後も復旧せず、稼働中Aを旧CLI/MCPが発見できない"
   // scope = "memory-legacy-projection-owner-cleanup"
   // lifecycle = "permanent"
   // distinction = "先発ownerを先に終了する既存testと逆の終了順で、pointerのhandoffと後発generation削除を同時に観測する"
@@ -723,10 +733,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
         runtimeDirectoryPath,
       });
-      const secondCliDiscovery = (await readDiscoveryProjection(
-        secondRuntime.discoveryFilePath,
-        "cli",
-      )).document;
+      const secondRuntimeGenerationId = secondRuntime.runtimeGenerationId;
 
       await secondRuntime.stop();
       secondRuntime = null;
@@ -748,14 +755,14 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         runtimeDirectoryPath,
         buildWithMateMemoryDiscoveryGenerationFileName(
           "cli",
-          secondCliDiscovery.runtimeGenerationId!,
+          secondRuntimeGenerationId,
         ),
       )));
       await assert.rejects(() => stat(path.join(
         runtimeDirectoryPath,
         buildWithMateMemoryDiscoveryGenerationFileName(
           "mcp",
-          secondCliDiscovery.runtimeGenerationId!,
+          secondRuntimeGenerationId,
         ),
       )));
     } finally {
@@ -921,6 +928,10 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
       releaseRuntimeCPointer();
       runtimeC = await runtimeCStart;
       runtimeCStart = null;
+      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6.current.json")));
+
+      await runtimeA.stop();
+      runtimeA = null;
       const current = (await readDiscoveryProjection(runtimeC.discoveryFilePath, "cli")).document;
       assert.equal(current.applicationInstanceId, TEST_APPLICATION_INSTANCE_C);
       assert.equal(current.runtimeGenerationId, runtimeC.runtimeGenerationId);

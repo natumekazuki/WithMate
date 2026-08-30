@@ -123,11 +123,13 @@ export type PublishMemoryV6DiscoveryFileOptions = {
   pathSecurity?: RuntimePathSecurity;
   beforeCleanup?: () => Promise<void>;
   beforePairCommit?: () => Promise<void>;
+  resolvePointerCommit?: () => Promise<LegacyPointerPublishDecision>;
 };
 
 type PublishedMemoryV6DiscoveryFile = {
   discoveryFilePath: string;
   mcpDiscoveryFilePath: string;
+  pointerPublished: boolean;
   applicationInstanceId?: string;
   runtimeGenerationId: string;
   /** @deprecated This value has runtime-generation semantics. */
@@ -143,6 +145,11 @@ type LegacyPointerReplacement = {
 type ResolvedLegacyPointerReplacement = {
   replacement: RuntimeDiscoveryRegistryRecord;
   observedMemoryPublications: readonly string[];
+};
+
+type LegacyPointerPublishDecision = {
+  runtimeGenerationId: string | null;
+  validateBeforeCommit: () => Promise<boolean>;
 };
 
 export const WITHMATE_MEMORY_LEGACY_GENERATION_MAX_FILES = 128;
@@ -693,6 +700,7 @@ export async function publishMemoryV6DiscoveryFile(
   await ensureSecureRuntimeDirectory(runtimeDirectoryPath, security);
   const prepared: PreparedDiscoveryProjection[] = [];
   let pointerTemporaryFilePath: string | null = null;
+  let pointerPublished = false;
   try {
     prepared.push(await prepareDiscoveryProjection({
       adapter: "cli",
@@ -719,10 +727,42 @@ export async function publishMemoryV6DiscoveryFile(
 
     pointerTemporaryFilePath = await prepareDiscoveryPairPointer(discoveryFilePath, runtimeGenerationId, security);
     await options.beforePairCommit?.();
-    await withLegacyPointerLock(runtimeDirectoryPath, async () => {
-      await rename(pointerTemporaryFilePath!, discoveryFilePath);
-    });
-    pointerTemporaryFilePath = null;
+    if (options.resolvePointerCommit) {
+      let committed = false;
+      for (let attempt = 0; attempt < 3 && !committed; attempt += 1) {
+        const decision = await options.resolvePointerCommit();
+        await withLegacyPointerLock(runtimeDirectoryPath, async () => {
+          if (!await decision.validateBeforeCommit()) {
+            return;
+          }
+          if (decision.runtimeGenerationId === runtimeGenerationId) {
+            await rename(pointerTemporaryFilePath!, discoveryFilePath);
+            pointerTemporaryFilePath = null;
+            pointerPublished = true;
+          } else {
+            await rm(discoveryFilePath, { force: true });
+            pointerPublished = false;
+          }
+          committed = true;
+        });
+      }
+      if (!committed) {
+        await withLegacyPointerLock(runtimeDirectoryPath, async () => {
+          await rm(discoveryFilePath, { force: true });
+        });
+        pointerPublished = false;
+      }
+    } else {
+      await withLegacyPointerLock(runtimeDirectoryPath, async () => {
+        await rename(pointerTemporaryFilePath!, discoveryFilePath);
+      });
+      pointerTemporaryFilePath = null;
+      pointerPublished = true;
+    }
+    if (pointerTemporaryFilePath) {
+      await rm(pointerTemporaryFilePath, { force: true });
+      pointerTemporaryFilePath = null;
+    }
   } catch (error) {
     await Promise.all([
       ...prepared.map(cleanupPreparedDiscoveryProjection),
@@ -736,6 +776,7 @@ export async function publishMemoryV6DiscoveryFile(
   return {
     discoveryFilePath,
     mcpDiscoveryFilePath,
+    pointerPublished,
     ...(options.applicationInstanceId ? { applicationInstanceId: options.applicationInstanceId } : {}),
     runtimeGenerationId,
     runtimeInstanceId: runtimeGenerationId,
@@ -922,6 +963,80 @@ async function legacyArtifactMatchesRegistryRecord(
   }
 }
 
+function memoryPublicationSet(records: readonly RuntimeDiscoveryRegistryRecord[]): string[] {
+  return records
+    .filter((record) => record.entry.runtimeKind === "memory")
+    .map((record) => [
+      record.entry.applicationInstanceId,
+      record.entry.runtimeGenerationId,
+      record.entry.publicationId,
+    ].join(":"))
+    .sort();
+}
+
+function publicationSetsMatch(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length
+    && left.every((value, index) => value === right[index]);
+}
+
+async function validateObservedMemoryPublications(input: {
+  observedMemoryPublications: readonly string[];
+  registryDirectoryPath?: string;
+  limits?: Partial<RuntimeDiscoveryRegistryLimits>;
+}): Promise<boolean> {
+  const snapshot = await listRuntimeDiscoveryRegistryEntries(
+    input.registryDirectoryPath,
+    input.limits,
+  );
+  return publicationSetsMatch(
+    memoryPublicationSet(snapshot.records),
+    input.observedMemoryPublications,
+  );
+}
+
+async function resolveLegacyPointerPublishDecision(input: {
+  applicationInstanceId: string;
+  runtimeGenerationId: string;
+  registryDirectoryPath?: string;
+  clock: RuntimeDiscoveryClock;
+  limits?: Partial<RuntimeDiscoveryRegistryLimits>;
+  fetch: typeof fetch;
+}): Promise<LegacyPointerPublishDecision> {
+  const snapshot = await listRuntimeDiscoveryRegistryEntries(
+    input.registryDirectoryPath,
+    input.limits,
+  );
+  const memoryRecords = snapshot.records.filter((record) => record.entry.runtimeKind === "memory");
+  const activeRecords: RuntimeDiscoveryRegistryRecord[] = [];
+  const limits = normalizeRuntimeDiscoveryRegistryLimits(input.limits);
+  for (const record of memoryRecords) {
+    const fresh = getRuntimeDiscoveryLeaseState(
+      record.entry,
+      input.clock.now(),
+      limits.staleThresholdMs,
+    ) === "fresh";
+    if (fresh || await challengeMemoryRuntimeRegistryEntry(
+      record.entry,
+      record.slotDirectoryPath,
+      input.fetch,
+    )) {
+      activeRecords.push(record);
+    }
+  }
+  const publishCurrent = activeRecords.length === 1
+    && activeRecords[0]!.entry.applicationInstanceId === input.applicationInstanceId
+    && activeRecords[0]!.entry.runtimeGenerationId === input.runtimeGenerationId;
+  const observedMemoryPublications = memoryPublicationSet(snapshot.records);
+  return {
+    runtimeGenerationId: publishCurrent ? input.runtimeGenerationId : null,
+    validateBeforeCommit: () => validateObservedMemoryPublications({
+      observedMemoryPublications,
+      ...(input.registryDirectoryPath ? { registryDirectoryPath: input.registryDirectoryPath } : {}),
+      ...(input.limits ? { limits: input.limits } : {}),
+    }),
+  };
+}
+
 async function resolveLegacyPointerReplacement(input: {
   runtimeDirectoryPath: string;
   registryDirectoryPath?: string;
@@ -978,14 +1093,7 @@ async function resolveLegacyPointerReplacement(input: {
   return candidates.length === 1
     ? {
       replacement: candidates[0],
-      observedMemoryPublications: snapshot.records
-        .filter((record) => record.entry.runtimeKind === "memory")
-        .map((record) => [
-          record.entry.applicationInstanceId,
-          record.entry.runtimeGenerationId,
-          record.entry.publicationId,
-        ].join(":"))
-        .sort(),
+      observedMemoryPublications: memoryPublicationSet(snapshot.records),
     }
     : null;
 }
@@ -1000,18 +1108,10 @@ async function validateLegacyPointerReplacementBeforeCommit(input: {
     input.registryDirectoryPath,
     input.limits,
   );
-  const currentMemoryPublications = snapshot.records
-    .filter((record) => record.entry.runtimeKind === "memory")
-    .map((record) => [
-      record.entry.applicationInstanceId,
-      record.entry.runtimeGenerationId,
-      record.entry.publicationId,
-    ].join(":"))
-    .sort();
-  if (currentMemoryPublications.length !== input.resolution.observedMemoryPublications.length
-    || currentMemoryPublications.some((value, index) => (
-      value !== input.resolution.observedMemoryPublications[index]
-    ))) {
+  if (!publicationSetsMatch(
+    memoryPublicationSet(snapshot.records),
+    input.resolution.observedMemoryPublications,
+  )) {
     return false;
   }
   const current = snapshot.records.find((record) => (
@@ -1254,6 +1354,14 @@ export async function startMemoryV6RuntimeApi(
         buildChannel: options.buildChannel,
         runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
         pathSecurity: security,
+        resolvePointerCommit: () => resolveLegacyPointerPublishDecision({
+          applicationInstanceId: options.applicationInstanceId,
+          runtimeGenerationId,
+          ...(options.registryDirectoryPath ? { registryDirectoryPath: options.registryDirectoryPath } : {}),
+          clock,
+          ...(options.runtimeDiscoveryLimits ? { limits: options.runtimeDiscoveryLimits } : {}),
+          fetch: options.fetch ?? fetch,
+        }),
       });
     } catch (error) {
       options.log?.({
@@ -1278,7 +1386,7 @@ export async function startMemoryV6RuntimeApi(
         applicationInstanceId: options.applicationInstanceId,
         runtimeGenerationId,
         buildChannel: options.buildChannel,
-        legacyProjectionPublished: legacyDiscoveryFile !== null,
+        legacyProjectionPublished: legacyDiscoveryFile?.pointerPublished ?? false,
         createdDatabase: bootstrap.created,
       },
     });

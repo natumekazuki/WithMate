@@ -707,13 +707,7 @@ export async function resolveWithMateMemoryApi(
       allCandidates,
     );
   }
-  if (matching.some((candidate) => candidate.credentialUnavailable)) {
-    const usable = matching.filter((candidate) => !candidate.credentialUnavailable);
-    if (usable.length === 0) {
-      return discoveryError("runtime_credential_unavailable", matching);
-    }
-  }
-  const active = matching.filter((candidate) => candidate.safe.active && candidate.connection !== null);
+  const active = matching.filter((candidate) => candidate.safe.active);
   if (active.length === 0) {
     return discoveryError(matching.length > 0 ? "runtime_stale" : "runtime_unavailable", matching);
   }
@@ -721,9 +715,12 @@ export async function resolveWithMateMemoryApi(
     return discoveryError("runtime_ambiguous", matching);
   }
   const selected = active[0]!;
+  if (selected.credentialUnavailable || selected.connection === null) {
+    return discoveryError("runtime_credential_unavailable", matching);
+  }
   return {
     kind: "selected",
-    connection: selected.connection!,
+    connection: selected.connection,
     candidate: selected.safe,
     candidates: toSafeCandidates(allCandidates),
   };
