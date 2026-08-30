@@ -182,12 +182,16 @@ WithMateのソースコードは[ISC License](LICENSE)で提供します。
 - `scripts/`: build、生成、migration、検証用script
 - `scripts/tests/`: Node test runner用test
 - `docs/design/`: 現行設計の正本とdomain detail
+- `docs/features/`: 利用者向けの機能別ガイド
+- `docs/releases/`: versionごとのrepository内リリースノート
 - `docs/adr/`: 長期的な設計判断
 - `docs/plans/`: 複数sessionまたは高リスク作業のplan
 - `build/`: icon、installer、CLIなどのpackaging入力
 
 ## 関連ドキュメント
 
+- [Release Notes](docs/releases/README.md): versionごとの追加機能、変更、互換性、検証結果
+- [Feature Guides](docs/features/README.md): 利用者向けの機能別ガイド
 - [Product Direction](docs/design/product-direction.md): プロダクトの優先順位と判断基準
 - [Documentation Map](docs/design/documentation-map.md): 現行設計文書の分類と入口
 - [Window Architecture](docs/design/window-architecture.md): Window間の責務とlifecycle

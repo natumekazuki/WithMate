@@ -8,6 +8,8 @@
 `docs/design/` にある文書を、current 実装に対する役割ごとに整理する。  
 この文書は、docs 精査で何を正本として残し、何を supporting doc とし、何を統合候補として扱うかを判断するための入口にする。
 
+利用者向けの機能別ガイドは[`docs/features/`](../features/README.md)、versionごとの変更内容は[`docs/releases/`](../releases/README.md)に分離する。設計上の責務や不変条件は引き続き`docs/design/`と`docs/adr/`を正本とする。
+
 ## Classification
 
 ### A. Current Source Of Truth
