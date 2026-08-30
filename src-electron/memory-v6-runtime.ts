@@ -112,6 +112,12 @@ export type StartMemoryV6RuntimeApiOptions = {
   beforeLegacyPointerCommit?: () => Promise<void>;
   /** Test-only observation point after legacy pointer commit and before lock release. */
   beforeLegacyPointerLockRelease?: () => Promise<void>;
+  /** Test-only failure injection after both legacy generation documents are prepared. */
+  beforeLegacyPairCommit?: () => Promise<void>;
+  /** Test-only barrier before failed legacy projection cleanup acquires mutation locks. */
+  beforeFailedLegacyProjectionCleanup?: () => Promise<void>;
+  /** Test-only barrier after replacement validation while the registry lock is held. */
+  beforeLegacyPointerHandoffLock?: () => Promise<void>;
   /** Test-only observation point immediately before registry entry publication. */
   beforeRuntimeRegistryPublicationCommit?: () => Promise<void>;
   /** Test-only observation point immediately before waiting for registry publication. */
@@ -134,6 +140,8 @@ export type PublishMemoryV6DiscoveryFileOptions = {
   pathSecurity?: RuntimePathSecurity;
   beforeCleanup?: () => Promise<void>;
   beforePairCommit?: () => Promise<void>;
+  beforeFailedProjectionCleanup?: () => Promise<void>;
+  cleanupFailedProjection?: (operation: () => Promise<void>) => Promise<void>;
   resolvePointerCommit?: () => Promise<LegacyPointerPublishDecision>;
 };
 
@@ -882,16 +890,23 @@ export async function publishMemoryV6DiscoveryFile(
       pointerTemporaryFilePath = null;
     }
   } catch (error) {
-    const pointerReferencesPreparedGeneration = await readCurrentLegacyRuntimeGenerationId(
-      runtimeDirectoryPath,
-    ).then(
-      (currentRuntimeGenerationId) => currentRuntimeGenerationId === runtimeGenerationId,
-      () => false,
-    );
-    await Promise.all([
-      ...(pointerReferencesPreparedGeneration ? [] : prepared.map(cleanupPreparedDiscoveryProjection)),
-      ...(pointerTemporaryFilePath ? [rm(pointerTemporaryFilePath, { force: true })] : []),
-    ]);
+    if (prepared.length > 0) {
+      await options.beforeFailedProjectionCleanup?.();
+      const cleanupPreparedPair = async () => {
+        if (await readCurrentLegacyRuntimeGenerationId(runtimeDirectoryPath) === runtimeGenerationId) {
+          return;
+        }
+        await Promise.all(prepared.map(cleanupPreparedDiscoveryProjection));
+      };
+      if (options.cleanupFailedProjection) {
+        await options.cleanupFailedProjection(cleanupPreparedPair);
+      } else {
+        await withLegacyPointerLock(runtimeDirectoryPath, cleanupPreparedPair);
+      }
+    }
+    if (pointerTemporaryFilePath) {
+      await rm(pointerTemporaryFilePath, { force: true });
+    }
     throw error;
   }
 
@@ -1295,6 +1310,7 @@ async function commitLegacyPointerReplacement(input: {
   registryDirectoryPath?: string;
   limits?: Partial<RuntimeDiscoveryRegistryLimits>;
   operation: () => Promise<void>;
+  beforeLegacyLock?: () => Promise<void>;
 }): Promise<boolean> {
   return withRuntimeDiscoveryRegistryMutationLock(
     input.registryDirectoryPath,
@@ -1302,6 +1318,7 @@ async function commitLegacyPointerReplacement(input: {
       if (!await validateLegacyPointerReplacementBeforeCommit(input)) {
         return false;
       }
+      await input.beforeLegacyLock?.();
       await withLegacyPointerLock(input.runtimeDirectoryPath, input.operation);
       return true;
     },
@@ -1560,6 +1577,12 @@ export async function startMemoryV6RuntimeApi(
         buildChannel: options.buildChannel,
         runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
         pathSecurity: security,
+        beforePairCommit: options.beforeLegacyPairCommit,
+        beforeFailedProjectionCleanup: options.beforeFailedLegacyProjectionCleanup,
+        cleanupFailedProjection: (operation) => withRuntimeDiscoveryRegistryMutationLock(
+          options.registryDirectoryPath,
+          () => withLegacyPointerLock(legacyPaths.runtimeDirectoryPath, operation),
+        ),
         resolvePointerCommit: () => resolveLegacyPointerPublishDecision({
           applicationInstanceId: options.applicationInstanceId,
           runtimeGenerationId,
@@ -1665,6 +1688,9 @@ export async function startMemoryV6RuntimeApi(
                         ? { limits: options.runtimeDiscoveryLimits }
                         : {}),
                       operation,
+                      ...(options.beforeLegacyPointerHandoffLock
+                        ? { beforeLegacyLock: options.beforeLegacyPointerHandoffLock }
+                        : {}),
                     }),
                   },
                 }

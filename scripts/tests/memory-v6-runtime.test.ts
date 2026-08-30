@@ -885,6 +885,99 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
   });
 
   // @test-value v1
+  // kind = "regression"
+  // claim = "replacementのgeneration pair検証からpointer commitまで、失敗publicationのpair cleanupを同じregistry→legacy lock順で排他する"
+  // oracle = { type = "adr", ref = "ADR-023 legacy pointer atomic handoff" }
+  // failure_mode = "handoffがreplacement pairを検証してlegacy lockを待つ間に、publication失敗側がlock外でpairを削除し、dangling pointerをcommitする"
+  // scope = "memory-legacy-projection-publication-cleanup-race"
+  // lifecycle = "permanent"
+  // distinction = "handoff後の通常cleanupではなく、replacement検証済み・pointer未commitの区間へfailed publication cleanupを割り込ませる"
+  // @end-test-value
+  it("failed publication cleanupは検証済みreplacementのhandoff完了後にpair参照を再確認する", async () => {
+    const firstUserDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const secondUserDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    let runtimeA: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    let runtimeB: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    let runtimeAStart: Promise<Awaited<ReturnType<typeof startMemoryV6RuntimeApi>>> | null = null;
+    let releaseFailedCleanup!: () => void;
+    let markFailedCleanupReady!: () => void;
+    const failedCleanupReady = new Promise<void>((resolve) => {
+      markFailedCleanupReady = resolve;
+    });
+    const failedCleanupBarrier = new Promise<void>((resolve) => {
+      releaseFailedCleanup = resolve;
+    });
+    let releaseHandoff!: () => void;
+    let markHandoffReady!: () => void;
+    const handoffReady = new Promise<void>((resolve) => {
+      markHandoffReady = resolve;
+    });
+    const handoffBarrier = new Promise<void>((resolve) => {
+      releaseHandoff = resolve;
+    });
+    try {
+      runtimeB = await startMemoryV6RuntimeApi({
+        userDataPath: secondUserDataPath,
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_B,
+        buildChannel: "development",
+        registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+        beforeLegacyPointerHandoffLock: async () => {
+          markHandoffReady();
+          await handoffBarrier;
+        },
+      });
+      runtimeAStart = startMemoryV6RuntimeApi({
+        userDataPath: firstUserDataPath,
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_A,
+        buildChannel: "installed",
+        registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+        beforeLegacyPairCommit: async () => {
+          throw new Error("Injected legacy pointer publication failure.");
+        },
+        beforeFailedLegacyProjectionCleanup: async () => {
+          markFailedCleanupReady();
+          await failedCleanupBarrier;
+        },
+      });
+      await failedCleanupReady;
+
+      const runtimeBStop = runtimeB.stop();
+      await handoffReady;
+      releaseFailedCleanup();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      releaseHandoff();
+
+      await runtimeBStop;
+      runtimeB = null;
+      runtimeA = await runtimeAStart;
+      runtimeAStart = null;
+
+      const cli = (await readDiscoveryProjection(runtimeA.discoveryFilePath, "cli")).document;
+      const mcp = (await readDiscoveryProjection(runtimeA.discoveryFilePath, "mcp")).document;
+      assert.equal(cli.applicationInstanceId, TEST_APPLICATION_INSTANCE_A);
+      assert.equal(cli.runtimeGenerationId, runtimeA.runtimeGenerationId);
+      assert.equal(mcp.applicationInstanceId, TEST_APPLICATION_INSTANCE_A);
+      assert.equal(mcp.runtimeGenerationId, runtimeA.runtimeGenerationId);
+    } finally {
+      releaseFailedCleanup();
+      releaseHandoff();
+      if (runtimeAStart) {
+        runtimeA = await runtimeAStart.catch(() => null);
+      }
+      await runtimeB?.stop().catch(() => undefined);
+      await runtimeA?.stop().catch(() => undefined);
+      await rm(firstUserDataPath, { recursive: true, force: true });
+      await rm(secondUserDataPath, { recursive: true, force: true });
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
   // kind = "compatibility"
   // claim = "cleanup後のactive legacy候補が複数ならpointerを公開せず、後続cleanupで一意になった時だけchallenge済みruntimeへ再投影する"
   // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }
