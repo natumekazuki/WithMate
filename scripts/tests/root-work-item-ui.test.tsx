@@ -252,25 +252,34 @@ test("Root WorkItem の改訂と引き継ぎ callback を操作から検証す�
 
 // @test-value v1
 // kind = "regression"
-// claim = "Root WorkItem改訂editorはowner callbackがtrueを返した場合だけ閉じ、pending中またはfalse完了ではdraftと親から渡されたerrorを同時に保持する"
+// claim = "Root WorkItem改訂editorはowner callbackがtrueを返した場合だけ閉じ、契約だけ保存された部分成功後は最新版と一致する契約へ明示的にrebaseして進捗draftだけを再送できる"
 // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#6-ui" }
-// failure_mode = "保存Promiseを待たずeditorを閉じて入力を失うか、false完了後に再送可能なdraftと部分成功表示が消える"
+// failure_mode = "保存Promiseを待たずeditorを閉じるか、契約だけ保存された後に保持した進捗draftを再送できず全入力の破棄を強制する"
 // scope = "SessionContextPane Root WorkItem revision editor"
 // lifecycle = "permanent"
-// distinction = "callback呼出しだけでなく未解決Promise、false完了、親からの部分成功error再描画後のeditor stateを順に観測する"
+// distinction = "未解決Promise、false完了、revision更新と部分成功error、契約一致時だけの明示rebase、進捗draft再送を順に観測する"
 // @end-test-value
 test("Root WorkItem改訂は成功時だけeditorを閉じてfailure時はdraftを保持する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const root = createRoot(container);
   let resolveSave: ((saved: boolean) => void) | null = null;
-  const save = () => new Promise<boolean>((resolve) => { resolveSave = resolve; });
+  const revisions: Array<{ expectedRevision: number; progressSummary: string }> = [];
+  const save = (input: { expectedRevision: number; progressSummary: string }) => {
+    revisions.push(input);
+    return new Promise<boolean>((resolve) => { resolveSave = resolve; });
+  };
   const previous = { window: globalThis.window, document: globalThis.document, Node: globalThis.Node, HTMLElement: globalThis.HTMLElement };
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Node: dom.window.Node, HTMLElement: dom.window.HTMLElement });
   try {
-    await act(async () => root.render(<SessionContextPane {...paneProps({ onReviseRootWorkItem: save })} />));
+    await act(async () => root.render(<SessionContextPane {...paneProps({
+      onReviseRootWorkItem: save,
+      rootWorkItem: { ...rootWorkItem, progressSummary: "Progress retained after partial success" },
+    })} />));
     const revise = [...container.querySelectorAll("button")].find((button) => button.textContent === "改訂") as HTMLButtonElement;
     await act(async () => revise.click());
+    const progress = [...container.querySelectorAll("textarea")]
+      .find((textarea) => textarea.parentElement?.textContent?.startsWith("progressSummary")) as HTMLTextAreaElement;
     await act(async () => container.querySelector<HTMLButtonElement>("button[type=submit]")?.click());
     assert.ok(container.querySelector("form.root-work-item-edit-form"));
     assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, "Root goal");
@@ -278,11 +287,25 @@ test("Root WorkItem改訂は成功時だけeditorを閉じてfailure時はdraft�
     await act(async () => resolveSave?.(false));
     await act(async () => root.render(<SessionContextPane {...paneProps({
       onReviseRootWorkItem: save,
+      rootWorkItem: { ...rootWorkItem, revision: 5 },
       rootWorkItemErrorMessage: "契約改訂は保存されましたが、進捗の保存に失敗しました。入力内容を残しています。",
     })} />));
     assert.ok(container.querySelector("form.root-work-item-edit-form"));
     assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, "Root goal");
+    assert.equal(progress.value, "Progress retained after partial success");
     assert.match(container.querySelector('[role="alert"]')?.textContent ?? "", /契約改訂は保存されました/);
+    assert.equal(container.querySelector<HTMLButtonElement>("button[type=submit]")?.disabled, true);
+    const retainProgress = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "最新版の契約で進捗入力を引き継ぐ") as HTMLButtonElement;
+    assert.ok(retainProgress);
+    await act(async () => retainProgress.click());
+    assert.equal(progress.value, "Progress retained after partial success");
+    assert.equal(container.querySelector<HTMLButtonElement>("button[type=submit]")?.disabled, false);
+    await act(async () => container.querySelector<HTMLButtonElement>("button[type=submit]")?.click());
+    assert.deepEqual(revisions.map(({ expectedRevision, progressSummary }) => ({ expectedRevision, progressSummary })), [
+      { expectedRevision: 4, progressSummary: "Progress retained after partial success" },
+      { expectedRevision: 5, progressSummary: "Progress retained after partial success" },
+    ]);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

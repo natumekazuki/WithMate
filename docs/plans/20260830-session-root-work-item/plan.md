@@ -238,7 +238,7 @@ provider 固有の repository artifact が存在しなくても、上記だけ�
 
 - root Session の WorkItem 現在値、progress、blockers、next action を既存 right pane で表示する。
 - owner Session から許可された field だけを改訂できるようにする。
-- editorは開始時のRoot WorkItem revisionをdraftと共に保持する。外部更新後はdraftを保持したまま保存を止め、入力を破棄して最新版を読み込む明示操作でだけdraftとbase revisionを更新する。自動mergeやlatest revisionへの付け替えは行わない。
+- editorは開始時のRoot WorkItem revisionをdraftと共に保持する。外部更新後はdraftを保持したまま保存を止め、入力を破棄して最新版を読み込む明示操作でdraftとbase revisionを更新する。draftの契約fieldが最新版と一致する場合は、明示的なrebaseで保持した進捗入力だけを再送できる。これにより契約改訂だけ成功した部分成功を回収する。自動mergeやlatest revisionへの暗黙の付け替えは行わない。
 - 履歴は progressive disclosure で表示し、常設説明で pane を埋めない。
 
 ## 直接検証

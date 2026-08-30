@@ -1798,6 +1798,20 @@ function RootWorkItemPane({
     && workItem.progressSummary.trim().length > 0
     && workItem.nextAction.trim().length > 0;
   const editorIsStale = editing && editorBaseRevision !== workItem.revision;
+  const currentContractMatchesDraft = workItem.goal === draft.goal
+    && workItem.scope === draft.scope
+    && workItem.completionCriteria === draft.completionCriteria
+    && workItem.authority === draft.authority;
+  const retainProgressOnCurrentContract = () => {
+    setEditorBaseRevision(workItem.revision);
+    setDraft((current) => ({
+      ...current,
+      goal: workItem.goal,
+      scope: workItem.scope,
+      completionCriteria: workItem.completionCriteria,
+      authority: workItem.authority,
+    }));
+  };
   return (
     <div className="command-monitor-card root-work-item-pane" aria-busy={loading || mutationPending}>
       <div className="command-monitor-card-head">
@@ -1840,6 +1854,11 @@ function RootWorkItemPane({
               <button type="button" className="drawer-toggle compact secondary" onClick={loadCurrentProjection}>
                 入力を破棄して最新版を読み込む
               </button>
+              {currentContractMatchesDraft ? (
+                <button type="button" className="drawer-toggle compact secondary" onClick={retainProgressOnCurrentContract}>
+                  最新版の契約で進捗入力を引き継ぐ
+                </button>
+              ) : null}
             </div>
           ) : null}
           {(["goal", "scope", "completionCriteria", "authority", "progressSummary", "blockers", "nextAction"] as const).map((key) => (
