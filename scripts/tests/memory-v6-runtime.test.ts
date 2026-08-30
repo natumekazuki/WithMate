@@ -834,6 +834,113 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
   });
 
   // @test-value v1
+  // kind = "compatibility"
+  // claim = "legacy handoffはreplacement解決後にMemory publication集合が変わった場合、選択済みruntimeへpointerをcommitしない"
+  // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }
+  // failure_mode = "BのcleanupがAを選択した後にCがpublishされ、AとCがactiveなのにAへpointerを暗黙handoffする"
+  // scope = "memory-legacy-projection-owner-cleanup"
+  // lifecycle = "permanent"
+  // distinction = "cleanup開始時から複数候補がある場合ではなく、replacement解決後からpointer commit直前までに候補が増える競合を観測する"
+  // @end-test-value
+  it("replacement解決後に新runtimeがpublishされた場合はlegacy handoffをcommitしない", async () => {
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const userDataPaths = await Promise.all([0, 1, 2].map(() => (
+      mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"))
+    )));
+    let runtimeA: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    let runtimeB: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    let runtimeC: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    let runtimeCStart: Promise<Awaited<ReturnType<typeof startMemoryV6RuntimeApi>>> | null = null;
+    let blockRuntimeBCleanupPointer = false;
+    let releaseRuntimeBCleanupPointer = () => undefined;
+    let markRuntimeBCleanupPointerReady = () => undefined;
+    const runtimeBCleanupPointerReady = new Promise<void>((resolve) => {
+      markRuntimeBCleanupPointerReady = resolve;
+    });
+    const runtimeBCleanupPointerBarrier = new Promise<void>((resolve) => {
+      releaseRuntimeBCleanupPointer = resolve;
+    });
+    let releaseRuntimeCPointer = () => undefined;
+    let markRuntimeCPointerReady = () => undefined;
+    const runtimeCPointerReady = new Promise<void>((resolve) => {
+      markRuntimeCPointerReady = resolve;
+    });
+    const runtimeCPointerBarrier = new Promise<void>((resolve) => {
+      releaseRuntimeCPointer = resolve;
+    });
+    const isPointerTemporaryFile = (targetPath: string) => (
+      path.basename(targetPath).startsWith("memory-v6.current.json.")
+      && targetPath.endsWith(".tmp")
+    );
+    try {
+      runtimeA = await startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[0],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_A,
+        buildChannel: "installed",
+        registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+      });
+      runtimeB = await startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[1],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_B,
+        buildChannel: "development",
+        registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+        runtimeDirectoryPath,
+        runtimePathSecurity: async (targetPath) => {
+          if (blockRuntimeBCleanupPointer && isPointerTemporaryFile(targetPath)) {
+            markRuntimeBCleanupPointerReady();
+            await runtimeBCleanupPointerBarrier;
+          }
+        },
+      });
+
+      blockRuntimeBCleanupPointer = true;
+      const runtimeBStop = runtimeB.stop();
+      await runtimeBCleanupPointerReady;
+      runtimeCStart = startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[2],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_C,
+        buildChannel: "development",
+        registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+        runtimeDirectoryPath,
+        runtimePathSecurity: async (targetPath) => {
+          if (isPointerTemporaryFile(targetPath)) {
+            markRuntimeCPointerReady();
+            await runtimeCPointerBarrier;
+          }
+        },
+      });
+      await runtimeCPointerReady;
+
+      releaseRuntimeBCleanupPointer();
+      await runtimeBStop;
+      runtimeB = null;
+      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6.current.json")));
+
+      releaseRuntimeCPointer();
+      runtimeC = await runtimeCStart;
+      runtimeCStart = null;
+      const current = (await readDiscoveryProjection(runtimeC.discoveryFilePath, "cli")).document;
+      assert.equal(current.applicationInstanceId, TEST_APPLICATION_INSTANCE_C);
+      assert.equal(current.runtimeGenerationId, runtimeC.runtimeGenerationId);
+    } finally {
+      releaseRuntimeBCleanupPointer();
+      releaseRuntimeCPointer();
+      if (runtimeCStart) {
+        runtimeC = await runtimeCStart.catch(() => null);
+      }
+      await runtimeB?.stop().catch(() => undefined);
+      await runtimeC?.stop().catch(() => undefined);
+      await runtimeA?.stop().catch(() => undefined);
+      await Promise.all(userDataPaths.map((userDataPath) => (
+        rm(userDataPath, { recursive: true, force: true })
+      )));
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
   // kind = "security"
   // claim = "DB bootstrap失敗時はlistener credential registry entry legacy generationのいずれも公開しない"
   // oracle = { type = "adr", ref = "ADR-023 publication failure timing" }

@@ -140,6 +140,11 @@ type LegacyPointerReplacement = {
   validateBeforeCommit: () => Promise<boolean>;
 };
 
+type ResolvedLegacyPointerReplacement = {
+  replacement: RuntimeDiscoveryRegistryRecord;
+  observedMemoryPublications: readonly string[];
+};
+
 export const WITHMATE_MEMORY_LEGACY_GENERATION_MAX_FILES = 128;
 
 const LEGACY_GENERATION_FILE_PATTERN = /^memory-v6-(cli|mcp)\.([0-9a-f]{64})\.json$/;
@@ -923,7 +928,7 @@ async function resolveLegacyPointerReplacement(input: {
   currentRuntimeGenerationId: string;
   limits?: Partial<RuntimeDiscoveryRegistryLimits>;
   fetch: typeof fetch;
-}): Promise<RuntimeDiscoveryRegistryRecord | null> {
+}): Promise<ResolvedLegacyPointerReplacement | null> {
   const snapshot = await listRuntimeDiscoveryRegistryEntries(
     input.registryDirectoryPath,
     input.limits,
@@ -970,11 +975,23 @@ async function resolveLegacyPointerReplacement(input: {
     }
   }
 
-  return candidates.length === 1 ? candidates[0] : null;
+  return candidates.length === 1
+    ? {
+      replacement: candidates[0],
+      observedMemoryPublications: snapshot.records
+        .filter((record) => record.entry.runtimeKind === "memory")
+        .map((record) => [
+          record.entry.applicationInstanceId,
+          record.entry.runtimeGenerationId,
+          record.entry.publicationId,
+        ].join(":"))
+        .sort(),
+    }
+    : null;
 }
 
 async function validateLegacyPointerReplacementBeforeCommit(input: {
-  replacement: RuntimeDiscoveryRegistryRecord;
+  resolution: ResolvedLegacyPointerReplacement;
   runtimeDirectoryPath: string;
   registryDirectoryPath?: string;
   limits?: Partial<RuntimeDiscoveryRegistryLimits>;
@@ -983,11 +1000,25 @@ async function validateLegacyPointerReplacementBeforeCommit(input: {
     input.registryDirectoryPath,
     input.limits,
   );
+  const currentMemoryPublications = snapshot.records
+    .filter((record) => record.entry.runtimeKind === "memory")
+    .map((record) => [
+      record.entry.applicationInstanceId,
+      record.entry.runtimeGenerationId,
+      record.entry.publicationId,
+    ].join(":"))
+    .sort();
+  if (currentMemoryPublications.length !== input.resolution.observedMemoryPublications.length
+    || currentMemoryPublications.some((value, index) => (
+      value !== input.resolution.observedMemoryPublications[index]
+    ))) {
+    return false;
+  }
   const current = snapshot.records.find((record) => (
-    record.entry.applicationInstanceId === input.replacement.entry.applicationInstanceId
-    && record.entry.runtimeKind === input.replacement.entry.runtimeKind
-    && record.entry.runtimeGenerationId === input.replacement.entry.runtimeGenerationId
-    && record.entry.publicationId === input.replacement.entry.publicationId
+    record.entry.applicationInstanceId === input.resolution.replacement.entry.applicationInstanceId
+    && record.entry.runtimeKind === input.resolution.replacement.entry.runtimeKind
+    && record.entry.runtimeGenerationId === input.resolution.replacement.entry.runtimeGenerationId
+    && record.entry.publicationId === input.resolution.replacement.entry.publicationId
   ));
   if (!current) {
     return false;
@@ -1264,7 +1295,7 @@ export async function startMemoryV6RuntimeApi(
       characterContextService,
       async stop(): Promise<void> {
         const cleanupErrors: unknown[] = [];
-        let legacyReplacement: RuntimeDiscoveryRegistryRecord | null = null;
+        let legacyReplacement: ResolvedLegacyPointerReplacement | null = null;
         try {
           await registryPublication?.unpublish();
         } catch (error) {
@@ -1298,9 +1329,9 @@ export async function startMemoryV6RuntimeApi(
             legacyDiscoveryFile,
             legacyReplacement
               ? {
-                runtimeGenerationId: legacyReplacement.entry.runtimeGenerationId,
+                runtimeGenerationId: legacyReplacement.replacement.entry.runtimeGenerationId,
                 validateBeforeCommit: () => validateLegacyPointerReplacementBeforeCommit({
-                  replacement: legacyReplacement!,
+                  resolution: legacyReplacement!,
                   runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
                   ...(options.registryDirectoryPath ? { registryDirectoryPath: options.registryDirectoryPath } : {}),
                   ...(options.runtimeDiscoveryLimits ? { limits: options.runtimeDiscoveryLimits } : {}),
