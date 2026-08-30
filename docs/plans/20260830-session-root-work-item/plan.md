@@ -157,7 +157,7 @@ Root WorkItem の自動作成後は、現行の Session delete protection をそ
 
 - active な Root WorkItem を持つ root Session の削除は拒否する。
 - terminal な Root WorkItem を持つ root Session の明示削除は、Session と自己所有 Root WorkItem の履歴を同じ transaction で削除する。
-- delegated WorkItem、未回収結果、child Session が残る場合は削除を拒否する。削除可能な terminal root に結びつく execution association は、Root WorkItem より先に同じ transaction で削除する。
+- active delegated WorkItem、未回収結果、child Session が残る場合は削除を拒否する。terminalかつ回収済みのdelegated WorkItemは、参照Sessionの物理削除時に履歴、idempotency、execution association、aggregation ledgerと同じtransactionで削除する。
 - UI 上の非表示や archive と物理削除を混同しない。
 
 Root WorkItem の履歴は Session の所有データであり、Session の明示的な物理削除後まで独立保存しない。

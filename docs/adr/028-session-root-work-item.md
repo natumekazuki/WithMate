@@ -15,7 +15,7 @@ Accepted
 - root Work Itemはroot Sessionの作成と同一SQLite transactionで作成し、どちらか片方だけのcommitを許さない。rootの一意性はSession単位のDB制約とservice validationで守る。既存delegated Work Itemの作成権限・変更権限・creator/target制約は維持する。
 - current projectionと全mutationは一つの単調増加revisionで直列化する。mutationはprincipal単位のidempotency keyを持ち、canonical replayを返す。append-only event streamには少なくとも `created`、`migration_baseline`、`contract_revised`、`progress`、`handoff`、`state_transitioned`、`result_reported` を記録する。
 - root ownerはgoal、scope、completion criteria、authority説明、state、progress、blockers、next action、terminal resultをrevisionedかつidempotentに更新できる。terminal rootは再開せず、別目的は新しいroot Sessionで開始する。
-- terminal resultは、全descendantがterminalでnested aggregation decisionが確定したsnapshotだけを受け付ける。active root、active descendant、未回収結果が残るroot Sessionは削除を拒否する。削除可能なterminal root Sessionは、自己所有root Work Itemと履歴を同一transactionで物理削除し、execution associationも同じ削除へ含める。
+- terminal resultは、全descendantがterminalでnested aggregation decisionが確定したsnapshotだけを受け付ける。active root、active descendant、未回収結果が残るroot Sessionは削除を拒否する。terminalかつ回収済みのdelegated Work Itemは参照Sessionの物理削除に合わせて履歴と関連ledgerを同一transactionで削除する。削除可能なterminal root Sessionは、自己所有root Work Itemと履歴を同一transactionで物理削除し、execution associationも同じ削除へ含める。
 - migrationでは既存Work Itemを `delegated` として保持し、移行時点から `migration_baseline` を一件だけ記録する。存在しない過去の履歴を生成せず、legacy parent-null delegated Work Itemを自動reparentしない。migration、repair、backfill、idempotency replayはこの境界を越えない。
 
 ## Consequences

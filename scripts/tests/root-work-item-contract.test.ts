@@ -863,6 +863,107 @@ describe("Root WorkItem contract", () => {
   });
 
   // @test-value v1
+  // kind = "regression"
+  // claim = "Session tree削除はactiveまたは未回収のdelegated WorkItemを拒否し、terminalかつ回収済みのdelegated WorkItemとevent、idempotency、execution association、aggregation ledgerを同じtransactionで物理削除する"
+  // oracle = { type = "contract", ref = "docs/adr/028-session-root-work-item.md#Decision" }
+  // failure_mode = "delegated WorkItemが一件でもあるtreeを永久に削除不能にするか、回収前のterminal resultを消すか、関連ledgerだけを孤児として残す"
+  // scope = "SessionStorageV6 WorkItem-aware tree deletion"
+  // lifecycle = "permanent"
+  // distinction = "nested delegatedをterminal化した直後の拒否、aggregation decision後のroot finalization、三階層bulk delete後の全関連表を同じfixtureで観測する"
+  // @end-test-value
+  it("RW-6B: 回収済みdelegatedをledgerごと削除し未回収resultは保護する", async () => {
+    const harness = await createHarness();
+    try {
+      const root = insertRootSession(harness, "root", "overall-coordinator");
+      const task = insertChildSession(harness, "task", root, "task-coordinator");
+      insertChildSession(harness, "executor", task, "executor");
+      const rootItem = getRootWorkItem(harness, "root");
+      const activeRoot = harness.service.transition({
+        workItemId: rootItem.id,
+        state: "in_progress",
+        expectedRevision: rootItem.revision,
+        idempotencyKey: "root-start-delete-tree",
+      }, runtimeBinding("root"));
+      const branch = createDelegated(harness, "root", "task", "delete-tree-branch");
+      const activeBranch = harness.service.transition({
+        workItemId: branch.id,
+        state: "in_progress",
+        expectedRevision: branch.revision,
+        idempotencyKey: "delete-tree-branch-start",
+      }, runtimeBinding("task"));
+      const nested = createDelegated(harness, "task", "executor", "delete-tree-nested", branch.id);
+      const activeNested = harness.service.transition({
+        workItemId: nested.id,
+        state: "in_progress",
+        expectedRevision: nested.revision,
+        idempotencyKey: "delete-tree-nested-start",
+      }, runtimeBinding("executor"));
+      harness.executionStorage.startImmediate({
+        id: "delete-tree-execution",
+        sessionId: "executor",
+        request: { turn: "complete nested" },
+        idempotencyKey: "delete-tree-execution-key",
+        requestFingerprint: "delete-tree-execution-fingerprint",
+        createdAt: NOW,
+        expiresAt: EXPIRES,
+        workItemId: nested.id,
+      });
+      harness.executionStorage.completeRunning({
+        executionId: "delete-tree-execution",
+        state: "completed",
+        result: { ok: true },
+        errorCode: "",
+        reason: "",
+        completedAt: NOW,
+        expiresAt: EXPIRES,
+      });
+      const terminalNested = reportResult(
+        harness,
+        nested.id,
+        "executor",
+        "completed",
+        activeNested.revision,
+        "delete-tree-nested-result",
+      );
+      assert.equal(terminalNested.state, "completed");
+      assert.throws(() => harness.sessionStorage.deleteSession("executor"), /WORK_ITEM_SESSION_PROTECTED/);
+      assert.ok(harness.sessionStorage.getSession("executor"));
+
+      const aggregate = harness.service.getAggregation({ parentWorkItemId: branch.id }, runtimeBinding("task"));
+      harness.service.decideAggregation({
+        parentWorkItemId: branch.id,
+        childWorkItemId: nested.id,
+        decision: "accepted",
+        expectedAggregateRevision: aggregate.aggregateRevision,
+        idempotencyKey: "delete-tree-accept-nested",
+      }, runtimeBinding("task"));
+      const resolvedAggregate = harness.service.getAggregation({ parentWorkItemId: branch.id }, runtimeBinding("task"));
+      reportResult(
+        harness,
+        branch.id,
+        "task",
+        "completed",
+        activeBranch.revision,
+        "delete-tree-branch-result",
+        resolvedAggregate.aggregateRevision,
+      );
+      reportResult(harness, rootItem.id, "root", "completed", activeRoot.revision, "delete-tree-root-result");
+
+      harness.sessionStorage.deleteSessions(["root", "task", "executor"]);
+      assert.equal(tableCount(harness.dbPath, "sessions_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_idempotency_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregations_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_decisions_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_idempotency_v6"), 0);
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v1
   // kind = "compatibility"
   // claim = "v1 WorkItem migrationは既存rowをdelegatedとしてbinding、result、execution association、aggregation、idempotencyと共に保持し、migration_baselineとroot backfillを二回目のrepairで増殖させない"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Migration と repair" }

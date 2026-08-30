@@ -166,7 +166,7 @@ export class WorkItemService {
     storage: Pick<
       WorkItemStorageV6,
       "cleanupExpiredIdempotency" | "create" | "get" | "iteratePage" | "listPage" | "mutate" | "resolveIdempotency"
-      | "reviseRoot" | "appendRootHistory" | "listHistory" | "listRecentHistory"
+      | "reviseRoot" | "appendRootHistory" | "listHistory" | "listRecentHistory" | "iterateHistory" | "iterateRecentHistory"
       | "getAggregationSummary" | "listAggregationItems" | "decideAggregation" | "retryAggregation"
       | "resolveAggregationIdempotency"
     >;
@@ -305,12 +305,25 @@ export class WorkItemService {
     return this.deps.storage.listHistory(input);
   }
 
+  iterateHistory(input: WorkItemHistoryListInput, binding: ResolvedAgentRuntimeBinding): Iterable<WorkItemEvent> {
+    this.requireRootOwner(input.workItemId, binding);
+    return this.deps.storage.iterateHistory(input);
+  }
+
   listRecentHistory(
     input: Pick<WorkItemHistoryListInput, "workItemId" | "limit">,
     binding: ResolvedAgentRuntimeBinding,
   ): WorkItemEvent[] {
     this.requireRootOwner(input.workItemId, binding);
     return this.deps.storage.listRecentHistory(input);
+  }
+
+  iterateRecentHistory(
+    input: Pick<WorkItemHistoryListInput, "workItemId" | "limit">,
+    binding: ResolvedAgentRuntimeBinding,
+  ): Iterable<WorkItemEvent> {
+    this.requireRootOwner(input.workItemId, binding);
+    return this.deps.storage.iterateRecentHistory(input);
   }
 
   reportResult(input: WorkItemResultInput, binding: ResolvedAgentRuntimeBinding): WorkItem {

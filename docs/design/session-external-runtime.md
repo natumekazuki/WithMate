@@ -549,6 +549,9 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | `work.create` | `work create` |
 | `work.list` | `work list` |
 | `work.get` | `work get` |
+| `work.revise` | `work revise` |
+| `work.history.append` | `work history append` |
+| `work.history.list` | `work history list` |
 | `work.transition` | `work transition` |
 | `work.result` | `work result` |
 | `work.cancel` | `work cancel` |

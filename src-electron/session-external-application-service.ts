@@ -93,6 +93,7 @@ import {
   WORK_ITEM_MAX_LIST_LIMIT,
   WORK_ITEM_MAX_RESULT_BYTES,
   WORK_ITEM_STATES,
+  type WorkItemEvent,
 } from "../src/work-item.js";
 import type { SessionExecution, TurnInitiator } from "../src/session-execution.js";
 import {
@@ -185,12 +186,24 @@ export type SessionExternalApplicationServiceDeps = {
   workItemService?: Pick<
     WorkItemService,
     "create" | "get" | "resolveListScope" | "iterateList" | "transition" | "reportResult" | "cancel" | "requireExecutionAssociation"
-    | "getAggregation" | "listAggregation" | "decideAggregation" | "retryAggregation" | "revise" | "appendHistory" | "listHistory"
+    | "getAggregation" | "listAggregation" | "decideAggregation" | "retryAggregation" | "revise" | "appendHistory" | "iterateHistory"
   >;
   getExecutionWorkItemId?(executionId: string): string | null;
+  invalidateSession?(sessionId: string): void;
 };
 
 export type SessionExternalApplicationResponse = SessionRuntimeResultEnvelope | SessionRuntimeError;
+
+const WORK_ITEM_MUTATION_OPERATIONS = new Set<SessionRuntimeOperation>([
+  "work.create",
+  "work.revise",
+  "work.history.append",
+  "work.transition",
+  "work.result",
+  "work.cancel",
+  "work.aggregation.decide",
+  "work.aggregation.retry",
+]);
 
 export class SessionExternalApplicationService {
   private accepting = true;
@@ -227,6 +240,7 @@ export class SessionExternalApplicationService {
         );
       }
       const result = await this.executeValidated(request.operation, request.input, agentRuntimeBinding);
+      this.invalidateWorkItemMutation(request.operation, agentRuntimeBinding.actorSessionId);
       const response = createSessionRuntimeResult(request.operation, result);
       assertApplicationResponseSize(request.operation, result, response);
       return response;
@@ -755,17 +769,21 @@ export class SessionExternalApplicationService {
     const service = this.requireWorkItemService();
     const scope = service.resolveListScope(binding);
     const afterSequence = input.cursor ? decodeWorkItemHistoryCursor(input, scope, input.cursor) : null;
-    const events = service.listHistory({ workItemId: input.workItemId, limit: input.limit + 1, afterSequence }, binding);
+    const events = service.iterateHistory({ workItemId: input.workItemId, limit: input.limit + 1, afterSequence }, binding);
     const result: {
-      items: Array<(typeof events)[number]>;
+      items: WorkItemEvent[];
       nextCursor?: string;
     } = { items: [] };
-    for (let index = 0; index < events.length && result.items.length < input.limit; index += 1) {
-      const event = events[index]!;
-      const hasMore = index + 1 < events.length;
+    for (const event of events) {
+      const hasMore = result.items.length >= input.limit;
+      if (hasMore) {
+        const last = result.items.at(-1);
+        if (last) result.nextCursor = encodeWorkItemHistoryCursor(input, scope, last.sequence);
+        break;
+      }
       const candidate: SessionRuntimeWorkItemHistoryListResult = {
         items: [...result.items, event],
-        ...(hasMore ? { nextCursor: encodeWorkItemHistoryCursor(input, scope, event.sequence) } : {}),
+        nextCursor: encodeWorkItemHistoryCursor(input, scope, event.sequence),
       };
       if (
         Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("work.history.list", candidate)), "utf8")
@@ -777,9 +795,19 @@ export class SessionExternalApplicationService {
         break;
       }
       result.items.push(event);
-      if (hasMore && result.items.length === input.limit) result.nextCursor = candidate.nextCursor;
     }
     return result;
+  }
+
+  private invalidateWorkItemMutation(operation: SessionRuntimeOperation, actorSessionId: string): void {
+    if (!this.deps.invalidateSession || !WORK_ITEM_MUTATION_OPERATIONS.has(operation)) return;
+    const rootSessionId = this.deps.getTurnAuthoritySession(actorSessionId)?.rootSessionId;
+    if (!rootSessionId) return;
+    try {
+      this.deps.invalidateSession(rootSessionId);
+    } catch (error) {
+      console.warn("Committed Work Item mutation invalidation failed", error);
+    }
   }
 
   private resolveWorkItemAssociation(

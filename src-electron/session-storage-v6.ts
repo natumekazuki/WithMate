@@ -1711,8 +1711,23 @@ export class SessionStorageV6 {
         OR item.target_session_id IN (${placeholders})
       )
         AND (
-          item.kind = 'delegated'
-          OR (item.kind = 'root' AND item.state IN ('pending', 'in_progress', 'waiting'))
+          item.state IN ('pending', 'in_progress', 'waiting')
+          OR (
+            item.kind = 'delegated'
+            AND item.parent_work_item_id IS NULL
+            AND item.state <> 'canceled'
+            AND item.result_json IS NULL
+          )
+          OR (
+            item.kind = 'delegated'
+            AND item.parent_work_item_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM work_item_aggregation_decisions_v6 AS decision
+              WHERE decision.child_work_item_id = item.id
+                AND decision.child_revision = item.revision
+            )
+          )
         )
       LIMIT 1
     `).get(...uniqueSessionIds, ...uniqueSessionIds, ...uniqueSessionIds) as { id?: unknown } | undefined;
@@ -1720,23 +1735,49 @@ export class SessionStorageV6 {
       throw new Error(`WORK_ITEM_SESSION_PROTECTED: ${protectedItem.id}`);
     }
 
-    this.db.prepare(`
-      DELETE FROM work_item_execution_associations_v6
-      WHERE work_item_id IN (
-        SELECT id
-        FROM work_items_v6
-        WHERE kind = 'root'
-          AND root_session_id IN (${placeholders})
-          AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+    const cleanupRows = this.db.prepare(`
+      SELECT item.id
+      FROM work_items_v6 AS item
+      WHERE (
+        item.root_session_id IN (${placeholders})
+        OR item.creator_session_id IN (${placeholders})
+        OR item.target_session_id IN (${placeholders})
       )
-    `).run(...uniqueSessionIds);
+        AND item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
+        AND (
+          item.kind = 'root'
+          OR (
+            item.parent_work_item_id IS NULL
+            AND (item.state = 'canceled' OR item.result_json IS NOT NULL)
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM work_item_aggregation_decisions_v6 AS decision
+            WHERE decision.child_work_item_id = item.id
+              AND decision.child_revision = item.revision
+          )
+        )
+    `).all(...uniqueSessionIds, ...uniqueSessionIds, ...uniqueSessionIds) as Array<{ id: string }>;
+    const cleanupWorkItemIds = cleanupRows.map((row) => row.id);
+    if (cleanupWorkItemIds.length === 0) return;
+    const itemPlaceholders = cleanupWorkItemIds.map(() => "?").join(", ");
 
+    this.db.prepare(`DELETE FROM work_item_execution_associations_v6 WHERE work_item_id IN (${itemPlaceholders})`)
+      .run(...cleanupWorkItemIds);
     this.db.prepare(`
-      DELETE FROM work_items_v6
-      WHERE kind = 'root'
-        AND root_session_id IN (${placeholders})
-        AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
-    `).run(...uniqueSessionIds);
+      DELETE FROM work_item_aggregation_idempotency_v6
+      WHERE child_work_item_id IN (${itemPlaceholders})
+        OR replacement_work_item_id IN (${itemPlaceholders})
+    `).run(...cleanupWorkItemIds, ...cleanupWorkItemIds);
+    this.db.prepare(`
+      DELETE FROM work_item_aggregation_decisions_v6
+      WHERE parent_work_item_id IN (${itemPlaceholders})
+        OR child_work_item_id IN (${itemPlaceholders})
+        OR replacement_work_item_id IN (${itemPlaceholders})
+    `).run(...cleanupWorkItemIds, ...cleanupWorkItemIds, ...cleanupWorkItemIds);
+    this.db.prepare(`DELETE FROM work_item_aggregations_v6 WHERE parent_work_item_id IN (${itemPlaceholders})`)
+      .run(...cleanupWorkItemIds);
+    this.db.prepare(`DELETE FROM work_items_v6 WHERE id IN (${itemPlaceholders})`).run(...cleanupWorkItemIds);
   }
 
   private listAuxiliarySessionIdsForParentsIfTableExists(parentSessionIds: readonly string[]): string[] {

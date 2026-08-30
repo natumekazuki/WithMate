@@ -161,6 +161,7 @@ import { cancelSessionRun } from "./session-run-cancellation.js";
 import { SessionExternalApplicationService } from "./session-external-application-service.js";
 import { WorkItemStorageV6 } from "./work-item-storage-v6.js";
 import { WorkItemService } from "./work-item-service.js";
+import { collectRecentWorkItemHistory } from "./work-item-history-projection.js";
 import { SessionCrudService } from "./session-crud-service.js";
 import { SessionFileService } from "./session-file-service.js";
 import { resolveCurrentGitBranch } from "./session-workspace-git.js";
@@ -3338,6 +3339,7 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
       projectTerminalFailureNotification: projectExecutionTerminalFailureNotification,
       workItemService: requireWorkItemService(),
       getExecutionWorkItemId: (executionId: string) => requireSessionExecutionStorage().getExecutionWorkItemId(executionId),
+      invalidateSession: (sessionId) => broadcastSessions([sessionId]),
     });
     if (sessionExternalRuntimeShuttingDown) {
       sessionExternalApplicationService.beginShutdown();
@@ -3426,25 +3428,11 @@ function listRootWorkItemHistory(sessionId: string, limit: number): readonly Wor
   }
   const binding = createRendererRootWorkItemBinding(sessionId);
   const item = requireRootWorkItemForSession(sessionId);
-  const events = requireWorkItemService().listRecentHistory({
+  const events = requireWorkItemService().iterateRecentHistory({
     workItemId: item.id,
     limit,
   }, binding);
-  const bounded: WorkItemEvent[] = [];
-  let responseBytes = 2;
-  for (const event of events) {
-    const eventBytes = Buffer.byteLength(JSON.stringify(event), "utf8");
-    const candidateBytes = responseBytes + (bounded.length === 0 ? 0 : 1) + eventBytes;
-    if (candidateBytes > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
-      if (bounded.length === 0) {
-        throw new Error("A Root WorkItem history event exceeds the IPC response limit.");
-      }
-      break;
-    }
-    bounded.push(event);
-    responseBytes = candidateBytes;
-  }
-  return bounded;
+  return collectRecentWorkItemHistory(events, SESSION_RUNTIME_MAX_RESPONSE_BYTES);
 }
 
 function reviseRootWorkItem(

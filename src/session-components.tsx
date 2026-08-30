@@ -1648,7 +1648,7 @@ export type SessionContextPaneProps = {
     progressSummary: string;
     blockers: string[];
     nextAction: string;
-  }) => void | Promise<void>;
+  }) => boolean | Promise<boolean>;
   onHandoffRootWorkItem?: () => void | Promise<void>;
 };
 
@@ -1816,7 +1816,15 @@ function RootWorkItemPane({
       </div>
       {errorMessage ? <p className="live-run-error" role="alert">{errorMessage}</p> : null}
       {editing && canMutate ? (
-        <form onSubmit={(event) => { event.preventDefault(); void onRevise?.({ ...draft, blockers: draft.blockers.split("\n").map((value) => value.trim()).filter(Boolean) }); setEditing(false); }} className="root-work-item-edit-form">
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          void Promise.resolve(onRevise?.({
+            ...draft,
+            blockers: draft.blockers.split("\n").map((value) => value.trim()).filter(Boolean),
+          }) ?? false).then((saved) => {
+            if (saved) setEditing(false);
+          }).catch(() => {});
+        }} className="root-work-item-edit-form">
           {(["goal", "scope", "completionCriteria", "authority", "progressSummary", "blockers", "nextAction"] as const).map((key) => (
             <label key={key}>{key}<textarea value={draft[key]} onChange={(event) => update(key, event.target.value)} rows={key === "goal" ? 2 : 1} /></label>
           ))}

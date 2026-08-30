@@ -266,15 +266,16 @@ describe("Root WorkItem public contract", () => {
 
 // @test-value v1
 // kind = "contract"
-// claim = "application dispatchはRoot owner bindingをrevise、appendHistory、listHistoryへ渡し、history cursorをwork itemとactor scopeへ固定してdomain conflictをstable errorへ写像する"
+// claim = "application dispatchはRoot owner bindingをrevise、appendHistory、listHistoryへ渡し、成功したmutationだけroot Sessionをinvalidateし、history cursorとdomain errorをstableに保つ"
 // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-// failure_mode = "operationが誤ったservice methodへdispatchされる、別ownerがcursorを再利用できる、またはstale revisionがgeneric runtime errorへ崩れる"
+// failure_mode = "外部mutation後もGUIが古いprojectionを保持する、拒否されたmutationで不要なinvalidateを出す、別ownerがcursorを再利用する、またはstale revisionがgeneric runtime errorへ崩れる"
 // scope = "session-external-application-service"
 // lifecycle = "permanent"
-// distinction = "parserとtransportでは見えないowner binding、cursor scope、domain error envelopeをapplication境界で観測する"
+// distinction = "parserとtransportでは見えないowner binding、成功二件とstale失敗のinvalidation差、cursor scope、domain error envelopeをapplication境界で観測する"
 // @end-test-value
 test("application dispatchはRoot owner method・history cursor scope・revision errorを保つ", async () => {
   const calls: Array<{ method: string; input: unknown; actorSessionId: string }> = [];
+  const invalidatedSessionIds: string[] = [];
   const service = new SessionExternalApplicationService({
     executionService: { beginShutdown() {} },
     crudService: {},
@@ -283,7 +284,8 @@ test("application dispatchはRoot owner method・history cursor scope・revision
     isProviderSupported: () => true,
     discoverSessionCustomAgents: async () => [],
     resolveTurnInitiator: async () => null,
-    getTurnAuthoritySession: () => null,
+    getTurnAuthoritySession: () => ({ rootSessionId: "root-a" } as never),
+    invalidateSession: (sessionId) => { invalidatedSessionIds.push(sessionId); },
     workItemService: {
       revise(input: typeof reviseInput, binding: ResolvedAgentRuntimeBinding) {
         calls.push({ method: "revise", input, actorSessionId: binding.actorSessionId });
@@ -297,8 +299,8 @@ test("application dispatchはRoot owner method・history cursor scope・revision
       resolveListScope(binding: ResolvedAgentRuntimeBinding) {
         return { rootSessionId: "root-a", actorSessionId: binding.actorSessionId, visibility: "root" as const };
       },
-      listHistory(input: { workItemId: string; limit: number; afterSequence: number | null }, binding: ResolvedAgentRuntimeBinding) {
-        calls.push({ method: "listHistory", input, actorSessionId: binding.actorSessionId });
+      iterateHistory(input: { workItemId: string; limit: number; afterSequence: number | null }, binding: ResolvedAgentRuntimeBinding) {
+        calls.push({ method: "iterateHistory", input, actorSessionId: binding.actorSessionId });
         return input.afterSequence === null ? [createdEvent, progressEvent] : [progressEvent];
       },
     },
@@ -322,27 +324,28 @@ test("application dispatchはRoot owner method・history cursor scope・revision
   const stale = await service.execute("work.revise", { ...reviseInput, expectedRevision: 99 }, owner);
   assert.ok("error" in stale);
   assert.equal("error" in stale ? stale.error.code : "", "WORK_ITEM_REVISION_CONFLICT");
+  assert.deepEqual(invalidatedSessionIds, ["root-a", "root-a"]);
   assert.deepEqual(calls.slice(0, 3).map(({ method, actorSessionId }) => ({ method, actorSessionId })), [
     { method: "revise", actorSessionId: "root-a" },
     { method: "appendHistory", actorSessionId: "root-a" },
-    { method: "listHistory", actorSessionId: "root-a" },
+    { method: "iterateHistory", actorSessionId: "root-a" },
   ]);
   assert.deepEqual((calls[2]?.input as { limit: number; afterSequence: number | null }), {
     workItemId: rootWorkItem.id,
     limit: 2,
     afterSequence: null,
   });
-  assert.equal(calls.some((call) => call.method === "listHistory" && call.actorSessionId === "root-b"), false);
+  assert.equal(calls.some((call) => call.method === "iterateHistory" && call.actorSessionId === "root-b"), false);
 });
 
   // @test-value v1
   // kind = "regression"
-  // claim = "work.history.listは要求page全体が8 MiBを超える場合、収まるeventだけとlast included sequenceに固定したnext cursorを返し、次pageを欠落なく再開する"
+  // claim = "work.history.listは8 MiBへ収まるeventだけをiteratorから読み、last included sequenceのcursorで次pageを欠落なく再開する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-  // failure_mode = "個々は512 KiB以内のvalid eventが既定件数まで蓄積すると要求全体をLIMIT_EXCEEDEDで拒否し、consumerが履歴へ到達できない"
+  // failure_mode = "個々は512 KiB以内のeventを全件展開してmain processへ過大な負荷を掛けるか、要求全体をLIMIT_EXCEEDEDで拒否してconsumerが履歴へ到達できない"
   // scope = "SessionExternalApplicationService work.history.list response projection"
   // lifecycle = "permanent"
-  // distinction = "単一巨大eventではなくvalidな大容量eventを複数返し、response byte上限、短いpage、cursor連続性を同時に観測する"
+  // distinction = "単一巨大eventではなくvalidな大容量eventを複数生成し、iterator消費件数、response byte上限、短いpage、cursor連続性を同時に観測する"
   // @end-test-value
   test("work.history.listはresponse上限へ収まるpageと継続cursorを返す", async () => {
   const largeBlockers = Array.from({ length: 25 }, () => "x".repeat(WORK_ITEM_MAX_TEXT_LENGTH));
@@ -356,6 +359,7 @@ test("application dispatchはRoot owner method・history cursor scope・revision
       nextAction: "Continue",
     },
   }));
+  let yieldedEvents = 0;
   const service = new SessionExternalApplicationService({
     executionService: { beginShutdown() {} },
     crudService: {},
@@ -369,10 +373,11 @@ test("application dispatchはRoot owner method・history cursor scope・revision
       resolveListScope(binding: ResolvedAgentRuntimeBinding) {
         return { rootSessionId: "root-a", actorSessionId: binding.actorSessionId, visibility: "root" as const };
       },
-      listHistory(input: { limit: number; afterSequence: number | null }) {
-        return events
-          .filter((event) => event.sequence > (input.afterSequence ?? 0))
-          .slice(0, input.limit);
+      *iterateHistory(input: { limit: number; afterSequence: number | null }) {
+        for (const event of events.filter((candidate) => candidate.sequence > (input.afterSequence ?? 0)).slice(0, input.limit)) {
+          yieldedEvents += 1;
+          yield event;
+        }
       },
     },
   } as any);
@@ -387,6 +392,8 @@ test("application dispatchはRoot owner method・history cursor scope・revision
   assert.ok(first.result.items.length < events.length);
   assert.ok(first.result.nextCursor);
   assert.ok(Buffer.byteLength(JSON.stringify(first), "utf8") <= SESSION_RUNTIME_MAX_RESPONSE_BYTES);
+  const firstPageYieldCount = yieldedEvents;
+  assert.ok(firstPageYieldCount < events.length);
 
   const lastSequence = first.result.items.at(-1)?.sequence;
   const second = await service.execute("work.history.list", {

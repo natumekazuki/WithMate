@@ -893,9 +893,12 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && hasForeignKey(db, "work_item_aggregation_decisions_v6", "child_work_item_id", "work_items_v6", "id")
     && hasForeignKey(db, "work_item_aggregation_decisions_v6", "replacement_work_item_id", "work_items_v6", "id")
     && workItemDeleteTriggerSql.includes("WORK_ITEM_SESSION_PROTECTED")
+    && workItemDeleteTriggerSql.includes("work_item_aggregation_decisions_v6")
+    && workItemDeleteTriggerSql.includes("decision.child_revision = work_items_v6.revision")
     && !workItemDeleteTriggerSql.includes("work_item_execution_associations_v6")
     && workItemDeleteCleanupTriggerSql.includes("DELETE FROM work_items_v6")
-    && workItemDeleteCleanupTriggerSql.includes("kind = 'root'")
+    && workItemDeleteCleanupTriggerSql.includes("DELETE FROM work_item_aggregation_decisions_v6")
+    && workItemDeleteCleanupTriggerSql.includes("creator_session_id = OLD.id")
     && sessionTurnPublicContextSql.includes("json_valid(effective_turn_json)")
     && sessionTurnPublicContextSql.includes("json_type(attachments_json) = 'array'")
     && sessionInteractionsSql.includes("state IN ('pending', 'answered', 'expired')")
@@ -1712,8 +1715,23 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
       OR target_session_id = OLD.id
     )
       AND (
-        kind = 'delegated'
-        OR (kind = 'root' AND state IN ('pending', 'in_progress', 'waiting'))
+        state IN ('pending', 'in_progress', 'waiting')
+        OR (
+          kind = 'delegated'
+          AND parent_work_item_id IS NULL
+          AND state <> 'canceled'
+          AND result_json IS NULL
+        )
+        OR (
+          kind = 'delegated'
+          AND parent_work_item_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM work_item_aggregation_decisions_v6 AS decision
+            WHERE decision.child_work_item_id = work_items_v6.id
+              AND decision.child_revision = work_items_v6.revision
+          )
+        )
       )
   )
   BEGIN
@@ -1723,12 +1741,44 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
   CREATE TRIGGER IF NOT EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete
   AFTER DELETE ON sessions_v6
   BEGIN
+    DELETE FROM work_item_execution_associations_v6
+    WHERE work_item_id IN (
+      SELECT id FROM work_items_v6
+      WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
+        AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+    );
+    DELETE FROM work_item_aggregation_idempotency_v6
+    WHERE child_work_item_id IN (
+      SELECT id FROM work_items_v6
+      WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
+        AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+    ) OR replacement_work_item_id IN (
+      SELECT id FROM work_items_v6
+      WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
+        AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+    );
+    DELETE FROM work_item_aggregation_decisions_v6
+    WHERE parent_work_item_id IN (
+      SELECT id FROM work_items_v6
+      WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
+        AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+    ) OR child_work_item_id IN (
+      SELECT id FROM work_items_v6
+      WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
+        AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+    ) OR replacement_work_item_id IN (
+      SELECT id FROM work_items_v6
+      WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
+        AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+    );
+    DELETE FROM work_item_aggregations_v6
+    WHERE parent_work_item_id IN (
+      SELECT id FROM work_items_v6
+      WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
+        AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+    );
     DELETE FROM work_items_v6
-    WHERE kind = 'root'
-      AND root_session_id = OLD.id
-      AND creator_session_id = OLD.id
-      AND target_session_id = OLD.id
-      AND parent_work_item_id IS NULL
+    WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
       AND state IN ('completed', 'partially_completed', 'failed', 'canceled');
   END;
 `;

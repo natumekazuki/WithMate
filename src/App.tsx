@@ -37,6 +37,10 @@ import {
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
 import type { RootWorkItem, WorkItemEvent } from "./work-item.js";
+import {
+  RootWorkItemEditorSaveError,
+  saveRootWorkItemEditor,
+} from "./root-work-item-editor-mutation.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import { startOpenCompanionReviewWindowIdsSubscription } from "./open-companion-review-window-subscription.js";
 import { startRelatedSessionDetailsSubscription } from "./related-session-details-subscription.js";
@@ -1162,61 +1166,42 @@ export default function AgentSessionWindowApp() {
     progressSummary: string;
     blockers: string[];
     nextAction: string;
-  }): Promise<void> => {
+  }): Promise<boolean> => {
     if (
       !withmateApi
       || !selectedSessionId
       || rootWorkItemState.ownerSessionId !== selectedSessionId
       || !rootWorkItemState.item
       || rootWorkItemMutationPendingRef.current
-    ) return;
+    ) return false;
     rootWorkItemMutationPendingRef.current = true;
     setIsRootWorkItemMutationPending(true);
-    let current = rootWorkItemState.item;
     try {
-      const contractChanged = current.goal !== input.goal
-        || current.scope !== input.scope
-        || current.completionCriteria !== input.completionCriteria
-        || current.authority !== input.authority;
-      if (contractChanged) {
-        current = await withmateApi.reviseRootWorkItem(selectedSessionId, {
-          goal: input.goal,
-          scope: input.scope,
-          completionCriteria: input.completionCriteria,
-          authority: input.authority,
-          expectedRevision: current.revision,
-          idempotencyKey: crypto.randomUUID(),
-        });
-      }
-      const progressChanged = current.progressSummary !== input.progressSummary
-        || current.nextAction !== input.nextAction
-        || current.blockers.length !== input.blockers.length
-        || current.blockers.some((blocker, index) => blocker !== input.blockers[index]);
-      if (progressChanged) {
-        current = await withmateApi.appendRootWorkItemHistory(selectedSessionId, {
-          type: "progress",
-          summary: input.progressSummary,
-          blockers: input.blockers,
-          nextAction: input.nextAction,
-          expectedRevision: current.revision,
-          idempotencyKey: crypto.randomUUID(),
-        });
-      }
+      const current = await saveRootWorkItemEditor(rootWorkItemState.item, input, {
+        revise: (request) => withmateApi.reviseRootWorkItem(selectedSessionId, request),
+        appendProgress: (request) => withmateApi.appendRootWorkItemHistory(selectedSessionId, request),
+        createIdempotencyKey: () => crypto.randomUUID(),
+      });
       setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
         ? { ...state, item: current, errorMessage: null }
         : state);
       if (selectedSessionIdRef.current === selectedSessionId) {
         await refreshRootWorkItem(selectedSessionId);
       }
+      return true;
     } catch (error) {
       console.error(error);
-      const errorMessage = error instanceof Error ? error.message : "Root WorkItemの更新に失敗しました。";
+      const failureMessage = error instanceof Error ? error.message : "Root WorkItemの更新に失敗しました。";
+      const errorMessage = error instanceof RootWorkItemEditorSaveError && error.contractRevisionCommitted
+        ? `契約改訂は保存されましたが、進捗の保存に失敗しました。入力内容を残しています。${failureMessage}`
+        : failureMessage;
       if (selectedSessionIdRef.current === selectedSessionId) {
         await refreshRootWorkItem(selectedSessionId);
         setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
           ? { ...state, errorMessage }
           : state);
       }
+      return false;
     } finally {
       rootWorkItemMutationPendingRef.current = false;
       setIsRootWorkItemMutationPending(false);

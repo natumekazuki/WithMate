@@ -498,6 +498,14 @@ export class WorkItemStorageV6 {
     afterSequence: number | null;
     limit: number;
   }): WorkItemEvent[] {
+    return Array.from(this.iterateHistory(input));
+  }
+
+  *iterateHistory(input: {
+    workItemId: string;
+    afterSequence: number | null;
+    limit: number;
+  }): IterableIterator<WorkItemEvent> {
     this.getRequired(input.workItemId);
     const rows = this.db.prepare(`
       SELECT sequence, work_item_id, revision, event_type, actor_session_id, payload_json, created_at
@@ -505,14 +513,21 @@ export class WorkItemStorageV6 {
       WHERE work_item_id = ? AND sequence > ?
       ORDER BY sequence ASC
       LIMIT ?
-    `).all(input.workItemId, input.afterSequence ?? 0, input.limit) as WorkItemEventRow[];
-    return rows.map(parseWorkItemEvent);
+    `).iterate(input.workItemId, input.afterSequence ?? 0, input.limit) as IterableIterator<WorkItemEventRow>;
+    for (const row of rows) yield parseWorkItemEvent(row);
   }
 
   listRecentHistory(input: {
     workItemId: string;
     limit: number;
   }): WorkItemEvent[] {
+    return Array.from(this.iterateRecentHistory(input)).reverse();
+  }
+
+  *iterateRecentHistory(input: {
+    workItemId: string;
+    limit: number;
+  }): IterableIterator<WorkItemEvent> {
     this.getRequired(input.workItemId);
     const rows = this.db.prepare(`
       SELECT sequence, work_item_id, revision, event_type, actor_session_id, payload_json, created_at
@@ -520,8 +535,8 @@ export class WorkItemStorageV6 {
       WHERE work_item_id = ?
       ORDER BY sequence DESC
       LIMIT ?
-    `).all(input.workItemId, input.limit) as WorkItemEventRow[];
-    return rows.reverse().map(parseWorkItemEvent);
+    `).iterate(input.workItemId, input.limit) as IterableIterator<WorkItemEventRow>;
+    for (const row of rows) yield parseWorkItemEvent(row);
   }
 
   get(workItemId: string): WorkItem | null {

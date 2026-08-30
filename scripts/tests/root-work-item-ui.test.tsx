@@ -191,7 +191,7 @@ test("Root WorkItem の改訂と引き継ぎ callback を操作から検証す�
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Node: dom.window.Node, HTMLElement: dom.window.HTMLElement });
   try {
     await act(async () => root.render(<SessionContextPane {...paneProps({
-      onReviseRootWorkItem: (input) => revisions.push(input),
+      onReviseRootWorkItem: (input) => { revisions.push(input); return true; },
       onHandoffRootWorkItem: () => { handoffs += 1; },
     })} />));
     const revise = [...container.querySelectorAll("button")].find((button) => button.textContent === "改訂") as HTMLButtonElement;
@@ -209,7 +209,7 @@ test("Root WorkItem の改訂と引き継ぎ callback を操作から検証す�
 
     await act(async () => root.render(<SessionContextPane {...paneProps({
       rootWorkItem: { ...rootWorkItem, progressSummary: "", nextAction: "" },
-      onReviseRootWorkItem: (input) => revisions.push(input),
+      onReviseRootWorkItem: (input) => { revisions.push(input); return true; },
       onHandoffRootWorkItem: () => { handoffs += 1; },
     })} />));
     const disabledHandoff = [...container.querySelectorAll("button")]
@@ -233,13 +233,53 @@ test("Root WorkItem の改訂と引き継ぎ callback を操作から検証す�
         reportingSessionId: "session-1",
         reportedAt: "2026-08-30T02:00:00.000Z",
       } },
-      onReviseRootWorkItem: (input) => revisions.push(input),
+      onReviseRootWorkItem: (input) => { revisions.push(input); return true; },
       onHandoffRootWorkItem: () => { handoffs += 1; },
     })} />));
     assert.equal([...container.querySelectorAll("button")].some((button) => button.textContent === "改訂"), false);
     assert.equal([...container.querySelectorAll("button")].some((button) => button.textContent === "引き継ぎ"), false);
     assert.equal(container.querySelector("form.root-work-item-edit-form"), null);
     assert.equal([...container.querySelectorAll("button")].some((button) => button.textContent === "保存"), false);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    Object.assign(globalThis, previous);
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "Root WorkItem改訂editorはowner callbackがtrueを返した場合だけ閉じ、pending中またはfalse完了ではdraftと親から渡されたerrorを同時に保持する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#6-ui" }
+// failure_mode = "保存Promiseを待たずeditorを閉じて入力を失うか、false完了後に再送可能なdraftと部分成功表示が消える"
+// scope = "SessionContextPane Root WorkItem revision editor"
+// lifecycle = "permanent"
+// distinction = "callback呼出しだけでなく未解決Promise、false完了、親からの部分成功error再描画後のeditor stateを順に観測する"
+// @end-test-value
+test("Root WorkItem改訂は成功時だけeditorを閉じてfailure時はdraftを保持する", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  const container = dom.window.document.getElementById("root") as HTMLElement;
+  const root = createRoot(container);
+  let resolveSave: ((saved: boolean) => void) | null = null;
+  const save = () => new Promise<boolean>((resolve) => { resolveSave = resolve; });
+  const previous = { window: globalThis.window, document: globalThis.document, Node: globalThis.Node, HTMLElement: globalThis.HTMLElement };
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, Node: dom.window.Node, HTMLElement: dom.window.HTMLElement });
+  try {
+    await act(async () => root.render(<SessionContextPane {...paneProps({ onReviseRootWorkItem: save })} />));
+    const revise = [...container.querySelectorAll("button")].find((button) => button.textContent === "改訂") as HTMLButtonElement;
+    await act(async () => revise.click());
+    await act(async () => container.querySelector<HTMLButtonElement>("button[type=submit]")?.click());
+    assert.ok(container.querySelector("form.root-work-item-edit-form"));
+    assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, "Root goal");
+
+    await act(async () => resolveSave?.(false));
+    await act(async () => root.render(<SessionContextPane {...paneProps({
+      onReviseRootWorkItem: save,
+      rootWorkItemErrorMessage: "契約改訂は保存されましたが、進捗の保存に失敗しました。入力内容を残しています。",
+    })} />));
+    assert.ok(container.querySelector("form.root-work-item-edit-form"));
+    assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, "Root goal");
+    assert.match(container.querySelector('[role="alert"]')?.textContent ?? "", /契約改訂は保存されました/);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
