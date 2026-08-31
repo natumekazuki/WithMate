@@ -288,3 +288,141 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     dom.window.close();
   }
 });
+
+// @test-value v1
+// kind = "contract"
+// claim = "SessionFileExplorerPaneはowner単位でtabをlazy mountし、tab切替では保持してowner変更時に破棄する"
+// oracle = { type = "contract", ref = "accepted behavior: in-window File Explorer tab state retention" }
+// failure_mode = "tab切替で取得結果が失われるか、Sessionまたはroot集合の変更後も旧panel stateが残る"
+// scope = "SessionFileExplorerPane tab panel lifecycle"
+// lifecycle = "permanent"
+// distinction = "同一owner内のtab切替と、Session・root集合によるowner変更を一つのlifecycleとして扱う"
+// @end-test-value
+test("SessionFileExplorerPane は訪問済みtab panelを保持する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { SessionFileExplorerPane } = await import("../../src/file-explorer/SessionFileExplorerPane.js");
+
+  function StatefulPanel({ name }: { name: string }) {
+    const [count, setCount] = React.useState(0);
+    return React.createElement(
+      "button",
+      { type: "button", "data-panel": name, onClick: () => setCount((current) => current + 1) },
+      `${name}:${count}`,
+    );
+  }
+
+  const api = {
+    async listSessionFileRoots() {
+      return [];
+    },
+    async listSessionDirectory() {
+      return [];
+    },
+    isSessionFileObjectCopyAvailable() {
+      return false;
+    },
+    async showSessionFileObjectCopyContextMenu() {
+      return { status: "dismissed" as const };
+    },
+  };
+  function Harness({ sessionId, rootsRevision }: { sessionId: string; rootsRevision: string }) {
+    const [activeTab, setActiveTab] = React.useState<"files" | "changes" | "history">("files");
+    return React.createElement(SessionFileExplorerPane, {
+      api,
+      sessionId,
+      enabled: true,
+      rootsRevision,
+      selectedFile: null,
+      activeTab,
+      onActiveTabChange: setActiveTab,
+      onRefreshChanges() {},
+      onOpenFile() {},
+      renderChangesContent: () => React.createElement(StatefulPanel, { name: "changes" }),
+      historyContent: React.createElement(StatefulPanel, { name: "history" }),
+    });
+  }
+
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Harness, { sessionId: "session-1", rootsRevision: "roots-1" }));
+      await Promise.resolve();
+    });
+    assert.equal(dom.window.document.querySelector("[data-panel='changes']"), null);
+    assert.equal(dom.window.document.querySelector("[data-panel='history']"), null);
+
+    const tabs = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("[role='tab']"));
+    const filesTab = tabs.find((tab) => tab.textContent === "Files");
+    const changesTab = tabs.find((tab) => tab.textContent === "Changes");
+    const historyTab = tabs.find((tab) => tab.textContent === "History");
+    assert.ok(filesTab);
+    assert.ok(changesTab);
+    assert.ok(historyTab);
+
+    await act(async () => changesTab.click());
+    const changesPanel = dom.window.document.querySelector<HTMLButtonElement>("[data-panel='changes']");
+    assert.ok(changesPanel);
+    await act(async () => changesPanel.click());
+    assert.equal(changesPanel.textContent, "changes:1");
+
+    await act(async () => historyTab.click());
+    assert.equal(changesPanel.closest("[role='tabpanel']")?.hasAttribute("hidden"), true);
+    const historyPanel = dom.window.document.querySelector<HTMLButtonElement>("[data-panel='history']");
+    assert.ok(historyPanel);
+    await act(async () => historyPanel.click());
+    assert.equal(historyPanel.textContent, "history:1");
+
+    await act(async () => filesTab.click());
+    assert.equal(historyPanel.closest("[role='tabpanel']")?.hasAttribute("hidden"), true);
+    await act(async () => changesTab.click());
+    assert.equal(changesPanel.textContent, "changes:1");
+    await act(async () => historyTab.click());
+    assert.equal(historyPanel.textContent, "history:1");
+    await act(async () => filesTab.click());
+    await act(async () => {
+      root?.render(React.createElement(Harness, { sessionId: "session-1", rootsRevision: "roots-2" }));
+      await Promise.resolve();
+    });
+    assert.equal(dom.window.document.querySelector("[data-panel='changes']"), null);
+    assert.equal(dom.window.document.querySelector("[data-panel='history']"), null);
+    await act(async () => changesTab.click());
+    assert.ok(dom.window.document.querySelector("[data-panel='changes']"));
+    await act(async () => filesTab.click());
+    await act(async () => {
+      root?.render(React.createElement(Harness, { sessionId: "session-2", rootsRevision: "roots-2" }));
+      await Promise.resolve();
+    });
+    assert.equal(dom.window.document.querySelector("[data-panel='changes']"), null);
+    assert.equal(dom.window.document.querySelector("[data-panel='history']"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});

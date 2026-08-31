@@ -4177,7 +4177,7 @@ export default function AgentSessionWindowApp() {
         <FileRootChangesPane
           api={withmateApi}
           sessionId={activeRunSessionId}
-          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable && fileExplorerTab === "changes"}
+          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable}
           roots={roots}
           rootsRevision={fileExplorerRootsRevision}
           refreshRevision={fileRootChangesRefreshRevision}
@@ -4189,7 +4189,7 @@ export default function AgentSessionWindowApp() {
         <FileRootGitHistoryPane
           api={withmateApi}
           sessionId={activeRunSessionId}
-          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable && fileExplorerTab === "history"}
+          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable}
           rootsRevision={fileExplorerRootsRevision}
           refreshRevision={fileRootGitHistoryRefreshRevision}
           onOpenDiff={handleShowFileRootGitHistoryDiff}
