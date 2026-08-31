@@ -672,6 +672,15 @@ test("SessionMessageColumn はvalid glossaryを通常messageへだけ投影しSo
   assert.doesNotMatch(sourceHtml, /class="glossary-annotation"/);
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "個別collapse controlは状態と対象本文を支援技術へ公開しkeyboard focusとclickで操作でき、一括shortcutも維持される"
+// oracle = { type = "contract", ref = "accepted behavior: accessible name、aria-expanded、aria-controlsと一括shortcutを維持する" }
+// failure_mode = "個別controlがkeyboardから到達不能になるかARIAの状態・対象を失う、または一括shortcutが動作しなくなる"
+// scope = "SessionMessageColumn collapse controls"
+// lifecycle = "permanent"
+// distinction = "DOM owner境界ではなく、個別controlのaccessibility contractと一括shortcutの操作経路を検証する"
+// @end-test-value
 test("SessionMessageColumn は個別・一括collapseをnative controlで操作する", async () => {
   const messages: Message[] = [
     { role: "user", text: "first **collapsed** message" },
@@ -708,7 +717,12 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
       "button[aria-label^='メッセージを展開']",
     );
     assert.ok(individualButton);
+    assert.equal(individualButton.getAttribute("aria-expanded"), "false");
     assert.equal(individualButton.getAttribute("aria-controls"), "message-body-session-s-0");
+    await act(async () => {
+      individualButton.focus();
+    });
+    assert.equal(mounted.dom.window.document.activeElement, individualButton);
     await act(async () => {
       individualButton.click();
     });
@@ -726,6 +740,49 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
     });
     assert.equal(allToggleCount, 1);
     assert.equal(shortcutEvent.defaultPrevented, true);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "個別collapse controlとmessage本文は同じtext wrapperに属し、Detailsはそのwrapperの外側に残る"
+// oracle = { type = "contract", ref = "accepted behavior: 個別の縮小・展開controlはMessage本文領域だけをownerにする" }
+// failure_mode = "collapse controlのoverlay ownerがmessage card全体になり、展開したDetails上へcontrolが追従する"
+// scope = "SessionMessageColumn message text owner boundary"
+// lifecycle = "permanent"
+// distinction = "個別・一括操作の状態遷移ではなく、本文とDetailsのDOM owner境界を検証する"
+// @end-test-value
+test("SessionMessageColumn は個別collapse controlを本文wrapper内に保ちDetailsをownerに含めない", async () => {
+  const messages = [createArtifactMessage()];
+  messages[0]!.text = "long message ".repeat(80);
+  const messageKeys = ["session-s-0"];
+  const messageCollapseTargets = buildMessageCollapseTargets(
+    messages,
+    [{ kind: "session", messageIndex: 0 }],
+    messageKeys,
+  );
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    messageKeys,
+    messageCollapseTargets,
+    expandedArtifacts: { "session-1-0": true },
+    onToggleMessageCollapse: () => undefined,
+  });
+
+  try {
+    const card = mounted.container.querySelector(".message-card");
+    const textWrapper = card?.querySelector(".message-text-wrapper");
+    const collapseControl = card?.querySelector(".message-collapse-control");
+    const messageBody = card?.querySelector("[data-message-body='true']");
+    const artifactShell = card?.querySelector(".artifact-shell");
+
+    assert.ok(textWrapper);
+    assert.equal(collapseControl?.parentElement, textWrapper);
+    assert.equal(messageBody?.parentElement, textWrapper);
+    assert.equal(textWrapper.querySelector(".artifact-shell"), null);
+    assert.equal(artifactShell?.parentElement, textWrapper.parentElement);
   } finally {
     await mounted.cleanup();
   }

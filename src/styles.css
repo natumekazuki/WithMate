@@ -7461,6 +7461,11 @@ button:disabled {
   gap: 10px;
 }
 
+.message-text-wrapper {
+  position: relative;
+  min-width: 0;
+}
+
 .message-collapse-control {
   position: absolute;
   inset: 0;
@@ -7491,13 +7496,13 @@ button:disabled {
   pointer-events: none;
 }
 
-.message-card.has-message-collapse-control:hover > .message-collapse-control,
-.message-card.has-message-collapse-control:focus-within > .message-collapse-control {
+.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control,
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control {
   opacity: 1;
 }
 
-.message-card.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
-.message-card.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle {
+.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle {
   pointer-events: auto;
 }
 
