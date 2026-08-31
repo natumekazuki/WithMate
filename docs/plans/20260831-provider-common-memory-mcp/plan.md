@@ -2,12 +2,12 @@
 
 ## Goal
 
-provider別`withmate-memory` Skill配布を停止し、runtime bindingから解決するactor-relative identityとMCP `tools/list`をMemory通常操作の正本にする。bootstrapではruntime behaviorとtestを変更せず、ADR 024と本計画だけを固定する。
+provider別`withmate-memory` Skill配布を停止し、runtime bindingから解決するactor-relative identityとMCP `tools/list`をMemory通常操作の正本にする。bootstrapではruntime behaviorとtestを変更せず、ADR 020/021の部分置換、ADR 024、本計画を固定する。
 
 ## Accepted contract
 
-- `docs/adr/020-memory-affect-mcp-application-boundary.md`: MCP/CLI/lifecycleは同じapplication boundaryを使い、SQLiteへ直接接続しない。effect certainty、idempotency、episode mutation owner、lifecycle/event-timeの分離を維持する。
-- `docs/adr/021-agent-runtime-binding-authority-boundary.md`: caller requestのSession identityをauthorityにせず、opaque binding、actor Session、provider generation、operation grantをserver側で解決する。
+- `docs/adr/020-memory-affect-mcp-application-boundary.md`: 共通application boundary、SQLite非直結、effect certainty、idempotency、episode mutation owner、lifecycle/event-time appraisalを維持する。agent-facing target、provider executionから使うCLI credential、fallback開始条件はADR 024が置換する。
+- `docs/adr/021-agent-runtime-binding-authority-boundary.md`: opaque binding registry、actor Session、provider generation、operation grant、turn capability、runtime owner selectionを維持する。Memory routeの`optional` policy、bindingなし経路、explicit Character selectorはADR 024が置換する。
 - `docs/adr/023-multi-instance-runtime-discovery.md`: bound clientはapplication instance/runtime generationを固定し、別instanceへfallbackしない。
 - `docs/adr/024-provider-common-memory-mcp-boundary.md`: canonical artifact path、actor-relative schema、CLI credential境界、Character context projection、diagnostics projectionを固定する。本計画と競合する旧Memory Skill配布記述は実装レーンで更新する。
 - executable contractの主な現状根拠は`withmate-memory-mcp.test.ts`の`tools/list`/binding/effect tests、`agent-runtime-binding-http.test.ts`のroute policy tests、`character-context-application-service.test.ts`のversion/effective/episode tests、`withmate-memory-cli.test.ts`のidentity challenge/effect tests、`withmate-memory-mcp-integration.test.ts`と`character-context-cli-mcp-integration.test.ts`の共通正本/parity testsである。
@@ -16,7 +16,7 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 
 1. CLI/MCP artifactは`resources/cli/withmate-memory.mjs`をrepository canonical pathとする。packaged pathは`<process.resourcesPath>/resources/cli/withmate-memory.mjs`。
 2. agent-facing general Memory targetは`{ kind: "user-global" } | { kind: "project"; project } | { kind: "character" } | { kind: "character+project"; project }`。user/Character/Session identityは含めない。
-3. operator CLIはexplicit identity/targetとoperator credentialを使う。agent-bound CLI fallbackはbinding-required marker、owner tuple、opaque reference、`--fallback-from mcp`を必須にし、MCP credentialと`agent_cli_fallback` allowlistを使う。operator credentialへdowngrade/昇格しない。
+3. operator CLIはexplicit identity/targetとoperator credentialを使う。agent-bound CLI fallbackはMCP initializeと`tools/list`取得後のtransport障害に限定し、binding-required marker、owner tuple、opaque reference、`--fallback-from mcp`を必須にして、MCP credentialと`agent_cli_fallback` allowlistを使う。operator credentialへdowngrade/昇格しない。
 4. Character contextからtop-level `characterId`/`sessionId`、`scope`、Memory itemのowner/scope/body/file/sourceを除く。schemaVersion、baseline、Affect mode/effective/evaluatedAt/version/updatedAt、Memory id/title/preview/tags/updatedAt、relatedTags、Memory updatedAtは維持する。
 5. Memory diagnosticsは`generatedAt`、`runtime`、`cliShim`、`lastErrors`だけを持つ。`providers`、`skillSync`、Managed Skill表示、provider instruction sample/copyを削除する。
 
@@ -37,8 +37,8 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 - Accepted contract / exact anchor: ADR 020のadapter credential/route allowlist、ADR 021のbound runtime selection、ADR 024の`agent_cli_fallback`。
 - Scope / semantic owner: runtime-side adapter authenticationは`src-electron/memory-v6-http-server.ts`、credential publish/discoveryは`src-electron/memory-v6-runtime.ts`と`scripts/withmate-memory-runtime-client.ts`、CLI mode選択は`scripts/withmate-memory.ts`。
 - Failure mode / consumer impact: MCP障害を契機にAgentがoperator routeを実行する、binding欠落をlocal-userへdowngradeする、別runtimeへ接続する、challenge前にsecret/bodyを送る。
-- State transitions / failure timing: mode admission → exact runtime select → challenge → credential exchange → binding/grant → dispatch → response/retry。binding/flag/credential不備は`effect: none`、dispatch後のwrite response lossだけ`unknown`。
-- Direct verification: operator command success、bound fallbackのMCP-equivalent route success、operator-only route rejection、flag/binding片方欠落 rejection、operator secret非参照、runtime generation mismatch、pre/post dispatch effect test。
+- State transitions / failure timing: MCP initialize → `tools/list`取得 → transport障害の分類 → fallback mode admission → exact runtime select → challenge → credential exchange → binding/grant → dispatch → response/retry。initializeまたは`tools/list`取得前の失敗はcapability unavailableでありfallbackしない。binding/flag/credential不備は`effect: none`、dispatch後のwrite response lossだけ`unknown`。
+- Direct verification: initialize/`tools/list`前の失敗がfallbackを開始しないtest、取得後のtransport障害だけがbound fallbackへ進むtest、operator command success、MCP-equivalent route success、operator-only route rejection、flag/binding片方欠落 rejection、operator secret非参照、runtime generation mismatch、pre/post dispatch effect test。
 - Independent review trigger: PCM-AUTHと同じtargeted reviewでcredential downgrade、secret exposure、generation mixingを反証する。
 - Gate: ready。
 
@@ -67,8 +67,8 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 - Accepted contract / exact anchor: ADR 020のexact input/output/error schema、ADR 018のAffect/episode収束、ADR 024のduplicate/retry/effect contract。
 - Scope / semantic owner: `scripts/withmate-memory-mcp.ts`と`scripts/withmate-memory-mcp-general.ts`が生成するMCP initialize instructions、tool description、schema、annotation。
 - Failure mode / consumer impact: semantic duplicate append、linked episode二重保存、changed requestへのkey再利用、structured domain errorをtransport failureとしてCLIへ迂回、partial/unknownを成功扱いする。
-- State transitions / failure timing: tools/list discovery → duplicate preflight/read → mutation → response loss/retry → replay/read-back。operation contractはprovider promptへ複製しない。
-- Direct verification: tools/list snapshotではなくexact field/description assertion、same-target preflight instruction、episode owner、idempotency/effect/error branch、代表invoke/effect test。
+- State transitions / failure timing: initialize → tools/list discovery → duplicate preflight/read → mutation → response loss/retry → replay/read-back。agent fallback contractはtools/list取得後だけ利用でき、operation contractはprovider promptへ複製しない。
+- Direct verification: tools/list snapshotではなくexact field/description assertion、fallback command/mode/schema/開始条件、initializeまたはtools/list取得前のfallback不在、same-target preflight instruction、episode owner、idempotency/effect/error branch、代表invoke/effect test。
 - Independent review trigger: PCM-AUTHのtargeted reviewにschema/operation wordingとruntime enforcementの不一致を含める。
 - Gate: ready。
 
@@ -133,7 +133,7 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 
 - Suggested branch: `feat/provider-common-memory-mcp-runtime`。
 - Suggested worktree: sibling `../feat-provider-common-memory-mcp-runtime`。
-- Owns: `src/agent-runtime/`のbinding/Memory authority contract、`src/character-context/`、`src-electron/provider-agent-runtime-binding.ts`、`src-electron/memory-v6-http-server.ts`、`src-electron/memory-v6-runtime.ts`、`src-electron/character-context-application-service.ts`、`scripts/withmate-memory-mcp*.ts`、`scripts/withmate-memory-runtime-client.ts`と対応tests。Memory mutationのturn capability admissionと、`src-electron/main.ts`が使うauthority snapshot builderをここで提供する。main wiring自体はLane 2が所有する。
+- Owns: `src/agent-runtime/`のbinding/Memory authority contract、`src/character-context/`、`src-electron/provider-agent-runtime-binding.ts`、`src-electron/memory-v6-http-server.ts`、`src-electron/memory-v6-runtime.ts`、`src-electron/character-context-application-service.ts`、`src-electron/provider-prompt.ts`、`scripts/withmate-memory-mcp*.ts`、`scripts/withmate-memory-runtime-client.ts`、`scripts/tests/provider-prompt.test.ts`と対応tests。Memory mutationのturn capability admissionと、`src-electron/main.ts`が使うauthority snapshot builderをここで提供する。main wiring自体はLane 2が所有する。
 - Canonical schema owner: `scripts/withmate-memory-mcp-general.ts`のtools/list exact schema。Character context projection owner: `src/character-context/character-context-contract.ts`。
 - Logical commit R1: actor-relative tools/list、binding-derived identity、agent fallback adapterのserver/client contract、identity-free context projectionとdirect tests。
 - Depends on: bootstrap contract commit。Lane 3がCLI entryから使うfallback mode/APIをR1で固定する。
@@ -168,7 +168,7 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 
 ### Lane checks
 
-- Lane 1: targeted MCP tools/list、binding HTTP、Character context application、runtime client/CLI effect tests。`npm run typecheck`。
+- Lane 1: targeted MCP tools/list、binding HTTP、Character context application、provider prompt、runtime client/CLI effect tests。`npm run typecheck`。
 - Lane 2: targeted Settings/Home/IPC/diagnostics/bootstrap tests。Memory managed Skill sync call不在とprovider directory非接触を直接検証。`npm run typecheck`。
 - Lane 3: CLI/build/shim/package path tests、分離temp directoryから生成artifactのMCP initialize/tools/list/read/write smoke。`npm run typecheck`、`npm run build:memory-cli`。
 
@@ -177,7 +177,7 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 1. MCP initializeと`tools/list`で17 tools、exact actor-relative input/output/error schema、annotation、operation descriptionを確認する。
 2. bound CodexとCopilotで同じactor-relative requestが同じcanonical user/Character/Project targetへ解決され、別Character/未許可Project/identity unknown fieldをdispatch前に拒否するcross-provider parityを確認する。
 3. operator CLIとagent-bound CLI fallbackで同じread/write/read-backを行い、fallbackがoperator-only route/credentialへ到達できないことを確認する。
-4. MCP→CLI fallbackのavailability条件、domain/authority/version/migration/idempotency error非fallback、pre/post dispatch effect certainty、unchanged retry/replayを確認する。
+4. MCP initialize/`tools/list`取得前の失敗ではagent fallbackを開始せず、取得後のtransport availability failureだけで開始すること、domain/authority/version/migration/idempotency error非fallback、pre/post dispatch effect certainty、unchanged retry/replayを確認する。
 5. current/missing/stale turn capabilityをMCPとagent CLI fallbackで確認し、mutation/file exportはstale requestをdispatch前に拒否し、read/operator/internal lifecycleは既存契約を維持することを確認する。
 6. Character contextのMCP/CLI/internal parity、identity/private field非投影、Affect version/effective/Memory preview維持を確認する。
 7. linked episodeがappraiseだけ、standalone episodeがappend_episodeだけで保存され、即時eventとlifecycle post-turnが別eventとして収束することを確認する。
@@ -217,6 +217,12 @@ flowchart LR
 - agent fallbackがoperator routeへ昇格しない指摘を採用し、さらに正規bound adapterがoperator credentialを選ばない`agent_cli_fallback` credential境界へ固定した。同一OS user上の攻撃的processはADR 021どおりthreat model外であり、このbootstrapでOS isolationへ拡張しない。
 - explicit Character IDをagent-facing targetへ残す案とCharacter context identityを維持する案は、現行ADR/設計の説明としては成立するが、今回の明示要求がその契約を置換するため不採用とした。互換shapeは残さない。
 - 旧managed Skillをmarker確認後に自動削除する案は、「upgrade時に削除、更新、検査しない」という明示要求に反するため不採用とした。残存copyは非接触の既知legacy artifactとして扱う。
+
+## Bootstrap review finding closure
+
+- ADR 020/021とADR 024のauthority契約競合は`current-scope repair`とした。ADR 024に部分置換表を置き、ADR 020/021からも置換範囲を参照し、本計画のAccepted contractを維持条項だけに限定した。
+- MCP初期化前にAgentがfallback契約を取得できない問題は`current-scope repair`とした。provider instruction、system prompt、managed Skillへbootstrap instructionを追加せず、agent-bound CLI fallbackをinitializeと`tools/list`取得後のtransport障害だけに限定した。
+- Character context consumerのlane漏れは`current-scope repair`とした。`src-electron/provider-prompt.ts`と`scripts/tests/provider-prompt.test.ts`をLane 1のownershipとdirect checksへ追加した。
 
 ## Bootstrap validation
 

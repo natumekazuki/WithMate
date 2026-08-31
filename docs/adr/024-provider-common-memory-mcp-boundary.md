@@ -10,7 +10,17 @@ Memoryの通常操作は、providerごとに配布する`withmate-memory` Skill�
 
 CLIはoperator作業とMCP transport障害時のagent fallbackを兼ねる。両者が同じCLI adapter credentialを使うと、bound Agentがfallbackによってoperator routeへ昇格できる。Character contextも現在はactor identityと内部Memory targetを返すが、turn promptが必要とするのはAffect version、effective context、baseline参照、関連Memoryのpreviewであり、生のactor identityではない。
 
-ADR 020の共通application boundary、ADR 021のruntime binding authority、ADR 018のAffect event/episode収束、ADR 023のruntime discoveryを維持しながら、provider固有Skill配布を廃止し、MCP `tools/list`をagent-facing Memory contractの正本にする必要がある。
+ADR 020の共通application boundary、ADR 021のruntime binding registry、ADR 018のAffect event/episode収束、ADR 023のruntime discoveryを基礎にしながら、agent-facing target、binding policy、CLI credential、fallback開始条件を置換し、MCP `tools/list`をagent-facing Memory contractの正本にする必要がある。
+
+## 既存ADRとの関係
+
+| ADR | ADR 024が置換する条項 | 維持する条項 |
+| --- | --- | --- |
+| ADR 020 | agent-facing Memoryの明示target、provider executionから使うCLIのoperator credential、MCP未初期化時を含むfallback開始条件 | 共通application boundary、SQLite非直結、effect certainty、idempotency、episode mutation owner、lifecycle/event-time appraisal |
+| ADR 021 | Memory CRUDと`memory.file_usage`の`optional` policy、bindingなしのlocal-user/operator経路、explicit Character selector | binding registry、generation、operation grant、turn capability、runtime owner selection |
+| ADR 023 | 置換なし | application instanceとadapter generationのexact selection、別instanceへfallbackしないruntime discovery |
+
+競合する範囲ではADR 024を優先する。operator CLIはADR 020/021のexplicit target/identityとoperator credentialを維持する別authority modeであり、provider executionから使うMCPまたはagent-bound CLI fallbackの非binding経路にはしない。
 
 ## Decision
 
@@ -54,7 +64,7 @@ type ActorRelativeMemoryTarget =
 - operator CLIはprovider binding markerがないprocessから起動し、CLI operator credentialを使用する。explicit target/identityを入力でき、operator allowlistにあるinspect、audit、correct、reset、maintenance routeを実行できる。`--fallback-from mcp`はoperator authorityの根拠にならない。
 - agent-bound CLI fallbackは、validなbinding-required marker、runtime owner tuple、opaque binding reference、`--fallback-from mcp`のすべてが揃う場合だけ選択する。callerが渡したidentityを使用せず、MCPと同じactor-relative input、route allowlist、authority、error contractを使う。
 - agent-bound fallbackはoperator credentialを読み取らない。runtime discoveryへagent CLI専用projectionを増やさず、MCP credential projectionを読み、exchange上では`agent_cli_fallback` adapterとしてMCP-equivalent allowlistへ認証する。serverはvalid bindingと`fallbackFrom: "mcp"`を両方要求する。どちらかが欠ける場合はdispatch前に`effect: none`で拒否し、operator modeへdowngradeしない。
-- MCP未設定、MCP process起動不能、transport-level availability failureだけをfallback開始条件とする。domain validation、authority、version、idempotency、migration、storageのstructured errorをfallbackで迂回しない。
+- agent-bound CLI fallbackは、同じprovider executionがMCP initializeに成功し、`tools/list`からfallback command、mode、actor-relative schemaを取得した後に発生したtransport-level availability failureだけを開始条件とする。MCP未設定、process起動不能、initialize失敗、`tools/list`取得失敗ではAgentがfallback契約を取得できないため、Memory capability unavailableとして扱い、agent-bound CLIを開始しない。operatorは明示作業としてCLIを使える。domain validation、authority、version、idempotency、migration、storageのstructured errorをfallbackで迂回しない。
 - common runtime secretは接続先本人確認だけに使う。operation authorityはadapter credential、route allowlist、resolved bindingから導き、requestのtransport名、identity field、`--fallback-from`単独からは導かない。
 - 同一OS user上の攻撃的processからprovider environmentやdiscovery credentialを秘匿することはADR 021と同じくthreat model外とする。ただし、正規のbound adapterがoperator credentialを選ぶ経路は設けない。
 
@@ -69,6 +79,7 @@ MCP `tools/list`はprovider非依存のagent-facing正本として、各toolに�
 - writeのidempotency key、response loss時のunchanged request retry、changed requestでのnew key、`replayed`とnew effectの区別。
 - `effect: none | committed | partial | unknown`、`saved`/`rejected`/`replayed`、read-backを推測で補完しないeffect certainty。
 - authority/version/migration/domain errorはtransport availability failureと区別し、fallback禁止を明示する。pre-dispatch failureは`effect: none`、dispatch後にwrite結果を確認できない場合だけ`effect: unknown`とする。
+- agent-bound CLI fallbackのcommand、mode、actor-relative schema、開始条件を公開する。initializeまたは`tools/list`取得前の失敗はfallback対象に含めない。
 
 descriptionで表すoperation sequenceとschemaで表す形を同じ`tools/list` contract testで固定する。WithMate system promptやprovider instruction sampleへ同じ方針を複製しない。
 
@@ -122,6 +133,7 @@ MCP/CLI consumerには生identityと内部Memory targetが残る。public applic
 
 - providerはMemory Skillのinstall/syncなしで、同じMCP tool contractを利用する。
 - operator CLIとagent fallbackは同じexecutableを使うが、入力schema、credential、route authorityはmodeごとにfail closedで分離される。
+- MCPを初期化できないprovider executionではagent-bound CLI fallbackを開始できず、Memory通常操作はcapability unavailableになる。operator CLIによるinspect、migration、manual recoveryはこの制約を受けない。
 - actor-relative schemaへの変更はagent-facing breaking changeであり、旧MCP request shapeとのcompatibility fallbackは置かない。operator CLIのexplicit schemaは維持する。
 - repository内の旧Skill source、Settings sample、managed Skill testsは実装移行時に削除または新契約のdirect testへ置換する。provider directoryに残る旧copyはWithMateが検査しないため、利用者が任意に削除するまで残り得る。
 - 3実装レーンは本ADRのschema、path、projectionを参照し、独自のaliasや互換shapeを追加しない。

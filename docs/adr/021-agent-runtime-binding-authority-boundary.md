@@ -4,6 +4,10 @@
 
 Accepted
 
+## Subsequent decisions
+
+ADR 024は、agent-facing Memory CRUDと`memory.file_usage`について、本ADRの`optional` policy、bindingなしのlocal-user/operator経路、explicit Character selectorを部分的に置換する。provider executionから使うMCPとagent-bound CLI fallbackはbindingを必須とし、actor-relative targetだけを受け付ける。operator CLIのexplicit target/identityは別authority modeとして維持する。本ADRのbinding registry、generation、operation grant、turn capability、runtime owner selectionの契約は維持する。
+
 ## Context
 
 WithMateが起動したprovider executionからSession scopedなAgent APIを呼ぶ場合、request body、CLI引数、promptへ記載されたSession IDはactor identityの根拠にならない。callerが転記する値では、誤転記、stale context、別Sessionの指定を区別できない。
