@@ -197,6 +197,7 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 ## Review gates
 
 - Full-review gate: `run`。authority、credential、public schema、filesystem upgrade副作用、複数subsystem interactionを跨ぎ、targeted checkだけでは3 lane統合のdowngrade/owner分裂を直接反証できないため、integration commitへcomplete-diff holistic reviewを一度だけ行う。
+- P1: targeted reviewerへcapabilityのactor/provider分離、stale handle cleanup、Glossary behavior parity lensを渡す。
 - Lane 1 R1: targeted reviewerへauthority/credential/schema/effect lensを渡す。
 - Lane 3 C1: targeted reviewerへprovider directory非接触、packaged path、shim owner lensを渡す。
 - Lane 2 D1とidentity-free projectionはdirect testsで閉じる。別の高リスクinteractionが見つかった場合だけtargeted reviewを追加する。

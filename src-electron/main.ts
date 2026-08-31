@@ -264,6 +264,7 @@ import {
   projectGlossaryCheckoutAuthority,
 } from "./glossary-application-service.js";
 import { GlossaryRuntimeService } from "./glossary-runtime-service.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "./provider-agent-runtime-turn-coordinator.js";
 import { GlossarySessionProjectionService } from "./glossary-session-projection-service.js";
 import { SessionGlossaryWindowSubscriptionCoordinator } from "./session-glossary-window-subscription.js";
 import { getGlossaryAgentRuntimeOperations } from "../src/glossary-operation-schema.js";
@@ -661,11 +662,13 @@ async function ensureSessionGlossarySubscription(sessionId: string): Promise<voi
   await glossaryWindowSubscriptionCoordinator.ensure(sessionId);
 }
 
+const providerAgentRuntimeTurns = new ProviderAgentRuntimeTurnCoordinator();
 const glossaryRuntimeService = new GlossaryRuntimeService({
   applicationService: glossaryApplicationService,
   bindingRegistry: agentRuntimeBindingRegistry,
   resolveActorSession: resolveAgentRuntimeActorSession,
   getProactiveCreateLimit: getGlossaryProactiveCreateLimit,
+  providerAgentRuntimeTurns,
 });
 
 async function issueProviderAgentRuntimeBinding(
