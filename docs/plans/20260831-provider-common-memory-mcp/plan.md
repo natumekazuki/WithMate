@@ -45,20 +45,20 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 ### PCM-TURN: stale turn mutationの拒否
 
 - Accepted contract / exact anchor: ADR 021のbinding generationとlogical turn capability分離、および「前turnの遅延child requestをmutation前に拒否する」契約をMemory/Character mutationへ適用する。
-- Scope / semantic owner: turn capability leaseは`SessionRuntimeService`、provider envは`src-electron/provider-agent-runtime-binding.ts`、exchange伝搬は`scripts/withmate-memory-runtime-client.ts`、Memory route admissionは`src-electron/memory-v6-http-server.ts`。
-- Failure mode / consumer impact: 前turnの遅延MCP/CLI requestが次turn中にappend/forget/move/appraise/episode mutationまたはfile exportを実行する。capabilityをidempotency fingerprintへ混ぜて正規reconcileがconflictになる。
-- State transitions / failure timing: turn lease発行 → provider env投影 → challenge → exchange envelope → binding/grant resolve → current capability照合 → mutation/file side effect dispatch → turn終了時失効。欠落/stale capabilityはdispatch前に`effect: none`。response loss後の後続turn reconcileは同一request/keyと新しいcurrent capabilityを使う。
-- Direct verification: MCPとagent CLI fallbackのcapability伝搬、current/stale/missing capability、同一turn retry、後続turn idempotent reconcile、operator/internal lifecycle非適用、public error/logへのcapability非露出test。
+- Scope / semantic owner: `SessionRuntimeService`はturn leaseのbegin/end順序、`src-electron/provider-agent-runtime-turn-coordinator.ts`のgeneric coordinatorはactor Session/providerごとのactive lease、capability発行/照合/失効を所有する。provider envは`src-electron/provider-agent-runtime-binding.ts`、exchange伝搬は`scripts/withmate-memory-runtime-client.ts`、Glossary admissionは`src-electron/glossary-runtime-service.ts`、Memory route admissionは`src-electron/memory-v6-http-server.ts`が同じcoordinatorを消費する。
+- Failure mode / consumer impact: GlossaryとMemoryが別のcapability mapを持ち、前turnの遅延requestを一方だけ許可する。遅延MCP/CLI requestが次turn中にappend/forget/move/appraise/episode mutationまたはfile exportを実行する。capabilityをidempotency fingerprintへ混ぜて正規reconcileがconflictになる。非idempotent file exportを自動再試行して既存出力との衝突またはeffect誤判定を起こす。
+- State transitions / failure timing: generic lease発行 → Glossary固有quota state登録 → provider env投影 → challenge → exchange envelope → binding/grant resolve → current capability照合 → 副作用dispatch → turn終了時にGlossary固有stateとgeneric leaseを失効。欠落/stale capabilityはdispatch前に`effect: none`。idempotency keyを持つmutationのresponse loss後は同一request/keyと新しいcurrent capabilityでreconcileする。`memory.get_file`/`memory.export_files`のdispatch後response lossは`effect: unknown`として自動再試行せず、意図した出力先のread-only確認またはoperator manual recoveryで閉じる。
+- Direct verification: generic coordinatorのcurrent/stale/missing capabilityとactor/provider分離、Glossary proactive createのquota/retry/stale拒否維持、MCPとagent CLI fallbackのcapability伝搬、Memory/Character mutationとfile exportのpre-dispatch拒否、idempotent mutationの後続turn reconcile、file exportの`idempotentHint: false`/unknown非再試行/出力先確認手順、operator/internal lifecycle非適用、public error/logへのcapability非露出test。
 - Independent review trigger: PCM-AUTHと同じtargeted reviewでlease race、capability downgrade、idempotency fingerprint混入を反証する。
 - Gate: ready。
 
 ### PCM-CONTEXT: identity-free Character context
 
 - Accepted contract / exact anchor: ADR 020のversioned minimal contextと`src-electron/provider-prompt.ts`が実際に消費するeffective/baseline/Memory preview、ADR 024のpublic projection。
-- Scope / semantic owner: `src/character-context/character-context-contract.ts`。
+- Scope / semantic owner: public projectionは`src/character-context/character-context-contract.ts`、provider prompt projectionは`src-electron/provider-prompt.ts`、post-turn evaluator projectionは`src-electron/character-affect-turn-evaluator.ts`。
 - Failure mode / consumer impact: MCP/CLI/promptへuser/Character/Session IDまたはMemory owner/scope/body/file/sourceが露出する。Affect version/effective/previewが欠落してturn/lifecycle評価が壊れる。
 - State transitions / failure timing: application read → response assembly → MCP/CLI output schema → provider prompt/lifecycle evaluator。projection時にredactし、内部service inputのidentity解決は維持する。
-- Direct verification: exact-key schema test、negative identity/private field test、MCP/CLI/internal parity、provider prompt effective/version/preview test、turn evaluator/settler tests。
+- Direct verification: exact-key schema test、negative identity/private field test、MCP/CLI/internal parity、provider prompt effective/version/preview test、turn evaluatorがCharacter Definitionとeffective/versionだけを保持し`character.id`/scope identityを含めないtest、settlerの内部identityによるevent保存/read-back test。
 - Independent review trigger: targeted checksがprojectionと全consumerを直接観測できるため単独reviewなし。PCM-AUTH reviewではrequest identityだけを対象にする。
 - Gate: ready。
 
@@ -108,8 +108,8 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 | --- | --- | --- | --- |
 | PCM-AUTH | MCP tools/list + binding Memory authority tuple + HTTP resolver | Character 6 tools、general Memory 11 tools、MCP、agent CLI fallback、Codex/Copilot binding env、Project path/ID canonicalization | operator CLI explicit identityは別authority modeとして維持 |
 | PCM-CLI | runtime adapter credential/allowlist | registry credential projection、legacy discovery禁止、challenge、exchange、fallback metric/error | lifecycle internal callはtransportを経由しない |
-| PCM-TURN | Session turn lease + Memory route admission | MCP、agent CLI fallback、general/Character mutation、file export、retry/reconcile | read-only、operator CLI、lifecycle internal callはturn capabilityを要求しない |
-| PCM-CONTEXT | Character context contract | internal lifecycle、MCP、CLI、provider prompt、turn evaluator/settler | inspect/auditのoperator projectionは通常contextではない |
+| PCM-TURN | generic Provider Agent runtime turn coordinator | SessionRuntimeService begin/end、Glossary proactive create、MCP、agent CLI fallback、general/Character mutation、file export、idempotent retry/reconcile、非idempotent export recovery | read-only、operator CLI、lifecycle internal callはturn capabilityを要求しない |
+| PCM-CONTEXT | Character context contract + provider projection | internal lifecycle、MCP、CLI、provider prompt、turn evaluator/settler | event保存/read-backで使うapplication内部identityとinspect/auditのoperator projectionはprovider contextではない |
 | PCM-TOOLS | MCP tools/list | initialize instructions、description、input/output、annotation、runtime mapping | system prompt、provider instruction sample、managed Skill docsへ複製しない |
 | PCM-DIST | CLI artifact path contract | build、extraResources、Windows alias、POSIX shim、runbook、isolated smoke | providerに残る旧Skill directoryは非接触 |
 | PCM-DIAG | diagnostics state type | main、IPC、preload、Settings、component tests | app log/Character metricsは別diagnostics owner |
@@ -129,14 +129,23 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 
 ## Implementation lanes
 
+### Prerequisite P1: generic provider turn capability
+
+- Suggested branch: `feat/provider-common-memory-mcp-turn-capability`。
+- Suggested worktree: sibling `../feat-provider-common-memory-mcp-turn-capability`。
+- Owns: `src-electron/provider-agent-runtime-turn-coordinator.ts`、`src-electron/glossary-proactive-turn.ts`、`src-electron/glossary-runtime-service.ts`、`src-electron/main.ts`のprovider turn begin/end wiring、`src-electron/session-runtime-service.ts`のturn lifecycle型と対応tests。
+- Logical commit P1: capability発行/active map/照合/失効をgeneric coordinatorへ移し、Glossary固有quota/fingerprint stateを兄弟consumerとして維持する。runtime behaviorはstale拒否を含めて互換とする。
+- Direct checks: generic coordinatorのactor/provider分離、二重begin、handle一致end、current/stale/missing capability、Glossary proactive quota/retry/stale拒否、SessionRuntimeServiceの全終了経路での失効。`npm run typecheck`。
+- Depends on: bootstrap contract commit。3実装worktreeはP1 commitを共通baseとして作成し、capability ownerを再実装しない。
+
 ### Lane 1: runtime binding / MCP schema / context projection
 
 - Suggested branch: `feat/provider-common-memory-mcp-runtime`。
 - Suggested worktree: sibling `../feat-provider-common-memory-mcp-runtime`。
-- Owns: `src/agent-runtime/`のbinding/Memory authority contract、`src/character-context/`、`src-electron/provider-agent-runtime-binding.ts`、`src-electron/memory-v6-http-server.ts`、`src-electron/memory-v6-runtime.ts`、`src-electron/character-context-application-service.ts`、`src-electron/provider-prompt.ts`、`scripts/withmate-memory-mcp*.ts`、`scripts/withmate-memory-runtime-client.ts`、`scripts/tests/provider-prompt.test.ts`と対応tests。Memory mutationのturn capability admissionと、`src-electron/main.ts`が使うauthority snapshot builderをここで提供する。main wiring自体はLane 2が所有する。
+- Owns: `src/agent-runtime/`のbinding/Memory authority contract、`src/character-context/`、`src-electron/provider-agent-runtime-binding.ts`、`src-electron/memory-v6-http-server.ts`、`src-electron/memory-v6-runtime.ts`、`src-electron/character-context-application-service.ts`、`src-electron/provider-prompt.ts`、`src-electron/character-affect-turn-evaluator.ts`、`scripts/withmate-memory-mcp*.ts`、`scripts/withmate-memory-runtime-client.ts`、`scripts/tests/provider-prompt.test.ts`、`scripts/tests/character-affect-turn-evaluator.test.ts`と対応tests。P1のgeneric coordinatorを使うMemory/Character副作用admissionと、`src-electron/main.ts`が使うauthority snapshot builderをここで提供する。main wiring自体はLane 2が所有する。
 - Canonical schema owner: `scripts/withmate-memory-mcp-general.ts`のtools/list exact schema。Character context projection owner: `src/character-context/character-context-contract.ts`。
 - Logical commit R1: actor-relative tools/list、binding-derived identity、agent fallback adapterのserver/client contract、identity-free context projectionとdirect tests。
-- Depends on: bootstrap contract commit。Lane 3がCLI entryから使うfallback mode/APIをR1で固定する。
+- Depends on: bootstrap contract commitとP1。Lane 3がCLI entryから使うfallback mode/APIをR1で固定する。
 
 ### Lane 2: managed Skill停止 / Settings / diagnostics / provider sample
 
@@ -145,7 +154,7 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 - Owns: `src-electron/main.ts`のMemory Skill bootstrapとLane 1 authority snapshot builderのbinding発行wiring、`src/memory-v6/memory-diagnostics-state.ts`、`src/memory-v6/provider-instruction-sample.ts`、`docs/design/settings-ui.md`、`docs/design/v6-memory-foundation.md`のmanaged Memory Skill記述、Settings/Home/IPC projectionとtests、Memory専用managed Skill service/testsの削除。Glossary/Character Authoringのmanaged distributionは変更しない。
 - Canonical diagnostics owner: `src/memory-v6/memory-diagnostics-state.ts`。
 - Logical commit D1: Memory Skill I/Oの全入口停止、4-field diagnostics、SettingsのManaged Skill/provider sample削除とdirect tests。
-- Depends on: bootstrap contract commit、Lane 1のauthority snapshot builder、Lane 3のcanonical artifact path constant。`src-electron/main.ts`はLane 2だけが編集し、Lane 1/3は変更しない。
+- Depends on: bootstrap contract commitとP1、Lane 1のauthority snapshot builder、Lane 3のcanonical artifact path constant。P1後の`src-electron/main.ts`はLane 2だけが編集し、Lane 1/3は変更しない。
 
 ### Lane 3: CLI artifact移設 / packaging / shim / runbook
 
@@ -154,11 +163,11 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 - Owns: `scripts/withmate-memory.ts`、`scripts/build-withmate-memory-cli.ts`、`resources/cli/withmate-memory.mjs`、旧`resources/skills/withmate-memory`削除、`package.json`、`build/installer.nsh`、`build/cli/withmate-memory.cmd`、`src-electron/memory-cli-shim-service.ts`、`docs/design/distribution-packaging.md`、`docs/runbooks/memory-affect-mcp.md`と対応tests。`src-electron/main.ts`は編集しない。
 - Canonical path owner: `scripts/build-withmate-memory-cli.ts`がexportするrepository/packaged relative path constant。consumerはliteralを再定義しない。
 - Logical commit C1: artifact path/build/package/shim/runbook移設と、operator/agent fallback CLI input mode、isolated artifact smoke。
-- Depends on: bootstrap contract commit。agent fallback client APIはLane 1 R1を取り込んでからC1を完成させる。path constantはLane 2 D1へ先行提供する。
+- Depends on: bootstrap contract commitとP1。agent fallback client APIはLane 1 R1を取り込んでからC1を完成させる。path constantはLane 2 D1へ先行提供する。
 
 ### Integration lane
 
-- Suggested branch/worktree: current `feat/provider-common-memory-mcp`をintegration ownerとし、3 laneのlogical commitだけを取り込む。merge順はR1 → C1 → D1を既定とし、C1のpath constantをD1が参照する。
+- Suggested branch/worktree: current `feat/provider-common-memory-mcp`をintegration ownerとし、P1を先行実装した後に3 laneのlogical commitだけを取り込む。merge順はP1 → R1 → C1 → D1を既定とし、C1のpath constantをD1が参照する。
 - Owns: cross-lane wiring、MCP/CLI integration、cross-provider parity、全体typecheck/build、docsの現行behaviorへの切替。各lane ownerの責務をintegration commitで再実装しない。
 - Logical commit I1は、mergeで露出したwiringとintegration contract testだけに限定する。新しいschema/path/projectionを発明しない。
 
@@ -168,7 +177,7 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 
 ### Lane checks
 
-- Lane 1: targeted MCP tools/list、binding HTTP、Character context application、provider prompt、runtime client/CLI effect tests。`npm run typecheck`。
+- Lane 1: targeted MCP tools/list、binding HTTP、Character context application、provider prompt、post-turn evaluator、runtime client/CLI effect tests。idempotent mutationのreconcileと非idempotent file exportのunknown非再試行を分けて検証する。`npm run typecheck`。
 - Lane 2: targeted Settings/Home/IPC/diagnostics/bootstrap tests。Memory managed Skill sync call不在とprovider directory非接触を直接検証。`npm run typecheck`。
 - Lane 3: CLI/build/shim/package path tests、分離temp directoryから生成artifactのMCP initialize/tools/list/read/write smoke。`npm run typecheck`、`npm run build:memory-cli`。
 
@@ -178,11 +187,12 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 2. bound CodexとCopilotで同じactor-relative requestが同じcanonical user/Character/Project targetへ解決され、別Character/未許可Project/identity unknown fieldをdispatch前に拒否するcross-provider parityを確認する。
 3. operator CLIとagent-bound CLI fallbackで同じread/write/read-backを行い、fallbackがoperator-only route/credentialへ到達できないことを確認する。
 4. MCP initialize/`tools/list`取得前の失敗ではagent fallbackを開始せず、取得後のtransport availability failureだけで開始すること、domain/authority/version/migration/idempotency error非fallback、pre/post dispatch effect certainty、unchanged retry/replayを確認する。
-5. current/missing/stale turn capabilityをMCPとagent CLI fallbackで確認し、mutation/file exportはstale requestをdispatch前に拒否し、read/operator/internal lifecycleは既存契約を維持することを確認する。
-6. Character contextのMCP/CLI/internal parity、identity/private field非投影、Affect version/effective/Memory preview維持を確認する。
-7. linked episodeがappraiseだけ、standalone episodeがappend_episodeだけで保存され、即時eventとlifecycle post-turnが別eventとして収束することを確認する。
-8. upgrade simulationでprovider Skill root配下へのread/writeをI/O spyで検出し、起動・Settings・shim install/uninstallが同directoryを一切削除/更新/検査しないことを確認する。
-9. `npm test`、`npm run typecheck`、`npm run build`をintegration commit OID上で実行する。全体failureは対象とunrelatedを切り分ける。
+5. generic coordinatorのcurrent/missing/stale turn capabilityをGlossary、MCP、agent CLI fallbackで確認し、mutation/file exportはstale requestをdispatch前に拒否し、read/operator/internal lifecycleは既存契約を維持することを確認する。
+6. Character contextのMCP/CLI/internal parity、provider promptとpost-turn evaluatorのidentity/private field非投影、Affect version/effective/Memory preview維持、settlerの内部identityによる保存を確認する。
+7. idempotent mutationはresponse loss後に同一request/keyでreconcileし、`memory.get_file`/`memory.export_files`は`effect: unknown`から自動再試行せず出力先確認/manual recoveryへ進むことを確認する。
+8. linked episodeがappraiseだけ、standalone episodeがappend_episodeだけで保存され、即時eventとlifecycle post-turnが別eventとして収束することを確認する。
+9. upgrade simulationでprovider Skill root配下へのread/writeをI/O spyで検出し、起動・Settings・shim install/uninstallが同directoryを一切削除/更新/検査しないことを確認する。
+10. `npm test`、`npm run typecheck`、`npm run build`をintegration commit OID上で実行する。全体failureは対象とunrelatedを切り分ける。
 
 ## Review gates
 
@@ -196,7 +206,10 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 
 ```mermaid
 flowchart LR
-  B0["B0 bootstrap contract"] --> R1["R1 runtime / MCP / context"]
+  B0["B0 bootstrap contract"] --> P1["P1 generic turn capability"]
+  P1 --> R1["R1 runtime / MCP / context"]
+  P1 --> C1["C1 CLI artifact / package / shim"]
+  P1 --> D1["D1 managed Skill stop / Settings / diagnostics"]
   R1 --> C1["C1 CLI artifact / package / shim"]
   C1 --> D1["D1 managed Skill stop / Settings / diagnostics"]
   R1 --> I1["I1 integration wiring / checks / docs"]
@@ -223,6 +236,9 @@ flowchart LR
 - ADR 020/021とADR 024のauthority契約競合は`current-scope repair`とした。ADR 024に部分置換表を置き、ADR 020/021からも置換範囲を参照し、本計画のAccepted contractを維持条項だけに限定した。
 - MCP初期化前にAgentがfallback契約を取得できない問題は`current-scope repair`とした。provider instruction、system prompt、managed Skillへbootstrap instructionを追加せず、agent-bound CLI fallbackをinitializeと`tools/list`取得後のtransport障害だけに限定した。
 - Character context consumerのlane漏れは`current-scope repair`とした。`src-electron/provider-prompt.ts`と`scripts/tests/provider-prompt.test.ts`をLane 1のownershipとdirect checksへ追加した。
+- turn capabilityのGlossary private ownership漏れは`boundary prerequisite`とした。P1でgeneric coordinatorへ発行/active map/照合/失効を移し、GlossaryとMemoryを兄弟consumerとしてClosure Map、lane依存、direct checksへ追加した。
+- post-turn evaluatorのCharacter ID投影漏れは`current-scope repair`とした。`character-affect-turn-evaluator.ts`と対応testをLane 1へ追加し、provider inputから`character.id`とscope identityを除く一方、event保存用の内部identityは維持する。
+- 非idempotent file exportへのreconcile適用は`current-scope repair`とした。idempotency keyを持つmutationとfailure timingを分け、exportの`effect: unknown`は自動再試行せず出力先のread-only確認またはoperator manual recoveryで閉じる。
 
 ## Bootstrap validation
 
