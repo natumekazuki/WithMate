@@ -74,7 +74,9 @@ export function FileRootChangesPane({
   const activeRefreshRequestsRef = useRef(0);
   const drainRefreshQueueRef = useRef<() => void>(() => undefined);
   const repositoriesReadyRef = useRef(false);
+  const repositoryDiscoveryFailedRef = useRef(false);
   const lastRefreshRevisionRef = useRef(refreshRevision);
+  const latestRefreshRevisionRef = useRef(refreshRevision);
   const diffRevisionRef = useRef(0);
   const [rootChanges, setRootChanges] = useState<GitRootChanges[]>([]);
   const [repositoriesLoading, setRepositoriesLoading] = useState(false);
@@ -83,6 +85,7 @@ export function FileRootChangesPane({
   const [loadingKey, setLoadingKey] = useState("");
   const [message, setMessage] = useState("");
   const [collapsedDirectories, setCollapsedDirectories] = useState<Record<string, boolean>>({});
+  latestRefreshRevisionRef.current = refreshRevision;
 
   const drainRefreshQueue = useCallback(() => {
     const queue = refreshQueueRef.current;
@@ -178,12 +181,13 @@ export function FileRootChangesPane({
     setRootChanges([]);
     setRepositoryMessage("");
     repositoriesReadyRef.current = false;
+    repositoryDiscoveryFailedRef.current = false;
     setRepositoriesReady(false);
     if (!api || !sessionId || !enabled || roots.length === 0) {
       setRepositoriesLoading(false);
       repositoriesReadyRef.current = true;
       setRepositoriesReady(true);
-      return;
+      return true;
     }
     setRepositoriesLoading(true);
     try {
@@ -192,11 +196,12 @@ export function FileRootChangesPane({
         rootIds: roots.map((root) => root.id),
       });
       if (repositoryRequestRevisionRef.current !== revision) {
-        return;
+        return false;
       }
       if (result.status === "failed") {
+        repositoryDiscoveryFailedRef.current = true;
         setRepositoryMessage(result.message);
-        return;
+        return false;
       }
       const repositoryRootIds = new Set(result.repositories.map((repository) => repository.rootId));
       const failuresByRootId = new Map(result.failures.map((failure) => [failure.rootId, failure.message]));
@@ -210,11 +215,15 @@ export function FileRootChangesPane({
           : [];
       });
       repositoryRootsRef.current = nextRootChanges.map((rootChange) => rootChange.root);
+      repositoryDiscoveryFailedRef.current = result.failures.length > 0;
       setRootChanges(nextRootChanges);
+      return true;
     } catch (error) {
       if (repositoryRequestRevisionRef.current === revision) {
+        repositoryDiscoveryFailedRef.current = true;
         setRepositoryMessage(error instanceof Error ? error.message : "Git repositories could not be resolved.");
       }
+      return false;
     } finally {
       if (repositoryRequestRevisionRef.current === revision) {
         setRepositoriesLoading(false);
@@ -240,8 +249,17 @@ export function FileRootChangesPane({
       return;
     }
     lastRefreshRevisionRef.current = refreshRevision;
+    if (repositoryDiscoveryFailedRef.current) {
+      const requestedRefreshRevision = refreshRevision;
+      void discoverRepositories().then((discovered) => {
+        if (discovered && latestRefreshRevisionRef.current === requestedRefreshRevision) {
+          refresh();
+        }
+      });
+      return;
+    }
     refresh();
-  }, [refresh, refreshRevision, repositoriesReady]);
+  }, [discoverRepositories, refresh, refreshRevision, repositoriesReady]);
 
   useEffect(() => {
     return () => {

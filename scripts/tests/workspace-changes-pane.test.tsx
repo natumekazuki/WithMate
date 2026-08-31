@@ -258,6 +258,98 @@ test("FileRootChangesPane はrepository discovery中をspinnerで示す", async 
 
 // @test-value v1
 // kind = "regression"
+// claim = "repository discovery失敗後の明示Refreshはdiscoveryを再試行し、成功した現行世代のChanges取得を開始する"
+// oracle = { type = "contract", ref = "accepted behavior: explicit Refresh recovers transient repository discovery failures" }
+// failure_mode = "一時的なdiscovery失敗後にRefreshしても空のrepository集合だけを処理し、Changesを再取得できない"
+// scope = "FileRootChangesPane discovery retry transition"
+// lifecycle = "permanent"
+// distinction = "初回discoveryのloading表示ではなく、failedから利用者操作でsuccessへ復旧する遷移を検証する"
+// @end-test-value
+test("FileRootChangesPane はRefreshでrepository discovery失敗から復旧する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
+
+  let discoveryCalls = 0;
+  const changesRequests: Array<{ sessionId: string; rootId: string }> = [];
+  const testApi = {
+    listFileRootChangesRepositories: async () => {
+      discoveryCalls += 1;
+      return discoveryCalls === 1
+        ? { status: "failed" as const, message: "Repository discovery timed out." }
+        : {
+            status: "ok" as const,
+            repositories: [{ rootId: "workspace" }],
+            failures: [],
+          };
+    },
+    listFileRootChanges: async (request: { sessionId: string; rootId: string }) => {
+      changesRequests.push(request);
+      return { status: "ok" as const, entries: [] };
+    },
+  };
+  const baseProps = {
+    api: testApi,
+    sessionId: "session-1",
+    enabled: true,
+    roots: [{ id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo" }],
+    rootsRevision: "roots-1",
+    refreshRevision: 0,
+    onOpenFile: () => undefined,
+    onOpenDiff: async () => null,
+  };
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootChangesPane, baseProps));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(discoveryCalls, 1);
+    assert.match(dom.window.document.body.textContent ?? "", /Repository discovery timed out/);
+    assert.deepEqual(changesRequests, []);
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 1 }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(discoveryCalls, 2);
+    assert.deepEqual(changesRequests, [{ sessionId: "session-1", rootId: "workspace" }]);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Repository discovery timed out/);
+    assert.match(dom.window.document.querySelector("[data-root-id='workspace']")?.textContent ?? "", /No changes/);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
 // claim = "repository別groupはnon-Git結果を除外し、失敗を局所表示しながら既存の変更導線と仮想化を維持する"
 // oracle = { type = "contract", ref = "MT-023D10 and MT-023D10A" }
 // failure_mode = "手動Refresh化に伴ってnon-Git除外、repository別failure、directory collapse、diff/file previewまたは大量表示が壊れる"
