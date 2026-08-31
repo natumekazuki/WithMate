@@ -2813,8 +2813,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
           requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
         }
       },
-      notifySessionTurnCompleted: (session, lastNonEmptyAssistantMessageText) => {
-        requireSessionTurnNotificationService().notifyTurnCompleted(session, lastNonEmptyAssistantMessageText);
+      notifySessionTurnTerminal: (notification) => {
+        requireSessionTurnNotificationService().notifyTurnTerminal(notification);
       },
       currentTimestampLabel,
     });
