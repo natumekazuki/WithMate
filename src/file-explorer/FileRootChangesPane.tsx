@@ -48,6 +48,15 @@ function createUnloadedRootChanges(roots: SessionFileRoot[]): GitRootChanges[] {
   }));
 }
 
+const MAX_CONCURRENT_FILE_ROOT_CHANGES_REQUESTS = 2;
+
+type ChangesRefreshQueue = {
+  revision: number;
+  sessionId: string;
+  roots: SessionFileRoot[];
+  nextIndex: number;
+};
+
 export function FileRootChangesPane({
   api,
   sessionId,
@@ -61,6 +70,9 @@ export function FileRootChangesPane({
   const requestRevisionRef = useRef(0);
   const repositoryRequestRevisionRef = useRef(0);
   const repositoryRootsRef = useRef<SessionFileRoot[]>([]);
+  const refreshQueueRef = useRef<ChangesRefreshQueue | null>(null);
+  const activeRefreshRequestsRef = useRef(0);
+  const drainRefreshQueueRef = useRef<() => void>(() => undefined);
   const repositoriesReadyRef = useRef(false);
   const lastRefreshRevisionRef = useRef(refreshRevision);
   const diffRevisionRef = useRef(0);
@@ -72,27 +84,20 @@ export function FileRootChangesPane({
   const [message, setMessage] = useState("");
   const [collapsedDirectories, setCollapsedDirectories] = useState<Record<string, boolean>>({});
 
-  const refresh = useCallback(() => {
-    const revision = requestRevisionRef.current + 1;
-    requestRevisionRef.current = revision;
-    if (!api || !sessionId || !enabled) {
+  const drainRefreshQueue = useCallback(() => {
+    const queue = refreshQueueRef.current;
+    if (!api || !sessionId || !enabled || !queue || queue.sessionId !== sessionId) {
       return;
     }
-    setMessage("");
-    const repositoryRoots = repositoryRootsRef.current;
-    setRootChanges((current) => repositoryRoots.map((root) => {
-      const existing = current.find((rootChange) => rootChange.root.id === root.id);
-      return {
-        root,
-        status: "pending",
-        entries: existing?.entries ?? [],
-        message: "",
-      };
-    }));
-
-    for (const root of repositoryRoots) {
+    while (
+      activeRefreshRequestsRef.current < MAX_CONCURRENT_FILE_ROOT_CHANGES_REQUESTS
+      && queue.nextIndex < queue.roots.length
+    ) {
+      const root = queue.roots[queue.nextIndex];
+      queue.nextIndex += 1;
+      activeRefreshRequestsRef.current += 1;
       void api.listFileRootChanges({ sessionId, rootId: root.id }).then((result) => {
-        if (requestRevisionRef.current !== revision) {
+        if (requestRevisionRef.current !== queue.revision) {
           return;
         }
         setRootChanges((current) => {
@@ -119,7 +124,7 @@ export function FileRootChangesPane({
           });
         });
       }).catch((error) => {
-        if (requestRevisionRef.current !== revision) {
+        if (requestRevisionRef.current !== queue.revision) {
           return;
         }
         setRootChanges((current) => current.map((rootChange) => rootChange.root.id === root.id
@@ -129,14 +134,46 @@ export function FileRootChangesPane({
               message: error instanceof Error ? error.message : "Git status failed.",
             }
           : rootChange));
+      }).finally(() => {
+        activeRefreshRequestsRef.current -= 1;
+        drainRefreshQueueRef.current();
       });
     }
+  }, [api, enabled, sessionId]);
+  drainRefreshQueueRef.current = drainRefreshQueue;
+
+  const refresh = useCallback(() => {
+    const revision = requestRevisionRef.current + 1;
+    requestRevisionRef.current = revision;
+    if (!api || !sessionId || !enabled) {
+      return;
+    }
+    setMessage("");
+    const repositoryRoots = repositoryRootsRef.current;
+    refreshQueueRef.current = {
+      revision,
+      sessionId,
+      roots: repositoryRoots,
+      nextIndex: 0,
+    };
+    setRootChanges((current) => repositoryRoots.map((root) => {
+      const existing = current.find((rootChange) => rootChange.root.id === root.id);
+      return {
+        root,
+        status: "pending",
+        entries: existing?.entries ?? [],
+        message: "",
+      };
+    }));
+
+    drainRefreshQueueRef.current();
   }, [api, enabled, sessionId]);
 
   const discoverRepositories = useCallback(async () => {
     const revision = repositoryRequestRevisionRef.current + 1;
     repositoryRequestRevisionRef.current = revision;
     requestRevisionRef.current += 1;
+    refreshQueueRef.current = null;
     repositoryRootsRef.current = [];
     setRootChanges([]);
     setRepositoryMessage("");
@@ -211,6 +248,7 @@ export function FileRootChangesPane({
       requestRevisionRef.current += 1;
       repositoryRequestRevisionRef.current += 1;
       diffRevisionRef.current += 1;
+      refreshQueueRef.current = null;
     };
   }, []);
 

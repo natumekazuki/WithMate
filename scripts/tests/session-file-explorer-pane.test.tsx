@@ -396,22 +396,28 @@ test("SessionFileExplorerPane は訪問済みtab panelを保持する", async ()
     assert.equal(changesPanel.textContent, "changes:1");
     await act(async () => historyTab.click());
     assert.equal(historyPanel.textContent, "history:1");
-    await act(async () => filesTab.click());
     await act(async () => {
       root?.render(React.createElement(Harness, { sessionId: "session-1", rootsRevision: "roots-2" }));
       await Promise.resolve();
     });
-    assert.equal(dom.window.document.querySelector("[data-panel='changes']"), null);
-    assert.equal(dom.window.document.querySelector("[data-panel='history']"), null);
+    const nextHistoryPanel = dom.window.document.querySelector<HTMLButtonElement>("[data-panel='history']");
+    assert.ok(nextHistoryPanel);
+    assert.notEqual(nextHistoryPanel, historyPanel);
+    assert.equal(nextHistoryPanel.textContent, "history:0");
     await act(async () => changesTab.click());
-    assert.ok(dom.window.document.querySelector("[data-panel='changes']"));
-    await act(async () => filesTab.click());
+    const nextChangesPanel = dom.window.document.querySelector<HTMLButtonElement>("[data-panel='changes']");
+    assert.ok(nextChangesPanel);
+    assert.notEqual(nextChangesPanel, changesPanel);
+    await act(async () => nextChangesPanel.click());
+    assert.equal(nextChangesPanel.textContent, "changes:1");
     await act(async () => {
       root?.render(React.createElement(Harness, { sessionId: "session-2", rootsRevision: "roots-2" }));
       await Promise.resolve();
     });
-    assert.equal(dom.window.document.querySelector("[data-panel='changes']"), null);
-    assert.equal(dom.window.document.querySelector("[data-panel='history']"), null);
+    const nextSessionChangesPanel = dom.window.document.querySelector<HTMLButtonElement>("[data-panel='changes']");
+    assert.ok(nextSessionChangesPanel);
+    assert.notEqual(nextSessionChangesPanel, nextChangesPanel);
+    assert.equal(nextSessionChangesPanel.textContent, "changes:0");
   } finally {
     if (root) {
       await act(async () => root?.unmount());

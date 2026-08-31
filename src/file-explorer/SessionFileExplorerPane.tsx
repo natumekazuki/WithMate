@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
   SessionDirectoryEntry,
@@ -410,7 +410,11 @@ export function SessionFileExplorerPane({
         hidden={activeTab !== "changes"}
       >
         {mountedTabs.changes || activeTab === "changes"
-          ? renderChangesContent?.(roots) ?? <p className="session-file-tree-empty">No changes.</p>
+          ? (
+              <Fragment key={`${tabOwnerKey}:changes`}>
+                {renderChangesContent?.(roots) ?? <p className="session-file-tree-empty">No changes.</p>}
+              </Fragment>
+            )
           : null}
       </div>
       <div
@@ -421,7 +425,11 @@ export function SessionFileExplorerPane({
         hidden={activeTab !== "history"}
       >
         {mountedTabs.history || activeTab === "history"
-          ? historyContent ?? <p className="session-file-tree-empty">No history.</p>
+          ? (
+              <Fragment key={`${tabOwnerKey}:history`}>
+                {historyContent ?? <p className="session-file-tree-empty">No history.</p>}
+              </Fragment>
+            )
           : null}
       </div>
     </aside>

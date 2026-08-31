@@ -194,6 +194,10 @@ test("FileRootChangesPane はrepository discovery中をspinnerで示す", async 
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     pretendToBeVisual: true,
   });
+  const style = dom.window.document.createElement("style");
+  style.textContent = (await readFile(new URL("../../src/styles.css", import.meta.url), "utf8"))
+    .replace(/^@import .*;$/gm, "");
+  dom.window.document.head.append(style);
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
@@ -230,7 +234,12 @@ test("FileRootChangesPane はrepository discovery中をspinnerで示す", async 
 
     const status = dom.window.document.querySelector("[role='status']");
     assert.ok(status);
-    assert.ok(status.querySelector(".workspace-changes-spinner[aria-hidden='true']"));
+    const spinner = status.querySelector<HTMLElement>(".workspace-changes-spinner[aria-hidden='true']");
+    assert.ok(spinner);
+    const spinnerStyle = dom.window.getComputedStyle(spinner);
+    assert.equal(spinnerStyle.width, "24px");
+    assert.equal(spinnerStyle.height, "24px");
+    assert.equal(spinnerStyle.borderTopStyle, "solid");
     assert.equal(status.querySelector(".visually-hidden")?.textContent, "Discovering Git repositories");
   } finally {
     if (root) {
@@ -780,13 +789,14 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
       root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 3 }));
       await Promise.resolve();
     });
-    assert.equal(pendingRequests.length, 6);
+    assert.equal(pendingRequests.length, 4);
 
     await act(async () => {
       pendingRequests[2]?.resolve({ status: "ok", entries: entries(7) });
       pendingRequests[3]?.resolve({ status: "ok", entries: entries(8) });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    assert.equal(pendingRequests.length, 6);
     assert.equal(dom.window.document.querySelectorAll("[data-root-id='slow'] .workspace-change-row").length, 1);
     assert.equal(dom.window.document.querySelectorAll("[data-root-id='fast'] .workspace-change-row").length, 2);
 
@@ -838,19 +848,153 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
 });
 
 // @test-value v1
+// kind = "invariant"
+// claim = "20 repositoryのRefreshと連続Refreshでもpane内のChanges要求は同時2件に制限され、最新世代だけを継続する"
+// oracle = { type = "contract", ref = "accepted behavior: bounded per-repository concurrent refresh" }
+// failure_mode = "一括Refreshまたは連続RefreshがMainのGit操作queueへ無制限に要求を積み、自己飽和させる"
+// scope = "FileRootChangesPane bounded request scheduling"
+// lifecycle = "permanent"
+// distinction = "repository別の表示順ではなく、18件超と連続Refresh時のadmission上限を検証する"
+// @end-test-value
+test("FileRootChangesPane は大量repositoryと連続Refreshをbounded schedulingする", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
+
+  const pendingRequests: Array<{
+    request: { sessionId: string; rootId: string };
+    settled: boolean;
+    resolve: (result: FileRootChangesResult) => void;
+  }> = [];
+  const roots: SessionFileRoot[] = Array.from({ length: 20 }, (_, index) => ({
+    id: `repo-${index}`,
+    kind: index === 0 ? "workspace" as const : "additional" as const,
+    label: `Repo ${index}`,
+    displayPath: `C:/repo-${index}`,
+  }));
+  const testApi = {
+    listFileRootChangesRepositories: async () => ({
+      status: "ok" as const,
+      repositories: roots.map((root) => ({ rootId: root.id })),
+      failures: [],
+    }),
+    listFileRootChanges: async (request: { sessionId: string; rootId: string }) => (
+      new Promise<FileRootChangesResult>((resolve) => {
+        const pending = {
+          request,
+          settled: false,
+          resolve(result: FileRootChangesResult) {
+            pending.settled = true;
+            resolve(result);
+          },
+        };
+        pendingRequests.push(pending);
+      })
+    ),
+  };
+  const baseProps = {
+    api: testApi,
+    sessionId: "session-1",
+    enabled: true,
+    roots,
+    rootsRevision: "roots-1",
+    refreshRevision: 0,
+    onOpenFile: () => undefined,
+    onOpenDiff: async () => null,
+  };
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootChangesPane, baseProps));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 1 }));
+      await Promise.resolve();
+    });
+    assert.equal(pendingRequests.length, 2);
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 2 }));
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 3 }));
+      await Promise.resolve();
+    });
+    assert.equal(pendingRequests.length, 2);
+
+    await act(async () => {
+      pendingRequests[0]?.resolve({ status: "ok", entries: [] });
+      pendingRequests[1]?.resolve({ status: "ok", entries: [] });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.deepEqual(pendingRequests.slice(2).map(({ request }) => request.rootId), ["repo-0", "repo-1"]);
+    assert.equal(pendingRequests.filter(({ settled }) => !settled).length, 2);
+
+    for (let index = 2; index < 22; index += 1) {
+      await act(async () => {
+        pendingRequests[index]?.resolve({ status: "ok", entries: [] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.ok(pendingRequests.filter(({ settled }) => !settled).length <= 2);
+    }
+    assert.equal(pendingRequests.length, 22);
+    assert.deepEqual(pendingRequests.slice(2).map(({ request }) => request.rootId), roots.map((root) => root.id));
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});
+
+// @test-value v1
 // kind = "contract"
-// claim = "Changesのrepository局所spinnerはreduced motion設定でanimationを停止する"
+// claim = "reduced motion用media ruleはChangesのrepository局所spinnerのanimationをnoneにする"
 // oracle = { type = "contract", ref = "accepted behavior: repository-local pending status" }
 // failure_mode = "repositoryのpending spinnerがreduced motion設定でも動き続ける"
-// scope = "Changes pending visual state"
+// scope = "Changes reduced-motion stylesheet contract"
 // lifecycle = "permanent"
 // @end-test-value
 test("Changes pending indicator はreduced motionに配慮する", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
-
-  assert.match(styles, /\.workspace-changes-root-spinner\s*{[^}]*animation:\s*workspace-changes-spin\s+720ms\s+linear\s+infinite;/s);
-  assert.match(
-    styles,
-    /@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.workspace-changes-root-spinner\s*{[^}]*animation:\s*none;/,
-  );
+  const dom = new JSDOM("<!doctype html><html><head></head><body></body></html>");
+  const style = dom.window.document.createElement("style");
+  style.textContent = styles.replace(/^@import .*;$/gm, "");
+  dom.window.document.head.append(style);
+  const reducedMotionRules = Array.from(style.sheet?.cssRules ?? []).filter((rule) => (
+    "media" in rule
+      && (rule as CSSMediaRule).media.mediaText.replaceAll(" ", "") === "(prefers-reduced-motion:reduce)"
+  )) as CSSMediaRule[];
+  assert.ok(reducedMotionRules.length > 0);
+  const spinnerRule = reducedMotionRules.flatMap((rule) => Array.from(rule.cssRules)).find((rule) => (
+    "selectorText" in rule
+      && (rule as CSSStyleRule).selectorText.split(",").map((selector) => selector.trim())
+        .includes(".workspace-changes-root-spinner")
+  )) as CSSStyleRule | undefined;
+  assert.ok(spinnerRule);
+  assert.equal(spinnerRule.style.getPropertyValue("animation"), "none");
+  dom.window.close();
 });
