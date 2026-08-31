@@ -1,0 +1,127 @@
+# ADR 024: Provider共通Memory MCPはactor-relative contractを所有する
+
+## Status
+
+Accepted
+
+## Context
+
+Memoryの通常操作は、providerごとに配布する`withmate-memory` Skillと、同じbundle内のCLI/MCP artifactに依存している。upgrade時にはWithMateがproviderのSkill directoryを検査・更新し、SettingsとdiagnosticsもSkill同期状態を表示する。一方、通常Sessionにはopaqueなruntime bindingがあり、actor Session、Character、local user、許可Projectをserver側で解決できる。agent-facing requestへ`userId`、`characterId`、`sessionId`を持たせ続けると、値をauthorityとして扱わない場合でも、caller-asserted identityとcanonical actorの二つの表現が残る。
+
+CLIはoperator作業とMCP transport障害時のagent fallbackを兼ねる。両者が同じCLI adapter credentialを使うと、bound Agentがfallbackによってoperator routeへ昇格できる。Character contextも現在はactor identityと内部Memory targetを返すが、turn promptが必要とするのはAffect version、effective context、baseline参照、関連Memoryのpreviewであり、生のactor identityではない。
+
+ADR 020の共通application boundary、ADR 021のruntime binding authority、ADR 018のAffect event/episode収束、ADR 023のruntime discoveryを維持しながら、provider固有Skill配布を廃止し、MCP `tools/list`をagent-facing Memory contractの正本にする必要がある。
+
+## Decision
+
+### 配布とcanonical artifact
+
+- `withmate-memory`の生成済みCLI/MCP artifactのrepository canonical pathを`resources/cli/withmate-memory.mjs`とする。packaged pathは`<process.resourcesPath>/resources/cli/withmate-memory.mjs`とする。
+- `resources/skills/withmate-memory`はSkill catalogとして配布しない。実装移行で同directoryをrepositoryから除去し、build、installer、Windows alias、macOS/Linux shim、isolated artifact smokeは新pathだけを参照する。
+- WithMateは起動、upgrade、Settings操作のいずれでも、provider側の既存`withmate-memory` Skill directoryを削除、更新、digest検査、collision検査しない。過去versionがprovider directoryへ置いたcopyは自動migrationまたはcleanupの対象にせず、利用者所有のlegacy artifactとして残す。
+- provider別のMemory instruction、Memory Skill同期、system promptへのMemory運用方針追加は行わない。通常操作の説明はMCP initialize instructions、`tools/list`のdescription、input/output schema、annotationへ置き、operator手順だけをrunbookへ置く。
+
+### actor-relative Memory target
+
+agent-facing general Memory toolのtargetは、次のstrictなdiscriminated unionを使う。discriminator名は`kind`とし、列挙値とfieldをMCP `tools/list`のexact schemaへ公開する。
+
+```ts
+type ActorRelativeMemoryTarget =
+  | { kind: "user-global" }
+  | { kind: "project"; project: ProjectTargetRef }
+  | { kind: "character" }
+  | { kind: "character+project"; project: ProjectTargetRef };
+```
+
+- `ProjectTargetRef`は既存どおり`{ type: "id"; id: string } | { type: "path"; path: string }`とし、pathは絶対pathだけを受け付ける。serverは保存済みProjectとbindingに許可されたProject scopeへcanonicalizeする。
+- `user-global`のuser、`character`と`character+project`のCharacterはruntime bindingから解決する。agent-facing targetは`userId`、`characterId`、`sessionId`、`owner`、`scope`を受け付けない。unknown fieldはdispatch前に拒否する。
+- bindingのMemory authority snapshotは`{ userId: "local-user"; characterId: string; allowedProjectIds: string[] }`を一つのtupleとして保持する。`allowedProjectIds`はbinding発行時にactor Sessionのworkspaceを既存Project resolverでcanonicalizeしたIDをsort/deduplicateした値とし、解決不能なworkspaceはProject authorityを持たない。将来別Projectを許可する場合も発行時にcanonical IDへ解決してtupleを更新し、binding generationを再発行する。request時は現行actor SessionのCharacterとsnapshotを照合し、targetのProjectを同じresolverでcanonicalizeして許可集合と比較する。ambient workspace、process cwd、caller pathをauthorityへ使わない。
+- agent-boundのMemory/Character mutationとfile exportは、bindingに加えて現在のlogical turn capabilityを必要とする。MCPとagent CLI fallbackはprovider environmentのcapabilityをruntime challenge後のexchange envelopeだけへ渡し、serverはapplication dispatchと外部file side effectより前にprocess-local turn leaseへ照合する。前turnのcapability、欠落、空値は`effect: none`で拒否する。同じlogical turn内のretryは同じcapabilityを使い、後続turnで同一requestをidempotency reconcileする場合は新しいcurrent capabilityを使う。capabilityはadmissionだけに使い、idempotency fingerprintやMemory source identityへ含めない。read-only route、operator CLI、lifecycleの同process内部呼び出しには要求しない。
+- general Memory toolはbindingを必須とする。bindingなしのlocal-user/operator互換をMCPへ残さない。operator CLIは既存のexplicit `MemoryTargetSelector`を維持し、actor-relative schemaと共有しない。
+- `memory.list_targets`のfilterも同じ`kind`語彙を使い、生のuser/Character identityを受け付けない。Projectを絞る場合だけ`ProjectTargetRef`を明示する。返却targetもactor-relative shapeとし、resolved user/Character IDを投影しない。
+- actor-relative schemaのpublic canonical ownerは`tools/list`を生成する`scripts/withmate-memory-mcp-general.ts`とする。Memory authority snapshotの型は`src/agent-runtime/agent-runtime-binding-contract.ts`、内部の永続化selectorは`src/memory-v6/memory-contract.ts`、actor-relative selectorから内部selectorへの解決とauthorityは`src-electron/memory-v6-http-server.ts`が所有する。public schema、binding authority、内部selectorを同じ型として扱わない。
+
+### Character tool inputとcontext projection
+
+- MCPの全Character tool inputとAffect candidateから`userId`、`characterId`、`sessionId`を除く。Character、Session、local userはruntime bindingから解決し、application requestへserver側で設定する。operator CLIのCharacter commandはexplicit identity inputを維持する。
+- `character_memory.search`のscopeはactor Characterまたは明示Projectとの組合せだけを表し、Character identityを含めない。別Characterを指定するagent-facing入口は作らない。
+- `CharacterContextResponse`からtop-levelの`characterId`、`sessionId`と`scope`全体を除く。`memory.items`は`id`、`title`、`preview`、`tags`、`updatedAt`だけのpreview projectionとし、Memory owner/scope/body/file/sourceを含めない。
+- `schemaVersion`、`baseline.definitionSha256`、`baseline.snapshotAt`、`affect.mode`、全`affect.effective` component、`affect.evaluatedAt`、`affect.version`、`affect.updatedAt`、`memory.items`、`memory.relatedTags`、`memory.updatedAt`は維持する。provider prompt、lifecycle evaluator、MCP output、CLI context readは同じprojectionを使う。
+- Character context public projectionのcanonical ownerは`src/character-context/character-context-contract.ts`とし、MCP output schemaはこのprojectionと完全一致させる。
+
+### operator CLIとagent-bound CLI fallback
+
+- operator CLIはprovider binding markerがないprocessから起動し、CLI operator credentialを使用する。explicit target/identityを入力でき、operator allowlistにあるinspect、audit、correct、reset、maintenance routeを実行できる。`--fallback-from mcp`はoperator authorityの根拠にならない。
+- agent-bound CLI fallbackは、validなbinding-required marker、runtime owner tuple、opaque binding reference、`--fallback-from mcp`のすべてが揃う場合だけ選択する。callerが渡したidentityを使用せず、MCPと同じactor-relative input、route allowlist、authority、error contractを使う。
+- agent-bound fallbackはoperator credentialを読み取らない。runtime discoveryへagent CLI専用projectionを増やさず、MCP credential projectionを読み、exchange上では`agent_cli_fallback` adapterとしてMCP-equivalent allowlistへ認証する。serverはvalid bindingと`fallbackFrom: "mcp"`を両方要求する。どちらかが欠ける場合はdispatch前に`effect: none`で拒否し、operator modeへdowngradeしない。
+- MCP未設定、MCP process起動不能、transport-level availability failureだけをfallback開始条件とする。domain validation、authority、version、idempotency、migration、storageのstructured errorをfallbackで迂回しない。
+- common runtime secretは接続先本人確認だけに使う。operation authorityはadapter credential、route allowlist、resolved bindingから導き、requestのtransport名、identity field、`--fallback-from`単独からは導かない。
+- 同一OS user上の攻撃的processからprovider environmentやdiscovery credentialを秘匿することはADR 021と同じくthreat model外とする。ただし、正規のbound adapterがoperator credentialを選ぶ経路は設けない。
+
+### tools/list operation contract
+
+MCP `tools/list`はprovider非依存のagent-facing正本として、各toolに次をexactに公開する。
+
+- strict input/output schema、actor-relative target、unknown field拒否、annotation。
+- semantic Memory append前に同じexact targetで`memory.search`を行い、activeな同義entryがあればappendせず、訂正authorityなしに競合replacementを作らないduplicate preflight。
+- affect eventとCharacter episodeは意味の類似では重複とせず、同一eventのretryだけを同じrequestとidempotency keyへ収束させる。
+- Affect eventに属するlinked episodeは`character_affect.appraise.memoryEpisode`だけがmutation ownerであり、`character_memory.append_episode`へ重複送信しない。standalone episodeだけが後者を使う。
+- writeのidempotency key、response loss時のunchanged request retry、changed requestでのnew key、`replayed`とnew effectの区別。
+- `effect: none | committed | partial | unknown`、`saved`/`rejected`/`replayed`、read-backを推測で補完しないeffect certainty。
+- authority/version/migration/domain errorはtransport availability failureと区別し、fallback禁止を明示する。pre-dispatch failureは`effect: none`、dispatch後にwrite結果を確認できない場合だけ`effect: unknown`とする。
+
+descriptionで表すoperation sequenceとschemaで表す形を同じ`tools/list` contract testで固定する。WithMate system promptやprovider instruction sampleへ同じ方針を複製しない。
+
+### diagnostics projection
+
+managed Skill停止後の`MemoryV6Diagnostics`は次のtop-level fieldだけを持つ。
+
+```ts
+type MemoryV6Diagnostics = {
+  generatedAt: string;
+  runtime: MemoryV6RuntimeDiagnostics;
+  cliShim: MemoryV6CliShimDiagnostics;
+  lastErrors: MemoryV6DiagnosticEvent[];
+};
+```
+
+- `providers`、`skillSync`、managed Skill status、provider instruction sample/copy actionを削除する。
+- Settings DiagnosticsはMemory API、CLI Shim、Last Errorだけを表示する。runtime projectionはinstance metadataだけのredacted summaryを維持し、credential、binding reference、Memory本文、個人pathを含めない。
+- diagnostics projectionのcanonical ownerは`src/memory-v6/memory-diagnostics-state.ts`とする。
+
+### 維持する境界
+
+- lifecycle-owned post-turn appraisalとMCP event-time appraisalは別event producerとして維持する。同一event retry以外を意味で統合せず、linked episodeのmutation ownerを重複させない。
+- CLIとMCPは同じrunning WithMate application serviceへ接続し、SQLite直結やfallback storeを作らない。
+- runtime challenge後だけcredentialとmutation bodyを送る。runtime instance/generation mismatch時に別instanceへfallbackしない。
+- public API、永続化schema、既存Memory data、Affect event、idempotency recordをこの移行のために書き換えない。
+
+## Alternatives
+
+### `resources/tools`または`resources/runtime`へ置く
+
+Skill catalog外という条件は満たすが、artifactは利用者が直接起動するCLIでもある。`resources/cli`がconsumer purposeを最も直接表し、追加の`bin`階層も単一生成物には不要なため採用しない。外部command名は変わらないため、この内部path選択で利用者操作は変えない。
+
+### 既存provider Skillをupgrade時に削除する
+
+provider directoryは利用者の編集やprovider固有管理と衝突し得る。新規配布停止を過去copyの破壊的cleanupへ拡張しない。
+
+### agent-bound fallbackもCLI operator credentialを使う
+
+MCP障害がoperator authorityへの昇格条件になり、binding route allowlistを迂回するため採用しない。
+
+### agent-facing targetへCharacter IDを残してserverで一致確認する
+
+spoofは拒否できるが、caller-asserted identityとcanonical actorの二表現が残り、schema consumerがIDをauthorityと誤認しやすいため採用しない。
+
+### Character contextの既存responseを維持しprompt組み立て時だけredactする
+
+MCP/CLI consumerには生identityと内部Memory targetが残る。public application projection自体を最小化する。
+
+## Consequences
+
+- providerはMemory Skillのinstall/syncなしで、同じMCP tool contractを利用する。
+- operator CLIとagent fallbackは同じexecutableを使うが、入力schema、credential、route authorityはmodeごとにfail closedで分離される。
+- actor-relative schemaへの変更はagent-facing breaking changeであり、旧MCP request shapeとのcompatibility fallbackは置かない。operator CLIのexplicit schemaは維持する。
+- repository内の旧Skill source、Settings sample、managed Skill testsは実装移行時に削除または新契約のdirect testへ置換する。provider directoryに残る旧copyはWithMateが検査しないため、利用者が任意に削除するまで残り得る。
+- 3実装レーンは本ADRのschema、path、projectionを参照し、独自のaliasや互換shapeを追加しない。
