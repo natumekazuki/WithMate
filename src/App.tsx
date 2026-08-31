@@ -4173,11 +4173,12 @@ export default function AgentSessionWindowApp() {
           }
         });
       }}
-      changesContent={(
+      renderChangesContent={(roots) => (
         <FileRootChangesPane
           api={withmateApi}
           sessionId={activeRunSessionId}
           enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable && fileExplorerTab === "changes"}
+          roots={roots}
           rootsRevision={fileExplorerRootsRevision}
           refreshRevision={fileRootChangesRefreshRevision}
           onOpenFile={handleOpenFileRootFile}

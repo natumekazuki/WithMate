@@ -476,6 +476,7 @@ export function FileRootGitHistoryPane({
         label: repository.label,
         displayPath: repository.displayPath,
       },
+      status: changedEntries.length > 0 ? "success" : "empty",
       entries: changedEntries,
       message: "",
     };

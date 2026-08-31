@@ -5845,6 +5845,23 @@ button:disabled {
   text-align: center;
 }
 
+.workspace-changes-root-pending {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.workspace-changes-root-spinner {
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 2px solid color-mix(in srgb, var(--muted) 28%, transparent);
+  border-top-color: var(--muted);
+  border-radius: 50%;
+  animation: workspace-changes-spin 720ms linear infinite;
+}
+
 .workspace-changes-group-header {
   padding: 4px 5px;
   color: var(--muted);
@@ -12916,7 +12933,8 @@ button:disabled {
     --session-dock-motion-duration: 0ms;
   }
 
-  .workspace-changes-spinner {
+  .workspace-changes-spinner,
+  .workspace-changes-root-spinner {
     animation: none;
   }
 

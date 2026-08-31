@@ -27,7 +27,7 @@ type SessionFileExplorerPaneProps = {
   onRefreshChanges: () => void;
   onRefreshHistory?: () => void;
   onOpenFile: (request: SessionFileRootResourceRequest, openInWindow: boolean) => void;
-  changesContent?: ReactNode;
+  renderChangesContent?: (roots: SessionFileRoot[]) => ReactNode;
   historyContent?: ReactNode;
 };
 
@@ -67,7 +67,7 @@ export function SessionFileExplorerPane({
   onRefreshChanges,
   onRefreshHistory,
   onOpenFile,
-  changesContent,
+  renderChangesContent,
   historyContent,
 }: SessionFileExplorerPaneProps) {
   const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
@@ -273,7 +273,7 @@ export function SessionFileExplorerPane({
         className={`session-file-explorer-body${activeTab === "changes" ? " has-changes" : activeTab === "history" ? " has-history" : ""}`}
       >
         {activeTab === "changes" ? (
-          changesContent ?? <p className="session-file-tree-empty">No changes.</p>
+          renderChangesContent?.(roots) ?? <p className="session-file-tree-empty">No changes.</p>
         ) : activeTab === "history" ? (
           historyContent ?? <p className="session-file-tree-empty">No history.</p>
         ) : (
