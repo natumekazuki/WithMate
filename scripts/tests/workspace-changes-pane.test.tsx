@@ -175,6 +175,80 @@ test("FileRootChangesPane は明示RefreshだけでChangesを取得する", asyn
 
 // @test-value v1
 // kind = "regression"
+// claim = "Changes paneはGit repository discovery中を視覚spinnerとscreen reader向けstatusで示す"
+// oracle = { type = "contract", ref = "user feedback: Changes tab loading indicator" }
+// failure_mode = "Changes tabへの切替時にrepository discoveryのloadingがvisible textだけで表示される"
+// scope = "FileRootChangesPane repository discovery loading state"
+// lifecycle = "permanent"
+// distinction = "Refresh後のrepository別pendingではなく、Changes tab切替直後のrepository discovery pendingを扱う"
+// @end-test-value
+test("FileRootChangesPane はrepository discovery中をspinnerで示す", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
+
+  const testApi = {
+    listFileRootChangesRepositories: async () => new Promise<{
+      status: "ok";
+      repositories: Array<{ rootId: string }>;
+      failures: [];
+    }>(() => undefined),
+    listFileRootChanges: async () => ({ status: "ok" as const, entries: [] }),
+  };
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootChangesPane, {
+        api: testApi,
+        sessionId: "session-1",
+        enabled: true,
+        roots: [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
+        rootsRevision: "roots-1",
+        refreshRevision: 0,
+        onOpenFile: () => undefined,
+        onOpenDiff: async () => null,
+      }));
+      await Promise.resolve();
+    });
+
+    const status = dom.window.document.querySelector("[role='status']");
+    assert.ok(status);
+    assert.ok(status.querySelector(".workspace-changes-spinner[aria-hidden='true']"));
+    assert.equal(status.querySelector(".visually-hidden")?.textContent, "Discovering Git repositories");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
 // claim = "repository別groupはnon-Git結果を除外し、失敗を局所表示しながら既存の変更導線と仮想化を維持する"
 // oracle = { type = "contract", ref = "MT-023D10 and MT-023D10A" }
 // failure_mode = "手動Refresh化に伴ってnon-Git除外、repository別failure、directory collapse、diff/file previewまたは大量表示が壊れる"

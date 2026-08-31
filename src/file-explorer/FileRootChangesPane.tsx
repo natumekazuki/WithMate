@@ -290,7 +290,10 @@ export function FileRootChangesPane({
           ))}
         </div>
       ) : repositoriesLoading ? (
-        <p className="workspace-changes-empty" role="status">Discovering Git repositories…</p>
+        <div className="workspace-changes-discovery-loading" role="status" aria-live="polite">
+          <span className="workspace-changes-spinner" aria-hidden="true" />
+          <span className="visually-hidden">Discovering Git repositories</span>
+        </div>
       ) : !message && !repositoryMessage ? (
         <p className="workspace-changes-empty">No Git repositories.</p>
       ) : null}

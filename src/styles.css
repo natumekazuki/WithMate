@@ -5682,6 +5682,15 @@ button:disabled {
   padding: 8px;
 }
 
+.workspace-changes-discovery-loading {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+}
+
 .workspace-changes-loading {
   position: absolute;
   inset: 8px;
