@@ -2347,6 +2347,111 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v1
   // kind = "regression"
+  // claim = "利用者cancel後にproviderがgrace内でnoncanceled errorを返してもfailed terminal通知を依頼しない"
+  // oracle = { type = "contract", ref = "accepted contract: user cancel is not a failure notification" }
+  // failure_mode = "adapterがcancel前にcanceled=falseを確定して遅延rejectすると、abort済みturnをfailed通知して利用者に失敗と誤認させる"
+  // scope = "session-runtime-terminal-cancel-race"
+  // lifecycle = "permanent"
+  // distinction = "cancel後のprovider成功ではなく、grace内にcanceled=falseのProviderTurnErrorがrejectする経路を扱う"
+  // @end-test-value
+  it("cancel 後に provider が grace 内で noncanceled error を返しても失敗通知しない", async () => {
+    const session = createSession();
+    let rejectProvider: ((error: Error) => void) | null = null;
+    let notificationCount = 0;
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      runSessionTurn() {
+        return new Promise<RunSessionTurnResult>((_resolve, reject) => {
+          rejectProvider = reject;
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession() {
+        return session;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      notifySessionTurnTerminal() {
+        notificationCount += 1;
+      },
+      currentTimestampLabel,
+      providerCancelGraceMs: 1_000,
+    });
+
+    const runPromise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (!rejectProvider) {
+      throw new Error("provider reject が取得できていないよ。");
+    }
+
+    service.cancelRun(session.id);
+    rejectProvider(new ProviderTurnError("workspace snapshot failed", createPartialResult(), false));
+    const result = await runPromise;
+
+    assert.equal(result.runState, "error");
+    assert.equal(notificationCount, 0);
+  });
+
+  // @test-value v1
+  // kind = "regression"
   // claim = "内部stale retryが成功したturnは一つのcompleted terminal通知だけを依頼する"
   // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
   // failure_mode = "内部retryの各attemptを別turnとして通知し、同一turnで重複通知する"

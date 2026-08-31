@@ -1653,7 +1653,7 @@ export class SessionRuntimeService {
         storedStatus: storedFailedSession.status,
       });
       activeRunningSession = storedFailedSession;
-      if (!canceled) {
+      if (!canceled && !runAbortController.signal.aborted) {
         notifySessionTurnTerminalBestEffort(this.deps.notifySessionTurnTerminal, {
           outcome: "failed",
           session: storedFailedSession,
