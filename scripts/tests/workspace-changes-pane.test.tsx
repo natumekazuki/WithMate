@@ -14,9 +14,9 @@ import type {
 
 // @test-value v1
 // kind = "contract"
-// claim = "Changes pane は認可済みroot枠を先に表示し、明示Refresh以外ではChanges取得を開始しない"
+// claim = "Changes pane は認可済みroot枠だけを先に表示し、明示Refresh以外ではChanges取得を開始しない"
 // oracle = { type = "contract", ref = "accepted behavior: manual Changes refresh" }
-// failure_mode = "初回表示、再描画、root集合変更、Session切替でGit statusが暗黙に実行される"
+// failure_mode = "初回表示に不要なidle説明が出るか、再描画、root集合変更、Session切替でGit statusが暗黙に実行される"
 // scope = "FileRootChangesPane refresh boundary"
 // lifecycle = "permanent"
 // distinction = "取得後のrepository別完了順ではなく、取得を開始できる操作を検証する"
@@ -88,7 +88,7 @@ test("FileRootChangesPane は明示RefreshだけでChangesを取得する", asyn
     });
     assert.deepEqual(repositoryRequests, [{ sessionId: "session-1", rootIds: ["workspace"] }]);
     assert.equal(dom.window.document.querySelectorAll(".workspace-changes-root-group").length, 1);
-    assert.match(dom.window.document.body.textContent ?? "", /Not loaded/);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Not loaded/);
     assert.deepEqual(changesRequests, []);
 
     await act(async () => {
@@ -821,7 +821,7 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
     });
     assert.equal(dom.window.document.querySelector("[data-root-id='slow']"), null);
     assert.equal(dom.window.document.querySelector("[data-root-id='fast']"), null);
-    assert.match(dom.window.document.querySelector("[data-root-id='next']")?.textContent ?? "", /Not loaded/);
+    assert.ok(dom.window.document.querySelector("[data-root-id='next']"));
   } finally {
     if (root) {
       await act(async () => root?.unmount());

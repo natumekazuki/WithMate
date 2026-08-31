@@ -140,7 +140,6 @@ export function FileRootChangesGroup({
     };
 
     if (rootChange.status === "idle") {
-      nextRows.push({ key: `status:${rootChange.root.id}`, type: "status", label: "Not loaded." });
       return nextRows;
     }
     if (rootChange.status === "pending" && rootChange.entries.length === 0) {
