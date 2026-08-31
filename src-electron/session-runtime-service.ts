@@ -32,6 +32,7 @@ import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-
 import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
 import { toAuditTextPreview } from "./audit-payload-limits.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { SessionTurnTerminalNotification } from "./session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
@@ -139,7 +140,7 @@ export type SessionRuntimeServiceDeps = {
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   getMateState?: () => MateStorageState;
-  notifySessionTurnCompleted?: (session: Session, lastNonEmptyAssistantMessageText: string) => Awaitable<void>;
+  notifySessionTurnTerminal?: (notification: SessionTurnTerminalNotification) => Awaitable<void>;
   currentTimestampLabel?: () => string;
   currentDate?: () => Date;
   providerCancelGraceMs?: number;
@@ -147,20 +148,19 @@ export type SessionRuntimeServiceDeps = {
   appraisalReadyRetryMs?: number;
 };
 
-function notifySessionTurnCompletedBestEffort(
-  notify: SessionRuntimeServiceDeps["notifySessionTurnCompleted"],
-  session: Session,
-  lastNonEmptyAssistantMessageText: string,
+function notifySessionTurnTerminalBestEffort(
+  notify: SessionRuntimeServiceDeps["notifySessionTurnTerminal"],
+  notification: SessionTurnTerminalNotification,
 ): void {
   if (!notify) {
     return;
   }
 
   try {
-    void Promise.resolve(notify(session, lastNonEmptyAssistantMessageText))
-      .catch((error) => console.warn("Session turn completion notification failed", error));
+    void Promise.resolve(notify(notification))
+      .catch((error) => console.warn("Session turn terminal notification failed", error));
   } catch (error) {
-    console.warn("Session turn completion notification failed", error);
+    console.warn("Session turn terminal notification failed", error);
   }
 }
 
@@ -1356,11 +1356,11 @@ export class SessionRuntimeService {
       });
       activeRunningSession = storedCompletedSession;
       if (!runAbortController.signal.aborted) {
-        notifySessionTurnCompletedBestEffort(
-          this.deps.notifySessionTurnCompleted,
-          storedCompletedSession,
-          result.lastNonEmptyAssistantMessageText ?? "",
-        );
+        notifySessionTurnTerminalBestEffort(this.deps.notifySessionTurnTerminal, {
+          outcome: "completed",
+          session: storedCompletedSession,
+          lastNonEmptyAssistantMessageText: result.lastNonEmptyAssistantMessageText ?? "",
+        });
       }
       completeCompletedTurnAppraisalBestEffort(
         requiresDurableAppraisal ? this.deps.markCompletedTurnAppraisalReady : undefined,
@@ -1653,6 +1653,12 @@ export class SessionRuntimeService {
         storedStatus: storedFailedSession.status,
       });
       activeRunningSession = storedFailedSession;
+      if (!canceled) {
+        notifySessionTurnTerminalBestEffort(this.deps.notifySessionTurnTerminal, {
+          outcome: "failed",
+          session: storedFailedSession,
+        });
+      }
       invalidateProviderSessionThreadBestEffort(
         this.deps.invalidateProviderSessionThread,
         storedFailedSession.provider,

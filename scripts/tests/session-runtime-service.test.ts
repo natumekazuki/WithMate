@@ -120,6 +120,7 @@ function createProviderCatalog(id = "codex"): ModelCatalogProvider {
 
 type CreateAuditLogInput = Parameters<SessionRuntimeServiceDeps["createAuditLog"]>[0];
 type UpdateAuditLogInput = Parameters<SessionRuntimeServiceDeps["updateAuditLog"]>[1];
+type TerminalNotificationInput = Parameters<NonNullable<SessionRuntimeServiceDeps["notifySessionTurnTerminal"]>>[0];
 
 function createAuditLogBase(input: CreateAuditLogInput): AuditLogEntry {
   return {
@@ -188,6 +189,14 @@ describe("SessionRuntimeService stale retry helpers", () => {
 });
 describe("SessionRuntimeService", () => {
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "completed Sessionのterminal commit後に通知を依頼し、background settlementを待たず次turnを受け付ける"
+  // oracle = { type = "contract", ref = "accepted contract: terminal notification after persisted terminal state" }
+  // failure_mode = "永続化前の通知またはbackground settlement待機により、通知先が未保存状態を読むか次turn受付が停止する"
+  // scope = "session-runtime-terminal-completion-order"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("各turnで最新Character contextを取得し、terminal commit後はready・audit・appraisalを待たずに返す", async () => {
     let storedSession = createSession();
     let contextVersion = 0;
@@ -330,7 +339,7 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
-      notifySessionTurnCompleted() {
+      notifySessionTurnTerminal() {
         completionNotificationCount += 1;
         callOrder.push(`completion-notification:${completionNotificationCount}`);
       },
@@ -673,6 +682,14 @@ describe("SessionRuntimeService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "character-authoring turnの通知対象はturn開始時の最新Character snapshotを含む保存済みSessionである"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // failure_mode = "staleなSession snapshotを通知へ渡して誤ったCharacter iconまたはSession情報を表示する"
+  // scope = "session-runtime-terminal-notification-snapshot"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("character-authoring session は turn 開始時の最新 Character snapshot を使う", async () => {
     const staleSession = createSession({
       sessionKind: "character-authoring",
@@ -791,9 +808,12 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
-      notifySessionTurnCompleted(completedSession, lastNonEmptyAssistantMessageText) {
-        notifiedSession = completedSession;
-        notifiedLastNonEmptyAssistantMessageText = lastNonEmptyAssistantMessageText;
+      notifySessionTurnTerminal(notification) {
+        assert.equal(notification.outcome, "completed");
+        notifiedSession = notification.session;
+        notifiedLastNonEmptyAssistantMessageText = notification.outcome === "completed"
+          ? notification.lastNonEmptyAssistantMessageText
+          : null;
       },
       currentTimestampLabel,
     });
@@ -1686,6 +1706,14 @@ describe("SessionRuntimeService", () => {
     assert.equal(liveStates.at(-1)?.reasoningText, "既存経路を確認してから表示へ流す");
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "利用者cancelはcanceled Sessionを保存してもterminal通知を依頼しない"
+  // oracle = { type = "contract", ref = "accepted contract: user cancel is not a failure notification" }
+  // failure_mode = "利用者がcancelしたturnをfailed通知として表示し、意図した中止をエラーと誤認させる"
+  // scope = "session-runtime-terminal-cancel"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("provider failure 時は error session を保存し、cancel 時は idle へ戻す", async () => {
     const baseSession = createSession();
     const storedSessions: Session[] = [];
@@ -1820,7 +1848,7 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
-      notifySessionTurnCompleted() {
+      notifySessionTurnTerminal() {
         notificationCount += 1;
       },
       currentTimestampLabel,
@@ -2205,6 +2233,15 @@ describe("SessionRuntimeService", () => {
     ]);
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "利用者cancelとprovider成功が競合してもterminal通知を依頼しない"
+  // oracle = { type = "contract", ref = "accepted contract: user cancel is not a failure notification" }
+  // failure_mode = "cancel後に到着したprovider成功をcompleted通知し、利用者の中止操作と矛盾する"
+  // scope = "session-runtime-terminal-cancel-race"
+  // lifecycle = "permanent"
+  // distinction = "通常のprovider canceled errorではなく、cancel後にproviderがgrace内で成功する競合を扱う"
+  // @end-test-value
   it("cancel 後に provider が grace 内で成功しても完了通知しない", async () => {
     const session = createSession();
     let resolveProvider: ((result: RunSessionTurnResult) => void) | null = null;
@@ -2285,7 +2322,7 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
-      notifySessionTurnCompleted() {
+      notifySessionTurnTerminal() {
         notificationCount += 1;
       },
       currentTimestampLabel,
@@ -2308,6 +2345,14 @@ describe("SessionRuntimeService", () => {
     assert.equal(queuedAppraisalCount, 1);
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "内部stale retryが成功したturnは一つのcompleted terminal通知だけを依頼する"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // failure_mode = "内部retryの各attemptを別turnとして通知し、同一turnで重複通知する"
+  // scope = "session-runtime-stale-retry-terminal-notification"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("stale thread / session error で meaningful partial が無い時だけ thread reset 後に 1 回 retry する", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
@@ -2453,7 +2498,7 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
-      notifySessionTurnCompleted() {
+      notifySessionTurnTerminal() {
         notificationCount += 1;
       },
       currentTimestampLabel,
@@ -3451,11 +3496,21 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(completedUpdate?.operations, [elicitationOperation]);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "非cancel failureはfailed Sessionのterminal commit後に一度だけfailed通知を依頼し、通知失敗後もprovider cleanupへ進む"
+  // oracle = { type = "contract", ref = "accepted contract: failed terminal notification is post-persist and best-effort" }
+  // failure_mode = "failed保存前または複数回の通知、あるいは通知例外によるterminal保存結果やprovider cleanupの失敗"
+  // scope = "session-runtime-failed-terminal-notification"
+  // lifecycle = "permanent"
+  // distinction = "completed通知やcancel除外ではなく、failed commitと通知とcleanupの順序および一回性を検証する"
+  // @end-test-value
   it("failed audit log は partial threadId が無くても live progress の threadId を維持する", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
-    let notificationCount = 0;
+    const terminalNotifications: TerminalNotificationInput[] = [];
+    const terminalOrder: string[] = [];
 
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
@@ -3497,6 +3552,9 @@ describe("SessionRuntimeService", () => {
       },
       upsertSession(next) {
         storedSessions.push(next);
+        if (next.runState === "error") {
+          terminalOrder.push("failed-upsert");
+        }
         return next;
       },
       async resolveComposerPreview() {
@@ -3538,14 +3596,18 @@ describe("SessionRuntimeService", () => {
       },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
+      invalidateProviderSessionThread() {
+        terminalOrder.push("provider-cleanup");
+      },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
-      notifySessionTurnCompleted() {
-        notificationCount += 1;
+      notifySessionTurnTerminal(notification) {
+        terminalNotifications.push(notification);
+        terminalOrder.push("terminal-notification");
+        throw new Error("notification failed");
       },
       currentTimestampLabel,
     });
@@ -3561,7 +3623,10 @@ describe("SessionRuntimeService", () => {
     assert.equal(auditUpdates.at(-1)?.assistantText, "途中まで進んだよ。");
     assert.deepEqual(auditUpdates.at(-1)?.operations, [{ type: "command_execution", summary: "npm test", details: "in_progress" }]);
     assert.deepEqual(auditUpdates.at(-1)?.usage, { inputTokens: 9, cachedInputTokens: 1, outputTokens: 3 });
-    assert.equal(notificationCount, 0);
+    assert.equal(terminalNotifications.length, 1);
+    assert.equal(terminalNotifications[0]?.outcome, "failed");
+    assert.equal(terminalNotifications[0]?.session, storedSessions.at(-1));
+    assert.deepEqual(terminalOrder, ["failed-upsert", "terminal-notification", "provider-cleanup"]);
   });
 
   it("usage_limit reason は audit log と assistant fallback で通常失敗文言にしない", async () => {
@@ -4236,6 +4301,14 @@ describe("SessionRuntimeService", () => {
     ]);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "completed Sessionを保存した後にその保存結果で通知し、通知の非同期failureはturn成功を変更しない"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // failure_mode = "永続化前snapshotを通知するか、通知Promise rejectionでcompleted turnをfailedへ変更する"
+  // scope = "session-runtime-completed-terminal-notification"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Session success を保存後に通知し、通知 failure は turn を失敗させない", async () => {
     const session = createSession();
     let persistedCompletedSession: Session | null = null;
@@ -4316,8 +4389,9 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
-      notifySessionTurnCompleted(completedSession) {
-        notifiedSession = completedSession;
+      notifySessionTurnTerminal(notification) {
+        assert.equal(notification.outcome, "completed");
+        notifiedSession = notification.session;
         return Promise.reject(new Error("notification failed"));
       },
       currentTimestampLabel,

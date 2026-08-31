@@ -112,9 +112,23 @@ function createHarness(overrides?: Partial<SessionTurnNotificationServiceDeps<Fa
     ...overrides,
   };
 
+  const terminalService = new SessionTurnNotificationService(deps);
+
   return {
     session,
-    service: new SessionTurnNotificationService(deps),
+    terminalService,
+    service: {
+      notifyTurnCompleted(completedSession: Session, lastNonEmptyAssistantMessageText = "") {
+        return terminalService.notifyTurnTerminal({
+          outcome: "completed",
+          session: completedSession,
+          lastNonEmptyAssistantMessageText,
+        });
+      },
+      dismissSessionNotification(sessionId: string) {
+        terminalService.dismissSessionNotification(sessionId);
+      },
+    },
     notifications,
     options,
     openedSessions,
@@ -130,6 +144,38 @@ async function flushAsyncListeners(): Promise<void> {
 }
 
 describe("SessionTurnNotificationService", () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "failed通知は保存済みSessionの識別情報だけから成功通知と区別できる固定文を作り、同一Sessionの通知置換とCharacter iconを共有する"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // failure_mode = "failed通知へassistant本文またはraw provider errorが露出するか、成功通知と別の置換・icon経路を通って重複通知になる"
+  // scope = "session-turn-terminal-notification-content"
+  // lifecycle = "permanent"
+  // distinction = "既存の成功preview testではなく、failed outcomeの固定contentと成功通知からの置換を検証する"
+  // @end-test-value
+  it("failed 通知は安全な固定文を使い、同じ Session の成功通知を置き換える", () => {
+    const harness = createHarness({ isResponsePreviewEnabled: () => true });
+    const failedSession = createSession({
+      messages: [{ role: "assistant", text: "secret-token raw provider error" }],
+    });
+
+    assert.equal(harness.service.notifyTurnCompleted(failedSession, "成功preview"), true);
+    assert.equal(harness.terminalService.notifyTurnTerminal({
+      outcome: "failed",
+      session: failedSession,
+    }), true);
+
+    assert.equal(harness.notifications[0]?.closed, true);
+    assert.deepEqual(harness.options[1], {
+      id: harness.options[0]?.id,
+      groupId: "WithMateSessions",
+      title: "WithMate",
+      body: "「通知テスト」のターンでエラーが発生しました",
+      icon: { path: "C:/characters/a.png" },
+    });
+    assert.doesNotMatch(harness.options[1]?.body ?? "", /secret-token|provider error|成功preview/);
+  });
+
   it("Windows で設定が有効かつ対象 Session Window が非 focus ならキャラアイコン付きで通知する", () => {
     const harness = createHarness();
     const session = createSession({
