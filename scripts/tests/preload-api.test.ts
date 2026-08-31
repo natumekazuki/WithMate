@@ -30,6 +30,14 @@ function createIpcRendererStub() {
   };
 }
 
+// @test-value v1
+// kind = "contract"
+// claim = "preloadはChanges repository discovery requestを専用IPC channelへそのまま渡す"
+// oracle = { type = "contract", ref = "WithMateWindowApi.listFileRootChangesRepositories" }
+// failure_mode = "rendererのrepository discoveryが別channelまたは欠落した引数でMainへ送られる"
+// scope = "preload invoke API"
+// lifecycle = "permanent"
+// @end-test-value
 test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる", async () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -318,6 +326,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:list-file-root-changes",
     args: [{ sessionId: "session-1", rootId: "workspace" }],
   });
+  assert.deepEqual(await api.listFileRootChangesRepositories({
+    sessionId: "session-1",
+    rootIds: ["workspace", "additional:repo"],
+  }), {
+    channel: "withmate:list-file-root-changes-repositories",
+    args: [{ sessionId: "session-1", rootIds: ["workspace", "additional:repo"] }],
+  });
   assert.deepEqual(await api.getFileRootDiff({
     sessionId: "session-1",
     rootId: "workspace",
@@ -423,6 +438,14 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
   unsubscribe();
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "preloadの公開API surfaceにChanges repository discovery methodが含まれる"
+// oracle = { type = "contract", ref = "WithMateWindowApi public surface" }
+// failure_mode = "型に存在するrepository discovery methodがrendererへexposeされない"
+// scope = "preload public API keys"
+// lifecycle = "permanent"
+// @end-test-value
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -504,6 +527,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionCharacterUsage",
     "listSessionSummaryPage",
     "listFileRootChanges",
+    "listFileRootChangesRepositories",
     "listFileRootGitHistoryRepositories",
     "listFileRootGitHistoryCommits",
     "getFileRootGitHistoryCommitDetail",

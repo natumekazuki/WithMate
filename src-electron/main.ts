@@ -1708,6 +1708,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionFilePreviewWindowPayload: (token) =>
                   requireMainWindowFacade().getFilePreviewPayload(token),
                 listFileRootChanges: (request) => createFileRootGitChangesService().listChanges(request),
+                listFileRootChangesRepositories: (request) =>
+                  createFileRootGitChangesService().listChangesRepositories(request),
                 getFileRootDiff: (request) => createFileRootGitChangesService().getFileDiff(request),
                 listFileRootGitHistoryRepositories: (request) =>
                   createFileRootGitChangesService().listHistoryRepositories(request),

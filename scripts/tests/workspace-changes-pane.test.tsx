@@ -43,9 +43,18 @@ test("FileRootChangesPane は明示RefreshだけでChangesを取得する", asyn
   const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
 
   type ChangesResult = { status: "ok"; entries: FileRootGitChangeEntry[] };
+  const repositoryRequests: Array<{ sessionId: string; rootIds: string[] }> = [];
   const changesRequests: Array<{ sessionId: string; rootId: string }> = [];
   const pendingChanges: Array<(result: ChangesResult) => void> = [];
   const testApi = {
+    listFileRootChangesRepositories: async (request: { sessionId: string; rootIds: string[] }) => {
+      repositoryRequests.push(request);
+      return {
+        status: "ok" as const,
+        repositories: request.rootIds.map((rootId) => ({ rootId })),
+        failures: [],
+      };
+    },
     listFileRootChanges: async (request: { sessionId: string; rootId: string }) => {
       changesRequests.push(request);
       return new Promise<ChangesResult>((resolve) => pendingChanges.push(resolve));
@@ -75,8 +84,9 @@ test("FileRootChangesPane は明示RefreshだけでChangesを取得する", asyn
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement(FileRootChangesPane, baseProps));
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    assert.deepEqual(repositoryRequests, [{ sessionId: "session-1", rootIds: ["workspace"] }]);
     assert.equal(dom.window.document.querySelectorAll(".workspace-changes-root-group").length, 1);
     assert.match(dom.window.document.body.textContent ?? "", /Not loaded/);
     assert.deepEqual(changesRequests, []);
@@ -103,9 +113,10 @@ test("FileRootChangesPane は明示RefreshだけでChangesを取得する", asyn
     });
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, refreshedProps));
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     assert.equal(changesRequests.length, 1);
+    assert.equal(repositoryRequests.length, 2);
 
     const nextRoots: SessionFileRoot[] = [
       { id: "additional:repo", kind: "additional", label: "Repo", displayPath: "C:/other" },
@@ -116,9 +127,10 @@ test("FileRootChangesPane は明示RefreshだけでChangesを取得する", asyn
         roots: nextRoots,
         rootsRevision: "roots-2",
       }));
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     assert.equal(changesRequests.length, 1);
+    assert.deepEqual(repositoryRequests.at(-1), { sessionId: "session-1", rootIds: ["additional:repo"] });
     assert.equal(dom.window.document.querySelector("[data-root-id='workspace']"), null);
     assert.ok(dom.window.document.querySelector("[data-root-id='additional:repo']"));
 
@@ -129,9 +141,10 @@ test("FileRootChangesPane は明示RefreshだけでChangesを取得する", asyn
         roots: nextRoots,
         rootsRevision: "roots-2",
       }));
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     assert.equal(changesRequests.length, 1);
+    assert.deepEqual(repositoryRequests.at(-1), { sessionId: "session-2", rootIds: ["additional:repo"] });
 
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, {
@@ -269,11 +282,13 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     { id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo/app" },
   ];
   const testApi = {
+    listFileRootChangesRepositories: async () => ({
+      status: "ok" as const,
+      repositories: ["additional:broken", "additional:repo", "workspace"].map((rootId) => ({ rootId })),
+      failures: [],
+    }),
     listFileRootChanges: async (request: { rootId: string }) => {
       requestedRootIds.push(request.rootId);
-      if (request.rootId === "session-folder") {
-        return { status: "not-git" as const, message: "Not a Git repository." };
-      }
       if (request.rootId === "additional:broken") {
         return { status: "failed" as const, message: "Git status failed for broken root." };
       }
@@ -337,7 +352,7 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     assert.equal(groups.find((group) => group.dataset.rootId === "additional:broken")?.style.minHeight, "78px");
     assert.equal(groups.find((group) => group.dataset.rootId === "additional:repo")?.style.maxHeight, "260px");
     assert.equal(groups.find((group) => group.dataset.rootId === "workspace")?.style.maxHeight, "408px");
-    assert.deepEqual(requestedRootIds, ["session-folder", "additional:broken", "additional:repo", "workspace"]);
+    assert.deepEqual(requestedRootIds, ["additional:broken", "additional:repo", "workspace"]);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Session Folder/);
     assert.match(dom.window.document.body.textContent ?? "", /Git status failed for broken root/);
     assert.match(dom.window.document.body.textContent ?? "", /repo/);
@@ -493,6 +508,11 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     let rejectStaleRequest: ((reason?: unknown) => void) | null = null;
     let statusRequestCount = 0;
     const staleReloadApi = {
+      listFileRootChangesRepositories: async (request: { rootIds: string[] }) => ({
+        status: "ok" as const,
+        repositories: request.rootIds.map((rootId) => ({ rootId })),
+        failures: [],
+      }),
       listFileRootChanges: async () => {
         statusRequestCount += 1;
         if (statusRequestCount === 1) {
@@ -528,7 +548,7 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
         rootsRevision: "stale-1",
         refreshRevision: 1,
       }));
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10));
     });
     assert.ok(rejectStaleRequest);
     await act(async () => {
@@ -610,6 +630,11 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
     reject: (error: Error) => void;
   }> = [];
   const testApi = {
+    listFileRootChangesRepositories: async (request: { rootIds: string[] }) => ({
+      status: "ok" as const,
+      repositories: request.rootIds.map((rootId) => ({ rootId })),
+      failures: [],
+    }),
     listFileRootChanges: async (request: { sessionId: string; rootId: string }) => (
       new Promise<FileRootChangesResult>((resolve, reject) => pendingRequests.push({ request, resolve, reject }))
     ),

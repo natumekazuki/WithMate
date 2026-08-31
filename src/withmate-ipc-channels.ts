@@ -33,6 +33,8 @@ export const WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL =
   "withmate:show-session-file-object-copy-context-menu";
 export const WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL = "withmate:show-markdown-link-context-menu";
 export const WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL = "withmate:list-file-root-changes";
+export const WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL =
+  "withmate:list-file-root-changes-repositories";
 export const WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL = "withmate:get-file-root-diff";
 export const WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL =
   "withmate:list-file-root-git-history-repositories";

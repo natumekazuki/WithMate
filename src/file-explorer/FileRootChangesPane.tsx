@@ -15,7 +15,7 @@ import type {
 
 type FileRootChangesApi = Pick<
   WithMateWindowApi,
-  "listFileRootChanges"
+  "listFileRootChanges" | "listFileRootChangesRepositories"
 >;
 
 export type FileRootChangesPaneProps = {
@@ -59,11 +59,15 @@ export function FileRootChangesPane({
   onOpenDiff,
 }: FileRootChangesPaneProps) {
   const requestRevisionRef = useRef(0);
+  const repositoryRequestRevisionRef = useRef(0);
+  const repositoryRootsRef = useRef<SessionFileRoot[]>([]);
+  const repositoriesReadyRef = useRef(false);
   const lastRefreshRevisionRef = useRef(refreshRevision);
   const diffRevisionRef = useRef(0);
-  const [rootChanges, setRootChanges] = useState<GitRootChanges[]>(() => (
-    sessionId ? createUnloadedRootChanges(roots) : []
-  ));
+  const [rootChanges, setRootChanges] = useState<GitRootChanges[]>([]);
+  const [repositoriesLoading, setRepositoriesLoading] = useState(false);
+  const [repositoriesReady, setRepositoriesReady] = useState(false);
+  const [repositoryMessage, setRepositoryMessage] = useState("");
   const [loadingKey, setLoadingKey] = useState("");
   const [message, setMessage] = useState("");
   const [collapsedDirectories, setCollapsedDirectories] = useState<Record<string, boolean>>({});
@@ -75,7 +79,8 @@ export function FileRootChangesPane({
       return;
     }
     setMessage("");
-    setRootChanges((current) => roots.map((root) => {
+    const repositoryRoots = repositoryRootsRef.current;
+    setRootChanges((current) => repositoryRoots.map((root) => {
       const existing = current.find((rootChange) => rootChange.root.id === root.id);
       return {
         root,
@@ -85,7 +90,7 @@ export function FileRootChangesPane({
       };
     }));
 
-    for (const root of roots) {
+    for (const root of repositoryRoots) {
       void api.listFileRootChanges({ sessionId, rootId: root.id }).then((result) => {
         if (requestRevisionRef.current !== revision) {
           return;
@@ -126,28 +131,85 @@ export function FileRootChangesPane({
           : rootChange));
       });
     }
+  }, [api, enabled, sessionId]);
+
+  const discoverRepositories = useCallback(async () => {
+    const revision = repositoryRequestRevisionRef.current + 1;
+    repositoryRequestRevisionRef.current = revision;
+    requestRevisionRef.current += 1;
+    repositoryRootsRef.current = [];
+    setRootChanges([]);
+    setRepositoryMessage("");
+    repositoriesReadyRef.current = false;
+    setRepositoriesReady(false);
+    if (!api || !sessionId || !enabled || roots.length === 0) {
+      setRepositoriesLoading(false);
+      repositoriesReadyRef.current = true;
+      setRepositoriesReady(true);
+      return;
+    }
+    setRepositoriesLoading(true);
+    try {
+      const result = await api.listFileRootChangesRepositories({
+        sessionId,
+        rootIds: roots.map((root) => root.id),
+      });
+      if (repositoryRequestRevisionRef.current !== revision) {
+        return;
+      }
+      if (result.status === "failed") {
+        setRepositoryMessage(result.message);
+        return;
+      }
+      const repositoryRootIds = new Set(result.repositories.map((repository) => repository.rootId));
+      const failuresByRootId = new Map(result.failures.map((failure) => [failure.rootId, failure.message]));
+      const nextRootChanges = roots.flatMap<GitRootChanges>((root) => {
+        if (repositoryRootIds.has(root.id)) {
+          return createUnloadedRootChanges([root]);
+        }
+        const failureMessage = failuresByRootId.get(root.id);
+        return failureMessage
+          ? [{ root, status: "failed", entries: [], message: failureMessage }]
+          : [];
+      });
+      repositoryRootsRef.current = nextRootChanges.map((rootChange) => rootChange.root);
+      setRootChanges(nextRootChanges);
+    } catch (error) {
+      if (repositoryRequestRevisionRef.current === revision) {
+        setRepositoryMessage(error instanceof Error ? error.message : "Git repositories could not be resolved.");
+      }
+    } finally {
+      if (repositoryRequestRevisionRef.current === revision) {
+        setRepositoriesLoading(false);
+        repositoriesReadyRef.current = true;
+        setRepositoriesReady(true);
+      }
+    }
   }, [api, enabled, roots, sessionId]);
 
   useEffect(() => {
-    requestRevisionRef.current += 1;
     diffRevisionRef.current += 1;
-    setRootChanges(sessionId ? createUnloadedRootChanges(roots) : []);
     setMessage("");
     setLoadingKey("");
     setCollapsedDirectories({});
-  }, [roots, rootsRevision, sessionId]);
+    void discoverRepositories();
+  }, [discoverRepositories, rootsRevision]);
 
   useEffect(() => {
     if (lastRefreshRevisionRef.current === refreshRevision) {
       return;
     }
+    if (!repositoriesReadyRef.current) {
+      return;
+    }
     lastRefreshRevisionRef.current = refreshRevision;
     refresh();
-  }, [refresh, refreshRevision]);
+  }, [refresh, refreshRevision, repositoriesReady]);
 
   useEffect(() => {
     return () => {
       requestRevisionRef.current += 1;
+      repositoryRequestRevisionRef.current += 1;
       diffRevisionRef.current += 1;
     };
   }, []);
@@ -211,6 +273,7 @@ export function FileRootChangesPane({
 
   return (
     <div className="workspace-changes-pane">
+      {repositoryMessage ? <p className="workspace-changes-message" role="alert">{repositoryMessage}</p> : null}
       {message ? <p className="workspace-changes-message" role="alert">{message}</p> : null}
       {rootChanges.length > 0 ? (
         <div className="workspace-changes-groups" role="list" aria-label="File root changes">
@@ -226,7 +289,9 @@ export function FileRootChangesPane({
             />
           ))}
         </div>
-      ) : !message ? (
+      ) : repositoriesLoading ? (
+        <p className="workspace-changes-empty" role="status">Discovering Git repositories…</p>
+      ) : !message && !repositoryMessage ? (
         <p className="workspace-changes-empty">No Git repositories.</p>
       ) : null}
     </div>

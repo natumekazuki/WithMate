@@ -104,6 +104,8 @@ import type {
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
+  FileRootChangesRepositoriesRequest,
+  FileRootChangesRepositoriesResult,
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
@@ -208,6 +210,7 @@ import {
   WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
@@ -462,6 +465,9 @@ export type MainIpcRegistrationDeps = {
     request: MarkdownLinkContextMenuRequest,
   ): Awaitable<MarkdownLinkContextMenuResult>;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
+  listFileRootChangesRepositories(
+    request: FileRootChangesRepositoriesRequest,
+  ): Awaitable<FileRootChangesRepositoriesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   listFileRootGitHistoryRepositories(
     request: FileRootGitHistoryRepositoriesRequest,
@@ -698,6 +704,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "showSessionFileObjectCopyContextMenu"
   | "showMarkdownLinkContextMenu"
   | "listFileRootChanges"
+  | "listFileRootChangesRepositories"
   | "getFileRootDiff"
   | "listFileRootGitHistoryRepositories"
   | "listFileRootGitHistoryCommits"
@@ -1810,6 +1817,24 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       })),
     };
   });
+  ipcMain.handle(
+    WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
+    async (event, request: FileRootChangesRepositoriesRequest) => {
+      if (
+        !request
+        || typeof request.sessionId !== "string"
+        || !request.sessionId
+        || !Array.isArray(request.rootIds)
+        || request.rootIds.length > 256
+        || request.rootIds.some((rootId) => typeof rootId !== "string" || !rootId)
+        || new Set(request.rootIds).size !== request.rootIds.length
+      ) {
+        throw new TypeError("Git repositories request is invalid.");
+      }
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.listFileRootChangesRepositories(request);
+    },
+  );
   ipcMain.handle(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, async (event, request: FileRootFileDiffRequest) => {
     if (
       !request
