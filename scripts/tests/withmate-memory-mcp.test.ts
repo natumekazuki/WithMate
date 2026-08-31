@@ -553,6 +553,72 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "非idempotentなfile exportはtools/listで自動再試行禁止と復旧手順を公開し、dispatch後のresponse lossをeffect unknownとして一度のdispatchで終了する"
+  // oracle = { type = "adr", ref = "ADR 024 tools/list operation contract" }
+  // failure_mode = "Agentが応答喪失後にfile exportを自動再試行し、既存出力との衝突またはeffect certaintyの誤認を起こす"
+  // scope = "withmate-memory-mcp-file-export"
+  // lifecycle = "permanent"
+  // distinction = "idempotency keyを持つMemory mutationのreconcileではなく、keyを持たないget_fileとexport_filesのresponse-loss recoveryを検証する"
+  // @end-test-value
+  it("非idempotent file exportはresponse loss後に自動再試行せず復旧契約を公開する", async () => {
+    const operations: WithMateMemoryRuntimeOperation[] = [];
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: "api-secret",
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+      },
+      runtimeCall: async (_connection, operation) => {
+        operations.push(operation);
+        throw new WithMateMemoryRuntimeExchangeError("response lost", true);
+      },
+    });
+    const client = new Client({ name: "withmate-file-export-effect-test", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const tools = await client.listTools();
+      const getFile = tools.tools.find((tool) => tool.name === "memory.get_file");
+      const exportFiles = tools.tools.find((tool) => tool.name === "memory.export_files");
+      for (const tool of [getFile, exportFiles]) {
+        assert.equal(tool?.annotations?.idempotentHint, false);
+        assert.match(tool?.description ?? "", /effect as unknown and do not retry automatically/);
+        assert.match(tool?.description ?? "", /operator manual recovery/);
+      }
+
+      const target = { owner: "user", scope: "global" } as const;
+      const getFileResult = await client.callTool({
+        name: "memory.get_file",
+        arguments: {
+          target,
+          objectId: "object-a",
+          outputPath: "C:\\exports\\memory.txt",
+        },
+      });
+      const exportFilesResult = await client.callTool({
+        name: "memory.export_files",
+        arguments: {
+          target,
+          entryId: "entry-a",
+          outputDirectoryPath: "C:\\exports\\entry-a",
+        },
+      });
+
+      assert.ok(getFileResult.structuredContent, JSON.stringify(getFileResult));
+      assert.ok(exportFilesResult.structuredContent, JSON.stringify(exportFilesResult));
+      assert.equal((getFileResult.structuredContent as any).error.effect, "unknown");
+      assert.equal((exportFilesResult.structuredContent as any).error.effect, "unknown");
+      assert.deepEqual(operations.map((operation) => operation.path), ["/v1/get_file", "/v1/export_files"]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("memory.list_tagsはcanonical sample上限とpaginationをruntime routeへ送る", async () => {
     const cursor = encodeMemoryListTagsCursor({
       usageCount: 3,

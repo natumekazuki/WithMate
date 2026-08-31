@@ -22,6 +22,15 @@ function character() {
 }
 
 describe("character affect turn evaluator", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "provider-facing evaluator promptはCharacter/User/Sessionの生identityを投影せず、定義とaffectのversioned contextだけを渡す"
+  // oracle = { type = "adr", ref = "ADR-024" }
+  // failure_mode = "prompt JSONへcharacter.idまたはscopeのuserId/characterId/sessionIdが混入し、providerがserver-owned identityを参照できる"
+  // scope = "character-affect-turn-evaluator provider prompt projection"
+  // lifecycle = "permanent"
+  // distinction = "内部のtoAffectEventInputsがserver-owned identityを保持する契約とは別に、provider入力の公開キー集合を直接検証する"
+  // @end-test-value
   it("one-turn eventと最小contextだけを評価promptへ渡す", () => {
     const prompt = buildCharacterAffectTurnPrompt({
       character: character(),
@@ -64,6 +73,28 @@ describe("character affect turn evaluator", () => {
       assistantMessage: "うん、通ったよ。",
     });
 
+    const promptPayload = JSON.parse(prompt.userText);
+    assert.deepEqual(Object.keys(promptPayload).sort(), ["character", "currentAffect", "event"]);
+    assert.deepEqual(Object.keys(promptPayload.character).sort(), ["definition"]);
+    assert.deepEqual(Object.keys(promptPayload.currentAffect).sort(), ["effective", "evaluatedAt", "version"]);
+    assert.deepEqual(Object.keys(promptPayload.event).sort(), ["assistantMessage", "userMessage"]);
+    assert.equal(promptPayload.character.definition, "# Definition");
+    assert.deepEqual(promptPayload.currentAffect.effective, [{
+      layer: "session",
+      targetType: "task",
+      targetId: "current-task",
+      family: "interest",
+      label: "interest",
+      valence: 0.4,
+      intensity: 0.6,
+    }]);
+    assert.equal(promptPayload.currentAffect.version, "affect-v1-42");
+    assert.equal(promptPayload.currentAffect.evaluatedAt, "2026-08-09T00:00:00.000Z");
+    assert.equal("id" in promptPayload.character, false);
+    assert.equal("scope" in promptPayload.currentAffect, false);
+    assert.equal("userId" in promptPayload.currentAffect, false);
+    assert.equal("characterId" in promptPayload.currentAffect, false);
+    assert.equal("sessionId" in promptPayload.currentAffect, false);
     assert.match(prompt.userText, /affect-v1-42/);
     assert.match(prompt.userText, /2026-08-09T00:00:00\.000Z/);
     assert.equal(JSON.parse(prompt.userText).currentAffect.evaluatedAt, "2026-08-09T00:00:00.000Z");
