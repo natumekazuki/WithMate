@@ -6068,33 +6068,64 @@ button:disabled {
 }
 
 .file-history-ref-badge {
+  --file-history-ref-accent: var(--character-sub);
+  --file-history-ref-foreground: var(--ink);
+  --file-history-ref-background: color-mix(
+    in srgb,
+    var(--file-history-ref-accent) 14%,
+    var(--surface-strong)
+  );
+  --file-history-ref-border: color-mix(
+    in srgb,
+    var(--ink) 58%,
+    var(--file-history-ref-accent)
+  );
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   max-width: 150px;
-  padding: 1px 5px;
+  padding: 1px 5px 1px 2px;
   overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid var(--file-history-ref-border);
   border-radius: 999px;
-  color: var(--muted);
+  background: var(--file-history-ref-background);
+  color: var(--file-history-ref-foreground);
   font-size: 0.62rem;
   line-height: 1.35;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.file-history-ref-badge.head {
-  border-color: color-mix(in srgb, var(--character-sub) 42%, transparent);
-  color: var(--ink);
+.file-history-ref-badge--head {
+  --file-history-ref-accent: var(--character-main);
 }
 
-.file-history-ref-badge.branch {
-  border-color: rgba(134, 239, 172, 0.28);
-  color: #bbf7d0;
+.file-history-ref-badge--branch {
+  --file-history-ref-accent: var(--teal);
 }
 
-.file-history-ref-badge.tag {
-  border-color: rgba(251, 191, 36, 0.28);
-  color: #fde68a;
+.file-history-ref-badge--tag {
+  --file-history-ref-accent: var(--gold);
+}
+
+.file-history-ref-badge-marker {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 1.25em;
+  height: 1.25em;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--ink) 44%, var(--file-history-ref-accent));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--file-history-ref-accent) 28%, var(--surface-strong));
+  color: var(--file-history-ref-foreground);
+  font-size: 0.82em;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.file-history-ref-badge-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .file-history-list-sentinel {

@@ -9,6 +9,7 @@ Session WindowのFile Explorerから、認可済みGit rootのcommit履歴とcom
 `History`タブでは、File Explorerに含まれるGit rootごとに次の情報を表示します。
 
 - commitのhash、subject、author、日時
+- commitが指すHEAD、branch、tag。共通のbadgeで表示し、文字markerとlabelによって色だけに依存せず種類を区別します。
 - 選択したcommitに含まれるfile
 - commit全体または一つのfileに限定した差分
 - commit時点のfile preview
