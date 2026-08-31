@@ -3325,23 +3325,7 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${messageCollapseTarget ? " has-message-collapse-control" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
-                  {messageCollapseTarget && onToggleMessageCollapse ? (
-                    <div className="message-collapse-control">
-                      <button
-                        className="message-collapse-toggle"
-                        type="button"
-                        onClick={() => onToggleMessageCollapse(messageKey)}
-                        aria-expanded={!isMessageCollapsed}
-                        aria-controls={messageBodyId}
-                        aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
-                        title={messageCollapseLabel}
-                      >
-                        <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
-                        <span className="visually-hidden">{messageCollapseLabel}</span>
-                      </button>
-                    </div>
-                  ) : null}
+                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
                   <div className="message-card-content">
                     {artifact && !isAssistant ? (
                       <button
@@ -3361,25 +3345,43 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    <div
-                      id={messageBodyId}
-                      data-message-body="true"
-                      data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
-                    >
-                      {shouldRenderFullMessage ? (
-                        <MessageRichText
-                          text={message.text}
-                          forceFullRender={findOpen && hasFindQuery}
-                          displayMode={messageViewMode}
-                          onOpenPath={onOpenPath}
-                          markdownLinkFileContext={markdownLinkFileContext}
-                          glossaryAnnotationMatcher={glossaryAnnotationMatcher}
-                          glossaryAnnotationScopeKey={messageKey}
-                          onActivateGlossaryEntry={onActivateGlossaryEntry}
-                        />
-                      ) : (
-                        <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
-                      )}
+                    <div className={`message-text-wrapper${messageCollapseTarget ? " has-message-collapse-control" : ""}`}>
+                      {messageCollapseTarget && onToggleMessageCollapse ? (
+                        <div className="message-collapse-control">
+                          <button
+                            className="message-collapse-toggle"
+                            type="button"
+                            onClick={() => onToggleMessageCollapse(messageKey)}
+                            aria-expanded={!isMessageCollapsed}
+                            aria-controls={messageBodyId}
+                            aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
+                            title={messageCollapseLabel}
+                          >
+                            <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
+                            <span className="visually-hidden">{messageCollapseLabel}</span>
+                          </button>
+                        </div>
+                      ) : null}
+                      <div
+                        id={messageBodyId}
+                        data-message-body="true"
+                        data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
+                      >
+                        {shouldRenderFullMessage ? (
+                          <MessageRichText
+                            text={message.text}
+                            forceFullRender={findOpen && hasFindQuery}
+                            displayMode={messageViewMode}
+                            onOpenPath={onOpenPath}
+                            markdownLinkFileContext={markdownLinkFileContext}
+                            glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+                            glossaryAnnotationScopeKey={messageKey}
+                            onActivateGlossaryEntry={onActivateGlossaryEntry}
+                          />
+                        ) : (
+                          <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
+                        )}
+                      </div>
                     </div>
 
                     {artifact ? (
