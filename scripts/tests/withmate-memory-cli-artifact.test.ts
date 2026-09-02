@@ -200,6 +200,7 @@ it("runtime directory のlegacy discovery pathでidentity検証後にstatusで�
 
       const { stdout } = await execFileAsync(process.execPath, [helperPath, "status"], {
         env: unboundHelperEnv({
+          LOCALAPPDATA: tempRootPath,
           WITHMATE_MEMORY_RUNTIME_DIR: runtimeDirectoryPath,
           WITHMATE_MEMORY_DISCOVERY_FILE: "",
           WITHMATE_MEMORY_API_URL: "",
@@ -224,6 +225,8 @@ it("runtime directory のlegacy discovery pathでidentity検証後にstatusで�
 // lifecycle = "permanent"
 // @end-test-value
 it("current CLI command namesを受け付け、未起動時はcanonical JSON errorを返す", async () => {
+  const tempRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-unavailable-"));
+  try {
     const { stdout } = await execFileAsync(process.execPath, [
       helperPath,
       "get-entry",
@@ -231,6 +234,7 @@ it("current CLI command namesを受け付け、未起動時はcanonical JSON err
       '{"schemaVersion":"withmate-memory-v1","entryId":"entry-1","target":{"owner":"project","scope":"project","project":{"type":"id","id":"project-a"}}}',
     ], {
       env: unboundHelperEnv({
+        LOCALAPPDATA: tempRootPath,
         WITHMATE_MEMORY_DISCOVERY_FILE: path.join(tmpdir(), "withmate-memory-missing.json"),
       }),
     }).catch((error: unknown) => {
@@ -240,6 +244,9 @@ it("current CLI command namesを受け付け、未起動時はcanonical JSON err
     });
 
     assert.equal(JSON.parse(stdout).error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
+  } finally {
+    await rm(tempRootPath, { recursive: true, force: true });
+  }
   });
 
 // @test-value v1
@@ -593,8 +600,11 @@ it("schema は helper 単体で capability を返す", async () => {
 // lifecycle = "permanent"
 // @end-test-value
 it("read shorthandはhelperでもrequest bodyを組み立てcanonical unavailableを返す", async () => {
+  const tempRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-unavailable-"));
+  try {
     const { stdout } = await execFileAsync(process.execPath, [helperPath, "search", "--project", path.resolve("."), "--query", "cli"], {
       env: unboundHelperEnv({
+        LOCALAPPDATA: tempRootPath,
         WITHMATE_MEMORY_DISCOVERY_FILE: path.join(tmpdir(), "withmate-memory-missing.json"),
       }),
     }).catch((error: unknown) => {
@@ -604,6 +614,9 @@ it("read shorthandはhelperでもrequest bodyを組み立てcanonical unavailabl
     });
 
     assert.equal(JSON.parse(stdout).error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
+  } finally {
+    await rm(tempRootPath, { recursive: true, force: true });
+  }
   });
 
   // @test-value v1

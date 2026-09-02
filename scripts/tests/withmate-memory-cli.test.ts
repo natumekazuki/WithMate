@@ -497,17 +497,23 @@ it("runtime directoryのdiscovery fileを既定で読む", async () => {
 // lifecycle = "permanent"
 // @end-test-value
 it("WithMate未起動時はDB直読みに逃げずWITHMATE_NOT_RUNNINGを返す", async () => {
+    const registryRootDirectoryPath = await mkdtemp(join(tmpdir(), "withmate-memory-empty-registry-"));
     const stdout = createOutputCapture();
-    const exitCode = await runWithMateMemoryCli(["status"], {
-      env: {},
-      stdout: stdout.stream,
-      readFile: async () => {
-        throw new Error("missing discovery file");
-      },
-    });
+    try {
+      const exitCode = await runWithMateMemoryCli(["status"], {
+        env: {},
+        stdout: stdout.stream,
+        registryRootDirectoryPath,
+        readFile: async () => {
+          throw new Error("missing discovery file");
+        },
+      });
 
-    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
-    assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
+      assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
+    } finally {
+      await rm(registryRootDirectoryPath, { recursive: true, force: true });
+    }
   });
 
 // @test-value v1
@@ -519,35 +525,41 @@ it("WithMate未起動時はDB直読みに逃げずWITHMATE_NOT_RUNNINGを返す"
 // lifecycle = "permanent"
 // @end-test-value
 it("Character commandのruntime unavailableを共通error semanticsで返す", async () => {
+    const registryRootDirectoryPath = await mkdtemp(join(tmpdir(), "withmate-memory-empty-registry-"));
     const stdout = createOutputCapture();
-    const exitCode = await runWithMateMemoryCli([
-      "context-get",
-      "--json",
-      JSON.stringify({
-        schemaVersion: "withmate-character-context-v1",
-        characterId: "character-a",
-        sessionId: "session-a",
-      }),
-    ], {
-      env: {},
-      stdout: stdout.stream,
-      readFile: async () => {
-        throw new Error("missing discovery file");
-      },
-    });
+    try {
+      const exitCode = await runWithMateMemoryCli([
+        "context-get",
+        "--json",
+        JSON.stringify({
+          schemaVersion: "withmate-character-context-v1",
+          characterId: "character-a",
+          sessionId: "session-a",
+        }),
+      ], {
+        env: {},
+        stdout: stdout.stream,
+        registryRootDirectoryPath,
+        readFile: async () => {
+          throw new Error("missing discovery file");
+        },
+      });
 
-    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
-    assert.deepEqual(stdout.json(), {
-      schemaVersion: "withmate-character-context-v1",
-      error: {
-        code: "storage_unavailable",
-        message: "WithMate runtime discovery could not select a runtime.",
-        retryable: true,
-        conversationMayContinue: true,
-        effect: "none",
-        details: { discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE", candidates: [] },
-      },
-    });
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+      assert.deepEqual(stdout.json(), {
+        schemaVersion: "withmate-character-context-v1",
+        error: {
+          code: "storage_unavailable",
+          message: "WithMate runtime discovery could not select a runtime.",
+          retryable: true,
+          conversationMayContinue: true,
+          effect: "none",
+          details: { discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE", candidates: [] },
+        },
+      });
+    } finally {
+      await rm(registryRootDirectoryPath, { recursive: true, force: true });
+    }
   });
 
   it("Character writeのdispatch後timeoutはeffect unknownを返す", async () => {
