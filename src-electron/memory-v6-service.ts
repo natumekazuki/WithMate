@@ -398,6 +398,7 @@ export class MemoryV6Service {
       projectId,
       characterId,
       allowedCharacterId: principal.type === "session_binding" ? principal.characterId : undefined,
+      allowedProjectIds: principal.type === "session_binding" ? principal.allowedProjectIds : undefined,
       includeEmpty: validated.value.includeEmpty,
       limit: validated.value.limit,
       cursor: validated.value.cursor,

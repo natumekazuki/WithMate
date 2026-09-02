@@ -22,6 +22,7 @@ import type {
   MemoryTargetSelector,
   ProjectTargetRef,
 } from "../src/memory-v6/memory-contract.js";
+import { MEMORY_ABSOLUTE_PATH_PATTERN } from "../src/memory-v6/memory-validation.js";
 import {
   createCharacterContextError,
   isCharacterContextError,
@@ -706,23 +707,57 @@ function turnAdmissionFailure(route: MemoryV6Route): unknown {
       });
 }
 
+type ResolvedAllowedProject = {
+  project: MemoryV6ProjectContext;
+  ref: ProjectTargetRef;
+};
+
+function parseProjectTargetRef(ref: unknown): ProjectTargetRef | null {
+  if (!ref || typeof ref !== "object" || Array.isArray(ref)) return null;
+  const value = ref as Record<string, unknown>;
+  if (
+    value.type === "id"
+    && Object.keys(value).length === 2
+    && typeof value.id === "string"
+    && value.id.length >= 1
+    && value.id.length <= 200
+  ) {
+    return { type: "id", id: value.id };
+  }
+  if (
+    value.type === "path"
+    && Object.keys(value).length === 2
+    && typeof value.path === "string"
+    && value.path.length >= 1
+    && value.path.length <= 1_000
+    && MEMORY_ABSOLUTE_PATH_PATTERN.test(value.path)
+  ) {
+    return { type: "path", path: value.path };
+  }
+  return null;
+}
+
 function resolveAllowedProject(
   options: MemoryV6HttpServerOptions,
   ref: unknown,
   authority: ProviderAgentRuntimeAuthoritySnapshot,
-): MemoryV6ProjectContext | null {
-  if (!ref || typeof ref !== "object" || Array.isArray(ref)) return null;
-  const value = ref as Partial<ProjectTargetRef>;
-  const project = value.type === "id" && typeof value.id === "string"
+): ResolvedAllowedProject | null {
+  const value = parseProjectTargetRef(ref);
+  if (!value) return null;
+  const project = value.type === "id"
     ? options.resolveProjectById?.(value.id.trim()) ?? (
         authority.allowedProjectIds.includes(value.id.trim())
           ? { id: value.id.trim(), displayName: value.id.trim() }
           : null
       )
-    : value.type === "path" && typeof value.path === "string"
+    : value.type === "path"
       ? options.resolveProjectByPath?.(value.path) ?? options.resolveKnownProjectByPath?.(value.path) ?? null
       : null;
-  return project && authority.allowedProjectIds.includes(project.id) ? project : null;
+  if (!project || !authority.allowedProjectIds.includes(project.id)) return null;
+  const canonicalRef: ProjectTargetRef = value.type === "path" && !options.resolveProjectById?.(project.id)
+    ? value
+    : { type: "id", id: project.id };
+  return { project, ref: canonicalRef };
 }
 
 function resolveActorRelativeTarget(
@@ -739,18 +774,14 @@ function resolveActorRelativeTarget(
     return { owner: "character", scope: "character", character: { type: "id", id: authority.characterId } };
   }
   if ((target.kind === "project" || target.kind === "character+project") && Object.keys(target).length === 2) {
-    const project = resolveAllowedProject(options, target.project, authority);
-    if (!project) return null;
-    const requestedRef = target.project as ProjectTargetRef;
-    const projectRef: ProjectTargetRef = requestedRef.type === "path" && !options.resolveProjectById?.(project.id)
-      ? requestedRef
-      : { type: "id", id: project.id };
+    const resolvedProject = resolveAllowedProject(options, target.project, authority);
+    if (!resolvedProject) return null;
     return target.kind === "project"
-      ? { owner: "project", scope: "project", project: projectRef }
+      ? { owner: "project", scope: "project", project: resolvedProject.ref }
       : {
           owner: "character", scope: "project",
           character: { type: "id", id: authority.characterId },
-          project: projectRef,
+          project: resolvedProject.ref,
         };
   }
   return null;
@@ -780,17 +811,13 @@ function resolveAgentBoundRequestBody(
         return { ok: true, value: applyActorSessionToBody(route, body, actorSession, authority) };
       }
       if (actorScope.scope === "project" && Object.keys(actorScope).length === 2) {
-        const project = resolveAllowedProject(options, actorScope.project, authority);
-        if (project) {
-          const requestedRef = actorScope.project as ProjectTargetRef;
-          const projectRef: ProjectTargetRef = requestedRef.type === "path" && !options.resolveProjectById?.(project.id)
-            ? requestedRef
-            : { type: "id", id: project.id };
+        const resolvedProject = resolveAllowedProject(options, actorScope.project, authority);
+        if (resolvedProject) {
           return {
             ok: true,
             value: applyActorSessionToBody(route, {
               ...request,
-              scope: { scope: "project", project: projectRef },
+              scope: { scope: "project", project: resolvedProject.ref },
             }, actorSession, authority),
           };
         }
@@ -804,7 +831,9 @@ function resolveAgentBoundRequestBody(
   }
   const request = { ...(body as Record<string, unknown>) };
   if (route === "file_usage") {
-    return { ok: true, value: request };
+    return Object.keys(request).every((key) => key === "schemaVersion")
+      ? { ok: true, value: request }
+      : { ok: false, error: agentInputError(route, "body", "Agent-bound file usage accepts no detail options.") };
   }
   if (route === "list_targets") {
     const filter = request.filter;
@@ -1180,7 +1209,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
   return {
     ok: true,
     body: body.value,
-    principal: createSessionBindingMemoryPrincipal(binding, actorSession),
+    principal: createSessionBindingMemoryPrincipal(binding, actorSession, authority),
     authority,
   };
 }
@@ -1188,6 +1217,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
 function createSessionBindingMemoryPrincipal(
   binding: ResolvedAgentRuntimeBinding,
   actorSession: AgentRuntimeActorSession,
+  authority?: ProviderAgentRuntimeAuthoritySnapshot,
 ): MemoryV6Principal {
   return {
     type: "session_binding",
@@ -1195,6 +1225,7 @@ function createSessionBindingMemoryPrincipal(
     sessionId: binding.actorSessionId,
     providerId: binding.providerId,
     characterId: actorSession.characterId,
+    ...(authority ? { allowedProjectIds: authority.allowedProjectIds } : {}),
     permissions: LOCAL_USER_MEMORY_PERMISSIONS,
   };
 }

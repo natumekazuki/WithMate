@@ -320,6 +320,12 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       assert.equal(Object.prototype.hasOwnProperty.call(searchOutputEntryProperties, "target"), true);
       assert.equal(Object.prototype.hasOwnProperty.call(searchOutputEntryProperties, "owner"), false);
       assert.equal(Object.prototype.hasOwnProperty.call(searchOutputEntryProperties, "scope"), false);
+      const fileUsageTool = result.tools.find((tool) => tool.name === "memory.file_usage");
+      assert.deepEqual(Object.keys(fileUsageTool?.inputSchema.properties ?? {}), []);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(fileUsageTool?.outputSchema?.properties ?? {}, "largestEntries"),
+        false,
+      );
       const listEntriesSchema = result.tools.find((tool) => tool.name === "memory.list_entries")?.inputSchema;
       assert.equal((listEntriesSchema?.properties?.states as { minItems?: number })?.minItems, 1);
       const listTagsSchema = result.tools.find((tool) => tool.name === "memory.list_tags")?.inputSchema;
@@ -356,6 +362,12 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       );
       assert.ok(projectPathPatterns.length > 0);
       assert.ok(projectPathPatterns.every((pattern) => pattern === absolutePathPattern));
+      const characterProjectPathPatterns = collectPropertyPatterns(
+        result.tools.find((tool) => tool.name === "character_memory.search")?.inputSchema,
+        "path",
+      );
+      assert.ok(characterProjectPathPatterns.length > 0);
+      assert.ok(characterProjectPathPatterns.every((pattern) => pattern === absolutePathPattern));
       const appendFiles = result.tools.find((tool) => tool.name === "memory.append")
         ?.inputSchema.properties?.files as { items?: { properties?: { path?: { pattern?: string } } } };
       assert.equal(appendFiles.items?.properties?.path?.pattern, absolutePathPattern);

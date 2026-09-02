@@ -26,6 +26,7 @@ import {
   type WithMateMemoryRuntimeResponse,
 } from "./withmate-memory-runtime-client.js";
 import type { RuntimeDiscoveryClock } from "../src/runtime-discovery/runtime-discovery-contract.js";
+import { MEMORY_ABSOLUTE_PATH_PATTERN } from "../src/memory-v6/memory-validation.js";
 import {
   GENERAL_MEMORY_MCP_TOOL_DEFINITIONS,
   registerGeneralMemoryMcpTools,
@@ -110,8 +111,8 @@ const affectCandidateSchema = z.object({
 }).strict();
 
 const projectRefSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("id"), id: z.string().min(1) }).strict(),
-  z.object({ type: z.literal("path"), path: z.string().min(1) }).strict(),
+  z.object({ type: z.literal("id"), id: z.string().min(1).max(200) }).strict(),
+  z.object({ type: z.literal("path"), path: z.string().min(1).max(1_000).regex(MEMORY_ABSOLUTE_PATH_PATTERN) }).strict(),
 ]);
 
 const memoryTagSchema = z.object({ type: z.string(), value: z.string() }).strict();

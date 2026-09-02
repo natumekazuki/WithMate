@@ -163,6 +163,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(calls[0]?.principal.type, "session_binding");
     assert.equal(calls[0]?.principal.sessionId, "session-a");
     assert.equal(calls[0]?.principal.characterId, "character-a");
+    assert.deepEqual(calls[0]?.principal.allowedProjectIds, ["project-a"]);
     assert.deepEqual(calls[0]?.body.targets, [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }]);
     assert.deepEqual((bound.value as any).items[0].target, {
       kind: "project",
@@ -191,9 +192,9 @@ describe("Memory HTTP agent runtime binding policy", () => {
 
   // @test-value v1
   // kind = "security"
-  // claim = "Character Memory searchのproject scopeはbinding許可Projectへcanonicalizeされ、別Projectはdispatch前に拒否される"
+  // claim = "Character Memory searchのproject scopeはexactな絶対pathまたはIDだけを受理し、binding許可Projectへcanonicalizeする"
   // oracle = { type = "adr", ref = "ADR-024 Character tool input and actor-relative scope" }
-  // failure_mode = "caller project pathまたは未許可Projectがactor Characterとの複合scopeへ到達する"
+  // failure_mode = "相対path、unknown field、または未許可Projectがactor Characterとの複合scopeへ到達する"
   // scope = "memory-http-character-search-project-authority"
   // lifecycle = "permanent"
   // @end-test-value
@@ -239,6 +240,65 @@ describe("Memory HTTP agent runtime binding policy", () => {
     }, binding.bindingReference);
     assert.equal(denied.status, 422);
     assert.equal((denied.value as any).error.field, "scope");
+
+    const relativePath = await runtime.call("/v1/character_memory/search", {
+      schemaVersion: "withmate-character-context-v1",
+      query: "relative project",
+      scope: { scope: "project", project: { type: "path", path: "." } },
+    }, binding.bindingReference);
+    assert.equal(relativePath.status, 422);
+
+    const unknownProjectField = await runtime.call("/v1/character_memory/search", {
+      schemaVersion: "withmate-character-context-v1",
+      query: "project with extra field",
+      scope: { scope: "project", project: { type: "id", id: "project-a", characterId: "character-b" } },
+    }, binding.bindingReference);
+    assert.equal(unknownProjectField.status, 422);
+    assert.equal(calls.length, 1);
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "agent-facing file usageは集計値だけを公開し、entry previewを含むlargest detail optionをdispatch前に拒否する"
+  // oracle = { type = "adr", ref = "ADR-024 actor-relative Memory read authority" }
+  // failure_mode = "未許可Projectのentry titleまたはpreviewがlargestEntries経由でagentへ露出する"
+  // scope = "memory-http-file-usage-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("agent-facing file usageはlargest detailを受け付けない", async () => {
+    const registry = new AgentRuntimeBindingRegistry();
+    const binding = registry.issueOrReuse({
+      actorSessionId: "session-a",
+      providerId: "codex",
+      authoritySnapshot: { userId: "local-user", characterId: "character-a", allowedProjectIds: ["project-a"] },
+      operationGrants: getMemoryV6AgentRuntimeOperations(),
+    });
+    const calls: unknown[] = [];
+    const service = {
+      fileUsage(_principal: unknown, options: unknown) {
+        calls.push(options);
+        return {
+          schemaVersion: "withmate-memory-v1",
+          quotaBytes: 10,
+          usedBytes: 0,
+          physicalBytes: 0,
+          pendingDeleteBytes: 0,
+          availableBytes: 10,
+          objectCount: 0,
+          pendingDeleteCount: 0,
+          quotaExceeded: false,
+        };
+      },
+    } as unknown as MemoryV6Service;
+    const runtime = await startServer({ registry, service });
+
+    const summary = await runtime.callRead("/v1/file_usage", binding.bindingReference);
+    assert.equal(summary.status, 200);
+    assert.deepEqual(calls, [{}]);
+
+    const largest = await runtime.callRead("/v1/file_usage?largest=1&limit=10", binding.bindingReference);
+    assert.equal(largest.status, 422);
+    assert.equal((largest.value as any).error.effect, "none");
     assert.equal(calls.length, 1);
   });
 
@@ -508,6 +568,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
     characterContextService?: CharacterContextApplicationService;
   }): Promise<{
     call(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
+    callRead(path: string, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     callFallback(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     callOperator(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     callOperatorFallback(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
@@ -550,6 +611,11 @@ describe("Memory HTTP agent runtime binding policy", () => {
       call: (path, body, bindingReference) => callWithMateMemoryRuntime(
         connection,
         { method: "POST", path, body },
+        { signal: new AbortController().signal, bindingReference, turnCapability: turn.capability },
+      ),
+      callRead: (path, bindingReference) => callWithMateMemoryRuntime(
+        connection,
+        { method: "GET", path, body: {} },
         { signal: new AbortController().signal, bindingReference, turnCapability: turn.capability },
       ),
       callFallback: (path, body, bindingReference) => callWithMateMemoryRuntime(

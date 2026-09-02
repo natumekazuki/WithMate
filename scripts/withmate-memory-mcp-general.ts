@@ -274,14 +274,6 @@ const fileUsageSuccessSchema = z.object({
   objectCount: z.number().int().nonnegative(),
   pendingDeleteCount: z.number().int().nonnegative(),
   quotaExceeded: z.boolean(),
-  largestEntries: z.array(z.object({
-    entryId: z.string(),
-    title: z.string(),
-    preview: z.string(),
-    totalFileBytes: z.number().int().nonnegative(),
-    fileCount: z.number().int().nonnegative(),
-    updatedAt: z.string(),
-  }).strict()).optional(),
 }).strict();
 
 const appendFileInputSchema = z.object({
@@ -439,18 +431,7 @@ export function registerGeneralMemoryMcpTools(
     method: "POST", path: "/v1/export_files", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: "write",
   }));
 
-  register("memory.file_usage", z.object({
-    largest: z.boolean().optional(),
-    limit: z.number().int().min(1).max(MEMORY_RESULT_LIMIT_MAX).optional(),
-  }).strict(), createMemoryToolOutputSchema(fileUsageSuccessSchema, ["schemaVersion", "quotaBytes", "usedBytes", "physicalBytes", "pendingDeleteBytes", "availableBytes", "objectCount", "pendingDeleteCount", "quotaExceeded"]), (input) => {
-    const query = new URLSearchParams();
-    if (input.largest === true) {
-      query.set("largest", "1");
-    }
-    if (input.limit !== undefined) {
-      query.set("limit", String(input.limit));
-    }
-    const suffix = query.toString();
-    return { method: "GET", path: `/v1/file_usage${suffix ? `?${suffix}` : ""}`, body: {}, operationKind: "read" };
-  });
+  register("memory.file_usage", z.object({}).strict(), createMemoryToolOutputSchema(fileUsageSuccessSchema, ["schemaVersion", "quotaBytes", "usedBytes", "physicalBytes", "pendingDeleteBytes", "availableBytes", "objectCount", "pendingDeleteCount", "quotaExceeded"]), () => ({
+    method: "GET", path: "/v1/file_usage", body: {}, operationKind: "read",
+  }));
 }
