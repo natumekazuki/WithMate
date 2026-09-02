@@ -1263,7 +1263,15 @@ describe("HomeRightPane", () => {
     assertNoMateTalkChatSurface(characterHtml);
   });
 
-  it("一括復元操作を上部へ常設し、対象なし・処理中のdisabledと対象別failureを投影する", () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Restore Sessions操作は復元対象の有無と処理中状態をdisabledおよびaria-busyへ投影する"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#復元操作" }
+  // failure_mode = "対象がない状態または復元処理中に操作でき、重複した復元要求が発生する"
+  // scope = "HomeRightPane Restore Sessions control"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("一括復元操作を上部へ常設し、対象なし・処理中をdisabledにする", () => {
     const emptyHtml = renderHomeRightPane("monitor");
     const enabledHtml = renderHomeRightPane("monitor", undefined, true, "", ["session-a", "session-b"]);
     const pendingHtml = renderHomeRightPane(
@@ -1273,7 +1281,6 @@ describe("HomeRightPane", () => {
       "",
       ["session-a", "session-b"],
       true,
-      "1件のSessionを開きました。 復元できなかったSession: session-b（削除済み）",
     );
 
     assert.match(emptyHtml, /Restore Sessions/);
@@ -1281,8 +1288,34 @@ describe("HomeRightPane", () => {
     assert.match(enabledHtml, /Restore Sessions/);
     assert.doesNotMatch(enabledHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
     assert.match(pendingHtml, /class="restore-session-windows-button"[^>]*disabled=""[^>]*aria-busy="true"/);
-    assert.match(pendingHtml, /session-b（削除済み）/);
-    assert.match(pendingHtml, /role="status" aria-live="polite"/);
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "空の復元feedbackではstatus要素を描画せず、失敗feedbackではpoliteなlive statusとして対象と理由を描画する"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#失敗時の扱い" }
+  // failure_mode = "正常終了後も空または成功文のstatusが残るか、復元失敗時に対象と理由を支援技術へ通知できない"
+  // scope = "HomeRightPane session restore feedback rendering"
+  // lifecycle = "permanent"
+  // distinction = "builderの文字列変換ではなく、空文字によるDOM非表示と失敗文字列のlive status描画を検証する"
+  // @end-test-value
+  it("復元feedbackは正常系でstatusを描画せず、失敗時だけlive statusを描画する", () => {
+    const successHtml = renderHomeRightPane("monitor", undefined, true, "", ["session-a"]);
+    const failureHtml = renderHomeRightPane(
+      "monitor",
+      undefined,
+      true,
+      "",
+      ["session-b"],
+      false,
+      "復元できなかったSession: session-b（削除済み）",
+    );
+
+    assert.doesNotMatch(successHtml, /session-window-restore-feedback/);
+    assert.doesNotMatch(successHtml, /role="status"/);
+    assert.match(failureHtml, /session-b（削除済み）/);
+    assert.match(failureHtml, /role="status" aria-live="polite"/);
+    assert.doesNotMatch(failureHtml, /件のSessionを開きました/);
   });
 
   it("Character icon 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {

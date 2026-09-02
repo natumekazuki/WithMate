@@ -15,15 +15,11 @@ export function selectPendingSessionWindowRestoreIds(
 }
 
 export function buildSessionWindowRestoreFeedback(result: SessionWindowRestoreResult): string {
-  if (result.requestedSessionIds.length === 0) {
-    return "復元できる前回のSessionはありません。";
-  }
-  const opened = `${result.openedSessionIds.length}件のSessionを開きました。`;
   if (result.failures.length === 0) {
-    return opened;
+    return "";
   }
   const failedTargets = result.failures
     .map(({ sessionId, reason }) => `${sessionId}（${FAILURE_LABELS[reason]}）`)
     .join("、");
-  return `${opened} 復元できなかったSession: ${failedTargets}`;
+  return `復元できなかったSession: ${failedTargets}`;
 }
