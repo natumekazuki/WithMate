@@ -19,7 +19,6 @@ import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { MemoryV6Diagnostics } from "../../src/memory-v6/memory-diagnostics-state.js";
-import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../../src/memory-v6/provider-instruction-sample.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
 
@@ -61,7 +60,6 @@ describe("HomeSettingsContent", () => {
     providerSettingRows?: typeof providerSettingRows;
     providerCatalogLoaded?: boolean;
     memoryV6Diagnostics?: MemoryV6Diagnostics | null;
-    onCopyMemoryProviderInstructionSample?: () => void;
   };
 
   const buildSettingsContent = (params?: RenderSettingsParams) => HomeSettingsContent({
@@ -96,7 +94,6 @@ describe("HomeSettingsContent", () => {
     onOpenMemoryV6Review: noOp,
     onInstallMemoryV6CliShim: noOp,
     onUninstallMemoryV6CliShim: noOp,
-    onCopyMemoryProviderInstructionSample: params?.onCopyMemoryProviderInstructionSample ?? noOp,
     onDeleteSessionsLastActiveBefore: noOp,
     onSaveSettings: noOp,
   });
@@ -193,9 +190,9 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v1
   // kind = "security"
-  // claim = "Memory diagnosticsはruntime selectorに必要なsafe metadataだけを表示し、secretまたは個人pathを表示しない"
-  // oracle = { type = "adr", ref = "ADR-023 diagnostics and security" }
-  // failure_mode = "Settings diagnosticsからcredential、userData、Skillまたはshimの個人pathが露出する"
+  // claim = "Memory diagnosticsはruntime、CLI Shim、Last Errorだけを表示し、managed Skillまたはprovider instructionを表示しない"
+  // oracle = { type = "adr", ref = "ADR-024 diagnostics projection" }
+  // failure_mode = "Settingsが廃止済みのMemory Skill同期状態またはprovider instruction copy導線を公開し続ける"
   // scope = "memory-runtime-diagnostics-projection"
   // lifecycle = "permanent"
   // @end-test-value
@@ -210,14 +207,6 @@ describe("HomeSettingsContent", () => {
           buildChannel: "installed",
           discoveryPublished: true,
         },
-        providers: [
-          { providerId: "codex", providerSupported: true },
-          { providerId: "custom", providerSupported: false },
-        ],
-        skillSync: [
-          { providerId: "codex", skillRootConfigured: true, status: "unchanged" },
-          { providerId: "custom", skillRootConfigured: true, status: "skipped-collision" },
-        ],
         cliShim: {
           platform: "darwin",
           commandName: "withmate-memory",
@@ -235,98 +224,16 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("running"));
     assert.ok(!html.includes("Active Bindings"));
     assert.ok(!html.includes("codex: env / custom: unsupported"));
-    assert.ok(html.includes("codex: unchanged / custom: skipped-collision"));
+    assert.ok(!html.includes("Managed Skill"));
     assert.ok(html.includes("CLI Shim"));
     assert.ok(html.includes("PATH ready"));
     assert.ok(html.includes("memory-v6.runtime-api.start-failed"));
-    assert.ok(html.includes("Provider Instruction Sample"));
-    assert.ok(html.includes("Copy Sample"));
-    assert.ok(html.includes("WithMate Memory Usage"));
-    assert.ok(html.includes("Do not read or write WithMate database files directly."));
+    assert.ok(!html.includes("Provider Instruction Sample"));
+    assert.ok(!html.includes("Copy Sample"));
     assert.ok(!html.includes("apiSecret"));
     assert.ok(!html.includes("bindingReference"));
     assert.ok(!html.includes("C:/"));
     assert.ok(!html.includes("/Users/"));
-    assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_BINDING_REFERENCE"));
-    assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_API_SECRET"));
-    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /binding reference/i);
-    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /api secret/i);
-    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /discovery file path/i);
-    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /internal header/i);
-    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /local runtime identifier/i);
-  });
-
-  // @test-value v1
-  // kind = "regression"
-  // claim = "safe diagnostics schemaを表示中でもProvider Instruction Sampleのcopy操作が維持される"
-  // oracle = { type = "contract", ref = "Settings copy action" }
-  // failure_mode = "diagnostics projection変更によりcopy buttonが描画されないかhandlerへ到達しない"
-  // scope = "settings-provider-instruction-copy"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("Provider Instruction Sample の copy button はsafe diagnostics表示中もhandlerを呼ぶ", async () => {
-    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
-    const previousWindow = globalThis.window;
-    const previousDocument = globalThis.document;
-    const previousHTMLElement = globalThis.HTMLElement;
-
-    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
-    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
-
-    const rootElement = dom.window.document.getElementById("root");
-    assert.ok(rootElement);
-    let root: Root | null = null;
-    let copyCount = 0;
-
-    try {
-      await act(async () => {
-        root = createRoot(rootElement);
-        root.render(buildSettingsContent({
-          onCopyMemoryProviderInstructionSample: () => {
-            copyCount += 1;
-          },
-          memoryV6Diagnostics: {
-            generatedAt: "2026-06-27T00:00:00.000Z",
-            runtime: {
-              status: "running",
-              applicationInstanceId: "11111111-1111-4111-8111-111111111111",
-              runtimeGenerationId: "22222222-2222-4222-8222-222222222222",
-              buildChannel: "development",
-              discoveryPublished: true,
-            },
-            providers: [],
-            skillSync: [],
-            cliShim: {
-              platform: "win32",
-              commandName: "withmate-memory",
-              supported: false,
-              status: "managed-by-installer",
-              pathContainsShimDirectory: true,
-            },
-            lastErrors: [],
-          },
-        }));
-      });
-
-      const copyButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
-        button.textContent?.trim() === "Copy Sample"
-      );
-      assert.ok(copyButton);
-
-      await act(async () => {
-        copyButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-      });
-
-      assert.equal(copyCount, 1);
-    } finally {
-      await act(async () => {
-        root?.unmount();
-      });
-      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
-      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
-      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
-    }
   });
 
   it("provider row が 0 件でも Coding Agent Providers section と empty state を表示する", () => {

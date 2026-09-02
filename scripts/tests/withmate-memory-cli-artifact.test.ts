@@ -11,16 +11,11 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import {
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
 } from "../../src/agent-runtime/agent-runtime-binding-contract.js";
-import {
-  ManagedMemorySkillService,
-  WITHMATE_MEMORY_SKILL_NAME,
-} from "../../src-electron/managed-memory-skill-service.js";
 import {
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
@@ -65,466 +60,21 @@ async function initializeIsolatedMcpServer(helperPath: string, cwd: string): Pro
   }
 }
 
-async function createBundle(): Promise<string> {
-  const bundlePath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-bundle-"));
-  await writeFile(
-    path.join(bundlePath, "SKILL.md"),
-    [
-      "---",
-      `name: ${WITHMATE_MEMORY_SKILL_NAME}`,
-      "description: bundle",
-      "---",
-      "",
-      "# WithMate Memory",
-      "",
-    ].join("\n"),
-    "utf8",
-  );
-  await mkdir(path.join(bundlePath, "bin"), { recursive: true });
-  await mkdir(path.join(bundlePath, "reference"), { recursive: true });
-  await writeFile(path.join(bundlePath, "bin", "withmate-memory.mjs"), "console.log('bundle helper');\n", "utf8");
-  await writeFile(path.join(bundlePath, "reference", "cli.md"), "# CLI\n", "utf8");
-  return bundlePath;
-}
-
-async function pathExists(targetPath: string): Promise<boolean> {
-  try {
-    await access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function normalizeLineEndings(value: string): string {
   return value.replace(/\r\n/g, "\n");
 }
 
-describe("ManagedMemorySkillService", () => {
-  it("配布元Skill documentationをCodex配置先へ同一内容で同期する", async () => {
-    const bundlePath = path.resolve("resources", "skills", WITHMATE_MEMORY_SKILL_NAME);
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    try {
-      const settings = createDefaultAppSettings();
-      settings.codingProviderSettings.codex = {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: rootPath,
-        skillRelativePath: "skills",
-        instructionRelativePath: "",
-      };
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => settings,
-        getAppVersion: () => "6.3.19-test",
-        isPackagedApp: () => true,
-        platform: "win32",
-      });
-
-      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
-      const installedPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME);
-      for (const relativePath of [
-        "SKILL.md",
-        path.join("reference", "character-context.md"),
-        path.join("reference", "cli.md"),
-      ]) {
-        assert.equal(
-          await readFile(path.join(installedPath, relativePath), "utf8"),
-          await readFile(path.join(bundlePath, relativePath), "utf8"),
-          `${relativePath} must match the distributed source`,
-        );
-      }
-      const marker = JSON.parse(await readFile(path.join(installedPath, ".withmate-managed-skill.json"), "utf8"));
-      assert.equal(marker.bundleVersion, "6.3.19-test");
-      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "unchanged");
-    } finally {
-      await rm(rootPath, { recursive: true, force: true });
-    }
-  });
-
-  it("設定済み provider skill root に Skill documentation と managed marker を install する", async () => {
-    const bundlePath = await createBundle();
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    try {
-      const settings = createDefaultAppSettings();
-      settings.codingProviderSettings.codex = {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: rootPath,
-        skillRelativePath: ".codex/skills",
-        instructionRelativePath: "",
-      };
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => settings,
-        getAppVersion: () => "5.0.0-test",
-        isPackagedApp: () => true,
-        platform: "win32",
-      });
-
-      const results = await service.syncConfiguredProviderSkills();
-      const result = results.find((entry) => entry.providerId === "codex");
-      const skillPath = path.join(rootPath, ".codex", "skills", WITHMATE_MEMORY_SKILL_NAME);
-
-      assert.equal(result?.status, "installed");
-      assert.equal(await readFile(path.join(skillPath, "SKILL.md"), "utf8"), await readFile(path.join(bundlePath, "SKILL.md"), "utf8"));
-      assert.match(await readFile(path.join(skillPath, ".withmate-managed-skill.json"), "utf8"), /"managedBy": "WithMate"/);
-      assert.equal(await pathExists(path.join(skillPath, "bin")), false);
-      assert.equal(await readFile(path.join(skillPath, "reference", "cli.md"), "utf8"), "# CLI\n");
-      const marker = JSON.parse(await readFile(path.join(skillPath, ".withmate-managed-skill.json"), "utf8"));
-      assert.equal(marker.bundleVersion, "5.0.0-test");
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-      await rm(rootPath, { recursive: true, force: true });
-    }
-  });
-
-  it("同じ bundleVersion の managed skill は unchanged として扱う", async () => {
-    const bundlePath = await createBundle();
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    try {
-      const settings = createDefaultAppSettings();
-      settings.codingProviderSettings.codex = {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: rootPath,
-        skillRelativePath: "skills",
-        instructionRelativePath: "",
-      };
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => settings,
-        getAppVersion: () => "5.0.0-test",
-        isPackagedApp: () => true,
-        platform: "win32",
-      });
-
-      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
-      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "unchanged");
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-      await rm(rootPath, { recursive: true, force: true });
-    }
-  });
-
-  it("managed marker が残っていても installed skill 本体が改変されていれば修復更新する", async () => {
-    const bundlePath = await createBundle();
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    try {
-      const settings = createDefaultAppSettings();
-      settings.codingProviderSettings.codex = {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: rootPath,
-        skillRelativePath: "skills",
-        instructionRelativePath: "",
-      };
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => settings,
-        getAppVersion: () => "5.0.0-test",
-        isPackagedApp: () => true,
-        platform: "win32",
-      });
-
-      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
-      const installedSkillPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME, "SKILL.md");
-      await writeFile(installedSkillPath, "broken installed skill\n", "utf8");
-
-      const result = (await service.syncConfiguredProviderSkills())[0];
-
-      assert.equal(result?.status, "updated");
-      assert.equal(await readFile(installedSkillPath, "utf8"), await readFile(path.join(bundlePath, "SKILL.md"), "utf8"));
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-      await rm(rootPath, { recursive: true, force: true });
-    }
-  });
-
-  it("古い managed skill に残った同梱 helper は次回 sync で除去する", async () => {
-    const bundlePath = await createBundle();
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    try {
-      const settings = createDefaultAppSettings();
-      settings.codingProviderSettings.codex = {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: rootPath,
-        skillRelativePath: "skills",
-        instructionRelativePath: "",
-      };
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => settings,
-        getAppVersion: () => "5.0.0-test",
-        isPackagedApp: () => true,
-        platform: "win32",
-      });
-
-      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
-      const skillPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME);
-      await mkdir(path.join(skillPath, "bin"), { recursive: true });
-      await writeFile(path.join(skillPath, "bin", "withmate-memory.mjs"), "old helper\n", "utf8");
-
-      const result = (await service.syncConfiguredProviderSkills())[0];
-
-      assert.equal(result?.status, "updated");
-      assert.equal(await pathExists(path.join(skillPath, "bin")), false);
-      assert.equal(await readFile(path.join(skillPath, "SKILL.md"), "utf8"), await readFile(path.join(bundlePath, "SKILL.md"), "utf8"));
-      assert.equal(await readFile(path.join(skillPath, "reference", "cli.md"), "utf8"), "# CLI\n");
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-      await rm(rootPath, { recursive: true, force: true });
-    }
-  });
-
-  it("同じ app version でも bundle 内容が変われば managed skill を更新する", async () => {
-    const bundlePath = await createBundle();
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    try {
-      const settings = createDefaultAppSettings();
-      settings.codingProviderSettings.codex = {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: rootPath,
-        skillRelativePath: "skills",
-        instructionRelativePath: "",
-      };
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => settings,
-        getAppVersion: () => "5.0.0-test",
-        isPackagedApp: () => true,
-        platform: "win32",
-      });
-
-      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
-      await writeFile(path.join(bundlePath, "SKILL.md"), "updated bundle\n", "utf8");
-
-      const result = (await service.syncConfiguredProviderSkills())[0];
-      const installedSkill = await readFile(
-        path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME, "SKILL.md"),
-        "utf8",
-      );
-
-      assert.equal(result?.status, "updated");
-      assert.equal(installedSkill, "updated bundle\n");
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-      await rm(rootPath, { recursive: true, force: true });
-    }
-  });
-
-  it("同じ app version でも reference 内容が変われば managed skill を更新する", async () => {
-    const bundlePath = await createBundle();
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    try {
-      const settings = createDefaultAppSettings();
-      settings.codingProviderSettings.codex = {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: rootPath,
-        skillRelativePath: "skills",
-        instructionRelativePath: "",
-      };
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => settings,
-        getAppVersion: () => "5.0.0-test",
-        isPackagedApp: () => true,
-        platform: "win32",
-      });
-
-      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
-      await writeFile(path.join(bundlePath, "reference", "cli.md"), "# Updated CLI\n", "utf8");
-
-      const result = (await service.syncConfiguredProviderSkills())[0];
-      const installedReference = await readFile(
-        path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME, "reference", "cli.md"),
-        "utf8",
-      );
-
-      assert.equal(result?.status, "updated");
-      assert.equal(installedReference, "# Updated CLI\n");
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-      await rm(rootPath, { recursive: true, force: true });
-    }
-  });
-
-  it("user-created 同名 skill は上書きせず collision として skip する", async () => {
-    const bundlePath = await createBundle();
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    try {
-      const skillRootPath = path.join(rootPath, "skills");
-      const userSkillPath = path.join(skillRootPath, WITHMATE_MEMORY_SKILL_NAME);
-      await mkdir(userSkillPath, { recursive: true });
-      await writeFile(path.join(userSkillPath, "SKILL.md"), "user skill", "utf8");
-
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => {
-          const settings = createDefaultAppSettings();
-          settings.codingProviderSettings.codex = {
-            enabled: true,
-            apiKey: "",
-            skillRootPath: rootPath,
-            skillRelativePath: "skills",
-            instructionRelativePath: "",
-          };
-          return settings;
-        },
-        getAppVersion: () => "5.0.0-test",
-        isPackagedApp: () => true,
-        platform: "win32",
-      });
-
-      const result = (await service.syncConfiguredProviderSkills())[0];
-
-      assert.equal(result?.status, "skipped-collision");
-      assert.equal(await readFile(path.join(userSkillPath, "SKILL.md"), "utf8"), "user skill");
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-      await rm(rootPath, { recursive: true, force: true });
-    }
-  });
-
-  it("同期を許可しない runtime では provider skill root を変更しない", async () => {
-    const bundlePath = await createBundle();
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    const directRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-direct-root-"));
-    try {
-      const settings = createDefaultAppSettings();
-      settings.codingProviderSettings.codex = {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: rootPath,
-        skillRelativePath: "skills",
-        instructionRelativePath: "",
-      };
-      const existingSkillPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME);
-      await mkdir(existingSkillPath, { recursive: true });
-      await writeFile(path.join(existingSkillPath, "sentinel.txt"), "keep", "utf8");
-      let appVersionReadCount = 0;
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => settings,
-        getAppVersion: () => {
-          appVersionReadCount += 1;
-          return "43.1.0-test";
-        },
-        isPackagedApp: () => false,
-        platform: "win32",
-      });
-
-      const configuredResult = (await service.syncConfiguredProviderSkills())[0];
-      const directResult = await service.syncProviderSkill("direct", directRootPath);
-
-      assert.equal(configuredResult?.status, "skipped-unpackaged");
-      assert.equal(directResult.status, "skipped-unpackaged");
-      assert.equal(await readFile(path.join(existingSkillPath, "sentinel.txt"), "utf8"), "keep");
-      assert.equal(await pathExists(path.join(existingSkillPath, ".withmate-managed-skill.json")), false);
-      assert.equal(await pathExists(path.join(directRootPath, WITHMATE_MEMORY_SKILL_NAME)), false);
-      assert.equal(appVersionReadCount, 0);
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-      await rm(rootPath, { recursive: true, force: true });
-      await rm(directRootPath, { recursive: true, force: true });
-    }
-  });
-
-  it("skill root 未設定 provider は skipped-unconfigured にする", async () => {
-    const bundlePath = await createBundle();
-    try {
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => createDefaultAppSettings(),
-        getAppVersion: () => "5.0.0-test",
-        isPackagedApp: () => true,
-        platform: "win32",
-      });
-
-      const result = (await service.syncConfiguredProviderSkills())[0];
-
-      assert.equal(result?.status, "skipped-unconfigured");
-      assert.equal(result?.skillPath, null);
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-    }
-  });
-
-  it("macOS では PATH shim 未整備の fallback として bundled helper を同期する", async () => {
-    const bundlePath = await createBundle();
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    try {
-      const settings = createDefaultAppSettings();
-      settings.codingProviderSettings.codex = {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: rootPath,
-        skillRelativePath: "skills",
-        instructionRelativePath: "",
-      };
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => settings,
-        getAppVersion: () => "5.0.0-test",
-        isPackagedApp: () => true,
-        platform: "darwin",
-      });
-
-      const result = (await service.syncConfiguredProviderSkills())[0];
-      const skillPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME);
-
-      assert.equal(result?.status, "installed");
-      assert.equal(await readFile(path.join(skillPath, "SKILL.md"), "utf8"), await readFile(path.join(bundlePath, "SKILL.md"), "utf8"));
-      assert.equal(await readFile(path.join(skillPath, "bin", "withmate-memory.mjs"), "utf8"), "console.log('bundle helper');\n");
-      assert.equal(await readFile(path.join(skillPath, "reference", "cli.md"), "utf8"), "# CLI\n");
-      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "unchanged");
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-      await rm(rootPath, { recursive: true, force: true });
-    }
-  });
-
-  it("macOS でも PATH shim が利用可能なら Skill documentation と managed marker を同期する", async () => {
-    const bundlePath = await createBundle();
-    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
-    try {
-      const settings = createDefaultAppSettings();
-      settings.codingProviderSettings.codex = {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: rootPath,
-        skillRelativePath: "skills",
-        instructionRelativePath: "",
-      };
-      const service = new ManagedMemorySkillService({
-        bundledSkillPath: bundlePath,
-        getAppSettings: () => settings,
-        getAppVersion: () => "5.0.0-test",
-        isPackagedApp: () => true,
-        platform: "darwin",
-        shouldSyncSkillMarkdownOnly: () => true,
-      });
-
-      const result = (await service.syncConfiguredProviderSkills())[0];
-      const skillPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME);
-
-      assert.equal(result?.status, "installed");
-      assert.equal(await pathExists(path.join(skillPath, "SKILL.md")), true);
-      assert.equal(await pathExists(path.join(skillPath, "bin", "withmate-memory.mjs")), false);
-      assert.equal(await readFile(path.join(skillPath, "reference", "cli.md"), "utf8"), "# CLI\n");
-    } finally {
-      await rm(bundlePath, { recursive: true, force: true });
-      await rm(rootPath, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("withmate-memory bundled helper", () => {
   const helperPath = path.resolve("resources", "cli", "withmate-memory.mjs");
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "canonical sourceから再生成したCLI artifactはrepositoryに同梱するartifactと一致する"
+  // oracle = { type = "adr", ref = "ADR-024 canonical CLI artifact path" }
+  // failure_mode = "配布artifactがcanonical sourceから乖離し、runtimeと異なる契約を公開する"
+  // scope = "bundled-memory-cli-artifact"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("canonical CLI source から生成された current artifact である", async () => {
     const outputDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-build-"));
     try {
@@ -538,6 +88,14 @@ describe("withmate-memory bundled helper", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "生成CLI artifactはrepository依存のない配布先でもschemaとMCP initializeを提供する"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI boundary" }
+  // failure_mode = "配布artifactがnode_modulesまたはrepository sourceへ暗黙依存して単体起動できない"
+  // scope = "bundled-memory-cli-artifact"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("依存のないisolated directoryでも生成CLIを起動できる", async () => {
     const outputDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-isolated-"));
     try {
@@ -762,6 +320,14 @@ it("schema は helper 単体で capability を返す", async () => {
     assert(schema.forgetReasons.includes("user_request"));
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "standalone CLIは標準入力からrequest bodyを受け取りcanonical validatorへ渡す"
+  // oracle = { type = "contract", ref = "withmate-memory CLI request input contract" }
+  // failure_mode = "配布CLIで--stdin入力だけが欠落または別形式へ変換される"
+  // scope = "bundled-memory-cli-input"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("--stdin は standalone helper の process stdin から request body を読む", () => {
     const request = JSON.stringify({
       schemaVersion: "withmate-memory-v1",
@@ -792,6 +358,14 @@ it("schema は helper 単体で capability を返す", async () => {
     assert.equal(response.value.cursor, "cursor-a");
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "standalone CLIはappend requestのdomain validation errorをcanonical codeとfieldで返す"
+  // oracle = { type = "contract", ref = "withmate-memory CLI validation contract" }
+  // failure_mode = "配布CLIのvalidatorがinvalid kindを受理するか非canonical errorへ変換する"
+  // scope = "bundled-memory-cli-validation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("validate は helper 単体で request を検証する", async () => {
     const request = JSON.stringify({
       schemaVersion: "withmate-memory-v1",
@@ -815,6 +389,14 @@ it("schema は helper 単体で capability を返す", async () => {
     assert.equal(error.field, "kind");
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "standalone CLI validatorはruntimeと同じunknown field、target、required field制約を拒否する"
+  // oracle = { type = "contract", ref = "withmate-memory request validation contract" }
+  // failure_mode = "CLIとruntimeのvalidationが分裂し、CLI経由だけ不正requestを受理する"
+  // scope = "bundled-memory-cli-validation-parity"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("validate は helper 側でも runtime validation と同じ失敗ケースを拒否する", async () => {
     const invalidCases = [
       {
@@ -922,6 +504,14 @@ it("schema は helper 単体で capability を返す", async () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "standalone CLI validatorはappend requestをruntimeと同じcanonical representationへ正規化する"
+  // oracle = { type = "contract", ref = "withmate-memory request normalization contract" }
+  // failure_mode = "CLIとruntimeでproject、tag、supersedesの正規化結果が分裂する"
+  // scope = "bundled-memory-cli-validation-parity"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("validate は helper 側でも append request を正規化する", async () => {
     const request = JSON.stringify({
       schemaVersion: "withmate-memory-v1",
@@ -950,6 +540,14 @@ it("schema は helper 単体で capability を返す", async () => {
     assert.deepEqual(response.value.supersedes, ["entry-a"]);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "standalone CLI validatorはprotected object metadataを含むappend requestを保持して受理する"
+  // oracle = { type = "contract", ref = "withmate-memory protected object contract" }
+  // failure_mode = "CLI artifact移設によりprotected object付きappendだけが拒否または欠落する"
+  // scope = "bundled-memory-cli-protected-object"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("validate は helper 側でも protected object 付き append を受け付ける", async () => {
     const filePath = path.resolve("artifact.bin");
     const request = JSON.stringify({
@@ -1008,6 +606,14 @@ it("read shorthandはhelperでもrequest bodyを組み立てcanonical unavailabl
     assert.equal(JSON.parse(stdout).error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
   });
 
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "配布CLIのusage errorはPATHから呼ぶoperator command形式だけを案内する"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI boundary" }
+  // failure_mode = "移設前の内部artifact pathがusageへ露出し、利用者を廃止済み経路へ誘導する"
+  // scope = "bundled-memory-cli-usage"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("usage error は PATH CLI command 形式を案内する", async () => {
     const { stdout } = await execFileAsync(process.execPath, [helperPath, "nope"], {
       env: process.env,
@@ -1023,3 +629,4 @@ it("read shorthandはhelperでもrequest bodyを組み立てcanonical unavailabl
     assert.doesNotMatch(error.message, /node bin\/withmate-memory\.mjs/);
   });
 });
+

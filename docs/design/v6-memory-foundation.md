@@ -49,7 +49,6 @@ foundationでは次を扱わない。
 - Mate Profile / Growthの復活
 - Character definitionの自動更新
 - Character Stream / Monologue連携
-- MCP entrypoint
 - vector DB / embedding model download
 - Memory Management Window
 - cloud sync
@@ -61,9 +60,8 @@ foundationでは次を扱わない。
 ## Architecture Summary
 
 ```text
-Global Memory Skill
-  -> withmate-memory CLI
-    -> localhost Memory API
+Provider-common Memory MCP / operator CLI
+  -> localhost Memory API
       -> Explicit Target Resolver
       -> Permission Gate
       -> Memory Application Service
@@ -300,7 +298,7 @@ generic hard delete、archive、purge、irreversible redactionは別操作とし
 
 全request / responseはversionを持つ。
 response shapeは操作ごとに自然な形にし、統一のためだけの共通envelopeは強制しない。
-LLM agentはMemory Skill内のCLI reference / usage guideで各commandの出力shapeを読む前提とする。
+LLM agent向けのcommandと入出力shapeはMCP `tools/list`を正本とする。operator CLIの操作手順はrunbookで管理する。
 error responseは共通envelopeよりもmachine-readable `code`、人間向け`message`、必要に応じた`field`を優先する。
 
 ### `memory.search`
@@ -866,23 +864,14 @@ forgetは解決済みtargetを必須とし、target外entry IDは存在確認に
 
 search監査は件数・latency・strategy程度に抑え、private query全文の常時保存を避ける。
 
-## Skill Distribution
+## Agent InterfaceとCLI Distribution
 
-- Skillはglobal provider skill rootへ配置する。
-- current実装では、packaged appだけがSettingsで解決できるprovider skill rootへ起動時と設定保存後に`withmate-memory`を同期する。source checkoutからの開発起動はglobal provider skill rootを変更せず、provider skill root未設定時もskipする。
-- WithMateが管理する場合はmanaged marker / versionを持つ。current実装では`.withmate-managed-skill.json`を持つ`withmate-memory`だけをapp version単位で更新する。
-- user-created同名Skillを無断上書きしない。
-- packaged CLI pathまたはshimをSkillが利用できるようにする。packaged CLI helperはbuild時に`scripts/withmate-memory.ts`から生成し、canonical CLIと別実装として保守しない。current実装ではWindowsのproviderへ同期するmanaged Skillは`SKILL.md`、`reference/`、managed markerを持ち、`bin/`は省略してinstalled app側のpackaged resourceをPATH shim経由で呼ぶ。Windowsではinstall rootの`withmate-memory.cmd`に加え、user PATH既定の`Microsoft\WindowsApps\withmate-memory.cmd` aliasをinstallerが作成する。installerはuser `Path` registry値を直接編集しない。macOS / LinuxではSettings > Diagnosticsから`~/.local/bin/withmate-memory` shimをinstall / uninstallできる。`~/.local/bin`がapp processの`PATH`に含まれてshimがusableな場合も、providerへ同期するmanaged Skillは`SKILL.md`、`reference/`、managed markerを持ち、`bin/`だけを省略する。
-- Skill updateとapp versionの互換範囲を定義する。
-- Skill本文はCLI command、JSON schema、error recovery、when-to-use / when-not-to-useを説明する。
-- CLIそのもののreferenceはsource bundleの`reference/`配下に残し、すべてのmanaged Skillへ同期する。`SKILL.md`は基本のCLI利用と判断基準を持ち、完全なrequest / response shape、file operation、error recoveryは`reference/`で補う。macOS / Linuxでshim未導入または`PATH`外の場合は`bin/`も同期対象に含め、`node bin/withmate-memory.mjs` fallbackを維持する。
-- Skill本体はMemoryを使うタイミング、search / get / append / forget / tagsの判断基準、inactive entryの扱いを説明する。
-- Skill本文やreferenceにはruntime secret、runtime discovery file pathを記載しない。
-- Settings Diagnosticsは、必要なproviderのuser-level instruction fileへ手動で貼り付けるためのprovider instruction sampleを表示し、clipboard copyできる。
-- WithMateは初期agent-previewではprovider instruction fileを自動編集しない。repo root `AGENTS.md`、Codex home `AGENTS.md`、GitHub Copilot CLIのglobal instruction fileを丸ごと上書きせず、managed block同期も初期対象にしない。
-- provider instruction sampleは詳細CLI仕様ではなく、WithMate Memory Skillを使うべきトリガーとhigh-level policyだけを持つ。
-- sampleにはDB直読み禁止、Memory CLI / Skill経由の原則、append / forgetを検討する自然言語トリガーを短く書く。
-- sampleにはruntime secret、discovery file path、internal header / env、local runtime identifierを書かない。
+- Agent向けMemory contractはprovider共通MCPのinitialize instructionsと`tools/list`が所有する。WithMateは`withmate-memory` Skillを新規配布せず、起動、upgrade、Settings操作でprovider側の既存Skill directoryを削除、更新、検査しない。
+- CLI/MCP artifactはbuild時に`scripts/withmate-memory.ts`から生成し、repositoryでは`resources/cli/withmate-memory.mjs`をcanonical pathとする。生成artifactをcanonical CLIと別実装として保守しない。
+- Windowsではinstall rootの`withmate-memory.cmd`と`Microsoft\WindowsApps\withmate-memory.cmd` aliasをinstallerが作成する。installerはuser `Path` registry値を直接編集しない。
+- macOS / LinuxではSettings > Diagnosticsから`~/.local/bin/withmate-memory` shimをinstall / uninstallできる。shimが未導入または`PATH`外でもprovider Skill directoryへCLIを同期しない。
+- operator CLIは明示target、operator credential、接続先selectorを扱える。agent-bound CLI fallbackはMCPのinitializeと`tools/list`取得後のtransport availability failureだけで使い、bound runtime、MCP credential、actor-relative schemaを維持する。
+- WithMateはMemory運用方針、reflection、CLI fallback手順をprovider instruction fileやsystem promptへ追加しない。
 
 ## UI Policy
 
@@ -891,10 +880,10 @@ foundationではMemory Management Windowを戻さない。
 最小UI:
 
 - Settings DiagnosticsにMemory API状態を表示する。current実装ではruntime APIのrunning / stopped / failed、application instance、Memory runtime generation、build channel、discovery publish状態だけをread-onlyで返し、endpoint、DB path、discovery file path、secret有無は投影しない。
-- global Skill install状態を表示する。current実装では直近managed Skill sync結果をproviderごとに表示し、unpackaged / collision / failed / unconfiguredを区別する。
-- last error summaryを表示する。current実装ではruntime起動/停止とSkill sync失敗の直近errorを最大3件保持する。
+- CLI shimのsupport、install、PATH状態を表示する。
+- last error summaryを表示する。current実装ではruntime起動/停止などの直近errorを最大3件保持する。
 - runtime API secret、discovery documentのsecret値はdiagnostics stateへ含めない。UIにはsecret値を表示しない。
-- Settings Diagnosticsにprovider instruction sampleを表示し、clipboard copy導線を置く。このsampleはユーザーが必要なprovider instruction fileへ手動で貼り付けるための補助であり、WithMateはinstruction fileを自動同期しない。
+- diagnosticsは`generatedAt`、`runtime`、`cliShim`、`lastErrors`の4 fieldだけを持ち、provider別状態、managed Skill同期状態、provider instruction sampleを投影しない。
 
 current実装では、Settings Diagnosticsから`Memory Review` windowを開き、active entryの検索、full body閲覧、agent-facing APIとは分離したapp-internal IPC経由のforgetを行える。
 Review UIはruntime API secret、discovery documentのsecret値をrendererへ渡さず、main process側のReview serviceからV6 Memory storageを扱う。
@@ -932,7 +921,7 @@ V6 DB migration boundaryは`docs/design/v6-database-foundation.md`を正本に�
 5. localhost server - 完了
 6. CLI / runtime discovery - 完了
 7. app起動配線 / discovery publish / app-internal API guard - 完了
-8. global Skill install / update - 完了
+8. provider共通MCP / operator CLI distribution - 完了
 9. diagnostics - 完了
 10. Memory Review UI - 完了
 11. optional retrieval enhancement
@@ -978,21 +967,19 @@ npm run build
 - app起動時のV6 DB bootstrap / runtime API discovery publish
 - discovery file cleanup
 - invalid V6 DB時にdiscovery fileを残さない
-- Settings DiagnosticsでMemory V6 runtime / managed Skill sync / last errorを表示する
+- Settings DiagnosticsでMemory V6 runtime / CLI shim / last errorを表示する
 - Memory V6 diagnostics stateにruntime API secretを含めない
 - `current` target、`--session-project`、`memory.resolve_context`を拒否する
 - Codex / Copilot adapterがMemory bindingなしでprovider client / session cacheを再利用する
-- user-created同名`withmate-memory` Skillを上書きせずcollisionとしてskipする
-- source checkoutからの開発起動ではmanaged Skillを新規作成も更新もしない
+- 起動、upgrade、Settings操作でprovider側の`withmate-memory` Skill directoryへアクセスしない
 - Settings DiagnosticsからMemory Review windowを開き、active entryの検索、full body閲覧、forgetを実行できる
-- Settings Diagnosticsでprovider instruction sampleを確認し、clipboardへcopyできる
 
 手動smoke gate:
 
-- Settings DiagnosticsでMemory V6 runtime、managed Skill sync、latest error summaryを確認する。
+- Settings DiagnosticsでMemory V6 runtime、CLI shim、latest error summaryを確認する。
 - Codex / Copilot sessionで`withmate-memory` CLIが明示project path / project ID / Character ID targetへ接続できることを確認する。
 - stale thread retry相当のinternal retry後に通常turnが継続し、Memory CLI利用が壊れないことを確認する。
-- user-created同名Skillがあるprovider rootでmanaged Skill syncが`skipped-collision`になり、既存Skillが上書きされないことを確認する。
+- provider rootに既存`withmate-memory` Skillがあっても、起動とSettings保存で内容とtimestampが変わらないことを確認する。
 
 ## Open Questions
 

@@ -5,7 +5,6 @@ import {
 } from "../provider-settings-state.js";
 import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
 import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
-import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../memory-v6/provider-instruction-sample.js";
 import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
 import {
   getMemoryFileQuotaMegabytes,
@@ -14,15 +13,12 @@ import {
 } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
-  SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
   SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP,
   SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL,
   SETTINGS_LAUNCH_AT_LOGIN_LABEL,
-  SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
-  SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
   SETTINGS_MEMORY_FILE_QUOTA_HELP,
   SETTINGS_MEMORY_FILE_QUOTA_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
@@ -77,7 +73,6 @@ export type HomeSettingsContentProps = {
   onOpenMemoryV6Review: () => void;
   onInstallMemoryV6CliShim: () => void;
   onUninstallMemoryV6CliShim: () => void;
-  onCopyMemoryProviderInstructionSample: () => void;
   onDeleteSessionsLastActiveBefore: () => void;
   onSaveSettings: () => void;
 };
@@ -140,7 +135,6 @@ export function HomeSettingsContent({
   onOpenMemoryV6Review,
   onInstallMemoryV6CliShim,
   onUninstallMemoryV6CliShim,
-  onCopyMemoryProviderInstructionSample,
   onDeleteSessionsLastActiveBefore,
   onSaveSettings,
 }: HomeSettingsContentProps) {
@@ -330,11 +324,6 @@ export function HomeSettingsContent({
                     <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "discovery published" : "discovery unavailable"}</small>
                   </div>
                   <div className="settings-diagnostics-item">
-                    <span>Managed Skill</span>
-                    <strong>{formatSkillSyncSummary(memoryV6Diagnostics)}</strong>
-                    <small>{formatSkillSyncDetail(memoryV6Diagnostics)}</small>
-                  </div>
-                  <div className="settings-diagnostics-item">
                     <span>CLI Shim</span>
                     <strong>{memoryV6Diagnostics.cliShim.status}</strong>
                     <small>{formatCliShimDetail(memoryV6Diagnostics)}</small>
@@ -379,22 +368,6 @@ export function HomeSettingsContent({
                   {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
                 </button>
               </div>
-              <section className="settings-provider-instruction-sample">
-                <div className="settings-provider-instruction-sample-head">
-                  <div>
-                    <strong>{SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL}</strong>
-                    <p className="settings-help">{SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP}</p>
-                  </div>
-                  <button
-                    className="launch-toggle compact"
-                    type="button"
-                    onClick={onCopyMemoryProviderInstructionSample}
-                  >
-                    {SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL}
-                  </button>
-                </div>
-                <pre>{WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE}</pre>
-              </section>
             </div>
           </section>
 
@@ -491,22 +464,6 @@ export function HomeSettingsContent({
       </div>
     </>
   );
-}
-
-function formatSkillSyncSummary(diagnostics: MemoryV6Diagnostics): string {
-  const ready = diagnostics.skillSync.filter((result) =>
-    result.status === "installed" || result.status === "updated" || result.status === "unchanged"
-  ).length;
-  return `${ready}/${diagnostics.skillSync.length}`;
-}
-
-function formatSkillSyncDetail(diagnostics: MemoryV6Diagnostics): string {
-  if (diagnostics.skillSync.length === 0) {
-    return "configured providers are unavailable";
-  }
-  return diagnostics.skillSync
-    .map((result) => `${result.providerId}: ${result.status}`)
-    .join(" / ");
 }
 
 function formatCliShimDetail(diagnostics: MemoryV6Diagnostics): string {

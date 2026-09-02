@@ -216,16 +216,11 @@ import { MainQueryService } from "./main-query-service.js";
 import {
   ManagedSkillDistributionService,
   type ManagedSkillBundleDescriptor,
-  type ManagedMemorySkillSyncResult,
   WITHMATE_GLOSSARY_SKILL_NAME,
-  WITHMATE_MEMORY_SKILL_NAME,
-} from "./managed-memory-skill-service.js";
+} from "./managed-skill-distribution-service.js";
 import { MemoryCliShimService } from "./memory-cli-shim-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
-import {
-  resolveProviderSkillRootPath,
-  type AppSettings,
-} from "../src/provider-settings-state.js";
+import type { AppSettings } from "../src/provider-settings-state.js";
 import type { ChatLayoutPreferenceUpdate } from "../src/chat/chat-layout-preference.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
@@ -254,7 +249,6 @@ import { exportMemoryProtectedObjectFile, exportMemoryProtectedObjectFiles } fro
 import { createElectronSafeStorageKeyProtector, MemoryProtectedObjectKeyStore } from "./memory-protected-object-key-store.js";
 import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
-import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
 import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
@@ -265,6 +259,9 @@ import {
 } from "./glossary-application-service.js";
 import { GlossaryRuntimeService } from "./glossary-runtime-service.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "./provider-agent-runtime-turn-coordinator.js";
+import { buildProviderAgentRuntimeAuthoritySnapshot } from "./provider-agent-runtime-binding.js";
+import { resolveMemoryV6ProjectCandidate } from "./memory-v6-project-resolver.js";
+import { resolveBundledMemoryCliScriptPath } from "../scripts/build-withmate-memory-cli.js";
 import { GlossarySessionProjectionService } from "./glossary-session-projection-service.js";
 import { SessionGlossaryWindowSubscriptionCoordinator } from "./session-glossary-window-subscription.js";
 import { getGlossaryAgentRuntimeOperations } from "../src/glossary-operation-schema.js";
@@ -324,9 +321,11 @@ const bundledModelCatalogPath = devServerUrl
 const bundledCharacterAuthoringSkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", CHARACTER_AUTHORING_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", CHARACTER_AUTHORING_SKILL_NAME);
-const bundledMemorySkillPath = app.isPackaged
-  ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
-  : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
+const bundledMemoryCliScriptPath = resolveBundledMemoryCliScriptPath({
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  currentDir,
+});
 const bundledGlossarySkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_GLOSSARY_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", WITHMATE_GLOSSARY_SKILL_NAME);
@@ -393,7 +392,6 @@ let characterAffectTurnRetryScheduler: CharacterAffectTurnRetryScheduler | null 
 let characterAffectTurnDrainCursor: CharacterAffectTurnDrainCursor | undefined;
 const characterAffectTurnStartupRecoveryCutoff = new Date().toISOString();
 const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
-let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
 let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
 let bootWindow: BrowserWindow | null = null;
 let appBootStatus: AppBootStatus = {
@@ -514,20 +512,7 @@ function recordMemoryV6DiagnosticError(
   ].slice(0, 3);
 }
 
-function getConfiguredProviderSettings(): AppSettings["codingProviderSettings"] {
-  try {
-    return requireAppSettingsStorage().getSettings().codingProviderSettings;
-  } catch {
-    return {};
-  }
-}
-
 async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
-  const configuredProviderSettings = getConfiguredProviderSettings();
-  const configuredProviderIds = Object.keys(configuredProviderSettings).sort();
-  const latestSkillResultByProvider = new Map(
-    managedMemorySkillSyncResults.map((result) => [result.providerId, result]),
-  );
   const cliShimDiagnostics = await requireMemoryCliShimService().getDiagnostics();
 
   return {
@@ -539,22 +524,6 @@ async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
       buildChannel: memoryV6RuntimeApi?.buildChannel ?? null,
       discoveryPublished: Boolean(memoryV6RuntimeApi),
     },
-    providers: configuredProviderIds.map((providerId) => {
-      const capabilities = getProviderRuntimeCapabilities({ providerId });
-      return {
-        providerId,
-        providerSupported: capabilities.providerSupported,
-      };
-    }),
-    skillSync: configuredProviderIds.map((providerId) => {
-      const result = latestSkillResultByProvider.get(providerId);
-      const configuredSkillRootPath = resolveProviderSkillRootPath(configuredProviderSettings[providerId]);
-      return {
-        providerId,
-        skillRootConfigured: Boolean(result?.skillRootPath ?? configuredSkillRootPath.trim()),
-        status: result?.status ?? "not-run",
-      };
-    }),
     cliShim: {
       platform: cliShimDiagnostics.platform,
       commandName: cliShimDiagnostics.commandName,
@@ -568,13 +537,11 @@ async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
 
 async function installMemoryV6CliShim(): Promise<MemoryV6Diagnostics> {
   await requireMemoryCliShimService().install();
-  await syncManagedMemorySkillBestEffort();
   return getMemoryV6Diagnostics();
 }
 
 async function uninstallMemoryV6CliShim(): Promise<MemoryV6Diagnostics> {
   await requireMemoryCliShimService().uninstall();
-  await syncManagedMemorySkillBestEffort();
   return getMemoryV6Diagnostics();
 }
 
@@ -675,6 +642,14 @@ async function issueProviderAgentRuntimeBinding(
   session: Pick<Session, "id" | "characterId" | "sessionKind" | "workspacePath">,
   providerId: string,
 ) {
+  const memoryAuthority = buildProviderAgentRuntimeAuthoritySnapshot({
+    characterId: session.characterId,
+    workspacePath: session.workspacePath,
+    resolveCanonicalProjectId: (workspacePath) => resolveMemoryV6ProjectCandidate(workspacePath)?.id,
+  });
+  if (!memoryAuthority) {
+    throw new Error("Provider runtime binding requires a canonical Character authority.");
+  }
   let glossaryAuthority: ReturnType<typeof projectGlossaryCheckoutAuthority> | null = null;
   try {
     glossaryAuthority = projectGlossaryCheckoutAuthority(
@@ -687,7 +662,7 @@ async function issueProviderAgentRuntimeBinding(
     actorSessionId: session.id,
     providerId,
     authoritySnapshot: {
-      characterId: session.characterId,
+      ...memoryAuthority,
       sessionKind: session.sessionKind,
       ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}),
     },
@@ -729,6 +704,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,
       protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
       agentRuntimeBindingRegistry,
+      providerAgentRuntimeTurns,
       resolveActorSession: resolveAgentRuntimeActorSession,
       routeAgentRuntimeExtension: (request) => glossaryRuntimeService.route(request),
       log: writeAppLog,
@@ -785,42 +761,7 @@ async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
   }
 }
 
-async function syncManagedMemorySkillBestEffort(): Promise<void> {
-  try {
-    const distribution = requireManagedSkillDistributionService();
-    const memoryResults = await distribution.syncConfiguredProviderSkills(MANAGED_MEMORY_SKILL_BUNDLE);
-    managedMemorySkillSyncResults = memoryResults;
-    const failed = memoryResults.filter((result) => result.status === "failed");
-    const collisions = memoryResults.filter((result) => result.status === "skipped-collision");
-    for (const result of failed) {
-      recordMemoryV6DiagnosticError(
-        "memory-v6.skill.sync.provider-failed",
-        `${result.providerId}: ${result.errorMessage ?? "managed skill sync failed"}`,
-      );
-    }
-    writeAppLog({
-      level: failed.length > 0 || collisions.length > 0 ? "warn" : "info",
-      kind: "memory-v6.skill.sync.completed",
-      process: "main",
-      message: "Memory V6 managed skill sync completed",
-      data: {
-        results: memoryResults,
-      },
-    });
-  } catch (error) {
-    recordMemoryV6DiagnosticError(
-      "memory-v6.skill.sync.failed",
-      error instanceof Error ? error.message : String(error),
-    );
-    writeAppLog({
-      level: "warn",
-      kind: "memory-v6.skill.sync.failed",
-      process: "main",
-      message: "Memory V6 managed skill sync failed",
-      error: appLogService.errorToLogError(error),
-    });
-  }
-
+async function syncManagedGlossarySkillBestEffort(): Promise<void> {
   try {
     const results = await requireManagedSkillDistributionService().syncConfiguredProviderSkills(
       MANAGED_GLOSSARY_SKILL_BUNDLE,
@@ -2204,7 +2145,7 @@ function deletePromptTemplate(id: string): PromptTemplate[] {
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
   applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled, app.isPackaged);
-  await syncManagedMemorySkillBestEffort();
+  await syncManagedGlossarySkillBestEffort();
   return savedSettings;
 }
 
@@ -2259,12 +2200,6 @@ function requireCharacterAuthoringService(): CharacterAuthoringService {
   return characterAuthoringService;
 }
 
-const MANAGED_MEMORY_SKILL_BUNDLE: ManagedSkillBundleDescriptor = {
-  skillName: WITHMATE_MEMORY_SKILL_NAME,
-  bundledSkillPath: bundledMemorySkillPath,
-  documentationRelativePaths: ["SKILL.md", "reference"],
-};
-
 const MANAGED_GLOSSARY_SKILL_BUNDLE: ManagedSkillBundleDescriptor = {
   skillName: WITHMATE_GLOSSARY_SKILL_NAME,
   bundledSkillPath: bundledGlossarySkillPath,
@@ -2277,9 +2212,6 @@ function requireManagedSkillDistributionService(): ManagedSkillDistributionServi
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getAppVersion: () => app.getVersion(),
       isPackagedApp: () => app.isPackaged,
-      shouldSyncDocumentationOnly: (bundle) => bundle.skillName === WITHMATE_MEMORY_SKILL_NAME
-        ? requireMemoryCliShimService().isPathShimUsable()
-        : false,
     });
   }
 
@@ -2290,7 +2222,7 @@ function requireMemoryCliShimService(): MemoryCliShimService {
   if (!memoryCliShimService) {
     memoryCliShimService = new MemoryCliShimService({
       appExecutablePath: process.execPath,
-      bundledCliScriptPath: path.join(bundledMemorySkillPath, "bin", "withmate-memory.mjs"),
+      bundledCliScriptPath: bundledMemoryCliScriptPath,
       homeDirectory: homedir(),
       pathEnv: process.env.PATH,
     });
@@ -4464,7 +4396,7 @@ if (!hasSingleInstanceLock) {
         requireAppSettingsStorage().getSettings().launchAtLoginEnabled,
         app.isPackaged,
       );
-      await syncManagedMemorySkillBestEffort();
+      await syncManagedGlossarySkillBestEffort();
       publishAppBootStatus({
         kind: "completed",
         stage: "home",
