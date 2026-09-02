@@ -54,6 +54,7 @@ import {
   mapRuntimeHttpFailureToMemory,
   resolveWithMateMemoryApi,
   resolveAgentRuntimeBindingReference,
+  resolveAgentRuntimeTurnCapability,
   verifyRuntimeIdentity,
   WithMateMemoryRuntimeExchangeError,
   WITHMATE_MEMORY_API_SECRET_HEADER,
@@ -138,7 +139,7 @@ export type WithMateMemoryCliDeps = {
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
-    options: { signal: AbortSignal; bindingReference?: string },
+    options: { signal: AbortSignal; bindingReference?: string; turnCapability?: string },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof readFile;
   fetch?: typeof fetch;
@@ -166,6 +167,26 @@ const CHARACTER_CONTEXT_WRITE_COMMANDS = new Set<WithMateMemoryApiCommand>([
   "affect_appraise",
   "affect_correct",
   "affect_reset",
+  "character_memory_append_episode",
+  "character_memory_correct",
+  "character_memory_forget",
+]);
+
+const AGENT_CLI_FALLBACK_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "file_usage",
+  "list_targets",
+  "list_entries",
+  "search",
+  "get_entry",
+  "get_file",
+  "export_files",
+  "list_tags",
+  "append",
+  "forget",
+  "move_entry",
+  "context_get",
+  "affect_appraise",
+  "character_memory_search",
   "character_memory_append_episode",
   "character_memory_correct",
   "character_memory_forget",
@@ -1404,6 +1425,25 @@ export async function runWithMateMemoryCli(
 
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
+    if (request.fallbackFrom === "mcp") {
+      if (!AGENT_CLI_FALLBACK_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+        throw usageError("--fallback-from mcp supports only operations published by MCP tools/list.");
+      }
+      if (request.apiUrl || request.discoveryFilePath || request.applicationInstanceId || request.runtimeGenerationId) {
+        throw usageError("--fallback-from mcp uses the runtime selected by the Agent binding and does not accept connection selectors.");
+      }
+      if (
+        request.command === "file_usage"
+        && typeof request.body === "object"
+        && request.body !== null
+        && Object.keys(request.body).length > 0
+      ) {
+        throw usageError("--fallback-from mcp file-usage accepts no detail selectors.");
+      }
+      if (!resolveAgentRuntimeBindingReference(env)) {
+        throw usageError("--fallback-from mcp requires an Agent runtime binding.");
+      }
+    }
     if (request.command === "help") {
       stdout.write(WITHMATE_MEMORY_CLI_HELP);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
@@ -1435,7 +1475,7 @@ export async function runWithMateMemoryCli(
       throw usageError(`${request.apiUrl !== undefined ? "--api-url" : "WITHMATE_MEMORY_API_URL"} must be a valid loopback HTTP URL.`);
     }
     const resolution = await resolveWithMateMemoryApi({
-      adapter: "cli",
+      adapter: request.fallbackFrom === "mcp" ? "mcp" : "cli",
       env: deps.env,
       apiUrl: request.apiUrl,
       discoveryFilePath: request.discoveryFilePath,
@@ -1476,6 +1516,7 @@ export async function runWithMateMemoryCli(
       }, {
         signal: abortController.signal,
         bindingReference: resolveAgentRuntimeBindingReference(deps.env),
+        ...(request.fallbackFrom ? { turnCapability: resolveAgentRuntimeTurnCapability(deps.env) } : {}),
       });
       response = runtimeResponse;
       responseJson = runtimeResponse.value;

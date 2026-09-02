@@ -523,7 +523,7 @@ describe("ManagedMemorySkillService", () => {
 });
 
 describe("withmate-memory bundled helper", () => {
-  const helperPath = path.resolve("resources", "skills", WITHMATE_MEMORY_SKILL_NAME, "bin", "withmate-memory.mjs");
+  const helperPath = path.resolve("resources", "cli", "withmate-memory.mjs");
 
   it("canonical CLI source から生成された current artifact である", async () => {
     const outputDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-build-"));

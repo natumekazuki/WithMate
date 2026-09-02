@@ -217,6 +217,91 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
 
 describe("withmate-memory CLI", () => {
 // @test-value v1
+// kind = "security"
+// claim = "agent CLI fallbackはMCP credentialとbound runtime identityを選び、bindingとturn capabilityを同じrequestへ伝搬する"
+// oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+// failure_mode = "fallbackがoperator credentialへ昇格する、別runtimeを選ぶ、またはbinding/turnなしでmutationを送る"
+// scope = "withmate-memory-agent-cli-fallback"
+// lifecycle = "permanent"
+// @end-test-value
+it("agent CLI fallbackはMCP credentialとruntime bindingを使う", async () => {
+  const stdout = createOutputCapture();
+  const observed: Array<{ connection: WithMateMemoryRuntimeConnection; operation: WithMateMemoryRuntimeOperation; options: Record<string, unknown> }> = [];
+  const body = {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    target: { kind: "project", project: { type: "id", id: "project-a" } },
+    kind: "decision",
+    title: "Fallback",
+    body: "Fallback body",
+    preview: "Fallback preview",
+    tags: [],
+    idempotencyKey: "fallback-append-a",
+  };
+  const exitCode = await runWithMateMemoryCliImpl([
+    "append", "--fallback-from", "mcp", "--json", JSON.stringify(body),
+  ], {
+    env: {
+      WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+      WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+      WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-a",
+      WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+      WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
+      WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "22222222-2222-4222-8222-222222222222",
+      WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777",
+      WITHMATE_MEMORY_API_SECRET: TEST_API_SECRET,
+      WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+      WITHMATE_MEMORY_OPERATOR_API_SECRET: TEST_OPERATOR_SECRET,
+    },
+    stdout: stdout.stream,
+    runtimeCall: async (connection, operation, options) => {
+      observed.push({ connection, operation, options });
+      return { ok: true, status: 200, value: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, created: true } };
+    },
+  });
+
+  assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+  assert.equal(observed.length, 1);
+  assert.deepEqual(observed[0].connection.credential, { adapter: "mcp", adapterSecret: "mcp-secret" });
+  assert.equal(observed[0].operation.fallbackFrom, "mcp");
+  assert.deepEqual(observed[0].operation.body, body);
+  assert.equal(observed[0].options.bindingReference, "binding-a");
+  assert.equal(observed[0].options.turnCapability, "turn-a");
+});
+
+// @test-value v1
+// kind = "security"
+// claim = "agent CLI fallbackはoperator-only command、connection selector、binding欠落をdispatch前に拒否する"
+// oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+// failure_mode = "fallback markerによってoperator authorityまたはcaller選択runtimeへ到達する"
+// scope = "withmate-memory-agent-cli-fallback"
+// lifecycle = "permanent"
+// @end-test-value
+it("agent CLI fallbackはoperator-only commandとcaller connection selectorを拒否する", async () => {
+  for (const args of [
+    ["audit", "--fallback-from", "mcp", "--all-targets"],
+    ["search", "--fallback-from", "mcp", "--api-url", "http://127.0.0.1:7777", "--json", JSON.stringify({})],
+    ["file-usage", "--fallback-from", "mcp", "--largest"],
+    ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+  ]) {
+    const stdout = createOutputCapture();
+    let dispatched = false;
+    const exitCode = await runWithMateMemoryCliImpl(args, {
+      env: args[0] === "search" && !args.includes("--api-url")
+        ? {}
+        : { WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a" },
+      stdout: stdout.stream,
+      runtimeCall: async () => {
+        dispatched = true;
+        return { ok: true, status: 200, value: {} };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
+    assert.equal(dispatched, false);
+  }
+});
+
+// @test-value v1
 // kind = "contract"
 // claim = "loopback環境変数からruntime接続情報を解決する"
 // oracle = { type = "contract", ref = "memory runtime discovery" }

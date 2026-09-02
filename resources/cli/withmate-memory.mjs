@@ -3376,6 +3376,8 @@ async function discoverWithMateMemoryApi(options) {
 	}
 }
 async function callWithMateMemoryRuntime(connection, operation, options) {
+	const exchangeAdapter = operation.fallbackFrom === "mcp" ? "agent_cli_fallback" : connection.credential.adapter;
+	if (exchangeAdapter === "agent_cli_fallback" && connection.credential.adapter !== "mcp") throw new WithMateMemoryRuntimeExchangeError("Agent-bound CLI fallback requires the MCP runtime credential.", false, { discoveryCode: "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE" });
 	let identityOutcome;
 	try {
 		identityOutcome = await verifyRuntimeIdentityOutcome(connection.api, options.fetch ?? fetch, options.signal);
@@ -3473,7 +3475,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 			request$1.end(JSON.stringify({
 				schemaVersion: WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
 				apiSecret: connection.api.apiSecret,
-				adapter: connection.credential.adapter,
+				adapter: exchangeAdapter,
 				adapterSecret: connection.credential.adapterSecret,
 				...options.bindingReference ? { bindingReference: options.bindingReference } : {},
 				...options.turnCapability ? { turnCapability: options.turnCapability } : {},
@@ -3494,6 +3496,9 @@ function resolveAgentRuntimeBindingReference(env = process.env) {
 	const reference = env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]?.trim();
 	if (!reference && env["WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED"]?.trim() === "1") throw usageError$1("WithMate provider execution requires its runtime binding reference.");
 	return reference || void 0;
+}
+function resolveAgentRuntimeTurnCapability(env = process.env) {
+	return env["WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY"]?.trim() || void 0;
 }
 async function verifyRuntimeIdentityOutcome(connection, fetchImpl, signal) {
 	const nonce = randomBytes(16).toString("base64url");
@@ -23447,30 +23452,28 @@ var projectRefSchema$1 = discriminatedUnion("type", [object({
 	type: literal("path"),
 	path: string().min(1).max(1e3).regex(MEMORY_ABSOLUTE_PATH_PATTERN)
 }).strict()]);
-var characterRefSchema = object({
-	type: literal("id"),
-	id: string().min(1).max(200)
-}).strict();
-var memoryTargetSchema = union([
+var memoryTargetSchema = discriminatedUnion("kind", [
+	object({ kind: literal("user-global") }).strict(),
 	object({
-		owner: literal("project"),
-		scope: literal("project"),
+		kind: literal("project"),
 		project: projectRefSchema$1
 	}).strict(),
+	object({ kind: literal("character") }).strict(),
 	object({
-		owner: literal("character"),
-		scope: literal("character"),
-		character: characterRefSchema
-	}).strict(),
-	object({
-		owner: literal("character"),
-		scope: literal("project"),
-		character: characterRefSchema,
+		kind: literal("character+project"),
 		project: projectRefSchema$1
-	}).strict(),
+	}).strict()
+]);
+var memoryTargetFilterSchema = discriminatedUnion("kind", [
+	object({ kind: literal("user-global") }).strict(),
 	object({
-		owner: literal("user"),
-		scope: literal("global")
+		kind: literal("project"),
+		project: projectRefSchema$1.optional()
+	}).strict(),
+	object({ kind: literal("character") }).strict(),
+	object({
+		kind: literal("character+project"),
+		project: projectRefSchema$1.optional()
 	}).strict()
 ]);
 var memoryTagInputSchema = object({
@@ -23481,38 +23484,6 @@ var memoryTagOutputSchema = object({
 	type: string(),
 	value: string()
 }).strict();
-var memoryOwnerOutputSchema = discriminatedUnion("type", [
-	object({
-		type: literal("character"),
-		id: string()
-	}).strict(),
-	object({
-		type: literal("project"),
-		id: string()
-	}).strict(),
-	object({
-		type: literal("user"),
-		id: literal("local-user")
-	}).strict()
-]);
-var memoryScopeOutputSchema = discriminatedUnion("type", [
-	object({
-		type: literal("session"),
-		id: string()
-	}).strict(),
-	object({
-		type: literal("project"),
-		id: string()
-	}).strict(),
-	object({
-		type: literal("character"),
-		id: string()
-	}).strict(),
-	object({
-		type: literal("global"),
-		id: literal("global")
-	}).strict()
-]);
 var memoryFileOutputSchema = object({
 	objectId: string(),
 	role: _enum(MEMORY_APPEND_FILE_ROLES),
@@ -23531,8 +23502,7 @@ var memoryFileOutputSchema = object({
 }).strict();
 var memoryEntrySummaryShape = {
 	id: string(),
-	owner: memoryOwnerOutputSchema,
-	scope: memoryScopeOutputSchema,
+	target: memoryTargetSchema,
 	kind: _enum(MEMORY_ENTRY_KINDS),
 	title: string(),
 	preview: string(),
@@ -23641,25 +23611,6 @@ var getEntrySuccessSchema = object({
 }).strict();
 var targetInventorySchema = object({
 	target: memoryTargetSchema,
-	owner: _enum([
-		"project",
-		"character",
-		"user"
-	]),
-	scope: _enum([
-		"project",
-		"character",
-		"global"
-	]),
-	project: object({
-		id: string(),
-		displayName: string(),
-		path: string().optional()
-	}).strict().optional(),
-	character: object({
-		id: string(),
-		displayName: string()
-	}).strict().optional(),
 	entryCount: number().int().nonnegative(),
 	tagCount: number().int().nonnegative(),
 	lastUpdatedAt: string().nullable()
@@ -23756,15 +23707,7 @@ var fileUsageSuccessSchema = object({
 	availableBytes: number().int().nonnegative(),
 	objectCount: number().int().nonnegative(),
 	pendingDeleteCount: number().int().nonnegative(),
-	quotaExceeded: boolean(),
-	largestEntries: array(object({
-		entryId: string(),
-		title: string(),
-		preview: string(),
-		totalFileBytes: number().int().nonnegative(),
-		fileCount: number().int().nonnegative(),
-		updatedAt: string()
-	}).strict()).optional()
+	quotaExceeded: boolean()
 }).strict();
 var appendFileInputSchema = object({
 	path: string().min(1).max(1e3).regex(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/, "path must be absolute"),
@@ -23776,7 +23719,7 @@ var appendFileInputSchema = object({
 var GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "memory.search",
-		description: "Search active general Memory in one or more explicit targets.",
+		description: "Search active general Memory in one or more actor-relative targets. Before memory.append, search the same exact target and do not append an active semantic duplicate or create a conflicting replacement without correction authority. Agent CLI fallback is available only after MCP initialize and tools/list succeeded and a later transport availability failure occurs: invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON. Never fallback for domain, authority, version, idempotency, migration, or storage errors.",
 		annotations: {
 			readOnlyHint: true,
 			destructiveHint: false,
@@ -23826,7 +23769,7 @@ var GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "memory.append",
-		description: "Append one idempotent general Memory entry to an explicit target, optionally importing protected files atomically.",
+		description: "Append one idempotent general Memory entry to an actor-relative target, optionally importing protected files atomically. First run memory.search against the same exact target; do not append an active semantic duplicate or create a conflicting replacement without correction authority. After response loss, reconcile only with the unchanged request and idempotency key, and distinguish replayed from a new effect.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: false,
@@ -23836,7 +23779,7 @@ var GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "memory.forget",
-		description: "Preview or perform an idempotent forget for an explicit target and concrete reason.",
+		description: "Preview or perform an idempotent forget for an actor-relative target and concrete reason. Run dryRun before a bulk forget, then read back current state. After response loss, reconcile only with the unchanged request and idempotency key; use a new key for a changed request and do not infer saved or effect state.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: true,
@@ -23846,7 +23789,7 @@ var GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "memory.move_entry",
-		description: "Move one active entry idempotently between explicit targets while preserving its identity and attachments.",
+		description: "Move one active entry idempotently between actor-relative targets while preserving its identity and attachments. After response loss, reconcile only with the unchanged request and idempotency key, use a new key for a changed request, and read back current state without guessing effect certainty.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: true,
@@ -23856,7 +23799,7 @@ var GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "memory.get_file",
-		description: "Export one protected object to a new absolute output path after target validation; existing files are not overwritten.",
+		description: "Export one protected object to a new absolute output path after target validation; existing files are not overwritten. This operation is non-idempotent: after a dispatched response loss, treat the effect as unknown and do not retry automatically. Inspect the intended output path read-only or use operator manual recovery; run a new operation only after confirming no file was created or by choosing a new output path.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: false,
@@ -23866,7 +23809,7 @@ var GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "memory.export_files",
-		description: "Export all protected objects for one entry to new files in an absolute output directory after target validation.",
+		description: "Export all protected objects for one entry to new files in an absolute output directory after target validation. This operation is non-idempotent: after a dispatched response loss, treat the effect as unknown and do not retry automatically. Inspect the intended output directory read-only or use operator manual recovery; run a new operation only after confirming no files were created or by choosing a new output directory.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: false,
@@ -23923,18 +23866,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 		operationKind: "read"
 	}));
 	register("memory.list_targets", object({
-		owner: _enum([
-			"project",
-			"character",
-			"user"
-		]).optional(),
-		scope: _enum([
-			"project",
-			"character",
-			"global"
-		]).optional(),
-		project: projectRefSchema$1.optional(),
-		character: characterRefSchema.optional(),
+		filter: memoryTargetFilterSchema.optional(),
 		includeEmpty: boolean().optional(),
 		limit: number().int().min(1).max(200).optional(),
 		cursor: string().min(1).max(500).optional()
@@ -24098,10 +24030,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 		},
 		operationKind: "write"
 	}));
-	register("memory.file_usage", object({
-		largest: boolean().optional(),
-		limit: number().int().min(1).max(50).optional()
-	}).strict(), createMemoryToolOutputSchema(fileUsageSuccessSchema, [
+	register("memory.file_usage", object({}).strict(), createMemoryToolOutputSchema(fileUsageSuccessSchema, [
 		"schemaVersion",
 		"quotaBytes",
 		"usedBytes",
@@ -24111,18 +24040,12 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 		"objectCount",
 		"pendingDeleteCount",
 		"quotaExceeded"
-	]), (input) => {
-		const query = new URLSearchParams();
-		if (input.largest === true) query.set("largest", "1");
-		if (input.limit !== void 0) query.set("limit", String(input.limit));
-		const suffix = query.toString();
-		return {
-			method: "GET",
-			path: `/v1/file_usage${suffix ? `?${suffix}` : ""}`,
-			body: {},
-			operationKind: "read"
-		};
-	});
+	]), () => ({
+		method: "GET",
+		path: "/v1/file_usage",
+		body: {},
+		operationKind: "read"
+	}));
 }
 //#endregion
 //#region scripts/withmate-memory-mcp.ts
@@ -24163,8 +24086,6 @@ var affectEpisodeCandidateSchema = object({
 }).strict();
 var affectCandidateSchema = object({
 	schemaVersion: literal("withmate-affect-v1"),
-	characterId: string().min(1),
-	userId: literal("local-user"),
 	layer: _enum(["relationship", "session"]),
 	targetType: _enum([
 		"user",
@@ -24199,10 +24120,10 @@ var affectCandidateSchema = object({
 }).strict();
 var projectRefSchema = discriminatedUnion("type", [object({
 	type: literal("id"),
-	id: string().min(1)
+	id: string().min(1).max(200)
 }).strict(), object({
 	type: literal("path"),
-	path: string().min(1)
+	path: string().min(1).max(1e3).regex(MEMORY_ABSOLUTE_PATH_PATTERN)
 }).strict()]);
 var memoryTagSchema = object({
 	type: string(),
@@ -24290,6 +24211,13 @@ var memorySearchHitSchema = object({
 		snippet: string().optional()
 	}).strict().optional()
 }).strict();
+var characterMemoryPreviewSchema = object({
+	id: string(),
+	title: string(),
+	preview: string(),
+	tags: array(memoryTagSchema),
+	updatedAt: string()
+}).strict();
 var memoryEntrySummarySchema = object({
 	...memoryEntryBaseShape,
 	state: _enum([
@@ -24328,8 +24256,6 @@ var characterErrorSchema = object({
 }).strict();
 var contextOutputSchema = union([object({
 	schemaVersion: literal(CHARACTER_CONTEXT_SCHEMA_VERSION),
-	characterId: string(),
-	sessionId: string(),
 	baseline: object({
 		definitionSha256: string(),
 		snapshotAt: string()
@@ -24376,14 +24302,9 @@ var contextOutputSchema = union([object({
 		updatedAt: string().nullable()
 	}).strict(),
 	memory: object({
-		items: array(memorySearchHitSchema),
+		items: array(characterMemoryPreviewSchema),
 		relatedTags: array(memoryTagSchema).optional(),
 		updatedAt: string().nullable()
-	}).strict(),
-	scope: object({
-		userId: literal("local-user"),
-		characterId: string(),
-		sessionId: string()
 	}).strict()
 }).strict(), characterErrorSchema]);
 var appraisalOutputSchema = union([object({
@@ -24452,12 +24373,9 @@ function createToolOutputSchema(successSchema, requiredSuccessKeys) {
 }
 var contextToolOutputSchema = createToolOutputSchema(contextOutputSchema.options[0], [
 	"schemaVersion",
-	"characterId",
-	"sessionId",
 	"baseline",
 	"affect",
-	"memory",
-	"scope"
+	"memory"
 ]);
 var appraisalToolOutputSchema = createToolOutputSchema(appraisalOutputSchema.options[0], [
 	"schemaVersion",
@@ -24489,9 +24407,9 @@ var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
 	"character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
 	"Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
 	"Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
-	"Do not expose internal audit data or tool state in the user-facing response. Use returned scope, source version, and update result without guessing missing values.",
+	"Do not expose internal audit data or tool state in the user-facing response. Use returned source version and update result without guessing missing values.",
 	"Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
-	"Use CLI fallback only when MCP is unavailable at the transport level. Structured Memory or Character domain errors, authority denial, conflicts, replay, and migration requirements are not availability failures."
+	"Agent CLI fallback is available only after this MCP initialize and tools/list succeeded and a later transport availability failure occurs. Invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON; initialization, tools/list, domain, authority, version, idempotency, migration, and storage failures do not permit fallback."
 ].join("\n");
 var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	{
@@ -24506,7 +24424,7 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "character_affect.appraise",
-		description: "Validate and record bounded candidates for the Character's own affect; this does not diagnose the user.",
+		description: "Validate and record bounded candidates for the Character's own affect; this does not diagnose the user. An episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry; report saved, rejected, replayed, version, and effect exactly as returned.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: false,
@@ -24526,7 +24444,7 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "character_memory.append_episode",
-		description: "Append one shared Character episode; motif recurrence is allowed and only same-event retries deduplicate.",
+		description: "Append one standalone shared Character episode only; episodes linked to an affect event belong exclusively to character_affect.appraise.memoryEpisode. Motif recurrence is allowed and only unchanged same-event retries reuse an idempotency key.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: false,
@@ -24558,8 +24476,10 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 [...CHARACTER_MCP_TOOL_DEFINITIONS, ...GENERAL_MEMORY_MCP_TOOL_DEFINITIONS];
 async function callRuntime(path, body, operationKind, deps) {
 	let bindingReference;
+	let turnCapability;
 	try {
 		bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+		turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
 	} catch (error) {
 		if (isMemoryErrorResponse$1(error)) return createCharacterContextError("authority_denied", error.error.message, {
 			retryable: false,
@@ -24599,7 +24519,8 @@ async function callRuntime(path, body, operationKind, deps) {
 			body
 		}, {
 			signal: abortController.signal,
-			bindingReference
+			bindingReference,
+			turnCapability
 		});
 		dispatched = true;
 		return mapRuntimeHttpFailureToCharacterContext(runtimeResponse);
@@ -24618,8 +24539,10 @@ async function callRuntime(path, body, operationKind, deps) {
 }
 async function callMemoryRuntime(operation, deps) {
 	let bindingReference;
+	let turnCapability;
 	try {
 		bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+		turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
 	} catch (error) {
 		if (isMemoryErrorResponse$1(error)) return error;
 		throw error;
@@ -24656,7 +24579,8 @@ async function callMemoryRuntime(operation, deps) {
 			body: operation.body
 		}, {
 			signal: abortController.signal,
-			bindingReference
+			bindingReference,
+			turnCapability
 		});
 		dispatched = true;
 		return mapRuntimeHttpFailureToMemory(runtimeResponse, operation.operationKind);
@@ -24701,7 +24625,6 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	server.registerTool("character_context.get", {
 		...definitions.get("character_context.get"),
 		inputSchema: object({
-			characterId: string().min(1),
 			query: string().min(1).optional(),
 			memoryLimit: number().int().min(0).max(10).default(3)
 		}).strict(),
@@ -24713,7 +24636,6 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	server.registerTool("character_affect.appraise", {
 		...definitions.get("character_affect.appraise"),
 		inputSchema: object({
-			characterId: string().min(1),
 			expectedVersion: string().min(1).optional(),
 			candidates: array(affectCandidateSchema).min(1).max(10)
 		}).strict(),
@@ -24725,7 +24647,6 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	server.registerTool("character_memory.search", {
 		...definitions.get("character_memory.search"),
 		inputSchema: object({
-			characterId: string().min(1),
 			query: string().min(1),
 			limit: number().int().min(1).max(20).default(5),
 			scope: discriminatedUnion("scope", [object({ scope: literal("character") }).strict(), object({
@@ -24741,8 +24662,6 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	server.registerTool("character_memory.append_episode", {
 		...definitions.get("character_memory.append_episode"),
 		inputSchema: object({
-			characterId: string().min(1),
-			sessionId: string().min(1),
 			idempotencyKey: string().min(1),
 			episode: episodeSchema
 		}).strict(),
@@ -24754,7 +24673,6 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	server.registerTool("character_memory.correct", {
 		...definitions.get("character_memory.correct"),
 		inputSchema: object({
-			characterId: string().min(1),
 			entryId: string().min(1),
 			reason: string().min(1),
 			idempotencyKey: string().min(1),
@@ -24768,7 +24686,6 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	server.registerTool("character_memory.forget", {
 		...definitions.get("character_memory.forget"),
 		inputSchema: object({
-			characterId: string().min(1),
 			entryId: string().min(1),
 			reason: _enum([
 				"user_request",
@@ -24817,6 +24734,25 @@ var CHARACTER_CONTEXT_WRITE_COMMANDS = /* @__PURE__ */ new Set([
 	"affect_appraise",
 	"affect_correct",
 	"affect_reset",
+	"character_memory_append_episode",
+	"character_memory_correct",
+	"character_memory_forget"
+]);
+var AGENT_CLI_FALLBACK_COMMANDS = /* @__PURE__ */ new Set([
+	"file_usage",
+	"list_targets",
+	"list_entries",
+	"search",
+	"get_entry",
+	"get_file",
+	"export_files",
+	"list_tags",
+	"append",
+	"forget",
+	"move_entry",
+	"context_get",
+	"affect_appraise",
+	"character_memory_search",
 	"character_memory_append_episode",
 	"character_memory_correct",
 	"character_memory_forget"
@@ -25866,6 +25802,12 @@ async function runWithMateMemoryCli(args, deps = {}) {
 	const env = deps.env ?? process.env;
 	try {
 		const request = await parseWithMateMemoryCliArgs(args, deps);
+		if (request.fallbackFrom === "mcp") {
+			if (!AGENT_CLI_FALLBACK_COMMANDS.has(request.command)) throw usageError("--fallback-from mcp supports only operations published by MCP tools/list.");
+			if (request.apiUrl || request.discoveryFilePath || request.applicationInstanceId || request.runtimeGenerationId) throw usageError("--fallback-from mcp uses the runtime selected by the Agent binding and does not accept connection selectors.");
+			if (request.command === "file_usage" && typeof request.body === "object" && request.body !== null && Object.keys(request.body).length > 0) throw usageError("--fallback-from mcp file-usage accepts no detail selectors.");
+			if (!resolveAgentRuntimeBindingReference(env)) throw usageError("--fallback-from mcp requires an Agent runtime binding.");
+		}
 		if (request.command === "help") {
 			stdout.write(WITHMATE_MEMORY_CLI_HELP);
 			return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
@@ -25894,7 +25836,7 @@ async function runWithMateMemoryCli(args, deps = {}) {
 		const explicitApiUrl = request.apiUrl ?? env.WITHMATE_MEMORY_API_URL?.trim();
 		if (explicitApiUrl && !normalizeWithMateMemoryApiBaseUrl(explicitApiUrl)) throw usageError(`${request.apiUrl !== void 0 ? "--api-url" : "WITHMATE_MEMORY_API_URL"} must be a valid loopback HTTP URL.`);
 		const resolution = await resolveWithMateMemoryApi({
-			adapter: "cli",
+			adapter: request.fallbackFrom === "mcp" ? "mcp" : "cli",
 			env: deps.env,
 			apiUrl: request.apiUrl,
 			discoveryFilePath: request.discoveryFilePath,
@@ -25933,7 +25875,8 @@ async function runWithMateMemoryCli(args, deps = {}) {
 				...request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}
 			}, {
 				signal: abortController.signal,
-				bindingReference: resolveAgentRuntimeBindingReference(deps.env)
+				bindingReference: resolveAgentRuntimeBindingReference(deps.env),
+				...request.fallbackFrom ? { turnCapability: resolveAgentRuntimeTurnCapability(deps.env) } : {}
 			});
 			response = runtimeResponse;
 			responseJson = runtimeResponse.value;

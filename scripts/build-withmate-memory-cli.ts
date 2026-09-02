@@ -2,32 +2,43 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { build } from "vite";
-
 const repositoryRootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const canonicalCliEntryPath = path.join(repositoryRootPath, "scripts", "withmate-memory.ts");
 const glossaryCliEntryPath = path.join(repositoryRootPath, "scripts", "withmate-glossary.ts");
-const defaultOutputDirectoryPath = path.join(
-  repositoryRootPath,
-  "resources",
-  "skills",
-  "withmate-memory",
-  "bin",
-);
-
 export const BUNDLED_MEMORY_CLI_FILE_NAME = "withmate-memory.mjs";
 export const BUNDLED_GLOSSARY_CLI_FILE_NAME = "withmate-glossary.mjs";
+export const BUNDLED_MEMORY_CLI_REPOSITORY_RELATIVE_PATH = "resources/cli/withmate-memory.mjs";
+export const BUNDLED_MEMORY_CLI_PACKAGED_RELATIVE_PATH = "resources/resources/cli/withmate-memory.mjs";
+
+const defaultOutputDirectoryPath = path.dirname(path.join(
+  repositoryRootPath,
+  BUNDLED_MEMORY_CLI_REPOSITORY_RELATIVE_PATH,
+));
+
+export function resolveBundledMemoryCliScriptPath(input: {
+  isPackaged: boolean;
+  resourcesPath: string;
+  currentDir: string;
+}): string {
+  return input.isPackaged
+    ? path.resolve(input.resourcesPath, "..", BUNDLED_MEMORY_CLI_PACKAGED_RELATIVE_PATH)
+    : path.resolve(input.currentDir, "../..", BUNDLED_MEMORY_CLI_REPOSITORY_RELATIVE_PATH);
+}
 
 async function buildManagedCli(input: {
   entryPath: string;
   outputDirectoryPath: string;
   outputFileName: string;
 }): Promise<string> {
+  const { build } = await import("vite");
   const resolvedOutputDirectoryPath = path.resolve(input.outputDirectoryPath);
   await mkdir(resolvedOutputDirectoryPath, { recursive: true });
   await build({
     configFile: false,
     logLevel: "error",
+    resolve: {
+      preserveSymlinks: true,
+    },
     ssr: {
       noExternal: true,
     },

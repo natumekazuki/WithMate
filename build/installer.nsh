@@ -10,7 +10,7 @@
   FileWrite $0 "@echo off$\r$\n"
   FileWrite $0 "setlocal$\r$\n"
   FileWrite $0 "set ELECTRON_RUN_AS_NODE=1$\r$\n"
-  FileWrite $0 '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\resources\skills\withmate-memory\bin\withmate-memory.mjs" %*$\r$\n'
+  FileWrite $0 '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\resources\cli\withmate-memory.mjs" %*$\r$\n'
   FileWrite $0 "exit /b %ERRORLEVEL%$\r$\n"
   FileClose $0
   FileOpen $0 "${WITHMATE_GLOSSARY_ALIAS}" w
