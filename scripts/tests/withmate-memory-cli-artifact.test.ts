@@ -629,4 +629,3 @@ it("read shorthandはhelperでもrequest bodyを組み立てcanonical unavailabl
     assert.doesNotMatch(error.message, /node bin\/withmate-memory\.mjs/);
   });
 });
-
