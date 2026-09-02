@@ -4154,7 +4154,7 @@ export default function AgentSessionWindowApp() {
     <SessionFileExplorerPane
       api={withmateApi}
       sessionId={activeRunSessionId}
-      enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable}
+      enabled={isSelectedWorkspaceAvailable}
       rootsRevision={fileExplorerRootsRevision}
       selectedFile={selectedFilePreview}
       activeTab={fileExplorerTab}
@@ -4173,11 +4173,12 @@ export default function AgentSessionWindowApp() {
           }
         });
       }}
-      changesContent={(
+      renderChangesContent={(roots) => (
         <FileRootChangesPane
           api={withmateApi}
           sessionId={activeRunSessionId}
-          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable && fileExplorerTab === "changes"}
+          enabled={isSelectedWorkspaceAvailable}
+          roots={roots}
           rootsRevision={fileExplorerRootsRevision}
           refreshRevision={fileRootChangesRefreshRevision}
           onOpenFile={handleOpenFileRootFile}
@@ -4188,7 +4189,7 @@ export default function AgentSessionWindowApp() {
         <FileRootGitHistoryPane
           api={withmateApi}
           sessionId={activeRunSessionId}
-          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable && fileExplorerTab === "history"}
+          enabled={isSelectedWorkspaceAvailable}
           rootsRevision={fileExplorerRootsRevision}
           refreshRevision={fileRootGitHistoryRefreshRevision}
           onOpenDiff={handleShowFileRootGitHistoryDiff}

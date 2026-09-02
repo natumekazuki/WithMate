@@ -247,6 +247,19 @@ export type FileRootChangesRequest = {
   rootId: string;
 };
 
+export type FileRootChangesRepositoriesRequest = {
+  sessionId: string;
+  rootIds: string[];
+};
+
+export type FileRootChangesRepositoriesResult =
+  | {
+      status: "ok";
+      repositories: Array<{ rootId: string }>;
+      failures: Array<{ rootId: string; message: string }>;
+    }
+  | { status: "failed"; message: string };
+
 export type FileRootChangesResult =
   | { status: "ok"; entries: FileRootGitChangeEntry[] }
   | { status: "not-git" | "root-not-found" | "failed"; message: string };

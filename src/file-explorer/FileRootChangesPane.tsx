@@ -7,21 +7,22 @@ import {
 } from "./FileRootChangesGroup.js";
 import type {
   FileRootFileDiffRequest,
-  FileRootChangesResult,
-    FileRootGitChangeEntry,
-    FileRootGitChangeScope,
+  FileRootGitChangeEntry,
+  FileRootGitChangeScope,
+  SessionFileRoot,
   SessionFileRootResourceRequest,
 } from "./file-explorer-contract.js";
 
 type FileRootChangesApi = Pick<
   WithMateWindowApi,
-  "listSessionFileRoots" | "listFileRootChanges"
+  "listFileRootChanges" | "listFileRootChangesRepositories"
 >;
 
 export type FileRootChangesPaneProps = {
   api: FileRootChangesApi | null;
   sessionId: string | null;
   enabled: boolean;
+  roots: SessionFileRoot[];
   rootsRevision: string;
   refreshRevision: number;
   onOpenFile: (
@@ -38,95 +39,236 @@ function directoryStateKey(rootId: string, scope: FileRootGitChangeScope, relati
   return `${rootId}\u0000${scope}\u0000${relativePath}`;
 }
 
+function createUnloadedRootChanges(roots: SessionFileRoot[]): GitRootChanges[] {
+  return roots.map((root) => ({
+    root,
+    status: "idle",
+    entries: [],
+    message: "",
+  }));
+}
+
+const MAX_CONCURRENT_FILE_ROOT_CHANGES_REQUESTS = 2;
+
+type ChangesRefreshQueue = {
+  revision: number;
+  sessionId: string;
+  roots: SessionFileRoot[];
+  nextIndex: number;
+};
+
 export function FileRootChangesPane({
   api,
   sessionId,
   enabled,
+  roots,
   rootsRevision,
   refreshRevision,
   onOpenFile,
   onOpenDiff,
 }: FileRootChangesPaneProps) {
   const requestRevisionRef = useRef(0);
+  const repositoryRequestRevisionRef = useRef(0);
+  const repositoryRootsRef = useRef<SessionFileRoot[]>([]);
+  const refreshQueueRef = useRef<ChangesRefreshQueue | null>(null);
+  const activeRefreshRequestsRef = useRef(0);
+  const drainRefreshQueueRef = useRef<() => void>(() => undefined);
+  const repositoriesReadyRef = useRef(false);
+  const repositoryDiscoveryFailedRef = useRef(false);
+  const lastRefreshRevisionRef = useRef(refreshRevision);
+  const latestRefreshRevisionRef = useRef(refreshRevision);
   const diffRevisionRef = useRef(0);
-  const rootChangesSessionIdRef = useRef<string | null>(null);
   const [rootChanges, setRootChanges] = useState<GitRootChanges[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [repositoriesLoading, setRepositoriesLoading] = useState(false);
+  const [repositoriesReady, setRepositoriesReady] = useState(false);
+  const [repositoryMessage, setRepositoryMessage] = useState("");
   const [loadingKey, setLoadingKey] = useState("");
   const [message, setMessage] = useState("");
   const [collapsedDirectories, setCollapsedDirectories] = useState<Record<string, boolean>>({});
+  latestRefreshRevisionRef.current = refreshRevision;
 
-  const reload = useCallback(async () => {
+  const drainRefreshQueue = useCallback(() => {
+    const queue = refreshQueueRef.current;
+    if (!api || !sessionId || !enabled || !queue || queue.sessionId !== sessionId) {
+      return;
+    }
+    while (
+      activeRefreshRequestsRef.current < MAX_CONCURRENT_FILE_ROOT_CHANGES_REQUESTS
+      && queue.nextIndex < queue.roots.length
+    ) {
+      const root = queue.roots[queue.nextIndex];
+      queue.nextIndex += 1;
+      activeRefreshRequestsRef.current += 1;
+      void api.listFileRootChanges({ sessionId, rootId: root.id }).then((result) => {
+        if (requestRevisionRef.current !== queue.revision) {
+          return;
+        }
+        setRootChanges((current) => {
+          if (result.status === "not-git" || result.status === "root-not-found") {
+            return current.filter((rootChange) => rootChange.root.id !== root.id);
+          }
+          return current.map((rootChange) => {
+            if (rootChange.root.id !== root.id) {
+              return rootChange;
+            }
+            if (result.status === "ok") {
+              return {
+                ...rootChange,
+                status: result.entries.length > 0 ? "success" : "empty",
+                entries: result.entries,
+                message: "",
+              };
+            }
+            return {
+              ...rootChange,
+              status: "failed",
+              message: result.message,
+            };
+          });
+        });
+      }).catch((error) => {
+        if (requestRevisionRef.current !== queue.revision) {
+          return;
+        }
+        setRootChanges((current) => current.map((rootChange) => rootChange.root.id === root.id
+          ? {
+              ...rootChange,
+              status: "failed",
+              message: error instanceof Error ? error.message : "Git status failed.",
+            }
+          : rootChange));
+      }).finally(() => {
+        activeRefreshRequestsRef.current -= 1;
+        drainRefreshQueueRef.current();
+      });
+    }
+  }, [api, enabled, sessionId]);
+  drainRefreshQueueRef.current = drainRefreshQueue;
+
+  const refresh = useCallback(() => {
     const revision = requestRevisionRef.current + 1;
     requestRevisionRef.current = revision;
     if (!api || !sessionId || !enabled) {
-      rootChangesSessionIdRef.current = sessionId;
-      setRootChanges([]);
-      setLoading(false);
-      setMessage("");
       return;
     }
-    if (rootChangesSessionIdRef.current !== sessionId) {
-      rootChangesSessionIdRef.current = sessionId;
-      setRootChanges([]);
-    }
-    setLoading(true);
     setMessage("");
-    try {
-      const roots = await api.listSessionFileRoots(sessionId);
-      const nextRootChanges: GitRootChanges[] = [];
-      for (const root of roots) {
-        if (requestRevisionRef.current !== revision) {
-          return;
-        }
-        let result: FileRootChangesResult;
-        try {
-          result = await api.listFileRootChanges({ sessionId, rootId: root.id });
-        } catch (error) {
-          if (requestRevisionRef.current !== revision) {
-            return;
-          }
-          nextRootChanges.push({
-            root,
-            entries: [],
-            message: error instanceof Error ? error.message : "Git status failed.",
-          });
-          continue;
-        }
-        if (requestRevisionRef.current !== revision) {
-          return;
-        }
-        if (result.status === "ok") {
-          nextRootChanges.push({ root, entries: result.entries, message: "" });
-        } else if (result.status === "failed") {
-          nextRootChanges.push({ root, entries: [], message: result.message });
-        }
-      }
-      if (requestRevisionRef.current === revision) {
-        setRootChanges(nextRootChanges);
-      }
-    } catch (error) {
-      if (requestRevisionRef.current === revision) {
-        setMessage(error instanceof Error ? error.message : "Git status failed.");
-      }
-    } finally {
-      if (requestRevisionRef.current === revision) {
-        setLoading(false);
-      }
-    }
+    const repositoryRoots = repositoryRootsRef.current;
+    refreshQueueRef.current = {
+      revision,
+      sessionId,
+      roots: repositoryRoots,
+      nextIndex: 0,
+    };
+    setRootChanges((current) => repositoryRoots.map((root) => {
+      const existing = current.find((rootChange) => rootChange.root.id === root.id);
+      return {
+        root,
+        status: "pending",
+        entries: existing?.entries ?? [],
+        message: "",
+      };
+    }));
+
+    drainRefreshQueueRef.current();
   }, [api, enabled, sessionId]);
 
-  useEffect(() => {
-    void reload();
-    return () => {
-      requestRevisionRef.current += 1;
-      diffRevisionRef.current += 1;
-    };
-  }, [refreshRevision, reload, rootsRevision]);
+  const discoverRepositories = useCallback(async () => {
+    const revision = repositoryRequestRevisionRef.current + 1;
+    repositoryRequestRevisionRef.current = revision;
+    requestRevisionRef.current += 1;
+    refreshQueueRef.current = null;
+    repositoryRootsRef.current = [];
+    setRootChanges([]);
+    setRepositoryMessage("");
+    repositoriesReadyRef.current = false;
+    repositoryDiscoveryFailedRef.current = false;
+    setRepositoriesReady(false);
+    if (!api || !sessionId || !enabled || roots.length === 0) {
+      setRepositoriesLoading(false);
+      repositoriesReadyRef.current = true;
+      setRepositoriesReady(true);
+      return true;
+    }
+    setRepositoriesLoading(true);
+    try {
+      const result = await api.listFileRootChangesRepositories({
+        sessionId,
+        rootIds: roots.map((root) => root.id),
+      });
+      if (repositoryRequestRevisionRef.current !== revision) {
+        return false;
+      }
+      if (result.status === "failed") {
+        repositoryDiscoveryFailedRef.current = true;
+        setRepositoryMessage(result.message);
+        return false;
+      }
+      const repositoryRootIds = new Set(result.repositories.map((repository) => repository.rootId));
+      const failuresByRootId = new Map(result.failures.map((failure) => [failure.rootId, failure.message]));
+      const nextRootChanges = roots.flatMap<GitRootChanges>((root) => {
+        if (repositoryRootIds.has(root.id)) {
+          return createUnloadedRootChanges([root]);
+        }
+        const failureMessage = failuresByRootId.get(root.id);
+        return failureMessage
+          ? [{ root, status: "failed", entries: [], message: failureMessage }]
+          : [];
+      });
+      repositoryRootsRef.current = nextRootChanges.map((rootChange) => rootChange.root);
+      repositoryDiscoveryFailedRef.current = result.failures.length > 0;
+      setRootChanges(nextRootChanges);
+      return true;
+    } catch (error) {
+      if (repositoryRequestRevisionRef.current === revision) {
+        repositoryDiscoveryFailedRef.current = true;
+        setRepositoryMessage(error instanceof Error ? error.message : "Git repositories could not be resolved.");
+      }
+      return false;
+    } finally {
+      if (repositoryRequestRevisionRef.current === revision) {
+        setRepositoriesLoading(false);
+        repositoriesReadyRef.current = true;
+        setRepositoriesReady(true);
+      }
+    }
+  }, [api, enabled, roots, sessionId]);
 
   useEffect(() => {
+    diffRevisionRef.current += 1;
+    setMessage("");
+    setLoadingKey("");
     setCollapsedDirectories({});
-  }, [rootsRevision, sessionId]);
+    void discoverRepositories();
+  }, [discoverRepositories, rootsRevision]);
+
+  useEffect(() => {
+    if (lastRefreshRevisionRef.current === refreshRevision) {
+      return;
+    }
+    if (!repositoriesReadyRef.current) {
+      return;
+    }
+    lastRefreshRevisionRef.current = refreshRevision;
+    if (repositoryDiscoveryFailedRef.current) {
+      const requestedRefreshRevision = refreshRevision;
+      void discoverRepositories().then((discovered) => {
+        if (discovered && latestRefreshRevisionRef.current === requestedRefreshRevision) {
+          refresh();
+        }
+      });
+      return;
+    }
+    refresh();
+  }, [discoverRepositories, refresh, refreshRevision, repositoriesReady]);
+
+  useEffect(() => {
+    return () => {
+      requestRevisionRef.current += 1;
+      repositoryRequestRevisionRef.current += 1;
+      diffRevisionRef.current += 1;
+      refreshQueueRef.current = null;
+    };
+  }, []);
 
   const toggleDirectory = (rootId: string, scope: FileRootGitChangeScope, relativePath: string) => {
     const key = directoryStateKey(rootId, scope, relativePath);
@@ -186,21 +328,9 @@ export function FileRootChangesPane({
   };
 
   return (
-    <div className="workspace-changes-pane" aria-busy={loading}>
+    <div className="workspace-changes-pane">
+      {repositoryMessage ? <p className="workspace-changes-message" role="alert">{repositoryMessage}</p> : null}
       {message ? <p className="workspace-changes-message" role="alert">{message}</p> : null}
-      {loading ? (
-        <div
-          className="workspace-changes-loading"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          <span className="workspace-changes-spinner" aria-hidden="true" />
-          <span className="visually-hidden">
-            {rootChanges.length > 0 ? "Refreshing changes" : "Loading changes"}
-          </span>
-        </div>
-      ) : null}
       {rootChanges.length > 0 ? (
         <div className="workspace-changes-groups" role="list" aria-label="File root changes">
           {rootChanges.map((rootChange) => (
@@ -215,7 +345,12 @@ export function FileRootChangesPane({
             />
           ))}
         </div>
-      ) : !loading && !message ? (
+      ) : repositoriesLoading ? (
+        <div className="workspace-changes-discovery-loading" role="status" aria-live="polite">
+          <span className="workspace-changes-spinner" aria-hidden="true" />
+          <span className="visually-hidden">Discovering Git repositories</span>
+        </div>
+      ) : !message && !repositoryMessage ? (
         <p className="workspace-changes-empty">No Git repositories.</p>
       ) : null}
     </div>

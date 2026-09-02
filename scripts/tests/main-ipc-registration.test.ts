@@ -52,6 +52,7 @@ import {
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
@@ -165,6 +166,14 @@ function createSessionRequest(workspace: Record<string, unknown>) {
   };
 }
 
+// @test-value v1
+// kind = "contract"
+// claim = "Main IPC registrationは公開中のChanges repository discovery channelを登録する"
+// oracle = { type = "contract", ref = "WithMateWindowApi.listFileRootChangesRepositories" }
+// failure_mode = "preloadが公開したrepository discovery channelにMain handlerがなくrenderer呼び出しが失敗する"
+// scope = "Main IPC public channel registration"
+// lifecycle = "permanent"
+// @end-test-value
 test("registerMainIpcHandlers は保持する public IPC だけを登録する", () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const { deps } = createDeps();
@@ -185,6 +194,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL));
@@ -649,6 +659,14 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
   ]);
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "Changes repository discovery IPCはowning Session senderを確認し、検証済みroot ID列だけをserviceへ渡す"
+// oracle = { type = "contract", ref = "Session File Explorer IPC authority boundary" }
+// failure_mode = "不正なroot ID列または別Session senderがrepository discovery serviceへ到達する"
+// scope = "Changes repository discovery IPC"
+// lifecycle = "permanent"
+// @end-test-value
 test("File Explorer IPC は owning Session window からだけ利用でき、Auxiliary ID を parent へ解決する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
@@ -668,6 +686,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   const historyDetailRequests: unknown[] = [];
   const historyDiffRequests: unknown[] = [];
   const changesRequests: unknown[] = [];
+  const changesRepositoryRequests: unknown[] = [];
   const diffRequests: unknown[] = [];
   const previewNavigationRequests: unknown[] = [];
   const { deps } = createDeps({
@@ -713,6 +732,10 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     listFileRootChanges: async (request: unknown) => {
       changesRequests.push(request);
       return { status: "ok", entries: [] };
+    },
+    listFileRootChangesRepositories: async (request: unknown) => {
+      changesRepositoryRequests.push(request);
+      return { status: "ok", repositories: [{ rootId: "workspace" }], failures: [] };
     },
     getFileRootDiff: async (request: unknown) => {
       diffRequests.push(request);
@@ -801,6 +824,19 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     entries: [],
   });
   assert.deepEqual(changesRequests, [changesRequest]);
+  const changesRepositoriesRequest = { sessionId: "aux-1", rootIds: ["workspace"] };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL)?.({}, changesRepositoriesRequest),
+    { status: "ok", repositories: [{ rootId: "workspace" }], failures: [] },
+  );
+  assert.deepEqual(changesRepositoryRequests, [changesRepositoriesRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL)?.({}, {
+      sessionId: "aux-1",
+      rootIds: ["workspace", "workspace"],
+    }) as Promise<unknown>,
+    /request is invalid/,
+  );
   const diffRequest = {
     sessionId: "aux-1",
     rootId: "workspace",
@@ -886,6 +922,11 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     /owning Session window/,
   );
   assert.deepEqual(changesRequests, [changesRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL)?.({}, changesRepositoriesRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.deepEqual(changesRepositoryRequests, [changesRepositoriesRequest]);
   await assert.rejects(
     () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest) as Promise<unknown>,
     /current Preview resource/,

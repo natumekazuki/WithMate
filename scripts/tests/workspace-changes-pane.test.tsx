@@ -6,11 +6,22 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import type {
+  FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootGitChangeEntry,
+  SessionFileRoot,
 } from "../../src/file-explorer/file-explorer-contract.js";
 
-test("FileRootChangesPane は表示対象と明示 refresh の変更時だけ再取得する", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "Changes pane は認可済みroot枠だけを先に表示し、明示Refresh以外ではChanges取得を開始しない"
+// oracle = { type = "contract", ref = "accepted behavior: manual Changes refresh" }
+// failure_mode = "初回表示に不要なidle説明が出るか、再描画、root集合変更、Session切替でGit statusが暗黙に実行される"
+// scope = "FileRootChangesPane refresh boundary"
+// lifecycle = "permanent"
+// distinction = "取得後のrepository別完了順ではなく、取得を開始できる操作を検証する"
+// @end-test-value
+test("FileRootChangesPane は明示RefreshだけでChangesを取得する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -32,25 +43,31 @@ test("FileRootChangesPane は表示対象と明示 refresh の変更時だけ再
   const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
 
   type ChangesResult = { status: "ok"; entries: FileRootGitChangeEntry[] };
-  const rootRequests: string[] = [];
+  const repositoryRequests: Array<{ sessionId: string; rootIds: string[] }> = [];
   const changesRequests: Array<{ sessionId: string; rootId: string }> = [];
   const pendingChanges: Array<(result: ChangesResult) => void> = [];
   const testApi = {
-    listSessionFileRoots: async (sessionId: string) => {
-      rootRequests.push(sessionId);
-      return [
-        { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo" },
-      ];
+    listFileRootChangesRepositories: async (request: { sessionId: string; rootIds: string[] }) => {
+      repositoryRequests.push(request);
+      return {
+        status: "ok" as const,
+        repositories: request.rootIds.map((rootId) => ({ rootId })),
+        failures: [],
+      };
     },
     listFileRootChanges: async (request: { sessionId: string; rootId: string }) => {
       changesRequests.push(request);
       return new Promise<ChangesResult>((resolve) => pendingChanges.push(resolve));
     },
   };
+  const roots: SessionFileRoot[] = [
+    { id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" },
+  ];
   const baseProps = {
     api: testApi,
     sessionId: "session-1",
     enabled: true,
+    roots,
     rootsRevision: "roots-1",
     refreshRevision: 0,
     onOpenFile: () => undefined,
@@ -67,56 +84,80 @@ test("FileRootChangesPane は表示対象と明示 refresh の変更時だけ再
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement(FileRootChangesPane, baseProps));
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    assert.deepEqual(rootRequests, ["session-1"]);
-    assert.deepEqual(changesRequests, [{ sessionId: "session-1", rootId: "workspace" }]);
+    assert.deepEqual(repositoryRequests, [{ sessionId: "session-1", rootIds: ["workspace"] }]);
+    assert.equal(dom.window.document.querySelectorAll(".workspace-changes-root-group").length, 1);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Not loaded/);
+    assert.deepEqual(changesRequests, []);
 
     await act(async () => {
       dom.window.dispatchEvent(new dom.window.Event("focus"));
       dom.window.dispatchEvent(new dom.window.Event("focus"));
+      root?.render(React.createElement(FileRootChangesPane, baseProps));
       await Promise.resolve();
     });
-    assert.equal(rootRequests.length, 1);
-    assert.equal(changesRequests.length, 1);
-
-    await completeRequest(0);
-    await act(async () => {
-      dom.window.dispatchEvent(new dom.window.Event("focus"));
-      dom.window.dispatchEvent(new dom.window.Event("focus"));
-      await Promise.resolve();
-    });
-    assert.equal(rootRequests.length, 1);
-    assert.equal(changesRequests.length, 1);
+    assert.equal(changesRequests.length, 0);
 
     const refreshedProps = { ...baseProps, refreshRevision: 1 };
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, refreshedProps));
       await Promise.resolve();
     });
-    assert.equal(rootRequests.length, 2);
-    assert.equal(changesRequests.length, 2);
-    await completeRequest(1);
+    assert.deepEqual(changesRequests, [{ sessionId: "session-1", rootId: "workspace" }]);
+    await completeRequest(0);
 
     await act(async () => {
-      root?.render(React.createElement(FileRootChangesPane, { ...refreshedProps, rootsRevision: "roots-2" }));
+      root?.render(React.createElement("div"));
       await Promise.resolve();
     });
-    assert.equal(rootRequests.length, 3);
-    assert.equal(changesRequests.length, 3);
-    await completeRequest(2);
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, refreshedProps));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(changesRequests.length, 1);
+    assert.equal(repositoryRequests.length, 2);
+
+    const nextRoots: SessionFileRoot[] = [
+      { id: "additional:repo", kind: "additional", label: "Repo", displayPath: "C:/other" },
+    ];
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...refreshedProps,
+        roots: nextRoots,
+        rootsRevision: "roots-2",
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(changesRequests.length, 1);
+    assert.deepEqual(repositoryRequests.at(-1), { sessionId: "session-1", rootIds: ["additional:repo"] });
+    assert.equal(dom.window.document.querySelector("[data-root-id='workspace']"), null);
+    assert.ok(dom.window.document.querySelector("[data-root-id='additional:repo']"));
 
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, {
         ...refreshedProps,
         sessionId: "session-2",
+        roots: nextRoots,
         rootsRevision: "roots-2",
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(changesRequests.length, 1);
+    assert.deepEqual(repositoryRequests.at(-1), { sessionId: "session-2", rootIds: ["additional:repo"] });
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...refreshedProps,
+        sessionId: "session-2",
+        roots: nextRoots,
+        rootsRevision: "roots-2",
+        refreshRevision: 2,
       }));
       await Promise.resolve();
     });
-    assert.deepEqual(rootRequests, ["session-1", "session-1", "session-1", "session-2"]);
-    assert.deepEqual(changesRequests.at(-1), { sessionId: "session-2", rootId: "workspace" });
-    await completeRequest(3);
+    assert.deepEqual(changesRequests.at(-1), { sessionId: "session-2", rootId: "additional:repo" });
+    await completeRequest(1);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -132,7 +173,191 @@ test("FileRootChangesPane は表示対象と明示 refresh の変更時だけ再
   }
 });
 
-test("FileRootChangesPane は大量の変更を constrained viewport 内で仮想化する", async () => {
+// @test-value v1
+// kind = "regression"
+// claim = "Changes paneはGit repository discovery中を視覚spinnerとscreen reader向けstatusで示す"
+// oracle = { type = "contract", ref = "user feedback: Changes tab loading indicator" }
+// failure_mode = "Changes tabへの切替時にrepository discoveryのloadingがvisible textだけで表示される"
+// scope = "FileRootChangesPane repository discovery loading state"
+// lifecycle = "permanent"
+// distinction = "Refresh後のrepository別pendingではなく、Changes tab切替直後のrepository discovery pendingを扱う"
+// @end-test-value
+test("FileRootChangesPane はrepository discovery中をspinnerで示す", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  const style = dom.window.document.createElement("style");
+  style.textContent = (await readFile(new URL("../../src/styles.css", import.meta.url), "utf8"))
+    .replace(/^@import .*;$/gm, "");
+  dom.window.document.head.append(style);
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
+
+  const testApi = {
+    listFileRootChangesRepositories: async () => new Promise<{
+      status: "ok";
+      repositories: Array<{ rootId: string }>;
+      failures: [];
+    }>(() => undefined),
+    listFileRootChanges: async () => ({ status: "ok" as const, entries: [] }),
+  };
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootChangesPane, {
+        api: testApi,
+        sessionId: "session-1",
+        enabled: true,
+        roots: [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
+        rootsRevision: "roots-1",
+        refreshRevision: 0,
+        onOpenFile: () => undefined,
+        onOpenDiff: async () => null,
+      }));
+      await Promise.resolve();
+    });
+
+    const status = dom.window.document.querySelector("[role='status']");
+    assert.ok(status);
+    const spinner = status.querySelector<HTMLElement>(".workspace-changes-spinner[aria-hidden='true']");
+    assert.ok(spinner);
+    const spinnerStyle = dom.window.getComputedStyle(spinner);
+    assert.equal(spinnerStyle.width, "24px");
+    assert.equal(spinnerStyle.height, "24px");
+    assert.equal(spinnerStyle.borderTopStyle, "solid");
+    assert.equal(status.querySelector(".visually-hidden")?.textContent, "Discovering Git repositories");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "repository discovery失敗後の明示Refreshはdiscoveryを再試行し、成功した現行世代のChanges取得を開始する"
+// oracle = { type = "contract", ref = "accepted behavior: explicit Refresh recovers transient repository discovery failures" }
+// failure_mode = "一時的なdiscovery失敗後にRefreshしても空のrepository集合だけを処理し、Changesを再取得できない"
+// scope = "FileRootChangesPane discovery retry transition"
+// lifecycle = "permanent"
+// distinction = "初回discoveryのloading表示ではなく、failedから利用者操作でsuccessへ復旧する遷移を検証する"
+// @end-test-value
+test("FileRootChangesPane はRefreshでrepository discovery失敗から復旧する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
+
+  let discoveryCalls = 0;
+  const changesRequests: Array<{ sessionId: string; rootId: string }> = [];
+  const testApi = {
+    listFileRootChangesRepositories: async () => {
+      discoveryCalls += 1;
+      return discoveryCalls === 1
+        ? { status: "failed" as const, message: "Repository discovery timed out." }
+        : {
+            status: "ok" as const,
+            repositories: [{ rootId: "workspace" }],
+            failures: [],
+          };
+    },
+    listFileRootChanges: async (request: { sessionId: string; rootId: string }) => {
+      changesRequests.push(request);
+      return { status: "ok" as const, entries: [] };
+    },
+  };
+  const baseProps = {
+    api: testApi,
+    sessionId: "session-1",
+    enabled: true,
+    roots: [{ id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo" }],
+    rootsRevision: "roots-1",
+    refreshRevision: 0,
+    onOpenFile: () => undefined,
+    onOpenDiff: async () => null,
+  };
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootChangesPane, baseProps));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(discoveryCalls, 1);
+    assert.match(dom.window.document.body.textContent ?? "", /Repository discovery timed out/);
+    assert.deepEqual(changesRequests, []);
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 1 }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(discoveryCalls, 2);
+    assert.deepEqual(changesRequests, [{ sessionId: "session-1", rootId: "workspace" }]);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Repository discovery timed out/);
+    assert.match(dom.window.document.querySelector("[data-root-id='workspace']")?.textContent ?? "", /No changes/);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "repository別groupはnon-Git結果を除外し、失敗を局所表示しながら既存の変更導線と仮想化を維持する"
+// oracle = { type = "contract", ref = "MT-023D10 and MT-023D10A" }
+// failure_mode = "手動Refresh化に伴ってnon-Git除外、repository別failure、directory collapse、diff/file previewまたは大量表示が壊れる"
+// scope = "FileRootChangesPane repository groups"
+// lifecycle = "permanent"
+// distinction = "取得開始条件ではなく、取得後の既存group操作と表示を検証する"
+// @end-test-value
+test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維持する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -224,25 +449,21 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     relativePath: string;
     openInWindow: boolean;
   }> = [];
-  let rootListFailure: Error | null = null;
   let workspaceEntries = entries;
+  const roots: SessionFileRoot[] = [
+    { id: "session-folder", kind: "session-folder", label: "Session Folder", displayPath: "C:/session" },
+    { id: "additional:broken", kind: "additional", label: "broken", displayPath: "C:/broken" },
+    { id: "additional:repo", kind: "additional", label: "repo", displayPath: "C:/repo" },
+    { id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo/app" },
+  ];
   const testApi = {
-    listSessionFileRoots: async () => {
-      if (rootListFailure) {
-        throw rootListFailure;
-      }
-      return [
-        { id: "session-folder", kind: "session-folder" as const, label: "Session Folder", displayPath: "C:/session" },
-        { id: "additional:broken", kind: "additional" as const, label: "broken", displayPath: "C:/broken" },
-        { id: "additional:repo", kind: "additional" as const, label: "repo", displayPath: "C:/repo" },
-        { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo/app" },
-      ];
-    },
+    listFileRootChangesRepositories: async () => ({
+      status: "ok" as const,
+      repositories: ["additional:broken", "additional:repo", "workspace"].map((rootId) => ({ rootId })),
+      failures: [],
+    }),
     listFileRootChanges: async (request: { rootId: string }) => {
       requestedRootIds.push(request.rootId);
-      if (request.rootId === "session-folder") {
-        return { status: "not-git" as const, message: "Not a Git repository." };
-      }
       if (request.rootId === "additional:broken") {
         return { status: "failed" as const, message: "Git status failed for broken root." };
       }
@@ -255,6 +476,7 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
   const baseProps = {
     api: testApi,
     enabled: true,
+    roots,
     rootsRevision: "roots-1",
     refreshRevision: 0,
     onOpenFile: async (request: { sessionId: string; rootId: string; relativePath: string }, openInWindow: boolean) => {
@@ -273,6 +495,14 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       root.render(React.createElement(FileRootChangesPane, {
         ...baseProps,
         sessionId: "session-1",
+      }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      root.render(React.createElement(FileRootChangesPane, {
+        ...baseProps,
+        sessionId: "session-1",
+        refreshRevision: 1,
       }));
     });
     await act(async () => {
@@ -297,7 +527,7 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     assert.equal(groups.find((group) => group.dataset.rootId === "additional:broken")?.style.minHeight, "78px");
     assert.equal(groups.find((group) => group.dataset.rootId === "additional:repo")?.style.maxHeight, "260px");
     assert.equal(groups.find((group) => group.dataset.rootId === "workspace")?.style.maxHeight, "408px");
-    assert.deepEqual(requestedRootIds, ["session-folder", "additional:broken", "additional:repo", "workspace"]);
+    assert.deepEqual(requestedRootIds, ["additional:broken", "additional:repo", "workspace"]);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Session Folder/);
     assert.match(dom.window.document.body.textContent ?? "", /Git status failed for broken root/);
     assert.match(dom.window.document.body.textContent ?? "", /repo/);
@@ -405,7 +635,7 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       root?.render(React.createElement(FileRootChangesPane, {
         ...baseProps,
         sessionId: "session-1",
-        refreshRevision: 1,
+        refreshRevision: 2,
       }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
@@ -420,49 +650,12 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     assert.equal(refreshedRepoList?.scrollTop, 20);
     assert.equal(refreshedWorkspaceList?.scrollTop, 120);
 
-    rootListFailure = new Error("Temporary root refresh failure.");
-    await act(async () => {
-      root?.render(React.createElement(FileRootChangesPane, {
-        ...baseProps,
-        sessionId: "session-1",
-        refreshRevision: 2,
-      }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    assert.equal(
-      dom.window.document.querySelector(".workspace-changes-root-group[data-root-id='additional:repo'] .workspace-changes-list"),
-      repoList,
-    );
-    assert.equal(
-      dom.window.document.querySelector(".workspace-changes-root-group[data-root-id='workspace'] .workspace-changes-list"),
-      workspaceList,
-    );
-    assert.equal(repoList.scrollTop, 20);
-    assert.equal(workspaceList.scrollTop, 120);
-    assert.match(dom.window.document.body.textContent ?? "", /Temporary root refresh failure/);
-
-    rootListFailure = null;
-    await act(async () => {
-      root?.render(React.createElement(FileRootChangesPane, {
-        ...baseProps,
-        sessionId: "session-1",
-        refreshRevision: 3,
-      }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    assert.equal(
-      dom.window.document.querySelector(".workspace-changes-root-group[data-root-id='workspace'] .workspace-changes-list"),
-      workspaceList,
-    );
-    assert.equal(workspaceList.scrollTop, 120);
-    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Temporary root refresh failure/);
-
     workspaceEntries = entries.slice(0, 1);
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, {
         ...baseProps,
         sessionId: "session-1",
-        refreshRevision: 4,
+        refreshRevision: 3,
       }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
@@ -490,9 +683,11 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     let rejectStaleRequest: ((reason?: unknown) => void) | null = null;
     let statusRequestCount = 0;
     const staleReloadApi = {
-      listSessionFileRoots: async () => [
-        { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo/app" },
-      ],
+      listFileRootChangesRepositories: async (request: { rootIds: string[] }) => ({
+        status: "ok" as const,
+        repositories: request.rootIds.map((rootId) => ({ rootId })),
+        failures: [],
+      }),
       listFileRootChanges: async () => {
         statusRequestCount += 1;
         if (statusRequestCount === 1) {
@@ -515,6 +710,9 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       api: staleReloadApi,
       sessionId: "session-1",
       enabled: true,
+      roots: [
+        { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo/app" },
+      ],
       refreshRevision: 0,
       onOpenFile: () => undefined,
       onOpenDiff: async () => null,
@@ -523,14 +721,16 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       root?.render(React.createElement(FileRootChangesPane, {
         ...staleReloadProps,
         rootsRevision: "stale-1",
+        refreshRevision: 1,
       }));
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10));
     });
     assert.ok(rejectStaleRequest);
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, {
         ...staleReloadProps,
-        rootsRevision: "stale-2",
+        rootsRevision: "stale-1",
+        refreshRevision: 2,
       }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
@@ -569,7 +769,16 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
   }
 });
 
-test("FileRootChangesPane は loading state を競合させず stale request を無視する", async () => {
+// @test-value v1
+// kind = "invariant"
+// claim = "Refreshはrepositoryごとに並行開始し、完了済みgroupを即時反映しながら古いrequest結果を無視する"
+// oracle = { type = "contract", ref = "accepted behavior: per-repository concurrent refresh" }
+// failure_mode = "遅いrepositoryが他groupの表示を止める、または再RefreshやSession切替後の古い結果が現行stateを上書きする"
+// scope = "FileRootChangesPane repository request generation"
+// lifecycle = "permanent"
+// distinction = "明示Refreshの開始条件ではなく、複数repositoryの完了順とrequest世代を検証する"
+// @end-test-value
+test("FileRootChangesPane はrepositoryごとに完了を反映してstale requestを無視する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -590,18 +799,30 @@ test("FileRootChangesPane は loading state を競合させず stale request を
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
   const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
 
-  type ChangesResult = { status: "ok"; entries: FileRootGitChangeEntry[] };
-  const pendingRequests: Array<(result: ChangesResult) => void> = [];
+  const pendingRequests: Array<{
+    request: { sessionId: string; rootId: string };
+    resolve: (result: FileRootChangesResult) => void;
+    reject: (error: Error) => void;
+  }> = [];
   const testApi = {
-    listSessionFileRoots: async () => [
-      { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo" },
-    ],
-    listFileRootChanges: async () => new Promise<ChangesResult>((resolve) => pendingRequests.push(resolve)),
+    listFileRootChangesRepositories: async (request: { rootIds: string[] }) => ({
+      status: "ok" as const,
+      repositories: request.rootIds.map((rootId) => ({ rootId })),
+      failures: [],
+    }),
+    listFileRootChanges: async (request: { sessionId: string; rootId: string }) => (
+      new Promise<FileRootChangesResult>((resolve, reject) => pendingRequests.push({ request, resolve, reject }))
+    ),
   };
+  const roots: SessionFileRoot[] = [
+    { id: "slow", kind: "workspace", label: "Slow", displayPath: "C:/slow" },
+    { id: "fast", kind: "additional", label: "Fast", displayPath: "C:/fast" },
+  ];
   const baseProps = {
     api: testApi,
     sessionId: "session-1",
     enabled: true,
+    roots,
     rootsRevision: "roots-1",
     refreshRevision: 0,
     onOpenFile: () => undefined,
@@ -620,89 +841,89 @@ test("FileRootChangesPane は loading state を競合させず stale request を
       root.render(React.createElement(FileRootChangesPane, baseProps));
       await Promise.resolve();
     });
-    const changesPane = dom.window.document.querySelector<HTMLElement>(".workspace-changes-pane");
-    const initialLoading = dom.window.document.querySelector<HTMLElement>(".workspace-changes-loading");
-    assert.equal(pendingRequests.length, 1);
-    assert.equal(changesPane?.getAttribute("aria-busy"), "true");
-    assert.equal(initialLoading?.getAttribute("role"), "status");
-    assert.equal(initialLoading?.className, "workspace-changes-loading");
-    assert.equal(initialLoading?.getAttribute("aria-live"), "polite");
-    assert.equal(initialLoading?.querySelector(".visually-hidden")?.textContent?.trim(), "Loading changes");
-    assert.ok(initialLoading?.querySelector(".workspace-changes-spinner[aria-hidden='true']"));
-    assert.equal(dom.window.document.querySelector(".workspace-changes-empty"), null);
-
-    await act(async () => {
-      pendingRequests[0]?.({ status: "ok", entries: entries(1) });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    assert.equal(changesPane?.getAttribute("aria-busy"), "false");
-    assert.equal(dom.window.document.querySelector(".workspace-changes-loading"), null);
-    assert.equal(dom.window.document.querySelector(".workspace-changes-root-count")?.textContent, "1");
+    assert.equal(pendingRequests.length, 0);
+    assert.equal(dom.window.document.querySelectorAll(".workspace-changes-root-group").length, 2);
 
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 1 }));
       await Promise.resolve();
     });
-    const refreshLoading = dom.window.document.querySelector<HTMLElement>(".workspace-changes-loading");
-    assert.equal(pendingRequests.length, 2);
-    assert.equal(changesPane?.getAttribute("aria-busy"), "true");
-    assert.equal(refreshLoading?.className, "workspace-changes-loading");
-    assert.equal(refreshLoading?.querySelector(".visually-hidden")?.textContent?.trim(), "Refreshing changes");
-    assert.equal(dom.window.document.querySelector(".workspace-changes-root-count")?.textContent, "1");
+    assert.deepEqual(pendingRequests.map(({ request }) => request), [
+      { sessionId: "session-1", rootId: "slow" },
+      { sessionId: "session-1", rootId: "fast" },
+    ]);
+    assert.equal(dom.window.document.querySelector(".workspace-changes-loading"), null);
+    assert.equal(dom.window.document.querySelector("[data-root-id='slow']")?.getAttribute("aria-busy"), "true");
+    assert.equal(dom.window.document.querySelector("[data-root-id='fast']")?.getAttribute("aria-busy"), "true");
+
+    await act(async () => {
+      pendingRequests[1]?.resolve({ status: "ok", entries: entries(2) });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(dom.window.document.querySelector("[data-root-id='slow']")?.getAttribute("aria-busy"), "true");
+    assert.equal(dom.window.document.querySelector("[data-root-id='fast']")?.getAttribute("aria-busy"), "false");
+    assert.equal(
+      dom.window.document.querySelector("[data-root-id='fast'] .workspace-changes-root-count")?.textContent,
+      "2",
+    );
+
+    await act(async () => {
+      pendingRequests[0]?.resolve({ status: "ok", entries: entries(1) });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(dom.window.document.querySelector("[data-root-id='slow']")?.getAttribute("aria-busy"), "false");
 
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 2 }));
       await Promise.resolve();
     });
-    assert.equal(pendingRequests.length, 3);
     await act(async () => {
-      pendingRequests[1]?.({ status: "ok", entries: entries(2) });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 3 }));
+      await Promise.resolve();
     });
-    assert.equal(changesPane?.getAttribute("aria-busy"), "true");
-    assert.equal(dom.window.document.querySelector(".workspace-changes-root-count")?.textContent, "1");
+    assert.equal(pendingRequests.length, 4);
 
     await act(async () => {
-      pendingRequests[2]?.({ status: "ok", entries: entries(3) });
+      pendingRequests[2]?.resolve({ status: "ok", entries: entries(7) });
+      pendingRequests[3]?.resolve({ status: "ok", entries: entries(8) });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    assert.equal(changesPane?.getAttribute("aria-busy"), "false");
-    assert.equal(dom.window.document.querySelector(".workspace-changes-loading"), null);
-    assert.equal(dom.window.document.querySelector(".workspace-changes-root-count")?.textContent, "3");
+    assert.equal(pendingRequests.length, 6);
+    assert.equal(dom.window.document.querySelectorAll("[data-root-id='slow'] .workspace-change-row").length, 1);
+    assert.equal(dom.window.document.querySelectorAll("[data-root-id='fast'] .workspace-change-row").length, 2);
 
     await act(async () => {
-      root?.render(React.createElement(FileRootChangesPane, {
-        ...baseProps,
-        api: {
-          listSessionFileRoots: async () => {
-            throw new Error("Initial root failure.");
-          },
-          listFileRootChanges: async () => ({ status: "ok" as const, entries: [] }),
-        },
-        sessionId: "session-error",
-        rootsRevision: "roots-error",
-      }));
+      pendingRequests[4]?.resolve({ status: "ok", entries: [] });
+      pendingRequests[5]?.reject(new Error("Fast repository failed."));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    assert.match(dom.window.document.querySelector("[role='alert']")?.textContent ?? "", /Initial root failure/);
-    assert.equal(dom.window.document.querySelector(".workspace-changes-empty"), null);
-    assert.equal(dom.window.document.querySelector(".workspace-changes-loading"), null);
+    assert.match(dom.window.document.querySelector("[data-root-id='slow']")?.textContent ?? "", /No changes/);
+    assert.match(dom.window.document.querySelector("[data-root-id='fast']")?.textContent ?? "", /Fast repository failed/);
+    assert.equal(dom.window.document.querySelector("[data-root-id='fast']")?.getAttribute("aria-busy"), "false");
 
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, {
         ...baseProps,
-        api: {
-          listSessionFileRoots: async () => [],
-          listFileRootChanges: async () => ({ status: "ok" as const, entries: [] }),
-        },
-        sessionId: "session-empty",
-        rootsRevision: "roots-empty",
+        refreshRevision: 4,
       }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...baseProps,
+        sessionId: "session-2",
+        roots: [{ id: "next", kind: "workspace", label: "Next", displayPath: "C:/next" }],
+        rootsRevision: "roots-2",
+        refreshRevision: 4,
+      }));
+      await Promise.resolve();
+      pendingRequests[6]?.resolve({ status: "ok", entries: entries(9) });
+      pendingRequests[7]?.resolve({ status: "ok", entries: entries(9) });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    assert.ok(dom.window.document.querySelector(".workspace-changes-empty"));
-    assert.equal(dom.window.document.querySelector("[role='alert']"), null);
-    assert.equal(dom.window.document.querySelector(".workspace-changes-loading"), null);
+    assert.equal(dom.window.document.querySelector("[data-root-id='slow']"), null);
+    assert.equal(dom.window.document.querySelector("[data-root-id='fast']"), null);
+    assert.ok(dom.window.document.querySelector("[data-root-id='next']"));
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -718,20 +939,154 @@ test("FileRootChangesPane は loading state を競合させず stale request を
   }
 });
 
-test("Changes loading indicator は既存内容より明瞭で reduced motion に配慮する", async () => {
-  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+// @test-value v1
+// kind = "invariant"
+// claim = "20 repositoryのRefreshと連続Refreshでもpane内のChanges要求は同時2件に制限され、最新世代だけを継続する"
+// oracle = { type = "contract", ref = "accepted behavior: bounded per-repository concurrent refresh" }
+// failure_mode = "一括Refreshまたは連続RefreshがMainのGit操作queueへ無制限に要求を積み、自己飽和させる"
+// scope = "FileRootChangesPane bounded request scheduling"
+// lifecycle = "permanent"
+// distinction = "repository別の表示順ではなく、18件超と連続Refresh時のadmission上限を検証する"
+// @end-test-value
+test("FileRootChangesPane は大量repositoryと連続Refreshをbounded schedulingする", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
 
-  assert.match(
-    styles,
-    /\.workspace-changes-loading\s*{[^}]*background:\s*color-mix\(in srgb, var\(--surface-deep\) 72%, transparent\);[^}]*color:\s*var\(--ink\);/s,
-  );
-  assert.match(
-    styles,
-    /\.workspace-changes-spinner\s*{[^}]*width:\s*24px;[^}]*height:\s*24px;[^}]*border:\s*3px solid/s,
-  );
-  assert.match(styles, /\.workspace-changes-spinner\s*{[^}]*animation:\s*workspace-changes-spin\s+720ms\s+linear\s+infinite;/s);
-  assert.match(
-    styles,
-    /@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.workspace-changes-spinner\s*{[^}]*animation:\s*none;/,
-  );
+  const pendingRequests: Array<{
+    request: { sessionId: string; rootId: string };
+    settled: boolean;
+    resolve: (result: FileRootChangesResult) => void;
+  }> = [];
+  const roots: SessionFileRoot[] = Array.from({ length: 20 }, (_, index) => ({
+    id: `repo-${index}`,
+    kind: index === 0 ? "workspace" as const : "additional" as const,
+    label: `Repo ${index}`,
+    displayPath: `C:/repo-${index}`,
+  }));
+  const testApi = {
+    listFileRootChangesRepositories: async () => ({
+      status: "ok" as const,
+      repositories: roots.map((root) => ({ rootId: root.id })),
+      failures: [],
+    }),
+    listFileRootChanges: async (request: { sessionId: string; rootId: string }) => (
+      new Promise<FileRootChangesResult>((resolve) => {
+        const pending = {
+          request,
+          settled: false,
+          resolve(result: FileRootChangesResult) {
+            pending.settled = true;
+            resolve(result);
+          },
+        };
+        pendingRequests.push(pending);
+      })
+    ),
+  };
+  const baseProps = {
+    api: testApi,
+    sessionId: "session-1",
+    enabled: true,
+    roots,
+    rootsRevision: "roots-1",
+    refreshRevision: 0,
+    onOpenFile: () => undefined,
+    onOpenDiff: async () => null,
+  };
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootChangesPane, baseProps));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 1 }));
+      await Promise.resolve();
+    });
+    assert.equal(pendingRequests.length, 2);
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 2 }));
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 3 }));
+      await Promise.resolve();
+    });
+    assert.equal(pendingRequests.length, 2);
+
+    await act(async () => {
+      pendingRequests[0]?.resolve({ status: "ok", entries: [] });
+      pendingRequests[1]?.resolve({ status: "ok", entries: [] });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.deepEqual(pendingRequests.slice(2).map(({ request }) => request.rootId), ["repo-0", "repo-1"]);
+    assert.equal(pendingRequests.filter(({ settled }) => !settled).length, 2);
+
+    for (let index = 2; index < 22; index += 1) {
+      await act(async () => {
+        pendingRequests[index]?.resolve({ status: "ok", entries: [] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.ok(pendingRequests.filter(({ settled }) => !settled).length <= 2);
+    }
+    assert.equal(pendingRequests.length, 22);
+    assert.deepEqual(pendingRequests.slice(2).map(({ request }) => request.rootId), roots.map((root) => root.id));
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "contract"
+// claim = "reduced motion用media ruleはChangesのrepository局所spinnerのanimationをnoneにする"
+// oracle = { type = "contract", ref = "accepted behavior: repository-local pending status" }
+// failure_mode = "repositoryのpending spinnerがreduced motion設定でも動き続ける"
+// scope = "Changes reduced-motion stylesheet contract"
+// lifecycle = "permanent"
+// @end-test-value
+test("Changes pending indicator はreduced motionに配慮する", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const dom = new JSDOM("<!doctype html><html><head></head><body></body></html>");
+  const style = dom.window.document.createElement("style");
+  style.textContent = styles.replace(/^@import .*;$/gm, "");
+  dom.window.document.head.append(style);
+  const reducedMotionRules = Array.from(style.sheet?.cssRules ?? []).filter((rule) => (
+    "media" in rule
+      && (rule as CSSMediaRule).media.mediaText.replaceAll(" ", "") === "(prefers-reduced-motion:reduce)"
+  )) as CSSMediaRule[];
+  assert.ok(reducedMotionRules.length > 0);
+  const spinnerRule = reducedMotionRules.flatMap((rule) => Array.from(rule.cssRules)).find((rule) => (
+    "selectorText" in rule
+      && (rule as CSSStyleRule).selectorText.split(",").map((selector) => selector.trim())
+        .includes(".workspace-changes-root-spinner")
+  )) as CSSStyleRule | undefined;
+  assert.ok(spinnerRule);
+  assert.equal(spinnerRule.style.getPropertyValue("animation"), "none");
+  dom.window.close();
 });

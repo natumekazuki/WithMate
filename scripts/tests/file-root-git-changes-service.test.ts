@@ -798,6 +798,51 @@ test("FileRootGitChangesService は実際のnon-Git directoryをnot-gitで返す
   }
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "Changes用repository discoveryは認可rootごとのGit判定だけを返し、status取得を実行しない"
+// oracle = { type = "contract", ref = "accepted behavior: repository frames before manual Changes refresh" }
+// failure_mode = "repository枠の準備でnon-Git rootを含める、または明示Refresh前にGit statusを実行する"
+// scope = "FileRootGitChangesService repository discovery"
+// lifecycle = "permanent"
+// @end-test-value
+test("FileRootGitChangesService はChanges取得なしでGit repository rootを抽出する", async () => {
+  const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-root-discovery-"));
+  const repositoryPath = path.join(parentPath, "repository");
+  const nonGitPath = path.join(parentPath, "non-git");
+  const commands: string[][] = [];
+  try {
+    await initializeRepository(repositoryPath);
+    await mkdir(nonGitPath);
+    const roots = new Map([
+      ["repository", repositoryPath],
+      ["non-git", nonGitPath],
+    ]);
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async ({ rootId }) => {
+        const rootPath = roots.get(rootId);
+        return rootPath ? { rootPath } : null;
+      },
+      runGit: async (workspacePath, args, options) => {
+        commands.push(args);
+        return runGitForTest(workspacePath, args, options);
+      },
+    });
+
+    assert.deepEqual(await service.listChangesRepositories({
+      sessionId: "session-1",
+      rootIds: ["repository", "non-git", "missing"],
+    }), {
+      status: "ok",
+      repositories: [{ rootId: "repository" }],
+      failures: [],
+    });
+    assert.equal(commands.some((args) => args.includes("status")), false);
+  } finally {
+    await rm(parentPath, { recursive: true, force: true });
+  }
+});
+
 test("FileRootGitChangesService は同じSessionのrootIdごとに認可済みdirectoryとdiffを分離する", async () => {
   const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-file-roots-"));
   const workspacePath = path.join(parentPath, "workspace");

@@ -83,6 +83,8 @@ import type {
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
+  FileRootChangesRepositoriesRequest,
+  FileRootChangesRepositoriesResult,
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
@@ -307,6 +309,9 @@ export type MainIpcSessionQueryDepsArgs = {
   ): Awaitable<SessionFilePreviewWindowOpenResult>;
   getSessionFilePreviewWindowPayload(token: string): SessionFilePreviewWindowPayload | null;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
+  listFileRootChangesRepositories(
+    request: FileRootChangesRepositoriesRequest,
+  ): Awaitable<FileRootChangesRepositoriesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   listFileRootGitHistoryRepositories(
     request: FileRootGitHistoryRepositoriesRequest,
@@ -551,6 +556,7 @@ export function createMainIpcRegistrationDeps(
     openSessionFilePreviewWindow: args.sessionQuery.openSessionFilePreviewWindow,
     getSessionFilePreviewWindowPayload: args.sessionQuery.getSessionFilePreviewWindowPayload,
     listFileRootChanges: args.sessionQuery.listFileRootChanges,
+    listFileRootChangesRepositories: args.sessionQuery.listFileRootChangesRepositories,
     getFileRootDiff: args.sessionQuery.getFileRootDiff,
     listFileRootGitHistoryRepositories: args.sessionQuery.listFileRootGitHistoryRepositories,
     listFileRootGitHistoryCommits: args.sessionQuery.listFileRootGitHistoryCommits,

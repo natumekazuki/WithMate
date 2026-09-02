@@ -107,6 +107,8 @@ import type {
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
+  FileRootChangesRepositoriesRequest,
+  FileRootChangesRepositoriesResult,
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
@@ -195,6 +197,9 @@ export type WithMateWindowSessionApi = {
     request: SessionFileObjectCopyContextMenuRequest,
   ): Promise<SessionFileObjectCopyContextMenuResult>;
   listFileRootChanges(request: FileRootChangesRequest): Promise<FileRootChangesResult>;
+  listFileRootChangesRepositories(
+    request: FileRootChangesRepositoriesRequest,
+  ): Promise<FileRootChangesRepositoriesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Promise<FileRootFileDiffResult>;
   listFileRootGitHistoryRepositories(
     request: FileRootGitHistoryRepositoriesRequest,

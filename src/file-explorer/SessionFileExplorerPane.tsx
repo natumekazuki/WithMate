@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
   SessionDirectoryEntry,
@@ -27,7 +27,7 @@ type SessionFileExplorerPaneProps = {
   onRefreshChanges: () => void;
   onRefreshHistory?: () => void;
   onOpenFile: (request: SessionFileRootResourceRequest, openInWindow: boolean) => void;
-  changesContent?: ReactNode;
+  renderChangesContent?: (roots: SessionFileRoot[]) => ReactNode;
   historyContent?: ReactNode;
 };
 
@@ -67,7 +67,7 @@ export function SessionFileExplorerPane({
   onRefreshChanges,
   onRefreshHistory,
   onOpenFile,
-  changesContent,
+  renderChangesContent,
   historyContent,
 }: SessionFileExplorerPaneProps) {
   const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
@@ -84,6 +84,36 @@ export function SessionFileExplorerPane({
   const [errorMessage, setErrorMessage] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
+  const tabPanelId = useId();
+  const tabOwnerKey = `${sessionId ?? ""}\u0000${rootsRevision}`;
+  const [mountedTabState, setMountedTabState] = useState(() => ({
+    ownerKey: tabOwnerKey,
+    changes: activeTab === "changes",
+    history: activeTab === "history",
+  }));
+  const mountedTabs = mountedTabState.ownerKey === tabOwnerKey
+    ? mountedTabState
+    : {
+        ownerKey: tabOwnerKey,
+        changes: activeTab === "changes",
+        history: activeTab === "history",
+      };
+
+  useEffect(() => {
+    setMountedTabState((current) => {
+      const next = current.ownerKey === tabOwnerKey
+        ? current
+        : {
+            ownerKey: tabOwnerKey,
+            changes: activeTab === "changes",
+            history: activeTab === "history",
+          };
+      if (activeTab === "files" || next[activeTab]) {
+        return next;
+      }
+      return { ...next, [activeTab]: true };
+    });
+  }, [activeTab, tabOwnerKey]);
 
   const loadDirectory = useCallback((rootId: string, relativePath: string, revision: number): Promise<void> => {
     if (!api || !sessionId) {
@@ -220,28 +250,34 @@ export function SessionFileExplorerPane({
       <div className="session-file-explorer-header">
         <div className="session-file-explorer-tabs" role="tablist" aria-label="File Explorer view">
           <button
+            id={`${tabPanelId}-files-tab`}
             className={activeTab === "files" ? "is-active" : ""}
             type="button"
             role="tab"
             aria-selected={activeTab === "files"}
+            aria-controls={`${tabPanelId}-files-panel`}
             onClick={() => onActiveTabChange("files")}
           >
             Files
           </button>
           <button
+            id={`${tabPanelId}-changes-tab`}
             className={activeTab === "changes" ? "is-active" : ""}
             type="button"
             role="tab"
             aria-selected={activeTab === "changes"}
+            aria-controls={`${tabPanelId}-changes-panel`}
             onClick={() => onActiveTabChange("changes")}
           >
             Changes
           </button>
           <button
+            id={`${tabPanelId}-history-tab`}
             className={activeTab === "history" ? "is-active" : ""}
             type="button"
             role="tab"
             aria-selected={activeTab === "history"}
+            aria-controls={`${tabPanelId}-history-panel`}
             onClick={() => onActiveTabChange("history")}
           >
             History
@@ -270,105 +306,131 @@ export function SessionFileExplorerPane({
 
       <div
         ref={treeScrollRef}
-        className={`session-file-explorer-body${activeTab === "changes" ? " has-changes" : activeTab === "history" ? " has-history" : ""}`}
+        id={`${tabPanelId}-files-panel`}
+        className="session-file-explorer-body"
+        role="tabpanel"
+        aria-labelledby={`${tabPanelId}-files-tab`}
+        hidden={activeTab !== "files"}
       >
-        {activeTab === "changes" ? (
-          changesContent ?? <p className="session-file-tree-empty">No changes.</p>
-        ) : activeTab === "history" ? (
-          historyContent ?? <p className="session-file-tree-empty">No history.</p>
-        ) : (
-          <>
-            {errorMessage ? <p className="session-file-tree-error">{errorMessage}</p> : null}
-            {feedbackMessage ? (
-              <p className="session-file-tree-feedback" role="status" aria-live="polite">{feedbackMessage}</p>
-            ) : null}
-            {!errorMessage && roots.length === 0 ? <p className="session-file-tree-empty">Loading roots…</p> : null}
-            <div className="session-file-tree-virtual" style={{ height: treeVirtualizer.getTotalSize() }}>
-              {treeVirtualizer.getVirtualItems().map((virtualRow) => {
-                const row = treeRows[virtualRow.index];
-                if (!row) {
-                  return null;
-                }
-                const rowKey = row.kind === "root"
-                  ? `root:${row.root.id}`
-                  : row.kind === "entry"
-                    ? `entry:${directoryKey(row.rootId, row.entry.relativePath)}`
-                    : row.id;
-                return (
-                  <div
-                    className="session-file-tree-virtual-row"
-                    key={rowKey}
-                    style={{ height: virtualRow.size, transform: `translateY(${virtualRow.start}px)` }}
+        {errorMessage ? <p className="session-file-tree-error">{errorMessage}</p> : null}
+        {feedbackMessage ? (
+          <p className="session-file-tree-feedback" role="status" aria-live="polite">{feedbackMessage}</p>
+        ) : null}
+        {!errorMessage && roots.length === 0 ? <p className="session-file-tree-empty">Loading roots…</p> : null}
+        <div className="session-file-tree-virtual" style={{ height: treeVirtualizer.getTotalSize() }}>
+          {treeVirtualizer.getVirtualItems().map((virtualRow) => {
+            const row = treeRows[virtualRow.index];
+            if (!row) {
+              return null;
+            }
+            const rowKey = row.kind === "root"
+              ? `root:${row.root.id}`
+              : row.kind === "entry"
+                ? `entry:${directoryKey(row.rootId, row.entry.relativePath)}`
+                : row.id;
+            return (
+              <div
+                className="session-file-tree-virtual-row"
+                key={rowKey}
+                style={{ height: virtualRow.size, transform: `translateY(${virtualRow.start}px)` }}
+              >
+                {row.kind === "status" ? (
+                  <div className="session-file-tree-status" style={{ paddingLeft: `${10 + row.depth * 14}px` }}>{row.label}</div>
+                ) : row.kind === "root" ? (
+                  <button
+                    className="session-file-root-row"
+                    type="button"
+                    onClick={() => toggleDirectory(row.root.id, "")}
+                    title={row.root.displayPath}
                   >
-                    {row.kind === "status" ? (
-                      <div className="session-file-tree-status" style={{ paddingLeft: `${10 + row.depth * 14}px` }}>{row.label}</div>
-                    ) : row.kind === "root" ? (
-                      <button
-                        className="session-file-root-row"
-                        type="button"
-                        onClick={() => toggleDirectory(row.root.id, "")}
-                        title={row.root.displayPath}
-                      >
-                        <span className={`session-file-tree-icon${expandedDirectories[directoryKey(row.root.id, "")] ? " is-expanded" : ""}`}>▸</span>
-                        <span className="session-file-tree-name">{row.root.label}</span>
-                      </button>
-                    ) : (() => {
-                      const entryKey = directoryKey(row.rootId, row.entry.relativePath);
-                      const isDirectory = row.entry.kind === "directory";
-                      const isSelected = selectedFile?.rootId === row.rootId && selectedFile.relativePath === row.entry.relativePath;
-                      return (
-                        <button
-                          className={`session-file-tree-row${isSelected ? " is-selected" : ""}`}
-                          type="button"
-                          style={{ paddingLeft: `${10 + row.depth * 14}px` }}
-                          onClick={(event) => {
-                            if (isDirectory) {
-                              toggleDirectory(row.rootId, row.entry.relativePath);
-                            } else if (row.entry.kind === "file") {
-                              onOpenFile(
-                                { sessionId: sessionId!, rootId: row.rootId, relativePath: row.entry.relativePath },
-                                event.ctrlKey || event.metaKey,
-                              );
-                            }
-                          }}
-                          onContextMenu={(event) => {
-                            if (!api || !fileObjectCopyAvailable || row.entry.kind !== "file") {
-                              return;
-                            }
-                            event.preventDefault();
-                            void api.showSessionFileObjectCopyContextMenu({
-                              resource: {
-                                sessionId: sessionId!,
-                                rootId: row.rootId,
-                                relativePath: row.entry.relativePath,
-                              },
-                              point: {
-                                x: Math.max(0, Math.round(event.clientX)),
-                                y: Math.max(0, Math.round(event.clientY)),
-                              },
-                            }).then((result) => {
-                              if (result.status !== "dismissed") {
-                                setFeedbackMessage(result.message);
-                              }
-                            }).catch(() => {
-                              setFeedbackMessage("File copy menu could not be opened.");
-                            });
-                          }}
-                          title={row.entry.relativePath}
-                        >
-                          <span className={`session-file-tree-icon${isDirectory && expandedDirectories[entryKey] ? " is-expanded" : ""}`}>
-                            {entryIcon(row.entry)}
-                          </span>
-                          <span className="session-file-tree-name">{row.entry.name}</span>
-                        </button>
-                      );
-                    })()}
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
+                    <span className={`session-file-tree-icon${expandedDirectories[directoryKey(row.root.id, "")] ? " is-expanded" : ""}`}>▸</span>
+                    <span className="session-file-tree-name">{row.root.label}</span>
+                  </button>
+                ) : (() => {
+                  const entryKey = directoryKey(row.rootId, row.entry.relativePath);
+                  const isDirectory = row.entry.kind === "directory";
+                  const isSelected = selectedFile?.rootId === row.rootId && selectedFile.relativePath === row.entry.relativePath;
+                  return (
+                    <button
+                      className={`session-file-tree-row${isSelected ? " is-selected" : ""}`}
+                      type="button"
+                      style={{ paddingLeft: `${10 + row.depth * 14}px` }}
+                      onClick={(event) => {
+                        if (isDirectory) {
+                          toggleDirectory(row.rootId, row.entry.relativePath);
+                        } else if (row.entry.kind === "file") {
+                          onOpenFile(
+                            { sessionId: sessionId!, rootId: row.rootId, relativePath: row.entry.relativePath },
+                            event.ctrlKey || event.metaKey,
+                          );
+                        }
+                      }}
+                      onContextMenu={(event) => {
+                        if (!api || !fileObjectCopyAvailable || row.entry.kind !== "file") {
+                          return;
+                        }
+                        event.preventDefault();
+                        void api.showSessionFileObjectCopyContextMenu({
+                          resource: {
+                            sessionId: sessionId!,
+                            rootId: row.rootId,
+                            relativePath: row.entry.relativePath,
+                          },
+                          point: {
+                            x: Math.max(0, Math.round(event.clientX)),
+                            y: Math.max(0, Math.round(event.clientY)),
+                          },
+                        }).then((result) => {
+                          if (result.status !== "dismissed") {
+                            setFeedbackMessage(result.message);
+                          }
+                        }).catch(() => {
+                          setFeedbackMessage("File copy menu could not be opened.");
+                        });
+                      }}
+                      title={row.entry.relativePath}
+                    >
+                      <span className={`session-file-tree-icon${isDirectory && expandedDirectories[entryKey] ? " is-expanded" : ""}`}>
+                        {entryIcon(row.entry)}
+                      </span>
+                      <span className="session-file-tree-name">{row.entry.name}</span>
+                    </button>
+                  );
+                })()}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div
+        id={`${tabPanelId}-changes-panel`}
+        className="session-file-explorer-body has-changes"
+        role="tabpanel"
+        aria-labelledby={`${tabPanelId}-changes-tab`}
+        hidden={activeTab !== "changes"}
+      >
+        {mountedTabs.changes || activeTab === "changes"
+          ? (
+              <Fragment key={`${tabOwnerKey}:changes`}>
+                {renderChangesContent?.(roots) ?? <p className="session-file-tree-empty">No changes.</p>}
+              </Fragment>
+            )
+          : null}
+      </div>
+      <div
+        id={`${tabPanelId}-history-panel`}
+        className="session-file-explorer-body has-history"
+        role="tabpanel"
+        aria-labelledby={`${tabPanelId}-history-tab`}
+        hidden={activeTab !== "history"}
+      >
+        {mountedTabs.history || activeTab === "history"
+          ? (
+              <Fragment key={`${tabOwnerKey}:history`}>
+                {historyContent ?? <p className="session-file-tree-empty">No history.</p>}
+              </Fragment>
+            )
+          : null}
       </div>
     </aside>
   );

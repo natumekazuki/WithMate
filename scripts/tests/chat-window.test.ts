@@ -725,6 +725,87 @@ test("SessionChatScreen は左右ペインを mounted のまま非表示・操�
   assert.match(html, /Latest Command/);
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "SessionChatScreenは左ペインのCollapseと再表示で同じchild instanceとstateを保持する"
+// oracle = { type = "contract", ref = "accepted behavior: preserve the complete left pane state while collapsed in the same Window" }
+// failure_mode = "左ペインのCollapseでchildがunmountされ、再表示時にtab、tree、Git結果などのlocal stateが初期化される"
+// scope = "SessionChatScreen left pane visibility lifecycle"
+// lifecycle = "permanent"
+// distinction = "Sessionやroot ownerの変更ではなく、同じWindow内の表示切替だけを検証する"
+// @end-test-value
+test("SessionChatScreen は左ペインのCollapse後もchild stateを保持する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  function StatefulLeftPane() {
+    const [count, setCount] = React.useState(0);
+    return React.createElement("button", {
+      type: "button",
+      "data-left-pane-state": "true",
+      onClick: () => setCount((current) => current + 1),
+    }, `state:${count}`);
+  }
+  const renderScreen = (visible: boolean) => React.createElement(SessionChatScreen, {
+    mode: "agent" as const,
+    header: null,
+    headerSplitter: null,
+    isHeaderVisible: true,
+    messageColumn: React.createElement("div", null, "Messages"),
+    actionDock: React.createElement("div", null, "Composer"),
+    actionDockSplitter: null,
+    isActionDockExpanded: true,
+    layoutPriority: "side-pane-first" as const,
+    splitter: null,
+    leftPane: React.createElement(StatefulLeftPane),
+    isLeftPaneVisible: visible,
+  });
+
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(renderScreen(true));
+    });
+    const button = dom.window.document.querySelector<HTMLButtonElement>("[data-left-pane-state='true']");
+    assert.ok(button);
+    await act(async () => button.click());
+    assert.equal(button.textContent, "state:1");
+
+    await act(async () => root?.render(renderScreen(false)));
+    assert.equal(dom.window.document.getElementById("session-left-pane")?.getAttribute("aria-hidden"), "true");
+    assert.equal(dom.window.document.querySelector("[data-left-pane-state='true']"), button);
+    assert.equal(button.textContent, "state:1");
+
+    await act(async () => root?.render(renderScreen(true)));
+    assert.equal(dom.window.document.querySelector("[data-left-pane-state='true']"), button);
+    assert.equal(button.textContent, "state:1");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});
+
 test("ChatDockSplitter は pointer と keyboard click の操作軸を通知する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
