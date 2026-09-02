@@ -58,7 +58,7 @@ Character系の`get`と`search`、一般Memoryのsearch/get/list/usageはread-on
 | --- | --- | --- | --- | --- |
 | `help` | なし | MCPで代替済み | server instructions、`tools/list` | CLIの表示用helpをpublic APIにしない |
 | `status` | `/v1/status` | MCPで代替済み | MCP initializeと各toolのstructured availability error | runtime identity確認用routeをtool化しない |
-| `characters` | `/v1/characters` | MCPで代替済み | `memory.list_targets`で`owner: character`と`includeEmpty: true`を指定 | Character definitionを広げずtarget inventoryだけを使う |
+| `characters` | `/v1/characters` | MCPで代替済み | `memory.list_targets`で`filter: { kind: "character" }`と`includeEmpty: true`を指定 | Character definitionを広げずtarget inventoryだけを使う |
 | `file-usage` | `/v1/file_usage` | 公開 | `memory.file_usage` | optional |
 | `list-targets` | `/v1/list_targets` | 公開 | `memory.list_targets` | なし |
 | `list-entries` | `/v1/list_entries` | 公開 | `memory.list_entries` | なし |
