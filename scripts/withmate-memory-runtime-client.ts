@@ -819,6 +819,14 @@ export async function callWithMateMemoryRuntime(
     fetch?: typeof fetch;
   },
 ): Promise<WithMateMemoryRuntimeResponse> {
+  const exchangeAdapter = operation.fallbackFrom === "mcp" ? "agent_cli_fallback" : connection.credential.adapter;
+  if (exchangeAdapter === "agent_cli_fallback" && connection.credential.adapter !== "mcp") {
+    throw new WithMateMemoryRuntimeExchangeError(
+      "Agent-bound CLI fallback requires the MCP runtime credential.",
+      false,
+      { discoveryCode: "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE" },
+    );
+  }
   let identityOutcome: RuntimeIdentityVerificationOutcome;
   try {
     identityOutcome = await verifyRuntimeIdentityOutcome(
@@ -956,7 +964,7 @@ export async function callWithMateMemoryRuntime(
       request.end(JSON.stringify({
         schemaVersion: WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
         apiSecret: connection.api.apiSecret,
-        adapter: connection.credential.adapter,
+        adapter: exchangeAdapter,
         adapterSecret: connection.credential.adapterSecret,
         ...(options.bindingReference ? { bindingReference: options.bindingReference } : {}),
         ...(options.turnCapability ? { turnCapability: options.turnCapability } : {}),

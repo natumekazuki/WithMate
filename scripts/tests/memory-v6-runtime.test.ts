@@ -369,9 +369,9 @@ describe("Memory V6 runtime API", () => {
 
 // @test-value v1
 // kind = "invariant"
-// claim = "Memory runtimeはapplication instanceと固有generationをregistryとlegacy projectionへ公開し、owner challenge後にoperationを実行する"
+// claim = "Memory runtimeはapplication instanceと固有generationを公開し、operator CLI credentialだけが明示identityのlocal-user operationを実行する"
 // oracle = { type = "adr", ref = "ADR-023 multi-instance-runtime-discovery" }
-// failure_mode = "registry credential、legacy projection、HTTP identityが異なるowner tupleを示し、別runtimeへoperationが到達する"
+// failure_mode = "registry credential、legacy projection、HTTP identityが別runtimeを示す、またはMCP credentialがoperator operationへ昇格する"
 // scope = "memory-runtime-publication-and-exchange"
 // lifecycle = "permanent"
 // @end-test-value
@@ -424,7 +424,13 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
           discoveryFilePath: runtime.mcpDiscoveryFilePath,
         });
         assert.ok(mcpConnection);
-        const unknownCharacter = await callWithMateMemoryRuntime(mcpConnection, {
+        const operatorConnection = await discoverWithMateMemoryApi({
+          adapter: "cli",
+          env: {},
+          discoveryFilePath: runtime.discoveryFilePath,
+        });
+        assert.ok(operatorConnection);
+        const unknownCharacter = await callWithMateMemoryRuntime(operatorConnection, {
           method: "POST",
           path: "/v1/append",
           body: {
@@ -444,7 +450,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         }, { signal: new AbortController().signal });
         assert.equal(unknownCharacter.status, 404);
         assert.equal((unknownCharacter.value as { error: { code: string } }).error.code, "MEMORY_TARGET_NOT_FOUND");
-        const archivedAppend = await callWithMateMemoryRuntime(mcpConnection, {
+        const archivedAppend = await callWithMateMemoryRuntime(operatorConnection, {
           method: "POST",
           path: "/v1/append",
           body: {
@@ -464,7 +470,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         }, { signal: new AbortController().signal });
         assert.equal(archivedAppend.status, 200);
         const archivedEntryId = (archivedAppend.value as { entry: { id: string } }).entry.id;
-        const archivedForget = await callWithMateMemoryRuntime(mcpConnection, {
+        const archivedForget = await callWithMateMemoryRuntime(operatorConnection, {
           method: "POST",
           path: "/v1/forget",
           body: {
@@ -558,17 +564,25 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
           },
           body: JSON.stringify(appendBody),
         });
-        assert.equal(mcpDirectAppend.status, 200);
-        assert.equal((await mcpDirectAppend.json()).created, true);
+        assert.equal(mcpDirectAppend.status, 401);
+        assert.equal((await mcpDirectAppend.json()).error.code, "MEMORY_PRINCIPAL_REQUIRED");
 
         const mcpExchangeAppend = await callWithMateMemoryRuntime(mcpConnection, {
           method: "POST",
           path: "/v1/append",
           body: appendBody,
         }, { signal: new AbortController().signal });
-        assert.equal(mcpExchangeAppend.ok, true);
-        assert.equal(mcpExchangeAppend.status, 200);
-        assert.equal((mcpExchangeAppend.value as { replayed?: true }).replayed, true);
+        assert.equal(mcpExchangeAppend.ok, false);
+        assert.equal(mcpExchangeAppend.status, 401);
+
+        const cliExchangeAppend = await callWithMateMemoryRuntime(cliConnection, {
+          method: "POST",
+          path: "/v1/append",
+          body: appendBody,
+        }, { signal: new AbortController().signal });
+        assert.equal(cliExchangeAppend.ok, true);
+        assert.equal(cliExchangeAppend.status, 200);
+        assert.equal((cliExchangeAppend.value as { created?: boolean }).created, true);
 
         const mcpAppendReadBack = await callWithMateMemoryRuntime(cliConnection, {
           method: "POST",
@@ -638,10 +652,9 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
             sessionId: "missing-session",
           }),
         });
-        assert.equal(authenticatedCli.status, 403);
+        assert.equal(authenticatedCli.status, 404);
         const authenticatedCliError = await authenticatedCli.json();
-        assert.equal(authenticatedCliError.error.code, "authority_denied");
-        assert.equal(authenticatedCliError.error.details.bindingFailure, "SESSION_BINDING_REQUIRED");
+        assert.equal(authenticatedCliError.error.code, "unknown_character");
 
         const characters = await fetch(`${runtime.baseUrl}/v1/characters`, {
           headers: {

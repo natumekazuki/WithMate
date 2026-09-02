@@ -16,7 +16,10 @@ import {
   isLoopbackRemoteAddress,
   resolveMemoryV6RouteTimeoutMs,
   type MemoryV6HttpServer,
+  type MemoryV6HttpServerOptions,
 } from "../../src-electron/memory-v6-http-server.js";
+import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/provider-agent-runtime-turn-coordinator.js";
 import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 import { callWithMateMemoryRuntime } from "../withmate-memory-runtime-client.js";
@@ -29,6 +32,7 @@ const TEST_RUNTIME_INSTANCE_ID = "test-runtime";
 async function withMemoryApi<T>(
   runner: (input: { baseUrl: string; storage: MemoryV6Storage; server: MemoryV6HttpServer }) => T | Promise<T>,
   overrides: Partial<Pick<MemoryV6ServiceDeps, "protectedObjectImporter">> = {},
+  serverOverrides: Partial<MemoryV6HttpServerOptions> = {},
 ): Promise<T> {
   const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-http-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
@@ -62,6 +66,7 @@ async function withMemoryApi<T>(
     mcpApiSecret: TEST_MCP_API_SECRET,
     runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
     maxBodyBytes: 1024,
+    ...serverOverrides,
   });
 
   try {
@@ -195,7 +200,15 @@ it("status はapplication instance、generation、build channelとowner challeng
     });
   });
 
-  it("共通apiSecretだけでは実行できず、MCP credentialは公開routeへだけ到達する", async () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "MCP credentialだけではagent-facing routeを実行できず、operator credentialとのroute境界も維持する"
+  // oracle = { type = "adr", ref = "ADR-024 general Memory binding policy" }
+  // failure_mode = "unbound MCPがlocal-userへdowngradeする、またはMCPからoperator-only routeへ到達する"
+  // scope = "memory-http-adapter-authority"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("共通apiSecretだけでは実行できず、MCP credentialはbindingなしで公開routeへ到達しない", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const body = appendRequest({ idempotencyKey: "unauthorized-mcp-append" });
       const missingAdapter = await fetch(`${baseUrl}/v1/append`, {
@@ -218,7 +231,7 @@ it("status はapplication instance、generation、build channelとowner challeng
         },
         body: JSON.stringify(body),
       });
-      assert.equal(mcpAppend.status, 200);
+      assert.equal(mcpAppend.status, 401);
 
       const mcpAudit = await fetch(`${baseUrl}/v1/audit`, {
         method: "POST",
@@ -238,19 +251,36 @@ it("status はapplication instance、generation、build channelとowner challeng
         query: "localhost",
       });
       assert.equal(search.status, 200);
-      assert.equal(search.json.items.length, 1);
+      assert.equal(search.json.items.length, 0);
     });
   });
 
 // @test-value v1
 // kind = "security"
-// claim = "MCP credential exchangeは公開routeだけをowner identity検証後にdispatchする"
-// oracle = { type = "adr", ref = "ADR-023 multi-instance-runtime-discovery" }
-// failure_mode = "不正なrouteまたはowner mismatchでもcredential検証後のoperation dispatchが実行される"
+// claim = "bound MCPはactor-relative targetとcurrent turn capabilityを検証してから公開routeだけをdispatchする"
+// oracle = { type = "adr", ref = "ADR-024 actor-relative Memory target and turn capability" }
+// failure_mode = "caller identity、未許可Project、stale capabilityまたは非公開routeがapplication副作用へ到達する"
 // scope = "memory-runtime-mcp-exchange"
 // lifecycle = "permanent"
 // @end-test-value
 it("MCP credentialは公開した一般Memory routeだけをruntime exchange経由で実行できる", async () => {
+    const bindings = new AgentRuntimeBindingRegistry();
+    const turns = new ProviderAgentRuntimeTurnCoordinator();
+    const binding = bindings.issueOrReuse({
+      actorSessionId: "session-a",
+      providerId: "codex",
+      authoritySnapshot: {
+        userId: "local-user",
+        characterId: "mika",
+        allowedProjectIds: ["project-a"],
+      },
+      operationGrants: [
+        "memory.route.search",
+        "memory.route.append",
+        "memory.route.forget",
+      ],
+    });
+    const turn = turns.begin({ actorSessionId: "session-a", providerId: "codex" });
     await withMemoryApi(async ({ baseUrl }) => {
       const connection = {
         api: {
@@ -264,21 +294,55 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
           adapterSecret: TEST_MCP_API_SECRET,
         },
       };
-      const call = (path: string, body: unknown) => callWithMateMemoryRuntime(connection, {
+      const call = (path: string, body: unknown, turnCapability = turn.capability) => callWithMateMemoryRuntime(connection, {
         method: "POST",
         path,
         body,
-      }, { signal: new AbortController().signal });
+      }, {
+        signal: new AbortController().signal,
+        bindingReference: binding.bindingReference,
+        turnCapability,
+      });
 
       const search = await call("/v1/search", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        targets: [{ owner: "user", scope: "global" }],
+        targets: [{ kind: "user-global" }],
         query: "preference",
       });
       assert.equal(search.status, 200);
       assert.deepEqual((search.value as any).items, []);
 
-      const appendWithoutIdempotency = await call("/v1/append", appendRequest({ idempotencyKey: undefined }));
+      const callerIdentity = await call("/v1/search", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        userId: "local-user",
+        targets: [{ kind: "user-global" }],
+        query: "preference",
+      });
+      assert.equal(callerIdentity.status, 422);
+      assert.equal((callerIdentity.value as any).error.field, "userId");
+      assert.equal((callerIdentity.value as any).error.effect, "none");
+
+      const unallowedProject = await call("/v1/search", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ kind: "project", project: { type: "id", id: "project-b" } }],
+        query: "preference",
+      });
+      assert.equal(unallowedProject.status, 422);
+      assert.equal((unallowedProject.value as any).error.field, "targets");
+      assert.equal((unallowedProject.value as any).error.effect, "none");
+
+      const staleAppend = await call("/v1/append", {
+        ...appendRequest({ idempotencyKey: "stale-turn-append" }),
+        target: { kind: "project", project: { type: "id", id: "project-a" } },
+      }, "stale-turn-capability");
+      assert.equal(staleAppend.status, 403);
+      assert.equal((staleAppend.value as any).error.code, "MEMORY_FORBIDDEN");
+      assert.equal((staleAppend.value as any).error.effect, "none");
+
+      const appendWithoutIdempotency = await call("/v1/append", {
+        ...appendRequest({ idempotencyKey: undefined }),
+        target: { kind: "project", project: { type: "id", id: "project-a" } },
+      });
       assert.equal(appendWithoutIdempotency.status, 422);
       assert.equal((appendWithoutIdempotency.value as any).error.code, "MEMORY_INVALID_FIELD");
       assert.equal((appendWithoutIdempotency.value as any).error.field, "idempotencyKey");
@@ -286,7 +350,7 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
 
       const forgetWithoutReason = await call("/v1/forget", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        target: { owner: "user", scope: "global" },
+        target: { kind: "user-global" },
         entryIds: ["entry-a"],
         idempotencyKey: "mcp-forget-policy",
       });
@@ -308,7 +372,18 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
       });
       assert.equal(affectInspect.status, 403);
       assert.equal((affectInspect.value as any).error.code, "authority_denied");
+    }, {}, {
+      agentRuntimeBindingRegistry: bindings,
+      providerAgentRuntimeTurns: turns,
+      resolveActorSession: (sessionId) => sessionId === "session-a"
+        ? { id: "session-a", providerId: "codex", characterId: "mika", workspacePath: "C:/workspace/project-a" }
+        : null,
+      resolveProjectById: (id) => id === "project-a" ? { id, displayName: "Project A" } : null,
+      resolveKnownProjectByPath: (path) => path === "C:/workspace/project-a"
+        ? { id: "project-a", displayName: "Project A" }
+        : null,
     });
+    turns.end(turn);
   });
 
   it("append / search / get_entry / list_tags / forget をlocal_userとしてdispatchする", async () => {

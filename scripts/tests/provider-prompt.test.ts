@@ -475,7 +475,16 @@ describe("composeProviderPrompt", () => {
     ]);
   });
 
-  it("固定system sectionの後ろへCharacter Affect Contextを置き、契約fieldと全effective componentを保持する", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "provider promptのCharacter Affect Contextはidentityを含めず、baseline・affect version・全effective component・Memory previewを契約どおり投影する"
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md:59-61" }
+  // failure_mode = "公開contextから除いたuser・Character・Session identityまたはMemory非公開fieldをprompt assemblyが再投影し、providerへ漏らす"
+  // scope = "composeProviderPrompt Character Affect Context projection"
+  // lifecycle = "permanent"
+  // distinction = "application responseのfield制限ではなく、provider向けJSON envelopeがidentityを再構成しないことを検証する"
+  // @end-test-value
+  it("固定system sectionの後ろへidentity-free Character Affect Contextを置き、契約fieldを保持する", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -499,8 +508,6 @@ describe("composeProviderPrompt", () => {
       attachments: [],
       characterContext: {
         schemaVersion: "withmate-character-context-v1",
-        characterId: "character-1",
-        sessionId: session.id,
         baseline: {
           definitionSha256: "sha256-character-definition",
           snapshotAt: "2026-06-14T00:00:00.000Z",
@@ -528,14 +535,19 @@ describe("composeProviderPrompt", () => {
           updatedAt: "2026-08-09T00:00:00.000Z",
         },
         memory: { items: [], updatedAt: null },
-        scope: { userId: "local-user", characterId: "character-1", sessionId: session.id },
       },
     });
 
     const contextJson = prompt.systemBodyText.match(/# Character Affect Context[\s\S]*?```json\n([\s\S]*?)\n```/)?.[1];
     assert.ok(contextJson);
     const context = JSON.parse(contextJson) as {
-      characterAffect: { effective: unknown[]; evaluatedAt: string; version: string };
+      characterAffect: {
+        effective: unknown[];
+        evaluatedAt: string;
+        version: string;
+        updatedAt: string | null;
+      };
+      relatedCharacterMemory: unknown[];
       baselineRef: { definitionSha256: string; snapshotAt: string };
     };
     assertSectionOrder(prompt.logicalPrompt.composedText, [
@@ -551,7 +563,13 @@ describe("composeProviderPrompt", () => {
     assert.equal(context.characterAffect.effective.length, 13);
     assert.equal(context.characterAffect.evaluatedAt, evaluatedAt);
     assert.equal(context.characterAffect.version, "affect-v1-provider-prompt");
-    assert.doesNotMatch(contextJson, /sourceSessionId|PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE/);
+    assert.equal(context.characterAffect.updatedAt, "2026-08-09T00:00:00.000Z");
+    assert.deepEqual(Object.keys(context).sort(), ["baselineRef", "characterAffect", "relatedCharacterMemory"]);
+    assert.deepEqual(Object.keys(context.characterAffect).sort(), ["effective", "evaluatedAt", "updatedAt", "version"]);
+    assert.doesNotMatch(
+      contextJson,
+      /characterId|sessionId|userId|"scope"|sourceSessionId|PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE/,
+    );
     assert.deepEqual(context.baselineRef, {
       definitionSha256: "sha256-character-definition",
       snapshotAt: "2026-06-14T00:00:00.000Z",

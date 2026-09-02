@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
+import type { ProviderAgentRuntimeAuthoritySnapshot } from "../src/agent-runtime/agent-runtime-binding-contract.js";
 import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
@@ -28,6 +29,34 @@ export type ProviderAgentRuntimeBindingRedactor = {
   sanitizeText: (value: string) => string;
   sanitize: <T>(value: T) => T;
 };
+
+export type ProviderAgentRuntimeAuthoritySnapshotInput = {
+  characterId: string | null | undefined;
+  workspacePath: string | null | undefined;
+  resolveCanonicalProjectId: (workspacePath: string) => string | null | undefined;
+};
+
+/**
+ * Builds the canonical actor authority snapshot from the bound Session only.
+ * Project resolution is deliberately fail-closed: an unknown workspace grants
+ * no project target rather than inventing an identifier.
+ */
+export function buildProviderAgentRuntimeAuthoritySnapshot(
+  input: ProviderAgentRuntimeAuthoritySnapshotInput,
+): ProviderAgentRuntimeAuthoritySnapshot | null {
+  const characterId = input.characterId?.trim() ?? "";
+  if (!characterId) {
+    return null;
+  }
+  const workspacePath = input.workspacePath?.trim() ?? "";
+  const resolvedProjectId = workspacePath ? input.resolveCanonicalProjectId(workspacePath)?.trim() ?? "" : "";
+  const allowedProjectIds = resolvedProjectId ? [resolvedProjectId] : [];
+  return {
+    userId: "local-user",
+    characterId,
+    allowedProjectIds,
+  };
+}
 
 /**
  * Sanitizes projection copies only. Raw provider events must remain untouched

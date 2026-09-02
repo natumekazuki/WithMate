@@ -28,32 +28,18 @@ const projectRefSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("path"), path: z.string().min(1).max(1_000).regex(MEMORY_ABSOLUTE_PATH_PATTERN) }).strict(),
 ]);
 
-const characterRefSchema = z.object({
-  type: z.literal("id"),
-  id: z.string().min(1).max(200),
-}).strict();
+const memoryTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("user-global") }).strict(),
+  z.object({ kind: z.literal("project"), project: projectRefSchema }).strict(),
+  z.object({ kind: z.literal("character") }).strict(),
+  z.object({ kind: z.literal("character+project"), project: projectRefSchema }).strict(),
+]);
 
-const memoryTargetSchema = z.union([
-  z.object({
-    owner: z.literal("project"),
-    scope: z.literal("project"),
-    project: projectRefSchema,
-  }).strict(),
-  z.object({
-    owner: z.literal("character"),
-    scope: z.literal("character"),
-    character: characterRefSchema,
-  }).strict(),
-  z.object({
-    owner: z.literal("character"),
-    scope: z.literal("project"),
-    character: characterRefSchema,
-    project: projectRefSchema,
-  }).strict(),
-  z.object({
-    owner: z.literal("user"),
-    scope: z.literal("global"),
-  }).strict(),
+const memoryTargetFilterSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("user-global") }).strict(),
+  z.object({ kind: z.literal("project"), project: projectRefSchema.optional() }).strict(),
+  z.object({ kind: z.literal("character") }).strict(),
+  z.object({ kind: z.literal("character+project"), project: projectRefSchema.optional() }).strict(),
 ]);
 
 const memoryTagInputSchema = z.object({
@@ -65,19 +51,6 @@ const memoryTagOutputSchema = z.object({
   type: z.string(),
   value: z.string(),
 }).strict();
-
-const memoryOwnerOutputSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("character"), id: z.string() }).strict(),
-  z.object({ type: z.literal("project"), id: z.string() }).strict(),
-  z.object({ type: z.literal("user"), id: z.literal("local-user") }).strict(),
-]);
-
-const memoryScopeOutputSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("session"), id: z.string() }).strict(),
-  z.object({ type: z.literal("project"), id: z.string() }).strict(),
-  z.object({ type: z.literal("character"), id: z.string() }).strict(),
-  z.object({ type: z.literal("global"), id: z.literal("global") }).strict(),
-]);
 
 const memoryFileOutputSchema = z.object({
   objectId: z.string(),
@@ -91,8 +64,7 @@ const memoryFileOutputSchema = z.object({
 
 const memoryEntrySummaryShape = {
   id: z.string(),
-  owner: memoryOwnerOutputSchema,
-  scope: memoryScopeOutputSchema,
+  target: memoryTargetSchema,
   kind: z.enum(MEMORY_ENTRY_KINDS),
   title: z.string(),
   preview: z.string(),
@@ -201,17 +173,6 @@ const getEntrySuccessSchema = z.object({
 
 const targetInventorySchema = z.object({
   target: memoryTargetSchema,
-  owner: z.enum(["project", "character", "user"]),
-  scope: z.enum(["project", "character", "global"]),
-  project: z.object({
-    id: z.string(),
-    displayName: z.string(),
-    path: z.string().optional(),
-  }).strict().optional(),
-  character: z.object({
-    id: z.string(),
-    displayName: z.string(),
-  }).strict().optional(),
   entryCount: z.number().int().nonnegative(),
   tagCount: z.number().int().nonnegative(),
   lastUpdatedAt: z.string().nullable(),
@@ -332,14 +293,14 @@ const appendFileInputSchema = z.object({
 }).strict();
 
 export const GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
-  { name: "memory.search", description: "Search active general Memory in one or more explicit targets.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: "memory.search", description: "Search active general Memory in one or more actor-relative targets. Before memory.append, search the same exact target and do not append an active semantic duplicate or create a conflicting replacement without correction authority. Agent CLI fallback is available only after MCP initialize and tools/list succeeded and a later transport availability failure occurs: invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON. Never fallback for domain, authority, version, idempotency, migration, or storage errors.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.get_entry", description: "Read one active Memory entry from an explicit target, including its full body.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.list_targets", description: "List bounded general Memory target inventory without exposing entry bodies.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.list_entries", description: "List entries in one explicit target; bodies are omitted unless explicitly requested.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.list_tags", description: "List tags for one explicit Memory target, optionally with bounded counts and samples.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: "memory.append", description: "Append one idempotent general Memory entry to an explicit target, optionally importing protected files atomically.", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: "memory.forget", description: "Preview or perform an idempotent forget for an explicit target and concrete reason.", annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
-  { name: "memory.move_entry", description: "Move one active entry idempotently between explicit targets while preserving its identity and attachments.", annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
+  { name: "memory.append", description: "Append one idempotent general Memory entry to an actor-relative target, optionally importing protected files atomically. First run memory.search against the same exact target; do not append an active semantic duplicate or create a conflicting replacement without correction authority. After response loss, reconcile only with the unchanged request and idempotency key, and distinguish replayed from a new effect.", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: "memory.forget", description: "Preview or perform an idempotent forget for an actor-relative target and concrete reason. Run dryRun before a bulk forget, then read back current state. After response loss, reconcile only with the unchanged request and idempotency key; use a new key for a changed request and do not infer saved or effect state.", annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
+  { name: "memory.move_entry", description: "Move one active entry idempotently between actor-relative targets while preserving its identity and attachments. After response loss, reconcile only with the unchanged request and idempotency key, use a new key for a changed request, and read back current state without guessing effect certainty.", annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: "memory.get_file", description: "Export one protected object to a new absolute output path after target validation; existing files are not overwritten. This operation is non-idempotent: after a dispatched response loss, treat the effect as unknown and do not retry automatically. Inspect the intended output path read-only or use operator manual recovery; run a new operation only after confirming no file was created or by choosing a new output path.", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
   { name: "memory.export_files", description: "Export all protected objects for one entry to new files in an absolute output directory after target validation. This operation is non-idempotent: after a dispatched response loss, treat the effect as unknown and do not retry automatically. Inspect the intended output directory read-only or use operator manual recovery; run a new operation only after confirming no files were created or by choosing a new output directory.", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
   { name: "memory.file_usage", description: "Read bounded protected-object quota and usage metadata without exposing content or storage paths.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -385,10 +346,7 @@ export function registerGeneralMemoryMcpTools(
   }));
 
   register("memory.list_targets", z.object({
-    owner: z.enum(["project", "character", "user"]).optional(),
-    scope: z.enum(["project", "character", "global"]).optional(),
-    project: projectRefSchema.optional(),
-    character: characterRefSchema.optional(),
+    filter: memoryTargetFilterSchema.optional(),
     includeEmpty: z.boolean().optional(),
     limit: z.number().int().min(1).max(200).optional(),
     cursor: z.string().min(1).max(500).optional(),

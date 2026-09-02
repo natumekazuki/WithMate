@@ -96,7 +96,6 @@ function buildCharacterAffectContextSection(context: RunSessionTurnInput["charac
       evaluatedAt: context.affect.evaluatedAt,
       version: context.affect.version,
       updatedAt: context.affect.updatedAt,
-      scope: context.scope,
     },
     relatedCharacterMemory: context.memory.items.map((item) => ({
       id: item.id,

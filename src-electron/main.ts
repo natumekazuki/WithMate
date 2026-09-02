@@ -256,8 +256,10 @@ import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
+import { buildProviderAgentRuntimeAuthoritySnapshot } from "./provider-agent-runtime-binding.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
 import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
+import { resolveMemoryV6ProjectCandidate } from "./memory-v6-project-resolver.js";
 import { RuntimeDiscoveryRegistryError } from "../src/runtime-discovery/runtime-discovery-contract.js";
 import {
   GlossaryApplicationService,
@@ -683,16 +685,21 @@ async function issueProviderAgentRuntimeBinding(
   } catch {
     // Non-Git workspaces keep Memory grants but do not receive glossary authority.
   }
+  const memoryAuthority = buildProviderAgentRuntimeAuthoritySnapshot({
+    characterId: session.characterId,
+    workspacePath: session.workspacePath,
+    resolveCanonicalProjectId: (workspacePath) => resolveMemoryV6ProjectCandidate(workspacePath)?.id,
+  });
   const binding = agentRuntimeBindingRegistry.issueOrReuse({
     actorSessionId: session.id,
     providerId,
     authoritySnapshot: {
-      characterId: session.characterId,
+      ...(memoryAuthority ?? { characterId: session.characterId }),
       sessionKind: session.sessionKind,
       ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}),
     },
     operationGrants: [
-      ...getMemoryV6AgentRuntimeOperations(),
+      ...(memoryAuthority ? getMemoryV6AgentRuntimeOperations() : []),
       ...(glossaryAuthority ? getGlossaryAgentRuntimeOperations() : []),
     ],
   });
@@ -729,6 +736,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,
       protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
       agentRuntimeBindingRegistry,
+      providerAgentRuntimeTurns,
       resolveActorSession: resolveAgentRuntimeActorSession,
       routeAgentRuntimeExtension: (request) => glossaryRuntimeService.route(request),
       log: writeAppLog,

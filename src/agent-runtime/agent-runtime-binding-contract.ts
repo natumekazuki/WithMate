@@ -18,3 +18,10 @@ export type MemoryRuntimeOwnerSelector = {
   applicationInstanceId: string;
   runtimeGenerationId: string;
 };
+
+/** Canonical actor authority projected into provider-bound runtime services. */
+export type ProviderAgentRuntimeAuthoritySnapshot = {
+  userId: "local-user";
+  characterId: string;
+  allowedProjectIds: string[];
+};

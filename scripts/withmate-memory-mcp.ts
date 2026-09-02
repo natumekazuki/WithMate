@@ -17,6 +17,7 @@ import {
   mapRuntimeHttpFailureToCharacterContext,
   mapRuntimeHttpFailureToMemory,
   resolveAgentRuntimeBindingReference,
+  resolveAgentRuntimeTurnCapability,
   resolveWithMateMemoryApi,
   WithMateMemoryRuntimeExchangeError,
   type WithMateMemoryRuntimeConnection,
@@ -35,7 +36,7 @@ type McpRuntimeDeps = {
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
-    options: { signal: AbortSignal; bindingReference?: string },
+    options: { signal: AbortSignal; bindingReference?: string; turnCapability?: string },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof import("node:fs/promises").readFile;
   fetch?: typeof fetch;
@@ -92,8 +93,6 @@ const affectEpisodeCandidateSchema = z.object({
 
 const affectCandidateSchema = z.object({
   schemaVersion: z.literal("withmate-affect-v1"),
-  characterId: z.string().min(1),
-  userId: z.literal("local-user"),
   layer: z.enum(["relationship", "session"]),
   targetType: z.enum(["user", "relationship", "task", "bug", "artifact", "self"]),
   targetId: z.string().min(1),
@@ -155,6 +154,14 @@ const memorySearchHitSchema = z.object({
     snippet: z.string().optional(),
   }).strict().optional(),
 }).strict();
+
+const characterMemoryPreviewSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  preview: z.string(),
+  tags: z.array(memoryTagSchema),
+  updatedAt: z.string(),
+}).strict();
 const memoryEntrySummarySchema = z.object({
   ...memoryEntryBaseShape,
   state: z.enum(["active", "superseded", "forgotten"]),
@@ -177,8 +184,6 @@ const characterErrorSchema = z.object({
 const contextOutputSchema = z.union([
   z.object({
     schemaVersion: z.literal(CHARACTER_CONTEXT_SCHEMA_VERSION),
-    characterId: z.string(),
-    sessionId: z.string(),
     baseline: z.object({ definitionSha256: z.string(), snapshotAt: z.string() }).strict(),
     affect: z.object({
       mode: z.enum(["shadow", "active"]),
@@ -201,14 +206,9 @@ const contextOutputSchema = z.union([
       updatedAt: z.string().nullable(),
     }).strict(),
     memory: z.object({
-      items: z.array(memorySearchHitSchema),
+      items: z.array(characterMemoryPreviewSchema),
       relatedTags: z.array(memoryTagSchema).optional(),
       updatedAt: z.string().nullable(),
-    }).strict(),
-    scope: z.object({
-      userId: z.literal("local-user"),
-      characterId: z.string(),
-      sessionId: z.string(),
     }).strict(),
   }).strict(),
   characterErrorSchema,
@@ -288,7 +288,7 @@ function createToolOutputSchema<T extends z.ZodRawShape>(
 
 const contextToolOutputSchema = createToolOutputSchema(
   contextOutputSchema.options[0],
-  ["schemaVersion", "characterId", "sessionId", "baseline", "affect", "memory", "scope"],
+  ["schemaVersion", "baseline", "affect", "memory"],
 );
 const appraisalToolOutputSchema = createToolOutputSchema(
   appraisalOutputSchema.options[0],
@@ -309,9 +309,9 @@ export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
   "character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
   "Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
   "Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
-  "Do not expose internal audit data or tool state in the user-facing response. Use returned scope, source version, and update result without guessing missing values.",
+  "Do not expose internal audit data or tool state in the user-facing response. Use returned source version and update result without guessing missing values.",
   "Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
-  "Use CLI fallback only when MCP is unavailable at the transport level. Structured Memory or Character domain errors, authority denial, conflicts, replay, and migration requirements are not availability failures.",
+  "Agent CLI fallback is available only after this MCP initialize and tools/list succeeded and a later transport availability failure occurs. Invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON; initialization, tools/list, domain, authority, version, idempotency, migration, and storage failures do not permit fallback.",
 ].join("\n");
 
 export const CHARACTER_MCP_TOOL_DEFINITIONS = [
@@ -322,7 +322,7 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "character_affect.appraise",
-    description: "Validate and record bounded candidates for the Character's own affect; this does not diagnose the user.",
+    description: "Validate and record bounded candidates for the Character's own affect; this does not diagnose the user. An episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry; report saved, rejected, replayed, version, and effect exactly as returned.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -332,7 +332,7 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "character_memory.append_episode",
-    description: "Append one shared Character episode; motif recurrence is allowed and only same-event retries deduplicate.",
+    description: "Append one standalone shared Character episode only; episodes linked to an affect event belong exclusively to character_affect.appraise.memoryEpisode. Motif recurrence is allowed and only unchanged same-event retries reuse an idempotency key.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -359,8 +359,10 @@ async function callRuntime(
   deps: McpRuntimeDeps,
 ): Promise<unknown> {
   let bindingReference: string | undefined;
+  let turnCapability: string | undefined;
   try {
     bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+    turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
   } catch (error) {
     if (isMemoryErrorResponse(error)) {
       return createCharacterContextError("authority_denied", error.error.message, {
@@ -405,6 +407,7 @@ async function callRuntime(
     }, {
       signal: abortController.signal,
       bindingReference,
+      turnCapability,
     });
     dispatched = true;
     return mapRuntimeHttpFailureToCharacterContext(runtimeResponse);
@@ -436,8 +439,10 @@ async function callMemoryRuntime(
   deps: McpRuntimeDeps,
 ): Promise<unknown> {
   let bindingReference: string | undefined;
+  let turnCapability: string | undefined;
   try {
     bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+    turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
   } catch (error) {
     if (isMemoryErrorResponse(error)) {
       return error;
@@ -481,6 +486,7 @@ async function callMemoryRuntime(
     }, {
       signal: abortController.signal,
       bindingReference,
+      turnCapability,
     });
     dispatched = true;
     return mapRuntimeHttpFailureToMemory(runtimeResponse, operation.operationKind);
@@ -535,7 +541,6 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   server.registerTool("character_context.get", {
     ...definitions.get("character_context.get")!,
     inputSchema: z.object({
-      characterId: z.string().min(1),
       query: z.string().min(1).optional(),
       memoryLimit: z.number().int().min(0).max(10).default(3),
     }).strict(),
@@ -548,7 +553,6 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   server.registerTool("character_affect.appraise", {
     ...definitions.get("character_affect.appraise")!,
     inputSchema: z.object({
-      characterId: z.string().min(1),
       expectedVersion: z.string().min(1).optional(),
       candidates: z.array(affectCandidateSchema).min(1).max(10),
     }).strict(),
@@ -561,7 +565,6 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   server.registerTool("character_memory.search", {
     ...definitions.get("character_memory.search")!,
     inputSchema: z.object({
-      characterId: z.string().min(1),
       query: z.string().min(1),
       limit: z.number().int().min(1).max(20).default(5),
       scope: z.discriminatedUnion("scope", [
@@ -578,8 +581,6 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   server.registerTool("character_memory.append_episode", {
     ...definitions.get("character_memory.append_episode")!,
     inputSchema: z.object({
-      characterId: z.string().min(1),
-      sessionId: z.string().min(1),
       idempotencyKey: z.string().min(1),
       episode: episodeSchema,
     }).strict(),
@@ -592,7 +593,6 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   server.registerTool("character_memory.correct", {
     ...definitions.get("character_memory.correct")!,
     inputSchema: z.object({
-      characterId: z.string().min(1),
       entryId: z.string().min(1),
       reason: z.string().min(1),
       idempotencyKey: z.string().min(1),
@@ -607,7 +607,6 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   server.registerTool("character_memory.forget", {
     ...definitions.get("character_memory.forget")!,
     inputSchema: z.object({
-      characterId: z.string().min(1),
       entryId: z.string().min(1),
       reason: z.enum(["user_request", "incorrect", "outdated", "privacy", "other"]),
       idempotencyKey: z.string().min(1),
