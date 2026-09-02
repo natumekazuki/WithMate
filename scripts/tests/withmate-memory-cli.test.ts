@@ -270,25 +270,54 @@ it("agent CLI fallbackはMCP credentialとruntime bindingを使う", async () =>
 
 // @test-value v1
 // kind = "security"
-// claim = "agent CLI fallbackはoperator-only command、connection selector、binding欠落をdispatch前に拒否する"
+// claim = "agent CLI fallbackはoperator-only command、connection selector、binding policyまたはruntime ownerの欠落・不正をdispatch前に拒否する"
 // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-// failure_mode = "fallback markerによってoperator authorityまたはcaller選択runtimeへ到達する"
+// failure_mode = "fallback markerによってoperator authority、caller選択runtime、またはbindingで選ばれていないunique runtimeへ到達する"
 // scope = "withmate-memory-agent-cli-fallback"
 // lifecycle = "permanent"
 // @end-test-value
-it("agent CLI fallbackはoperator-only commandとcaller connection selectorを拒否する", async () => {
-  for (const args of [
-    ["audit", "--fallback-from", "mcp", "--all-targets"],
-    ["search", "--fallback-from", "mcp", "--api-url", "http://127.0.0.1:7777", "--json", JSON.stringify({})],
-    ["file-usage", "--fallback-from", "mcp", "--largest"],
-    ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+it("agent CLI fallbackはoperator-only入力とbound runtime情報の欠落・不正を拒否する", async () => {
+  const boundEnv = {
+    WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+    WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+    WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+    WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
+  };
+  for (const { args, env } of [
+    { args: ["audit", "--fallback-from", "mcp", "--all-targets"], env: boundEnv },
+    {
+      args: ["search", "--fallback-from", "mcp", "--api-url", "http://127.0.0.1:7777", "--json", JSON.stringify({})],
+      env: boundEnv,
+    },
+    { args: ["file-usage", "--fallback-from", "mcp", "--largest"], env: boundEnv },
+    { args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})], env: {} },
+    {
+      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+      env: {
+        WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+        WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+        WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
+      },
+    },
+    {
+      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+      env: {
+        WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+        WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+      },
+    },
+    {
+      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+      env: {
+        ...boundEnv,
+        WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "not-a-uuid",
+      },
+    },
   ]) {
     const stdout = createOutputCapture();
     let dispatched = false;
     const exitCode = await runWithMateMemoryCliImpl(args, {
-      env: args[0] === "search" && !args.includes("--api-url")
-        ? {}
-        : { WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a" },
+      env,
       stdout: stdout.stream,
       runtimeCall: async () => {
         dispatched = true;

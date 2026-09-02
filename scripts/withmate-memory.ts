@@ -44,6 +44,11 @@ import {
   validateCharacterMemorySearchRequest,
 } from "../src/character-context/character-context-validation.js";
 import {
+  WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
+} from "../src/agent-runtime/agent-runtime-binding-contract.js";
+import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   callWithMateMemoryRuntime,
   createCharacterRuntimeDiscoveryError,
@@ -64,7 +69,7 @@ import {
   type WithMateMemoryRuntimeResponse,
   type WithMateMemoryRuntimeConnection,
 } from "./withmate-memory-runtime-client.js";
-import type { RuntimeDiscoveryClock } from "../src/runtime-discovery/runtime-discovery-contract.js";
+import { isUuid, type RuntimeDiscoveryClock } from "../src/runtime-discovery/runtime-discovery-contract.js";
 import { startWithMateMemoryMcpServer } from "./withmate-memory-mcp.js";
 
 export {
@@ -1426,6 +1431,17 @@ export async function runWithMateMemoryCli(
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
     if (request.fallbackFrom === "mcp") {
+      if (env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() !== "1") {
+        throw usageError("--fallback-from mcp requires the Agent runtime binding policy.");
+      }
+      if (!resolveAgentRuntimeBindingReference(env)) {
+        throw usageError("--fallback-from mcp requires an Agent runtime binding.");
+      }
+      const applicationInstanceId = env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV]?.trim();
+      const runtimeGenerationId = env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV]?.trim();
+      if (!isUuid(applicationInstanceId) || !isUuid(runtimeGenerationId)) {
+        throw usageError("--fallback-from mcp requires the runtime owner selected by the Agent binding.");
+      }
       if (!AGENT_CLI_FALLBACK_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
         throw usageError("--fallback-from mcp supports only operations published by MCP tools/list.");
       }
@@ -1439,9 +1455,6 @@ export async function runWithMateMemoryCli(
         && Object.keys(request.body).length > 0
       ) {
         throw usageError("--fallback-from mcp file-usage accepts no detail selectors.");
-      }
-      if (!resolveAgentRuntimeBindingReference(env)) {
-        throw usageError("--fallback-from mcp requires an Agent runtime binding.");
       }
     }
     if (request.command === "help") {

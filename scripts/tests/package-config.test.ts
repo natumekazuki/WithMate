@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 import {
@@ -36,6 +36,7 @@ describe("package build config", () => {
     const windowsLauncher = await readFile("build/cli/withmate-memory.cmd", "utf8");
     assert.equal(BUNDLED_MEMORY_CLI_REPOSITORY_RELATIVE_PATH, "resources/cli/withmate-memory.mjs");
     assert.equal(BUNDLED_MEMORY_CLI_PACKAGED_RELATIVE_PATH, "resources/resources/cli/withmate-memory.mjs");
+    await assert.rejects(() => access("resources/skills/withmate-memory"));
     assert.match(installerScript, /Microsoft\\WindowsApps/);
     assert.match(installerScript, /withmate-memory\.cmd/);
     assert.match(installerScript, /resources\\resources\\cli\\withmate-memory\.mjs/);
