@@ -67,7 +67,7 @@
 ## Current Read
 
 2026-06-27 時点では、WithMate の Codex / GitHub Copilot 対応は同じ Session UI で通常turnを実行できる範囲まで入っている。
-Memory V6 は Skill-first local Memory service として、runtime API、CLI discovery、app-internal guard、explicit target validation、managed Skill sync、Settings Diagnostics まで接続済みである。
+Memory V6 はprovider共通MCPをagent-facing contractの正本とし、runtime bindingによるactor-relative target、operator CLI、app-internal guard、Settings Diagnosticsまで接続済みである。provider別のMemory Skillは配布・同期しない。
 一方で cross-provider matrix として見ると、未着手が多いのは `slash command`, `agent/apps/mcp/plugins` まわり。
 
 ## Update Rule
