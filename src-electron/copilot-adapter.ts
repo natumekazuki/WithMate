@@ -5,6 +5,7 @@ import {
   CopilotClient,
   RuntimeConnection,
   type CopilotSession,
+  type JsonValue,
   type PermissionHandler,
   type MessageOptions,
   type PermissionRequest,
@@ -964,18 +965,19 @@ export function isCopilotVisibleToolName(toolName: string): boolean {
 
 export function buildCopilotToolSummary(
   toolName: string,
-  argumentsValue: Record<string, unknown> | undefined,
+  argumentsValue: JsonValue | undefined,
   workspacePath: string,
 ): string {
   const normalizedToolName = normalizeCopilotToolName(toolName);
+  const argumentRecord = isRecord(argumentsValue) ? argumentsValue : undefined;
   if (COPILOT_SHELL_TOOL_NAMES.has(normalizedToolName)) {
-    return extractShellCommandFromArguments(argumentsValue) ?? normalizedToolName;
+    return extractShellCommandFromArguments(argumentRecord) ?? normalizedToolName;
   }
 
-  const targetPath = getStringArgument(argumentsValue, ["path", "filePath", "fileName", "target", "targetPath", "destination", "destinationPath"]);
+  const targetPath = getStringArgument(argumentRecord, ["path", "filePath", "fileName", "target", "targetPath", "destination", "destinationPath"]);
   if (normalizedToolName === "move" || normalizedToolName === "rename") {
-    const sourcePath = getStringArgument(argumentsValue, ["source", "sourcePath", "from", "oldPath"]);
-    const destinationPath = getStringArgument(argumentsValue, ["destination", "destinationPath", "to", "newPath", "path"]);
+    const sourcePath = getStringArgument(argumentRecord, ["source", "sourcePath", "from", "oldPath"]);
+    const destinationPath = getStringArgument(argumentRecord, ["destination", "destinationPath", "to", "newPath", "path"]);
     const formattedSource = sourcePath ? compactCopilotTargetPath(sourcePath, workspacePath) : null;
     const formattedDestination = destinationPath ? compactCopilotTargetPath(destinationPath, workspacePath) : null;
     if (formattedSource && formattedDestination) {
