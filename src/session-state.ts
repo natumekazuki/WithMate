@@ -191,6 +191,7 @@ export type CreateSessionRequest = Omit<
   | "branch"
   | "approvalMode"
   | "codexSandboxMode"
+  | "codexSpeed"
   | "model"
   | "reasoningEffort"
   | "customAgentName"

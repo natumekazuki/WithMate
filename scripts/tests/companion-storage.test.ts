@@ -159,6 +159,7 @@ describe("CompanionStorage", () => {
       const group = storage.ensureGroup(createGroup());
       const session = storage.createSession(createSession(group.id, {
         approvalMode: "never",
+        codexSpeed: "fast",
       }));
 
       assert.equal(session.groupId, group.id);
@@ -185,7 +186,7 @@ describe("CompanionStorage", () => {
           reasoningEffort: DEFAULT_REASONING_EFFORT,
           approvalMode: "never",
           codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
-          codexSpeed: "standard",
+          codexSpeed: "fast",
           character: "Mia",
           characterRoleMarkdown: "落ち着いて伴走する。",
           characterIconPath: "icon.png",
@@ -198,7 +199,7 @@ describe("CompanionStorage", () => {
       ]);
       assert.equal(storage.getSession("session-1")?.companionBranch, "withmate/companion/session-1");
       assert.equal(storage.getSession("session-1")?.approvalMode, "never");
-      assert.equal(storage.getSession("session-1")?.codexSpeed, "standard");
+      assert.equal(storage.getSession("session-1")?.codexSpeed, "fast");
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);
