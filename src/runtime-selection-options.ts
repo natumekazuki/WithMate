@@ -2,6 +2,7 @@ import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } fro
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import { getCodexSpeedOptions, type CodexSpeed } from "./codex-speed.js";
+import { getCodexReviewerOptions, type CodexReviewer } from "./codex-reviewer.js";
 import {
   buildModelSelectOptions,
   buildReasoningEffortSelectOptions,
@@ -22,6 +23,7 @@ export type RuntimeSelectionOptions = {
   selectedModelFallbackLabel: string;
   reasoningSelectOptions: ReasoningEffortSelectOption[];
   speedSelectOptions: RuntimeSelectOption<CodexSpeed>[];
+  reviewerSelectOptions: RuntimeSelectOption<CodexReviewer>[];
 };
 
 export function buildRuntimeSelectionOptions({
@@ -33,6 +35,7 @@ export function buildRuntimeSelectionOptions({
   selectedApprovalMode,
   selectedCodexSandboxMode,
   selectedCodexSpeed,
+  selectedCodexReviewer,
 }: {
   providerId: string | null | undefined;
   providerCatalog: ModelCatalogProvider | null | undefined;
@@ -42,6 +45,7 @@ export function buildRuntimeSelectionOptions({
   selectedApprovalMode: ApprovalMode;
   selectedCodexSandboxMode: CodexSandboxMode;
   selectedCodexSpeed: CodexSpeed;
+  selectedCodexReviewer: CodexReviewer;
 }): RuntimeSelectionOptions {
   const approvalChoiceOptions = (() => {
     const options = getApprovalOptionsForProvider(providerId);
@@ -57,6 +61,7 @@ export function buildRuntimeSelectionOptions({
   const selectedModelFallbackLabel = resolveModelFallbackLabel(providerCatalog, selectedModel);
   const reasoningSelectOptions = buildReasoningEffortSelectOptions(reasoningEfforts);
   const speedSelectOptions = getCodexSpeedOptions(providerId);
+  const reviewerSelectOptions = getCodexReviewerOptions(providerId);
 
   return {
     approvalChoiceOptions,
@@ -69,5 +74,10 @@ export function buildRuntimeSelectionOptions({
       : speedSelectOptions.some((option) => option.value === selectedCodexSpeed)
         ? speedSelectOptions
         : [{ value: selectedCodexSpeed, label: selectedCodexSpeed }, ...speedSelectOptions],
+    reviewerSelectOptions: reviewerSelectOptions.length === 0
+      ? []
+      : reviewerSelectOptions.some((option) => option.value === selectedCodexReviewer)
+        ? reviewerSelectOptions
+        : [{ value: selectedCodexReviewer, label: selectedCodexReviewer }, ...reviewerSelectOptions],
   };
 }

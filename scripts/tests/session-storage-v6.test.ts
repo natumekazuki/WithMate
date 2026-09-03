@@ -197,13 +197,13 @@ function listSessionTurnSummaries(dbPath: string): string[] {
 describe("SessionStorageV6", () => {
   // @test-value v1
   // kind = "invariant"
-  // claim = "Main SessionのCodex speedはV6 storageでSession単位に永続化され、欠落値はStandardへ正規化される"
-  // oracle = { type = "contract", ref = "accepted behavior: persisted selection" }
-  // failure_mode = "Fast選択が再起動で消える、またはmigration前rowがFastへ昇格する"
+  // claim = "Main SessionのReviewerは新規作成でUserになり、V6 runtime policyでroundtripし未知値はUserへ正規化される"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-2" }
+  // failure_mode = "Auto-review選択が再起動で消える、新規値がUser以外になる、または未知値がAuto-reviewへ昇格する"
   // scope = "session-storage-v6"
   // lifecycle = "permanent"
   // @end-test-value
-  it("codexSpeedをroundtripし欠落runtime policyをStandardとして読む", async () => {
+  it("ReviewerをV6 runtime policyでroundtripし新規・未知値をUserとして読む", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-speed-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
     let storage: SessionStorageV6 | null = null;
@@ -221,6 +221,7 @@ describe("SessionStorageV6", () => {
         characterIconPath: "",
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
         codexSpeed: "fast",
+        codexReviewer: "auto-review",
       }));
       const legacySession = storage.insertSession(buildNewSession({
         id: "legacy-session",
@@ -237,12 +238,14 @@ describe("SessionStorageV6", () => {
       storage = null;
 
       const db = new DatabaseSync(dbPath);
-      db.prepare("UPDATE sessions_v6 SET runtime_policy_json = '{}' WHERE id = ?").run(legacySession.id);
+      db.prepare("UPDATE sessions_v6 SET runtime_policy_json = json_set(runtime_policy_json, '$.codexReviewer', 'unexpected') WHERE id = ?").run(legacySession.id);
       db.close();
 
       storage = new SessionStorageV6(dbPath);
       assert.equal(storage.getSession(fastSession.id)?.codexSpeed, "fast");
       assert.equal(storage.getSession(legacySession.id)?.codexSpeed, "standard");
+      assert.equal(storage.getSession(fastSession.id)?.codexReviewer, "auto-review");
+      assert.equal(storage.getSession(legacySession.id)?.codexReviewer, "user");
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

@@ -77,6 +77,7 @@ function createSession(groupId: string, overrides: Partial<CompanionSession> = {
     approvalMode: DEFAULT_APPROVAL_MODE,
     codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
     codexSpeed: "standard",
+    codexReviewer: "user",
     characterId: "char-1",
     character: "Mia",
     characterRoleMarkdown: "落ち着いて伴走する。",
@@ -168,13 +169,13 @@ function countBlobObjects(dbPath: string): number {
 describe("CompanionStorageV3", () => {
   // @test-value v1
   // kind = "invariant"
-  // claim = "Companion SessionのCodex speedは専用列でroundtripし、未知値はStandardへ正規化される"
-  // oracle = { type = "contract", ref = "accepted behavior: persisted selection / Companion projection" }
-  // failure_mode = "CompanionのFast選択が再起動で消える、または未知の保存値がFast扱いになる"
+  // claim = "Companion SessionのReviewerはV3専用列でroundtripし、既存schemaへ列追加され、未知値はUserへ正規化される"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-2" }
+  // failure_mode = "既存DBを開けない、Auto-review選択が再起動で消える、または未知値がAuto-review扱いになる"
   // scope = "companion-storage-v3"
   // lifecycle = "permanent"
   // @end-test-value
-  it("codexSpeedをroundtripし未知値をStandardとして読む", async () => {
+  it("Reviewer専用列を既存V3へ追加してroundtripし未知値をUserとして読む", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-speed-v3-"));
     const dbPath = path.join(tempDirectory, "withmate-v3.db");
     const blobPath = path.join(tempDirectory, "blobs");
@@ -182,20 +183,29 @@ describe("CompanionStorageV3", () => {
 
     try {
       createV3Database(dbPath);
+      const legacyDb = openAppDatabase(dbPath);
+      legacyDb.exec("ALTER TABLE companion_sessions DROP COLUMN codex_reviewer;");
+      legacyDb.close();
       storage = new CompanionStorageV3(dbPath, blobPath);
       const group = await storage.ensureGroup(createGroup());
-      const session = await storage.createSession(createSession(group.id, { codexSpeed: "fast" }));
+      const session = await storage.createSession(createSession(group.id, {
+        codexSpeed: "fast",
+        codexReviewer: "auto-review",
+      }));
       assert.equal((await storage.getSession(session.id))?.codexSpeed, "fast");
+      assert.equal((await storage.getSession(session.id))?.codexReviewer, "auto-review");
       storage.close();
       storage = null;
 
       const db = openAppDatabase(dbPath);
-      db.prepare("UPDATE companion_sessions SET codex_speed = 'unexpected' WHERE id = ?").run(session.id);
+      db.prepare("UPDATE companion_sessions SET codex_speed = 'unexpected', codex_reviewer = 'unexpected' WHERE id = ?").run(session.id);
       db.close();
 
       storage = new CompanionStorageV3(dbPath, blobPath);
       assert.equal((await storage.getSession(session.id))?.codexSpeed, "standard");
       assert.equal((await storage.listActiveSessionSummaries())[0]?.codexSpeed, "standard");
+      assert.equal((await storage.getSession(session.id))?.codexReviewer, "user");
+      assert.equal((await storage.listActiveSessionSummaries())[0]?.codexReviewer, "user");
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

@@ -34,6 +34,7 @@ import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { CodexSpeed } from "./codex-speed.js";
+import { isCodexReviewerControlDisabled, type CodexReviewer } from "./codex-reviewer.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -3700,6 +3701,8 @@ export type SessionComposerExpandedProps = {
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string }>;
   selectedApprovalMode: ApprovalMode;
+  reviewerOptions: Array<{ value: CodexReviewer; label: string }>;
+  selectedCodexReviewer: CodexReviewer;
   sandboxOptions: Array<{ value: CodexSandboxMode; label: string }>;
   selectedCodexSandboxMode: CodexSandboxMode;
   speedOptions: Array<{ value: CodexSpeed; label: string }>;
@@ -3733,6 +3736,7 @@ export type SessionComposerExpandedProps = {
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
   onChangeApprovalMode: (value: ApprovalMode) => void;
+  onChangeCodexReviewer: (value: CodexReviewer) => void;
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeCodexSpeed: (value: CodexSpeed) => void;
   onChangeModel: (value: string) => void;
@@ -3779,6 +3783,8 @@ export function SessionComposerExpanded({
   isComposerBlockedFeedbackActive,
   approvalOptions,
   selectedApprovalMode,
+  reviewerOptions = [],
+  selectedCodexReviewer = "user",
   sandboxOptions,
   selectedCodexSandboxMode,
   speedOptions = [],
@@ -3812,6 +3818,7 @@ export function SessionComposerExpanded({
   onDraftCompositionEnd,
   onSendOrCancel,
   onChangeApprovalMode,
+  onChangeCodexReviewer = () => {},
   onChangeCodexSandboxMode,
   onChangeCodexSpeed = () => {},
   onChangeModel,
@@ -4178,6 +4185,28 @@ export function SessionComposerExpanded({
                   ))}
                 </select>
               </div>
+
+              {reviewerOptions.length > 0 ? (
+                <div className="composer-setting-field composer-setting-reviewer">
+                  <span>Reviewer</span>
+                  <select
+                    value={selectedCodexReviewer}
+                    onChange={(event) => onChangeCodexReviewer(event.target.value as CodexReviewer)}
+                    disabled={isCodexReviewerControlDisabled({
+                      approvalMode: selectedApprovalMode,
+                      isRunning,
+                      composerBlocked,
+                    })}
+                    aria-label="Reviewer"
+                  >
+                    {reviewerOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
 
               {sandboxOptions.length > 0 ? (
                 <div className="composer-setting-field composer-setting-sandbox">

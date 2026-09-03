@@ -32,6 +32,7 @@ import {
   buildSessionWithApprovalMode,
   buildSessionWithCodexSandboxMode,
   buildSessionWithCodexSpeed,
+  buildSessionWithCodexReviewer,
   buildSessionWithModelChange,
   buildSessionWithReasoningEffort,
 } from "./runtime-option-state.js";
@@ -237,6 +238,7 @@ import {
 import {
   runAuxiliaryApprovalModeChangeOperation,
   runAuxiliaryCodexSpeedChangeOperation,
+  runAuxiliaryCodexReviewerChangeOperation,
   runAuxiliaryModelChangeOperation,
   runAuxiliaryReasoningEffortChangeOperation,
   runAuxiliarySandboxModeChangeOperation,
@@ -2510,6 +2512,7 @@ export default function AgentSessionWindowApp() {
     selectedModelFallbackLabel,
     reasoningSelectOptions,
     speedSelectOptions,
+    reviewerSelectOptions,
   } = useMemo(
     () => buildRuntimeSelectionOptions({
       providerId: displayedSession?.provider,
@@ -2520,12 +2523,14 @@ export default function AgentSessionWindowApp() {
       selectedApprovalMode: displayedSession?.approvalMode ?? "untrusted",
       selectedCodexSandboxMode: displayedSession?.codexSandboxMode ?? "workspace-write",
       selectedCodexSpeed: displayedSession?.codexSpeed ?? "standard",
+      selectedCodexReviewer: displayedSession?.codexReviewer ?? "user",
     }),
     [
       displayedSession?.provider,
       displayedSession?.approvalMode,
       displayedSession?.codexSandboxMode,
       displayedSession?.codexSpeed,
+      displayedSession?.codexReviewer,
       displayedSession?.model,
       modelOptions,
       selectedProviderCatalog,
@@ -2745,6 +2750,7 @@ export default function AgentSessionWindowApp() {
         userMessage: messageText,
         clientRequestId,
         submitSource: options?.submitSource ?? "composer",
+        codexReviewer: updatedSession.codexReviewer,
       };
       try {
         const savedSession = await withmateApi.runSessionTurn(sessionId, request);
@@ -3096,6 +3102,23 @@ export default function AgentSessionWindowApp() {
     }
   };
 
+  const handleChangeCodexReviewer = async (codexReviewer: Session["codexReviewer"]) => {
+    if (
+      !selectedSession ||
+      selectedSession.provider !== "codex" ||
+      selectedSession.approvalMode === "never" ||
+      isSelectedSessionReadOnly ||
+      selectedSessionRunState === "running"
+    ) {
+      return;
+    }
+
+    const nextSession = buildSessionWithCodexReviewer(selectedSession, codexReviewer, currentTimestampLabel());
+    if (nextSession) {
+      await persistSession(nextSession);
+    }
+  };
+
   const handleStartTitleEdit = createStartTitleEditHandler({
     getTitle: () => selectedSession?.taskTitle,
     canStart: () => !!selectedSession && !isSelectedSessionReadOnly && selectedSessionRunState !== "running",
@@ -3223,6 +3246,17 @@ export default function AgentSessionWindowApp() {
   const handleChangeAuxiliaryCodexSpeed = async (codexSpeed: Session["codexSpeed"]) => {
     await runAuxiliaryCodexSpeedChangeOperation({
       codexSpeed,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  };
+
+  const handleChangeAuxiliaryCodexReviewer = async (codexReviewer: Session["codexReviewer"]) => {
+    if (activeAuxiliarySession?.approvalMode === "never") {
+      return;
+    }
+    await runAuxiliaryCodexReviewerChangeOperation({
+      codexReviewer,
       updateActiveAuxiliarySession,
       createTimestampLabel: currentTimestampLabel,
     });
@@ -4435,6 +4469,7 @@ export default function AgentSessionWindowApp() {
         approvalChoiceOptions,
         sandboxChoiceOptions,
         speedChoiceOptions: speedSelectOptions,
+        reviewerChoiceOptions: reviewerSelectOptions,
         modelSelectOptions,
         selectedModelFallbackLabel,
         reasoningSelectOptions,
@@ -4632,6 +4667,11 @@ export default function AgentSessionWindowApp() {
           shouldUseAuxiliary: !!activeAuxiliarySession,
           onAuxiliaryChange: handleChangeAuxiliaryCodexSpeed,
           onSelectedSessionChange: handleChangeCodexSpeed,
+        }),
+        onChangeCodexReviewer: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["codexReviewer"]>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryCodexReviewer,
+          onSelectedSessionChange: handleChangeCodexReviewer,
         }),
         onChangeModel: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
           shouldUseAuxiliary: !!activeAuxiliarySession,

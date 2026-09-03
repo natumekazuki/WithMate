@@ -1883,6 +1883,14 @@ test("Auxiliary mutationはowner windowへ限定し、Companion Reviewからの�
   ]);
 });
 
+// @test-value v1
+// kind = "invariant"
+// claim = "Session windowのAuxiliary作成はReviewerを含むruntime optionの直接指定を拒否する"
+// oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-2" }
+// failure_mode = "rendererがReviewerを直接指定してMain Processの親継承を迂回する"
+// scope = "auxiliary-create-ipc"
+// lifecycle = "permanent"
+// @end-test-value
 test("Auxiliary create IPC は送信元 window と runtime selection mode を結び付ける", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
@@ -1920,6 +1928,15 @@ test("Auxiliary create IPC は送信元 window と runtime selection mode を結
       provider: "codex",
       runtimeSelection: "latest-session",
       approvalMode: undefined,
+    }) as Promise<unknown>,
+    /cannot specify runtime options directly/,
+  );
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      codexReviewer: undefined,
     }) as Promise<unknown>,
     /cannot specify runtime options directly/,
   );

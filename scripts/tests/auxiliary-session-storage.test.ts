@@ -110,6 +110,7 @@ function buildCompanionSession(overrides: Partial<CompanionSession> = {}): Compa
     approvalMode: "on-request",
     codexSandboxMode: "workspace-write-network",
     codexSpeed: "standard",
+    codexReviewer: "user",
     characterId: "companion",
     character: "Companion",
     characterRoleMarkdown: "",
@@ -582,13 +583,13 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
 
 // @test-value v1
 // kind = "invariant"
-// claim = "Auxiliary Sessionは作成時に親のspeedを引き継ぎ、その後の変更を自身だけへ永続化する"
-// oracle = { type = "contract", ref = "accepted behavior: persisted selection / Main and Auxiliary ownership" }
-// failure_mode = "Auxiliaryが親のFastを継承しない、再読込で消える、またはAuxiliary変更が親へ漏れる"
+// claim = "Auxiliary Sessionは作成時に親のReviewerを引き継ぎ、その後の変更を自身だけへ永続化する"
+// oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-2" }
+// failure_mode = "Auxiliaryが親のAuto-reviewを継承しない、再読込で消える、またはAuxiliary変更が親へ漏れる"
 // scope = "auxiliary-session-service-storage"
 // lifecycle = "permanent"
 // @end-test-value
-test("Auxiliary codexSpeedは親から継承した後に独立して保存する", async () => {
+test("Auxiliary Reviewerは親から継承した後に独立して保存する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-speed-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   let auxiliaryStorage: AuxiliarySessionStorage | null = null;
@@ -607,6 +608,7 @@ test("Auxiliary codexSpeedは親から継承した後に独立して保存する
         characterIconPath: "",
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
         codexSpeed: "fast",
+        codexReviewer: "auto-review",
       }),
       provider: "codex",
     };
@@ -622,11 +624,19 @@ test("Auxiliary codexSpeedは親から継承した後に独立して保存する
       codexSpeed: parent.codexSpeed,
     });
     assert.equal(auxiliary.codexSpeed, "fast");
+    assert.equal(auxiliary.codexReviewer, "auto-review");
 
-    const updated = service.updateAuxiliarySession({ ...auxiliary, codexSpeed: "standard" });
+    const updated = service.updateAuxiliarySession({
+      ...auxiliary,
+      codexSpeed: "standard",
+      codexReviewer: "user",
+    });
     assert.equal(updated.codexSpeed, "standard");
     assert.equal(service.getAuxiliarySession(auxiliary.id)?.codexSpeed, "standard");
     assert.equal(parent.codexSpeed, "fast");
+    assert.equal(updated.codexReviewer, "user");
+    assert.equal(service.getAuxiliarySession(auxiliary.id)?.codexReviewer, "user");
+    assert.equal(parent.codexReviewer, "auto-review");
   } finally {
     auxiliaryStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);

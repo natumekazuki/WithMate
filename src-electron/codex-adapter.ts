@@ -39,6 +39,11 @@ import {
   type CodexServiceTier,
 } from "../src/codex-speed.js";
 import {
+  DEFAULT_CODEX_REVIEWER,
+  mapCodexReviewerToApprovalsReviewer,
+  type CodexApprovalsReviewer,
+} from "../src/codex-reviewer.js";
+import {
   reasoningEffortLabel,
   resolveModelSelection,
   type ModelCatalogProvider,
@@ -1378,6 +1383,7 @@ function toRunChecks(
   const checks: RunCheck[] = [
     { label: "provider", value: providerCatalog.label },
     { label: "approval", value: session.approvalMode },
+    { label: "reviewer", value: session.codexReviewer },
     buildCodexSpeedRunCheck(session.codexSpeed),
     { label: "model", value: selection.resolvedModel },
     { label: "reasoning", value: reasoningEffortLabel(selection.resolvedReasoningEffort) },
@@ -1600,6 +1606,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       null,
       "background",
       mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
+      mapCodexReviewerToApprovalsReviewer(DEFAULT_CODEX_REVIEWER),
     );
     const thread = client.startThread(toCodexSdkThreadOptions(this.buildBackgroundThreadOptions(input)));
 
@@ -1632,6 +1639,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
     scope: CodexClientScope = "foreground",
     serviceTier: CodexServiceTier = mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
+    approvalsReviewer: CodexApprovalsReviewer = mapCodexReviewerToApprovalsReviewer(DEFAULT_CODEX_REVIEWER),
   ): { client: Codex; clientKey: string } {
     const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
     const codexPathOverride = resolvePackagedProviderBinaryPath("codex");
@@ -1644,6 +1652,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       bindingCacheKey,
       scope,
       serviceTier,
+      approvalsReviewer,
     ]);
     const cached = this.clients.get(clientKey);
     if (cached) {
@@ -1656,6 +1665,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       config: {
         // Keep Standard explicit so a user's global config.toml cannot silently opt this Session into Fast.
         service_tier: serviceTier,
+        approvals_reviewer: approvalsReviewer,
       },
       env: mergeDefinedProviderEnv(
         process.env,
@@ -1674,6 +1684,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       input.agentRuntimeBinding,
       "foreground",
       mapCodexSpeedToServiceTier(input.session.codexSpeed),
+      mapCodexReviewerToApprovalsReviewer(input.session.codexReviewer),
     );
     const previousClientKey = this.clientKeysBySession.get(input.session.id);
     if (previousClientKey && previousClientKey !== clientKey) {
@@ -2194,6 +2205,7 @@ export function buildCodexThreadSettings(
   );
   const sandboxOptions = resolveCodexSandboxThreadOptions(session.codexSandboxMode);
   const serviceTier = mapCodexSpeedToServiceTier(session.codexSpeed);
+  const approvalsReviewer = mapCodexReviewerToApprovalsReviewer(session.codexReviewer);
   const options: CodexThreadOptions = {
     workingDirectory: workspacePath,
     skipGitRepoCheck: true,
@@ -2217,6 +2229,7 @@ export function buildCodexThreadSettings(
       options.modelReasoningEffort,
       additionalDirectories,
       serviceTier,
+      approvalsReviewer,
       clientKey,
     ]),
   };
