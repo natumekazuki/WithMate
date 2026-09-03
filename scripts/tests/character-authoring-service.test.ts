@@ -214,6 +214,89 @@ description: "作業を一緒に進める相手"
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "authoring Sessionへコピーされた固定SkillがCharacter Kernel、必須検証、WithMate固有の除外境界をすべて含む"
+  // oracle = { type = "adr", ref = "docs/adr/011-character-authoring-kernel.md" }
+  // failure_mode = "配布bundleの一部が旧版または欠落し、次回のAuthor / Improve Sessionが固定返答中心の旧品質契約で作業する"
+  // scope = "character-authoring-skill-distribution"
+  // lifecycle = "permanent"
+  // distinction = "配布処理の存在だけでなく、実際のprovider workspaceにコピーされたSkill全体の品質契約を観測する"
+  // @end-test-value
+  it("配布後の固定 Skill は Character Kernel と検証・除外境界を一式持つ", async () => {
+    const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
+    const service = createService({
+      getCharacterDirectory: () => workspacePath,
+      getCharacter: () => buildCharacter({ notesMarkdown: "" }),
+    });
+
+    try {
+      const result = await service.startSession({
+        mode: "create",
+        characterId: "char-muse",
+        provider: "codex",
+      });
+      const copiedSkillRoot = path.join(
+        result.workspacePath,
+        ".agents",
+        "skills",
+        CHARACTER_AUTHORING_SKILL_NAME,
+      );
+      const skillMarkdown = await readFile(path.join(copiedSkillRoot, "SKILL.md"), "utf8");
+      const formatMarkdown = await readFile(
+        path.join(copiedSkillRoot, "references", "character-format.md"),
+        "utf8",
+      );
+      const rubricMarkdown = await readFile(
+        path.join(copiedSkillRoot, "references", "authoring-rubric.md"),
+        "utf8",
+      );
+      const notesTemplate = await readFile(
+        path.join(copiedSkillRoot, "templates", "character-notes.md"),
+        "utf8",
+      );
+
+      assert.match(skillMarkdown, /選択の核 × 言語アイデンティティ × 状態変調/);
+      assert.match(skillMarkdown, /既存Characterへ自動migrationや一括rewriteを要求しない/);
+      assert.match(skillMarkdown, /Notion同期.*必須処理にしない/);
+      for (const section of [
+        "Identity Core",
+        "Attention and Appraisal",
+        "Social Intent / User Relationship",
+        "Emotional Dynamics and Core Tensions",
+        "Thinking and Action Style",
+        "Identity Invariants",
+        "Distributional Tendencies",
+        "Triggered Markers",
+        "State Modulation",
+        "Character Priority",
+        "Minimal Reliability",
+      ]) {
+        assert.match(formatMarkdown, new RegExp(section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      }
+      assert.match(formatMarkdown, /旧sectionや既存`Examples`を含むCharacterも引き続き読み込める/);
+      for (const validation of [
+        "Name-swap",
+        "Phrase-suppression",
+        "Voice-restoration",
+        "Unseen-scenario",
+        "Paraphrase diversity",
+        "Marker-overuse",
+        "Core-tension",
+        "Long-form retention",
+        "Relationship smoke test",
+      ]) {
+        assert.match(rubricMarkdown, new RegExp(validation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      }
+      assert.match(notesTemplate, /## Observation Log/);
+      assert.match(notesTemplate, /## Character Kernel Derivation/);
+      assert.match(notesTemplate, /## Revision Guardrails/);
+      assert.match(notesTemplate, /## Validation Summary/);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("improve mode の開始時に既存 Character files を書き換えない", async () => {
     const existingDefinition = "# Existing character\r\n";
     const existingNotes = "# Existing notes\r\n";

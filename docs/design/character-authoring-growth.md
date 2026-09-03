@@ -1,14 +1,14 @@
 # Character Authoring And Improvement
 
 - 作成日: 2026-06-16
-- 更新日: 2026-08-01
+- 更新日: 2026-09-04
 - 対象: 保存済み Character の agent authoring
 
 ## Goal
 
 通常 Session の UI と provider adapter を再利用し、保存済み `character.md` と optional な `character-notes.md` を固定 authoring Skill で作成・改善する。
 
-format は `docs/design/character-definition-format.md`、storage / snapshot は `docs/design/character-storage.md`、判断理由は `docs/adr/010-character-authoring-project-contract.md` を参照する。
+format は `docs/design/character-definition-format.md`、storage / snapshot は `docs/design/character-storage.md`、launch と保存境界は `docs/adr/010-character-authoring-project-contract.md`、Kernel 品質契約は `docs/adr/011-character-authoring-kernel.md` を参照する。
 
 ## Product Flow
 
@@ -63,11 +63,18 @@ app 管理 Skill の正本は `resources/skills/withmate-character-authoring/` �
 - runtime philosophy と person-first boundary
 - existing definition の差分改善手順
 - LF-normalized 8,000 character format
+- 「選択の核 × 言語アイデンティティ × 状態変調」による Character Kernel
+- Identity Core、Attention and Appraisal、Social Intent、Emotional Dynamics、Thinking and Action Style
+- Voice Rules の Identity Invariants、Distributional Tendencies、Triggered Markers
+- State Modulation、Character Priority、Minimal Reliability
 - public description と relationship rubric
 - official / community source と rights / privacy policy
-- full authoring 用の seven-scenario relationship smoke test
+- observation、採否、uncertainty、revision guardrail、validation result の notes 分離
+- full authoring 用の generalization / voice test と seven-scenario relationship smoke test
 
-Skill は局所的な語尾、反応、example の修正を targeted update とし、新規作成、全面改稿、事実・関係性・public description の位置付けを変える作業を full authoring とする。format、8,000 文字上限、output boundary、依頼箇所の review は両 mode で確認する。source 調査、全 rubric、7 ケースの smoke test は full authoring、source に依存する変更、またはユーザーが調査を求めた場合だけ行う。
+Skill は局所的な語尾、反応、呼称頻度の修正を targeted update とし、新規作成、Character Kernel への再構成、全面改稿、事実・関係性・public description の位置付けを変える作業を full authoring とする。format、8,000 文字上限、output boundary、依頼箇所の review は両 mode で確認する。source 調査、全 rubric、Name-swap、Phrase-suppression、Voice-restoration、Unseen-scenario、Paraphrase diversity、Marker-overuse、Core-tension、Long-form retention、7 ケースの relationship smoke test は full authoring、source に依存する変更、またはユーザーが調査を求めた場合に行う。
+
+full authoring の新しい runtime 定義は、完成返答の `Examples` や場面別台詞集を置かず、未知場面へ一般化できる生成規則で構成する。targeted update は旧 section や既存 `Examples` があることだけで全面 rewrite せず、有用な identity signal を保持する。推奨 Kernel 構造を storage parser の hard contract へ昇格せず、既存 Character を自動 migration しない。
 
 `character-notes.md` は optional のまま扱う。targeted update では記録すべき source、material な解釈、revision guardrail がある場合だけ template から作成し、full authoring では作成して evidence と判断を記録する。
 
@@ -84,8 +91,10 @@ Skill は局所的な語尾、反応、example の修正を targeted update と�
 
 - `character-notes.md` の runtime 常設 prompt 注入
 - Memory / Growth / unrelated Session history からの hidden rewrite
+- `config.toml` からの hidden input
 - user action なしの Character 自律保存
 - user-selectable authoring Skill / Agent
+- Notion 同期、CharacterPack Zip、asset 生成・配布、catalog metadata の色更新
 - source の権利や外部情報の完全性保証
 
 ## Executable Contracts

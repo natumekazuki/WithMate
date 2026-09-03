@@ -5,6 +5,7 @@ import { DEFAULT_CHARACTER_THEME, type CharacterDetail } from "../../src/charact
 import {
   CHARACTER_DEFINITION_MAX_CHARACTERS,
   countCharacterDefinitionCharacters,
+  validateCharacterDefinitionMarkdown,
 } from "../../src/character/character-definition.js";
 import {
   buildDefaultCharacterDefinition,
@@ -20,6 +21,14 @@ import {
 } from "../../src/character-editor/character-editor-state.js";
 
 describe("Character editor state", () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "新規draftがhard format内でCharacter Kernelの推奨構造を初期化し、固定返答Examplesを生成しない"
+  // oracle = { type = "adr", ref = "docs/adr/011-character-authoring-kernel.md" }
+  // failure_mode = "Author with Agentの開始前に旧Examples中心のdefault定義が保存され、新しいfull authoring品質契約と食い違う"
+  // scope = "character-editor-new-draft"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("新規 draft は V5 character.md の初期本文を作る", () => {
     const draft = createNewCharacterEditorDraft("Mia");
 
@@ -27,23 +36,40 @@ describe("Character editor state", () => {
     assert.equal(draft.name, "Mia");
     assert.match(draft.definitionMarkdown, /schema: withmate-character-v5/);
     assert.match(draft.definitionMarkdown, /name: "Mia"/);
-    assert.match(draft.definitionMarkdown, /# Character Definition/);
+    assert.match(draft.definitionMarkdown, /# Character Kernel/);
     assert.match(draft.definitionMarkdown, /## Experience Goal/);
-    assert.match(draft.definitionMarkdown, /## Work \/ Response Separation/);
+    assert.match(draft.definitionMarkdown, /## Identity Core/);
+    assert.match(draft.definitionMarkdown, /## Attention and Appraisal/);
+    assert.match(draft.definitionMarkdown, /## Social Intent \/ User Relationship/);
+    assert.match(draft.definitionMarkdown, /## Emotional Dynamics and Core Tensions/);
+    assert.match(draft.definitionMarkdown, /## Thinking and Action Style/);
+    assert.match(draft.definitionMarkdown, /### Identity Invariants/);
+    assert.match(draft.definitionMarkdown, /### Distributional Tendencies/);
+    assert.match(draft.definitionMarkdown, /### Triggered Markers/);
+    assert.match(draft.definitionMarkdown, /## State Modulation/);
     assert.match(draft.definitionMarkdown, /## Character Priority/);
     assert.match(draft.definitionMarkdown, /## Minimal Reliability/);
-    assert.match(draft.definitionMarkdown, /### 普通の作業依頼/);
-    assert.match(draft.definitionMarkdown, /### 意見が合わない時/);
-    assert.match(draft.definitionMarkdown, /ユーザーへ説明する言葉、相槌、励まし、ツッコミ、距離感、温度に反映する。/);
+    assert.doesNotMatch(draft.definitionMarkdown, /^## Examples$/m);
     assert.doesNotMatch(draft.definitionMarkdown, /## Coding Agent Behavior/);
     assert.doesNotMatch(draft.definitionMarkdown, /## Knowledge Policy/);
     assert.doesNotMatch(draft.definitionMarkdown, /## Runtime Notes/);
+    assert.deepEqual(validateCharacterDefinitionMarkdown(draft.definitionMarkdown), []);
     assert.ok(countCharacterDefinitionCharacters(draft.definitionMarkdown) <= CHARACTER_DEFINITION_MAX_CHARACTERS);
     assert.match(buildDefaultCharacterDefinition("   "), /name: "New Character"/);
-    assert.match(draft.notesMarkdown, /## Relationship Evidence Mapping/);
+    assert.match(draft.notesMarkdown, /## Observation Log/);
+    assert.match(draft.notesMarkdown, /## Revision Guardrails/);
+    assert.match(draft.notesMarkdown, /## Validation Summary/);
     assert.doesNotMatch(draft.notesMarkdown, /New Character/);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "name以外が未編集の新規draftだけを新しい名前のdefault Kernelへ再生成し、編集済み本文は上書きしない"
+  // oracle = { type = "contract", ref = "docs/design/character-definition-format.md#update-policy" }
+  // failure_mode = "name変更でdefault本文がstaleになる、またはユーザーが編集したcharacter.mdをdefault Kernelで上書きする"
+  // scope = "character-editor-draft-name-update"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("未編集の新規 character.md だけ name 変更に追従する", () => {
     const draft = createNewCharacterEditorDraft();
     const renamed = updateCharacterEditorDraft(draft, { name: "Mia" });
@@ -51,7 +77,7 @@ describe("Character editor state", () => {
     assert.equal(renamed.name, "Mia");
     assert.match(renamed.definitionMarkdown, /name: "Mia"/);
     assert.match(renamed.definitionMarkdown, /Miaと気心の知れた相手/);
-    assert.match(renamed.definitionMarkdown, /可能な限りMiaとして話す/);
+    assert.match(renamed.definitionMarkdown, /# Character Kernel/);
     assert.doesNotMatch(renamed.notesMarkdown, /New Character/);
 
     const edited = updateCharacterEditorDraft(
