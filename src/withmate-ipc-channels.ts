@@ -31,6 +31,8 @@ export const WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL =
 export const WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL = "withmate:copy-session-file-object";
 export const WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL =
   "withmate:show-session-file-object-copy-context-menu";
+export const WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL =
+  "withmate:show-session-file-tree-context-menu";
 export const WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL = "withmate:show-markdown-link-context-menu";
 export const WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL = "withmate:list-file-root-changes";
 export const WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL =

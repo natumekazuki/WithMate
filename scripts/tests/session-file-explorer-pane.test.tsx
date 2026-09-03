@@ -52,7 +52,16 @@ function directoryEntry(name: string): SessionDirectoryEntry {
   };
 }
 
-test("SessionFileExplorerPane は directory load を明示展開と現行 request identity に限定する", async () => {
+// @test-value v1
+// kind = "invariant"
+// claim = "Files treeはroot・directory・regular fileだけを同じpath context menu契約へ渡し、通常clickとload identityを維持する"
+// oracle = { type = "contract", ref = "accepted behavior: File Explorer tree path context menu siblings" }
+// failure_mode = "rootまたはdirectoryでpath操作できない、対象外rowに操作が出る、またはcontext menu追加で通常clickと非同期loadが回帰する"
+// scope = "SessionFileExplorerPane Files tree interaction"
+// lifecycle = "permanent"
+// distinction = "root・directory・fileの兄弟入口とsymbolic link除外を、既存click/load observableと同時に確認する"
+// @end-test-value
+test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単位に保つ", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -117,15 +126,14 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
   const { SessionFileExplorerPane } = await import("../../src/file-explorer/SessionFileExplorerPane.js");
 
   const directoryRequests: Array<Deferred<SessionDirectoryEntry[]>> = [];
-  const copyMenuRequests: unknown[] = [];
+  const pathMenuRequests: unknown[] = [];
   let directoryCalls = 0;
   const api = {
-    isSessionFileObjectCopyAvailable() {
-      return true;
-    },
-    async showSessionFileObjectCopyContextMenu(request: unknown) {
-      copyMenuRequests.push(request);
-      return { status: "effect-unknown" as const, message: "File copy status is unknown." };
+    async showSessionFileTreeContextMenu(request: unknown) {
+      pathMenuRequests.push(request);
+      return (request as { nodeKind?: string }).nodeKind === "file"
+        ? { status: "failed" as const, message: "Path action failed." }
+        : { status: "dismissed" as const };
     },
     async listSessionFileRoots() {
       return [{ id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:\\workspace" }];
@@ -157,6 +165,8 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
         onOpenFile(request, openInWindow) {
           openedFiles.push({ relativePath: request.relativePath, openInWindow });
         },
+        canInsertPathReference: true,
+        onInsertPathReference() {},
       }));
     });
     await act(async () => {
@@ -169,6 +179,12 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
 
     const initialRoot = dom.window.document.querySelector<HTMLButtonElement>(".session-file-root-row");
     assert.ok(initialRoot);
+    initialRoot.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 6,
+      clientY: 9,
+    }));
     await act(async () => {
       initialRoot.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       initialRoot.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
@@ -193,15 +209,21 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     assert.equal(directoryCalls, 2);
 
     await act(async () => {
-      directoryRequests[1]?.resolve([fileEntry("new.txt"), directoryEntry("folder")]);
+      directoryRequests[1]?.resolve([
+        fileEntry("new.txt"),
+        directoryEntry("folder"),
+        { ...fileEntry("linked.txt"), kind: "symbolic-link" },
+      ]);
       await directoryRequests[1]?.promise;
     });
     await waitFor(() => dom.window.document.body.textContent?.includes("new.txt") ?? false);
     const rows = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(".session-file-tree-row"));
     const fileRow = rows.find((row) => row.textContent?.includes("new.txt"));
     const directoryRow = rows.find((row) => row.textContent?.includes("folder"));
+    const symbolicLinkRow = rows.find((row) => row.textContent?.includes("linked.txt"));
     assert.ok(fileRow);
     assert.ok(directoryRow);
+    assert.ok(symbolicLinkRow);
     await act(async () => {
       fileRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       fileRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
@@ -217,19 +239,47 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
         clientX: 24,
         clientY: 48,
       }));
+      symbolicLinkRow.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 30,
+        clientY: 60,
+      }));
       await Promise.resolve();
     });
     assert.deepEqual(openedFiles, [
       { relativePath: "new.txt", openInWindow: false },
       { relativePath: "new.txt", openInWindow: true },
     ]);
-    assert.deepEqual(copyMenuRequests, [{
-      resource: { sessionId: "session-1", rootId: "workspace", relativePath: "new.txt" },
-      point: { x: 24, y: 48 },
-    }]);
+    assert.deepEqual(pathMenuRequests, [
+      {
+        sessionId: "session-1",
+        rootId: "workspace",
+        relativePath: "",
+        nodeKind: "root",
+        canInsert: true,
+        point: { x: 6, y: 9 },
+      },
+      {
+        sessionId: "session-1",
+        rootId: "workspace",
+        relativePath: "folder",
+        nodeKind: "directory",
+        canInsert: true,
+        point: { x: 12, y: 18 },
+      },
+      {
+        sessionId: "session-1",
+        rootId: "workspace",
+        relativePath: "new.txt",
+        nodeKind: "file",
+        canInsert: true,
+        point: { x: 24, y: 48 },
+      },
+    ]);
     assert.equal(
       dom.window.document.querySelector(".session-file-tree-feedback")?.textContent,
-      "File copy status is unknown.",
+      "Path action failed.",
     );
 
     await act(async () => {
@@ -253,6 +303,8 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
           changesRefreshCalls += 1;
         },
         onOpenFile() {},
+        canInsertPathReference: false,
+        onInsertPathReference() {},
         changesContent: React.createElement("div", null, "Changes content"),
       }));
     });
@@ -287,6 +339,48 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     }
     dom.window.close();
   }
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "path insertion resultはaction確定時にも同じactive ownerかつ書き込み可能なcomposerだけへ渡る"
+// oracle = { type = "contract", ref = "accepted behavior: File Explorer path insertion owner revalidation" }
+// failure_mode = "menu表示後のowner切替またはcomposer無効化後に別ownerや書き込み不可draftへpathを挿入する"
+// scope = "SessionFileExplorerPane path insertion result boundary"
+// lifecycle = "permanent"
+// distinction = "menu request時のcapabilityではなくresult適用時の最新ownerとcapabilityを観測する"
+// @end-test-value
+test("SessionFileExplorerPane は path insertion result適用時にownerとcapabilityを再確認する", async () => {
+  const { applySessionFileTreePathInsertionResult } = await import(
+    "../../src/file-explorer/SessionFileExplorerPane.js"
+  );
+  const inserted: string[] = [];
+  const result = {
+    status: "insert-path",
+    ownerSessionId: "session-1",
+    absolutePath: "C:\\workspace\\docs\\report.md",
+  };
+  const insertPathReference = (_ownerSessionId: string, absolutePath: string) => inserted.push(absolutePath);
+
+  assert.equal(applySessionFileTreePathInsertionResult({
+    result,
+    currentOwnerSessionId: "session-2",
+    canInsert: true,
+    insertPathReference,
+  }), false);
+  assert.equal(applySessionFileTreePathInsertionResult({
+    result,
+    currentOwnerSessionId: "session-1",
+    canInsert: false,
+    insertPathReference,
+  }), false);
+  assert.equal(applySessionFileTreePathInsertionResult({
+    result,
+    currentOwnerSessionId: "session-1",
+    canInsert: true,
+    insertPathReference,
+  }), true);
+  assert.deepEqual(inserted, ["C:\\workspace\\docs\\report.md"]);
 });
 
 // @test-value v1
@@ -335,10 +429,7 @@ test("SessionFileExplorerPane は訪問済みtab panelを保持する", async ()
     async listSessionDirectory() {
       return [];
     },
-    isSessionFileObjectCopyAvailable() {
-      return false;
-    },
-    async showSessionFileObjectCopyContextMenu() {
+    async showSessionFileTreeContextMenu() {
       return { status: "dismissed" as const };
     },
   };
@@ -354,6 +445,8 @@ test("SessionFileExplorerPane は訪問済みtab panelを保持する", async ()
       onActiveTabChange: setActiveTab,
       onRefreshChanges() {},
       onOpenFile() {},
+      canInsertPathReference: false,
+      onInsertPathReference() {},
       renderChangesContent: () => React.createElement(StatefulPanel, { name: "changes" }),
       historyContent: React.createElement(StatefulPanel, { name: "history" }),
     });

@@ -3620,7 +3620,7 @@ export default function AgentSessionWindowApp() {
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
     applySelectedPathReferenceInsertionCommand({
       draft: currentDraft,
-      fallbackCaret: composerCaret,
+      fallbackCaret: targetAuxiliarySession ? composerCaret : mainComposerCaretRef.current,
       selectedPaths,
       textarea,
       workspacePath: selectedSession?.workspacePath ?? null,
@@ -4150,6 +4150,9 @@ export default function AgentSessionWindowApp() {
     activeRunSessionId ?? "",
     ...(activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories),
   ].join("\u0000");
+  const canInsertFileTreePathReference = activeAuxiliarySession
+    ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
+    : !isComposerDisabled;
   const fileExplorerPane = (
     <SessionFileExplorerPane
       api={withmateApi}
@@ -4172,6 +4175,13 @@ export default function AgentSessionWindowApp() {
             window.alert(message);
           }
         });
+      }}
+      canInsertPathReference={canInsertFileTreePathReference}
+      onInsertPathReference={(ownerSessionId, absolutePath) => {
+        if (ownerSessionId !== activeRunSessionId || !canInsertFileTreePathReference) {
+          return;
+        }
+        insertReferencePaths([absolutePath]);
       }}
       renderChangesContent={(roots) => (
         <FileRootChangesPane

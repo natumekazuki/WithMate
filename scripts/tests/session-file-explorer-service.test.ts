@@ -9,6 +9,80 @@ import test from "node:test";
 import { listIdentityBoundDirectory } from "../../src-electron/identity-bound-directory-listing.js";
 import { SessionFileExplorerService } from "../../src-electron/session-file-explorer-service.js";
 
+// @test-value v1
+// kind = "security"
+// claim = "tree path actionは現在のSession root内にあるroot・directory・regular fileのlexical pathだけを期待kind一致後に返す"
+// oracle = { type = "contract", ref = "accepted behavior invariant 1: resource authority" }
+// failure_mode = "renderer指定のtraversal、stale root、symlink、またはkind不一致targetがclipboardまたはcomposer用pathへ認可される"
+// scope = "SessionFileExplorerService.resolvePathActionTarget"
+// lifecycle = "permanent"
+// distinction = "previewのreal path解決ではなくtree表示上のlexical pathとnode kindを検証する"
+// @end-test-value
+test("SessionFileExplorerService は tree path actionをcurrent rootとnode kindへ制限する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-tree-path-action-"));
+  const workspacePath = path.join(tempDirectory, "workspace");
+  const directoryPath = path.join(workspacePath, "docs");
+  const filePath = path.join(directoryPath, "report.txt");
+  const linkPath = path.join(workspacePath, "linked-report.txt");
+  let currentWorkspacePath = workspacePath;
+  try {
+    await mkdir(directoryPath, { recursive: true });
+    await writeFile(filePath, "report");
+    await symlink(filePath, linkPath, "file");
+    const service = new SessionFileExplorerService({
+      userDataPath: path.join(tempDirectory, "user-data"),
+      async getSessionContext(sessionId) {
+        return sessionId === "session-1"
+          ? { workspacePath: currentWorkspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }
+          : null;
+      },
+    });
+
+    assert.equal(await service.resolvePathActionTarget({
+      sessionId: "session-1",
+      rootId: "workspace",
+      relativePath: "",
+      nodeKind: "root",
+    }), workspacePath);
+    assert.equal(await service.resolvePathActionTarget({
+      sessionId: "session-1",
+      rootId: "workspace",
+      relativePath: "docs",
+      nodeKind: "directory",
+    }), directoryPath);
+    assert.equal(await service.resolvePathActionTarget({
+      sessionId: "session-1",
+      rootId: "workspace",
+      relativePath: "docs/report.txt",
+      nodeKind: "file",
+    }), filePath);
+
+    for (const request of [
+      { sessionId: "missing", rootId: "workspace", relativePath: "docs/report.txt", nodeKind: "file" as const },
+      { sessionId: "session-1", rootId: "stale-root", relativePath: "docs/report.txt", nodeKind: "file" as const },
+      { sessionId: "session-1", rootId: "workspace", relativePath: "../outside.txt", nodeKind: "file" as const },
+      { sessionId: "session-1", rootId: "workspace", relativePath: filePath, nodeKind: "file" as const },
+      { sessionId: "session-1", rootId: "workspace", relativePath: "docs", nodeKind: "file" as const },
+      { sessionId: "session-1", rootId: "workspace", relativePath: "linked-report.txt", nodeKind: "file" as const },
+    ]) {
+      await assert.rejects(() => service.resolvePathActionTarget(request));
+    }
+
+    currentWorkspacePath = "";
+    await assert.rejects(
+      () => service.resolvePathActionTarget({
+        sessionId: "session-1",
+        rootId: "workspace",
+        relativePath: "",
+        nodeKind: "root",
+      }),
+      /root path.*空/,
+    );
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("SessionFileExplorerService は preview link を最も具体的な認可 root へ解決する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-file-preview-link-"));
   const workspacePath = path.join(tempDirectory, "workspace");

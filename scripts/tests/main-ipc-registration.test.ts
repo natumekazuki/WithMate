@@ -49,6 +49,7 @@ import {
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
@@ -168,11 +169,12 @@ function createSessionRequest(workspace: Record<string, unknown>) {
 
 // @test-value v1
 // kind = "contract"
-// claim = "Main IPC registrationは公開中のChanges repository discovery channelを登録する"
-// oracle = { type = "contract", ref = "WithMateWindowApi.listFileRootChangesRepositories" }
-// failure_mode = "preloadが公開したrepository discovery channelにMain handlerがなくrenderer呼び出しが失敗する"
+// claim = "Main IPC registrationは現行の公開channelを登録し、廃止済みchannelを登録しない"
+// oracle = { type = "contract", ref = "withmate-ipc-channels public surface" }
+// failure_mode = "preloadが公開したchannelにMain handlerがないか、廃止済みchannelが再び呼び出し可能になる"
 // scope = "Main IPC public channel registration"
 // lifecycle = "permanent"
+// distinction = "file tree context menuを含む公開channel集合とremoved channel不在を検証する"
 // @end-test-value
 test("registerMainIpcHandlers は保持する public IPC だけを登録する", () => {
   const { ipcMain, handlers } = createIpcMainStub();
@@ -191,6 +193,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
@@ -1347,6 +1350,66 @@ test("file object copy IPCは認可対象resourceとowning senderだけを受け
     /current Preview resource/,
   );
   assert.deepEqual(copyRequests, [copyRequest]);
+});
+
+// @test-value v1
+// kind = "security"
+// claim = "file tree context menu IPCは限定fieldとnode kindを検証し、対象Sessionを所有するwindowだけへrequestを渡す"
+// oracle = { type = "contract", ref = "accepted behavior invariant 1: renderer request boundary" }
+// failure_mode = "absolute pathや余分なfieldを含むrequest、または非owner windowからのpath操作がMain serviceへ到達する"
+// scope = "main IPC file tree context menu boundary"
+// lifecycle = "permanent"
+// distinction = "file preview resourceではなくroot・directoryを含むtree node専用requestとowning Session windowを検証する"
+// @end-test-value
+test("file tree context menu IPCはstrict requestとowning Session windowだけを受け付ける", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  const requests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    showSessionFileTreeContextMenu: async (_event: unknown, request: unknown) => {
+      requests.push(request);
+      return { status: "dismissed" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = {
+    sessionId: "aux-1",
+    rootId: "workspace",
+    relativePath: "docs",
+    nodeKind: "directory",
+    point: { x: 24, y: 48 },
+    canInsert: false,
+  };
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL)?.({}, request),
+    { status: "dismissed" },
+  );
+  assert.deepEqual(requests, [request]);
+
+  for (const invalidRequest of [
+    { ...request, absolutePath: "C:/outside" },
+    { ...request, nodeKind: "symbolic-link" },
+    { ...request, point: { x: -1, y: 2 } },
+    { ...request, canInsert: "yes" },
+  ]) {
+    await assert.rejects(
+      () => handlers.get(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL)?.({}, invalidRequest) as Promise<unknown>,
+      /File tree context menu request is invalid/,
+    );
+  }
+
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL)?.({}, request) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.deepEqual(requests, [request]);
 });
 
 test("Markdown link context menu IPCはtargetと認可用file contextを変換せず渡す", async () => {

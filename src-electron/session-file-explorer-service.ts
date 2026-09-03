@@ -17,6 +17,7 @@ import type {
   SessionFilePreviewTargetResolution,
   SessionFileRoot,
   SessionFileRootKind,
+  SessionFileTreePathActionTargetRequest,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileAbsoluteResource,
@@ -181,6 +182,9 @@ function makeAdditionalRootId(absolutePath: string): string {
 }
 
 function makeRoot(kind: SessionFileRootKind, absolutePath: string, id: string, label: string): ResolvedSessionFileRoot {
+  if (typeof absolutePath !== "string" || !absolutePath.trim()) {
+    throw new Error("file root path が空だよ。");
+  }
   return {
     id,
     kind,
@@ -271,6 +275,33 @@ export class SessionFileExplorerService {
 
   async resolveHistoryRoot(sessionId: string, rootId: string): Promise<ResolvedSessionFileRoot | null> {
     return (await this.resolveHistoryRoots(sessionId)).find((candidate) => candidate.id === rootId) ?? null;
+  }
+
+  async resolvePathActionTarget(request: SessionFileTreePathActionTargetRequest): Promise<string> {
+    if (!(["root", "directory", "file"] as const).includes(request.nodeKind)) {
+      throw new TypeError("File tree path action node kind is invalid.");
+    }
+    const candidate = await this.resolveTargetCandidate(
+      {
+        sessionId: request.sessionId,
+        rootId: request.rootId,
+        relativePath: request.relativePath,
+      },
+      request.nodeKind === "root",
+    );
+    if ((request.nodeKind === "root") !== (request.relativePath === "")) {
+      throw new Error("File tree path action node kind does not match its path.");
+    }
+    const targetStats = request.nodeKind === "root"
+      ? await (this.deps.statPath ?? stat)(candidate.unresolvedTargetPath)
+      : await (this.deps.lstatPath ?? lstat)(candidate.unresolvedTargetPath);
+    const kindMatches = request.nodeKind === "file"
+      ? targetStats.isFile()
+      : targetStats.isDirectory();
+    if (!kindMatches) {
+      throw new Error("File tree path action node kind does not match the current target.");
+    }
+    return candidate.unresolvedTargetPath;
   }
 
   async resolvePreviewTarget(
