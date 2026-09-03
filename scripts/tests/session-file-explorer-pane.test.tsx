@@ -4,7 +4,10 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import type { SessionDirectoryEntry } from "../../src/file-explorer/file-explorer-contract.js";
+import {
+  buildSessionFileExplorerRootsRevision,
+  type SessionDirectoryEntry,
+} from "../../src/file-explorer/file-explorer-contract.js";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -51,6 +54,29 @@ function directoryEntry(name: string): SessionDirectoryEntry {
     modifiedAt: "2026-08-02T00:00:00.000Z",
   };
 }
+
+// @test-value v1
+// kind = "invariant"
+// claim = "File Explorer root revisionはactive Session、workspace path、Additional Directory集合の組を一意に表す"
+// oracle = { type = "contract", ref = "accepted behavior invariant 2: root change invalidates pending insertion" }
+// failure_mode = "同じSession IDのworkspace pathだけが変わったときに旧rootのmenu結果を新rootへ挿入する"
+// scope = "buildSessionFileExplorerRootsRevision"
+// lifecycle = "permanent"
+// distinction = "Additional Directory変更だけでなくMain rootの対応先であるworkspace path変更もrevisionへ反映する"
+// @end-test-value
+test("File Explorer root revisionはworkspace path変更を検出する", () => {
+  const initial = buildSessionFileExplorerRootsRevision({
+    sessionId: "session-1",
+    workspacePath: "C:\\workspace-a",
+    additionalDirectories: ["C:\\additional"],
+  });
+  const workspaceChanged = buildSessionFileExplorerRootsRevision({
+    sessionId: "session-1",
+    workspacePath: "C:\\workspace-b",
+    additionalDirectories: ["C:\\additional"],
+  });
+  assert.notEqual(initial, workspaceChanged);
+});
 
 // @test-value v1
 // kind = "invariant"
@@ -395,6 +421,172 @@ test("SessionFileExplorerPane は path insertion result適用時にowner・root�
     insertPathReference,
   }), true);
   assert.deepEqual(inserted, ["C:\\workspace\\docs\\report.md"]);
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "非同期menu結果はReactへcommit済みのowner snapshotだけを参照してpathを挿入する"
+// oracle = { type = "contract", ref = "accepted behavior invariant 2: insertion targets the current active writable composer" }
+// failure_mode = "concurrent renderが中断されたとき、未commit renderのcallbackをcurrent ownerとしてpath挿入へ使う"
+// scope = "SessionFileExplorerPane committed insertion owner snapshot"
+// lifecycle = "permanent"
+// distinction = "通常のowner切替ではなく、同じowner identityの中断renderがrefだけを先行更新する競合を観測する"
+// @end-test-value
+test("SessionFileExplorerPane は中断renderのowner callbackへpathを挿入しない", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  const previousGetBoundingClientRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const previousClientHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientHeight");
+  const previousClientWidth = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientWidth");
+  const previousOffsetHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "offsetHeight");
+  const previousOffsetWidth = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "offsetWidth");
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    return {
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 320,
+      bottom: 480,
+      width: 320,
+      height: 480,
+      toJSON: () => ({}),
+    };
+  };
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get: () => 480,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", {
+    configurable: true,
+    get: () => 320,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get: () => 480,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", {
+    configurable: true,
+    get: () => 320,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { SessionFileExplorerPane } = await import("../../src/file-explorer/SessionFileExplorerPane.js");
+  const menuResult = deferred<{ status: "insert-path"; ownerSessionId: string; absolutePath: string }>();
+  const suspendedRender = deferred<void>();
+  const committedInsertions: string[] = [];
+  const uncommittedInsertions: string[] = [];
+  const api = {
+    async listSessionFileRoots() {
+      return [{ id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:\\workspace" }];
+    },
+    async listSessionDirectory() {
+      return [];
+    },
+    showSessionFileTreeContextMenu() {
+      return menuResult.promise;
+    },
+  };
+  function SuspendedSibling({ suspend }: { suspend: boolean }) {
+    if (suspend) {
+      throw suspendedRender.promise;
+    }
+    return null;
+  }
+  const renderPane = (
+    onInsertPathReference: (ownerSessionId: string, absolutePath: string) => void,
+    suspend: boolean,
+  ) => React.createElement(
+    React.Suspense,
+    { fallback: null },
+    React.createElement(SessionFileExplorerPane, {
+      api,
+      sessionId: "session-1",
+      enabled: true,
+      rootsRevision: "roots-1",
+      selectedFile: null,
+      activeTab: "files",
+      onActiveTabChange() {},
+      onRefreshChanges() {},
+      onOpenFile() {},
+      canInsertPathReference: true,
+      onInsertPathReference,
+    }),
+    React.createElement(SuspendedSibling, { suspend }),
+  );
+
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(renderPane((_ownerSessionId, absolutePath) => committedInsertions.push(absolutePath), false));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("resize"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() => dom.window.document.querySelector(".session-file-root-row") !== null);
+    dom.window.document.querySelector<HTMLButtonElement>(".session-file-root-row")?.dispatchEvent(
+      new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+
+    await act(async () => {
+      React.startTransition(() => {
+        root?.render(renderPane((_ownerSessionId, absolutePath) => uncommittedInsertions.push(absolutePath), true));
+      });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      menuResult.resolve({
+        status: "insert-path",
+        ownerSessionId: "session-1",
+        absolutePath: "C:\\workspace\\report.md",
+      });
+      await menuResult.promise;
+    });
+    assert.deepEqual(committedInsertions, ["C:\\workspace\\report.md"]);
+    assert.deepEqual(uncommittedInsertions, []);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.HTMLElement.prototype.getBoundingClientRect = previousGetBoundingClientRect;
+    if (previousClientHeight) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", previousClientHeight);
+    }
+    if (previousClientWidth) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", previousClientWidth);
+    }
+    if (previousOffsetHeight) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", previousOffsetHeight);
+    }
+    if (previousOffsetWidth) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", previousOffsetWidth);
+    }
+    dom.window.close();
+  }
 });
 
 // @test-value v1

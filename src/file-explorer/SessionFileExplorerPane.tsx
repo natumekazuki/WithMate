@@ -1,5 +1,15 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import type {
@@ -42,6 +52,13 @@ type DirectoryLoadRequest = {
   revision: number;
   requestId: number;
   promise: Promise<void>;
+};
+
+type FileTreeInsertionOwnerSnapshot = {
+  sessionId: string | null;
+  rootsRevision: string;
+  canInsert: boolean;
+  insertPathReference: (ownerSessionId: string, absolutePath: string) => void;
 };
 
 export function applySessionFileTreePathInsertionResult(input: {
@@ -95,14 +112,20 @@ export function SessionFileExplorerPane({
   renderChangesContent,
   historyContent,
 }: SessionFileExplorerPaneProps) {
-  const currentSessionIdRef = useRef(sessionId);
-  const rootsRevisionRef = useRef(rootsRevision);
-  const canInsertPathReferenceRef = useRef(canInsertPathReference);
-  const onInsertPathReferenceRef = useRef(onInsertPathReference);
-  currentSessionIdRef.current = sessionId;
-  rootsRevisionRef.current = rootsRevision;
-  canInsertPathReferenceRef.current = canInsertPathReference;
-  onInsertPathReferenceRef.current = onInsertPathReference;
+  const insertionOwnerSnapshotRef = useRef<FileTreeInsertionOwnerSnapshot>({
+    sessionId,
+    rootsRevision,
+    canInsert: canInsertPathReference,
+    insertPathReference: onInsertPathReference,
+  });
+  useLayoutEffect(() => {
+    insertionOwnerSnapshotRef.current = {
+      sessionId,
+      rootsRevision,
+      canInsert: canInsertPathReference,
+      insertPathReference: onInsertPathReference,
+    };
+  }, [canInsertPathReference, onInsertPathReference, rootsRevision, sessionId]);
   const loadRevisionRef = useRef(0);
   const directoryRequestSequenceRef = useRef(0);
   const inFlightDirectoryLoadsRef = useRef(new Map<string, DirectoryLoadRequest>());
@@ -267,13 +290,14 @@ export function SessionFileExplorerPane({
         setFeedbackMessage(result.message);
         return;
       }
+      const currentInsertionOwner = insertionOwnerSnapshotRef.current;
       applySessionFileTreePathInsertionResult({
         result,
-        currentOwnerSessionId: currentSessionIdRef.current,
+        currentOwnerSessionId: currentInsertionOwner.sessionId,
         requestedRootsRevision,
-        currentRootsRevision: rootsRevisionRef.current,
-        canInsert: canInsertPathReferenceRef.current,
-        insertPathReference: onInsertPathReferenceRef.current,
+        currentRootsRevision: currentInsertionOwner.rootsRevision,
+        canInsert: currentInsertionOwner.canInsert,
+        insertPathReference: currentInsertionOwner.insertPathReference,
       });
     }).catch(() => {
       setFeedbackMessage("Path menu could not be opened.");

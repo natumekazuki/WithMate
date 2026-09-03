@@ -105,6 +105,43 @@ test("SessionFileExplorerService は tree path actionをcurrent rootとnode kind
 });
 
 // @test-value v1
+// kind = "invariant"
+// claim = "未作成のSession Folder rootはpath actionで認可でき、menu表示前の解決だけではdirectoryを作成しない"
+// oracle = { type = "contract", ref = "accepted behavior: root row path menu and dismiss has no external side effect" }
+// failure_mode = "未作成のSession Folderを右クリックしてmenuを閉じただけでfilesystemへ空directoryを作る"
+// scope = "SessionFileExplorerService.resolvePathActionTarget"
+// lifecycle = "permanent"
+// distinction = "directory展開時の明示的なSession Folder作成は維持し、path menuの事前認可だけをnon-mutatingにする"
+// @end-test-value
+test("SessionFileExplorerService は未作成Session Folderのpath action認可でdirectoryを作らない", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-tree-session-folder-path-"));
+  const workspacePath = path.join(tempDirectory, "workspace");
+  try {
+    await mkdir(workspacePath, { recursive: true });
+    const service = new SessionFileExplorerService({
+      userDataPath: path.join(tempDirectory, "user-data"),
+      async getSessionContext() {
+        return { workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] };
+      },
+    });
+    const sessionFolder = (await service.listRoots("session-1"))
+      .find((root) => root.kind === "session-folder");
+    assert.ok(sessionFolder);
+    await assert.rejects(() => lstat(sessionFolder.displayPath), { code: "ENOENT" });
+
+    assert.equal(await service.resolvePathActionTarget({
+      sessionId: "session-1",
+      rootId: sessionFolder.id,
+      relativePath: "",
+      nodeKind: "root",
+    }), sessionFolder.displayPath);
+    await assert.rejects(() => lstat(sessionFolder.displayPath), { code: "ENOENT" });
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v1
 // kind = "security"
 // claim = "tree由来のfile-object copyはlexical leafがregular fileでopened handleと同一identityの間だけoperationを開始する"
 // oracle = { type = "contract", ref = "accepted behavior invariant 1 and 3: symbolic link exclusion before clipboard side effect" }

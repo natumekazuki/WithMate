@@ -36,6 +36,18 @@ export type SessionFileTreePathActionContextMenuResult =
   | { status: "failed"; message: string }
   | { status: "dismissed" };
 
+export function buildSessionFileExplorerRootsRevision(input: {
+  sessionId: string | null;
+  workspacePath: string | null;
+  additionalDirectories: readonly string[];
+}): string {
+  return JSON.stringify([
+    input.sessionId ?? "",
+    input.workspacePath ?? "",
+    ...input.additionalDirectories,
+  ]);
+}
+
 export type SessionDirectoryEntry = {
   name: string;
   relativePath: string;
