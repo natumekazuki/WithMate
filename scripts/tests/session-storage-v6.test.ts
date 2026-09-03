@@ -195,6 +195,60 @@ function listSessionTurnSummaries(dbPath: string): string[] {
 }
 
 describe("SessionStorageV6", () => {
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Main SessionのCodex speedはV6 storageでSession単位に永続化され、欠落値はStandardへ正規化される"
+  // oracle = { type = "contract", ref = "accepted behavior: persisted selection" }
+  // failure_mode = "Fast選択が再起動で消える、またはmigration前rowがFastへ昇格する"
+  // scope = "session-storage-v6"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("codexSpeedをroundtripし欠落runtime policyをStandardとして読む", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-speed-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const fastSession = storage.insertSession(buildNewSession({
+        id: "fast-session",
+        taskTitle: "Fast session",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        codexSpeed: "fast",
+      }));
+      const legacySession = storage.insertSession(buildNewSession({
+        id: "legacy-session",
+        taskTitle: "Legacy session",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      }));
+      storage.close();
+      storage = null;
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare("UPDATE sessions_v6 SET runtime_policy_json = '{}' WHERE id = ?").run(legacySession.id);
+      db.close();
+
+      storage = new SessionStorageV6(dbPath);
+      assert.equal(storage.getSession(fastSession.id)?.codexSpeed, "fast");
+      assert.equal(storage.getSession(legacySession.id)?.codexSpeed, "standard");
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("pin stateだけを更新し、updatedAtと本文を維持して再読込できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");

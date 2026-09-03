@@ -320,7 +320,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer toolbar に `Add Directory` を置き、その横の toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
-- composer 下の `Approval / Model / Depth`
+- composer 下の runtime settings は shared chat composer を正本とし、`Approval / Sandbox / Model / Depth`を表示する。Codex providerでは同じ列へcompactな`Speed`選択を追加し、`Standard` / `Fast`をSession単位で保持する。Codex以外では`Speed`を表示せず、runningまたはread-onlyの既存runtime option制約では変更できない
   - approval chip は `自動実行 / 安全寄り / プロバイダー判断`
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`

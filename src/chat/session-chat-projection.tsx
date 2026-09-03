@@ -116,6 +116,7 @@ export type AgentSessionChatProjectionInput = {
   isComposerBlockedFeedbackActive: boolean;
   approvalChoiceOptions: SessionComposerExpandedProps["approvalOptions"];
   sandboxChoiceOptions: SessionComposerExpandedProps["sandboxOptions"];
+  speedChoiceOptions: SessionComposerExpandedProps["speedOptions"];
   modelSelectOptions: SessionComposerExpandedProps["modelOptions"];
   selectedModelFallbackLabel: string;
   reasoningSelectOptions: SessionComposerExpandedProps["reasoningOptions"];
@@ -212,6 +213,7 @@ export type AgentSessionChatProjectionInput = {
   onSendOrCancel: () => void;
   onChangeApprovalMode: SessionComposerExpandedProps["onChangeApprovalMode"];
   onChangeCodexSandboxMode: SessionComposerExpandedProps["onChangeCodexSandboxMode"];
+  onChangeCodexSpeed: SessionComposerExpandedProps["onChangeCodexSpeed"];
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
@@ -309,6 +311,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       selectedApprovalMode: input.selectedSession.approvalMode,
       sandboxOptions: input.sandboxChoiceOptions,
       selectedCodexSandboxMode: input.selectedSession.codexSandboxMode,
+      speedOptions: input.speedChoiceOptions,
+      selectedCodexSpeed: input.selectedSession.codexSpeed,
       modelOptions: input.modelSelectOptions,
       selectedModel: input.selectedSession.model,
       selectedModelFallbackLabel: input.selectedModelFallbackLabel,
@@ -342,6 +346,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onSendOrCancel: input.onSendOrCancel,
       onChangeApprovalMode: input.onChangeApprovalMode,
       onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
+      onChangeCodexSpeed: input.onChangeCodexSpeed,
       onChangeModel: input.onChangeModel,
       onChangeReasoningEffort: input.onChangeReasoningEffort,
     }),

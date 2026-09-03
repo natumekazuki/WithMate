@@ -565,6 +565,7 @@ function rowToCompanionSession(row: CompanionSessionRow, messages: CompanionMess
     customAgentName: row.custom_agent_name,
     approvalMode: normalizeApprovalMode(row.approval_mode),
     codexSandboxMode: normalizeCodexSandboxMode(row.codex_sandbox_mode),
+    codexSpeed: "standard",
     characterId: row.character_id,
     character: row.character_name,
     characterRoleMarkdown: row.character_role_markdown,

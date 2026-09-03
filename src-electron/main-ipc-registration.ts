@@ -1322,6 +1322,7 @@ function assertAuxiliaryCreateModeForOwner(
     Object.hasOwn(input, "reasoningEffort") ||
     Object.hasOwn(input, "approvalMode") ||
     Object.hasOwn(input, "codexSandboxMode") ||
+    Object.hasOwn(input, "codexSpeed") ||
     Object.hasOwn(input, "customAgentName")
   ) {
     throw new Error("Session window Auxiliary creation cannot specify runtime options directly.");

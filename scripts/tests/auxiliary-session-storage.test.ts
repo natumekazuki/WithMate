@@ -109,6 +109,7 @@ function buildCompanionSession(overrides: Partial<CompanionSession> = {}): Compa
     customAgentName: "reviewer",
     approvalMode: "on-request",
     codexSandboxMode: "workspace-write-network",
+    codexSpeed: "standard",
     characterId: "companion",
     character: "Companion",
     characterRoleMarkdown: "",
@@ -134,6 +135,7 @@ function buildAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxil
     reasoningEffort: "high",
     approvalMode: DEFAULT_APPROVAL_MODE,
     codexSandboxMode: "danger-full-access",
+    codexSpeed: "standard",
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "",
@@ -250,6 +252,14 @@ test("AuxiliarySessionStorage は created_at なしの旧 auxiliary_sessions を
   }
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "親SessionでCodex speedが未指定ならAuxiliary SessionはStandardで作成される"
+// oracle = { type = "contract", ref = "accepted behavior: new and existing data default" }
+// failure_mode = "未指定のCodex speedがFastへ昇格するかAuxiliary作成結果から欠落する"
+// scope = "auxiliary-session-service"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxiliarySessionService は親の作業 context と未指定 runtime option の既定値で active session を復元する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-session-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
@@ -298,6 +308,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     assert.equal(auxiliary.reasoningEffort, parent.reasoningEffort);
     assert.equal(auxiliary.approvalMode, DEFAULT_APPROVAL_MODE);
     assert.equal(auxiliary.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE);
+    assert.equal(auxiliary.codexSpeed, "standard");
     assert.deepEqual(auxiliary.allowedAdditionalDirectories, ["C:/shared"]);
     assert.equal(auxiliary.displayAfterMessageIndex, parent.messages.length - 1);
 
@@ -565,6 +576,59 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     companionStorage?.close();
     auxiliaryStorage?.close();
     sessionStorage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "Auxiliary Sessionは作成時に親のspeedを引き継ぎ、その後の変更を自身だけへ永続化する"
+// oracle = { type = "contract", ref = "accepted behavior: persisted selection / Main and Auxiliary ownership" }
+// failure_mode = "Auxiliaryが親のFastを継承しない、再読込で消える、またはAuxiliary変更が親へ漏れる"
+// scope = "auxiliary-session-service-storage"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary codexSpeedは親から継承した後に独立して保存する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-speed-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+
+  try {
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    const parent = {
+      ...buildNewSession({
+        id: "speed-parent",
+        taskTitle: "Speed parent",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "mate",
+        character: "Mate",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        codexSpeed: "fast",
+      }),
+      provider: "codex",
+    };
+    const service = new AuxiliarySessionService({
+      getParentSession: (parentSessionId) => parentSessionId === parent.id ? parent : null,
+      getStorage: () => auxiliaryStorage!,
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+    });
+
+    const auxiliary = await service.createAuxiliarySession({
+      parentSessionId: parent.id,
+      provider: parent.provider,
+      codexSpeed: parent.codexSpeed,
+    });
+    assert.equal(auxiliary.codexSpeed, "fast");
+
+    const updated = service.updateAuxiliarySession({ ...auxiliary, codexSpeed: "standard" });
+    assert.equal(updated.codexSpeed, "standard");
+    assert.equal(service.getAuxiliarySession(auxiliary.id)?.codexSpeed, "standard");
+    assert.equal(parent.codexSpeed, "fast");
+  } finally {
+    auxiliaryStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);
   }
 });

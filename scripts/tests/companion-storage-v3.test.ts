@@ -76,6 +76,7 @@ function createSession(groupId: string, overrides: Partial<CompanionSession> = {
     customAgentName: "",
     approvalMode: DEFAULT_APPROVAL_MODE,
     codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+    codexSpeed: "standard",
     characterId: "char-1",
     character: "Mia",
     characterRoleMarkdown: "落ち着いて伴走する。",
@@ -165,6 +166,42 @@ function countBlobObjects(dbPath: string): number {
 }
 
 describe("CompanionStorageV3", () => {
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Companion SessionのCodex speedは専用列でroundtripし、未知値はStandardへ正規化される"
+  // oracle = { type = "contract", ref = "accepted behavior: persisted selection / Companion projection" }
+  // failure_mode = "CompanionのFast選択が再起動で消える、または未知の保存値がFast扱いになる"
+  // scope = "companion-storage-v3"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("codexSpeedをroundtripし未知値をStandardとして読む", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-speed-v3-"));
+    const dbPath = path.join(tempDirectory, "withmate-v3.db");
+    const blobPath = path.join(tempDirectory, "blobs");
+    let storage: CompanionStorageV3 | null = null;
+
+    try {
+      createV3Database(dbPath);
+      storage = new CompanionStorageV3(dbPath, blobPath);
+      const group = await storage.ensureGroup(createGroup());
+      const session = await storage.createSession(createSession(group.id, { codexSpeed: "fast" }));
+      assert.equal((await storage.getSession(session.id))?.codexSpeed, "fast");
+      storage.close();
+      storage = null;
+
+      const db = openAppDatabase(dbPath);
+      db.prepare("UPDATE companion_sessions SET codex_speed = 'unexpected' WHERE id = ?").run(session.id);
+      db.close();
+
+      storage = new CompanionStorageV3(dbPath, blobPath);
+      assert.equal((await storage.getSession(session.id))?.codexSpeed, "standard");
+      assert.equal((await storage.listActiveSessionSummaries())[0]?.codexSpeed, "standard");
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("session と merge run を blob-backed payload で roundtrip する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-v3-"));
     const dbPath = path.join(tempDirectory, "withmate-v3.db");

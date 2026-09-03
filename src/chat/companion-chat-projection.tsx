@@ -103,6 +103,8 @@ export type CompanionChatProjectionInput = {
   selectedApprovalMode: SessionComposerExpandedProps["selectedApprovalMode"];
   sandboxOptions: SessionComposerExpandedProps["sandboxOptions"];
   selectedCodexSandboxMode: SessionComposerExpandedProps["selectedCodexSandboxMode"];
+  speedOptions: SessionComposerExpandedProps["speedOptions"];
+  selectedCodexSpeed: SessionComposerExpandedProps["selectedCodexSpeed"];
   modelOptions: SessionComposerExpandedProps["modelOptions"];
   selectedModel: string;
   selectedModelFallbackLabel: string;
@@ -189,6 +191,7 @@ export type CompanionChatProjectionInput = {
   onSendOrCancel: () => void;
   onChangeApprovalMode: SessionComposerExpandedProps["onChangeApprovalMode"];
   onChangeCodexSandboxMode: SessionComposerExpandedProps["onChangeCodexSandboxMode"];
+  onChangeCodexSpeed: SessionComposerExpandedProps["onChangeCodexSpeed"];
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
@@ -283,6 +286,8 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       selectedApprovalMode: input.selectedApprovalMode,
       sandboxOptions: input.sandboxOptions,
       selectedCodexSandboxMode: input.selectedCodexSandboxMode,
+      speedOptions: input.speedOptions,
+      selectedCodexSpeed: input.selectedCodexSpeed,
       modelOptions: input.modelOptions,
       selectedModel: input.selectedModel,
       selectedModelFallbackLabel: input.selectedModelFallbackLabel,
@@ -314,6 +319,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onSendOrCancel: input.onSendOrCancel,
       onChangeApprovalMode: input.onChangeApprovalMode,
       onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
+      onChangeCodexSpeed: input.onChangeCodexSpeed,
       onChangeModel: input.onChangeModel,
       onChangeReasoningEffort: input.onChangeReasoningEffort,
     }),

@@ -1,8 +1,10 @@
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { CodexSpeed } from "./codex-speed.js";
 import {
   applyAuxiliarySessionApprovalModeChange,
   applyAuxiliarySessionCodexSandboxModeChange,
+  applyAuxiliarySessionCodexSpeedChange,
   applyAuxiliarySessionModelChange,
   applyAuxiliarySessionReasoningEffortChange,
   type AuxiliarySession,
@@ -30,6 +32,16 @@ export async function runAuxiliarySandboxModeChangeOperation(input: {
 }): Promise<void> {
   await input.updateActiveAuxiliarySession((current) => (
     applyAuxiliarySessionCodexSandboxModeChange(current, input.codexSandboxMode, input.createTimestampLabel())
+  ));
+}
+
+export async function runAuxiliaryCodexSpeedChangeOperation(input: {
+  codexSpeed: CodexSpeed;
+  updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;
+  createTimestampLabel: () => string;
+}): Promise<void> {
+  await input.updateActiveAuxiliarySession((current) => (
+    applyAuxiliarySessionCodexSpeedChange(current, input.codexSpeed, input.createTimestampLabel())
   ));
 }
 

@@ -63,6 +63,7 @@ function createSession(groupId: string, overrides: Partial<CompanionSession> = {
     customAgentName: "",
     approvalMode: DEFAULT_APPROVAL_MODE,
     codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+    codexSpeed: "standard",
     characterId: "char-1",
     character: "Mia",
     characterRoleMarkdown: "落ち着いて伴走する。",
@@ -140,6 +141,14 @@ describe("CompanionStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Companion summaryとdetailは保存済みCodex speedを同じSession ownerから返す"
+  // oracle = { type = "contract", ref = "accepted behavior: Companion persistence projection" }
+  // failure_mode = "Companionの一覧とdetailでSpeed選択が失われるか食い違う"
+  // scope = "companion-storage"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("group と active session を保存して summary と detail を読み戻せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -176,6 +185,7 @@ describe("CompanionStorage", () => {
           reasoningEffort: DEFAULT_REASONING_EFFORT,
           approvalMode: "never",
           codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+          codexSpeed: "standard",
           character: "Mia",
           characterRoleMarkdown: "落ち着いて伴走する。",
           characterIconPath: "icon.png",
@@ -188,6 +198,7 @@ describe("CompanionStorage", () => {
       ]);
       assert.equal(storage.getSession("session-1")?.companionBranch, "withmate/companion/session-1");
       assert.equal(storage.getSession("session-1")?.approvalMode, "never");
+      assert.equal(storage.getSession("session-1")?.codexSpeed, "standard");
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

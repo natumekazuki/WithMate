@@ -1,5 +1,6 @@
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { CodexSpeed } from "./codex-speed.js";
 import type { ModelReasoningEffort } from "./model-catalog.js";
 import type { ChangedFile } from "./runtime-state.js";
 import type { Message } from "./session-state.js";
@@ -86,6 +87,7 @@ export type CompanionSession = {
   customAgentName: string;
   approvalMode: ApprovalMode;
   codexSandboxMode: CodexSandboxMode;
+  codexSpeed: CodexSpeed;
   characterId: string;
   character: string;
   characterRoleMarkdown: string;
@@ -122,6 +124,7 @@ export type CompanionSessionSummary = Pick<
   | "reasoningEffort"
   | "approvalMode"
   | "codexSandboxMode"
+  | "codexSpeed"
   | "character"
   | "characterRoleMarkdown"
   | "characterIconPath"
@@ -250,6 +253,7 @@ export function createCompanionSessionSummary(
     reasoningEffort: session.reasoningEffort,
     approvalMode: session.approvalMode,
     codexSandboxMode: session.codexSandboxMode,
+    codexSpeed: session.codexSpeed,
     character: session.character,
     characterRoleMarkdown: session.characterRoleMarkdown,
     characterIconPath: session.characterIconPath,
