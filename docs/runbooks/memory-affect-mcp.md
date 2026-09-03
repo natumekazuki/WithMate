@@ -106,13 +106,13 @@ $request | withmate-memory affect-inspect --stdin
 
 `character-memory-correct`の自由記述reasonは訂正監査とidempotency判定に使われる。`character-memory-forget`のreasonは`user_request`、`incorrect`、`outdated`、`privacy`、`other`のいずれかを指定する。
 
-MCPのinitializeと`tools/list`取得後にtransport availability failureが発生し、同じ一般MemoryまたはCharacter操作をCLIで明示的にfallbackする場合は`--fallback-from mcp`を付ける。fallbackはruntime bindingが選んだruntimeとMCP credentialを使い、operator-only command、接続先selector、caller指定identityは受け付けない。
+MCPのinitializeと`tools/list`取得後にtransport availability failureが発生し、tool errorの`details.fallbackEligible`が`true`になった同じ一般MemoryまたはCharacter操作をCLIで明示的にfallbackする場合は`--fallback-from mcp`を付ける。fallbackはruntime bindingが選んだruntimeとMCP credentialを使い、operator-only command、接続先selector、caller指定identityは受け付けない。provider binding markerがあるprocessのflagなしCLIはoperator modeへ切り替えず拒否される。
 
 ```powershell
 $request | withmate-memory context-get --stdin --fallback-from mcp
 ```
 
-fallbackも同じruntime APIを使う。MCP initialize前の未設定・起動不能では開始せず、`tools/list`取得後のtransport-level availability failureだけを開始条件にする。MemoryまたはCharacterのstructured domain error、authority拒否、invalid input、version conflict、idempotency conflict/replay、migration requiredをCLIで迂回してはならない。idempotency keyを持つwriteの`effect: unknown`はresponse lossの可能性を表すため、同じrequestとidempotency keyでreconcileする。`memory.get_file`と`memory.export_files`は自動再試行せず、出力先をread-onlyで確認するかoperatorによるmanual recoveryへ進む。
+fallbackも同じruntime APIを使う。MCP processは`tools/list` responseの正常送出後にserverへ短命な`listed` stateを登録し、後続toolの実transport exceptionでmethod、path、bodyのfingerprintを持つ`eligible` stateへ遷移させる。CLIは同じruntime generation、binding、current turn、operation fingerprintに一致するadmissionだけをconsumeする。MCP initialize前の未設定・起動不能、`tools/list`失敗、process terminationなどserverへ障害を報告できない場合は開始しない。MemoryまたはCharacterのstructured domain error、authority拒否、invalid input、version conflict、idempotency conflict/replay、migration requiredをCLIで迂回してはならない。変更request、期限切れ、stale turnも拒否される。idempotency keyを持つwriteの`effect: unknown`はresponse lossの可能性を表すため、同じrequestとidempotency keyでreconcileする。`memory.get_file`と`memory.export_files`はagent fallbackで自動再試行せず、出力先をread-onlyで確認するかoperatorによるmanual recoveryへ進む。
 
 ## Errorと再試行
 

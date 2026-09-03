@@ -12,6 +12,11 @@ import {
 } from "../../src-electron/memory-v6-http-server.js";
 import type { CharacterContextApplicationService } from "../../src-electron/character-context-application-service.js";
 import type { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
+import {
+  createMemoryFallbackOperationFingerprint,
+  WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH,
+  WITHMATE_MEMORY_FALLBACK_LISTED_PATH,
+} from "../../src/memory-v6/memory-runtime-exchange.js";
 import { callWithMateMemoryRuntime } from "../withmate-memory-runtime-client.js";
 
 const API_SECRET = "api-secret";
@@ -455,13 +460,13 @@ describe("Memory HTTP agent runtime binding policy", () => {
 
   // @test-value v1
   // kind = "security"
-  // claim = "agent CLI fallbackはMCP credential、binding、fallback markerを組み合わせてもMCP-equivalent routeだけを実行する"
+  // claim = "agent CLI fallbackはtools/list成功後のtransport failureに対応する短命server admissionとcurrent turnが一致する同一操作だけを実行する"
   // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-  // failure_mode = "fallbackがoperator credentialを使用する、operator-only routeへ昇格する、またはbindingなしでdispatchする"
+  // failure_mode = "fallback markerの自己申告、別操作、operator credential、またはstale turnでMemory serviceへdispatchする"
   // scope = "memory-runtime-agent-cli-fallback"
   // lifecycle = "permanent"
   // @end-test-value
-  it("agent CLI fallbackはMCP credentialとbindingでMCP allowlistだけを使う", async () => {
+  it("agent CLI fallbackはserver admissionとcurrent turnが一致する同一操作だけを使う", async () => {
     const registry = new AgentRuntimeBindingRegistry();
     const binding = registry.issueOrReuse({
       actorSessionId: "session-a",
@@ -476,29 +481,71 @@ describe("Memory HTTP agent runtime binding policy", () => {
         return { schemaVersion: "withmate-memory-v1", items: [] };
       },
     } as unknown as MemoryV6Service;
-    const runtime = await startServer({ registry, service });
+    let nowMs = Date.parse("2026-09-03T00:00:00.000Z");
+    const runtime = await startServer({ registry, service, now: () => new Date(nowMs) });
     const body = {
       schemaVersion: "withmate-memory-v1",
       targets: [{ kind: "user-global" }],
       query: "fallback",
     };
 
+    const unadmitted = await runtime.callFallback("/v1/search", body, binding.bindingReference);
+    assert.equal(unadmitted.status, 403);
+    assert.equal(calls.length, 0);
+
+    assert.equal((await runtime.markFallbackListed(binding.bindingReference)).status, 200);
+    const listedOnly = await runtime.callFallback("/v1/search", body, binding.bindingReference);
+    assert.equal(listedOnly.status, 403);
+    assert.equal(calls.length, 0);
+
+    assert.equal((await runtime.markFallbackEligible("/v1/search", body, binding.bindingReference)).status, 200);
     const allowed = await runtime.callFallback("/v1/search", body, binding.bindingReference);
     assert.equal(allowed.status, 200);
     assert.equal(calls.length, 1);
+
+    const exactRetry = await runtime.callFallback("/v1/search", body, binding.bindingReference);
+    assert.equal(exactRetry.status, 200);
+    assert.equal(calls.length, 2);
+
+    assert.equal((await runtime.markFallbackEligible("/v1/search", body, binding.bindingReference)).status, 200);
+    const changed = await runtime.callFallback(
+      "/v1/search",
+      { ...body, query: "different" },
+      binding.bindingReference,
+    );
+    assert.equal(changed.status, 403);
+    assert.equal(calls.length, 2);
 
     const denied = await runtime.callFallback("/v1/audit", {
       schemaVersion: "withmate-memory-v1",
       allTargets: true,
     }, binding.bindingReference);
     assert.equal(denied.status, 403);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
 
     await assert.rejects(
       runtime.callOperatorFallback("/v1/search", body, binding.bindingReference),
       /requires the MCP runtime credential/,
     );
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
+
+    const boundOperator = await runtime.callOperator("/v1/search", body, binding.bindingReference);
+    assert.equal(boundOperator.status, 403);
+    assert.equal(calls.length, 2);
+
+    assert.equal((await runtime.markFallbackListed(binding.bindingReference)).status, 200);
+    assert.equal((await runtime.markFallbackEligible("/v1/search", body, binding.bindingReference)).status, 200);
+    nowMs += 60_001;
+    const expired = await runtime.callFallback("/v1/search", body, binding.bindingReference);
+    assert.equal(expired.status, 403);
+    assert.equal(calls.length, 2);
+
+    assert.equal((await runtime.markFallbackListed(binding.bindingReference)).status, 200);
+    assert.equal((await runtime.markFallbackEligible("/v1/search", body, binding.bindingReference)).status, 200);
+    runtime.expireTurn();
+    const stale = await runtime.callFallback("/v1/search", body, binding.bindingReference);
+    assert.equal(stale.status, 403);
+    assert.equal(calls.length, 2);
   });
 
   it("optional routeでも提示済みの空白bindingを未提示へfallbackしない", async () => {
@@ -522,6 +569,14 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(calls.length, 0);
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "operator CLI exchangeはroute policyに関係なくAgent bindingを提示したrequestをdispatch前に拒否する"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // failure_mode = "provider-bound processがoperator credentialとbindingを組み合わせてoperator-only routeへ昇格する"
+  // scope = "memory-runtime-operator-cli-binding-boundary"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("none routeはbinding付きprovider CLIをoperatorへ昇格させずdispatch前に拒否する", async () => {
     const registry = new AgentRuntimeBindingRegistry();
     const binding = registry.issueOrReuse({
@@ -554,7 +609,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
       binding.bindingReference,
     );
     assert.equal(bound.status, 403);
-    assert.equal((bound.value as any).error.details.bindingFailure, "SESSION_BINDING_FORBIDDEN");
+    assert.equal((bound.value as any).error.code, "MEMORY_FORBIDDEN");
     assert.equal(calls.length, 0);
 
     const operator = await runtime.callOperator("/v1/character_affect/reset", body);
@@ -566,12 +621,15 @@ describe("Memory HTTP agent runtime binding policy", () => {
     registry: AgentRuntimeBindingRegistry;
     service?: MemoryV6Service;
     characterContextService?: CharacterContextApplicationService;
+    now?: () => Date;
   }): Promise<{
     call(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     callRead(path: string, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     callFallback(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     callOperator(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     callOperatorFallback(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
+    markFallbackListed(bindingReference: string): ReturnType<typeof callWithMateMemoryRuntime>;
+    markFallbackEligible(path: string, body: unknown, bindingReference: string): ReturnType<typeof callWithMateMemoryRuntime>;
     expireTurn(): void;
   }> {
     const turns = new ProviderAgentRuntimeTurnCoordinator();
@@ -594,6 +652,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
       resolveKnownProjectByPath: (projectPath) => projectPath === "C:/project-a"
         ? { id: "project-a", displayName: "Project A" }
         : null,
+      ...(input.now ? { now: input.now } : {}),
     });
     await server.start();
     const address = server.address();
@@ -637,6 +696,20 @@ describe("Memory HTTP agent runtime binding policy", () => {
           credential: { adapter: "cli" as const, adapterSecret: OPERATOR_SECRET },
         },
         { method: "POST", path, body, fallbackFrom: "mcp" },
+        { signal: new AbortController().signal, bindingReference, turnCapability: turn.capability },
+      ),
+      markFallbackListed: (bindingReference) => callWithMateMemoryRuntime(
+        connection,
+        { method: "POST", path: WITHMATE_MEMORY_FALLBACK_LISTED_PATH, body: {} },
+        { signal: new AbortController().signal, bindingReference, turnCapability: turn.capability },
+      ),
+      markFallbackEligible: (path, body, bindingReference) => callWithMateMemoryRuntime(
+        connection,
+        {
+          method: "POST",
+          path: WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH,
+          body: { fingerprint: createMemoryFallbackOperationFingerprint({ method: "POST", path, body }) },
+        },
         { signal: new AbortController().signal, bindingReference, turnCapability: turn.capability },
       ),
       expireTurn: () => turns.end(turn),

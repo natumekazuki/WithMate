@@ -306,7 +306,8 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       const memorySearchDescription = result.tools.find((tool) => tool.name === "memory.search")?.description ?? "";
       assert.match(memorySearchDescription, /same exact target/);
       assert.match(memorySearchDescription, /withmate-memory <command> --fallback-from mcp/);
-      assert.match(memorySearchDescription, /only after MCP initialize and tools\/list succeeded/);
+      assert.match(memorySearchDescription, /only when MCP initialize and tools\/list succeeded/);
+      assert.match(memorySearchDescription, /details\.fallbackEligible=true/);
       assert.match(memorySearchDescription, /Never fallback for domain, authority, version, idempotency, migration, or storage errors/);
       const searchTargetBranches = (result.tools.find((tool) => tool.name === "memory.search")
         ?.inputSchema.properties?.targets as { items?: { oneOf?: Array<{ properties?: Record<string, unknown> }> } })
@@ -384,6 +385,76 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       assert.match(CHARACTER_MCP_SERVER_INSTRUCTIONS, /autonomous user-delegate operations/);
       assert.match(CHARACTER_MCP_SERVER_INSTRUCTIONS, /memory\.\*/);
       assert.match(CHARACTER_MCP_SERVER_INSTRUCTIONS, /domain, authority, version, idempotency, migration, and storage failures do not permit fallback/);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "MCP adapterはtools/list成功後に観測したtransport failureだけをserver-side CLI fallback admissionへ昇格する"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // failure_mode = "tools/list前またはdomain rejectionでfallback admissionを作り、callerの自己申告CLI fallbackを許可する"
+  // scope = "withmate-memory-mcp-fallback-admission"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("tools/list後のtransport failureだけをCLI fallback eligibleとして返す", async () => {
+    let listed = false;
+    let eligibilityAttempts = 0;
+    let domainFailure = false;
+    const fallbackAdmission = {
+      async markListed() {
+        listed = true;
+      },
+      async markEligible() {
+        eligibilityAttempts += 1;
+        return listed;
+      },
+    };
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createWithMateMemoryMcpServer({
+      fallbackAdmission,
+      runtimeCall: async () => {
+        if (domainFailure) {
+          return {
+            ok: false,
+            status: 403,
+            value: {
+              schemaVersion: "withmate-memory-v1",
+              error: { code: "MEMORY_FORBIDDEN", message: "forbidden", effect: "none" },
+            },
+          };
+        }
+        throw new WithMateMemoryRuntimeExchangeError("transport failed", false, {
+          discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE",
+        });
+      },
+    });
+    const client = new Client({ name: "withmate-fallback-admission-test", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const beforeList = await client.callTool({
+        name: "memory.search",
+        arguments: { targets: [{ kind: "user-global" }], query: "before" },
+      });
+      assert.equal((beforeList.structuredContent as any).error.details?.fallbackEligible, undefined);
+
+      await client.listTools();
+      const afterList = await client.callTool({
+        name: "memory.search",
+        arguments: { targets: [{ kind: "user-global" }], query: "after" },
+      });
+      assert.equal((afterList.structuredContent as any).error.details.fallbackEligible, true);
+
+      domainFailure = true;
+      const domain = await client.callTool({
+        name: "memory.search",
+        arguments: { targets: [{ kind: "user-global" }], query: "domain" },
+      });
+      assert.equal((domain.structuredContent as any).error.details?.fallbackEligible, undefined);
+      assert.equal(eligibilityAttempts, 2);
     } finally {
       await client.close();
       await server.close();
@@ -658,6 +729,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
   // @end-test-value
   it("非idempotent file exportはresponse loss後に自動再試行せず復旧契約を公開する", async () => {
     const operations: WithMateMemoryRuntimeOperation[] = [];
+    let fallbackEligibilityAttempts = 0;
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createWithMateMemoryMcpServer({
       env: {
@@ -665,6 +737,13 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         WITHMATE_MEMORY_API_SECRET: "api-secret",
         WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
         WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+      },
+      fallbackAdmission: {
+        async markListed() {},
+        async markEligible() {
+          fallbackEligibilityAttempts += 1;
+          return true;
+        },
       },
       runtimeCall: async (_connection, operation) => {
         operations.push(operation);
@@ -705,6 +784,9 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       assert.ok(exportFilesResult.structuredContent, JSON.stringify(exportFilesResult));
       assert.equal((getFileResult.structuredContent as any).error.effect, "unknown");
       assert.equal((exportFilesResult.structuredContent as any).error.effect, "unknown");
+      assert.equal((getFileResult.structuredContent as any).error.details?.fallbackEligible, undefined);
+      assert.equal((exportFilesResult.structuredContent as any).error.details?.fallbackEligible, undefined);
+      assert.equal(fallbackEligibilityAttempts, 0);
       assert.deepEqual(operations.map((operation) => operation.path), ["/v1/get_file", "/v1/export_files"]);
     } finally {
       await client.close();

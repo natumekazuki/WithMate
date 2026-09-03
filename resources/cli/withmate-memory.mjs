@@ -1370,6 +1370,7 @@ var WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER = "x-withmate-memory-app
 /** Canonical Memory runtime generation header; runtime-instance remains a legacy alias. */
 var WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER = "x-withmate-memory-runtime-generation";
 var WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER = "x-withmate-memory-runtime-challenge";
+var WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH = "/v1/fallback-admission/eligible";
 var WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-memory-runtime-exchange-v1";
 function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeGenerationId, nonce) {
 	return createHmac("sha256", apiSecret).update(`${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
@@ -1380,6 +1381,19 @@ function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeGenerationId, no
 */
 function createWithMateMemoryRuntimeOwnerChallenge(apiSecret, applicationInstanceId, runtimeGenerationId, nonce) {
 	return createHmac("sha256", apiSecret).update(`${applicationInstanceId}\n${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
+}
+function canonicalizeJson(value) {
+	if (Array.isArray(value)) return value.map(canonicalizeJson);
+	if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, canonicalizeJson(entry)]));
+	return value;
+}
+/** Fingerprint for one exact MCP operation that may be retried through CLI fallback. */
+function createMemoryFallbackOperationFingerprint(operation) {
+	return createHash("sha256").update(JSON.stringify({
+		method: operation.method,
+		path: operation.path,
+		body: canonicalizeJson(operation.body)
+	}), "utf8").digest("base64url");
 }
 var RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME = "runtime-discovery";
 var RUNTIME_DISCOVERY_ENTRY_FILE_NAME = "entry.json";
@@ -23719,7 +23733,7 @@ var appendFileInputSchema = object({
 var GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "memory.search",
-		description: "Search active general Memory in one or more actor-relative targets. Before memory.append, search the same exact target and do not append an active semantic duplicate or create a conflicting replacement without correction authority. Agent CLI fallback is available only after MCP initialize and tools/list succeeded and a later transport availability failure occurs: invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON. Never fallback for domain, authority, version, idempotency, migration, or storage errors.",
+		description: "Search active general Memory in one or more actor-relative targets. Before memory.append, search the same exact target and do not append an active semantic duplicate or create a conflicting replacement without correction authority. Agent CLI fallback is available only when MCP initialize and tools/list succeeded and a later transport error returns details.fallbackEligible=true: invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON. The runtime consumes the matching short-lived admission. Never fallback for domain, authority, version, idempotency, migration, or storage errors.",
 		annotations: {
 			readOnlyHint: true,
 			destructiveHint: false,
@@ -24055,8 +24069,115 @@ var GENERAL_MEMORY_FILE_OPERATION_PATHS = /* @__PURE__ */ new Set([
 	"/v1/get_file",
 	"/v1/export_files"
 ]);
+var NON_RETRYABLE_FALLBACK_PATHS = /* @__PURE__ */ new Set(["/v1/get_file", "/v1/export_files"]);
+var ToolsListTrackingTransport = class {
+	delegate;
+	onToolsListSuccess;
+	#pendingToolsList = /* @__PURE__ */ new Set();
+	onclose;
+	onerror;
+	onmessage;
+	constructor(delegate, onToolsListSuccess) {
+		this.delegate = delegate;
+		this.onToolsListSuccess = onToolsListSuccess;
+		delegate.onclose = () => this.onclose?.();
+		delegate.onerror = (error) => this.onerror?.(error);
+		delegate.onmessage = (message, extra) => {
+			if ("method" in message && message.method === "tools/list" && "id" in message && message.id !== void 0) this.#pendingToolsList.add(message.id);
+			this.onmessage?.(message, extra);
+		};
+	}
+	get sessionId() {
+		return this.delegate.sessionId;
+	}
+	start() {
+		return this.delegate.start();
+	}
+	async send(message, options) {
+		const isSuccessfulToolsListResponse = "id" in message && message.id !== void 0 && !("method" in message) && this.#pendingToolsList.delete(message.id) && "result" in message;
+		await this.delegate.send(message, options);
+		if (isSuccessfulToolsListResponse) await this.onToolsListSuccess();
+	}
+	close() {
+		return this.delegate.close();
+	}
+	setProtocolVersion(version) {
+		this.delegate.setProtocolVersion?.(version);
+	}
+};
+var FallbackAwareMcpServer = class extends McpServer {
+	fallbackAdmission;
+	constructor(fallbackAdmission) {
+		super({
+			name: "withmate-character-context",
+			version: "1.0.0"
+		}, { instructions: CHARACTER_MCP_SERVER_INSTRUCTIONS });
+		this.fallbackAdmission = fallbackAdmission;
+	}
+	connect(transport) {
+		return super.connect(new ToolsListTrackingTransport(transport, () => this.fallbackAdmission.markListed()));
+	}
+};
+function createMcpFallbackAdmission(deps) {
+	let connection = null;
+	let bindingReference;
+	let turnCapability;
+	const callControl = async (path, body) => {
+		if (!connection || !bindingReference || !turnCapability) return false;
+		const abortController = new AbortController();
+		const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 1e4);
+		try {
+			return (await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
+				method: "POST",
+				path,
+				body
+			}, {
+				signal: abortController.signal,
+				bindingReference,
+				turnCapability
+			})).ok;
+		} catch {
+			return false;
+		} finally {
+			clearTimeout(timeout);
+		}
+	};
+	return {
+		async markListed() {
+			try {
+				bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+				turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
+				const resolution = await resolveWithMateMemoryApi({
+					adapter: "mcp",
+					env: deps.env,
+					readFile: deps.readFile,
+					fetch: deps.fetch,
+					clock: deps.clock,
+					registryRootDirectoryPath: deps.registryRootDirectoryPath,
+					staleThresholdMs: deps.staleThresholdMs
+				});
+				connection = resolution.kind === "selected" ? resolution.connection : null;
+				if (!await callControl("/v1/fallback-admission/listed", {})) connection = null;
+			} catch {
+				connection = null;
+			}
+		},
+		async markEligible(operation) {
+			const pathname = new URL(operation.path, "http://127.0.0.1").pathname;
+			if (NON_RETRYABLE_FALLBACK_PATHS.has(pathname)) return false;
+			return callControl(WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH, { fingerprint: createMemoryFallbackOperationFingerprint(operation) });
+		}
+	};
+}
 function runtimeExchangeDiscoveryCode$1(error) {
 	return error.discoveryCode;
+}
+function isTransportAvailabilityError(error) {
+	return error instanceof WithMateMemoryRuntimeExchangeError || error instanceof Error && error.name === "AbortError";
+}
+function isAgentCliFallbackEligibleOperation(operation) {
+	const pathname = new URL(operation.path, "http://127.0.0.1").pathname;
+	return !NON_RETRYABLE_FALLBACK_PATHS.has(pathname);
 }
 var affectValueSchema = object({
 	label: string().min(1),
@@ -24409,7 +24530,7 @@ var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
 	"Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
 	"Do not expose internal audit data or tool state in the user-facing response. Use returned source version and update result without guessing missing values.",
 	"Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
-	"Agent CLI fallback is available only after this MCP initialize and tools/list succeeded and a later transport availability failure occurs. Invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON; initialization, tools/list, domain, authority, version, idempotency, migration, and storage failures do not permit fallback."
+	"Agent CLI fallback is available only when this MCP initialize and tools/list succeeded and a later transport error returns details.fallbackEligible=true. Then invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON; the runtime consumes the matching short-lived admission. Initialization, tools/list, domain, authority, version, idempotency, migration, and storage failures do not permit fallback."
 ].join("\n");
 var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	{
@@ -24527,11 +24648,19 @@ async function callRuntime(path, body, operationKind, deps) {
 	} catch (error) {
 		const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError ? error.dispatched : dispatched;
 		const discoveryCode = error instanceof WithMateMemoryRuntimeExchangeError && !operationDispatched ? runtimeExchangeDiscoveryCode$1(error) : void 0;
+		const fallbackEligible = isTransportAvailabilityError(error) ? await deps.fallbackAdmission?.markEligible({
+			method: "POST",
+			path,
+			body
+		}) ?? false : false;
 		return createCharacterContextError("storage_unavailable", "WithMate runtime request failed.", {
 			retryable: true,
 			conversationMayContinue: true,
 			effect: operationKind === "write" && operationDispatched ? "unknown" : "none",
-			...discoveryCode ? { details: { discoveryCode } } : {}
+			...discoveryCode || fallbackEligible ? { details: {
+				...discoveryCode ? { discoveryCode } : {},
+				...fallbackEligible ? { fallbackEligible: true } : {}
+			} } : {}
 		});
 	} finally {
 		clearTimeout(timeout);
@@ -24587,16 +24716,21 @@ async function callMemoryRuntime(operation, deps) {
 	} catch (error) {
 		const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError ? error.dispatched : dispatched;
 		const discoveryCode = error instanceof WithMateMemoryRuntimeExchangeError && !operationDispatched ? runtimeExchangeDiscoveryCode$1(error) : void 0;
+		const fallbackEligible = isTransportAvailabilityError(error) && isAgentCliFallbackEligibleOperation(operation) ? await deps.fallbackAdmission?.markEligible(operation) ?? false : false;
 		if (discoveryCode) return createMemoryRuntimeError(discoveryCode, "WithMate Memory runtime identity changed before dispatch.", {
 			retryable: discoveryCode === "WITHMATE_RUNTIME_UNAVAILABLE" || discoveryCode === "WITHMATE_RUNTIME_STALE",
 			conversationMayContinue: true,
 			effect: "none",
-			details: { discoveryCode }
+			details: {
+				discoveryCode,
+				...fallbackEligible ? { fallbackEligible: true } : {}
+			}
 		});
 		return createMemoryRuntimeError("WITHMATE_MEMORY_TRANSPORT_ERROR", "WithMate runtime request failed.", {
 			retryable: true,
 			conversationMayContinue: true,
-			effect: operation.operationKind === "write" && operationDispatched ? "unknown" : "none"
+			effect: operation.operationKind === "write" && operationDispatched ? "unknown" : "none",
+			...fallbackEligible ? { details: { fallbackEligible: true } } : {}
 		});
 	} finally {
 		clearTimeout(timeout);
@@ -24617,10 +24751,12 @@ function toolResult(value) {
 	};
 }
 function createWithMateMemoryMcpServer(deps = {}) {
-	const server = new McpServer({
-		name: "withmate-character-context",
-		version: "1.0.0"
-	}, { instructions: CHARACTER_MCP_SERVER_INSTRUCTIONS });
+	const fallbackAdmission = deps.fallbackAdmission ?? createMcpFallbackAdmission(deps);
+	const server = new FallbackAwareMcpServer(fallbackAdmission);
+	const runtimeDeps = {
+		...deps,
+		fallbackAdmission
+	};
 	const definitions = new Map(CHARACTER_MCP_TOOL_DEFINITIONS.map((definition) => [definition.name, definition]));
 	server.registerTool("character_context.get", {
 		...definitions.get("character_context.get"),
@@ -24632,7 +24768,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_context/get", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, "read", deps)));
+	}, "read", runtimeDeps)));
 	server.registerTool("character_affect.appraise", {
 		...definitions.get("character_affect.appraise"),
 		inputSchema: object({
@@ -24643,7 +24779,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_affect/appraise", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, "write", deps)));
+	}, "write", runtimeDeps)));
 	server.registerTool("character_memory.search", {
 		...definitions.get("character_memory.search"),
 		inputSchema: object({
@@ -24658,7 +24794,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_memory/search", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, "read", deps)));
+	}, "read", runtimeDeps)));
 	server.registerTool("character_memory.append_episode", {
 		...definitions.get("character_memory.append_episode"),
 		inputSchema: object({
@@ -24669,7 +24805,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_memory/append_episode", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, "write", deps)));
+	}, "write", runtimeDeps)));
 	server.registerTool("character_memory.correct", {
 		...definitions.get("character_memory.correct"),
 		inputSchema: object({
@@ -24682,7 +24818,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_memory/correct", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, "write", deps)));
+	}, "write", runtimeDeps)));
 	server.registerTool("character_memory.forget", {
 		...definitions.get("character_memory.forget"),
 		inputSchema: object({
@@ -24700,8 +24836,8 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_memory/forget", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, "write", deps)));
-	registerGeneralMemoryMcpTools(server, (operation) => callMemoryRuntime(operation, deps), toolResult);
+	}, "write", runtimeDeps)));
+	registerGeneralMemoryMcpTools(server, (operation) => callMemoryRuntime(operation, runtimeDeps), toolResult);
 	return server;
 }
 async function startWithMateMemoryMcpServer(deps = {}) {
@@ -25802,8 +25938,11 @@ async function runWithMateMemoryCli(args, deps = {}) {
 	const env = deps.env ?? process.env;
 	try {
 		const request = await parseWithMateMemoryCliArgs(args, deps);
+		const bindingRequired = env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() === "1";
+		const localOnlyCommand = request.command === "help" || request.command === "mcp_server" || request.command === "schema" || request.command === "validate";
+		if (bindingRequired && request.fallbackFrom !== "mcp" && !localOnlyCommand) throw usageError("Provider-bound Memory CLI requests require an admitted --fallback-from mcp operation.");
 		if (request.fallbackFrom === "mcp") {
-			if (env["WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED"]?.trim() !== "1") throw usageError("--fallback-from mcp requires the Agent runtime binding policy.");
+			if (!bindingRequired) throw usageError("--fallback-from mcp requires the Agent runtime binding policy.");
 			if (!resolveAgentRuntimeBindingReference(env)) throw usageError("--fallback-from mcp requires an Agent runtime binding.");
 			const applicationInstanceId = env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV]?.trim();
 			const runtimeGenerationId = env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV]?.trim();

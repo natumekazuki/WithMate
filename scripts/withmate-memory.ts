@@ -1430,8 +1430,16 @@ export async function runWithMateMemoryCli(
 
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
+    const bindingRequired = env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() === "1";
+    const localOnlyCommand = request.command === "help"
+      || request.command === "mcp_server"
+      || request.command === "schema"
+      || request.command === "validate";
+    if (bindingRequired && request.fallbackFrom !== "mcp" && !localOnlyCommand) {
+      throw usageError("Provider-bound Memory CLI requests require an admitted --fallback-from mcp operation.");
+    }
     if (request.fallbackFrom === "mcp") {
-      if (env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() !== "1") {
+      if (!bindingRequired) {
         throw usageError("--fallback-from mcp requires the Agent runtime binding policy.");
       }
       if (!resolveAgentRuntimeBindingReference(env)) {

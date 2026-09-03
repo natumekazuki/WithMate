@@ -67,8 +67,8 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 - Accepted contract / exact anchor: ADR 020のexact input/output/error schema、ADR 018のAffect/episode収束、ADR 024のduplicate/retry/effect contract。
 - Scope / semantic owner: `scripts/withmate-memory-mcp.ts`と`scripts/withmate-memory-mcp-general.ts`が生成するMCP initialize instructions、tool description、schema、annotation。
 - Failure mode / consumer impact: semantic duplicate append、linked episode二重保存、changed requestへのkey再利用、structured domain errorをtransport failureとしてCLIへ迂回、partial/unknownを成功扱いする。
-- State transitions / failure timing: initialize → tools/list discovery → duplicate preflight/read → mutation → response loss/retry → replay/read-back。agent fallback contractはtools/list取得後だけ利用でき、operation contractはprovider promptへ複製しない。
-- Direct verification: tools/list snapshotではなくexact field/description assertion、fallback command/mode/schema/開始条件、initializeまたはtools/list取得前のfallback不在、same-target preflight instruction、episode owner、idempotency/effect/error branch、代表invoke/effect test。
+- State transitions / failure timing: initialize → tools/list response送出とserver-side `listed`登録 → duplicate preflight/read → mutation → 実transport exceptionとexact operationの`eligible`登録 → CLIによるadmission consume → replay/read-back。agent fallback contractはserverが同じruntime generation、binding、turn、method/path/bodyへ発行した短命admissionでだけ利用でき、operation contractはprovider promptへ複製しない。
+- Direct verification: tools/list snapshotではなくexact field/description assertion、fallback command/mode/schema/開始条件、initializeまたはtools/list取得前・listedだけ・structured domain errorでのfallback不在、実transport exception後のexact operation成功、変更body・期限切れ・stale turn・非idempotent file export拒否、same-target preflight instruction、episode owner、idempotency/effect/error branch、代表invoke/effect test。
 - Independent review trigger: PCM-AUTHのtargeted reviewにschema/operation wordingとruntime enforcementの不一致を含める。
 - Gate: ready。
 
@@ -107,7 +107,7 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 | Invariant | Canonical owner | Siblings in scope | Excluded siblings |
 | --- | --- | --- | --- |
 | PCM-AUTH | MCP tools/list + binding Memory authority tuple + HTTP resolver | Character 6 tools、general Memory 11 tools、MCP、agent CLI fallback、Codex/Copilot binding env、Project path/ID canonicalization | operator CLI explicit identityは別authority modeとして維持 |
-| PCM-CLI | runtime adapter credential/allowlist | registry credential projection、legacy discovery禁止、challenge、exchange、fallback metric/error | lifecycle internal callはtransportを経由しない |
+| PCM-CLI | HTTP serverのfallback admission state + runtime adapter credential/allowlist | MCP tools/list送出、実transport exception、registry credential projection、challenge、exchange、bound CLIのflag省略、fallback metric/error | lifecycle internal callはtransportを経由しない |
 | PCM-TURN | generic Provider Agent runtime turn coordinator | SessionRuntimeService begin/end、Glossary proactive create、MCP、agent CLI fallback、general/Character mutation、file export、idempotent retry/reconcile、非idempotent export recovery | read-only、operator CLI、lifecycle internal callはturn capabilityを要求しない |
 | PCM-CONTEXT | Character context contract + provider projection | internal lifecycle、MCP、CLI、provider prompt、turn evaluator/settler | event保存/read-backで使うapplication内部identityとinspect/auditのoperator projectionはprovider contextではない |
 | PCM-TOOLS | MCP tools/list | initialize instructions、description、input/output、annotation、runtime mapping | system prompt、provider instruction sample、managed Skill docsへ複製しない |
@@ -185,8 +185,8 @@ provider別`withmate-memory` Skill配布を停止し、runtime bindingから解�
 
 1. MCP initializeと`tools/list`で17 tools、exact actor-relative input/output/error schema、annotation、operation descriptionを確認する。
 2. bound CodexとCopilotで同じactor-relative requestが同じcanonical user/Character/Project targetへ解決され、別Character/未許可Project/identity unknown fieldをdispatch前に拒否するcross-provider parityを確認する。
-3. operator CLIとagent-bound CLI fallbackで同じread/write/read-backを行い、fallbackがoperator-only route/credentialへ到達できないことを確認する。
-4. MCP initialize/`tools/list`取得前の失敗ではagent fallbackを開始せず、取得後のtransport availability failureだけで開始すること、domain/authority/version/migration/idempotency error非fallback、pre/post dispatch effect certainty、unchanged retry/replayを確認する。
+3. operator CLIとagent-bound CLI fallbackで同じread/write/read-backを行い、provider-bound processのflagなしCLIとbinding付きoperator requestが拒否され、fallbackがoperator-only route/credentialへ到達できないことを確認する。
+4. MCP initialize/`tools/list` response送出前、server-side `listed`だけ、structured domain errorではagent fallbackを開始せず、その後の実transport exceptionで同じruntime generation、binding、turn、method/path/bodyにだけ短命admissionが発行されることを確認する。exact operationのconsume/retry、変更body、期限切れ、stale turn、非idempotent file exportの拒否と、pre/post dispatch effect certaintyを確認する。
 5. generic coordinatorのcurrent/missing/stale turn capabilityをGlossary、MCP、agent CLI fallbackで確認し、mutation/file exportはstale requestをdispatch前に拒否し、read/operator/internal lifecycleは既存契約を維持することを確認する。
 6. Character contextのMCP/CLI/internal parity、provider promptとpost-turn evaluatorのidentity/private field非投影、Affect version/effective/Memory preview維持、settlerの内部identityによる保存を確認する。
 7. idempotent mutationはresponse loss後に同一request/keyでreconcileし、`memory.get_file`/`memory.export_files`は`effect: unknown`から自動再試行せず出力先確認/manual recoveryへ進むことを確認する。
@@ -240,6 +240,7 @@ flowchart LR
 - turn capabilityのGlossary private ownership漏れは`boundary prerequisite`とした。P1でgeneric coordinatorへ発行/active map/照合/失効を移し、GlossaryとMemoryを兄弟consumerとしてClosure Map、lane依存、direct checksへ追加した。
 - post-turn evaluatorのCharacter ID投影漏れは`current-scope repair`とした。`character-affect-turn-evaluator.ts`と対応testをLane 1へ追加し、provider inputから`character.id`とscope identityを除く一方、event保存用の内部identityは維持する。
 - 非idempotent file exportへのreconcile適用は`current-scope repair`とした。idempotency keyを持つmutationとfailure timingを分け、exportの`effect: unknown`は自動再試行せず出力先のread-only確認またはoperator manual recoveryで閉じる。
+- provider-bound CLIのoperator昇格とfallback開始条件の自己申告は、PCM-CLI authority invariantの`current-scope repair`とした。bound processの通常CLIとbinding付きoperator requestを拒否し、MCPのtools/list送出と後続の実transport exceptionをserver-sideの短命admissionへ収束させる。flag単独、listedだけ、変更operation、期限切れ、stale turn、structured error、非idempotent file exportではadmissionを発行またはconsumeしない。
 
 ## Bootstrap validation
 

@@ -1438,6 +1438,7 @@ export async function startMemoryV6RuntimeApi(
       resolveKnownProjectByPath: projectResolver.resolveKnownProjectByPath,
       resolveActorSession: options.resolveActorSession,
       routeAgentRuntimeExtension: options.routeAgentRuntimeExtension,
+      ...(options.now ? { now: options.now } : {}),
     });
     await server.start();
 

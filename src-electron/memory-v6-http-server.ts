@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -34,8 +34,11 @@ import type {
 import {
   createWithMateMemoryRuntimeChallenge,
   createWithMateMemoryRuntimeOwnerChallenge,
+  createMemoryFallbackOperationFingerprint,
   WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
   WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES,
+  WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH,
+  WITHMATE_MEMORY_FALLBACK_LISTED_PATH,
   WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER,
   WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER,
@@ -75,6 +78,7 @@ export type MemoryV6HttpServerOptions = {
   routeAgentRuntimeExtension?: (
     request: AgentRuntimeExtensionRequest,
   ) => Promise<AgentRuntimeExtensionResponse | null> | AgentRuntimeExtensionResponse | null;
+  now?: () => Date;
 };
 
 export type AgentRuntimeActorSession = {
@@ -209,10 +213,15 @@ export function agentRuntimeOperationForMemoryRoute(route: MemoryV6Route): strin
   return `memory.route.${route}`;
 }
 
+export const MEMORY_V6_FALLBACK_ADMISSION_OPERATION = "memory.fallback.admission";
+
 export function getMemoryV6AgentRuntimeOperations(): string[] {
-  return (Object.keys(MEMORY_V6_ROUTE_BINDING_POLICIES) as MemoryV6Route[])
+  return [
+    ...(Object.keys(MEMORY_V6_ROUTE_BINDING_POLICIES) as MemoryV6Route[])
     .filter((route) => MEMORY_V6_ROUTE_BINDING_POLICIES[route] !== "none")
-    .map(agentRuntimeOperationForMemoryRoute);
+    .map(agentRuntimeOperationForMemoryRoute),
+    MEMORY_V6_FALLBACK_ADMISSION_OPERATION,
+  ];
 }
 
 const mcpRoutes = new Set<MemoryV6Route>([
@@ -1148,6 +1157,9 @@ async function resolveRouteAgentRuntimeBinding(input: {
     return { ok: true, body: input.body, principal: null, authority: null };
   }
   const bindingWasPresented = input.bindingReference !== undefined;
+  if (input.transport === "cli" && bindingWasPresented && input.fallbackFrom === undefined) {
+    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
+  }
   const reference = input.bindingReference?.trim();
   if (!bindingWasPresented) {
     return policy === "optional"
@@ -1192,7 +1204,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
   if (identityField) {
     return { ok: false, error: agentInputError(input.route, identityField, "Caller identity is not accepted.") };
   }
-  if (requiresCurrentTurnCapability(input.route, input.body)) {
+  if (input.fallbackFrom === "mcp" || requiresCurrentTurnCapability(input.route, input.body)) {
     const admission = input.options.providerAgentRuntimeTurns?.admit({
       actorSessionId: binding.actorSessionId,
       providerId: binding.providerId,
@@ -1263,6 +1275,114 @@ function validateMcpGeneralMutationPolicy(
   return null;
 }
 
+function validateFallbackAdmissionActor(input: {
+  options: MemoryV6HttpServerOptions;
+  bindingReference: unknown;
+  turnCapability: unknown;
+}): { ok: true; bindingReference: string; turnCapability: string } | { ok: false } {
+  const bindingReference = typeof input.bindingReference === "string" ? input.bindingReference.trim() : "";
+  const turnCapability = typeof input.turnCapability === "string" ? input.turnCapability.trim() : "";
+  if (!bindingReference || !turnCapability) {
+    return { ok: false };
+  }
+  const resolved = input.options.agentRuntimeBindingRegistry?.resolve(
+    bindingReference,
+    MEMORY_V6_FALLBACK_ADMISSION_OPERATION,
+  );
+  if (!resolved?.ok) {
+    return { ok: false };
+  }
+  const turn = input.options.providerAgentRuntimeTurns?.admit({
+    actorSessionId: resolved.binding.actorSessionId,
+    providerId: resolved.binding.providerId,
+    turnCapability,
+  });
+  return turn?.ok ? { ok: true, bindingReference, turnCapability } : { ok: false };
+}
+
+const FALLBACK_ADMISSION_TTL_MS = 60_000;
+const FALLBACK_ADMISSION_MAX_RECORDS = 256;
+
+type FallbackAdmissionRecord = {
+  phase: "listed" | "eligible" | "consumed";
+  expiresAtMs: number;
+  fingerprint?: string;
+};
+
+function fallbackAdmissionKey(bindingReference: string, turnCapability: string): string {
+  return createHash("sha256")
+    .update(`${bindingReference}\0${turnCapability}`, "utf8")
+    .digest("base64url");
+}
+
+class MemoryFallbackAdmissionState {
+  readonly #records = new Map<string, FallbackAdmissionRecord>();
+
+  #purgeExpired(nowMs: number): void {
+    for (const [key, record] of this.#records) {
+      if (record.expiresAtMs <= nowMs) {
+        this.#records.delete(key);
+      }
+    }
+  }
+
+  markListed(bindingReference: string, turnCapability: string, nowMs: number): boolean {
+    this.#purgeExpired(nowMs);
+    const key = fallbackAdmissionKey(bindingReference, turnCapability);
+    if (!this.#records.has(key) && this.#records.size >= FALLBACK_ADMISSION_MAX_RECORDS) {
+      return false;
+    }
+    this.#records.set(key, {
+      phase: "listed",
+      expiresAtMs: nowMs + FALLBACK_ADMISSION_TTL_MS,
+    });
+    return true;
+  }
+
+  markEligible(
+    bindingReference: string,
+    turnCapability: string,
+    fingerprint: string,
+    nowMs: number,
+  ): boolean {
+    this.#purgeExpired(nowMs);
+    const key = fallbackAdmissionKey(bindingReference, turnCapability);
+    if (!this.#records.has(key)) {
+      return false;
+    }
+    this.#records.set(key, {
+      phase: "eligible",
+      expiresAtMs: nowMs + FALLBACK_ADMISSION_TTL_MS,
+      fingerprint,
+    });
+    return true;
+  }
+
+  admit(
+    bindingReference: string,
+    turnCapability: string,
+    fingerprint: string,
+    nowMs: number,
+  ): boolean {
+    this.#purgeExpired(nowMs);
+    const key = fallbackAdmissionKey(bindingReference, turnCapability);
+    const record = this.#records.get(key);
+    if (
+      !record
+      || (record.phase !== "eligible" && record.phase !== "consumed")
+      || record.fingerprint !== fingerprint
+    ) {
+      return false;
+    }
+    this.#records.set(key, {
+      phase: "consumed",
+      expiresAtMs: record.expiresAtMs,
+      fingerprint,
+    });
+    return true;
+  }
+}
+
 export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): MemoryV6HttpServer {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
@@ -1279,6 +1399,8 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const fileOperationRequestTimeoutMs = options.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS;
   const maxConcurrentRequests = options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
+  const fallbackAdmissions = new MemoryFallbackAdmissionState();
+  const nowMs = (): number => (options.now?.() ?? new Date()).getTime();
   let activeRequests = 0;
   let activeAgentExtensionRequests = 0;
 
@@ -1356,6 +1478,66 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           return;
         }
         const operationUrl = new URL(payload.operation.path, "http://127.0.0.1");
+        if (payload.adapter === "cli" && payload.bindingReference !== undefined) {
+          writeJson(response, 403, memoryTransportError(
+            "MEMORY_FORBIDDEN",
+            "Operator CLI requests cannot use an Agent runtime binding.",
+          ));
+          return;
+        }
+        if (
+          operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_PATH
+          || operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH
+        ) {
+          if (
+            payload.adapter !== "mcp"
+            || payload.operation.method !== "POST"
+            || payload.operation.fallbackFrom !== undefined
+          ) {
+            writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Fallback admission control is MCP-only."));
+            return;
+          }
+          const actor = validateFallbackAdmissionActor({
+            options,
+            bindingReference: payload.bindingReference,
+            turnCapability: payload.turnCapability,
+          });
+          if (!actor.ok) {
+            writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Fallback admission requires the current bound turn."));
+            return;
+          }
+          if (operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_PATH) {
+            const listed = fallbackAdmissions.markListed(actor.bindingReference, actor.turnCapability, nowMs());
+            writeJson(
+              response,
+              listed ? 200 : 503,
+              listed
+                ? { ok: true, fallbackAdmission: "listed" }
+                : memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Fallback admission capacity is unavailable."),
+            );
+            return;
+          }
+          const body = payload.operation.body;
+          const fingerprint = body && typeof body === "object" && !Array.isArray(body)
+            && typeof (body as Record<string, unknown>).fingerprint === "string"
+            && Object.keys(body as Record<string, unknown>).length === 1
+              ? (body as Record<string, string>).fingerprint.trim()
+              : "";
+          const eligible = Boolean(fingerprint) && fallbackAdmissions.markEligible(
+            actor.bindingReference,
+            actor.turnCapability,
+            fingerprint,
+            nowMs(),
+          );
+          writeJson(
+            response,
+            eligible ? 200 : 403,
+            eligible
+              ? { ok: true, fallbackAdmission: "eligible" }
+              : memoryTransportError("MEMORY_FORBIDDEN", "Fallback admission was not preceded by tools/list."),
+          );
+          return;
+        }
         if (operationUrl.pathname === "/v1/status" && payload.operation.method === "GET") {
           writeJson(response, 200, {
             ok: true,
@@ -1396,6 +1578,26 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           : route === "file_usage"
             ? buildFileUsageRequestOptions(payload.operation.path)
             : payload.operation.body;
+        if (payload.adapter === "agent_cli_fallback") {
+          const bindingReference = payload.bindingReference?.trim() ?? "";
+          const turnCapability = payload.turnCapability?.trim() ?? "";
+          const fingerprint = createMemoryFallbackOperationFingerprint({
+            method: payload.operation.method,
+            path: payload.operation.path,
+            body: payload.operation.body,
+          });
+          if (
+            !bindingReference
+            || !turnCapability
+            || !fallbackAdmissions.admit(bindingReference, turnCapability, fingerprint, nowMs())
+          ) {
+            writeJson(response, 403, memoryTransportError(
+              "MEMORY_FORBIDDEN",
+              "Agent CLI fallback requires a current server-verified MCP transport admission.",
+            ));
+            return;
+          }
+        }
         const result = await routeResolvedRequest({
           options,
           route,

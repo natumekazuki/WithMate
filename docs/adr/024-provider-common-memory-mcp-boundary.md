@@ -63,10 +63,11 @@ type ActorRelativeMemoryTarget =
 
 ### operator CLIとagent-bound CLI fallback
 
-- operator CLIはprovider binding markerがないprocessから起動し、CLI operator credentialを使用する。explicit target/identityを入力でき、operator allowlistにあるinspect、audit、correct、reset、maintenance routeを実行できる。`--fallback-from mcp`はoperator authorityの根拠にならない。
+- operator CLIはprovider binding markerがないprocessから起動し、CLI operator credentialを使用する。explicit target/identityを入力でき、operator allowlistにあるinspect、audit、correct、reset、maintenance routeを実行できる。provider binding markerがあるprocessからの通常CLI操作は、read/writeを問わずCLIでdispatchする前に拒否する。serverもbinding referenceを伴うoperator CLI requestを拒否し、`--fallback-from mcp`はoperator authorityの根拠にならない。
 - agent-bound CLI fallbackは、validなbinding-required marker、runtime owner tuple、opaque binding reference、`--fallback-from mcp`のすべてが揃う場合だけ選択する。callerが渡したidentityを使用せず、MCPと同じactor-relative input、route allowlist、authority、error contractを使う。
-- agent-bound fallbackはoperator credentialを読み取らない。runtime discoveryへagent CLI専用projectionを増やさず、MCP credential projectionを読み、exchange上では`agent_cli_fallback` adapterとしてMCP-equivalent allowlistへ認証する。serverはvalid bindingと`fallbackFrom: "mcp"`を両方要求する。どちらかが欠ける場合はdispatch前に`effect: none`で拒否し、operator modeへdowngradeしない。
-- agent-bound CLI fallbackは、同じprovider executionがMCP initializeに成功し、`tools/list`からfallback command、mode、actor-relative schemaを取得した後に発生したtransport-level availability failureだけを開始条件とする。MCP未設定、process起動不能、initialize失敗、`tools/list`取得失敗ではAgentがfallback契約を取得できないため、Memory capability unavailableとして扱い、agent-bound CLIを開始しない。operatorは明示作業としてCLIを使える。domain validation、authority、version、idempotency、migration、storageのstructured errorをfallbackで迂回しない。
+- agent-bound fallbackはoperator credentialを読み取らない。runtime discoveryへagent CLI専用projectionを増やさず、MCP credential projectionを読み、exchange上では`agent_cli_fallback` adapterとしてMCP-equivalent allowlistへ認証する。serverはvalid binding、current turn capability、`fallbackFrom: "mcp"`、server-side fallback admissionをすべて要求する。いずれかが欠ける場合はdispatch前に`effect: none`で拒否し、operator modeへdowngradeしない。
+- agent-bound CLI fallbackは、同じprovider executionがMCP initializeに成功し、`tools/list` responseを正常に送出した後に発生したtransport-level availability failureだけを開始条件とする。MCP processは`tools/list`成功時にruntime generation、binding、turn capabilityへ結び付く短命な`listed` stateをserverへ登録し、その後の実transport exception時にmethod、path、bodyのfingerprintを持つ`eligible` stateへ遷移させる。CLI requestは同じbinding、current turn、operation fingerprintに一致するadmissionだけを原子的にconsumeでき、同じfingerprintのresponse loss retryを除いて再利用できない。変更request、期限切れ、stale turnはdispatch前に拒否する。
+- MCP未設定、process起動不能、initialize失敗、`tools/list`取得またはresponse送出の失敗、MCP processからserverへ障害を報告できないprocess terminationでは、fallback admissionを発行せずMemory capability unavailableとして扱う。domain validation、authority、version、idempotency、migration、storageのstructured errorはtransport failureではなく、fallback admissionを発行しない。非idempotentな`memory.get_file`と`memory.export_files`もagent-bound CLI fallbackの対象外とし、出力先確認またはoperator manual recoveryで閉じる。
 - common runtime secretは接続先本人確認だけに使う。operation authorityはadapter credential、route allowlist、resolved bindingから導き、requestのtransport名、identity field、`--fallback-from`単独からは導かない。
 - 同一OS user上の攻撃的processからprovider environmentやdiscovery credentialを秘匿することはADR 021と同じくthreat model外とする。ただし、正規のbound adapterがoperator credentialを選ぶ経路は設けない。
 
@@ -82,7 +83,7 @@ MCP `tools/list`はprovider非依存のagent-facing正本として、各toolに�
 - 非idempotentな`memory.get_file`と`memory.export_files`ではresponse loss後に自動再試行せず、`effect: unknown`、意図した出力先のread-only確認、operator manual recovery、新規出力先を使う明示的な再実行を区別する。
 - `effect: none | committed | partial | unknown`、`saved`/`rejected`/`replayed`、read-backを推測で補完しないeffect certainty。
 - authority/version/migration/domain errorはtransport availability failureと区別し、fallback禁止を明示する。pre-dispatch failureは`effect: none`、dispatch後にwrite結果を確認できない場合だけ`effect: unknown`とする。
-- agent-bound CLI fallbackのcommand、mode、actor-relative schema、開始条件を公開する。initializeまたは`tools/list`取得前の失敗はfallback対象に含めない。
+- agent-bound CLI fallbackのcommand、mode、actor-relative schema、開始条件と、transport error responseの`details.fallbackEligible`を公開する。Agentは同fieldが`true`の場合だけ変更していないoperationをCLIへ渡し、initializeまたは`tools/list`取得前の失敗、structured domain error、非idempotent file exportではfallbackを開始しない。
 
 descriptionで表すoperation sequenceとschemaで表す形を同じ`tools/list` contract testで固定する。WithMate system promptやprovider instruction sampleへ同じ方針を複製しない。
 

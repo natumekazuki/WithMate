@@ -34,3 +34,12 @@ export type MemoryV6Diagnostics = {
   cliShim: MemoryV6CliShimDiagnostics;
   lastErrors: MemoryV6DiagnosticEvent[];
 };
+
+export function projectMemoryV6Diagnostics(input: MemoryV6Diagnostics): MemoryV6Diagnostics {
+  return {
+    generatedAt: input.generatedAt,
+    runtime: input.runtime,
+    cliShim: input.cliShim,
+    lastErrors: input.lastErrors,
+  };
+}

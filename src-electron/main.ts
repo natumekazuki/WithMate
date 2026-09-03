@@ -233,6 +233,7 @@ import type {
   MemoryV6DiagnosticEvent,
   MemoryV6Diagnostics,
 } from "../src/memory-v6/memory-diagnostics-state.js";
+import { projectMemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
 import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
 import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -515,7 +516,7 @@ function recordMemoryV6DiagnosticError(
 async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
   const cliShimDiagnostics = await requireMemoryCliShimService().getDiagnostics();
 
-  return {
+  return projectMemoryV6Diagnostics({
     generatedAt: new Date().toISOString(),
     runtime: {
       status: memoryV6RuntimeApi ? "running" : memoryV6RuntimeStatus,
@@ -532,7 +533,7 @@ async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
       pathContainsShimDirectory: cliShimDiagnostics.pathContainsShimDirectory,
     },
     lastErrors: memoryV6DiagnosticErrors,
-  };
+  });
 }
 
 async function installMemoryV6CliShim(): Promise<MemoryV6Diagnostics> {

@@ -21,11 +21,19 @@ import { mergeDefinedProviderEnv } from "../../src-electron/provider-agent-runti
 import { runWithMateMemoryCli } from "../withmate-memory.js";
 import { buildWithMateMemoryCli } from "../build-withmate-memory-cli.js";
 import { createWithMateMemoryMcpServer } from "../withmate-memory-mcp.js";
+import {
+  callWithMateMemoryRuntime,
+  WithMateMemoryRuntimeExchangeError,
+  type WithMateMemoryRuntimeConnection,
+  type WithMateMemoryRuntimeOperation,
+  type WithMateMemoryRuntimeResponse,
+} from "../withmate-memory-runtime-client.js";
 
 const API_SECRET = "general-memory-api-secret";
 const OPERATOR_SECRET = "general-memory-operator-secret";
 const MCP_SECRET = "general-memory-mcp-secret";
-const RUNTIME_ID = "general-memory-runtime";
+const APPLICATION_INSTANCE_ID = "11111111-1111-4111-8111-111111111111";
+const RUNTIME_ID = "22222222-2222-4222-8222-222222222222";
 const PROJECT_PATH = "C:/workspace/general-memory-project";
 const PROJECT_ID = "project-general-memory";
 
@@ -37,7 +45,13 @@ type RuntimeFixture = {
   close(): Promise<void>;
 };
 
-async function createRuntimeFixture(): Promise<RuntimeFixture> {
+async function createRuntimeFixture(options: {
+  runtimeCall?: (
+    connection: WithMateMemoryRuntimeConnection,
+    operation: WithMateMemoryRuntimeOperation,
+    requestOptions: { signal: AbortSignal; bindingReference?: string; turnCapability?: string },
+  ) => Promise<WithMateMemoryRuntimeResponse>;
+} = {}): Promise<RuntimeFixture> {
   const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-general-memory-mcp-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
   const db = new DatabaseSync(dbPath);
@@ -81,6 +95,7 @@ async function createRuntimeFixture(): Promise<RuntimeFixture> {
     apiSecret: API_SECRET,
     operatorApiSecret: OPERATOR_SECRET,
     mcpApiSecret: MCP_SECRET,
+    applicationInstanceId: APPLICATION_INSTANCE_ID,
     runtimeInstanceId: RUNTIME_ID,
     agentRuntimeBindingRegistry: bindings,
     providerAgentRuntimeTurns: turns,
@@ -102,6 +117,9 @@ async function createRuntimeFixture(): Promise<RuntimeFixture> {
     WITHMATE_MEMORY_OPERATOR_API_SECRET: OPERATOR_SECRET,
     WITHMATE_MEMORY_MCP_API_SECRET: MCP_SECRET,
     WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: RUNTIME_ID,
+    WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: APPLICATION_INSTANCE_ID,
+    WITHMATE_MEMORY_RUNTIME_GENERATION_ID: RUNTIME_ID,
+    WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
     WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
     WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability,
   };
@@ -112,7 +130,7 @@ async function createRuntimeFixture(): Promise<RuntimeFixture> {
     WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: RUNTIME_ID,
   };
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const mcpServer = createWithMateMemoryMcpServer({ env });
+  const mcpServer = createWithMateMemoryMcpServer({ env, runtimeCall: options.runtimeCall });
   const client = new Client({ name: "general-memory-integration-test", version: "1.0.0" });
   await mcpServer.connect(serverTransport);
   await client.connect(clientTransport);
@@ -153,6 +171,26 @@ async function callCli(
   return { exitCode, value: JSON.parse(output) };
 }
 
+async function callFallbackCli(
+  fixture: RuntimeFixture,
+  command: string,
+  body: unknown,
+): Promise<{ exitCode: number; value: any }> {
+  let output = "";
+  const exitCode = await runWithMateMemoryCli([
+    command,
+    "--fallback-from",
+    "mcp",
+    "--json",
+    JSON.stringify(body),
+  ], {
+    env: fixture.env,
+    stdout: { write: (chunk) => { output += String(chunk); return true; } },
+    stderr: { write: () => true },
+  });
+  return { exitCode, value: JSON.parse(output) };
+}
+
 function operatorProjectTarget(ref: { type: "id"; id: string } | { type: "path"; path: string }) {
   return { owner: "project" as const, scope: "project" as const, project: ref };
 }
@@ -162,6 +200,61 @@ function actorProjectTarget(ref: { type: "id"; id: string } | { type: "path"; pa
 }
 
 describe("general Memory MCP runtime integration", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "tools/list後にMCP processが観測したtransport failureは同じbinding・turn・operationだけのCLI fallback admissionになる"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // failure_mode = "provider-bound CLIが自己申告だけでoperatorへ降格する、またはadmissionを別bodyへ横流ししてMemoryを更新する"
+  // scope = "general-memory-mcp-cli-fallback-integration"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("MCP transport failureのserver admissionで同一CLI fallbackだけを実行する", async () => {
+    let failNextAppend = true;
+    const fixture = await createRuntimeFixture({
+      runtimeCall: async (connection, operation, requestOptions) => {
+        if (operation.path === "/v1/append" && failNextAppend) {
+          failNextAppend = false;
+          throw new WithMateMemoryRuntimeExchangeError("simulated transport failure", false, {
+            discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE",
+          });
+        }
+        return callWithMateMemoryRuntime(connection, operation, requestOptions);
+      },
+    });
+    const body = {
+      target: { kind: "user-global" as const },
+      kind: "decision",
+      title: "Fallback admission",
+      body: "Only the failed MCP operation may use CLI fallback.",
+      preview: "Fallback admission is operation-bound.",
+      tags: [],
+      idempotencyKey: "fallback-admission-integration",
+    };
+    try {
+      await fixture.client.listTools();
+      const failed = await fixture.client.callTool({ name: "memory.append", arguments: body });
+      assert.equal(failed.isError, true);
+      assert.equal((failed.structuredContent as any).error.details.fallbackEligible, true);
+
+      const fallback = await callFallbackCli(fixture, "append", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        ...body,
+      });
+      assert.equal(fallback.exitCode, 0, JSON.stringify(fallback.value));
+      assert.equal(fallback.value.created, true);
+
+      const changed = await callFallbackCli(fixture, "append", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        ...body,
+        title: "Changed fallback",
+      });
+      assert.notEqual(changed.exitCode, 0);
+      assert.equal(changed.value.error.code, "MEMORY_FORBIDDEN");
+    } finally {
+      await fixture.close();
+    }
+  });
+
   // @test-value v1
   // kind = "contract"
   // claim = "operator CLI explicit targetとbound MCP actor-relative targetは同じMemory application stateを相互参照する"
