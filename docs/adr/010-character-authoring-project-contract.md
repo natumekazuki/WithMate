@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-01
+- Successor: ADR 011 replaces the fixed Skill quality model. Storage、launch、provider、snapshot の判断は本 ADR を維持する。
 
 ## Context
 
