@@ -82,7 +82,7 @@ export class SessionFileTreeContextMenuService {
           },
         },
         {
-          label: "プロンプトにパスを挿入",
+          label: "パスを挿入",
           enabled: request.canInsert,
           click: () => {
             if (!request.canInsert || !beginSelection()) {

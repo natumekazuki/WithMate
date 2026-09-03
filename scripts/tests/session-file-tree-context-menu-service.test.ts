@@ -62,8 +62,8 @@ function createMenuHarness(options?: {
 
 // @test-value v1
 // kind = "contract"
-// claim = "native Files menuは2つのpath操作を全対象へ出し、Windows regular fileだけseparator後にfile-object copyを追加する"
-// oracle = { type = "contract", ref = "accepted behavior invariant 2 and 3: native menu composition" }
+// claim = "native Files menuは「パスをコピー」と「パスを挿入」を全対象へ出し、Windows regular fileだけseparator後にfile-object copyを追加する"
+// oracle = { type = "contract", ref = "user-requested File tree menu labels and accepted behavior invariant 2 and 3" }
 // failure_mode = "path copyとfile-object copyが混同される、directoryやrootからpath操作が欠落する、またはinsert不可時にも操作可能になる"
 // scope = "SessionFileTreeContextMenuService menu template"
 // lifecycle = "permanent"
@@ -81,7 +81,7 @@ test("Files path context menuはpath操作とWindows file copyをnode kind別に
   await Promise.resolve();
   assert.deepEqual(fileHarness.getTemplate().map(({ label, type, enabled }) => ({ label, type, enabled })), [
     { label: "パスをコピー", type: undefined, enabled: undefined },
-    { label: "プロンプトにパスを挿入", type: undefined, enabled: true },
+    { label: "パスを挿入", type: undefined, enabled: true },
     { label: undefined, type: "separator", enabled: undefined },
     { label: "ファイルをコピー", type: undefined, enabled: undefined },
   ]);
@@ -113,7 +113,7 @@ test("Files path context menuはpath操作とWindows file copyをnode kind別に
     await Promise.resolve();
     assert.deepEqual(harness.getTemplate().map(({ label, enabled }) => ({ label, enabled })), [
       { label: "パスをコピー", enabled: undefined },
-      { label: "プロンプトにパスを挿入", enabled: false },
+      { label: "パスを挿入", enabled: false },
     ]);
     harness.closePopup();
     assert.deepEqual(await result, { status: "dismissed" });
