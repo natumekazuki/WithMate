@@ -4196,24 +4196,6 @@ export function SessionComposerExpanded({
                   </select>
                 </div>
               ) : null}
-
-              {speedOptions.length > 0 ? (
-                <div className="composer-setting-field composer-setting-speed">
-                  <span>Speed</span>
-                  <select
-                    value={selectedCodexSpeed}
-                    onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
-                    disabled={isRunning || composerBlocked}
-                    aria-label="Speed"
-                  >
-                    {speedOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
             </>
           ) : null}
 
@@ -4251,6 +4233,24 @@ export function SessionComposerExpanded({
               ))}
             </select>
           </div>
+
+          {speedOptions.length > 0 ? (
+            <div className="composer-setting-field composer-setting-speed">
+              <span>Speed</span>
+              <select
+                value={selectedCodexSpeed}
+                onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
+                disabled={isRunning || composerBlocked}
+                aria-label="Speed"
+              >
+                {speedOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
         </div>
 
         {isRunning ? null : (
