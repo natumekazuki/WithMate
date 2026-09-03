@@ -212,6 +212,44 @@ describe("CompanionStorageV3", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "V3 Companion Session更新は保存済みApprovalがneverの間、他項目を更新しても現在のReviewerを保持する"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-3" }
+  // failure_mode = "直接IPCまたはstale payloadがnever中のV3 Companion Reviewerを変更し、後のinteractive復帰で意図しない値が有効になる"
+  // scope = "companion-storage-v3"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("updateSession は保存済みApprovalがneverの間Reviewerを保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-reviewer-never-v3-"));
+    const dbPath = path.join(tempDirectory, "withmate-v3.db");
+    const blobPath = path.join(tempDirectory, "blobs");
+    let storage: CompanionStorageV3 | null = null;
+
+    try {
+      createV3Database(dbPath);
+      storage = new CompanionStorageV3(dbPath, blobPath);
+      const group = await storage.ensureGroup(createGroup());
+      const session = await storage.createSession(createSession(group.id, {
+        approvalMode: "never",
+        codexReviewer: "auto-review",
+      }));
+
+      const updated = await storage.updateSession({
+        ...session,
+        taskTitle: "Renamed Companion",
+        codexReviewer: "user",
+      });
+
+      assert.equal(updated.taskTitle, "Renamed Companion");
+      assert.equal(updated.codexReviewer, "auto-review");
+      assert.equal((await storage.getSession(session.id))?.codexReviewer, "auto-review");
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("session と merge run を blob-backed payload で roundtrip する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-v3-"));
     const dbPath = path.join(tempDirectory, "withmate-v3.db");

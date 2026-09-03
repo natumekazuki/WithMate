@@ -643,6 +643,63 @@ test("Auxiliary Reviewerは親から継承した後に独立して保存する",
   }
 });
 
+// @test-value v1
+// kind = "invariant"
+// claim = "Auxiliary Session更新は保存済みApprovalがneverの間、他項目を更新しても現在のReviewerを保持する"
+// oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-3" }
+// failure_mode = "直接IPCまたはstale payloadがnever中のAuxiliary Reviewerを変更し、後のinteractive復帰で意図しない値が有効になる"
+// scope = "auxiliary-session-service"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary更新は保存済みApprovalがneverの間Reviewerを保持する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-reviewer-never-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+
+  try {
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    const parent = {
+      ...buildNewSession({
+        id: "reviewer-never-parent",
+        taskTitle: "Reviewer never parent",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "mate",
+        character: "Mate",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: "never",
+        codexReviewer: "auto-review",
+      }),
+      provider: "codex",
+    };
+    const service = new AuxiliarySessionService({
+      getParentSession: (parentSessionId) => parentSessionId === parent.id ? parent : null,
+      getStorage: () => auxiliaryStorage!,
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+    });
+    const auxiliary = await service.createAuxiliarySession({
+      parentSessionId: parent.id,
+      provider: parent.provider,
+      approvalMode: "never",
+    });
+
+    const updated = service.updateAuxiliarySession({
+      ...auxiliary,
+      title: "Renamed Auxiliary",
+      codexReviewer: "user",
+    });
+
+    assert.equal(updated.title, "Renamed Auxiliary");
+    assert.equal(updated.codexReviewer, "auto-review");
+    assert.equal(service.getAuxiliarySession(auxiliary.id)?.codexReviewer, "auto-review");
+  } finally {
+    auxiliaryStorage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
 test("AuxiliarySessionStorage は指定した parent の active summary だけを返す", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-active-auxiliary-summary-"));
   const dbPath = path.join(tempDirectory, "withmate.db");

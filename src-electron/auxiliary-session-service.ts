@@ -13,7 +13,7 @@ import {
   DEFAULT_CODEX_SANDBOX_MODE,
 } from "../src/codex-sandbox-mode.js";
 import { CODEX_SPEED_VALUES, DEFAULT_CODEX_SPEED } from "../src/codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER } from "../src/codex-reviewer.js";
+import { DEFAULT_CODEX_REVIEWER, resolveCodexReviewerUpdate } from "../src/codex-reviewer.js";
 import {
   coerceModelSelection,
   getModelCatalogItem,
@@ -362,7 +362,9 @@ export class AuxiliarySessionService {
       approvalMode: shouldPreserveEditableSettings ? current.approvalMode : session.approvalMode,
       codexSandboxMode: shouldPreserveEditableSettings ? current.codexSandboxMode : session.codexSandboxMode,
       codexSpeed: shouldPreserveEditableSettings ? current.codexSpeed : session.codexSpeed,
-      codexReviewer: shouldPreserveEditableSettings ? current.codexReviewer : session.codexReviewer,
+      codexReviewer: shouldPreserveEditableSettings
+        ? current.codexReviewer
+        : resolveCodexReviewerUpdate(current, session.codexReviewer),
       customAgentName: shouldPreserveEditableSettings ? current.customAgentName : session.customAgentName,
       allowedAdditionalDirectories: shouldPreserveEditableSettings
         ? [...current.allowedAdditionalDirectories]

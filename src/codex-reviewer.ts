@@ -21,6 +21,16 @@ export function mapCodexReviewerToApprovalsReviewer(reviewer: CodexReviewer): Co
   return reviewer === "auto-review" ? "auto_review" : "user";
 }
 
+export function resolveCodexReviewerUpdate(
+  current: { approvalMode: ApprovalMode; codexReviewer: CodexReviewer } | null | undefined,
+  requestedReviewer: unknown,
+): CodexReviewer {
+  if (current?.approvalMode === "never") {
+    return current.codexReviewer;
+  }
+  return normalizeCodexReviewer(requestedReviewer);
+}
+
 export function getCodexReviewerOptions(
   providerId: string | null | undefined,
 ): RuntimeSelectOption<CodexReviewer>[] {

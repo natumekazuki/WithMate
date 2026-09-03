@@ -24,7 +24,7 @@ import {
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_CODEX_SPEED, normalizeCodexSpeed } from "../src/codex-speed.js";
-import { normalizeCodexReviewer } from "../src/codex-reviewer.js";
+import { normalizeCodexReviewer, resolveCodexReviewerUpdate } from "../src/codex-reviewer.js";
 import {
   DEFAULT_CATALOG_REVISION,
   DEFAULT_MODEL_ID,
@@ -901,7 +901,10 @@ export class CompanionStorageV3 {
       throw new Error("Companion Session の Character owner / runtime snapshot は更新できないよ。");
     }
 
-    return this.writeSession(session, true);
+    return this.writeSession({
+      ...session,
+      codexReviewer: resolveCodexReviewerUpdate(currentSession, session.codexReviewer),
+    }, true);
   }
 
   async updateSessionBaseSnapshot(session: CompanionSession): Promise<CompanionSession> {

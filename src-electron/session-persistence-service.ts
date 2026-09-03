@@ -16,6 +16,7 @@ import {
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
+import { resolveCodexReviewerUpdate } from "../src/codex-reviewer.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
 import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
@@ -459,6 +460,7 @@ export class SessionPersistenceService {
     const storeStartedAt = Date.now();
     const normalizedSession = {
       ...sessionToStore,
+      codexReviewer: resolveCodexReviewerUpdate(currentSession, sessionToStore.codexReviewer),
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
         sessionToStore.workspacePath,
         sessionToStore.allowedAdditionalDirectories,

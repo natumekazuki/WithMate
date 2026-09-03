@@ -234,6 +234,7 @@ describe("SessionStorageV6", () => {
         characterIconPath: "",
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       }));
+      assert.equal(storage.getSession(legacySession.id)?.codexReviewer, "user");
       storage.close();
       storage = null;
 

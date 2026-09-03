@@ -6,6 +6,7 @@ import {
   isCodexReviewerControlDisabled,
   mapCodexReviewerToApprovalsReviewer,
   normalizeCodexReviewer,
+  resolveCodexReviewerUpdate,
 } from "../../src/codex-reviewer.js";
 import { buildSessionWithApprovalMode } from "../../src/runtime-option-state.js";
 
@@ -52,4 +53,27 @@ test("neverではReviewer変更を無効化し保存値をinteractive復帰後�
     isRunning: false,
     composerBlocked: false,
   }), false);
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "保存済みApprovalがneverのSession更新は現在のReviewerを保持し、interactive時だけ要求値を正規化して採用する"
+// oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-3" }
+// failure_mode = "staleなfull-session payloadでnever中のReviewerが変わり、後のinteractive復帰時に意図しない値が有効になる"
+// scope = "codex-reviewer-update"
+// lifecycle = "permanent"
+// @end-test-value
+test("保存済みApprovalがneverの間はReviewer更新を現在値へ固定する", () => {
+  assert.equal(resolveCodexReviewerUpdate({
+    approvalMode: "never",
+    codexReviewer: "auto-review",
+  }, "user"), "auto-review");
+  assert.equal(resolveCodexReviewerUpdate({
+    approvalMode: "on-request",
+    codexReviewer: "auto-review",
+  }, "user"), "user");
+  assert.equal(resolveCodexReviewerUpdate({
+    approvalMode: "on-request",
+    codexReviewer: "auto-review",
+  }, "unexpected"), "user");
 });

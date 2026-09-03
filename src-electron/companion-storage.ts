@@ -29,7 +29,11 @@ import {
 } from "../src/model-catalog.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_CODEX_SPEED, normalizeCodexSpeed } from "../src/codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER, normalizeCodexReviewer } from "../src/codex-reviewer.js";
+import {
+  DEFAULT_CODEX_REVIEWER,
+  normalizeCodexReviewer,
+  resolveCodexReviewerUpdate,
+} from "../src/codex-reviewer.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
@@ -767,7 +771,7 @@ export class CompanionStorage {
       session.approvalMode,
       session.codexSandboxMode,
       normalizeCodexSpeed(session.codexSpeed),
-      normalizeCodexReviewer(session.codexReviewer),
+      resolveCodexReviewerUpdate(currentSession, session.codexReviewer),
       session.characterId,
       session.character,
       session.characterRoleMarkdown,
