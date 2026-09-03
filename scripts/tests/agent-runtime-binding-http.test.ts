@@ -504,6 +504,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(calls.length, 0);
 
     assert.equal((await runtime.markFallbackEligible("/v1/search", body, binding.bindingReference)).status, 200);
+    assert.equal((await runtime.markFallbackListed(binding.bindingReference)).status, 200);
     const allowed = await runtime.callFallback("/v1/search", body, binding.bindingReference);
     assert.equal(allowed.status, 200);
     assert.equal(calls.length, 1);
@@ -512,6 +513,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(exactRetry.status, 200);
     assert.equal(calls.length, 2);
 
+    assert.equal((await runtime.markFallbackListed(binding.bindingReference)).status, 200);
     assert.equal((await runtime.markFallbackEligible("/v1/search", body, binding.bindingReference)).status, 403);
     const changed = await runtime.callFallback(
       "/v1/search",
@@ -519,6 +521,11 @@ describe("Memory HTTP agent runtime binding policy", () => {
       binding.bindingReference,
     );
     assert.equal(changed.status, 403);
+    assert.equal(calls.length, 2);
+
+    nowMs += 60_001;
+    const expired = await runtime.callFallback("/v1/search", body, binding.bindingReference);
+    assert.equal(expired.status, 403);
     assert.equal(calls.length, 2);
 
     const fileBody = {
@@ -549,13 +556,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(boundOperator.status, 403);
     assert.equal(calls.length, 2);
 
-    assert.equal((await runtime.markFallbackListed(binding.bindingReference)).status, 200);
-    assert.equal((await runtime.markFallbackEligible("/v1/search", body, binding.bindingReference)).status, 200);
     nowMs += 60_001;
-    const expired = await runtime.callFallback("/v1/search", body, binding.bindingReference);
-    assert.equal(expired.status, 403);
-    assert.equal(calls.length, 2);
-
     assert.equal((await runtime.markFallbackListed(binding.bindingReference)).status, 200);
     assert.equal((await runtime.markFallbackEligible("/v1/search", body, binding.bindingReference)).status, 200);
     runtime.expireTurn();

@@ -1332,7 +1332,10 @@ class MemoryFallbackAdmissionState {
   markListed(bindingReference: string, turnCapability: string, nowMs: number): boolean {
     this.#purgeExpired(nowMs);
     const key = fallbackAdmissionKey(bindingReference, turnCapability);
-    if (!this.#records.has(key) && this.#records.size >= FALLBACK_ADMISSION_MAX_RECORDS) {
+    if (this.#records.has(key)) {
+      return true;
+    }
+    if (this.#records.size >= FALLBACK_ADMISSION_MAX_RECORDS) {
       return false;
     }
     this.#records.set(key, {
