@@ -815,6 +815,7 @@ export async function callWithMateMemoryRuntime(
     signal: AbortSignal;
     bindingReference?: string;
     turnCapability?: string;
+    fallbackAdmissionSecret?: string;
     exchangePath?: string;
     fetch?: typeof fetch;
   },
@@ -968,6 +969,9 @@ export async function callWithMateMemoryRuntime(
         adapterSecret: connection.credential.adapterSecret,
         ...(options.bindingReference ? { bindingReference: options.bindingReference } : {}),
         ...(options.turnCapability ? { turnCapability: options.turnCapability } : {}),
+        ...(options.fallbackAdmissionSecret
+          ? { fallbackAdmissionSecret: options.fallbackAdmissionSecret }
+          : {}),
         operation,
       }));
     });

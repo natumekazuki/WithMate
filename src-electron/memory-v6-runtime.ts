@@ -18,6 +18,9 @@ import {
 } from "../src/memory-v6/memory-discovery.js";
 import {
   createWithMateMemoryRuntimeOwnerChallenge,
+  WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+  WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION,
+  type WithMateMemoryFallbackAdmissionCredential,
 } from "../src/memory-v6/memory-runtime-exchange.js";
 import {
   isUuid,
@@ -1422,12 +1425,14 @@ export async function startMemoryV6RuntimeApi(
     const apiSecret = createRuntimeApiSecret();
     const operatorApiSecret = createRuntimeApiSecret();
     const mcpApiSecret = createRuntimeApiSecret();
+    const fallbackAdmissionApiSecret = createRuntimeApiSecret();
     server = createMemoryV6HttpServer({
       service,
       characterContextService,
       apiSecret,
       operatorApiSecret,
       mcpApiSecret,
+      fallbackAdmissionApiSecret,
       applicationInstanceId: options.applicationInstanceId,
       runtimeGenerationId,
       buildChannel: options.buildChannel,
@@ -1505,6 +1510,20 @@ export async function startMemoryV6RuntimeApi(
               publishedAt,
             }),
           } satisfies RuntimeDiscoveryCredentialEnvelope<WithMateMemoryDiscoveryDocument>,
+        },
+        {
+          adapterKind: WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+          document: {
+            schemaVersion: "withmate-runtime-credential-v1",
+            applicationInstanceId: options.applicationInstanceId,
+            runtimeKind: "memory",
+            adapterKind: WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+            runtimeGenerationId,
+            credential: {
+              schemaVersion: WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION,
+              admissionSecret: fallbackAdmissionApiSecret,
+            },
+          } satisfies RuntimeDiscoveryCredentialEnvelope<WithMateMemoryFallbackAdmissionCredential>,
         },
       ],
       challenge: (entry, slotDirectoryPath) => challengeMemoryRuntimeRegistryEntry(

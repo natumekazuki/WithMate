@@ -56,6 +56,7 @@ export type MemoryV6HttpServerOptions = {
   apiSecret: string;
   operatorApiSecret: string;
   mcpApiSecret: string;
+  fallbackAdmissionApiSecret?: string;
   /** @deprecated use runtimeGenerationId; retained as a wire-compatibility alias. */
   runtimeInstanceId?: string;
   applicationInstanceId?: string;
@@ -593,6 +594,7 @@ type RuntimeExchangePayload = {
   adapterSecret: string;
   bindingReference?: string;
   turnCapability?: string;
+  fallbackAdmissionSecret?: string;
   operation: {
     method: "GET" | "POST";
     path: string;
@@ -614,6 +616,7 @@ function parseRuntimeExchangePayload(value: unknown): RuntimeExchangePayload | n
     || typeof payload.adapterSecret !== "string"
     || (payload.bindingReference !== undefined && typeof payload.bindingReference !== "string")
     || (payload.turnCapability !== undefined && typeof payload.turnCapability !== "string")
+    || (payload.fallbackAdmissionSecret !== undefined && typeof payload.fallbackAdmissionSecret !== "string")
     || !operation
     || (operation.method !== "GET" && operation.method !== "POST")
     || typeof operation.path !== "string"
@@ -1347,7 +1350,8 @@ class MemoryFallbackAdmissionState {
   ): boolean {
     this.#purgeExpired(nowMs);
     const key = fallbackAdmissionKey(bindingReference, turnCapability);
-    if (!this.#records.has(key)) {
+    const record = this.#records.get(key);
+    if (!record || record.phase !== "listed") {
       return false;
     }
     this.#records.set(key, {
@@ -1389,6 +1393,7 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
   const apiSecret = requireNonEmptySecret(options.apiSecret, "apiSecret");
   const operatorApiSecret = requireNonEmptySecret(options.operatorApiSecret, "operatorApiSecret");
   const mcpApiSecret = requireNonEmptySecret(options.mcpApiSecret, "mcpApiSecret");
+  const fallbackAdmissionApiSecret = options.fallbackAdmissionApiSecret?.trim() ?? "";
   const applicationInstanceId = requireNonEmptySecret(options.applicationInstanceId ?? "legacy", "applicationInstanceId");
   const runtimeGenerationId = requireNonEmptySecret(
     options.runtimeGenerationId ?? options.runtimeInstanceId ?? "",
@@ -1493,8 +1498,14 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
             payload.adapter !== "mcp"
             || payload.operation.method !== "POST"
             || payload.operation.fallbackFrom !== undefined
+            || !fallbackAdmissionApiSecret
+            || !payload.fallbackAdmissionSecret
+            || !timingSafeStringEqual(payload.fallbackAdmissionSecret, fallbackAdmissionApiSecret)
           ) {
-            writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Fallback admission control is MCP-only."));
+            writeJson(response, 403, memoryTransportError(
+              "MEMORY_FORBIDDEN",
+              "Fallback admission control requires the dedicated MCP reporter credential.",
+            ));
             return;
           }
           const actor = validateFallbackAdmissionActor({
@@ -1587,7 +1598,9 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
             body: payload.operation.body,
           });
           if (
-            !bindingReference
+            route === "get_file"
+            || route === "export_files"
+            || !bindingReference
             || !turnCapability
             || !fallbackAdmissions.admit(bindingReference, turnCapability, fingerprint, nowMs())
           ) {

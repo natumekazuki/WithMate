@@ -537,7 +537,7 @@ CLIはDBを直接触らず、起動中のWithMateが提供するruntime Memory A
 WithMateが起動していない場合、CLIはすべてのMemory操作を拒否し、machine-readable errorを返す。
 WithMate起動中は、operator CLIからMemory target inventory、明示targetのentry一覧・検索・取得・tag統計・audit・append・forget preview/mutation・retargetを扱える。
 operator CLI requestは、runtime secretとnonce challengeを通過した同一OS userの`local_user` principalとして扱う。明示targetだけを扱い、`character: current`やsession-bound project inferenceは使えない。
-agent-bound CLI fallbackはMCPと同じ`session_binding` principal、actor-relative input、route allowlistを使い、caller指定identityやoperator credentialを使わない。provider binding markerがあるprocessではflagなしの通常CLI操作を拒否し、serverもbinding reference付きoperator requestを受け付けない。fallbackはMCPの`tools/list` response送出と後続の実transport exceptionをserverが観測し、同じruntime generation、binding、current turn、method/path/bodyへ発行した短命admissionがある場合だけ実行できる。structured domain error、変更operation、期限切れ、stale turn、非idempotent file exportは対象外とする。
+agent-bound CLI fallbackはMCPと同じ`session_binding` principal、actor-relative input、route allowlistを使い、caller指定identityやoperator credentialを使わない。provider binding markerがあるprocessではflagなしの通常CLI操作を拒否し、serverもbinding reference付きoperator requestを受け付けない。fallbackは通常MCP credentialと分離したgeneration-bound reporter credentialにより、MCPの`tools/list` response送出と後続の実transport exceptionをserverへ登録し、同じruntime generation、binding、current turn、method/path/bodyへ発行した短命admissionがある場合だけ実行できる。stateは`listed → eligible → consumed`の一方向であり、structured domain error、変更operation、期限切れ、stale turn、非idempotent file exportはclientとserverの両方で対象外とする。
 retrieval ranking、暗黙target注入、毎turn prompt注入は行わない。
 bindingなしの外部CLIによるappend / forgetではMemory entryの`source.sessionId`を`null`として保存する。WithMateが起動したagent executionからbinding付きで操作する場合は、runtimeが解決したactor Sessionをsourceとidempotency principalへ保存する。
 `--self` flagは採用しない。

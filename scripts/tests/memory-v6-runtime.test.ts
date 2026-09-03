@@ -16,8 +16,13 @@ import {
 } from "../../src/runtime-discovery/runtime-discovery-contract.js";
 import {
   listRuntimeDiscoveryRegistryEntries,
+  readRuntimeDiscoveryCredential,
   resolveRuntimeDiscoveryMutationLockFilePath,
 } from "../../src/runtime-discovery/runtime-discovery-registry.js";
+import {
+  WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+  WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION,
+} from "../../src/memory-v6/memory-runtime-exchange.js";
 import {
   publishMemoryV6DiscoveryFile,
   startMemoryV6RuntimeApi,
@@ -365,6 +370,56 @@ describe("Memory V6 runtime API", () => {
       resolveDefaultWithMateMemoryDiscoveryFilePath({ WITHMATE_MEMORY_RUNTIME_DIR: "C:/tmp/withmate-runtime" }),
       path.resolve("C:/tmp/withmate-runtime", "memory-v6.current.json"),
     );
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "fallback admission reporter credentialは通常MCP credentialと別のgeneration-bound registry projectionへだけ公開する"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // failure_mode = "通常MCP credentialだけでlisted/eligible controlを自己発行し、実transport failureなしにCLI fallbackを許可する"
+  // scope = "memory-fallback-admission-reporter-credential"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("fallback admission reporter credentialを通常MCP projectionから分離する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const registryDirectoryPath = path.join(runtimeDirectoryPath, "registry");
+    let runtime: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    try {
+      runtime = await startMemoryV6RuntimeApi({
+        userDataPath,
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_A,
+        buildChannel: "development",
+        registryDirectoryPath,
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+      });
+      const snapshot = await listRuntimeDiscoveryRegistryEntries(registryDirectoryPath);
+      assert.equal(snapshot.records.length, 1);
+      assert.deepEqual(
+        snapshot.records[0]!.entry.adapters.map((adapter) => adapter.adapterKind).sort(),
+        ["cli", "mcp", WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND].sort(),
+      );
+      const admissionSerialized = await readRuntimeDiscoveryCredential(
+        snapshot.records[0]!,
+        WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+      );
+      const mcpSerialized = await readRuntimeDiscoveryCredential(snapshot.records[0]!, "mcp");
+      assert.ok(admissionSerialized);
+      assert.ok(mcpSerialized);
+      const admissionEnvelope = JSON.parse(admissionSerialized);
+      assert.equal(
+        admissionEnvelope.credential.schemaVersion,
+        WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION,
+      );
+      assert.equal(typeof admissionEnvelope.credential.admissionSecret, "string");
+      assert.equal(admissionEnvelope.credential.admissionSecret.length > 20, true);
+      assert.equal(mcpSerialized.includes(admissionEnvelope.credential.admissionSecret), false);
+    } finally {
+      await runtime?.stop().catch(() => undefined);
+      await rm(userDataPath, { recursive: true, force: true });
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
   });
 
 // @test-value v1

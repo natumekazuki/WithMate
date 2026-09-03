@@ -10,6 +10,11 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
+import {
+  WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+  WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION,
+} from "../../src/memory-v6/memory-runtime-exchange.js";
+import { publishRuntimeDiscoveryEntry } from "../../src/runtime-discovery/runtime-discovery-registry.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { createMemoryV6HttpServer } from "../../src-electron/memory-v6-http-server.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
@@ -32,6 +37,7 @@ import {
 const API_SECRET = "general-memory-api-secret";
 const OPERATOR_SECRET = "general-memory-operator-secret";
 const MCP_SECRET = "general-memory-mcp-secret";
+const FALLBACK_ADMISSION_SECRET = "general-memory-fallback-admission-secret";
 const APPLICATION_INSTANCE_ID = "11111111-1111-4111-8111-111111111111";
 const RUNTIME_ID = "22222222-2222-4222-8222-222222222222";
 const PROJECT_PATH = "C:/workspace/general-memory-project";
@@ -95,6 +101,7 @@ async function createRuntimeFixture(options: {
     apiSecret: API_SECRET,
     operatorApiSecret: OPERATOR_SECRET,
     mcpApiSecret: MCP_SECRET,
+    fallbackAdmissionApiSecret: FALLBACK_ADMISSION_SECRET,
     applicationInstanceId: APPLICATION_INSTANCE_ID,
     runtimeInstanceId: RUNTIME_ID,
     agentRuntimeBindingRegistry: bindings,
@@ -111,6 +118,33 @@ async function createRuntimeFixture(options: {
   const address = runtime.address();
   assert.ok(address);
   const baseUrl = `http://127.0.0.1:${address.port}`;
+  const registryRootDirectoryPath = join(tempDirectory, "runtime-registry");
+  const registryPublication = await publishRuntimeDiscoveryEntry({
+    rootDirectoryPath: registryRootDirectoryPath,
+    security: async () => undefined,
+    identity: {
+      applicationInstanceId: APPLICATION_INSTANCE_ID,
+      runtimeKind: "memory",
+      runtimeGenerationId: RUNTIME_ID,
+    },
+    buildChannel: "development",
+    process: { pid: process.pid, startedAt: new Date().toISOString() },
+    credentialDocuments: [{
+      adapterKind: WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+      document: {
+        schemaVersion: "withmate-runtime-credential-v1",
+        applicationInstanceId: APPLICATION_INSTANCE_ID,
+        runtimeKind: "memory",
+        adapterKind: WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+        runtimeGenerationId: RUNTIME_ID,
+        credential: {
+          schemaVersion: WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION,
+          admissionSecret: FALLBACK_ADMISSION_SECRET,
+        },
+      },
+    }],
+    challenge: async () => true,
+  });
   const env = {
     WITHMATE_MEMORY_API_URL: baseUrl,
     WITHMATE_MEMORY_API_SECRET: API_SECRET,
@@ -130,7 +164,11 @@ async function createRuntimeFixture(options: {
     WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: RUNTIME_ID,
   };
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const mcpServer = createWithMateMemoryMcpServer({ env, runtimeCall: options.runtimeCall });
+  const mcpServer = createWithMateMemoryMcpServer({
+    env,
+    runtimeCall: options.runtimeCall,
+    registryRootDirectoryPath,
+  });
   const client = new Client({ name: "general-memory-integration-test", version: "1.0.0" });
   await mcpServer.connect(serverTransport);
   await client.connect(clientTransport);
@@ -144,6 +182,7 @@ async function createRuntimeFixture(options: {
       await client.close();
       await mcpServer.close();
       await runtime.stop();
+      await registryPublication.unpublish();
       turns.end(turn);
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });

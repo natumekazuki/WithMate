@@ -22097,6 +22097,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				adapterSecret: connection.credential.adapterSecret,
 				...options.bindingReference ? { bindingReference: options.bindingReference } : {},
 				...options.turnCapability ? { turnCapability: options.turnCapability } : {},
+				...options.fallbackAdmissionSecret ? { fallbackAdmissionSecret: options.fallbackAdmissionSecret } : {},
 				operation
 			}));
 		});

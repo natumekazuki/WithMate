@@ -1371,6 +1371,7 @@ var WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER = "x-withmate-memory-app
 var WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER = "x-withmate-memory-runtime-generation";
 var WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER = "x-withmate-memory-runtime-challenge";
 var WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH = "/v1/fallback-admission/eligible";
+var WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND = "mcp-fallback-admission";
 var WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-memory-runtime-exchange-v1";
 function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeGenerationId, nonce) {
 	return createHmac("sha256", apiSecret).update(`${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
@@ -3493,6 +3494,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				adapterSecret: connection.credential.adapterSecret,
 				...options.bindingReference ? { bindingReference: options.bindingReference } : {},
 				...options.turnCapability ? { turnCapability: options.turnCapability } : {},
+				...options.fallbackAdmissionSecret ? { fallbackAdmissionSecret: options.fallbackAdmissionSecret } : {},
 				operation
 			}));
 		});
@@ -24118,12 +24120,30 @@ var FallbackAwareMcpServer = class extends McpServer {
 		return super.connect(new ToolsListTrackingTransport(transport, () => this.fallbackAdmission.markListed()));
 	}
 };
+async function resolveFallbackAdmissionSecret(deps, connection) {
+	if (deps.fallbackAdmissionSecret?.trim()) return deps.fallbackAdmissionSecret.trim();
+	const applicationInstanceId = connection.api.applicationInstanceId;
+	if (!applicationInstanceId) return null;
+	try {
+		const matches = (await listRuntimeDiscoveryRegistryEntries(deps.registryRootDirectoryPath)).records.filter((record) => record.entry.runtimeKind === "memory" && record.entry.applicationInstanceId === applicationInstanceId && record.entry.runtimeGenerationId === connection.api.runtimeGenerationId);
+		if (matches.length !== 1) return null;
+		const serialized = await readRuntimeDiscoveryCredential(matches[0], WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND);
+		if (!serialized) return null;
+		const envelope = JSON.parse(serialized);
+		const credential = envelope.credential;
+		return envelope.schemaVersion === "withmate-runtime-credential-v1" && envelope.applicationInstanceId === applicationInstanceId && envelope.runtimeKind === "memory" && envelope.adapterKind === "mcp-fallback-admission" && envelope.runtimeGenerationId === connection.api.runtimeGenerationId && credential?.schemaVersion === "withmate-memory-fallback-admission-credential-v1" && typeof credential.admissionSecret === "string" && credential.admissionSecret.trim() ? credential.admissionSecret.trim() : null;
+	} catch {
+		return null;
+	}
+}
 function createMcpFallbackAdmission(deps) {
 	let connection = null;
 	let bindingReference;
 	let turnCapability;
+	let fallbackAdmissionSecret = null;
+	let listedRegistration = null;
 	const callControl = async (path, body) => {
-		if (!connection || !bindingReference || !turnCapability) return false;
+		if (!connection || !bindingReference || !turnCapability || !fallbackAdmissionSecret) return false;
 		const abortController = new AbortController();
 		const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 1e4);
 		try {
@@ -24134,7 +24154,8 @@ function createMcpFallbackAdmission(deps) {
 			}, {
 				signal: abortController.signal,
 				bindingReference,
-				turnCapability
+				turnCapability,
+				fallbackAdmissionSecret
 			})).ok;
 		} catch {
 			return false;
@@ -24144,25 +24165,34 @@ function createMcpFallbackAdmission(deps) {
 	};
 	return {
 		async markListed() {
-			try {
-				bindingReference = resolveAgentRuntimeBindingReference(deps.env);
-				turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
-				const resolution = await resolveWithMateMemoryApi({
-					adapter: "mcp",
-					env: deps.env,
-					readFile: deps.readFile,
-					fetch: deps.fetch,
-					clock: deps.clock,
-					registryRootDirectoryPath: deps.registryRootDirectoryPath,
-					staleThresholdMs: deps.staleThresholdMs
-				});
-				connection = resolution.kind === "selected" ? resolution.connection : null;
-				if (!await callControl("/v1/fallback-admission/listed", {})) connection = null;
-			} catch {
-				connection = null;
-			}
+			listedRegistration = (async () => {
+				try {
+					bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+					turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
+					const resolution = await resolveWithMateMemoryApi({
+						adapter: "mcp",
+						env: deps.env,
+						readFile: deps.readFile,
+						fetch: deps.fetch,
+						clock: deps.clock,
+						registryRootDirectoryPath: deps.registryRootDirectoryPath,
+						staleThresholdMs: deps.staleThresholdMs
+					});
+					connection = resolution.kind === "selected" ? resolution.connection : null;
+					fallbackAdmissionSecret = connection ? await resolveFallbackAdmissionSecret(deps, connection) : null;
+					if (!await callControl("/v1/fallback-admission/listed", {})) {
+						connection = null;
+						fallbackAdmissionSecret = null;
+					}
+				} catch {
+					connection = null;
+					fallbackAdmissionSecret = null;
+				}
+			})();
+			await listedRegistration;
 		},
 		async markEligible(operation) {
+			await listedRegistration;
 			const pathname = new URL(operation.path, "http://127.0.0.1").pathname;
 			if (NON_RETRYABLE_FALLBACK_PATHS.has(pathname)) return false;
 			return callControl(WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH, { fingerprint: createMemoryFallbackOperationFingerprint(operation) });
