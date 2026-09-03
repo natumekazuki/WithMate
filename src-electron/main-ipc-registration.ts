@@ -103,6 +103,8 @@ import type {
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFileTreePathActionContextMenuResult,
+  SessionFileTreePathActionRequest,
   FileRootChangesRequest,
   FileRootChangesRepositoriesRequest,
   FileRootChangesRepositoriesResult,
@@ -208,6 +210,7 @@ import {
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
@@ -460,6 +463,10 @@ export type MainIpcRegistrationDeps = {
     event: IpcSenderEvent,
     request: SessionFileObjectCopyContextMenuRequest,
   ): Awaitable<SessionFileObjectCopyContextMenuResult>;
+  showSessionFileTreeContextMenu(
+    event: IpcSenderEvent,
+    request: SessionFileTreePathActionRequest,
+  ): Awaitable<SessionFileTreePathActionContextMenuResult>;
   showMarkdownLinkContextMenu(
     event: IpcSenderEvent,
     request: MarkdownLinkContextMenuRequest,
@@ -702,6 +709,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "showSessionFilePreviewImageContextMenu"
   | "copySessionFileObject"
   | "showSessionFileObjectCopyContextMenu"
+  | "showSessionFileTreeContextMenu"
   | "showMarkdownLinkContextMenu"
   | "listFileRootChanges"
   | "listFileRootChangesRepositories"
@@ -1162,6 +1170,53 @@ function parseSessionFileObjectCopyContextMenuRequest(
   }
   return {
     resource: candidate.resource,
+    point: {
+      x: (point as Record<string, unknown>).x as number,
+      y: (point as Record<string, unknown>).y as number,
+    },
+  };
+}
+
+function parseSessionFileTreeContextMenuRequest(input: unknown): SessionFileTreePathActionRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("File tree context menu request is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (!hasOnlyObjectKeys(candidate, [
+    "sessionId",
+    "rootId",
+    "relativePath",
+    "nodeKind",
+    "point",
+    "canInsert",
+  ])) {
+    throw new TypeError("File tree context menu request is invalid.");
+  }
+  const point = candidate.point;
+  if (
+    typeof candidate.sessionId !== "string"
+    || !candidate.sessionId
+    || typeof candidate.rootId !== "string"
+    || !candidate.rootId
+    || typeof candidate.relativePath !== "string"
+    || !["root", "directory", "file"].includes(String(candidate.nodeKind))
+    || typeof candidate.canInsert !== "boolean"
+    || !point
+    || typeof point !== "object"
+    || !hasOnlyObjectKeys(point as Record<string, unknown>, ["x", "y"])
+    || !Number.isSafeInteger((point as Record<string, unknown>).x)
+    || ((point as Record<string, unknown>).x as number) < 0
+    || !Number.isSafeInteger((point as Record<string, unknown>).y)
+    || ((point as Record<string, unknown>).y as number) < 0
+  ) {
+    throw new TypeError("File tree context menu request is invalid.");
+  }
+  return {
+    sessionId: candidate.sessionId,
+    rootId: candidate.rootId,
+    relativePath: candidate.relativePath,
+    nodeKind: candidate.nodeKind as SessionFileTreePathActionRequest["nodeKind"],
+    canInsert: candidate.canInsert,
     point: {
       x: (point as Record<string, unknown>).x as number,
       y: (point as Record<string, unknown>).y as number,
@@ -1768,6 +1823,11 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     const request = parseSessionFileObjectCopyContextMenuRequest(input);
     await assertSessionFileResourceSender(event, request.resource, deps);
     return deps.showSessionFileObjectCopyContextMenu(event, request);
+  });
+  ipcMain.handle(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFileTreeContextMenuRequest(input);
+    await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.showSessionFileTreeContextMenu(event, request);
   });
   ipcMain.handle(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
     const request = parseMarkdownLinkContextMenuRequest(input);

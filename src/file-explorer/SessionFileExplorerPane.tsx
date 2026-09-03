@@ -1,5 +1,16 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 
 import type {
   SessionDirectoryEntry,
@@ -12,8 +23,7 @@ type FileExplorerApi = Pick<
   WithMateWindowApi,
   | "listSessionFileRoots"
   | "listSessionDirectory"
-  | "isSessionFileObjectCopyAvailable"
-  | "showSessionFileObjectCopyContextMenu"
+  | "showSessionFileTreeContextMenu"
 >;
 
 type SessionFileExplorerPaneProps = {
@@ -27,6 +37,8 @@ type SessionFileExplorerPaneProps = {
   onRefreshChanges: () => void;
   onRefreshHistory?: () => void;
   onOpenFile: (request: SessionFileRootResourceRequest, openInWindow: boolean) => void;
+  canInsertPathReference: boolean;
+  onInsertPathReference: (ownerSessionId: string, absolutePath: string) => void;
   renderChangesContent?: (roots: SessionFileRoot[]) => ReactNode;
   historyContent?: ReactNode;
 };
@@ -41,6 +53,34 @@ type DirectoryLoadRequest = {
   requestId: number;
   promise: Promise<void>;
 };
+
+type FileTreeInsertionOwnerSnapshot = {
+  sessionId: string | null;
+  rootsRevision: string;
+  canInsert: boolean;
+  insertPathReference: (ownerSessionId: string, absolutePath: string) => void;
+};
+
+export function applySessionFileTreePathInsertionResult(input: {
+  result: { status: string; ownerSessionId?: string; absolutePath?: string };
+  currentOwnerSessionId: string | null;
+  requestedRootsRevision: string;
+  currentRootsRevision: string;
+  canInsert: boolean;
+  insertPathReference: (ownerSessionId: string, absolutePath: string) => void;
+}): boolean {
+  if (
+    input.result.status !== "insert-path"
+    || input.result.ownerSessionId !== input.currentOwnerSessionId
+    || input.requestedRootsRevision !== input.currentRootsRevision
+    || !input.canInsert
+    || !input.result.absolutePath
+  ) {
+    return false;
+  }
+  input.insertPathReference(input.result.ownerSessionId, input.result.absolutePath);
+  return true;
+}
 
 function directoryKey(rootId: string, relativePath: string): string {
   return `${rootId}\u0000${relativePath}`;
@@ -67,10 +107,25 @@ export function SessionFileExplorerPane({
   onRefreshChanges,
   onRefreshHistory,
   onOpenFile,
+  canInsertPathReference,
+  onInsertPathReference,
   renderChangesContent,
   historyContent,
 }: SessionFileExplorerPaneProps) {
-  const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
+  const insertionOwnerSnapshotRef = useRef<FileTreeInsertionOwnerSnapshot>({
+    sessionId,
+    rootsRevision,
+    canInsert: canInsertPathReference,
+    insertPathReference: onInsertPathReference,
+  });
+  useLayoutEffect(() => {
+    insertionOwnerSnapshotRef.current = {
+      sessionId,
+      rootsRevision,
+      canInsert: canInsertPathReference,
+      insertPathReference: onInsertPathReference,
+    };
+  }, [canInsertPathReference, onInsertPathReference, rootsRevision, sessionId]);
   const loadRevisionRef = useRef(0);
   const directoryRequestSequenceRef = useRef(0);
   const inFlightDirectoryLoadsRef = useRef(new Map<string, DirectoryLoadRequest>());
@@ -213,6 +268,42 @@ export function SessionFileExplorerPane({
     }
   };
 
+  const showPathContextMenu = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    target: { rootId: string; relativePath: string; nodeKind: "root" | "directory" | "file" },
+  ) => {
+    if (!api || !sessionId) {
+      return;
+    }
+    event.preventDefault();
+    const requestedRootsRevision = rootsRevision;
+    void api.showSessionFileTreeContextMenu({
+      sessionId,
+      ...target,
+      canInsert: canInsertPathReference,
+      point: {
+        x: Math.max(0, Math.round(event.clientX)),
+        y: Math.max(0, Math.round(event.clientY)),
+      },
+    }).then((result) => {
+      if (result.status === "failed") {
+        setFeedbackMessage(result.message);
+        return;
+      }
+      const currentInsertionOwner = insertionOwnerSnapshotRef.current;
+      applySessionFileTreePathInsertionResult({
+        result,
+        currentOwnerSessionId: currentInsertionOwner.sessionId,
+        requestedRootsRevision,
+        currentRootsRevision: currentInsertionOwner.rootsRevision,
+        canInsert: currentInsertionOwner.canInsert,
+        insertPathReference: currentInsertionOwner.insertPathReference,
+      });
+    }).catch(() => {
+      setFeedbackMessage("Path menu could not be opened.");
+    });
+  };
+
   const treeRows = useMemo(() => {
     const rows: FileTreeRow[] = [];
     const appendDirectory = (rootId: string, relativePath: string, depth: number) => {
@@ -341,6 +432,11 @@ export function SessionFileExplorerPane({
                     className="session-file-root-row"
                     type="button"
                     onClick={() => toggleDirectory(row.root.id, "")}
+                    onContextMenu={(event) => showPathContextMenu(event, {
+                      rootId: row.root.id,
+                      relativePath: "",
+                      nodeKind: "root",
+                    })}
                     title={row.root.displayPath}
                   >
                     <span className={`session-file-tree-icon${expandedDirectories[directoryKey(row.root.id, "")] ? " is-expanded" : ""}`}>▸</span>
@@ -366,26 +462,13 @@ export function SessionFileExplorerPane({
                         }
                       }}
                       onContextMenu={(event) => {
-                        if (!api || !fileObjectCopyAvailable || row.entry.kind !== "file") {
+                        if (row.entry.kind !== "directory" && row.entry.kind !== "file") {
                           return;
                         }
-                        event.preventDefault();
-                        void api.showSessionFileObjectCopyContextMenu({
-                          resource: {
-                            sessionId: sessionId!,
-                            rootId: row.rootId,
-                            relativePath: row.entry.relativePath,
-                          },
-                          point: {
-                            x: Math.max(0, Math.round(event.clientX)),
-                            y: Math.max(0, Math.round(event.clientY)),
-                          },
-                        }).then((result) => {
-                          if (result.status !== "dismissed") {
-                            setFeedbackMessage(result.message);
-                          }
-                        }).catch(() => {
-                          setFeedbackMessage("File copy menu could not be opened.");
+                        showPathContextMenu(event, {
+                          rootId: row.rootId,
+                          relativePath: row.entry.relativePath,
+                          nodeKind: row.entry.kind,
                         });
                       }}
                       title={row.entry.relativePath}

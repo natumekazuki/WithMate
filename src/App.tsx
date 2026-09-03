@@ -175,7 +175,10 @@ import {
   type SessionGlossaryProjection,
 } from "./glossary-contract.js";
 import { createGlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
-import { buildFileRootDiffPreviewWindowRequest } from "./file-explorer/file-explorer-contract.js";
+import {
+  buildFileRootDiffPreviewWindowRequest,
+  buildSessionFileExplorerRootsRevision,
+} from "./file-explorer/file-explorer-contract.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
   acknowledgePreviewChatMessageCount,
@@ -3620,7 +3623,7 @@ export default function AgentSessionWindowApp() {
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
     applySelectedPathReferenceInsertionCommand({
       draft: currentDraft,
-      fallbackCaret: composerCaret,
+      fallbackCaret: targetAuxiliarySession ? composerCaret : mainComposerCaretRef.current,
       selectedPaths,
       textarea,
       workspacePath: selectedSession?.workspacePath ?? null,
@@ -4146,10 +4149,15 @@ export default function AgentSessionWindowApp() {
     return <ChatWindowStatusScreen message="Session が選択されていません。Home Window から session を開いてね。" />;
   }
 
-  const fileExplorerRootsRevision = [
-    activeRunSessionId ?? "",
-    ...(activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories),
-  ].join("\u0000");
+  const fileExplorerRootsRevision = buildSessionFileExplorerRootsRevision({
+    sessionId: activeRunSessionId,
+    workspacePath: selectedSession.workspacePath,
+    additionalDirectories:
+      activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories,
+  });
+  const canInsertFileTreePathReference = activeAuxiliarySession
+    ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
+    : !isComposerDisabled;
   const fileExplorerPane = (
     <SessionFileExplorerPane
       api={withmateApi}
@@ -4172,6 +4180,13 @@ export default function AgentSessionWindowApp() {
             window.alert(message);
           }
         });
+      }}
+      canInsertPathReference={canInsertFileTreePathReference}
+      onInsertPathReference={(ownerSessionId, absolutePath) => {
+        if (ownerSessionId !== activeRunSessionId || !canInsertFileTreePathReference) {
+          return;
+        }
+        insertReferencePaths([absolutePath]);
       }}
       renderChangesContent={(roots) => (
         <FileRootChangesPane

@@ -82,6 +82,8 @@ import type {
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFileTreePathActionContextMenuResult,
+  SessionFileTreePathActionRequest,
   FileRootChangesRequest,
   FileRootChangesRepositoriesRequest,
   FileRootChangesRepositoriesResult,
@@ -200,6 +202,10 @@ export type MainIpcWindowDepsArgs = {
     event: IpcMainInvokeEvent,
     request: SessionFileObjectCopyContextMenuRequest,
   ): Awaitable<SessionFileObjectCopyContextMenuResult>;
+  showSessionFileTreeContextMenu(
+    event: IpcMainInvokeEvent,
+    request: SessionFileTreePathActionRequest,
+  ): Awaitable<SessionFileTreePathActionContextMenuResult>;
   showMarkdownLinkContextMenu(
     event: IpcMainInvokeEvent,
     request: MarkdownLinkContextMenuRequest,
@@ -491,6 +497,7 @@ export function createMainIpcRegistrationDeps(
     showSessionFilePreviewImageContextMenu: args.window.showSessionFilePreviewImageContextMenu,
     copySessionFileObject: args.window.copySessionFileObject,
     showSessionFileObjectCopyContextMenu: args.window.showSessionFileObjectCopyContextMenu,
+    showSessionFileTreeContextMenu: args.window.showSessionFileTreeContextMenu,
     showMarkdownLinkContextMenu: args.window.showMarkdownLinkContextMenu,
     openPathTarget: args.window.openPathTarget,
     openAppLogFolder: args.window.openAppLogFolder,

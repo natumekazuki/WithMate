@@ -164,6 +164,7 @@ import { SessionMemorySupportService } from "./session-memory-support-service.js
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
 import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
 import { SessionFileObjectCopyService } from "./session-file-object-copy-service.js";
+import { SessionFileTreeContextMenuService } from "./session-file-tree-context-menu-service.js";
 import { MarkdownLinkContextMenuService } from "./markdown-link-context-menu-service.js";
 import { WindowsFileDropClipboardWriter } from "./windows-file-drop-clipboard-writer.js";
 import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
@@ -338,6 +339,13 @@ const sessionFileObjectCopyService = new SessionFileObjectCopyService({
   platform: process.platform,
   createAuthorizationBoundary: createSessionFileExplorerService,
   writeNativeFileDrop: (targetPath) => windowsFileDropClipboardWriter.copyFile(targetPath),
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+});
+const sessionFileTreeContextMenuService = new SessionFileTreeContextMenuService({
+  platform: process.platform,
+  createAuthorizationBoundary: createSessionFileExplorerService,
+  writeText: (targetPath) => clipboard.writeText(targetPath),
+  copyFileObject: (resource) => sessionFileObjectCopyService.copyTreeResource(resource),
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
 const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({
@@ -1613,6 +1621,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   sessionFileObjectCopyService.copyResource(request.resource),
                 showSessionFileObjectCopyContextMenu: (event, request) =>
                   sessionFileObjectCopyService.showContextMenu(
+                    BrowserWindow.fromWebContents(event.sender) ?? null,
+                    request,
+                  ),
+                showSessionFileTreeContextMenu: (event, request) =>
+                  sessionFileTreeContextMenuService.showContextMenu(
                     BrowserWindow.fromWebContents(event.sender) ?? null,
                     request,
                   ),

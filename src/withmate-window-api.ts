@@ -106,6 +106,8 @@ import type {
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFileTreePathActionContextMenuResult,
+  SessionFileTreePathActionRequest,
   FileRootChangesRequest,
   FileRootChangesRepositoriesRequest,
   FileRootChangesRepositoriesResult,
@@ -196,6 +198,9 @@ export type WithMateWindowSessionApi = {
   showSessionFileObjectCopyContextMenu(
     request: SessionFileObjectCopyContextMenuRequest,
   ): Promise<SessionFileObjectCopyContextMenuResult>;
+  showSessionFileTreeContextMenu(
+    request: SessionFileTreePathActionRequest,
+  ): Promise<SessionFileTreePathActionContextMenuResult>;
   listFileRootChanges(request: FileRootChangesRequest): Promise<FileRootChangesResult>;
   listFileRootChangesRepositories(
     request: FileRootChangesRepositoriesRequest,
