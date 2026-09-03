@@ -294,9 +294,9 @@ it("agent CLI fallbackはMCP credentialとruntime bindingを使う", async () =>
 
 // @test-value v1
 // kind = "security"
-// claim = "provider-bound CLIは通常operator mode、不完全またはoperator-onlyなfallback入力、非idempotent file exportをdispatch前に拒否する"
+// claim = "provider-bound CLIは通常operator mode、不完全・operator-only・内部field付きfallback入力、非idempotent file exportをdispatch前に拒否する"
 // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-// failure_mode = "bound processがfallback markerを省略してoperator credentialを選ぶ、markerでoperator authorityやcaller選択runtimeへ到達する、またはget-file/export-filesをagent fallbackとしてdispatchする"
+// failure_mode = "bound processがfallback markerを省略してoperator credentialを選ぶ、markerでoperator authorityやcaller選択runtimeへ到達する、schemaVersion追加requestを同一admissionへ正規化する、またはget-file/export-filesをagent fallbackとしてdispatchする"
 // scope = "withmate-memory-agent-cli-fallback"
 // lifecycle = "permanent"
 // @end-test-value
@@ -323,6 +323,19 @@ it("agent CLI fallbackは非対応入力とbound runtime情報の欠落・不正
       env: boundEnv,
     },
     { args: ["audit", "--fallback-from", "mcp", "--all-targets"], env: boundEnv },
+    {
+      args: ["append", "--fallback-from", "mcp", "--json", JSON.stringify({
+        schemaVersion: "attacker-controlled",
+        target: { kind: "user-global" },
+        kind: "decision",
+        title: "Changed fallback input",
+        body: "Internal fields are not public MCP input.",
+        preview: "Internal fields must be rejected.",
+        tags: [],
+        idempotencyKey: "changed-fallback-schema-version",
+      })],
+      env: boundEnv,
+    },
     {
       args: ["get-file", "--fallback-from", "mcp", "--json", JSON.stringify({
         target: { kind: "user-global" },

@@ -25976,6 +25976,7 @@ async function runWithMateMemoryCli(args, deps = {}) {
 			const runtimeGenerationId = env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV]?.trim();
 			if (!isUuid(applicationInstanceId) || !isUuid(runtimeGenerationId)) throw usageError("--fallback-from mcp requires the runtime owner selected by the Agent binding.");
 			if (!AGENT_CLI_FALLBACK_COMMANDS.has(request.command)) throw usageError("--fallback-from mcp supports only operations published by MCP tools/list.");
+			if (typeof request.body === "object" && request.body !== null && !Array.isArray(request.body) && Object.prototype.hasOwnProperty.call(request.body, "schemaVersion")) throw usageError("--fallback-from mcp accepts public MCP tool input and does not accept schemaVersion.");
 			if (request.apiUrl || request.discoveryFilePath || request.applicationInstanceId || request.runtimeGenerationId) throw usageError("--fallback-from mcp uses the runtime selected by the Agent binding and does not accept connection selectors.");
 			if (request.command === "file_usage" && typeof request.body === "object" && request.body !== null && Object.keys(request.body).length > 0) throw usageError("--fallback-from mcp file-usage accepts no detail selectors.");
 		}

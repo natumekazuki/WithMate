@@ -279,6 +279,13 @@ describe("general Memory MCP runtime integration", () => {
       assert.equal(fallback.exitCode, 0, JSON.stringify(fallback.value));
       assert.equal(fallback.value.created, true);
 
+      const internalField = await callFallbackCli(fixture, "append", {
+        ...body,
+        schemaVersion: "attacker-controlled",
+      });
+      assert.notEqual(internalField.exitCode, 0);
+      assert.equal(internalField.value.error.code, "WITHMATE_MEMORY_CLI_USAGE");
+
       const changed = await callFallbackCli(fixture, "append", {
         ...body,
         title: "Changed fallback",
