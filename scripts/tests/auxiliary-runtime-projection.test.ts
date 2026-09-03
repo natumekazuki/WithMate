@@ -111,7 +111,7 @@ function createCompanionSession(): CompanionSession {
     model: "gpt-companion",
     reasoningEffort: "medium",
     customAgentName: "buddy",
-    approvalMode: "on-failure",
+    approvalMode: "on-request",
     codexSandboxMode: "workspace-write",
     characterId: "companion-char",
     character: "Companion",

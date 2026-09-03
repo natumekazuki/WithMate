@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
-import type { ApprovalMode } from "../../src/approval-mode.js";
 import type { CodexSandboxMode } from "../../src/codex-sandbox-mode.js";
 import { buildRuntimeSelectionOptions } from "../../src/runtime-selection-options.js";
 
@@ -20,6 +19,14 @@ const providerCatalog: ModelCatalogProvider = {
   ],
 };
 
+// @test-value v1
+// kind = "contract"
+// claim = "providerと現在の選択値から一貫したruntime selector optionsを構築する"
+// oracle = { type = "contract", ref = "docs/design/codex-capability-matrix.md#6-approval--sandbox--model--reasoning-depth" }
+// failure_mode = "provider非対応の設定が現れるか、既存sessionのmodelまたはreasoning表示が失われる"
+// scope = "runtime-selection-options"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildRuntimeSelectionOptions は approval / sandbox / model / reasoning / fallback をまとめて構築する", () => {
   const options = buildRuntimeSelectionOptions({
     providerId: "copilot",
@@ -27,12 +34,11 @@ test("buildRuntimeSelectionOptions は approval / sandbox / model / reasoning / 
     models: providerCatalog.models,
     selectedModel: "legacy-model",
     reasoningEfforts: ["high", "low"],
-    selectedApprovalMode: "on-failure" as ApprovalMode,
+    selectedApprovalMode: "on-request",
     selectedCodexSandboxMode: "danger-full-access" as CodexSandboxMode,
   });
 
   assert.deepEqual(options.approvalChoiceOptions, [
-    { value: "on-failure", label: "on-failure" },
     { value: "never", label: "never" },
     { value: "on-request", label: "on-request" },
     { value: "untrusted", label: "untrusted" },

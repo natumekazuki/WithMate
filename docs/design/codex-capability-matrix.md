@@ -111,7 +111,6 @@
 - UI / session persistence の approval 正本は Codex SDK policy 値
   - `never`
   - `on-request`
-  - `on-failure`
   - `untrusted`
 - Codex session は Sandbox dropdown で `read-only` / `workspace-write` / `workspace-write + network` / `danger-full-access` を選べる
 - `workspace-write + network` は SDK へ `sandboxMode: "workspace-write"` と `networkAccessEnabled: true` の組み合わせで渡す
@@ -241,7 +240,7 @@ Codex capability 棚卸し後の次 task は、次の順で切るのが自然。
 1. `GitHub Copilot minimal integration`
    - 同じ Session UI で `run / cancel / audit log` が通るところまで
 2. `Approval behavior validation`
-   - `never / on-request / on-failure / untrusted` と Codex sandbox mode の実測
+   - `never / on-request / untrusted` と Codex sandbox mode の実測
 3. `Minimal slash command absorption`
    - 必要になった command だけ canonical UI alias として入れる
 

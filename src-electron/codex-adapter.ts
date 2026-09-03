@@ -27,7 +27,7 @@ import type {
   SessionMemoryDelta,
 } from "../src/app-state.js";
 import { getProviderAppSettings } from "../src/provider-settings-state.js";
-import { mapApprovalModeToCodexPolicy } from "../src/approval-mode.js";
+import { mapApprovalModeToCodexPolicy, type ApprovalMode } from "../src/approval-mode.js";
 import {
   resolveCodexSandboxThreadOptions,
   type CodexSdkSandboxMode,
@@ -251,7 +251,7 @@ export type CodexThreadOptions = {
   workingDirectory: string;
   skipGitRepoCheck: true;
   sandboxMode: CodexSdkSandboxMode;
-  approvalPolicy: "never" | "on-request" | "on-failure" | "untrusted";
+  approvalPolicy: ApprovalMode;
   model: string;
   modelReasoningEffort: ModelReasoningEffort;
   networkAccessEnabled?: boolean;

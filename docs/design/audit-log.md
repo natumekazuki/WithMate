@@ -72,7 +72,7 @@ SQLite の `audit_logs` table を使う。
 
 旧 schema の `prompt_text` / `user_message` / `system_prompt_text` / `input_prompt_text` / `composed_prompt_text` は write-path の正本にしない。
 `approval_mode` は新規保存時は provider-neutral canonical value `allow-all / safety / provider-controlled` を正本にする。
-既存 row に残る `never / untrusted / on-request / on-failure` は read-path normalize で吸収し、one-shot migration は前提にしない。
+既存 row に残る `never / untrusted / on-request` は read-path normalize で吸収し、one-shot migration は前提にしない。
 
 ## Background Memory Extraction
 

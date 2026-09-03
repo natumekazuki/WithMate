@@ -1,4 +1,4 @@
-export const APPROVAL_MODE_VALUES = ["never", "on-request", "on-failure", "untrusted"] as const;
+export const APPROVAL_MODE_VALUES = ["never", "on-request", "untrusted"] as const;
 
 export type ApprovalMode = (typeof APPROVAL_MODE_VALUES)[number];
 
@@ -7,7 +7,6 @@ export const DEFAULT_APPROVAL_MODE: ApprovalMode = "untrusted";
 export const approvalModeOptions = [
   { id: "never", label: "never" },
   { id: "on-request", label: "on-request" },
-  { id: "on-failure", label: "on-failure" },
   { id: "untrusted", label: "untrusted" },
 ] as const satisfies Array<{ id: ApprovalMode; label: string }>;
 

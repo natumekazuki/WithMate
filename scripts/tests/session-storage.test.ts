@@ -151,30 +151,6 @@ describe("SessionStorage", () => {
     }
   });
 
-  it("legacy approval 値も read-path normalize で provider-neutral に読める", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
-    const dbPath = path.join(tempDirectory, "withmate.db");
-
-    try {
-      const storage = new SessionStorage(dbPath);
-      const session = storage.upsertSession(createSession("legacy", "workspace-legacy", "char-a", "A"));
-      storage.close();
-
-      const db = new DatabaseSync(dbPath);
-      db.prepare("UPDATE sessions SET approval_mode = ? WHERE id = ?").run("on-failure", session.id);
-      db.close();
-
-      const reopened = new SessionStorage(dbPath);
-      const loaded = reopened.getSession(session.id);
-      reopened.close();
-
-      assert.ok(loaded);
-      assert.equal(loaded.approvalMode, "on-failure");
-    } finally {
-      await removeDirectoryWithRetry(tempDirectory);
-    }
-  });
-
   it("customAgentName を保存して読み戻せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

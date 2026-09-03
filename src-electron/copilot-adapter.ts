@@ -1432,7 +1432,6 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
           : toPermissionDecision("denied-by-rules")
       );
     case "on-request":
-    case "on-failure":
     default:
       return async (request) => {
         if (isReadOnlyPermissionRequest(request)) {
@@ -1463,7 +1462,6 @@ function buildBackgroundPermissionHandler(input: RunBackgroundStructuredPromptIn
           : toPermissionDecision("denied-by-rules")
       );
     case "on-request":
-    case "on-failure":
     default:
       return (request) => (
         isReadOnlyPermissionRequest(request)

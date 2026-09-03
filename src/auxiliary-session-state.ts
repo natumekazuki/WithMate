@@ -1,4 +1,4 @@
-import type { ApprovalMode } from "./approval-mode.js";
+import { normalizeApprovalMode, type ApprovalMode } from "./approval-mode.js";
 import {
   addAllowedAdditionalDirectory,
   removeAllowedAdditionalDirectory,
@@ -439,13 +439,7 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
     reasoningEffort: isModelReasoningEffort(candidate.reasoningEffort)
       ? candidate.reasoningEffort
       : "medium",
-    approvalMode:
-      candidate.approvalMode === "never" ||
-      candidate.approvalMode === "on-request" ||
-      candidate.approvalMode === "on-failure"
-      || candidate.approvalMode === "untrusted"
-        ? candidate.approvalMode
-        : "untrusted",
+    approvalMode: normalizeApprovalMode(candidate.approvalMode),
     codexSandboxMode: normalizeCodexSandboxMode(candidate.codexSandboxMode),
     customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName : "",
     allowedAdditionalDirectories: Array.isArray(candidate.allowedAdditionalDirectories)
