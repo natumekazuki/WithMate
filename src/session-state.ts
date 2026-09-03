@@ -4,6 +4,7 @@ import {
   normalizeCodexSandboxMode,
   type CodexSandboxMode,
 } from "./codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED, normalizeCodexSpeed, type CodexSpeed } from "./codex-speed.js";
 import { normalizeCharacterThemeColors, type CharacterThemeColors } from "./character-state.js";
 import type { CharacterRuntimeSnapshot } from "./character/character-catalog.js";
 import {
@@ -82,6 +83,7 @@ export type Session = {
   runState: string;
   approvalMode: ApprovalMode;
   codexSandboxMode: CodexSandboxMode;
+  codexSpeed: CodexSpeed;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   customAgentName: string;
@@ -163,6 +165,7 @@ export type CreateSessionInput = {
   characterRuntimeSnapshot?: CharacterRuntimeSnapshot | null;
   approvalMode: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;
+  codexSpeed?: CodexSpeed;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
   customAgentName?: string;
@@ -188,6 +191,7 @@ export type CreateSessionRequest = Omit<
   | "branch"
   | "approvalMode"
   | "codexSandboxMode"
+  | "codexSpeed"
   | "model"
   | "reasoningEffort"
   | "customAgentName"
@@ -424,6 +428,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
       (candidate as { codexSandboxMode?: unknown }).codexSandboxMode,
       DEFAULT_CODEX_SANDBOX_MODE,
     ),
+    codexSpeed: normalizeCodexSpeed((candidate as { codexSpeed?: unknown }).codexSpeed),
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
     reasoningEffort: isModelReasoningEffort(candidate.reasoningEffort)
       ? candidate.reasoningEffort
@@ -625,6 +630,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     runState: "idle",
     approvalMode: normalizeApprovalMode(input.approvalMode, DEFAULT_APPROVAL_MODE),
     codexSandboxMode: normalizeCodexSandboxMode(input.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE),
+    codexSpeed: normalizeCodexSpeed(input.codexSpeed ?? DEFAULT_CODEX_SPEED),
     model: input.model?.trim() || DEFAULT_MODEL_ID,
     reasoningEffort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     customAgentName: input.customAgentName?.trim() || "",
@@ -703,6 +709,7 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
     summary.reasoningEffort,
     summary.approvalMode,
     summary.codexSandboxMode,
+    summary.codexSpeed,
     summary.workspacePath,
     summary.branch,
     summary.sessionKind,

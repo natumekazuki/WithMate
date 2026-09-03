@@ -1,6 +1,7 @@
 import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } from "./model-catalog.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import { getCodexSpeedOptions, type CodexSpeed } from "./codex-speed.js";
 import {
   buildModelSelectOptions,
   buildReasoningEffortSelectOptions,
@@ -20,6 +21,7 @@ export type RuntimeSelectionOptions = {
   modelSelectOptions: ModelSelectOption[];
   selectedModelFallbackLabel: string;
   reasoningSelectOptions: ReasoningEffortSelectOption[];
+  speedSelectOptions: RuntimeSelectOption<CodexSpeed>[];
 };
 
 export function buildRuntimeSelectionOptions({
@@ -30,6 +32,7 @@ export function buildRuntimeSelectionOptions({
   reasoningEfforts,
   selectedApprovalMode,
   selectedCodexSandboxMode,
+  selectedCodexSpeed,
 }: {
   providerId: string | null | undefined;
   providerCatalog: ModelCatalogProvider | null | undefined;
@@ -38,6 +41,7 @@ export function buildRuntimeSelectionOptions({
   reasoningEfforts: readonly ModelReasoningEffort[];
   selectedApprovalMode: ApprovalMode;
   selectedCodexSandboxMode: CodexSandboxMode;
+  selectedCodexSpeed: CodexSpeed;
 }): RuntimeSelectionOptions {
   const approvalChoiceOptions = (() => {
     const options = getApprovalOptionsForProvider(providerId);
@@ -52,6 +56,7 @@ export function buildRuntimeSelectionOptions({
   const modelSelectOptions = buildModelSelectOptions(models, selectedModel);
   const selectedModelFallbackLabel = resolveModelFallbackLabel(providerCatalog, selectedModel);
   const reasoningSelectOptions = buildReasoningEffortSelectOptions(reasoningEfforts);
+  const speedSelectOptions = getCodexSpeedOptions(providerId);
 
   return {
     approvalChoiceOptions,
@@ -59,5 +64,10 @@ export function buildRuntimeSelectionOptions({
     modelSelectOptions,
     selectedModelFallbackLabel,
     reasoningSelectOptions,
+    speedSelectOptions: speedSelectOptions.length === 0
+      ? []
+      : speedSelectOptions.some((option) => option.value === selectedCodexSpeed)
+        ? speedSelectOptions
+        : [{ value: selectedCodexSpeed, label: selectedCodexSpeed }, ...speedSelectOptions],
   };
 }

@@ -1,5 +1,6 @@
 import { type ApprovalMode } from "./approval-mode.js";
 import { type CodexSandboxMode } from "./codex-sandbox-mode.js";
+import { type CodexSpeed } from "./codex-speed.js";
 import { type ModelReasoningEffort } from "./model-catalog.js";
 
 export type DiffRow = {
@@ -353,6 +354,7 @@ export type RunSessionTurnRequest = {
   reasoningEffort?: ModelReasoningEffort;
   approvalMode?: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;
+  codexSpeed?: CodexSpeed;
 };
 
 const SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

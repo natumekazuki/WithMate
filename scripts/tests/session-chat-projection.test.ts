@@ -8,7 +8,7 @@ import {
   type AgentSessionChatProjectionInput,
 } from "../../src/chat/session-chat-projection.js";
 import type { CharacterProfile } from "../../src/app-state.js";
-import type { SessionContextPaneProps } from "../../src/session-components.js";
+import { SessionComposerExpanded, type SessionContextPaneProps } from "../../src/session-components.js";
 import type { Session } from "../../src/session-state.js";
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 
@@ -67,6 +67,7 @@ function createSession(): Session {
     runState: "idle",
     approvalMode: "never",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "fast",
     model: "gpt-test",
     reasoningEffort: "low",
     customAgentName: "",
@@ -142,6 +143,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     isComposerBlockedFeedbackActive: false,
     approvalChoiceOptions: [{ value: "never", label: "never" }],
     sandboxChoiceOptions: [{ value: "workspace-write", label: "workspace-write" }],
+    speedChoiceOptions: [{ value: "standard", label: "Standard" }, { value: "fast", label: "Fast" }],
     modelSelectOptions: [{ value: "gpt-test", label: "GPT Test" }],
     selectedModelFallbackLabel: "GPT Test",
     reasoningSelectOptions: [{ value: "low", label: "low" }],
@@ -236,6 +238,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onSendOrCancel: noop,
     onChangeApprovalMode: noop,
     onChangeCodexSandboxMode: noop,
+    onChangeCodexSpeed: noop,
     onChangeModel: noop,
     onChangeReasoningEffort: noop,
     onStartContextRailResize: noop,
@@ -664,4 +667,29 @@ test("buildAgentSessionChatWindowProps は session runState ではなく running
 
   assert.equal(props.composerProps.isRunning, false);
   assert.equal(props.compactActionDockProps.isRunning, false);
+});
+
+// @test-value v1
+// kind = "contract"
+// claim = "shared composer projectionは表示中SessionのSpeedを渡し、running時は既存runtime option制約で変更不可にする"
+// oracle = { type = "contract", ref = "accepted behavior: shared UI" }
+// failure_mode = "表示中Sessionの選択値と表示がずれる、またはrun中にSpeedを変更できる"
+// scope = "session-chat-projection"
+// lifecycle = "permanent"
+// @end-test-value
+test("buildAgentSessionChatWindowProps はSpeed選択値とrunning制約をshared composerへ渡す", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    isSelectedSessionRunning: true,
+  }));
+
+  assert.equal(props.composerProps.selectedCodexSpeed, "fast");
+  assert.deepEqual(props.composerProps.speedOptions, [
+    { value: "standard", label: "Standard" },
+    { value: "fast", label: "Fast" },
+  ]);
+  const html = renderToStaticMarkup(React.createElement(
+    SessionComposerExpanded,
+    props.composerProps,
+  ));
+  assert.match(html, /disabled="" aria-label="Speed"/);
 });

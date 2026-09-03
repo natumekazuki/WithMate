@@ -2,6 +2,7 @@ import path from "node:path";
 
 import {
   Codex,
+  type CodexOptions,
   type Thread,
   type ThreadEvent,
   type ThreadItem,
@@ -32,6 +33,11 @@ import {
   resolveCodexSandboxThreadOptions,
   type CodexSdkSandboxMode,
 } from "../src/codex-sandbox-mode.js";
+import {
+  DEFAULT_CODEX_SPEED,
+  mapCodexSpeedToServiceTier,
+  type CodexServiceTier,
+} from "../src/codex-speed.js";
 import {
   reasoningEffortLabel,
   resolveModelSelection,
@@ -171,7 +177,10 @@ const DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS = 5_000;
 export type CodexAdapterOptions = {
   streamCloseGraceMs?: number;
   snapshotDeadlineMs?: number;
+  createClient?: (options: CodexOptions) => Codex;
 };
+
+type CodexClientScope = "foreground" | "background";
 
 const CODEX_STREAM_CLOSE_TIMEOUT = Symbol("codex-stream-close-timeout");
 const CODEX_SNAPSHOT_TIMEOUT = Symbol("codex-snapshot-timeout");
@@ -1369,6 +1378,7 @@ function toRunChecks(
   const checks: RunCheck[] = [
     { label: "provider", value: providerCatalog.label },
     { label: "approval", value: session.approvalMode },
+    buildCodexSpeedRunCheck(session.codexSpeed),
     { label: "model", value: selection.resolvedModel },
     { label: "reasoning", value: reasoningEffortLabel(selection.resolvedReasoningEffort) },
   ];
@@ -1392,6 +1402,10 @@ function toRunChecks(
   }
 
   return checks;
+}
+
+export function buildCodexSpeedRunCheck(speed: Session["codexSpeed"]): RunCheck {
+  return { label: "speed", value: speed };
 }
 
 function summarizeSnapshotWarning(stats: SnapshotCaptureStats): string {
@@ -1580,7 +1594,13 @@ export class CodexAdapter implements ProviderTurnAdapter {
     providerQuotaTelemetry: ProviderQuotaTelemetry | null;
   }> {
     const signal = input.signal ?? AbortSignal.timeout(input.timeoutMs);
-    const { client } = this.getClient(input.providerId, input.appSettings);
+    const { client } = this.getClient(
+      input.providerId,
+      input.appSettings,
+      null,
+      "background",
+      mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
+    );
     const thread = client.startThread(toCodexSdkThreadOptions(this.buildBackgroundThreadOptions(input)));
 
     const backgroundInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
@@ -1610,25 +1630,39 @@ export class CodexAdapter implements ProviderTurnAdapter {
     providerId: string,
     appSettings: AppSettings,
     agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
+    scope: CodexClientScope = "foreground",
+    serviceTier: CodexServiceTier = mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
   ): { client: Codex; clientKey: string } {
     const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
     const codexPathOverride = resolvePackagedProviderBinaryPath("codex");
     const bindingCacheKey = buildProviderAgentRuntimeBindingCacheKey(agentRuntimeBinding);
-    const clientKey = JSON.stringify([providerId, codingApiKey || null, codexPathOverride, bindingCacheKey]);
+    // Background prompts remain Standard and use a separate cache scope so a foreground Fast client cannot leak into them.
+    const clientKey = JSON.stringify([
+      providerId,
+      codingApiKey || null,
+      codexPathOverride,
+      bindingCacheKey,
+      scope,
+      serviceTier,
+    ]);
     const cached = this.clients.get(clientKey);
     if (cached) {
       return { client: cached, clientKey };
     }
 
-    const clientOptions = {
+    const clientOptions: CodexOptions = {
       ...(codingApiKey ? { apiKey: codingApiKey } : {}),
       ...(codexPathOverride ? { codexPathOverride } : {}),
+      config: {
+        // Keep Standard explicit so a user's global config.toml cannot silently opt this Session into Fast.
+        service_tier: serviceTier,
+      },
       env: mergeDefinedProviderEnv(
         process.env,
         buildProviderAgentRuntimeBindingEnv(agentRuntimeBinding),
       ),
     };
-    const client = new Codex(clientOptions);
+    const client = this.options.createClient?.(clientOptions) ?? new Codex(clientOptions);
     this.clients.set(clientKey, client);
     return { client, clientKey };
   }
@@ -1638,6 +1672,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
       input.providerCatalog.id,
       input.appSettings,
       input.agentRuntimeBinding,
+      "foreground",
+      mapCodexSpeedToServiceTier(input.session.codexSpeed),
     );
     const previousClientKey = this.clientKeysBySession.get(input.session.id);
     if (previousClientKey && previousClientKey !== clientKey) {
@@ -2157,6 +2193,7 @@ export function buildCodexThreadSettings(
     session.allowedAdditionalDirectories,
   );
   const sandboxOptions = resolveCodexSandboxThreadOptions(session.codexSandboxMode);
+  const serviceTier = mapCodexSpeedToServiceTier(session.codexSpeed);
   const options: CodexThreadOptions = {
     workingDirectory: workspacePath,
     skipGitRepoCheck: true,
@@ -2179,6 +2216,7 @@ export function buildCodexThreadSettings(
       options.model,
       options.modelReasoningEffort,
       additionalDirectories,
+      serviceTier,
       clientKey,
     ]),
   };

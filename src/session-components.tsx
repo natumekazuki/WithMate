@@ -33,6 +33,7 @@ import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { CodexSpeed } from "./codex-speed.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -3701,6 +3702,8 @@ export type SessionComposerExpandedProps = {
   selectedApprovalMode: ApprovalMode;
   sandboxOptions: Array<{ value: CodexSandboxMode; label: string }>;
   selectedCodexSandboxMode: CodexSandboxMode;
+  speedOptions: Array<{ value: CodexSpeed; label: string }>;
+  selectedCodexSpeed: CodexSpeed;
   modelOptions: SessionSelectOption[];
   selectedModel: string;
   selectedModelFallbackLabel: string;
@@ -3731,6 +3734,7 @@ export type SessionComposerExpandedProps = {
   onSendOrCancel: () => void;
   onChangeApprovalMode: (value: ApprovalMode) => void;
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
+  onChangeCodexSpeed: (value: CodexSpeed) => void;
   onChangeModel: (value: string) => void;
   onChangeReasoningEffort: (value: string) => void;
   onMessageViewModeChange?: (mode: MessageViewMode) => void;
@@ -3777,6 +3781,8 @@ export function SessionComposerExpanded({
   selectedApprovalMode,
   sandboxOptions,
   selectedCodexSandboxMode,
+  speedOptions = [],
+  selectedCodexSpeed = "standard",
   modelOptions,
   selectedModel,
   selectedModelFallbackLabel,
@@ -3807,6 +3813,7 @@ export function SessionComposerExpanded({
   onSendOrCancel,
   onChangeApprovalMode,
   onChangeCodexSandboxMode,
+  onChangeCodexSpeed = () => {},
   onChangeModel,
   onChangeReasoningEffort,
   onMessageViewModeChange = () => {},
@@ -4226,6 +4233,24 @@ export function SessionComposerExpanded({
               ))}
             </select>
           </div>
+
+          {speedOptions.length > 0 ? (
+            <div className="composer-setting-field composer-setting-speed">
+              <span>Speed</span>
+              <select
+                value={selectedCodexSpeed}
+                onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
+                disabled={isRunning || composerBlocked}
+                aria-label="Speed"
+              >
+                {speedOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
         </div>
 
         {isRunning ? null : (

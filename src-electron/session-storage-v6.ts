@@ -807,6 +807,7 @@ export class SessionStorageV6 {
       characterName: session.character,
       characterIconPath: session.characterIconPath,
       characterThemeColors: session.characterThemeColors,
+      codexSpeed: session.codexSpeed,
     };
     const conflictClause = operation === "create"
       ? "ON CONFLICT(id) DO NOTHING"
@@ -956,6 +957,7 @@ export class SessionStorageV6 {
       runState: runtimePolicy.runState,
       approvalMode: row.approval_mode,
       codexSandboxMode: row.codex_sandbox_mode,
+      codexSpeed: runtimePolicy.codexSpeed,
       model: row.model_id,
       reasoningEffort: row.reasoning_effort,
       customAgentName: row.custom_agent_name,

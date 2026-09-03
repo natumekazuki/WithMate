@@ -17,6 +17,7 @@ type CreateSessionMetadataInput = Omit<
   | "branch"
   | "approvalMode"
   | "codexSandboxMode"
+  | "codexSpeed"
   | "model"
   | "reasoningEffort"
   | "customAgentName"

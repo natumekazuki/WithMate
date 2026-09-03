@@ -31,6 +31,7 @@ import {
 import {
   buildSessionWithApprovalMode,
   buildSessionWithCodexSandboxMode,
+  buildSessionWithCodexSpeed,
   buildSessionWithModelChange,
   buildSessionWithReasoningEffort,
 } from "./runtime-option-state.js";
@@ -235,6 +236,7 @@ import {
 } from "./auxiliary-session-state.js";
 import {
   runAuxiliaryApprovalModeChangeOperation,
+  runAuxiliaryCodexSpeedChangeOperation,
   runAuxiliaryModelChangeOperation,
   runAuxiliaryReasoningEffortChangeOperation,
   runAuxiliarySandboxModeChangeOperation,
@@ -2507,6 +2509,7 @@ export default function AgentSessionWindowApp() {
     modelSelectOptions,
     selectedModelFallbackLabel,
     reasoningSelectOptions,
+    speedSelectOptions,
   } = useMemo(
     () => buildRuntimeSelectionOptions({
       providerId: displayedSession?.provider,
@@ -2516,11 +2519,13 @@ export default function AgentSessionWindowApp() {
       reasoningEfforts: availableReasoningEfforts,
       selectedApprovalMode: displayedSession?.approvalMode ?? "untrusted",
       selectedCodexSandboxMode: displayedSession?.codexSandboxMode ?? "workspace-write",
+      selectedCodexSpeed: displayedSession?.codexSpeed ?? "standard",
     }),
     [
       displayedSession?.provider,
       displayedSession?.approvalMode,
       displayedSession?.codexSandboxMode,
+      displayedSession?.codexSpeed,
       displayedSession?.model,
       modelOptions,
       selectedProviderCatalog,
@@ -3075,6 +3080,22 @@ export default function AgentSessionWindowApp() {
     await persistSession(nextSession);
   };
 
+  const handleChangeCodexSpeed = async (codexSpeed: Session["codexSpeed"]) => {
+    if (
+      !selectedSession ||
+      selectedSession.provider !== "codex" ||
+      isSelectedSessionReadOnly ||
+      selectedSessionRunState === "running"
+    ) {
+      return;
+    }
+
+    const nextSession = buildSessionWithCodexSpeed(selectedSession, codexSpeed, currentTimestampLabel());
+    if (nextSession) {
+      await persistSession(nextSession);
+    }
+  };
+
   const handleStartTitleEdit = createStartTitleEditHandler({
     getTitle: () => selectedSession?.taskTitle,
     canStart: () => !!selectedSession && !isSelectedSessionReadOnly && selectedSessionRunState !== "running",
@@ -3194,6 +3215,14 @@ export default function AgentSessionWindowApp() {
   const handleChangeAuxiliarySandboxMode = async (codexSandboxMode: Session["codexSandboxMode"]) => {
     await runAuxiliarySandboxModeChangeOperation({
       codexSandboxMode,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  };
+
+  const handleChangeAuxiliaryCodexSpeed = async (codexSpeed: Session["codexSpeed"]) => {
+    await runAuxiliaryCodexSpeedChangeOperation({
+      codexSpeed,
       updateActiveAuxiliarySession,
       createTimestampLabel: currentTimestampLabel,
     });
@@ -4405,6 +4434,7 @@ export default function AgentSessionWindowApp() {
           forceComposerBlockedFeedback && renderedComposerSendability.feedbackTone === "blocked",
         approvalChoiceOptions,
         sandboxChoiceOptions,
+        speedChoiceOptions: speedSelectOptions,
         modelSelectOptions,
         selectedModelFallbackLabel,
         reasoningSelectOptions,
@@ -4597,6 +4627,11 @@ export default function AgentSessionWindowApp() {
           shouldUseAuxiliary: !!activeAuxiliarySession,
           onAuxiliaryChange: handleChangeAuxiliarySandboxMode,
           onSelectedSessionChange: handleChangeCodexSandboxMode,
+        }),
+        onChangeCodexSpeed: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["codexSpeed"]>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryCodexSpeed,
+          onSelectedSessionChange: handleChangeCodexSpeed,
         }),
         onChangeModel: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
           shouldUseAuxiliary: !!activeAuxiliarySession,

@@ -3,6 +3,7 @@ import {
   DEFAULT_CODEX_SANDBOX_MODE,
   type CodexSandboxMode,
 } from "../src/codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED, type CodexSpeed } from "../src/codex-speed.js";
 import {
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,
@@ -22,6 +23,7 @@ export type SessionLaunchSelection = {
   reasoningEffort: ModelReasoningEffort;
   approvalMode: ApprovalMode;
   codexSandboxMode: CodexSandboxMode;
+  codexSpeed: CodexSpeed;
   customAgentName: string;
 };
 
@@ -80,6 +82,7 @@ export class SessionLaunchSelectionService {
       reasoningEffort: modelSelection.resolvedReasoningEffort,
       approvalMode: latestSession?.approvalMode ?? DEFAULT_APPROVAL_MODE,
       codexSandboxMode: latestSession?.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
+      codexSpeed: DEFAULT_CODEX_SPEED,
       customAgentName: latestSession?.customAgentName ?? "",
     };
   }

@@ -1,5 +1,6 @@
 import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED } from "../codex-speed.js";
 import {
   DEFAULT_CHARACTER_SESSION_COPY,
   DEFAULT_CHARACTER_THEME_COLORS,
@@ -548,6 +549,8 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     selectedApprovalMode: DEFAULT_APPROVAL_MODE,
     sandboxOptions: [],
     selectedCodexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+    speedOptions: [],
+    selectedCodexSpeed: DEFAULT_CODEX_SPEED,
     onPickFile: chatWindowNoop,
     onPickFolder: chatWindowNoop,
     onPickImage: chatWindowNoop,
@@ -564,6 +567,7 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     onDraftCompositionEnd: chatWindowNoop,
     onChangeApprovalMode: chatWindowNoop,
     onChangeCodexSandboxMode: chatWindowNoop,
+    onChangeCodexSpeed: chatWindowNoop,
     ...props,
   };
 }

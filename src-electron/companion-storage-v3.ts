@@ -23,6 +23,7 @@ import {
 } from "../src/character/character-runtime-snapshot.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED, normalizeCodexSpeed } from "../src/codex-speed.js";
 import {
   DEFAULT_CATALOG_REVISION,
   DEFAULT_MODEL_ID,
@@ -69,6 +70,7 @@ type CompanionSessionRow = {
   custom_agent_name: string;
   approval_mode: string;
   codex_sandbox_mode: string;
+  codex_speed: string;
   character_id: string;
   character_name: string;
   character_role_preview: string;
@@ -177,6 +179,7 @@ const COMPANION_SESSION_SUMMARY_COLUMNS = `
   custom_agent_name,
   approval_mode,
   codex_sandbox_mode,
+  codex_speed,
   character_id,
   character_name,
   character_role_preview,
@@ -213,6 +216,7 @@ const COMPANION_SESSION_DETAIL_COLUMNS = `
   custom_agent_name,
   approval_mode,
   codex_sandbox_mode,
+  codex_speed,
   character_id,
   character_name,
   character_role_preview,
@@ -499,6 +503,7 @@ async function rowToSession(row: CompanionSessionRow, blobStore: TextBlobStore):
       row.codex_sandbox_mode === "danger-full-access"
         ? row.codex_sandbox_mode
         : DEFAULT_CODEX_SANDBOX_MODE,
+    codexSpeed: normalizeCodexSpeed(row.codex_speed),
     characterId: row.character_id,
     character: row.character_name,
     characterRoleMarkdown: row.character_role_blob_id
@@ -586,6 +591,7 @@ function sessionToSummary(
     reasoningEffort: session.reasoningEffort,
     approvalMode: session.approvalMode,
     codexSandboxMode: session.codexSandboxMode,
+    codexSpeed: session.codexSpeed,
     character: session.character,
     characterRoleMarkdown: session.characterRoleMarkdown,
     characterIconPath: session.characterIconPath,
@@ -629,6 +635,7 @@ function rowToSessionSummary(
       row.codex_sandbox_mode === "danger-full-access"
       ? row.codex_sandbox_mode
       : DEFAULT_CODEX_SANDBOX_MODE,
+    codexSpeed: normalizeCodexSpeed(row.codex_speed),
     character: row.character_name,
     characterRoleMarkdown: row.character_role_preview,
     characterIconPath: row.character_icon_path,
@@ -850,6 +857,9 @@ export class CompanionStorageV3 {
     );
     if (!columns.has("character_runtime_snapshot_json")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN character_runtime_snapshot_json TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.has("codex_speed")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN codex_speed TEXT NOT NULL DEFAULT 'standard';");
     }
   }
 
@@ -1082,7 +1092,7 @@ export class CompanionStorageV3 {
       INSERT INTO companion_sessions (
         ${COMPANION_SESSION_DETAIL_COLUMNS},
         message_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.groupId,
@@ -1108,6 +1118,7 @@ export class CompanionStorageV3 {
       session.customAgentName,
       session.approvalMode,
       session.codexSandboxMode,
+      normalizeCodexSpeed(session.codexSpeed),
       session.characterId,
       session.character,
       preview(session.characterRoleMarkdown),
@@ -1140,6 +1151,7 @@ export class CompanionStorageV3 {
         custom_agent_name = ?,
         approval_mode = ?,
         codex_sandbox_mode = ?,
+        codex_speed = ?,
         character_id = ?,
         character_name = ?,
         character_role_preview = ?,
@@ -1167,6 +1179,7 @@ export class CompanionStorageV3 {
       session.customAgentName,
       session.approvalMode,
       session.codexSandboxMode,
+      normalizeCodexSpeed(session.codexSpeed),
       session.characterId,
       session.character,
       preview(session.characterRoleMarkdown),

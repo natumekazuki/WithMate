@@ -4,6 +4,7 @@ import {
   removeAllowedAdditionalDirectory,
 } from "./additional-directory-state.js";
 import { normalizeCodexSandboxMode, type CodexSandboxMode } from "./codex-sandbox-mode.js";
+import { normalizeCodexSpeed, type CodexSpeed } from "./codex-speed.js";
 import {
   isModelReasoningEffort,
   resolveModelChangeSelection,
@@ -24,6 +25,7 @@ export type CreateAuxiliarySessionInput = {
   reasoningEffort?: ModelReasoningEffort;
   approvalMode?: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;
+  codexSpeed?: CodexSpeed;
   customAgentName?: string;
 };
 
@@ -39,6 +41,7 @@ export type AuxiliarySession = {
   reasoningEffort: ModelReasoningEffort;
   approvalMode: ApprovalMode;
   codexSandboxMode: CodexSandboxMode;
+  codexSpeed: CodexSpeed;
   customAgentName: string;
   allowedAdditionalDirectories: string[];
   threadId: string;
@@ -66,7 +69,7 @@ export function applyAuxiliarySessionPatch(
 
 export function applyAuxiliarySessionRuntimeOptionsPatch(
   session: AuxiliarySession,
-  patch: Partial<Pick<AuxiliarySession, "approvalMode" | "codexSandboxMode">>,
+  patch: Partial<Pick<AuxiliarySession, "approvalMode" | "codexSandboxMode" | "codexSpeed">>,
   updatedAt: string,
 ): AuxiliarySession {
   return applyAuxiliarySessionPatch(session, patch, updatedAt);
@@ -86,6 +89,14 @@ export function applyAuxiliarySessionCodexSandboxModeChange(
   updatedAt: string,
 ): AuxiliarySession {
   return applyAuxiliarySessionRuntimeOptionsPatch(session, { codexSandboxMode }, updatedAt);
+}
+
+export function applyAuxiliarySessionCodexSpeedChange(
+  session: AuxiliarySession,
+  codexSpeed: CodexSpeed,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionRuntimeOptionsPatch(session, { codexSpeed }, updatedAt);
 }
 
 export function applyAuxiliarySessionModelSelectionPatch(
@@ -441,6 +452,7 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
       : "medium",
     approvalMode: normalizeApprovalMode(candidate.approvalMode),
     codexSandboxMode: normalizeCodexSandboxMode(candidate.codexSandboxMode),
+    codexSpeed: normalizeCodexSpeed(candidate.codexSpeed),
     customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName : "",
     allowedAdditionalDirectories: Array.isArray(candidate.allowedAdditionalDirectories)
       ? candidate.allowedAdditionalDirectories.filter((entry): entry is string => typeof entry === "string")

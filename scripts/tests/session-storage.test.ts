@@ -245,6 +245,14 @@ describe("SessionStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "legacy Session summary projectionはdetail破損時もStandardへ正規化したCodex speedを返す"
+  // oracle = { type = "contract", ref = "accepted behavior: existing saved data default" }
+  // failure_mode = "旧Session summaryの欠落speedがFastへ昇格するか一覧取得を壊す"
+  // scope = "session-storage-summary"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("listSessionSummaries は detail JSON が壊れていても summary だけ返せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -292,6 +300,7 @@ describe("SessionStorage", () => {
           runState: session.runState,
           approvalMode: session.approvalMode,
           codexSandboxMode: session.codexSandboxMode,
+          codexSpeed: "standard",
           model: session.model,
           reasoningEffort: session.reasoningEffort,
           customAgentName: session.customAgentName,
