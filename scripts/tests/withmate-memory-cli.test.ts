@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 
+import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src/character-context/character-context-contract.js";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import { createMemoryErrorResponse } from "../../src/memory-v6/memory-response-contract.js";
 import {
@@ -218,17 +219,32 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
 describe("withmate-memory CLI", () => {
 // @test-value v1
 // kind = "security"
-// claim = "agent CLI fallbackはMCP credentialとbound runtime identityを選び、bindingとturn capabilityを同じrequestへ伝搬する"
+// claim = "agent CLI fallbackはMCP credentialとbound runtime identityを選び、公開tool入力をMCPと同じruntime bodyへ変換してbindingとturn capabilityを伝搬する"
 // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-// failure_mode = "fallbackがoperator credentialへ昇格する、別runtimeを選ぶ、またはbinding/turnなしでmutationを送る"
+// failure_mode = "fallbackがoperator credentialへ昇格する、別runtimeを選ぶ、binding/turnを欠く、またはMCP内部fieldを補わずadmissionと異なるbodyを送る"
 // scope = "withmate-memory-agent-cli-fallback"
 // lifecycle = "permanent"
 // @end-test-value
 it("agent CLI fallbackはMCP credentialとruntime bindingを使う", async () => {
   const stdout = createOutputCapture();
   const observed: Array<{ connection: WithMateMemoryRuntimeConnection; operation: WithMateMemoryRuntimeOperation; options: Record<string, unknown> }> = [];
+  const env = {
+    WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+    WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+    WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-a",
+    WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+    WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
+    WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "22222222-2222-4222-8222-222222222222",
+    WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777",
+    WITHMATE_MEMORY_API_SECRET: TEST_API_SECRET,
+    WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+    WITHMATE_MEMORY_OPERATOR_API_SECRET: TEST_OPERATOR_SECRET,
+  };
+  const runtimeCall: NonNullable<WithMateMemoryCliDeps["runtimeCall"]> = async (connection, operation, options) => {
+    observed.push({ connection, operation, options });
+    return { ok: true, status: 200, value: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, created: true } };
+  };
   const body = {
-    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
     target: { kind: "project", project: { type: "id", id: "project-a" } },
     kind: "decision",
     title: "Fallback",
@@ -240,43 +256,51 @@ it("agent CLI fallbackはMCP credentialとruntime bindingを使う", async () =>
   const exitCode = await runWithMateMemoryCliImpl([
     "append", "--fallback-from", "mcp", "--json", JSON.stringify(body),
   ], {
-    env: {
-      WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
-      WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
-      WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-a",
-      WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
-      WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
-      WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "22222222-2222-4222-8222-222222222222",
-      WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777",
-      WITHMATE_MEMORY_API_SECRET: TEST_API_SECRET,
-      WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
-      WITHMATE_MEMORY_OPERATOR_API_SECRET: TEST_OPERATOR_SECRET,
-    },
+    env,
     stdout: stdout.stream,
-    runtimeCall: async (connection, operation, options) => {
-      observed.push({ connection, operation, options });
-      return { ok: true, status: 200, value: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, created: true } };
-    },
+    runtimeCall,
   });
 
   assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
   assert.equal(observed.length, 1);
   assert.deepEqual(observed[0].connection.credential, { adapter: "mcp", adapterSecret: "mcp-secret" });
   assert.equal(observed[0].operation.fallbackFrom, "mcp");
-  assert.deepEqual(observed[0].operation.body, body);
+  assert.deepEqual(observed[0].operation.body, {
+    ...body,
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+  });
   assert.equal(observed[0].options.bindingReference, "binding-a");
   assert.equal(observed[0].options.turnCapability, "turn-a");
+
+  const characterBody = {
+    query: "fallback defaults",
+    scope: { scope: "character" },
+  };
+  const characterExitCode = await runWithMateMemoryCliImpl([
+    "character-memory-search", "--fallback-from", "mcp", "--json", JSON.stringify(characterBody),
+  ], {
+    env,
+    stdout: createOutputCapture().stream,
+    runtimeCall,
+  });
+  assert.equal(characterExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+  assert.equal(observed.length, 2);
+  assert.deepEqual(observed[1].operation.body, {
+    ...characterBody,
+    limit: 5,
+    schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+  });
 });
 
 // @test-value v1
 // kind = "security"
-// claim = "provider-bound CLIは通常operator modeと、不完全またはoperator-onlyなfallback入力をdispatch前に拒否する"
+// claim = "provider-bound CLIは通常operator mode、不完全またはoperator-onlyなfallback入力、非idempotent file exportをdispatch前に拒否する"
 // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-// failure_mode = "bound processがfallback markerを省略してoperator credentialを選ぶ、またはmarkerでoperator authorityやcaller選択runtimeへ到達する"
+// failure_mode = "bound processがfallback markerを省略してoperator credentialを選ぶ、markerでoperator authorityやcaller選択runtimeへ到達する、またはget-file/export-filesをagent fallbackとしてdispatchする"
 // scope = "withmate-memory-agent-cli-fallback"
 // lifecycle = "permanent"
 // @end-test-value
-it("agent CLI fallbackはoperator-only入力とbound runtime情報の欠落・不正を拒否する", async () => {
+it("agent CLI fallbackは非対応入力とbound runtime情報の欠落・不正を拒否する", async () => {
   const boundEnv = {
     WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
     WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
@@ -299,6 +323,22 @@ it("agent CLI fallbackはoperator-only入力とbound runtime情報の欠落・�
       env: boundEnv,
     },
     { args: ["audit", "--fallback-from", "mcp", "--all-targets"], env: boundEnv },
+    {
+      args: ["get-file", "--fallback-from", "mcp", "--json", JSON.stringify({
+        target: { kind: "user-global" },
+        objectId: "a".repeat(32),
+        outputPath: "C:/tmp/memory.bin",
+      })],
+      env: boundEnv,
+    },
+    {
+      args: ["export-files", "--fallback-from", "mcp", "--json", JSON.stringify({
+        target: { kind: "user-global" },
+        entryId: "memory-a",
+        outputDirectoryPath: "C:/tmp/memory-export",
+      })],
+      env: boundEnv,
+    },
     {
       args: ["search", "--fallback-from", "mcp", "--api-url", "http://127.0.0.1:7777", "--json", JSON.stringify({})],
       env: boundEnv,

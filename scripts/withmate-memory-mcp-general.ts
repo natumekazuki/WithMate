@@ -9,6 +9,7 @@ import {
   MEMORY_V6_SCHEMA_VERSION,
 } from "../src/memory-v6/memory-contract.js";
 import { MEMORY_ABSOLUTE_PATH_PATTERN } from "../src/memory-v6/memory-validation.js";
+import { buildWithMateMemoryMcpRuntimeBody } from "./withmate-memory-mcp-operation.js";
 
 type GeneralMemoryRuntimeCall = (operation: {
   method: "GET" | "POST";
@@ -327,14 +328,14 @@ export function registerGeneralMemoryMcpTools(
     limit: z.number().int().min(1).max(MEMORY_RESULT_LIMIT_MAX).optional(),
     cursor: z.string().min(1).max(500).optional(),
   }).strict(), createMemoryToolOutputSchema(searchSuccessSchema, ["schemaVersion", "items"]), (input) => ({
-    method: "POST", path: "/v1/search", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: "read",
+    method: "POST", path: "/v1/search", body: buildWithMateMemoryMcpRuntimeBody("search", input), operationKind: "read",
   }));
 
   register("memory.get_entry", z.object({
     entryId: z.string().min(1).max(200),
     target: memoryTargetSchema,
   }).strict(), createMemoryToolOutputSchema(getEntrySuccessSchema, ["schemaVersion", "entry"]), (input) => ({
-    method: "POST", path: "/v1/get_entry", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: "read",
+    method: "POST", path: "/v1/get_entry", body: buildWithMateMemoryMcpRuntimeBody("get_entry", input), operationKind: "read",
   }));
 
   register("memory.list_targets", z.object({
@@ -343,7 +344,7 @@ export function registerGeneralMemoryMcpTools(
     limit: z.number().int().min(1).max(200).optional(),
     cursor: z.string().min(1).max(500).optional(),
   }).strict(), createMemoryToolOutputSchema(listTargetsSuccessSchema, ["schemaVersion", "items"]), (input) => ({
-    method: "POST", path: "/v1/list_targets", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: "read",
+    method: "POST", path: "/v1/list_targets", body: buildWithMateMemoryMcpRuntimeBody("list_targets", input), operationKind: "read",
   }));
 
   register("memory.list_entries", z.object({
@@ -355,7 +356,7 @@ export function registerGeneralMemoryMcpTools(
     limit: z.number().int().min(1).max(200).optional(),
     cursor: z.string().min(1).max(500).optional(),
   }).strict(), createMemoryToolOutputSchema(listEntriesSuccessSchema, ["schemaVersion", "items"]), (input) => ({
-    method: "POST", path: "/v1/list_entries", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: "read",
+    method: "POST", path: "/v1/list_entries", body: buildWithMateMemoryMcpRuntimeBody("list_entries", input), operationKind: "read",
   }));
 
   register("memory.list_tags", z.object({
@@ -374,7 +375,7 @@ export function registerGeneralMemoryMcpTools(
       then: { properties: { withCounts: { const: true } }, required: ["withCounts"] },
     }],
   }), createMemoryToolOutputSchema(listTagsSuccessSchema, ["schemaVersion", "tags"]), (input) => ({
-    method: "POST", path: "/v1/list_tags", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: "read",
+    method: "POST", path: "/v1/list_tags", body: buildWithMateMemoryMcpRuntimeBody("list_tags", input), operationKind: "read",
   }));
 
   register("memory.append", z.object({
@@ -390,7 +391,7 @@ export function registerGeneralMemoryMcpTools(
     sourceMessageId: z.string().min(1).max(200).optional(),
     idempotencyKey: z.string().min(1).max(200),
   }).strict(), createMemoryToolOutputSchema(appendSuccessSchema, ["schemaVersion", "entry", "created"]), (input) => ({
-    method: "POST", path: "/v1/append", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: "write",
+    method: "POST", path: "/v1/append", body: buildWithMateMemoryMcpRuntimeBody("append", input), operationKind: "write",
   }));
 
   register("memory.forget", z.object({
@@ -401,7 +402,7 @@ export function registerGeneralMemoryMcpTools(
     idempotencyKey: z.string().min(1).max(200),
     dryRun: z.boolean().optional(),
   }).strict(), createMemoryToolOutputSchema(forgetSuccessSchema, ["schemaVersion", "results"]), (input) => ({
-    method: "POST", path: "/v1/forget", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: input.dryRun ? "read" : "write",
+    method: "POST", path: "/v1/forget", body: buildWithMateMemoryMcpRuntimeBody("forget", input), operationKind: input.dryRun ? "read" : "write",
   }));
 
   register("memory.move_entry", z.object({
@@ -412,7 +413,7 @@ export function registerGeneralMemoryMcpTools(
     sourceMessageId: z.string().min(1).max(200).optional(),
     idempotencyKey: z.string().min(1).max(200),
   }).strict(), createMemoryToolOutputSchema(moveSuccessSchema, ["schemaVersion", "entry", "moved", "from", "to"]), (input) => ({
-    method: "POST", path: "/v1/move_entry", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: "write",
+    method: "POST", path: "/v1/move_entry", body: buildWithMateMemoryMcpRuntimeBody("move_entry", input), operationKind: "write",
   }));
 
   register("memory.get_file", z.object({
@@ -420,7 +421,7 @@ export function registerGeneralMemoryMcpTools(
     objectId: z.string().min(1).max(64),
     outputPath: z.string().min(1).max(1_000).regex(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/, "outputPath must be absolute"),
   }).strict(), createMemoryToolOutputSchema(getFileSuccessSchema, ["schemaVersion", "objectId", "entryId", "outputPath", "bytesWritten", "contentType", "displayName"]), (input) => ({
-    method: "POST", path: "/v1/get_file", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: "write",
+    method: "POST", path: "/v1/get_file", body: buildWithMateMemoryMcpRuntimeBody("get_file", input), operationKind: "write",
   }));
 
   register("memory.export_files", z.object({
@@ -428,10 +429,10 @@ export function registerGeneralMemoryMcpTools(
     entryId: z.string().min(1).max(200),
     outputDirectoryPath: z.string().min(1).max(1_000).regex(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/, "outputDirectoryPath must be absolute"),
   }).strict(), createMemoryToolOutputSchema(exportFilesSuccessSchema, ["schemaVersion", "entryId", "outputDirectoryPath", "exportedCount", "files"]), (input) => ({
-    method: "POST", path: "/v1/export_files", body: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...input }, operationKind: "write",
+    method: "POST", path: "/v1/export_files", body: buildWithMateMemoryMcpRuntimeBody("export_files", input), operationKind: "write",
   }));
 
   register("memory.file_usage", z.object({}).strict(), createMemoryToolOutputSchema(fileUsageSuccessSchema, ["schemaVersion", "quotaBytes", "usedBytes", "physicalBytes", "pendingDeleteBytes", "availableBytes", "objectCount", "pendingDeleteCount", "quotaExceeded"]), () => ({
-    method: "GET", path: "/v1/file_usage", body: {}, operationKind: "read",
+    method: "GET", path: "/v1/file_usage", body: buildWithMateMemoryMcpRuntimeBody("file_usage", {}), operationKind: "read",
   }));
 }

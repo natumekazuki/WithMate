@@ -241,9 +241,9 @@ function actorProjectTarget(ref: { type: "id"; id: string } | { type: "path"; pa
 describe("general Memory MCP runtime integration", () => {
   // @test-value v1
   // kind = "security"
-  // claim = "tools/list後にMCP processが観測したtransport failureは同じbinding・turn・operationだけのCLI fallback admissionになる"
+  // claim = "tools/list後のtransport failureはMCPへ渡した公開tool引数を変更しない同一binding・turnのCLI fallbackだけを許可する"
   // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-  // failure_mode = "provider-bound CLIが自己申告だけでoperatorへ降格する、またはadmissionを別bodyへ横流ししてMemoryを更新する"
+  // failure_mode = "MCP内部fieldと公開CLI bodyの差で正当なfallbackを拒否する、またはadmissionを変更bodyへ横流ししてMemoryを更新する"
   // scope = "general-memory-mcp-cli-fallback-integration"
   // lifecycle = "permanent"
   // @end-test-value
@@ -275,15 +275,11 @@ describe("general Memory MCP runtime integration", () => {
       assert.equal(failed.isError, true);
       assert.equal((failed.structuredContent as any).error.details.fallbackEligible, true);
 
-      const fallback = await callFallbackCli(fixture, "append", {
-        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        ...body,
-      });
+      const fallback = await callFallbackCli(fixture, "append", body);
       assert.equal(fallback.exitCode, 0, JSON.stringify(fallback.value));
       assert.equal(fallback.value.created, true);
 
       const changed = await callFallbackCli(fixture, "append", {
-        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         ...body,
         title: "Changed fallback",
       });

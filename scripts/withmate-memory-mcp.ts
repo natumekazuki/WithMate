@@ -48,6 +48,7 @@ import {
   GENERAL_MEMORY_MCP_TOOL_DEFINITIONS,
   registerGeneralMemoryMcpTools,
 } from "./withmate-memory-mcp-general.js";
+import { buildWithMateMemoryMcpRuntimeBody } from "./withmate-memory-mcp-operation.js";
 
 type McpRuntimeDeps = {
   env?: NodeJS.ProcessEnv;
@@ -784,10 +785,12 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
       memoryLimit: z.number().int().min(0).max(10).default(3),
     }).strict(),
     outputSchema: contextToolOutputSchema,
-  }, async (input) => toolResult(await callRuntime("/v1/character_context/get", {
-    schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-    ...input,
-  }, "read", runtimeDeps)));
+  }, async (input) => toolResult(await callRuntime(
+    "/v1/character_context/get",
+    buildWithMateMemoryMcpRuntimeBody("context_get", input),
+    "read",
+    runtimeDeps,
+  )));
 
   server.registerTool("character_affect.appraise", {
     ...definitions.get("character_affect.appraise")!,
@@ -796,10 +799,12 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
       candidates: z.array(affectCandidateSchema).min(1).max(10),
     }).strict(),
     outputSchema: appraisalToolOutputSchema,
-  }, async (input) => toolResult(await callRuntime("/v1/character_affect/appraise", {
-    schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-    ...input,
-  }, "write", runtimeDeps)));
+  }, async (input) => toolResult(await callRuntime(
+    "/v1/character_affect/appraise",
+    buildWithMateMemoryMcpRuntimeBody("affect_appraise", input),
+    "write",
+    runtimeDeps,
+  )));
 
   server.registerTool("character_memory.search", {
     ...definitions.get("character_memory.search")!,
@@ -812,10 +817,12 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
       ]),
     }).strict(),
     outputSchema: searchToolOutputSchema,
-  }, async (input) => toolResult(await callRuntime("/v1/character_memory/search", {
-    schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-    ...input,
-  }, "read", runtimeDeps)));
+  }, async (input) => toolResult(await callRuntime(
+    "/v1/character_memory/search",
+    buildWithMateMemoryMcpRuntimeBody("character_memory_search", input),
+    "read",
+    runtimeDeps,
+  )));
 
   server.registerTool("character_memory.append_episode", {
     ...definitions.get("character_memory.append_episode")!,
@@ -824,10 +831,12 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
       episode: episodeSchema,
     }).strict(),
     outputSchema: mutationToolOutputSchema,
-  }, async (input) => toolResult(await callRuntime("/v1/character_memory/append_episode", {
-    schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-    ...input,
-  }, "write", runtimeDeps)));
+  }, async (input) => toolResult(await callRuntime(
+    "/v1/character_memory/append_episode",
+    buildWithMateMemoryMcpRuntimeBody("character_memory_append_episode", input),
+    "write",
+    runtimeDeps,
+  )));
 
   server.registerTool("character_memory.correct", {
     ...definitions.get("character_memory.correct")!,
@@ -838,10 +847,12 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
       replacement: episodeSchema,
     }).strict(),
     outputSchema: mutationToolOutputSchema,
-  }, async (input) => toolResult(await callRuntime("/v1/character_memory/correct", {
-    schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-    ...input,
-  }, "write", runtimeDeps)));
+  }, async (input) => toolResult(await callRuntime(
+    "/v1/character_memory/correct",
+    buildWithMateMemoryMcpRuntimeBody("character_memory_correct", input),
+    "write",
+    runtimeDeps,
+  )));
 
   server.registerTool("character_memory.forget", {
     ...definitions.get("character_memory.forget")!,
@@ -851,10 +862,12 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
       idempotencyKey: z.string().min(1),
     }).strict(),
     outputSchema: mutationToolOutputSchema,
-  }, async (input) => toolResult(await callRuntime("/v1/character_memory/forget", {
-    schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-    ...input,
-  }, "write", runtimeDeps)));
+  }, async (input) => toolResult(await callRuntime(
+    "/v1/character_memory/forget",
+    buildWithMateMemoryMcpRuntimeBody("character_memory_forget", input),
+    "write",
+    runtimeDeps,
+  )));
 
   registerGeneralMemoryMcpTools(
     server,

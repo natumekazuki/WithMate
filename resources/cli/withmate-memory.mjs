@@ -23460,6 +23460,54 @@ var StdioServerTransport = class {
 	}
 };
 //#endregion
+//#region scripts/withmate-memory-mcp-operation.ts
+var GENERAL_MEMORY_COMMANDS = /* @__PURE__ */ new Set([
+	"list_targets",
+	"list_entries",
+	"search",
+	"get_entry",
+	"get_file",
+	"export_files",
+	"list_tags",
+	"append",
+	"forget",
+	"move_entry"
+]);
+function isAbsolutePath(value) {
+	return path.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+function normalizeProjectPathTargets$1(value) {
+	if (Array.isArray(value)) return value.map((item) => normalizeProjectPathTargets$1(item));
+	if (!value || typeof value !== "object") return value;
+	const record = value;
+	const normalized = Object.fromEntries(Object.entries(record).map(([key, item]) => [key, normalizeProjectPathTargets$1(item)]));
+	if (record.type === "path" && typeof record.path === "string" && isAbsolutePath(record.path)) normalized.path = path.win32.isAbsolute(record.path) ? path.win32.normalize(record.path).replace(/\\/g, "/") : path.resolve(record.path);
+	return normalized;
+}
+function buildWithMateMemoryMcpRuntimeBody(command, publicInput) {
+	if (command === "file_usage") return {};
+	if (!publicInput || typeof publicInput !== "object" || Array.isArray(publicInput)) return publicInput;
+	const input = normalizeProjectPathTargets$1(publicInput);
+	if (GENERAL_MEMORY_COMMANDS.has(command)) return {
+		...input,
+		schemaVersion: MEMORY_V6_SCHEMA_VERSION
+	};
+	if (command === "context_get") return {
+		...input,
+		memoryLimit: input.memoryLimit ?? 3,
+		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION
+	};
+	if (command === "character_memory_search") return {
+		...input,
+		limit: input.limit ?? 5,
+		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION
+	};
+	return {
+		...input,
+		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION
+	};
+}
+//#endregion
 //#region scripts/withmate-memory-mcp-general.ts
 var projectRefSchema$1 = discriminatedUnion("type", [object({
 	type: literal("id"),
@@ -23863,10 +23911,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	}).strict(), createMemoryToolOutputSchema(searchSuccessSchema, ["schemaVersion", "items"]), (input) => ({
 		method: "POST",
 		path: "/v1/search",
-		body: {
-			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			...input
-		},
+		body: buildWithMateMemoryMcpRuntimeBody("search", input),
 		operationKind: "read"
 	}));
 	register("memory.get_entry", object({
@@ -23875,10 +23920,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	}).strict(), createMemoryToolOutputSchema(getEntrySuccessSchema, ["schemaVersion", "entry"]), (input) => ({
 		method: "POST",
 		path: "/v1/get_entry",
-		body: {
-			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			...input
-		},
+		body: buildWithMateMemoryMcpRuntimeBody("get_entry", input),
 		operationKind: "read"
 	}));
 	register("memory.list_targets", object({
@@ -23889,10 +23931,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	}).strict(), createMemoryToolOutputSchema(listTargetsSuccessSchema, ["schemaVersion", "items"]), (input) => ({
 		method: "POST",
 		path: "/v1/list_targets",
-		body: {
-			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			...input
-		},
+		body: buildWithMateMemoryMcpRuntimeBody("list_targets", input),
 		operationKind: "read"
 	}));
 	register("memory.list_entries", object({
@@ -23910,10 +23949,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	}).strict(), createMemoryToolOutputSchema(listEntriesSuccessSchema, ["schemaVersion", "items"]), (input) => ({
 		method: "POST",
 		path: "/v1/list_entries",
-		body: {
-			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			...input
-		},
+		body: buildWithMateMemoryMcpRuntimeBody("list_entries", input),
 		operationKind: "read"
 	}));
 	register("memory.list_tags", object({
@@ -23937,10 +23973,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	}] }), createMemoryToolOutputSchema(listTagsSuccessSchema, ["schemaVersion", "tags"]), (input) => ({
 		method: "POST",
 		path: "/v1/list_tags",
-		body: {
-			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			...input
-		},
+		body: buildWithMateMemoryMcpRuntimeBody("list_tags", input),
 		operationKind: "read"
 	}));
 	register("memory.append", object({
@@ -23962,10 +23995,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	]), (input) => ({
 		method: "POST",
 		path: "/v1/append",
-		body: {
-			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			...input
-		},
+		body: buildWithMateMemoryMcpRuntimeBody("append", input),
 		operationKind: "write"
 	}));
 	register("memory.forget", object({
@@ -23978,10 +24008,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	}).strict(), createMemoryToolOutputSchema(forgetSuccessSchema, ["schemaVersion", "results"]), (input) => ({
 		method: "POST",
 		path: "/v1/forget",
-		body: {
-			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			...input
-		},
+		body: buildWithMateMemoryMcpRuntimeBody("forget", input),
 		operationKind: input.dryRun ? "read" : "write"
 	}));
 	register("memory.move_entry", object({
@@ -24000,10 +24027,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	]), (input) => ({
 		method: "POST",
 		path: "/v1/move_entry",
-		body: {
-			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			...input
-		},
+		body: buildWithMateMemoryMcpRuntimeBody("move_entry", input),
 		operationKind: "write"
 	}));
 	register("memory.get_file", object({
@@ -24021,10 +24045,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	]), (input) => ({
 		method: "POST",
 		path: "/v1/get_file",
-		body: {
-			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			...input
-		},
+		body: buildWithMateMemoryMcpRuntimeBody("get_file", input),
 		operationKind: "write"
 	}));
 	register("memory.export_files", object({
@@ -24040,10 +24061,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	]), (input) => ({
 		method: "POST",
 		path: "/v1/export_files",
-		body: {
-			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			...input
-		},
+		body: buildWithMateMemoryMcpRuntimeBody("export_files", input),
 		operationKind: "write"
 	}));
 	register("memory.file_usage", object({}).strict(), createMemoryToolOutputSchema(fileUsageSuccessSchema, [
@@ -24059,7 +24077,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 	]), () => ({
 		method: "GET",
 		path: "/v1/file_usage",
-		body: {},
+		body: buildWithMateMemoryMcpRuntimeBody("file_usage", {}),
 		operationKind: "read"
 	}));
 }
@@ -24795,10 +24813,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 			memoryLimit: number().int().min(0).max(10).default(3)
 		}).strict(),
 		outputSchema: contextToolOutputSchema
-	}, async (input) => toolResult(await callRuntime("/v1/character_context/get", {
-		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-		...input
-	}, "read", runtimeDeps)));
+	}, async (input) => toolResult(await callRuntime("/v1/character_context/get", buildWithMateMemoryMcpRuntimeBody("context_get", input), "read", runtimeDeps)));
 	server.registerTool("character_affect.appraise", {
 		...definitions.get("character_affect.appraise"),
 		inputSchema: object({
@@ -24806,10 +24821,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 			candidates: array(affectCandidateSchema).min(1).max(10)
 		}).strict(),
 		outputSchema: appraisalToolOutputSchema
-	}, async (input) => toolResult(await callRuntime("/v1/character_affect/appraise", {
-		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-		...input
-	}, "write", runtimeDeps)));
+	}, async (input) => toolResult(await callRuntime("/v1/character_affect/appraise", buildWithMateMemoryMcpRuntimeBody("affect_appraise", input), "write", runtimeDeps)));
 	server.registerTool("character_memory.search", {
 		...definitions.get("character_memory.search"),
 		inputSchema: object({
@@ -24821,10 +24833,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 			}).strict()])
 		}).strict(),
 		outputSchema: searchToolOutputSchema
-	}, async (input) => toolResult(await callRuntime("/v1/character_memory/search", {
-		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-		...input
-	}, "read", runtimeDeps)));
+	}, async (input) => toolResult(await callRuntime("/v1/character_memory/search", buildWithMateMemoryMcpRuntimeBody("character_memory_search", input), "read", runtimeDeps)));
 	server.registerTool("character_memory.append_episode", {
 		...definitions.get("character_memory.append_episode"),
 		inputSchema: object({
@@ -24832,10 +24841,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 			episode: episodeSchema
 		}).strict(),
 		outputSchema: mutationToolOutputSchema
-	}, async (input) => toolResult(await callRuntime("/v1/character_memory/append_episode", {
-		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-		...input
-	}, "write", runtimeDeps)));
+	}, async (input) => toolResult(await callRuntime("/v1/character_memory/append_episode", buildWithMateMemoryMcpRuntimeBody("character_memory_append_episode", input), "write", runtimeDeps)));
 	server.registerTool("character_memory.correct", {
 		...definitions.get("character_memory.correct"),
 		inputSchema: object({
@@ -24845,10 +24851,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 			replacement: episodeSchema
 		}).strict(),
 		outputSchema: mutationToolOutputSchema
-	}, async (input) => toolResult(await callRuntime("/v1/character_memory/correct", {
-		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-		...input
-	}, "write", runtimeDeps)));
+	}, async (input) => toolResult(await callRuntime("/v1/character_memory/correct", buildWithMateMemoryMcpRuntimeBody("character_memory_correct", input), "write", runtimeDeps)));
 	server.registerTool("character_memory.forget", {
 		...definitions.get("character_memory.forget"),
 		inputSchema: object({
@@ -24863,10 +24866,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 			idempotencyKey: string().min(1)
 		}).strict(),
 		outputSchema: mutationToolOutputSchema
-	}, async (input) => toolResult(await callRuntime("/v1/character_memory/forget", {
-		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-		...input
-	}, "write", runtimeDeps)));
+	}, async (input) => toolResult(await callRuntime("/v1/character_memory/forget", buildWithMateMemoryMcpRuntimeBody("character_memory_forget", input), "write", runtimeDeps)));
 	registerGeneralMemoryMcpTools(server, (operation) => callMemoryRuntime(operation, runtimeDeps), toolResult);
 	return server;
 }
@@ -24910,8 +24910,6 @@ var AGENT_CLI_FALLBACK_COMMANDS = /* @__PURE__ */ new Set([
 	"list_entries",
 	"search",
 	"get_entry",
-	"get_file",
-	"export_files",
 	"list_tags",
 	"append",
 	"forget",
@@ -26041,10 +26039,11 @@ async function runWithMateMemoryCli(args, deps = {}) {
 		const abortController = new AbortController();
 		const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
 		try {
+			const runtimeBody = request.fallbackFrom === "mcp" ? buildWithMateMemoryMcpRuntimeBody(request.command, request.body) : request.body;
 			const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
 				method: route.method,
 				path: buildRoutePath(request),
-				body: request.body,
+				body: runtimeBody,
 				...request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}
 			}, {
 				signal: abortController.signal,

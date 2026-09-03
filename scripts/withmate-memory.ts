@@ -71,6 +71,10 @@ import {
 } from "./withmate-memory-runtime-client.js";
 import { isUuid, type RuntimeDiscoveryClock } from "../src/runtime-discovery/runtime-discovery-contract.js";
 import { startWithMateMemoryMcpServer } from "./withmate-memory-mcp.js";
+import {
+  buildWithMateMemoryMcpRuntimeBody,
+  type WithMateMemoryMcpCommand,
+} from "./withmate-memory-mcp-operation.js";
 
 export {
   DEFAULT_REQUEST_TIMEOUT_MS,
@@ -183,8 +187,6 @@ const AGENT_CLI_FALLBACK_COMMANDS = new Set<WithMateMemoryApiCommand>([
   "list_entries",
   "search",
   "get_entry",
-  "get_file",
-  "export_files",
   "list_tags",
   "append",
   "forget",
@@ -1529,10 +1531,13 @@ export async function runWithMateMemoryCli(
     const abortController = new AbortController();
     const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
     try {
+      const runtimeBody = request.fallbackFrom === "mcp"
+        ? buildWithMateMemoryMcpRuntimeBody(request.command as WithMateMemoryMcpCommand, request.body)
+        : request.body;
       const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
         method: route.method,
         path: buildRoutePath(request),
-        body: request.body,
+        body: runtimeBody,
         ...(request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}),
       }, {
         signal: abortController.signal,
