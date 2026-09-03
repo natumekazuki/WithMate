@@ -265,7 +265,16 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
-  it("context、appraise、Memory episodeを同じ正本からversion付きでread-backする", async () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "Character contextの公開responseはidentity-freeなtop-levelとMemory preview fieldだけを返し、維持対象のbaseline・affect・memory version情報を保持する"
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md:59-61" }
+  // failure_mode = "内部request identityまたはMemory owner・scope・body・file・sourceが公開responseへ混入し、providerやagent consumerへactor identityまたは非公開Memory詳細が漏れる"
+  // scope = "CharacterContextApplicationService.getContext public projection"
+  // lifecycle = "permanent"
+  // distinction = "request authorityの内部identity維持ではなく、成功response assemblyのexact field projectionを検証する"
+  // @end-test-value
+  it("context、appraise、Memory episodeをidentity-free projectionでversion付きread-backする", async () => {
     const fixture = createFixture();
     try {
       const initial = await fixture.service.getContext({
@@ -312,8 +321,16 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(context.affect.effective[0]?.targetId, "bug-1");
       assert.equal(context.memory.items.length, 1);
       assert.equal(context.memory.items[0]?.title, "Bug reproduction");
-      assert.equal("body" in (context.memory.items[0] ?? {}), false);
-      assert.equal("events" in context, false);
+      assert.deepEqual(Object.keys(context).sort(), ["affect", "baseline", "memory", "schemaVersion"]);
+      assert.deepEqual(Object.keys(context.baseline).sort(), ["definitionSha256", "snapshotAt"]);
+      assert.deepEqual(Object.keys(context.affect).sort(), ["effective", "evaluatedAt", "mode", "updatedAt", "version"]);
+      assert.deepEqual(Object.keys(context.memory).sort(), ["items", "updatedAt"]);
+      assert.deepEqual(Object.keys(context.memory.items[0] ?? {}).sort(), ["id", "preview", "tags", "title", "updatedAt"]);
+      assert.equal(context.baseline.definitionSha256, "definition-hash");
+      assert.equal(context.baseline.snapshotAt, "2026-08-09T00:00:00.000Z");
+      assert.equal(context.affect.mode, "shadow");
+      assert.equal(context.affect.evaluatedAt, "2026-08-09T01:00:00.000Z");
+      assert.equal(context.memory.updatedAt, context.memory.items[0]?.updatedAt);
     } finally {
       fixture.close();
     }

@@ -327,8 +327,6 @@ describe("home-settings-actions", () => {
         installMemoryV6CliShim: async () => ({
           generatedAt: "2026-06-28T00:00:00.000Z",
           runtime: { status: "running", applicationInstanceId: null, runtimeGenerationId: null, buildChannel: null, discoveryPublished: false },
-          providers: [],
-          skillSync: [],
           cliShim: {
             platform: "darwin",
             commandName: "withmate-memory",
@@ -341,8 +339,6 @@ describe("home-settings-actions", () => {
         uninstallMemoryV6CliShim: async () => ({
           generatedAt: "2026-06-28T00:00:00.000Z",
           runtime: { status: "running", applicationInstanceId: null, runtimeGenerationId: null, buildChannel: null, discoveryPublished: false },
-          providers: [],
-          skillSync: [],
           cliShim: {
             platform: "darwin",
             commandName: "withmate-memory",

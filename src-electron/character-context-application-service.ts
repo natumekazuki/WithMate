@@ -273,8 +273,6 @@ export class CharacterContextApplicationService {
           searchTermCount,
           () => ({
           schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-          characterId: input.characterId,
-          sessionId: input.sessionId,
           baseline: {
             definitionSha256: snapshot.definitionSha256,
             snapshotAt: snapshot.snapshotAt,
@@ -300,14 +298,15 @@ export class CharacterContextApplicationService {
             updatedAt: version.updatedAt,
           },
           memory: {
-            items: memory.items,
+            items: memory.items.map((item) => ({
+              id: item.id,
+              title: item.title,
+              preview: item.preview,
+              tags: item.tags,
+              updatedAt: item.updatedAt,
+            })),
             ...(memory.relatedTags ? { relatedTags: memory.relatedTags } : {}),
             updatedAt: sourceVersion(memory.items),
-          },
-          scope: {
-            userId: LOCAL_USER_ID,
-            characterId: input.characterId,
-            sessionId: input.sessionId,
           },
           }),
         );

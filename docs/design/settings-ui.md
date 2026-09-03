@@ -1,7 +1,7 @@
 # Settings UI
 
 - 作成日: 2026-03-14
-- 更新日: 2026-07-03
+- 更新日: 2026-09-03
 - 対象: 独立した `Settings Window`
 
 ## Goal
@@ -16,7 +16,7 @@
 - V5 current では Character 定義は `Characters` editor で管理し、session / companion 開始時の `CharacterRuntimeSnapshot` を runtime prompt の主経路にする
 - provider instruction sync は V5 Character 注入の主経路ではなく、Settings current UI には置かない
 - current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog`、`Storage Maintenance` を置く
-- V6 Memory provider instructionは自動同期せず、Diagnostics内に手動貼り付け用sampleとcopy導線を置く
+- Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
 - current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
@@ -46,12 +46,9 @@
   - `Diagnostics`
     - app log / crash dump folder
     - Memory V6 read-only diagnostics
-      - runtime API status / base URL / DB path / discovery file path
-      - active binding count
-      - provider memory binding support
-      - managed `withmate-memory` Skill sync status
+      - runtime API status / application instance / runtime generation / build channel / discovery publish status
+      - CLI shim status
       - latest Memory V6 diagnostic errors
-      - provider instruction sample preview / copy action
 - `Model Catalog`
   - import / export
 - `Storage Maintenance`
@@ -72,10 +69,9 @@
   - V5 current では skill folder だけが runtime の skill 探索元になり、instruction file は Provider Instruction Sync を再起動せず設定値として保持する
 - Diagnostics の folder open
 - Diagnostics の Memory V6 read-only summary
-  - runtime API は `running` / `stopped` / `failed` と、公開済み discovery / DB path を表示する
-  - managed `withmate-memory` Skill sync は provider ごとの `not-run` / `synced` / `failed` / `skipped-collision` を表示する
-  - runtime API secret は表示せず、`hasApiSecret` の boolean だけを診断 state に含める
-  - provider instruction sample を表示し、必要な provider の instruction file へ手動で貼り付けるために clipboard copy できる
+  - runtime API は `running` / `stopped` / `failed` と、application instance、runtime generation、build channel、discovery publish状態を表示する
+  - CLI shimはplatform、support、install状態、PATH状態を表示する
+  - credential、binding reference、Memory本文、個人path、provider別状態、managed Skill同期状態はdiagnostics stateへ含めない
 - `model catalog` の import
 - `model catalog` の export
 - `Storage Maintenance` の古い Session 削除
@@ -100,9 +96,8 @@
 - Settings Window の古い Session 削除の確認文言と戻り値解釈は `home-settings-actions` が担当し、削除 orchestration は Main Process 側の session command API に委譲する
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する
 - Memory V6 diagnostics は Main Process 側の `getMemoryV6Diagnostics()` が集約し、renderer 側の `HomeApp.tsx` が初回表示時と Settings 保存成功後に再取得する
-- Memory V6 diagnostics は secret を返さず、runtime status / path / support / sync status / error summary の read-only projection として扱う
-- Settings Window の Diagnostics 表示は `SettingsContent.tsx` が担当し、操作導線は既存の folder open、Memory Review、provider instruction sample copy、Settings save に限定する
-- provider instruction sampleは `withmate-memory` Skill利用トリガー、DB直読み禁止、append / forget判断、secret非露出を短く示す。WithMateはprovider instruction fileを自動編集しない
+- Memory V6 diagnostics は`generatedAt`、`runtime`、`cliShim`、`lastErrors`の4 fieldだけを持つread-only projectionとして扱う
+- Settings Window の Diagnostics 表示は`SettingsContent.tsx`が担当し、操作導線はfolder open、Memory Review、CLI shim操作、Settings saveに限定する
 - Character editor は Settings Window から分離し、Home の `Characters` panel から開く独立 `Character Editor Window` で扱う。
 - `character.md` の validation error は `Character Editor Window` の raw editor 操作結果として表示する。
 
@@ -112,7 +107,6 @@
 - 新規 workspace の root directory 設定
 - provider ごとの既定値
 - MemoryGeneration を再設計する場合の専用設定
-- provider instruction fileをWithMateが自動編集する同期設定
 - DB reset をSettingsへ戻す場合の専用導線
 
 ## Non Goals
@@ -120,3 +114,4 @@
 - Home に設定項目を常設すること
 - 独立 monologue plane 用設定欄を current milestone で追加すること
 - MemoryGeneration / Character Reflection の旧設定 UI を current milestone で維持すること
+- Memory managed Skillの同期状態やprovider instruction sampleを表示すること

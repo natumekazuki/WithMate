@@ -1,7 +1,7 @@
 # Memory Architecture
 
 - 作成日: 2026-03-12
-- 更新日: 2026-06-22
+- 更新日: 2026-09-03
 - 対象: Project Memory / Session Memory / Character Memory の責務設計
 - 関連 Issue:
   - `#3 LangGraphを使ってMemoryの永続化と共有`
@@ -17,7 +17,7 @@ WithMate における Memory を、保存データとしての責務と coding p
 
 2026-06-14 の V5 Character Core では、Memory / Growth history を Character runtime prompt へ常設注入しない。Character の runtime 正本は session / companion 開始時点の `CharacterRuntimeSnapshot.definitionMarkdown` であり、Memory / Growth 再設計は V5 preview 後の deferred scope とする。
 
-2026-06-22 の V6 Memory foundation では、旧MemoryGenerationやV4 Growthを復活させず、V5 Character-first runtimeの外側にSkill-first local Memory serviceを追加する。V6のowner / scope / API / binding / storage / privacy方針は`docs/design/v6-memory-foundation.md`を正本にする。
+2026-06-22 の V6 Memory foundation では、旧MemoryGenerationやV4 Growthを復活させず、V5 Character-first runtimeの外側にlocal Memory serviceを追加した。現在のagent-facing入口はprovider共通MCPであり、V6のowner / scope / API / binding / storage / privacy方針は`docs/design/v6-memory-foundation.md`を正本にする。
 
 同日のV6 DB foundationでは、DB定義全体を再設計し、V5以前のsession履歴とlegacy Memory互換を保持要件にしない。V6のdestructive reset / legacy data境界は`docs/design/v6-database-foundation.md`を正本にする。
 
@@ -230,7 +230,7 @@ Memory Management Window の既存データ閲覧 / delete 機能は、別途残
 
 MemoryGeneration を再実装する場合は、旧 v1 の復帰ではなく新規設計として扱う。
 
-V6 Memory foundationでは、この新規設計を`docs/design/v6-memory-foundation.md`に分離する。V6はMemoryをcoding plane promptへ常設注入せず、agentが必要時にだけglobal Skill / CLI / localhost API経由で検索・追加・忘却する。
+V6 Memory foundationでは、この新規設計を`docs/design/v6-memory-foundation.md`に分離する。V6はMemoryをcoding plane promptへ常設注入せず、agentが必要時にprovider共通MCP経由で検索・追加・忘却する。operator CLIは同じlocalhost application serviceへ接続する別authority modeとして扱う。
 
 最低限、次を事前に決める。
 

@@ -13,6 +13,19 @@ type ProjectScopeRow = {
   display_name: string;
 };
 
+export function resolveMemoryV6ProjectCandidate(projectPath: string): MemoryV6ProjectContext | null {
+  const resolved = resolveProjectScope(projectPath);
+  if (resolved.projectType !== "git") {
+    return null;
+  }
+  const id = `project-${createHash("sha256").update(resolved.projectKey, "utf8").digest("hex").slice(0, 32)}`;
+  return {
+    id,
+    displayName: resolved.displayName,
+    admission: { id, ...resolved },
+  };
+}
+
 export function createMemoryV6ProjectResolver(dbPath: string): Pick<
   MemoryV6TargetResolverDeps,
   "resolveProjectById" | "resolveProjectByPath" | "resolveKnownProjectByPath"
@@ -27,29 +40,22 @@ export function createMemoryV6ProjectResolver(dbPath: string): Pick<
       return row ? { id: row.id, displayName: row.display_name } : null;
     }),
     resolveProjectByPath: (projectPath) => withDatabase(dbPath, (db) => {
-      const resolved = resolveProjectScope(projectPath);
-      if (resolved.projectType !== "git") {
-        return null;
-      }
+      const candidate = resolveMemoryV6ProjectCandidate(projectPath);
+      if (!candidate?.admission) return null;
       const existing = db.prepare(`
         SELECT id
         FROM project_scopes_v6
         WHERE project_type = ?
           AND project_key = ?
-      `).get(resolved.projectType, resolved.projectKey) as { id: string } | undefined;
+      `).get(candidate.admission.projectType, candidate.admission.projectKey) as { id: string } | undefined;
       if (existing) {
         return {
           id: existing.id,
-          displayName: resolved.displayName,
-          admission: { id: existing.id, ...resolved },
+          displayName: candidate.displayName,
+          admission: { ...candidate.admission, id: existing.id },
         };
       }
-      const projectId = `project-${createHash("sha256").update(resolved.projectKey, "utf8").digest("hex").slice(0, 32)}`;
-      return {
-        id: projectId,
-        displayName: resolved.displayName,
-        admission: { id: projectId, ...resolved },
-      };
+      return candidate;
     }),
     resolveKnownProjectByPath: (projectPath) => withDatabase(dbPath, (db) => {
       const resolved = resolveProjectScope(projectPath);

@@ -14,6 +14,7 @@ export type MemoryV6SessionBindingPrincipal = {
   sessionId: string;
   providerId: string;
   characterId: string;
+  allowedProjectIds?: readonly string[];
   permissions: readonly MemoryPermission[];
 };
 

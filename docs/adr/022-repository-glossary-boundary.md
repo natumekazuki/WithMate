@@ -65,7 +65,7 @@ Accepted
 - runtime authority、MCP、CLI: `src-electron/glossary-runtime-service.ts`、`src/glossary-operation-schema.ts`、`scripts/tests/glossary-runtime-service.test.ts`、`scripts/tests/withmate-glossary-cli-mcp.test.ts`
 - external update、renderer projection: `src-electron/glossary-session-projection-service.ts`、`src-electron/session-glossary-window-subscription.ts`、`scripts/tests/glossary-session-projection-service.test.ts`、`scripts/tests/session-glossary-window-subscription.test.ts`、`scripts/tests/session-glossary-pane.test.tsx`
 - annotation、keyboard、tooltip: `src/glossary/glossary-annotation-projection.ts`、`src/glossary/MessageGlossaryAnnotations.tsx`、`scripts/tests/glossary-annotation-projection.test.ts`、`scripts/tests/message-glossary-annotation.test.tsx`
-- managed distribution: `src-electron/managed-memory-skill-service.ts`の`ManagedSkillDistributionService`、`scripts/tests/managed-memory-skill-service.test.ts`、`scripts/tests/managed-glossary-skill-service.test.ts`
+- managed distribution: `src-electron/managed-skill-distribution-service.ts`の`ManagedSkillDistributionService`、`scripts/tests/managed-glossary-skill-service.test.ts`
 
 ## Alternatives
 

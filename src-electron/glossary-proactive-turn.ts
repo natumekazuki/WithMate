@@ -1,48 +1,32 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  ProviderAgentRuntimeTurnCoordinator,
+  type ProviderAgentRuntimeTurnHandle,
+} from "./provider-agent-runtime-turn-coordinator.js";
 
-export type GlossaryProactiveTurnHandle = Readonly<{
-  actorSessionId: string;
-  providerId: string;
-  capability: string;
-}>;
+export type GlossaryProactiveTurnHandle = ProviderAgentRuntimeTurnHandle;
 
 type ProactiveTurnState = {
   limit: number | null | undefined;
   requestFingerprint: string | null;
 };
 
-function turnKey(actorSessionId: string, providerId: string): string {
-  return `${actorSessionId}\0${providerId}`;
-}
-
-function equalCapability(actual: string | null | undefined, expected: string): boolean {
-  if (!actual) {
-    return false;
-  }
-  const actualBytes = Buffer.from(actual, "utf8");
-  const expectedBytes = Buffer.from(expected, "utf8");
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
-}
-
 export class GlossaryProactiveTurnCoordinator {
-  readonly #activeByActor = new Map<string, GlossaryProactiveTurnHandle>();
+  readonly #providerTurns: ProviderAgentRuntimeTurnCoordinator;
   readonly #stateByHandle = new WeakMap<GlossaryProactiveTurnHandle, ProactiveTurnState>();
+
+  constructor(providerTurns: ProviderAgentRuntimeTurnCoordinator) {
+    this.#providerTurns = providerTurns;
+  }
 
   begin(input: {
     actorSessionId: string;
     providerId: string;
     proactiveCreateLimit: number | null | undefined;
   }): GlossaryProactiveTurnHandle {
-    const key = turnKey(input.actorSessionId, input.providerId);
-    if (this.#activeByActor.has(key)) {
-      throw new Error("A provider Session turn is already active for this actor.");
-    }
-    const handle = Object.freeze({
+    const handle = this.#providerTurns.begin({
       actorSessionId: input.actorSessionId,
       providerId: input.providerId,
-      capability: randomBytes(32).toString("base64url"),
     });
-    this.#activeByActor.set(key, handle);
     this.#stateByHandle.set(handle, {
       limit: input.proactiveCreateLimit,
       requestFingerprint: null,
@@ -51,11 +35,8 @@ export class GlossaryProactiveTurnCoordinator {
   }
 
   end(handle: GlossaryProactiveTurnHandle): void {
-    const key = turnKey(handle.actorSessionId, handle.providerId);
-    if (this.#activeByActor.get(key) === handle) {
-      this.#activeByActor.delete(key);
-    }
     this.#stateByHandle.delete(handle);
+    this.#providerTurns.end(handle);
   }
 
   admit(input: {
@@ -65,9 +46,9 @@ export class GlossaryProactiveTurnCoordinator {
     requestFingerprint: string;
     entryCount: number;
   }): { ok: true; proactiveCreateLimit: number } | { ok: false; reason: "inactive" | "invalid-limit" | "limit-exceeded" | "second-request" } {
-    const handle = this.#activeByActor.get(turnKey(input.actorSessionId, input.providerId));
-    const state = handle ? this.#stateByHandle.get(handle) : null;
-    if (!state || !handle || !equalCapability(input.turnCapability, handle.capability)) {
+    const admission = this.#providerTurns.admit(input);
+    const state = admission.ok ? this.#stateByHandle.get(admission.handle) : null;
+    if (!admission.ok || !state) {
       return { ok: false, reason: "inactive" };
     }
     if (state.requestFingerprint === null) {

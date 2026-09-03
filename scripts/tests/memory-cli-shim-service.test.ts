@@ -7,13 +7,21 @@ import { describe, it } from "node:test";
 import { MemoryCliShimService } from "../../src-electron/memory-cli-shim-service.js";
 
 describe("MemoryCliShimService", () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "POSIX shimはcanonical packaged CLI pathを呼び出し、管理metadataに基づいてinstallとuninstallを行う"
+  // oracle = { type = "adr", ref = "ADR-024 canonical CLI artifact path" }
+  // failure_mode = "shimが旧Skill artifactを参照するか、管理外fileを削除する"
+  // scope = "memory-cli-shim"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("macOS/Linux では ~/.local/bin shim の PATH 状態を診断して install/uninstall できる", async () => {
     const homeDirectory = await mkdtemp(path.join(tmpdir(), "withmate-cli-shim-home-"));
     try {
       const shimDirectory = path.join(homeDirectory, ".local", "bin");
       const service = new MemoryCliShimService({
         appExecutablePath: "/Applications/WithMate.app/Contents/MacOS/WithMate",
-        bundledCliScriptPath: "/Applications/WithMate.app/Contents/Resources/resources/skills/withmate-memory/bin/withmate-memory.mjs",
+        bundledCliScriptPath: "/Applications/WithMate.app/Contents/Resources/resources/cli/withmate-memory.mjs",
         homeDirectory,
         pathEnv: ["/usr/bin", shimDirectory].join(path.delimiter),
         platform: "darwin",
@@ -47,12 +55,20 @@ describe("MemoryCliShimService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "canonical CLI shimをinstallしてもshim directoryがPATH外ならdiagnosticsで区別する"
+  // oracle = { type = "contract", ref = "Memory CLI shim diagnostics" }
+  // failure_mode = "PATH外のshimを利用可能として報告する"
+  // scope = "memory-cli-shim-diagnostics"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("PATH に ~/.local/bin が無い場合は installed-path-missing として診断する", async () => {
     const homeDirectory = await mkdtemp(path.join(tmpdir(), "withmate-cli-shim-home-"));
     try {
       const service = new MemoryCliShimService({
         appExecutablePath: "/opt/WithMate/withmate",
-        bundledCliScriptPath: "/opt/WithMate/resources/skills/withmate-memory/bin/withmate-memory.mjs",
+        bundledCliScriptPath: "/opt/WithMate/resources/cli/withmate-memory.mjs",
         homeDirectory,
         pathEnv: "/usr/bin",
         platform: "linux",
@@ -66,6 +82,14 @@ describe("MemoryCliShimService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "管理metadataのない既存shimはmarker文字列があっても利用者所有として上書き・削除しない"
+  // oracle = { type = "contract", ref = "Memory CLI shim ownership boundary" }
+  // failure_mode = "利用者所有shimの内容をWithMate管理物と誤認して破壊する"
+  // scope = "memory-cli-shim-ownership"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("marker 文字列を含む既存のユーザー所有 shim も上書きも削除もしない", async () => {
     const homeDirectory = await mkdtemp(path.join(tmpdir(), "withmate-cli-shim-home-"));
     try {
@@ -75,7 +99,7 @@ describe("MemoryCliShimService", () => {
       await writeFile(shimPath, "#!/bin/sh\n# Managed by WithMate Memory CLI shim\necho user\n", "utf8");
       const service = new MemoryCliShimService({
         appExecutablePath: "/Applications/WithMate.app/Contents/MacOS/WithMate",
-        bundledCliScriptPath: "/Applications/WithMate.app/Contents/Resources/resources/skills/withmate-memory/bin/withmate-memory.mjs",
+        bundledCliScriptPath: "/Applications/WithMate.app/Contents/Resources/resources/cli/withmate-memory.mjs",
         homeDirectory,
         pathEnv: shimDirectory,
         platform: "darwin",
@@ -90,6 +114,14 @@ describe("MemoryCliShimService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "生成内容が一致しても管理metadataを失ったshimは利用者所有として保護する"
+  // oracle = { type = "contract", ref = "Memory CLI shim ownership boundary" }
+  // failure_mode = "内容一致だけをauthorityとして管理外shimを上書き・削除する"
+  // scope = "memory-cli-shim-ownership"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("metadata が無い既存 shim は script 内容が一致しても非管理として保護する", async () => {
     const homeDirectory = await mkdtemp(path.join(tmpdir(), "withmate-cli-shim-home-"));
     try {
@@ -98,7 +130,7 @@ describe("MemoryCliShimService", () => {
       await mkdir(shimDirectory, { recursive: true });
       const service = new MemoryCliShimService({
         appExecutablePath: "/Applications/WithMate.app/Contents/MacOS/WithMate",
-        bundledCliScriptPath: "/Applications/WithMate.app/Contents/Resources/resources/skills/withmate-memory/bin/withmate-memory.mjs",
+        bundledCliScriptPath: "/Applications/WithMate.app/Contents/Resources/resources/cli/withmate-memory.mjs",
         homeDirectory,
         pathEnv: shimDirectory,
         platform: "darwin",
@@ -116,10 +148,18 @@ describe("MemoryCliShimService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "WindowsのCLI commandはinstaller管理でありSettings shim操作の対象にしない"
+  // oracle = { type = "adr", ref = "ADR-024 CLI distribution boundary" }
+  // failure_mode = "WindowsでPOSIX shim操作を有効化しinstaller所有commandと競合する"
+  // scope = "memory-cli-shim-platform"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Windows は installer 管理として診断し、UI install 対象にしない", async () => {
     const service = new MemoryCliShimService({
       appExecutablePath: "C:\\Program Files\\WithMate\\WithMate.exe",
-      bundledCliScriptPath: "C:\\Program Files\\WithMate\\resources\\resources\\skills\\withmate-memory\\bin\\withmate-memory.mjs",
+      bundledCliScriptPath: "C:\\Program Files\\WithMate\\resources\\resources\\cli\\withmate-memory.mjs",
       homeDirectory: "C:\\Users\\test",
       pathEnv: "",
       platform: "win32",
