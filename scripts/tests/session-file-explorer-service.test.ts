@@ -68,6 +68,27 @@ test("SessionFileExplorerService は tree path actionをcurrent rootとnode kind
       await assert.rejects(() => service.resolvePathActionTarget(request));
     }
 
+    const replacementWorkspacePath = path.join(tempDirectory, "replacement-workspace");
+    await mkdir(path.join(replacementWorkspacePath, "docs"), { recursive: true });
+    await writeFile(path.join(replacementWorkspacePath, "docs", "report.txt"), "replacement");
+    const rootChangeService = new SessionFileExplorerService({
+      userDataPath: path.join(tempDirectory, "user-data"),
+      async getSessionContext() {
+        return { workspacePath: currentWorkspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] };
+      },
+      async lstatPath(targetPath) {
+        const targetStats = await lstat(targetPath);
+        currentWorkspacePath = replacementWorkspacePath;
+        return targetStats;
+      },
+    });
+    await assert.rejects(() => rootChangeService.resolvePathActionTarget({
+      sessionId: "session-1",
+      rootId: "workspace",
+      relativePath: "docs/report.txt",
+      nodeKind: "file",
+    }), /root changed/);
+
     currentWorkspacePath = "";
     await assert.rejects(
       () => service.resolvePathActionTarget({
@@ -78,6 +99,48 @@ test("SessionFileExplorerService は tree path actionをcurrent rootとnode kind
       }),
       /root path.*空/,
     );
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v1
+// kind = "security"
+// claim = "tree由来のfile-object copyはlexical leafがregular fileでopened handleと同一identityの間だけoperationを開始する"
+// oracle = { type = "contract", ref = "accepted behavior invariant 1 and 3: symbolic link exclusion before clipboard side effect" }
+// failure_mode = "regular file rowがsymlinkへ差し替わった後もリンク先をfile objectとしてclipboardへ書く"
+// scope = "SessionFileExplorerService.withAuthorizedTreeFilePath"
+// lifecycle = "permanent"
+// distinction = "previewとMarkdownの既存real-path copy境界を変えず、tree consumerだけlexical regular-file identityを要求する"
+// @end-test-value
+test("SessionFileExplorerService は tree file operation前にsymlink leafを拒否する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-tree-file-operation-"));
+  const workspacePath = path.join(tempDirectory, "workspace");
+  const filePath = path.join(workspacePath, "report.txt");
+  const archivedPath = path.join(workspacePath, "archived-report.txt");
+  let operationCalls = 0;
+  try {
+    await mkdir(workspacePath, { recursive: true });
+    await writeFile(filePath, "report");
+    const service = new SessionFileExplorerService({
+      userDataPath: path.join(tempDirectory, "user-data"),
+      async getSessionContext() {
+        return { workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] };
+      },
+      async openFile(targetPath, flags) {
+        await rename(targetPath, archivedPath);
+        await symlink(archivedPath, targetPath, "file");
+        return open(targetPath, flags);
+      },
+    });
+
+    await assert.rejects(() => service.withAuthorizedTreeFilePath(
+      { sessionId: "session-1", rootId: "workspace", relativePath: "report.txt" },
+      async () => {
+        operationCalls += 1;
+      },
+    ), /changed during authorization/);
+    assert.equal(operationCalls, 0);
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
   }

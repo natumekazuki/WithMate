@@ -345,7 +345,7 @@ const sessionFileTreeContextMenuService = new SessionFileTreeContextMenuService(
   platform: process.platform,
   createAuthorizationBoundary: createSessionFileExplorerService,
   writeText: (targetPath) => clipboard.writeText(targetPath),
-  copyFileObject: (resource) => sessionFileObjectCopyService.copyResource(resource),
+  copyFileObject: (resource) => sessionFileObjectCopyService.copyTreeResource(resource),
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
 const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({

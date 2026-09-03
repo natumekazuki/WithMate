@@ -301,7 +301,30 @@ export class SessionFileExplorerService {
     if (!kindMatches) {
       throw new Error("File tree path action node kind does not match the current target.");
     }
-    return candidate.unresolvedTargetPath;
+    const confirmedCandidate = await this.resolveTargetCandidate(
+      {
+        sessionId: request.sessionId,
+        rootId: request.rootId,
+        relativePath: request.relativePath,
+      },
+      request.nodeKind === "root",
+    );
+    if (
+      pathKey(confirmedCandidate.rootAbsolutePath) !== pathKey(candidate.rootAbsolutePath)
+      || pathKey(confirmedCandidate.unresolvedTargetPath) !== pathKey(candidate.unresolvedTargetPath)
+    ) {
+      throw new Error("File tree root changed during path authorization.");
+    }
+    const confirmedStats = request.nodeKind === "root"
+      ? await (this.deps.statPath ?? stat)(confirmedCandidate.unresolvedTargetPath)
+      : await (this.deps.lstatPath ?? lstat)(confirmedCandidate.unresolvedTargetPath);
+    const confirmedKindMatches = request.nodeKind === "file"
+      ? confirmedStats.isFile()
+      : confirmedStats.isDirectory();
+    if (!confirmedKindMatches) {
+      throw new Error("File tree target changed during path authorization.");
+    }
+    return confirmedCandidate.unresolvedTargetPath;
   }
 
   async resolvePreviewTarget(
@@ -634,6 +657,39 @@ export class SessionFileExplorerService {
       try {
         const confirmedTargetRealPath = await this.confirmOpenedTarget(opened.candidate, opened.stats);
         targetStillCurrent = pathKey(confirmedTargetRealPath) === pathKey(opened.targetRealPath);
+      } catch {
+        targetStillCurrent = false;
+      }
+      return { result, targetStillCurrent };
+    } finally {
+      await opened.handle.close();
+    }
+  }
+
+  async withAuthorizedTreeFilePath<T>(
+    request: SessionFileRootResourceRequest,
+    operation: (targetRealPath: string) => Promise<T>,
+  ): Promise<AuthorizedSessionFileOperationResult<T>> {
+    const candidate = await this.resolveTargetCandidate(request, false);
+    const lstatPath = this.deps.lstatPath ?? lstat;
+    const lexicalStats = await lstatPath(candidate.unresolvedTargetPath);
+    if (!lexicalStats.isFile()) {
+      throw new Error("File tree target is not a regular file.");
+    }
+    const opened = await this.openAuthorizedCandidate(candidate, "file");
+    try {
+      const confirmedLexicalStats = await lstatPath(candidate.unresolvedTargetPath);
+      if (!confirmedLexicalStats.isFile() || !isSameFileIdentity(opened.stats, confirmedLexicalStats)) {
+        throw new Error("File tree target changed during authorization.");
+      }
+      const result = await operation(opened.targetRealPath);
+      let targetStillCurrent = false;
+      try {
+        const finalLexicalStats = await lstatPath(candidate.unresolvedTargetPath);
+        const confirmedTargetRealPath = await this.confirmOpenedTarget(candidate, opened.stats);
+        targetStillCurrent = finalLexicalStats.isFile()
+          && isSameFileIdentity(opened.stats, finalLexicalStats)
+          && pathKey(confirmedTargetRealPath) === pathKey(opened.targetRealPath);
       } catch {
         targetStillCurrent = false;
       }

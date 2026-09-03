@@ -107,15 +107,16 @@ export class SessionFileTreeContextMenuService {
               if (!beginSelection()) {
                 return;
               }
-              void this.deps.copyFileObject({
+              void resolveCurrentTarget().then(() => this.deps.copyFileObject({
                 sessionId: request.sessionId,
                 rootId: request.rootId,
                 relativePath: request.relativePath,
-              }).then((result) => {
-                settle(result.status === "copied"
-                  ? { status: "copied-file" }
-                  : { status: "failed", message: result.message || FILE_COPY_FAILED_MESSAGE });
-              }).catch(() => settle({ status: "failed", message: FILE_COPY_FAILED_MESSAGE }));
+              }))
+                .then((result) => {
+                  settle(result.status === "copied"
+                    ? { status: "copied-file" }
+                    : { status: "failed", message: result.message || FILE_COPY_FAILED_MESSAGE });
+                }).catch(() => settle({ status: "failed", message: FILE_COPY_FAILED_MESSAGE }));
             },
           },
         );

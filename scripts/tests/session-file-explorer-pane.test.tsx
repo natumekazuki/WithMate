@@ -343,14 +343,14 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
 
 // @test-value v1
 // kind = "invariant"
-// claim = "path insertion resultはaction確定時にも同じactive ownerかつ書き込み可能なcomposerだけへ渡る"
+// claim = "path insertion resultはaction確定時にも同じactive owner・root revisionかつ書き込み可能なcomposerだけへ渡る"
 // oracle = { type = "contract", ref = "accepted behavior: File Explorer path insertion owner revalidation" }
-// failure_mode = "menu表示後のowner切替またはcomposer無効化後に別ownerや書き込み不可draftへpathを挿入する"
+// failure_mode = "menu表示後のowner・root切替またはcomposer無効化後にstale pathを別ownerや書き込み不可draftへ挿入する"
 // scope = "SessionFileExplorerPane path insertion result boundary"
 // lifecycle = "permanent"
-// distinction = "menu request時のcapabilityではなくresult適用時の最新ownerとcapabilityを観測する"
+// distinction = "menu request時の状態ではなくresult適用時の最新owner、root revision、capabilityを観測する"
 // @end-test-value
-test("SessionFileExplorerPane は path insertion result適用時にownerとcapabilityを再確認する", async () => {
+test("SessionFileExplorerPane は path insertion result適用時にowner・root・capabilityを再確認する", async () => {
   const { applySessionFileTreePathInsertionResult } = await import(
     "../../src/file-explorer/SessionFileExplorerPane.js"
   );
@@ -365,18 +365,32 @@ test("SessionFileExplorerPane は path insertion result適用時にownerとcapab
   assert.equal(applySessionFileTreePathInsertionResult({
     result,
     currentOwnerSessionId: "session-2",
+    requestedRootsRevision: "roots-1",
+    currentRootsRevision: "roots-1",
     canInsert: true,
     insertPathReference,
   }), false);
   assert.equal(applySessionFileTreePathInsertionResult({
     result,
     currentOwnerSessionId: "session-1",
+    requestedRootsRevision: "roots-1",
+    currentRootsRevision: "roots-1",
     canInsert: false,
     insertPathReference,
   }), false);
   assert.equal(applySessionFileTreePathInsertionResult({
     result,
     currentOwnerSessionId: "session-1",
+    requestedRootsRevision: "roots-1",
+    currentRootsRevision: "roots-2",
+    canInsert: true,
+    insertPathReference,
+  }), false);
+  assert.equal(applySessionFileTreePathInsertionResult({
+    result,
+    currentOwnerSessionId: "session-1",
+    requestedRootsRevision: "roots-1",
+    currentRootsRevision: "roots-1",
     canInsert: true,
     insertPathReference,
   }), true);

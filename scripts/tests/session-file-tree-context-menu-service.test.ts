@@ -88,6 +88,7 @@ test("Files path context menuはpath操作とWindows file copyをnode kind別に
   fileHarness.getTemplate()[3]?.click?.();
   fileHarness.closePopup();
   assert.deepEqual(await fileResult, { status: "copied-file" });
+  assert.equal(fileHarness.getResolveCalls(), 2);
   assert.deepEqual(copiedFileRequests, [{
     sessionId: "session-1",
     rootId: "workspace",
@@ -191,4 +192,31 @@ test("Files path insertはaction時の認可pathをowner付きで返しpopup clo
     absolutePath: "C:\\current\\report.txt",
   });
   assert.deepEqual(writes, []);
+});
+
+// @test-value v1
+// kind = "security"
+// claim = "Windows file-object copyはmenu open後もregular fileであるtargetだけをaction時のtree認可境界へ渡す"
+// oracle = { type = "contract", ref = "accepted behavior invariant 1 and 3: symbolic link exclusion and file-only object copy" }
+// failure_mode = "menu open後にfileがsymlinkまたは別kindへ変わってもfile object clipboard writeを開始する"
+// scope = "SessionFileTreeContextMenuService file-object copy action"
+// lifecycle = "permanent"
+// distinction = "path copyではなくWindows file-object copy siblingもaction時のtree node kindを再認可する"
+// @end-test-value
+test("Files file-object copyはaction時のtree再認可失敗後にclipboard処理を開始しない", async () => {
+  let copyCalls = 0;
+  const harness = createMenuHarness({
+    resolveTarget: (call) => call === 1
+      ? "C:\\workspace\\docs\\report.txt"
+      : Promise.reject(new Error("target became a symbolic link")),
+    copyFileObject: async () => {
+      copyCalls += 1;
+      return { status: "copied", message: "File copied." };
+    },
+  });
+  const result = harness.service.showContextMenu({} as never, REQUEST);
+  await Promise.resolve();
+  harness.getTemplate()[3]?.click?.();
+  assert.deepEqual(await result, { status: "failed", message: "File could not be copied." });
+  assert.equal(copyCalls, 0);
 });

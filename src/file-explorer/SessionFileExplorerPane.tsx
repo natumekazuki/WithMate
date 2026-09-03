@@ -47,12 +47,15 @@ type DirectoryLoadRequest = {
 export function applySessionFileTreePathInsertionResult(input: {
   result: { status: string; ownerSessionId?: string; absolutePath?: string };
   currentOwnerSessionId: string | null;
+  requestedRootsRevision: string;
+  currentRootsRevision: string;
   canInsert: boolean;
   insertPathReference: (ownerSessionId: string, absolutePath: string) => void;
 }): boolean {
   if (
     input.result.status !== "insert-path"
     || input.result.ownerSessionId !== input.currentOwnerSessionId
+    || input.requestedRootsRevision !== input.currentRootsRevision
     || !input.canInsert
     || !input.result.absolutePath
   ) {
@@ -93,9 +96,11 @@ export function SessionFileExplorerPane({
   historyContent,
 }: SessionFileExplorerPaneProps) {
   const currentSessionIdRef = useRef(sessionId);
+  const rootsRevisionRef = useRef(rootsRevision);
   const canInsertPathReferenceRef = useRef(canInsertPathReference);
   const onInsertPathReferenceRef = useRef(onInsertPathReference);
   currentSessionIdRef.current = sessionId;
+  rootsRevisionRef.current = rootsRevision;
   canInsertPathReferenceRef.current = canInsertPathReference;
   onInsertPathReferenceRef.current = onInsertPathReference;
   const loadRevisionRef = useRef(0);
@@ -248,6 +253,7 @@ export function SessionFileExplorerPane({
       return;
     }
     event.preventDefault();
+    const requestedRootsRevision = rootsRevision;
     void api.showSessionFileTreeContextMenu({
       sessionId,
       ...target,
@@ -264,6 +270,8 @@ export function SessionFileExplorerPane({
       applySessionFileTreePathInsertionResult({
         result,
         currentOwnerSessionId: currentSessionIdRef.current,
+        requestedRootsRevision,
+        currentRootsRevision: rootsRevisionRef.current,
         canInsert: canInsertPathReferenceRef.current,
         insertPathReference: onInsertPathReferenceRef.current,
       });
