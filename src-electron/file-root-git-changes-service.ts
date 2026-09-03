@@ -2557,7 +2557,9 @@ export class FileRootGitChangesService {
           const pathspecs = entry
             ? [entry.relativePath, ...(entry.previousRelativePath ? [entry.previousRelativePath] : [])]
             : [];
+          const workTreeConfigArgs = await this.#readWorkTreeConfigArgs(operation);
           const result = await this.#runIdentityBoundGit(operation, [
+            ...workTreeConfigArgs,
             "diff-tree",
             "--no-commit-id",
             "--patch",
