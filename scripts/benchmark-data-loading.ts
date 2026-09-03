@@ -206,6 +206,7 @@ function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions):
     approvalMode: "never",
     codexSandboxMode: "workspace-write",
     codexSpeed: "standard",
+    codexReviewer: "user",
     model: "gpt-5.4-mini",
     reasoningEffort: "medium",
     customAgentName: "",

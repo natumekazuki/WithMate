@@ -1,6 +1,7 @@
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { CodexSpeed } from "./codex-speed.js";
+import type { CodexReviewer } from "./codex-reviewer.js";
 import {
   resolveModelChangeSelection,
   resolveModelSelection,
@@ -19,6 +20,10 @@ type CodexSandboxModeSessionLike = {
 
 type CodexSpeedSessionLike = {
   codexSpeed: CodexSpeed;
+};
+
+type CodexReviewerSessionLike = {
+  codexReviewer: CodexReviewer;
 };
 
 type ModelRuntimeSessionLike = {
@@ -79,6 +84,21 @@ export function buildSessionWithCodexSpeed<TSession extends CodexSpeedSessionLik
   return {
     ...session,
     codexSpeed,
+    updatedAt,
+  };
+}
+
+export function buildSessionWithCodexReviewer<TSession extends CodexReviewerSessionLike>(
+  session: TSession,
+  codexReviewer: CodexReviewer,
+  updatedAt: string,
+): (TSession & { codexReviewer: CodexReviewer; updatedAt: string }) | null {
+  if (codexReviewer === session.codexReviewer) {
+    return null;
+  }
+  return {
+    ...session,
+    codexReviewer,
     updatedAt,
   };
 }

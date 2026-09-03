@@ -104,6 +104,7 @@ function buildProviderSession(session: CompanionSession): Session {
     approvalMode: session.approvalMode,
     codexSandboxMode: session.codexSandboxMode,
     codexSpeed: session.codexSpeed,
+    codexReviewer: session.codexReviewer,
     model: session.model,
     reasoningEffort: session.reasoningEffort,
     customAgentName: session.customAgentName,
@@ -355,6 +356,7 @@ export class CompanionRuntimeService {
       approvalMode: request.approvalMode ?? session.approvalMode,
       codexSandboxMode: request.codexSandboxMode ?? session.codexSandboxMode,
       codexSpeed: request.codexSpeed ?? session.codexSpeed,
+      codexReviewer: request.codexReviewer ?? session.codexReviewer,
     };
     const providerSession = this.deps.resolveProviderSession?.(buildProviderSession(requestedSession))
       ?? buildProviderSession(requestedSession);

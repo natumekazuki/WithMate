@@ -115,6 +115,7 @@ export type AgentSessionChatProjectionInput = {
   composerSendButtonTitle: string | undefined;
   isComposerBlockedFeedbackActive: boolean;
   approvalChoiceOptions: SessionComposerExpandedProps["approvalOptions"];
+  reviewerChoiceOptions: SessionComposerExpandedProps["reviewerOptions"];
   sandboxChoiceOptions: SessionComposerExpandedProps["sandboxOptions"];
   speedChoiceOptions: SessionComposerExpandedProps["speedOptions"];
   modelSelectOptions: SessionComposerExpandedProps["modelOptions"];
@@ -212,6 +213,7 @@ export type AgentSessionChatProjectionInput = {
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
   onChangeApprovalMode: SessionComposerExpandedProps["onChangeApprovalMode"];
+  onChangeCodexReviewer: SessionComposerExpandedProps["onChangeCodexReviewer"];
   onChangeCodexSandboxMode: SessionComposerExpandedProps["onChangeCodexSandboxMode"];
   onChangeCodexSpeed: SessionComposerExpandedProps["onChangeCodexSpeed"];
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
@@ -309,6 +311,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isComposerBlockedFeedbackActive: input.isComposerBlockedFeedbackActive,
       approvalOptions: input.approvalChoiceOptions,
       selectedApprovalMode: input.selectedSession.approvalMode,
+      reviewerOptions: input.reviewerChoiceOptions,
+      selectedCodexReviewer: input.selectedSession.codexReviewer,
       sandboxOptions: input.sandboxChoiceOptions,
       selectedCodexSandboxMode: input.selectedSession.codexSandboxMode,
       speedOptions: input.speedChoiceOptions,
@@ -345,6 +349,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onDraftCompositionEnd: input.onDraftCompositionEnd,
       onSendOrCancel: input.onSendOrCancel,
       onChangeApprovalMode: input.onChangeApprovalMode,
+      onChangeCodexReviewer: input.onChangeCodexReviewer,
       onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
       onChangeCodexSpeed: input.onChangeCodexSpeed,
       onChangeModel: input.onChangeModel,

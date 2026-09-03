@@ -75,6 +75,7 @@ function createSession(options?: {
   approvalMode?: "never" | "on-request" | "untrusted";
   codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   codexSpeed?: "standard" | "fast";
+  codexReviewer?: "user" | "auto-review";
   allowedAdditionalDirectories?: string[];
 }) {
   const {
@@ -84,6 +85,7 @@ function createSession(options?: {
     approvalMode = DEFAULT_APPROVAL_MODE,
     codexSandboxMode,
     codexSpeed,
+    codexReviewer,
     allowedAdditionalDirectories,
   } = options ?? {};
 
@@ -101,6 +103,7 @@ function createSession(options?: {
       approvalMode,
       codexSandboxMode,
       codexSpeed,
+      codexReviewer,
       model,
       reasoningEffort,
       allowedAdditionalDirectories,
@@ -1362,20 +1365,27 @@ describe("CodexAdapter thread settings", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "StandardとFastは異なるthread settings identityを持ち、auditには選択speedが記録される"
-  // oracle = { type = "contract", ref = "accepted behavior: provider execution" }
-  // failure_mode = "speed変更後も旧tierのsettings keyが一致するかauditから要求speedを追跡できない"
+  // claim = "SpeedまたはReviewerが異なるSessionは異なるthread settings identityを持つ"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-4" }
+  // failure_mode = "Reviewer変更後も旧client/thread settingsを再利用して異なるreviewer設定でturnを実行する"
   // scope = "codex-thread-settings"
   // lifecycle = "permanent"
   // @end-test-value
-  it("StandardとFastでthread settings keyを分離しspeed run checkを記録する", () => {
+  it("SpeedとReviewerの実値でthread settings keyを分離する", () => {
     const standard = createSession({ threadId: "thread-1", codexSpeed: "standard" });
     const fast = createSession({ threadId: "thread-1", codexSpeed: "fast" });
+    const autoReview = createSession({
+      threadId: "thread-1",
+      codexSpeed: "standard",
+      codexReviewer: "auto-review",
+    });
 
     const standardSettings = buildCodexThreadSettings(standard, CODEX_PROVIDER_CATALOG, "client-key");
     const fastSettings = buildCodexThreadSettings(fast, CODEX_PROVIDER_CATALOG, "client-key");
+    const autoReviewSettings = buildCodexThreadSettings(autoReview, CODEX_PROVIDER_CATALOG, "client-key");
 
     assert.notEqual(standardSettings.settingsKey, fastSettings.settingsKey);
+    assert.notEqual(standardSettings.settingsKey, autoReviewSettings.settingsKey);
     assert.deepEqual(buildCodexSpeedRunCheck("standard"), { label: "speed", value: "standard" });
     assert.deepEqual(buildCodexSpeedRunCheck("fast"), { label: "speed", value: "fast" });
   });
@@ -1469,13 +1479,13 @@ describe("CodexAdapter thread settings", () => {
 describe("CodexAdapter service tier clients", () => {
   // @test-value v1
   // kind = "invariant"
-  // claim = "foreground clientは選択tierを明示し、background clientは常にdefaultの専用cache scopeを使う"
-  // oracle = { type = "contract", ref = "accepted behavior: provider execution / background structured prompt" }
-  // failure_mode = "Standardがglobal Fastを継承する、tier変更後も旧clientを使う、またはbackground jobへFastが漏れる"
+  // claim = "foreground clientはSessionのtierとReviewerを明示し、background clientはdefault tierとUser Reviewerを明示する"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-4" }
+  // failure_mode = "Reviewer変更後も旧clientを使う、global設定を継承する、またはbackground jobへAuto-reviewが漏れる"
   // scope = "codex-client-cache"
   // lifecycle = "permanent"
   // @end-test-value
-  it("service_tierとforeground/background clientを公開実行経路で分離する", async () => {
+  it("service_tierとReviewerでforeground/background clientを分離しrun checkへ記録する", async () => {
     const createdOptions: CodexOptions[] = [];
     const resumedThreadIds: string[] = [];
     let threadSequence = 0;
@@ -1512,13 +1522,29 @@ describe("CodexAdapter service tier clients", () => {
       standardInput.session.id = fastInput.session.id;
       standardInput.session.threadId = fastResult.threadId;
       standardInput.session.codexSpeed = "standard";
-      const standardResult = await adapter.runSessionTurn(standardInput);
+      standardInput.session.codexReviewer = "auto-review";
+      const autoReviewResult = await adapter.runSessionTurn(standardInput);
+      const userInput = createCodexRunSessionTurnInput(workspacePath);
+      userInput.session.id = fastInput.session.id;
+      userInput.session.threadId = autoReviewResult.threadId;
+      userInput.session.codexSpeed = "standard";
+      userInput.session.codexReviewer = "user";
+      const userResult = await adapter.runSessionTurn(userInput);
 
-      assert.deepEqual(createdOptions.map((options) => options.config?.service_tier), ["fast", "default", "default"]);
-      assert.deepEqual(resumedThreadIds, [fastResult.threadId]);
+      assert.deepEqual(createdOptions.map((options) => options.config?.service_tier), ["fast", "default", "default", "default"]);
+      assert.deepEqual(createdOptions.map((options) => options.config?.approvals_reviewer), [
+        "user",
+        "user",
+        "auto_review",
+        "user",
+      ]);
+      assert.deepEqual(resumedThreadIds, [fastResult.threadId, autoReviewResult.threadId]);
       assert.equal(fastResult.artifact?.runChecks.some((check) => check.label === "speed" && check.value === "fast"), true);
-      assert.equal(standardResult.artifact?.runChecks.some(
-        (check) => check.label === "speed" && check.value === "standard",
+      assert.equal(autoReviewResult.artifact?.runChecks.some(
+        (check) => check.label === "reviewer" && check.value === "auto-review",
+      ), true);
+      assert.equal(userResult.artifact?.runChecks.some(
+        (check) => check.label === "reviewer" && check.value === "user",
       ), true);
     } finally {
       await rm(workspacePath, { recursive: true, force: true });

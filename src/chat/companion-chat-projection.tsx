@@ -100,7 +100,9 @@ export type CompanionChatProjectionInput = {
   sendButtonTitle: string | undefined;
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: SessionComposerExpandedProps["approvalOptions"];
+  reviewerOptions: SessionComposerExpandedProps["reviewerOptions"];
   selectedApprovalMode: SessionComposerExpandedProps["selectedApprovalMode"];
+  selectedCodexReviewer: SessionComposerExpandedProps["selectedCodexReviewer"];
   sandboxOptions: SessionComposerExpandedProps["sandboxOptions"];
   selectedCodexSandboxMode: SessionComposerExpandedProps["selectedCodexSandboxMode"];
   speedOptions: SessionComposerExpandedProps["speedOptions"];
@@ -190,6 +192,7 @@ export type CompanionChatProjectionInput = {
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
   onChangeApprovalMode: SessionComposerExpandedProps["onChangeApprovalMode"];
+  onChangeCodexReviewer: SessionComposerExpandedProps["onChangeCodexReviewer"];
   onChangeCodexSandboxMode: SessionComposerExpandedProps["onChangeCodexSandboxMode"];
   onChangeCodexSpeed: SessionComposerExpandedProps["onChangeCodexSpeed"];
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
@@ -284,6 +287,8 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isComposerBlockedFeedbackActive: input.isComposerBlockedFeedbackActive,
       approvalOptions: input.approvalOptions,
       selectedApprovalMode: input.selectedApprovalMode,
+      reviewerOptions: input.reviewerOptions,
+      selectedCodexReviewer: input.selectedCodexReviewer,
       sandboxOptions: input.sandboxOptions,
       selectedCodexSandboxMode: input.selectedCodexSandboxMode,
       speedOptions: input.speedOptions,
@@ -318,6 +323,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onDraftCompositionEnd: input.onDraftCompositionEnd,
       onSendOrCancel: input.onSendOrCancel,
       onChangeApprovalMode: input.onChangeApprovalMode,
+      onChangeCodexReviewer: input.onChangeCodexReviewer,
       onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
       onChangeCodexSpeed: input.onChangeCodexSpeed,
       onChangeModel: input.onChangeModel,

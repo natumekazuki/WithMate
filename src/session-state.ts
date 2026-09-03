@@ -5,6 +5,7 @@ import {
   type CodexSandboxMode,
 } from "./codex-sandbox-mode.js";
 import { DEFAULT_CODEX_SPEED, normalizeCodexSpeed, type CodexSpeed } from "./codex-speed.js";
+import { DEFAULT_CODEX_REVIEWER, normalizeCodexReviewer, type CodexReviewer } from "./codex-reviewer.js";
 import { normalizeCharacterThemeColors, type CharacterThemeColors } from "./character-state.js";
 import type { CharacterRuntimeSnapshot } from "./character/character-catalog.js";
 import {
@@ -84,6 +85,7 @@ export type Session = {
   approvalMode: ApprovalMode;
   codexSandboxMode: CodexSandboxMode;
   codexSpeed: CodexSpeed;
+  codexReviewer: CodexReviewer;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   customAgentName: string;
@@ -166,6 +168,7 @@ export type CreateSessionInput = {
   approvalMode: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;
   codexSpeed?: CodexSpeed;
+  codexReviewer?: CodexReviewer;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
   customAgentName?: string;
@@ -192,6 +195,7 @@ export type CreateSessionRequest = Omit<
   | "approvalMode"
   | "codexSandboxMode"
   | "codexSpeed"
+  | "codexReviewer"
   | "model"
   | "reasoningEffort"
   | "customAgentName"
@@ -429,6 +433,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
       DEFAULT_CODEX_SANDBOX_MODE,
     ),
     codexSpeed: normalizeCodexSpeed((candidate as { codexSpeed?: unknown }).codexSpeed),
+    codexReviewer: normalizeCodexReviewer((candidate as { codexReviewer?: unknown }).codexReviewer),
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
     reasoningEffort: isModelReasoningEffort(candidate.reasoningEffort)
       ? candidate.reasoningEffort
@@ -631,6 +636,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     approvalMode: normalizeApprovalMode(input.approvalMode, DEFAULT_APPROVAL_MODE),
     codexSandboxMode: normalizeCodexSandboxMode(input.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE),
     codexSpeed: normalizeCodexSpeed(input.codexSpeed ?? DEFAULT_CODEX_SPEED),
+    codexReviewer: normalizeCodexReviewer(input.codexReviewer ?? DEFAULT_CODEX_REVIEWER),
     model: input.model?.trim() || DEFAULT_MODEL_ID,
     reasoningEffort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     customAgentName: input.customAgentName?.trim() || "",
@@ -710,6 +716,7 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
     summary.approvalMode,
     summary.codexSandboxMode,
     summary.codexSpeed,
+    summary.codexReviewer,
     summary.workspacePath,
     summary.branch,
     summary.sessionKind,

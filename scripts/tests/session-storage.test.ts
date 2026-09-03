@@ -247,9 +247,9 @@ describe("SessionStorage", () => {
 
   // @test-value v1
   // kind = "contract"
-  // claim = "legacy Session summary projectionはdetail破損時もStandardへ正規化したCodex speedを返す"
+  // claim = "legacy Session summary projectionはdetail破損時もCodex speedとReviewerを既定値へ正規化する"
   // oracle = { type = "contract", ref = "accepted behavior: existing saved data default" }
-  // failure_mode = "旧Session summaryの欠落speedがFastへ昇格するか一覧取得を壊す"
+  // failure_mode = "旧Session summaryの欠落runtime optionが誤った値へ変わるか一覧取得を壊す"
   // scope = "session-storage-summary"
   // lifecycle = "permanent"
   // @end-test-value
@@ -301,6 +301,7 @@ describe("SessionStorage", () => {
           approvalMode: session.approvalMode,
           codexSandboxMode: session.codexSandboxMode,
           codexSpeed: "standard",
+          codexReviewer: "user",
           model: session.model,
           reasoningEffort: session.reasoningEffort,
           customAgentName: session.customAgentName,

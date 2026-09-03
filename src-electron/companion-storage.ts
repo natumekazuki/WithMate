@@ -29,6 +29,11 @@ import {
 } from "../src/model-catalog.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_CODEX_SPEED, normalizeCodexSpeed } from "../src/codex-speed.js";
+import {
+  DEFAULT_CODEX_REVIEWER,
+  normalizeCodexReviewer,
+  resolveCodexReviewerUpdate,
+} from "../src/codex-reviewer.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
@@ -66,6 +71,7 @@ type CompanionSessionRow = {
   approval_mode: string;
   codex_sandbox_mode: string;
   codex_speed: string;
+  codex_reviewer: string;
   character_id: string;
   character_name: string;
   character_role_markdown: string;
@@ -126,6 +132,7 @@ const COMPANION_SESSION_COLUMNS = `
   approval_mode,
   codex_sandbox_mode,
   codex_speed,
+  codex_reviewer,
   character_id,
   character_name,
   character_role_markdown,
@@ -196,6 +203,7 @@ function rowToSession(row: CompanionSessionRow): CompanionSession {
         ? row.codex_sandbox_mode
         : DEFAULT_CODEX_SANDBOX_MODE,
     codexSpeed: normalizeCodexSpeed(row.codex_speed),
+    codexReviewer: normalizeCodexReviewer(row.codex_reviewer),
     characterId: row.character_id,
     character: row.character_name,
     characterRoleMarkdown: row.character_role_markdown,
@@ -426,6 +434,7 @@ function sessionToSummary(
     approvalMode: session.approvalMode,
     codexSandboxMode: session.codexSandboxMode,
     codexSpeed: session.codexSpeed,
+    codexReviewer: session.codexReviewer,
     character: session.character,
     characterRoleMarkdown: session.characterRoleMarkdown,
     characterIconPath: session.characterIconPath,
@@ -482,6 +491,7 @@ export class CompanionStorage {
         approval_mode TEXT NOT NULL DEFAULT '${DEFAULT_APPROVAL_MODE}',
         codex_sandbox_mode TEXT NOT NULL DEFAULT '${DEFAULT_CODEX_SANDBOX_MODE}',
         codex_speed TEXT NOT NULL DEFAULT '${DEFAULT_CODEX_SPEED}',
+        codex_reviewer TEXT NOT NULL DEFAULT '${DEFAULT_CODEX_REVIEWER}',
         character_id TEXT NOT NULL,
         character_name TEXT NOT NULL,
         character_role_markdown TEXT NOT NULL DEFAULT '',
@@ -576,6 +586,9 @@ export class CompanionStorage {
     if (!columns.has("codex_speed")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN codex_speed TEXT NOT NULL DEFAULT 'standard';");
     }
+    if (!columns.has("codex_reviewer")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN codex_reviewer TEXT NOT NULL DEFAULT 'user';");
+    }
 
     const mergeRunColumns = new Set(
       (this.db.prepare("PRAGMA table_info(companion_merge_runs)").all() as { name: string }[]).map(
@@ -609,7 +622,7 @@ export class CompanionStorage {
     this.db.prepare(`
       INSERT INTO companion_sessions (
         ${COMPANION_SESSION_COLUMNS}
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.groupId,
@@ -636,6 +649,7 @@ export class CompanionStorage {
       session.approvalMode,
       session.codexSandboxMode,
       normalizeCodexSpeed(session.codexSpeed),
+      normalizeCodexReviewer(session.codexReviewer),
       session.characterId,
       session.character,
       session.characterRoleMarkdown,
@@ -730,6 +744,7 @@ export class CompanionStorage {
         approval_mode = ?,
         codex_sandbox_mode = ?,
         codex_speed = ?,
+        codex_reviewer = ?,
         character_id = ?,
         character_name = ?,
         character_role_markdown = ?,
@@ -756,6 +771,7 @@ export class CompanionStorage {
       session.approvalMode,
       session.codexSandboxMode,
       normalizeCodexSpeed(session.codexSpeed),
+      resolveCodexReviewerUpdate(currentSession, session.codexReviewer),
       session.characterId,
       session.character,
       session.characterRoleMarkdown,

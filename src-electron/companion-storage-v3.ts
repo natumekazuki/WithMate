@@ -24,6 +24,7 @@ import {
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_CODEX_SPEED, normalizeCodexSpeed } from "../src/codex-speed.js";
+import { normalizeCodexReviewer, resolveCodexReviewerUpdate } from "../src/codex-reviewer.js";
 import {
   DEFAULT_CATALOG_REVISION,
   DEFAULT_MODEL_ID,
@@ -71,6 +72,7 @@ type CompanionSessionRow = {
   approval_mode: string;
   codex_sandbox_mode: string;
   codex_speed: string;
+  codex_reviewer: string;
   character_id: string;
   character_name: string;
   character_role_preview: string;
@@ -180,6 +182,7 @@ const COMPANION_SESSION_SUMMARY_COLUMNS = `
   approval_mode,
   codex_sandbox_mode,
   codex_speed,
+  codex_reviewer,
   character_id,
   character_name,
   character_role_preview,
@@ -217,6 +220,7 @@ const COMPANION_SESSION_DETAIL_COLUMNS = `
   approval_mode,
   codex_sandbox_mode,
   codex_speed,
+  codex_reviewer,
   character_id,
   character_name,
   character_role_preview,
@@ -504,6 +508,7 @@ async function rowToSession(row: CompanionSessionRow, blobStore: TextBlobStore):
         ? row.codex_sandbox_mode
         : DEFAULT_CODEX_SANDBOX_MODE,
     codexSpeed: normalizeCodexSpeed(row.codex_speed),
+    codexReviewer: normalizeCodexReviewer(row.codex_reviewer),
     characterId: row.character_id,
     character: row.character_name,
     characterRoleMarkdown: row.character_role_blob_id
@@ -592,6 +597,7 @@ function sessionToSummary(
     approvalMode: session.approvalMode,
     codexSandboxMode: session.codexSandboxMode,
     codexSpeed: session.codexSpeed,
+    codexReviewer: session.codexReviewer,
     character: session.character,
     characterRoleMarkdown: session.characterRoleMarkdown,
     characterIconPath: session.characterIconPath,
@@ -636,6 +642,7 @@ function rowToSessionSummary(
       ? row.codex_sandbox_mode
       : DEFAULT_CODEX_SANDBOX_MODE,
     codexSpeed: normalizeCodexSpeed(row.codex_speed),
+    codexReviewer: normalizeCodexReviewer(row.codex_reviewer),
     character: row.character_name,
     characterRoleMarkdown: row.character_role_preview,
     characterIconPath: row.character_icon_path,
@@ -861,6 +868,9 @@ export class CompanionStorageV3 {
     if (!columns.has("codex_speed")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN codex_speed TEXT NOT NULL DEFAULT 'standard';");
     }
+    if (!columns.has("codex_reviewer")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN codex_reviewer TEXT NOT NULL DEFAULT 'user';");
+    }
   }
 
   async ensureGroup(group: CompanionGroup): Promise<CompanionGroup> {
@@ -891,7 +901,10 @@ export class CompanionStorageV3 {
       throw new Error("Companion Session の Character owner / runtime snapshot は更新できないよ。");
     }
 
-    return this.writeSession(session, true);
+    return this.writeSession({
+      ...session,
+      codexReviewer: resolveCodexReviewerUpdate(currentSession, session.codexReviewer),
+    }, true);
   }
 
   async updateSessionBaseSnapshot(session: CompanionSession): Promise<CompanionSession> {
@@ -1092,7 +1105,7 @@ export class CompanionStorageV3 {
       INSERT INTO companion_sessions (
         ${COMPANION_SESSION_DETAIL_COLUMNS},
         message_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.groupId,
@@ -1119,6 +1132,7 @@ export class CompanionStorageV3 {
       session.approvalMode,
       session.codexSandboxMode,
       normalizeCodexSpeed(session.codexSpeed),
+      normalizeCodexReviewer(session.codexReviewer),
       session.characterId,
       session.character,
       preview(session.characterRoleMarkdown),
@@ -1152,6 +1166,7 @@ export class CompanionStorageV3 {
         approval_mode = ?,
         codex_sandbox_mode = ?,
         codex_speed = ?,
+        codex_reviewer = ?,
         character_id = ?,
         character_name = ?,
         character_role_preview = ?,
@@ -1180,6 +1195,7 @@ export class CompanionStorageV3 {
       session.approvalMode,
       session.codexSandboxMode,
       normalizeCodexSpeed(session.codexSpeed),
+      normalizeCodexReviewer(session.codexReviewer),
       session.characterId,
       session.character,
       preview(session.characterRoleMarkdown),
