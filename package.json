@@ -33,7 +33,7 @@
   "dependencies": {
     "@github/copilot-sdk": "^1.0.6",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@openai/codex-sdk": "^0.145.0",
+    "@openai/codex-sdk": "^0.153.0",
     "@shikijs/core": "^4.4.2",
     "@shikijs/engine-javascript": "^4.4.2",
     "@shikijs/langs": "^4.4.2",
