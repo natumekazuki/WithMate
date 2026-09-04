@@ -945,6 +945,110 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
 
   // @test-value v1
   // kind = "contract"
+  // claim = "operation開始時に送出中だったtools/listは、rollback tokenの有無によらずresponse成功後に同じregistrationをfallback判定へ使用する"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // failure_mode = "server既存stateを返すtokenなしregistrationが送出成功しても、開始時admission欠落またはtoken差により正当なfallbackが拒否される"
+  // scope = "withmate-memory-mcp-fallback-admission"
+  // lifecycle = "permanent"
+  // distinction = "operation開始後に作成された後発registrationではなく、開始時点ですでに送出処理中だったregistrationの成功確定を検証する"
+  // @end-test-value
+  it("開始時に送出中のtokenなしregistrationはresponse成功後にoperation snapshotへ採用する", async () => {
+    for (const priorAdmission of ["absent", "different-token"] as const) {
+      let activeAdmissionToken = priorAdmission === "different-token" ? "admission-old" : "admission-current";
+      let listedCalls = 0;
+      const eligibleTokens: string[] = [];
+      let gateNextListResponse = false;
+      let releaseListResponse!: () => void;
+      let notifyListResponseStarted!: () => void;
+      let notifyRuntimeRequestStarted!: () => void;
+      const listResponseGate = new Promise<void>((resolve) => {
+        releaseListResponse = resolve;
+      });
+      const listResponseStarted = new Promise<void>((resolve) => {
+        notifyListResponseStarted = resolve;
+      });
+      const runtimeRequestStarted = new Promise<void>((resolve) => {
+        notifyRuntimeRequestStarted = resolve;
+      });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const originalSend = serverTransport.send.bind(serverTransport);
+      serverTransport.send = async (message, options) => {
+        if (gateNextListResponse && "result" in message && "id" in message) {
+          gateNextListResponse = false;
+          notifyListResponseStarted();
+          await listResponseGate;
+        }
+        await originalSend(message, options);
+      };
+      const server = createWithMateMemoryMcpServer({
+        env: {
+          WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+          WITHMATE_MEMORY_API_SECRET: "api-secret",
+          WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+          WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+          WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+          WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-a",
+        },
+        fallbackAdmissionSecret: "fallback-secret",
+        runtimeCall: async (_connection, operation) => {
+          if (operation.path === "/v1/fallback-admission/listed") {
+            listedCalls += 1;
+            if (priorAdmission === "different-token" && listedCalls === 1) {
+              return {
+                ok: true,
+                status: 200,
+                value: { admissionToken: "admission-old", rollbackToken: "rollback-old" },
+              };
+            }
+            return { ok: true, status: 200, value: { admissionToken: "admission-current" } };
+          }
+          if (operation.path === "/v1/fallback-admission/eligible") {
+            const requestedToken = (operation.body as any).admissionToken;
+            eligibleTokens.push(requestedToken);
+            const eligible = requestedToken === activeAdmissionToken;
+            return { ok: eligible, status: eligible ? 200 : 403, value: {} };
+          }
+          notifyRuntimeRequestStarted();
+          throw new WithMateMemoryRuntimeExchangeError("transport failed", false, {
+            discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE",
+          });
+        },
+      });
+      const client = new Client({ name: `withmate-fallback-pending-${priorAdmission}-test`, version: "1.0.0" });
+      let pendingList: Promise<unknown> | null = null;
+      try {
+        await server.connect(serverTransport);
+        await client.connect(clientTransport);
+        if (priorAdmission === "different-token") {
+          await client.listTools();
+          activeAdmissionToken = "admission-current";
+        }
+        gateNextListResponse = true;
+        pendingList = client.listTools();
+        await listResponseStarted;
+        const toolCall = client.callTool({
+          name: "memory.search",
+          arguments: { targets: [{ kind: "user-global" }], query: priorAdmission },
+        });
+        await runtimeRequestStarted;
+        assert.deepEqual(eligibleTokens, []);
+        releaseListResponse();
+        await pendingList;
+
+        const result = await toolCall;
+        assert.equal((result.structuredContent as any).error.details?.fallbackEligible, true);
+        assert.deepEqual(eligibleTokens, ["admission-current"]);
+      } finally {
+        releaseListResponse();
+        await client.close();
+        await pendingList;
+        await server.close();
+      }
+    }
+  });
+
+  // @test-value v1
+  // kind = "contract"
   // claim = "一般Memory toolはactor-relative inputを対応runtime routeへ送りdomain rejectionを変更せず返す"
   // oracle = { type = "adr", ref = "ADR-024 exact MCP schema and failure boundary" }
   // failure_mode = "MCP adapterがrouteまたはdomain errorを別の成功・fallback条件へ変換する"

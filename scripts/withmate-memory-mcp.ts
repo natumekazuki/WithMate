@@ -373,10 +373,12 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
           let admission = admissionAtStart;
           if (deliveryPendingAtStart) {
             const registered = await registrationAtStart;
-            const requiresSettlement = Boolean(
-              registered?.rollback
-              || (registered && admissionAtStart && !isSameControlContext(registered.context, admissionAtStart.context)),
-            );
+            const requiresSettlement = Boolean(registered && (
+              registered.rollback
+              || !admissionAtStart
+              || !isSameControlContext(registered.context, admissionAtStart.context)
+              || registered.admissionToken !== admissionAtStart.admissionToken
+            ));
             if (requiresSettlement) {
               if (deliveryAtStart && !await deliveryAtStart) {
                 return false;
