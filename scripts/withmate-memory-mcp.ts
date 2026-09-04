@@ -227,6 +227,14 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
   let deliveredContext: ControlContext | null = null;
   let listedRegistration: Promise<void> | null = null;
   let listedDelivery: Promise<boolean> | null = null;
+  let listedDeliveryRequiresSettlement = false;
+
+  const isSameControlContext = (left: ControlContext, right: ControlContext): boolean => (
+    left.connection.api.runtimeGenerationId === right.connection.api.runtimeGenerationId
+    && left.bindingReference === right.bindingReference
+    && left.turnCapability === right.turnCapability
+    && left.fallbackAdmissionSecret === right.fallbackAdmissionSecret
+  );
 
   const callControl = async (
     context: ControlContext,
@@ -320,6 +328,10 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
       })();
       listedRegistration = registration.then(() => undefined);
       const registered = await registration;
+      listedDeliveryRequiresSettlement = Boolean(
+        registered?.rollback
+        || (registered && deliveredContext && !isSameControlContext(registered.context, deliveredContext)),
+      );
       return {
         async commit(): Promise<void> {
           if (registered) {
@@ -338,7 +350,7 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
     },
     async markEligible(operation): Promise<boolean> {
       await listedRegistration;
-      if (!deliveredContext) {
+      if (!deliveredContext || listedDeliveryRequiresSettlement) {
         if (listedDelivery && !await listedDelivery) {
           return false;
         }

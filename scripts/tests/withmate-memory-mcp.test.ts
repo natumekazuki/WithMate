@@ -624,6 +624,103 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
   });
 
   // @test-value v1
+  // kind = "security"
+  // claim = "先行tools/list成功後でも新規作成されたfallback admissionは、対応responseの送出成功前にeligibleへ遷移しない"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // failure_mode = "先行admissionの期限切れ後に再作成したlisted stateが、未送出responseの確定待ちを迂回してeligibleになりrollback不能になる"
+  // scope = "withmate-memory-mcp-fallback-admission"
+  // lifecycle = "permanent"
+  // distinction = "tokenなしの真の重複ではなく、先行delivery後にcreator token付きで再作成されたstateの送出待機を検証する"
+  // @end-test-value
+  it("先行admission期限切れ後の再登録はresponse送出成功までeligibleにしない", async () => {
+    let listed = false;
+    let listedGeneration = 0;
+    let eligibilityAttempts = 0;
+    let failNextResponse = false;
+    let releaseResponse!: () => void;
+    let notifyResponseStarted!: () => void;
+    let notifySearchFailure!: () => void;
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
+    const responseStarted = new Promise<void>((resolve) => {
+      notifyResponseStarted = resolve;
+    });
+    const searchFailureStarted = new Promise<void>((resolve) => {
+      notifySearchFailure = resolve;
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const originalSend = serverTransport.send.bind(serverTransport);
+    serverTransport.send = async (message, options) => {
+      if (failNextResponse && "result" in message && "id" in message) {
+        failNextResponse = false;
+        notifyResponseStarted();
+        await responseGate;
+        throw new Error("recreated tools/list response send failed");
+      }
+      await originalSend(message, options);
+    };
+    const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: "api-secret",
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+        WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+        WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-a",
+      },
+      fallbackAdmissionSecret: "fallback-secret",
+      runtimeCall: async (_connection, operation) => {
+        if (operation.path === "/v1/fallback-admission/listed") {
+          listed = true;
+          listedGeneration += 1;
+          return { ok: true, status: 200, value: { rollbackToken: `rollback-${listedGeneration}` } };
+        }
+        if (operation.path === "/v1/fallback-admission/listed/rollback") {
+          listed = false;
+          return { ok: true, status: 200, value: {} };
+        }
+        if (operation.path === "/v1/fallback-admission/eligible") {
+          eligibilityAttempts += 1;
+          return { ok: listed, status: listed ? 200 : 403, value: {} };
+        }
+        notifySearchFailure();
+        throw new WithMateMemoryRuntimeExchangeError("transport failed", false, {
+          discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE",
+        });
+      },
+    });
+    const client = new Client({ name: "withmate-fallback-recreated-list-test", version: "1.0.0" });
+    let recreatedList: Promise<unknown> | null = null;
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      await client.listTools();
+      listed = false;
+      failNextResponse = true;
+      recreatedList = client.listTools().catch(() => undefined);
+      await responseStarted;
+      const toolCall = client.callTool({
+        name: "memory.search",
+        arguments: { targets: [{ kind: "user-global" }], query: "during-recreated-response" },
+      });
+      await searchFailureStarted;
+      await Promise.resolve();
+      assert.equal(eligibilityAttempts, 0);
+      releaseResponse();
+      const result = await toolCall;
+      assert.equal((result.structuredContent as any).error.details?.fallbackEligible, undefined);
+      assert.equal(listed, false);
+      assert.equal(eligibilityAttempts, 0);
+    } finally {
+      releaseResponse();
+      await client.close();
+      await recreatedList;
+      await server.close();
+    }
+  });
+
+  // @test-value v1
   // kind = "contract"
   // claim = "一般Memory toolはactor-relative inputを対応runtime routeへ送りdomain rejectionを変更せず返す"
   // oracle = { type = "adr", ref = "ADR-024 exact MCP schema and failure boundary" }

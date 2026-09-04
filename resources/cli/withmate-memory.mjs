@@ -25622,6 +25622,8 @@ function createMcpFallbackAdmission(deps) {
 	let deliveredContext = null;
 	let listedRegistration = null;
 	let listedDelivery = null;
+	let listedDeliveryRequiresSettlement = false;
+	const isSameControlContext = (left, right) => left.connection.api.runtimeGenerationId === right.connection.api.runtimeGenerationId && left.bindingReference === right.bindingReference && left.turnCapability === right.turnCapability && left.fallbackAdmissionSecret === right.fallbackAdmissionSecret;
 	const callControl = async (context, path, body) => {
 		const abortController = new AbortController();
 		const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 1e4);
@@ -25696,6 +25698,7 @@ function createMcpFallbackAdmission(deps) {
 			})();
 			listedRegistration = registration.then(() => void 0);
 			const registered = await registration;
+			listedDeliveryRequiresSettlement = Boolean(registered?.rollback || registered && deliveredContext && !isSameControlContext(registered.context, deliveredContext));
 			return {
 				async commit() {
 					if (registered) deliveredContext = registered.context;
@@ -25712,7 +25715,7 @@ function createMcpFallbackAdmission(deps) {
 		},
 		async markEligible(operation) {
 			await listedRegistration;
-			if (!deliveredContext) {
+			if (!deliveredContext || listedDeliveryRequiresSettlement) {
 				if (listedDelivery && !await listedDelivery) return false;
 			}
 			const pathname = new URL(operation.path, "http://127.0.0.1").pathname;
