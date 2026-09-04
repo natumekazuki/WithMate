@@ -5,13 +5,12 @@ import path from "node:path";
 
 import { resolveProviderSkillRootPath, type AppSettings } from "../src/provider-settings-state.js";
 
-export const WITHMATE_MEMORY_SKILL_NAME = "withmate-memory";
 export const WITHMATE_GLOSSARY_SKILL_NAME = "withmate-glossary";
 const MANAGED_MARKER_FILE = ".withmate-managed-skill.json";
 const MANAGED_MARKER_VERSION = 1;
 const MANAGED_SKILL_FILE_NAME = "SKILL.md";
 
-export type ManagedMemorySkillSyncStatus =
+export type ManagedSkillSyncStatus =
   | "installed"
   | "updated"
   | "unchanged"
@@ -20,11 +19,11 @@ export type ManagedMemorySkillSyncStatus =
   | "skipped-collision"
   | "failed";
 
-export type ManagedMemorySkillSyncResult = {
+export type ManagedSkillSyncResult = {
   providerId: string;
   skillRootPath: string | null;
   skillPath: string | null;
-  status: ManagedMemorySkillSyncStatus;
+  status: ManagedSkillSyncStatus;
   errorMessage?: string;
 };
 
@@ -57,7 +56,7 @@ export class ManagedSkillDistributionService {
 
   async syncConfiguredProviderSkills(
     bundle: ManagedSkillBundleDescriptor,
-  ): Promise<ManagedMemorySkillSyncResult[]> {
+  ): Promise<ManagedSkillSyncResult[]> {
     const appSettings = this.deps.getAppSettings();
     const providerEntries = Object.entries(appSettings.codingProviderSettings);
     return Promise.all(providerEntries.map(([providerId, providerSettings]) =>
@@ -69,7 +68,7 @@ export class ManagedSkillDistributionService {
     bundle: ManagedSkillBundleDescriptor,
     providerId: string,
     skillRootPath: string,
-  ): Promise<ManagedMemorySkillSyncResult> {
+  ): Promise<ManagedSkillSyncResult> {
     const normalizedSkillRootPath = skillRootPath.trim();
     if (!normalizedSkillRootPath) {
       return {
@@ -211,39 +210,6 @@ export class ManagedSkillDistributionService {
       }
       throw error;
     }
-  }
-}
-
-export type ManagedMemorySkillServiceDeps = ManagedSkillDistributionServiceDeps & {
-  bundledSkillPath: string;
-  shouldSyncSkillMarkdownOnly?: () => boolean | Promise<boolean>;
-};
-
-export class ManagedMemorySkillService {
-  readonly #distribution: ManagedSkillDistributionService;
-  readonly #bundle: ManagedSkillBundleDescriptor;
-
-  constructor(deps: ManagedMemorySkillServiceDeps) {
-    this.#distribution = new ManagedSkillDistributionService({
-      getAppSettings: deps.getAppSettings,
-      getAppVersion: deps.getAppVersion,
-      isPackagedApp: deps.isPackagedApp,
-      platform: deps.platform,
-      shouldSyncDocumentationOnly: () => deps.shouldSyncSkillMarkdownOnly?.() ?? false,
-    });
-    this.#bundle = {
-      skillName: WITHMATE_MEMORY_SKILL_NAME,
-      bundledSkillPath: deps.bundledSkillPath,
-      documentationRelativePaths: [MANAGED_SKILL_FILE_NAME, "reference"],
-    };
-  }
-
-  syncConfiguredProviderSkills(): Promise<ManagedMemorySkillSyncResult[]> {
-    return this.#distribution.syncConfiguredProviderSkills(this.#bundle);
-  }
-
-  syncProviderSkill(providerId: string, skillRootPath: string): Promise<ManagedMemorySkillSyncResult> {
-    return this.#distribution.syncProviderSkill(this.#bundle, providerId, skillRootPath);
   }
 }
 

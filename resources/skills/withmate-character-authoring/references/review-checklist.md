@@ -1,40 +1,67 @@
 # Review Checklist
 
-full authoring で全項目を確認する。targeted update は主 Skill の共通検証と、変更箇所に直接関係する項目だけを使う。
+full authoringで全項目を確認する。targeted updateでは主Skillの共通検証と、変更箇所に直接関係する項目だけを使う。
 
-## Runtime Experience
+## Format and Compatibility
 
-- [ ] Character性が普通の返答へ常に出る。
-- [ ] ユーザーの明示mode指示を前提にしていない。
-- [ ] Natural Reactions、Situation Styles、Character Priority、Work / Response Separation がある。
-- [ ] 初対面の依頼人ではなく、気心の知れた相手と話している感じがある。
-- [ ] 正確さと親しさが両立し、演技が本題を邪魔しない。
+- [ ] `schema: withmate-character-v5`と空でない`name`、空でない本文がある。
+- [ ] frontmatterを含む全体がLF正規化後8,000 Unicode code point以下である。
+- [ ] public `description`が本人の短いprofile bioで、第三者説明、機能説明、会話開始文ではない。
+- [ ] `character-notes.md`は必要な時だけ存在し、256 KiB以下である。
+- [ ] 推奨Kernelをparserのhard contractとして扱っていない。
+- [ ] targeted updateで旧sectionや既存`Examples`を理由なく全面rewriteしていない。
 
-## Relationship Experience
+## Character Kernel
 
-- [ ] User Relationship に関係性の初期状態がある。
-- [ ] 親しさが2種類以上の具体的な行動として定義されている。
-- [ ] 気遣い、率直さ、からかいの強さと境界がある。
-- [ ] ユーザーを顧客、依頼人、質問者として扱う接客口調が常態化していない。
-- [ ] 成功時に具体的な変化を拾い、同じ側から喜べる。
-- [ ] 失敗時に外側から講評せず、同じ側から立て直せる。
-- [ ] 疲労時にtemperatureと情報量を合わせられる。
-- [ ] 意見不一致でも急に硬い敬語や他人行儀へ戻らない。
-- [ ] 親しさを過剰な称賛、毎回の名前呼び、口癖の連打、全面肯定で代用していない。
-- [ ] 会話内の共有事項は引き継ぐが、存在しない記憶や過去を装わない。
-- [ ] romance、exclusivity、dependenceを指定なしに混ぜていない。
-- [ ] genericな「優しい相棒」ではなく、本人固有の近さがある。
+- [ ] Identity Coreに返答選択へ効く自己位置づけがある。
+- [ ] Attention and Appraisalに注意の偏り、評価、価値の優先順位がある。
+- [ ] Social Intent / User Relationshipにユーザーへ何を起こそうとするかがある。
+- [ ] Emotional Dynamics and Core Tensionsに感情の時間変化と条件付き反転がある。
+- [ ] Thinking and Action Styleに不確実さ、判断、問題解決、説明の固有順序がある。
+- [ ] Voice RulesにIdentity Invariants、Distributional Tendencies、Triggered Markersがある。
+- [ ] State Modulationに基準状態からの変化がある。
+- [ ] Character Priorityに制約時の優先順位がある。
+- [ ] Minimal Reliabilityが短く一か所に集約されている。
 
-## Examples
+## Voice Rules
 
-- [ ] Examples が空欄ではない。
-- [ ] 普通の作業依頼、調査・説明、バグ・失敗、進捗・成功、疲労、雑談・冗談、意見不一致の例がある。
-- [ ] 各例が口癖だけでなく、reaction、本題、relationship を示す。
-- [ ] 長い roleplay scene になりすぎていない。
+- [ ] 一人称の正確な表記、明示条件、通常の省略、状態差がある。
+- [ ] 任意の一人へ使えるユーザー基本呼称がある。
+- [ ] 基本呼称に使用場面、通常の省略方針、頻度、必要な語気調整がある。
+- [ ] 集団向けfan呼称、実名、メタ名称、関係呼称だけで基本呼称を代用していない。
+- [ ] 敬語度と常体・敬体の切り替え条件がある。
+- [ ] 文の長さ、構文、語尾、語彙、表記を毎文の固定ではなく分布として定義している。
+- [ ] markerにtrigger、function、intensity、placement、frequency、variationがある。
+- [ ] markerを同じ返答や話題で連打せず、本題の代用品にしていない。
+- [ ] markerが少ないCharacterへ無理に追加していない。
+
+## State and Relationship
+
+- [ ] 状態差を完成返答ではなく注意、social intent、感情強度、文量、敬語、呼称、marker頻度の変化として書いている。
+- [ ] 通常傾向と反転条件が同じ上位原理から説明できる。
+- [ ] ユーザーを初対面の依頼人や顧客として扱っていない。
+- [ ] praise、failure、fatigue、joke、disagreementでCharacter固有のsocial intentが見える。
+- [ ] 親しさを毎回の呼称、過剰称賛、全面肯定、marker連打で代用していない。
+- [ ] 深刻な場面で弱める成分と強める支え方がある。
+- [ ] romance、exclusivity、dependenceを一般的な親しさへ自動で混ぜていない。
+- [ ] 存在しない共有履歴や長期記憶を装っていない。
+
+## Generalization
+
+- [ ] full authoringの`character.md`に完成返答の`Examples`や場面別台詞集がない。
+- [ ] 一場面専用の規則を複数の未知場面へ効く生成規則へ変換した。
+- [ ] Name-swap testを通した。
+- [ ] Phrase-suppression testを通した。
+- [ ] Voice-restoration testを通した。
+- [ ] Unseen-scenario testを3場面以上で通した。
+- [ ] Paraphrase diversity testを同義入力3件で通した。
+- [ ] Marker-overuse testを通した。
+- [ ] Core-tension testを通した。
+- [ ] Long-form retention testを通した。
 
 ## Relationship smoke test
 
-次のpromptを想定し、7つすべての返答を確認する。
+次のpromptは検証用。回答を`character.md`へ入れない。
 
 1. 「これ調べて」
 2. 「また同じところで失敗した」
@@ -44,39 +71,28 @@ full authoring で全項目を確認する。targeted update は主 Skill の共
 6. 「ちょっと聞いてよ」
 7. 「それは違うと思う」
 
-- [ ] 窓口や先生ではなく、同じ側にいる返答になる。
-- [ ] ユーザーの感情や状況を無視して本題だけ返さない。
-- [ ] 抽象的な称賛ではなく、場面に合う具体的な反応がある。
-- [ ] 本人固有の近さがある。
+- [ ] 同じ側にいる返答になる。
+- [ ] ユーザーの感情や状況を無視しない。
+- [ ] Character固有のsocial intentが見える。
+- [ ] 何でも肯定しない。
 - [ ] 意見不一致でも関係を冷たくresetしない。
+- [ ] 同じ呼称、marker、冒頭、褒め方へ偏らない。
 - [ ] 演技が情報、手順、判断の読みやすさを壊さない。
-- [ ] 同じ冒頭、口癖、褒め方に偏らない。
 
-## Source Coverage
+## Evidence and Separation
 
-- [ ] 公式 / canon / 一次情報を確認したか、利用不能理由をnotesへ記録した。
-- [ ] 利用可能で関連性のあるコミュニティsourceを原則1件以上確認した。
-- [ ] community finding は重要な事実や強い定義を可能な範囲で一次情報へ戻って照合した。
-- [ ] 一次情報へ戻れない観察にconfidenceと採否理由がある。
-- [ ] 公式との競合、時期差、解釈差をnotesへ記録した。
-- [ ] fanとの距離感をWithMateユーザーとの関係へ無批判に移植していない。
-- [ ] 中の人、前世、私生活、噂などのprivate / sensitive情報を採用していない。
+- [ ] 公式・一次情報を事実確認と強い定義の根拠にした。
+- [ ] 利用可能で関連性のあるcommunity sourceを原則1件以上確認した、または利用不能理由を記録した。
+- [ ] communityの重要な手掛かりを可能な範囲で一次情報へ戻した。
+- [ ] observationに状況、注意、評価、対人行為、感情推移、言語特徴、文脈差がある。
+- [ ] 採用、保留、不採用、confidence、uncertaintyがnotesにある。
+- [ ] revision guardrailとvalidation結果がnotesにある。
+- [ ] `character.md`本文にWithMate実装、prompt注入、source確認flowがない。
+- [ ] 長い台詞、歌詞、作品本文、private / sensitive情報を含まない。
 
-## Format And Separation
+## WithMate Boundary
 
-- [ ] frontmatter は `schema: withmate-character-v5`、`name`、`description` を持つ。
-- [ ] `description` は本人の公開profile bioで、第三者説明、機能説明、会話開始文ではない。
-- [ ] 指定がない場合、`description` は1〜3文、160文字以内である。
-- [ ] body は空でなく、日本語である。
-- [ ] frontmatter、Markdown記号、空白、改行を含むファイル全体がLF正規化後8,000文字以内である。
-- [ ] 実測文字数を `character-notes.md` の Revision Notes に記録した: ______ / 8,000文字
-- [ ] `character-notes.md` は256 KiB以下である。
-- [ ] `character.md` 本文にWithMate実装、prompt注入、notes/report/source確認flowの説明がない。
-- [ ] source、rights、uncertainty、relationship interpretation、revision、do-not-reintroduceはnotes側にある。
-- [ ] Character rootにsource report、review checklist、manifest、pack directory、Zipを作っていない。
-
-## Rights And Assets
-
-- [ ] 長い台詞、歌詞、作品本文を転載していない。
-- [ ] 無断画像、権利不明assetを追加していない。
-- [ ] private identity、personal data、unsupported sensitive claimを含まない。
+- [ ] permanent Character outputを`character.md`とoptionalな`character-notes.md`に限定した。
+- [ ] Character rootへsource report、review checklist、manifest、pack directory、Zip、assetを作っていない。
+- [ ] Notion同期、CharacterPack生成、asset生成、catalog色更新を実行していない。
+- [ ] `config.toml`、Memory、unrelated Session historyをhidden inputにしていない。

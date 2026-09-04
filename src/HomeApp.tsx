@@ -21,7 +21,6 @@ import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import type { OpenSessionWindowIdsState } from "./open-session-window-subscription.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
-import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "./memory-v6/provider-instruction-sample.js";
 import {
   buildHomeLaunchProjection,
 } from "./home/home-launch-projection.js";
@@ -884,19 +883,6 @@ export default function HomeApp() {
     deletingOldSessions,
     onChangeSessionCleanupCutoffDate: setSessionCleanupCutoffDate,
     onOpenMemoryV6Review: () => void openMemoryV6ReviewWindow(),
-    onCopyMemoryProviderInstructionSample: () => {
-      const clipboard = navigator.clipboard;
-      if (!clipboard?.writeText) {
-        setSettingsFeedback("この環境では clipboard copy を利用できません。");
-        return;
-      }
-
-      void clipboard.writeText(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE)
-        .then(() => setSettingsFeedback("WithMate Memory の provider instruction sample をコピーしたよ。"))
-        .catch((error) => {
-          setSettingsFeedback(error instanceof Error ? error.message : "provider instruction sample のコピーに失敗したよ。");
-        });
-    },
     ...settingsDraftHandlers,
     ...settingsCommandHandlers,
   };

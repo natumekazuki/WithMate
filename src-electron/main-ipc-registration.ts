@@ -103,7 +103,11 @@ import type {
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFileTreePathActionContextMenuResult,
+  SessionFileTreePathActionRequest,
   FileRootChangesRequest,
+  FileRootChangesRepositoriesRequest,
+  FileRootChangesRepositoriesResult,
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
@@ -206,8 +210,10 @@ import {
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
@@ -457,11 +463,18 @@ export type MainIpcRegistrationDeps = {
     event: IpcSenderEvent,
     request: SessionFileObjectCopyContextMenuRequest,
   ): Awaitable<SessionFileObjectCopyContextMenuResult>;
+  showSessionFileTreeContextMenu(
+    event: IpcSenderEvent,
+    request: SessionFileTreePathActionRequest,
+  ): Awaitable<SessionFileTreePathActionContextMenuResult>;
   showMarkdownLinkContextMenu(
     event: IpcSenderEvent,
     request: MarkdownLinkContextMenuRequest,
   ): Awaitable<MarkdownLinkContextMenuResult>;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
+  listFileRootChangesRepositories(
+    request: FileRootChangesRepositoriesRequest,
+  ): Awaitable<FileRootChangesRepositoriesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   listFileRootGitHistoryRepositories(
     request: FileRootGitHistoryRepositoriesRequest,
@@ -696,8 +709,10 @@ type MainIpcSessionQueryDeps = Pick<
   | "showSessionFilePreviewImageContextMenu"
   | "copySessionFileObject"
   | "showSessionFileObjectCopyContextMenu"
+  | "showSessionFileTreeContextMenu"
   | "showMarkdownLinkContextMenu"
   | "listFileRootChanges"
+  | "listFileRootChangesRepositories"
   | "getFileRootDiff"
   | "listFileRootGitHistoryRepositories"
   | "listFileRootGitHistoryCommits"
@@ -1162,6 +1177,53 @@ function parseSessionFileObjectCopyContextMenuRequest(
   };
 }
 
+function parseSessionFileTreeContextMenuRequest(input: unknown): SessionFileTreePathActionRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("File tree context menu request is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (!hasOnlyObjectKeys(candidate, [
+    "sessionId",
+    "rootId",
+    "relativePath",
+    "nodeKind",
+    "point",
+    "canInsert",
+  ])) {
+    throw new TypeError("File tree context menu request is invalid.");
+  }
+  const point = candidate.point;
+  if (
+    typeof candidate.sessionId !== "string"
+    || !candidate.sessionId
+    || typeof candidate.rootId !== "string"
+    || !candidate.rootId
+    || typeof candidate.relativePath !== "string"
+    || !["root", "directory", "file"].includes(String(candidate.nodeKind))
+    || typeof candidate.canInsert !== "boolean"
+    || !point
+    || typeof point !== "object"
+    || !hasOnlyObjectKeys(point as Record<string, unknown>, ["x", "y"])
+    || !Number.isSafeInteger((point as Record<string, unknown>).x)
+    || ((point as Record<string, unknown>).x as number) < 0
+    || !Number.isSafeInteger((point as Record<string, unknown>).y)
+    || ((point as Record<string, unknown>).y as number) < 0
+  ) {
+    throw new TypeError("File tree context menu request is invalid.");
+  }
+  return {
+    sessionId: candidate.sessionId,
+    rootId: candidate.rootId,
+    relativePath: candidate.relativePath,
+    nodeKind: candidate.nodeKind as SessionFileTreePathActionRequest["nodeKind"],
+    canInsert: candidate.canInsert,
+    point: {
+      x: (point as Record<string, unknown>).x as number,
+      y: (point as Record<string, unknown>).y as number,
+    },
+  };
+}
+
 function parseMarkdownLinkContextMenuRequest(input: unknown): MarkdownLinkContextMenuRequest {
   if (!input || typeof input !== "object") {
     throw new TypeError("Markdown link context menu request is invalid.");
@@ -1260,6 +1322,8 @@ function assertAuxiliaryCreateModeForOwner(
     Object.hasOwn(input, "reasoningEffort") ||
     Object.hasOwn(input, "approvalMode") ||
     Object.hasOwn(input, "codexSandboxMode") ||
+    Object.hasOwn(input, "codexSpeed") ||
+    Object.hasOwn(input, "codexReviewer") ||
     Object.hasOwn(input, "customAgentName")
   ) {
     throw new Error("Session window Auxiliary creation cannot specify runtime options directly.");
@@ -1762,6 +1826,11 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     await assertSessionFileResourceSender(event, request.resource, deps);
     return deps.showSessionFileObjectCopyContextMenu(event, request);
   });
+  ipcMain.handle(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFileTreeContextMenuRequest(input);
+    await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.showSessionFileTreeContextMenu(event, request);
+  });
   ipcMain.handle(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
     const request = parseMarkdownLinkContextMenuRequest(input);
     if (!deps.resolveEventWindow(event)) {
@@ -1810,6 +1879,24 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       })),
     };
   });
+  ipcMain.handle(
+    WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
+    async (event, request: FileRootChangesRepositoriesRequest) => {
+      if (
+        !request
+        || typeof request.sessionId !== "string"
+        || !request.sessionId
+        || !Array.isArray(request.rootIds)
+        || request.rootIds.length > 256
+        || request.rootIds.some((rootId) => typeof rootId !== "string" || !rootId)
+        || new Set(request.rootIds).size !== request.rootIds.length
+      ) {
+        throw new TypeError("Git repositories request is invalid.");
+      }
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.listFileRootChangesRepositories(request);
+    },
+  );
   ipcMain.handle(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, async (event, request: FileRootFileDiffRequest) => {
     if (
       !request

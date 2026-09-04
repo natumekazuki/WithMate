@@ -98,7 +98,6 @@ export function buildCharacterAffectTurnPrompt(input: CharacterAffectTurnPromptI
     ].join("\n"),
     userText: JSON.stringify({
       character: {
-        id: input.character.characterId,
         definition: input.character.definitionMarkdown,
       },
       currentAffect: input.context
@@ -106,7 +105,6 @@ export function buildCharacterAffectTurnPrompt(input: CharacterAffectTurnPromptI
             effective: input.context.affect.effective,
             evaluatedAt: input.context.affect.evaluatedAt,
             version: input.context.affect.version,
-            scope: input.context.scope,
           }
         : null,
       event: {

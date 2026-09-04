@@ -18,6 +18,9 @@ import {
 } from "../src/memory-v6/memory-discovery.js";
 import {
   createWithMateMemoryRuntimeOwnerChallenge,
+  WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+  WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION,
+  type WithMateMemoryFallbackAdmissionCredential,
 } from "../src/memory-v6/memory-runtime-exchange.js";
 import {
   isUuid,
@@ -51,6 +54,7 @@ import {
   type AgentRuntimeExtensionResponse,
 } from "./memory-v6-http-server.js";
 import type { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
+import type { ProviderAgentRuntimeTurnCoordinator } from "./provider-agent-runtime-turn-coordinator.js";
 import { createMemoryV6ProjectResolver } from "./memory-v6-project-resolver.js";
 import {
   inspectMemoryProtectedObjectInputFile,
@@ -97,6 +101,7 @@ export type StartMemoryV6RuntimeApiOptions = {
   now?: () => Date;
   log?: (input: AppLogInput) => void;
   agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
+  providerAgentRuntimeTurns?: Pick<ProviderAgentRuntimeTurnCoordinator, "admit">;
   resolveActorSession?: (
     sessionId: string,
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
@@ -1420,18 +1425,25 @@ export async function startMemoryV6RuntimeApi(
     const apiSecret = createRuntimeApiSecret();
     const operatorApiSecret = createRuntimeApiSecret();
     const mcpApiSecret = createRuntimeApiSecret();
+    const fallbackAdmissionApiSecret = createRuntimeApiSecret();
     server = createMemoryV6HttpServer({
       service,
       characterContextService,
       apiSecret,
       operatorApiSecret,
       mcpApiSecret,
+      fallbackAdmissionApiSecret,
       applicationInstanceId: options.applicationInstanceId,
       runtimeGenerationId,
       buildChannel: options.buildChannel,
       agentRuntimeBindingRegistry: options.agentRuntimeBindingRegistry,
+      providerAgentRuntimeTurns: options.providerAgentRuntimeTurns,
+      resolveProjectById: projectResolver.resolveProjectById,
+      resolveProjectByPath: projectResolver.resolveProjectByPath,
+      resolveKnownProjectByPath: projectResolver.resolveKnownProjectByPath,
       resolveActorSession: options.resolveActorSession,
       routeAgentRuntimeExtension: options.routeAgentRuntimeExtension,
+      ...(options.now ? { now: options.now } : {}),
     });
     await server.start();
 
@@ -1498,6 +1510,20 @@ export async function startMemoryV6RuntimeApi(
               publishedAt,
             }),
           } satisfies RuntimeDiscoveryCredentialEnvelope<WithMateMemoryDiscoveryDocument>,
+        },
+        {
+          adapterKind: WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+          document: {
+            schemaVersion: "withmate-runtime-credential-v1",
+            applicationInstanceId: options.applicationInstanceId,
+            runtimeKind: "memory",
+            adapterKind: WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
+            runtimeGenerationId,
+            credential: {
+              schemaVersion: WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION,
+              admissionSecret: fallbackAdmissionApiSecret,
+            },
+          } satisfies RuntimeDiscoveryCredentialEnvelope<WithMateMemoryFallbackAdmissionCredential>,
         },
       ],
       challenge: (entry, slotDirectoryPath) => challengeMemoryRuntimeRegistryEntry(

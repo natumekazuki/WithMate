@@ -46,7 +46,7 @@
 | retry | canceled/error 後に同じ request を再送する | 対応 | 未確認 | 実装済み | provider native 機能というより wrapper UX |
 | model selection | session ごとに model を選ぶ | 対応 | 対応 | 実装済み | catalog と session metadata に保存 |
 | reasoning depth | session ごとに reasoning depth を選ぶ | 対応 | 未確認 | 実装済み | Copilot 側の depth 同等概念は未整理 |
-| approval mode | provider-native approval 設定へ map する | 対応 | 一部対応 | 一部実装 | WithMate は Codex SDK policy 値の `never / on-request / on-failure / untrusted` を正本にする。Copilot は provider-specific choices だけを UI に出す |
+| approval mode | provider-native approval 設定へ map する | 対応 | 一部対応 | 一部実装 | WithMate は Codex policy 値の `never / on-request / untrusted` を正本にする。Copilot は provider-specific choices だけを UI に出す |
 | file / folder context | workspace file/folder を turn input に含める | 一部対応 | 一部対応 | 実装済み | workspace 外 path は session metadata `allowedAdditionalDirectories` 配下だけを許可する。Codex はその許可リストを `additionalDirectories`、Copilot は `attachments` の `file` / `directory` へ変換して送る |
 | image attachment | image を turn input に含める | 対応 | 一部対応 | 実装済み | Codex は `local_image`、Copilot は `attachments` の `file` として送る |
 | skill selection | skill を選び、provider native invocation へ変換する | 対応 | 対応 | 実装済み | Codex は `$skill-name`、Copilot は directive 設計まで |
@@ -67,7 +67,7 @@
 ## Current Read
 
 2026-06-27 時点では、WithMate の Codex / GitHub Copilot 対応は同じ Session UI で通常turnを実行できる範囲まで入っている。
-Memory V6 は Skill-first local Memory service として、runtime API、CLI discovery、app-internal guard、explicit target validation、managed Skill sync、Settings Diagnostics まで接続済みである。
+Memory V6 はprovider共通MCPをagent-facing contractの正本とし、runtime bindingによるactor-relative target、operator CLI、app-internal guard、Settings Diagnosticsまで接続済みである。provider別のMemory Skillは配布・同期しない。
 一方で cross-provider matrix として見ると、未着手が多いのは `slash command`, `agent/apps/mcp/plugins` まわり。
 
 ## Update Rule

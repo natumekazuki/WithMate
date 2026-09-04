@@ -181,14 +181,18 @@ function readCssPixelValue(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function readCssBorderPixelValue(width: string, style: string): number {
+  return style === "none" || style === "hidden" ? 0 : readCssPixelValue(width);
+}
+
 export function measureSessionVerticalDockLayoutBounds(layout: HTMLElement): SessionVerticalDockLayoutBounds {
   const bounds = layout.getBoundingClientRect();
   const styles = window.getComputedStyle(layout);
   const contentTop = bounds.top
-    + readCssPixelValue(styles.borderTopWidth)
+    + readCssBorderPixelValue(styles.borderTopWidth, styles.borderTopStyle)
     + readCssPixelValue(styles.paddingTop);
   const contentBottom = bounds.bottom
-    - readCssPixelValue(styles.borderBottomWidth)
+    - readCssBorderPixelValue(styles.borderBottomWidth, styles.borderBottomStyle)
     - readCssPixelValue(styles.paddingBottom);
   return {
     top: contentTop,
@@ -201,10 +205,10 @@ export function measureSessionHorizontalLayoutBounds(layout: HTMLElement): Sessi
   const bounds = layout.getBoundingClientRect();
   const styles = window.getComputedStyle(layout);
   const contentLeft = bounds.left
-    + readCssPixelValue(styles.borderLeftWidth)
+    + readCssBorderPixelValue(styles.borderLeftWidth, styles.borderLeftStyle)
     + readCssPixelValue(styles.paddingLeft);
   const contentRight = bounds.right
-    - readCssPixelValue(styles.borderRightWidth)
+    - readCssBorderPixelValue(styles.borderRightWidth, styles.borderRightStyle)
     - readCssPixelValue(styles.paddingRight);
   return {
     left: contentLeft,

@@ -10,6 +10,7 @@ import type {
   SessionFilePreviewTargetResolution,
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
+  SessionFileRootResourceRequest,
 } from "../src/file-explorer/file-explorer-contract.js";
 import { isSessionFileRootResource } from "../src/file-explorer/file-explorer-contract.js";
 import type { AuthorizedSessionFileOperationResult } from "./session-file-explorer-service.js";
@@ -25,6 +26,10 @@ type SessionFileAuthorizationBoundary = {
   ): Promise<SessionFilePreviewTargetResolution>;
   withAuthorizedFilePath<T>(
     request: SessionFileResourceRequest,
+    operation: (targetRealPath: string) => Promise<T>,
+  ): Promise<AuthorizedSessionFileOperationResult<T>>;
+  withAuthorizedTreeFilePath?<T>(
+    request: SessionFileRootResourceRequest,
     operation: (targetRealPath: string) => Promise<T>,
   ): Promise<AuthorizedSessionFileOperationResult<T>>;
 };
@@ -93,6 +98,35 @@ export class SessionFileObjectCopyService {
         return isNotCopyableFileError(error)
           ? { status: "not-copyable", message: FILE_NOT_COPYABLE_MESSAGE }
           : { status: "failed", message: FILE_COPY_FAILED_MESSAGE };
+      }
+
+      if (operation.result.status === "failed-before-write") {
+        return { status: "failed", message: FILE_COPY_FAILED_MESSAGE };
+      }
+      if (operation.result.status === "copied" && operation.targetStillCurrent) {
+        return { status: "copied", message: FILE_COPIED_MESSAGE };
+      }
+      return { status: "effect-unknown", message: FILE_COPY_EFFECT_UNKNOWN_MESSAGE };
+    });
+  }
+
+  copyTreeResource(resource: SessionFileRootResourceRequest): Promise<SessionFileObjectCopyResult> {
+    return this.enqueue(async () => {
+      if (!this.isAvailable()) {
+        return { status: "not-copyable", message: FILE_NOT_COPYABLE_MESSAGE };
+      }
+      let operation: AuthorizedSessionFileOperationResult<NativeFileDropWriteResult>;
+      try {
+        const authorization = this.deps.createAuthorizationBoundary();
+        if (!authorization.withAuthorizedTreeFilePath) {
+          return { status: "failed", message: FILE_COPY_FAILED_MESSAGE };
+        }
+        operation = await authorization.withAuthorizedTreeFilePath(
+          resource,
+          (targetRealPath) => this.deps.writeNativeFileDrop(targetRealPath),
+        );
+      } catch {
+        return { status: "failed", message: FILE_COPY_FAILED_MESSAGE };
       }
 
       if (operation.result.status === "failed-before-write") {

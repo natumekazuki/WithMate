@@ -12,6 +12,8 @@ import {
   CODEX_SANDBOX_MODE_VALUES,
   DEFAULT_CODEX_SANDBOX_MODE,
 } from "../src/codex-sandbox-mode.js";
+import { CODEX_SPEED_VALUES, DEFAULT_CODEX_SPEED } from "../src/codex-speed.js";
+import { DEFAULT_CODEX_REVIEWER, resolveCodexReviewerUpdate } from "../src/codex-reviewer.js";
 import {
   coerceModelSelection,
   getModelCatalogItem,
@@ -115,6 +117,7 @@ function assertLatestSessionRuntimeFieldsAbsent(input: CreateAuxiliarySessionInp
     input.reasoningEffort !== undefined ||
     input.approvalMode !== undefined ||
     input.codexSandboxMode !== undefined ||
+    input.codexSpeed !== undefined ||
     input.customAgentName !== undefined
   ) {
     throw new Error("latest-session 選択では runtime option を直接指定できないよ。");
@@ -175,6 +178,14 @@ export class AuxiliarySessionService {
         "codexSandboxMode",
       )
       : null;
+    const explicitCodexSpeed = runtimeSelectionMode === "explicit"
+      ? resolveInitialRuntimeOption(
+        input.codexSpeed,
+        CODEX_SPEED_VALUES,
+        DEFAULT_CODEX_SPEED,
+        "codexSpeed",
+      )
+      : null;
 
     const parent = await this.deps.getParentSession(input.parentSessionId);
     if (!parent) {
@@ -192,6 +203,7 @@ export class AuxiliarySessionService {
         input,
         explicitApprovalMode ?? DEFAULT_APPROVAL_MODE,
         explicitCodexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
+        explicitCodexSpeed ?? DEFAULT_CODEX_SPEED,
       );
 
     const now = currentTimestampLabel();
@@ -207,6 +219,8 @@ export class AuxiliarySessionService {
       reasoningEffort: launchSelection.reasoningEffort,
       approvalMode: launchSelection.approvalMode,
       codexSandboxMode: launchSelection.codexSandboxMode,
+      codexSpeed: parent.codexSpeed,
+      codexReviewer: parent.codexReviewer,
       customAgentName: launchSelection.customAgentName,
       allowedAdditionalDirectories: [...parent.allowedAdditionalDirectories],
       threadId: "",
@@ -223,6 +237,7 @@ export class AuxiliarySessionService {
     input: CreateAuxiliarySessionInput,
     approvalMode: SessionLaunchSelection["approvalMode"],
     codexSandboxMode: SessionLaunchSelection["codexSandboxMode"],
+    codexSpeed: SessionLaunchSelection["codexSpeed"],
   ): SessionLaunchSelection {
     const snapshot = this.deps.getModelCatalogSnapshot?.();
     const providerCatalog = getProviderCatalog(snapshot?.providers ?? [], input.provider);
@@ -237,6 +252,8 @@ export class AuxiliarySessionService {
       reasoningEffort: modelSelection.resolvedReasoningEffort,
       approvalMode,
       codexSandboxMode,
+      codexSpeed,
+      codexReviewer: DEFAULT_CODEX_REVIEWER,
       customAgentName: input.customAgentName?.trim() ?? "",
     };
   }
@@ -272,6 +289,8 @@ export class AuxiliarySessionService {
       reasoningEffort: runtimeSession.reasoningEffort,
       approvalMode: runtimeSession.approvalMode,
       codexSandboxMode: runtimeSession.codexSandboxMode,
+      codexSpeed: runtimeSession.codexSpeed,
+      codexReviewer: runtimeSession.codexReviewer,
       customAgentName: runtimeSession.customAgentName,
       allowedAdditionalDirectories: [...runtimeSession.allowedAdditionalDirectories],
       threadId: runtimeSession.threadId,
@@ -312,6 +331,8 @@ export class AuxiliarySessionService {
       session.title !== current.title ||
       session.approvalMode !== current.approvalMode ||
       session.codexSandboxMode !== current.codexSandboxMode ||
+      session.codexSpeed !== current.codexSpeed ||
+      session.codexReviewer !== current.codexReviewer ||
       session.customAgentName !== current.customAgentName ||
       !areStringArraysEqual(session.allowedAdditionalDirectories, current.allowedAdditionalDirectories);
     const isExplicitRuntimeMetadataUpdate =
@@ -340,6 +361,10 @@ export class AuxiliarySessionService {
       reasoningEffort: shouldPreserveRuntimeMetadata ? current.reasoningEffort : session.reasoningEffort,
       approvalMode: shouldPreserveEditableSettings ? current.approvalMode : session.approvalMode,
       codexSandboxMode: shouldPreserveEditableSettings ? current.codexSandboxMode : session.codexSandboxMode,
+      codexSpeed: shouldPreserveEditableSettings ? current.codexSpeed : session.codexSpeed,
+      codexReviewer: shouldPreserveEditableSettings
+        ? current.codexReviewer
+        : resolveCodexReviewerUpdate(current, session.codexReviewer),
       customAgentName: shouldPreserveEditableSettings ? current.customAgentName : session.customAgentName,
       allowedAdditionalDirectories: shouldPreserveEditableSettings
         ? [...current.allowedAdditionalDirectories]
@@ -417,6 +442,8 @@ export class AuxiliarySessionService {
       runState: auxiliary.runState,
       approvalMode: auxiliary.approvalMode,
       codexSandboxMode: auxiliary.codexSandboxMode,
+      codexSpeed: auxiliary.codexSpeed,
+      codexReviewer: auxiliary.codexReviewer,
       model: auxiliary.model,
       reasoningEffort: auxiliary.reasoningEffort,
       customAgentName: auxiliary.customAgentName,

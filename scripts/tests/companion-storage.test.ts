@@ -63,6 +63,8 @@ function createSession(groupId: string, overrides: Partial<CompanionSession> = {
     customAgentName: "",
     approvalMode: DEFAULT_APPROVAL_MODE,
     codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+    codexSpeed: "standard",
+    codexReviewer: "user",
     characterId: "char-1",
     character: "Mia",
     characterRoleMarkdown: "落ち着いて伴走する。",
@@ -140,6 +142,14 @@ describe("CompanionStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Companion summaryとdetailは保存済みCodex speedとReviewerを同じSession ownerから返す"
+  // oracle = { type = "contract", ref = "accepted behavior: Companion persistence projection" }
+  // failure_mode = "Companionの一覧とdetailでSpeedまたはReviewer選択が失われるか食い違う"
+  // scope = "companion-storage"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("group と active session を保存して summary と detail を読み戻せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -150,6 +160,8 @@ describe("CompanionStorage", () => {
       const group = storage.ensureGroup(createGroup());
       const session = storage.createSession(createSession(group.id, {
         approvalMode: "never",
+        codexSpeed: "fast",
+        codexReviewer: "auto-review",
       }));
 
       assert.equal(session.groupId, group.id);
@@ -176,6 +188,8 @@ describe("CompanionStorage", () => {
           reasoningEffort: DEFAULT_REASONING_EFFORT,
           approvalMode: "never",
           codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+          codexSpeed: "fast",
+          codexReviewer: "auto-review",
           character: "Mia",
           characterRoleMarkdown: "落ち着いて伴走する。",
           characterIconPath: "icon.png",
@@ -188,6 +202,44 @@ describe("CompanionStorage", () => {
       ]);
       assert.equal(storage.getSession("session-1")?.companionBranch, "withmate/companion/session-1");
       assert.equal(storage.getSession("session-1")?.approvalMode, "never");
+      assert.equal(storage.getSession("session-1")?.codexSpeed, "fast");
+      assert.equal(storage.getSession("session-1")?.codexReviewer, "auto-review");
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Companion Session更新は保存済みApprovalがneverの間、他項目を更新しても現在のReviewerを保持する"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-3" }
+  // failure_mode = "直接IPCまたはstale payloadがnever中のCompanion Reviewerを変更し、後のinteractive復帰で意図しない値が有効になる"
+  // scope = "companion-storage"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("updateSession は保存済みApprovalがneverの間Reviewerを保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-reviewer-never-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CompanionStorage | null = null;
+
+    try {
+      storage = new CompanionStorage(dbPath);
+      const group = storage.ensureGroup(createGroup());
+      const session = storage.createSession(createSession(group.id, {
+        approvalMode: "never",
+        codexReviewer: "auto-review",
+      }));
+
+      const updated = storage.updateSession({
+        ...session,
+        taskTitle: "Renamed Companion",
+        codexReviewer: "user",
+      });
+
+      assert.equal(updated.taskTitle, "Renamed Companion");
+      assert.equal(updated.codexReviewer, "auto-review");
+      assert.equal(storage.getSession(session.id)?.codexReviewer, "auto-review");
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

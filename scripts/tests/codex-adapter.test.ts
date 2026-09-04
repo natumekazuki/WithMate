@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import type { Codex, CodexOptions } from "@openai/codex-sdk";
 
 import { buildNewSession } from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
@@ -12,6 +13,7 @@ import type { ModelCatalogProvider, ModelReasoningEffort } from "../../src/model
 import {
   CodexAdapter,
   buildCodexProviderMetadata,
+  buildCodexSpeedRunCheck,
   buildCodexThreadSettings,
   buildCodexStableRawItems,
   collectCodexAssistantResponseFromEventsForTesting,
@@ -72,6 +74,8 @@ function createSession(options?: {
   reasoningEffort?: ModelReasoningEffort;
   approvalMode?: "never" | "on-request" | "untrusted";
   codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
+  codexSpeed?: "standard" | "fast";
+  codexReviewer?: "user" | "auto-review";
   allowedAdditionalDirectories?: string[];
 }) {
   const {
@@ -80,6 +84,8 @@ function createSession(options?: {
     reasoningEffort = "high",
     approvalMode = DEFAULT_APPROVAL_MODE,
     codexSandboxMode,
+    codexSpeed,
+    codexReviewer,
     allowedAdditionalDirectories,
   } = options ?? {};
 
@@ -96,6 +102,8 @@ function createSession(options?: {
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       approvalMode,
       codexSandboxMode,
+      codexSpeed,
+      codexReviewer,
       model,
       reasoningEffort,
       allowedAdditionalDirectories,
@@ -1355,6 +1363,33 @@ describe("CodexAdapter thread settings", () => {
     assert.equal(nextSettings.options.modelReasoningEffort, "low");
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "SpeedまたはReviewerが異なるSessionは異なるthread settings identityを持つ"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-4" }
+  // failure_mode = "Reviewer変更後も旧client/thread settingsを再利用して異なるreviewer設定でturnを実行する"
+  // scope = "codex-thread-settings"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("SpeedとReviewerの実値でthread settings keyを分離する", () => {
+    const standard = createSession({ threadId: "thread-1", codexSpeed: "standard" });
+    const fast = createSession({ threadId: "thread-1", codexSpeed: "fast" });
+    const autoReview = createSession({
+      threadId: "thread-1",
+      codexSpeed: "standard",
+      codexReviewer: "auto-review",
+    });
+
+    const standardSettings = buildCodexThreadSettings(standard, CODEX_PROVIDER_CATALOG, "client-key");
+    const fastSettings = buildCodexThreadSettings(fast, CODEX_PROVIDER_CATALOG, "client-key");
+    const autoReviewSettings = buildCodexThreadSettings(autoReview, CODEX_PROVIDER_CATALOG, "client-key");
+
+    assert.notEqual(standardSettings.settingsKey, fastSettings.settingsKey);
+    assert.notEqual(standardSettings.settingsKey, autoReviewSettings.settingsKey);
+    assert.deepEqual(buildCodexSpeedRunCheck("standard"), { label: "speed", value: "standard" });
+    assert.deepEqual(buildCodexSpeedRunCheck("fast"), { label: "speed", value: "fast" });
+  });
+
   it("max / ultra を Codex thread options へそのまま渡す", () => {
     for (const reasoningEffort of ["max", "ultra"] as const) {
       const session = createSession({
@@ -1438,6 +1473,82 @@ describe("CodexAdapter thread settings", () => {
     assert.equal(resumeCalls[0]?.threadId, "thread-1");
     assert.equal(resumeCalls[0]?.options.model, "gpt-5.4-mini");
     assert.equal(resumeCalls[0]?.options.modelReasoningEffort, "low");
+  });
+});
+
+describe("CodexAdapter service tier clients", () => {
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "foreground clientはSessionのtierとReviewerを明示し、background clientはdefault tierとUser Reviewerを明示する"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-4" }
+  // failure_mode = "Reviewer変更後も旧clientを使う、global設定を継承する、またはbackground jobへAuto-reviewが漏れる"
+  // scope = "codex-client-cache"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("service_tierとReviewerでforeground/background clientを分離しrun checkへ記録する", async () => {
+    const createdOptions: CodexOptions[] = [];
+    const resumedThreadIds: string[] = [];
+    let threadSequence = 0;
+    const adapter = new CodexAdapter(undefined, {
+      createClient: (options) => {
+        createdOptions.push(options);
+        const createThread = (threadId: string) => ({
+          id: threadId,
+          runStreamed: async () => ({
+            events: createCodexStreamFromEvents([
+              { type: "item.completed", item: { id: "message", type: "agent_message", text: "done" } },
+              { type: "turn.completed", usage: null },
+            ]),
+          }),
+          run: async () => ({ finalResponse: "{\"answer\":\"ok\"}", usage: null }),
+        });
+        return {
+          startThread: () => createThread(`thread-${++threadSequence}`),
+          resumeThread: (threadId: string) => {
+            resumedThreadIds.push(threadId);
+            return createThread(threadId);
+          },
+        } as Codex;
+      },
+    });
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-speed-client-"));
+
+    try {
+      const fastInput = createCodexRunSessionTurnInput(workspacePath);
+      fastInput.session.codexSpeed = "fast";
+      const fastResult = await adapter.runSessionTurn(fastInput);
+      await adapter.runBackgroundStructuredPrompt(createCodexBackgroundPromptInput({ workspacePath }));
+      const standardInput = createCodexRunSessionTurnInput(workspacePath);
+      standardInput.session.id = fastInput.session.id;
+      standardInput.session.threadId = fastResult.threadId;
+      standardInput.session.codexSpeed = "standard";
+      standardInput.session.codexReviewer = "auto-review";
+      const autoReviewResult = await adapter.runSessionTurn(standardInput);
+      const userInput = createCodexRunSessionTurnInput(workspacePath);
+      userInput.session.id = fastInput.session.id;
+      userInput.session.threadId = autoReviewResult.threadId;
+      userInput.session.codexSpeed = "standard";
+      userInput.session.codexReviewer = "user";
+      const userResult = await adapter.runSessionTurn(userInput);
+
+      assert.deepEqual(createdOptions.map((options) => options.config?.service_tier), ["fast", "default", "default", "default"]);
+      assert.deepEqual(createdOptions.map((options) => options.config?.approvals_reviewer), [
+        "user",
+        "user",
+        "auto_review",
+        "user",
+      ]);
+      assert.deepEqual(resumedThreadIds, [fastResult.threadId, autoReviewResult.threadId]);
+      assert.equal(fastResult.artifact?.runChecks.some((check) => check.label === "speed" && check.value === "fast"), true);
+      assert.equal(autoReviewResult.artifact?.runChecks.some(
+        (check) => check.label === "reviewer" && check.value === "auto-review",
+      ), true);
+      assert.equal(userResult.artifact?.runChecks.some(
+        (check) => check.label === "reviewer" && check.value === "user",
+      ), true);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
   });
 });
 

@@ -30,6 +30,8 @@ export function companionSessionToAuxiliaryParentSession(session: CompanionSessi
     runState: session.runState,
     approvalMode: session.approvalMode,
     codexSandboxMode: session.codexSandboxMode,
+    codexSpeed: session.codexSpeed,
+    codexReviewer: session.codexReviewer,
     model: session.model,
     reasoningEffort: session.reasoningEffort,
     customAgentName: session.customAgentName,

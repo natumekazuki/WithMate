@@ -121,7 +121,7 @@ current milestone の provider ごとの差は次。
   - `image` も `attachments` の `file` として送り、専用 UI 分岐は持たない
   - custom agent は `~/.copilot/agents` と workspace `.github/agents` を探索し、picker には `user-invocable: true` の定義だけを出す。session metadata の選択値は `customAgents` / `agent` に変換する
   - rich command timeline は未対応
-  - `on-request` または `on-failure` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
+  - `on-request` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
   - `elicitation.requested` が来た場合は、Main Process の `onElicitationRequest` bridge を通して Session UI の form / url card へ中継し、user の `accept / decline / cancel` を RPC で返す
   - Electron main process では `src-electron/provider-binary-paths.ts` を正本にして staged native Copilot CLI binary を明示して起動する
   - `Latest Command` と audit `operations` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
@@ -173,7 +173,7 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
 7. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
 8. `MainProviderFacade` が coding plane adapter を解決し、`model / reasoningEffort` を検証したうえで provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder の workspace 外 access は session metadata `allowedAdditionalDirectories` だけを `additionalDirectories` へ変換し、画像は structured input にして `thread.runStreamed()` を実行する
-   - `CopilotAdapter`: Mate 定義は provider instruction file の managed block 側へ同期済みであることを前提にし、`session.send()` には user input 本文と attachment だけを送る。file / folder は `session.send({ attachments })` の `file` / `directory` へ変換して同時に渡す。image も `file` attachment として吸収し、renderer 側では共通の `Image` 導線を維持する。workspace 外 path は WithMate 側の `allowedAdditionalDirectories` 判定だけを正本にして許可する。`on-request` / `on-failure` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
+   - `CopilotAdapter`: Mate 定義は provider instruction file の managed block 側へ同期済みであることを前提にし、`session.send()` には user input 本文と attachment だけを送る。file / folder は `session.send({ attachments })` の `file` / `directory` へ変換して同時に渡す。image も `file` attachment として吸収し、renderer 側では共通の `Image` 導線を維持する。workspace 外 path は WithMate 側の `allowedAdditionalDirectories` 判定だけを正本にして許可する。`on-request` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
 9. Main Process が stream event から live state と provider telemetry を組み立て、IPC で Session Window へ中継する
    - live state には `approvalRequest` と `elicitationRequest` を含められる
    - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する
@@ -238,11 +238,10 @@ adapter 実行に最低限必要な session 情報:
 
 ## Approval Modes
 
-approval mode は Codex SDK の policy 値を正本にする。
+approval mode は WithMate が対応する Codex policy 値を正本にする。
 
 - `never`
 - `on-request`
-- `on-failure`
 - `untrusted`
 
 方針:
@@ -253,7 +252,7 @@ approval mode は Codex SDK の policy 値を正本にする。
   - `safety -> untrusted`
   - `provider-controlled -> on-request`
 - CodexAdapter は `approvalMode` を SDK `approvalPolicy` へそのまま渡す
-- CopilotAdapter は `never` を自動許可、`untrusted` を read-only 以外 rules deny、`on-request` / `on-failure` を Session UI の approval card 中継として扱う
+- CopilotAdapter は `never` を自動許可、`untrusted` を read-only 以外 rules deny、`on-request` を Session UI の approval card 中継として扱う
 - UI wording は SDK 値をそのまま使い、provider ごとに出す choices を分ける
 
 これにより、session 作成、永続化、監査、artifact 表示、resume 復元では SDK 値を追跡しつつ、provider ごとの差異は provider-specific choices と adapter 実装で吸収する。

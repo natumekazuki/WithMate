@@ -9,7 +9,7 @@ import {
   ManagedSkillDistributionService,
   WITHMATE_GLOSSARY_SKILL_NAME,
   type ManagedSkillBundleDescriptor,
-} from "../../src-electron/managed-memory-skill-service.js";
+} from "../../src-electron/managed-skill-distribution-service.js";
 import {
   BUNDLED_GLOSSARY_CLI_FILE_NAME,
   buildWithMateGlossaryCli,

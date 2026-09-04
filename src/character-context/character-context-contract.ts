@@ -59,10 +59,16 @@ export type CharacterAffectSummary = {
   intensity: number;
 };
 
+export type CharacterMemoryPreview = {
+  id: string;
+  title: string;
+  preview: string;
+  tags: MemoryTag[];
+  updatedAt: string;
+};
+
 export type CharacterContextResponse = {
   schemaVersion: typeof CHARACTER_CONTEXT_SCHEMA_VERSION;
-  characterId: string;
-  sessionId: string;
   baseline: {
     definitionSha256: string;
     snapshotAt: string;
@@ -75,14 +81,9 @@ export type CharacterContextResponse = {
     updatedAt: string | null;
   };
   memory: {
-    items: MemorySearchHit[];
+    items: CharacterMemoryPreview[];
     relatedTags?: MemoryTag[];
     updatedAt: string | null;
-  };
-  scope: {
-    userId: "local-user";
-    characterId: string;
-    sessionId: string;
   };
 };
 

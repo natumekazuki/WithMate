@@ -44,6 +44,11 @@ import {
   validateCharacterMemorySearchRequest,
 } from "../src/character-context/character-context-validation.js";
 import {
+  WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
+} from "../src/agent-runtime/agent-runtime-binding-contract.js";
+import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   callWithMateMemoryRuntime,
   createCharacterRuntimeDiscoveryError,
@@ -54,6 +59,7 @@ import {
   mapRuntimeHttpFailureToMemory,
   resolveWithMateMemoryApi,
   resolveAgentRuntimeBindingReference,
+  resolveAgentRuntimeTurnCapability,
   verifyRuntimeIdentity,
   WithMateMemoryRuntimeExchangeError,
   WITHMATE_MEMORY_API_SECRET_HEADER,
@@ -63,8 +69,12 @@ import {
   type WithMateMemoryRuntimeResponse,
   type WithMateMemoryRuntimeConnection,
 } from "./withmate-memory-runtime-client.js";
-import type { RuntimeDiscoveryClock } from "../src/runtime-discovery/runtime-discovery-contract.js";
+import { isUuid, type RuntimeDiscoveryClock } from "../src/runtime-discovery/runtime-discovery-contract.js";
 import { startWithMateMemoryMcpServer } from "./withmate-memory-mcp.js";
+import {
+  buildWithMateMemoryMcpRuntimeBody,
+  type WithMateMemoryMcpCommand,
+} from "./withmate-memory-mcp-operation.js";
 
 export {
   DEFAULT_REQUEST_TIMEOUT_MS,
@@ -138,7 +148,7 @@ export type WithMateMemoryCliDeps = {
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
-    options: { signal: AbortSignal; bindingReference?: string },
+    options: { signal: AbortSignal; bindingReference?: string; turnCapability?: string },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof readFile;
   fetch?: typeof fetch;
@@ -166,6 +176,24 @@ const CHARACTER_CONTEXT_WRITE_COMMANDS = new Set<WithMateMemoryApiCommand>([
   "affect_appraise",
   "affect_correct",
   "affect_reset",
+  "character_memory_append_episode",
+  "character_memory_correct",
+  "character_memory_forget",
+]);
+
+const AGENT_CLI_FALLBACK_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "file_usage",
+  "list_targets",
+  "list_entries",
+  "search",
+  "get_entry",
+  "list_tags",
+  "append",
+  "forget",
+  "move_entry",
+  "context_get",
+  "affect_appraise",
+  "character_memory_search",
   "character_memory_append_episode",
   "character_memory_correct",
   "character_memory_forget",
@@ -1404,6 +1432,49 @@ export async function runWithMateMemoryCli(
 
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
+    const bindingRequired = env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() === "1";
+    const localOnlyCommand = request.command === "help"
+      || request.command === "mcp_server"
+      || request.command === "schema"
+      || request.command === "validate";
+    if (bindingRequired && request.fallbackFrom !== "mcp" && !localOnlyCommand) {
+      throw usageError("Provider-bound Memory CLI requests require an admitted --fallback-from mcp operation.");
+    }
+    if (request.fallbackFrom === "mcp") {
+      if (!bindingRequired) {
+        throw usageError("--fallback-from mcp requires the Agent runtime binding policy.");
+      }
+      if (!resolveAgentRuntimeBindingReference(env)) {
+        throw usageError("--fallback-from mcp requires an Agent runtime binding.");
+      }
+      const applicationInstanceId = env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV]?.trim();
+      const runtimeGenerationId = env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV]?.trim();
+      if (!isUuid(applicationInstanceId) || !isUuid(runtimeGenerationId)) {
+        throw usageError("--fallback-from mcp requires the runtime owner selected by the Agent binding.");
+      }
+      if (!AGENT_CLI_FALLBACK_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+        throw usageError("--fallback-from mcp supports only operations published by MCP tools/list.");
+      }
+      if (
+        typeof request.body === "object"
+        && request.body !== null
+        && !Array.isArray(request.body)
+        && Object.prototype.hasOwnProperty.call(request.body, "schemaVersion")
+      ) {
+        throw usageError("--fallback-from mcp accepts public MCP tool input and does not accept schemaVersion.");
+      }
+      if (request.apiUrl || request.discoveryFilePath || request.applicationInstanceId || request.runtimeGenerationId) {
+        throw usageError("--fallback-from mcp uses the runtime selected by the Agent binding and does not accept connection selectors.");
+      }
+      if (
+        request.command === "file_usage"
+        && typeof request.body === "object"
+        && request.body !== null
+        && Object.keys(request.body).length > 0
+      ) {
+        throw usageError("--fallback-from mcp file-usage accepts no detail selectors.");
+      }
+    }
     if (request.command === "help") {
       stdout.write(WITHMATE_MEMORY_CLI_HELP);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
@@ -1435,7 +1506,7 @@ export async function runWithMateMemoryCli(
       throw usageError(`${request.apiUrl !== undefined ? "--api-url" : "WITHMATE_MEMORY_API_URL"} must be a valid loopback HTTP URL.`);
     }
     const resolution = await resolveWithMateMemoryApi({
-      adapter: "cli",
+      adapter: request.fallbackFrom === "mcp" ? "mcp" : "cli",
       env: deps.env,
       apiUrl: request.apiUrl,
       discoveryFilePath: request.discoveryFilePath,
@@ -1468,14 +1539,18 @@ export async function runWithMateMemoryCli(
     const abortController = new AbortController();
     const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
     try {
+      const runtimeBody = request.fallbackFrom === "mcp"
+        ? buildWithMateMemoryMcpRuntimeBody(request.command as WithMateMemoryMcpCommand, request.body)
+        : request.body;
       const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
         method: route.method,
         path: buildRoutePath(request),
-        body: request.body,
+        body: runtimeBody,
         ...(request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}),
       }, {
         signal: abortController.signal,
         bindingReference: resolveAgentRuntimeBindingReference(deps.env),
+        ...(request.fallbackFrom ? { turnCapability: resolveAgentRuntimeTurnCapability(deps.env) } : {}),
       });
       response = runtimeResponse;
       responseJson = runtimeResponse.value;

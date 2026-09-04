@@ -82,7 +82,11 @@ import type {
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFileTreePathActionContextMenuResult,
+  SessionFileTreePathActionRequest,
   FileRootChangesRequest,
+  FileRootChangesRepositoriesRequest,
+  FileRootChangesRepositoriesResult,
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
@@ -198,6 +202,10 @@ export type MainIpcWindowDepsArgs = {
     event: IpcMainInvokeEvent,
     request: SessionFileObjectCopyContextMenuRequest,
   ): Awaitable<SessionFileObjectCopyContextMenuResult>;
+  showSessionFileTreeContextMenu(
+    event: IpcMainInvokeEvent,
+    request: SessionFileTreePathActionRequest,
+  ): Awaitable<SessionFileTreePathActionContextMenuResult>;
   showMarkdownLinkContextMenu(
     event: IpcMainInvokeEvent,
     request: MarkdownLinkContextMenuRequest,
@@ -307,6 +315,9 @@ export type MainIpcSessionQueryDepsArgs = {
   ): Awaitable<SessionFilePreviewWindowOpenResult>;
   getSessionFilePreviewWindowPayload(token: string): SessionFilePreviewWindowPayload | null;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
+  listFileRootChangesRepositories(
+    request: FileRootChangesRepositoriesRequest,
+  ): Awaitable<FileRootChangesRepositoriesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   listFileRootGitHistoryRepositories(
     request: FileRootGitHistoryRepositoriesRequest,
@@ -486,6 +497,7 @@ export function createMainIpcRegistrationDeps(
     showSessionFilePreviewImageContextMenu: args.window.showSessionFilePreviewImageContextMenu,
     copySessionFileObject: args.window.copySessionFileObject,
     showSessionFileObjectCopyContextMenu: args.window.showSessionFileObjectCopyContextMenu,
+    showSessionFileTreeContextMenu: args.window.showSessionFileTreeContextMenu,
     showMarkdownLinkContextMenu: args.window.showMarkdownLinkContextMenu,
     openPathTarget: args.window.openPathTarget,
     openAppLogFolder: args.window.openAppLogFolder,
@@ -551,6 +563,7 @@ export function createMainIpcRegistrationDeps(
     openSessionFilePreviewWindow: args.sessionQuery.openSessionFilePreviewWindow,
     getSessionFilePreviewWindowPayload: args.sessionQuery.getSessionFilePreviewWindowPayload,
     listFileRootChanges: args.sessionQuery.listFileRootChanges,
+    listFileRootChangesRepositories: args.sessionQuery.listFileRootChangesRepositories,
     getFileRootDiff: args.sessionQuery.getFileRootDiff,
     listFileRootGitHistoryRepositories: args.sessionQuery.listFileRootGitHistoryRepositories,
     listFileRootGitHistoryCommits: args.sessionQuery.listFileRootGitHistoryCommits,

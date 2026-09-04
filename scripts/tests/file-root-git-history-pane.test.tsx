@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
@@ -519,10 +520,20 @@ test("History repository一覧の再読込開始時に旧Diffを即座に失効�
   }
 });
 
-test("History detail はcommit metadata、changed file tree、file diffとOpen All Changesを同じ状態で開く", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "HEAD、branch、tagのref badgeが一覧とdetailの両方で種類を文字markerとaccessible labelに保持する"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// failure_mode = "ref badgeが色だけで種類を区別する実装へ戻り、色を判別できない利用者がHEAD、branch、tagを識別できない"
+// scope = "file-root-git-history-pane"
+// lifecycle = "permanent"
+// distinction = "contrastの描画値ではなく、色に依存しないref種別のobservableを一覧とdetailで検証する"
+// @end-test-value
+test("History detail はref種別、commit metadata、changed file tree、file diffとOpen All Changesを同じ状態で開く", async () => {
   const { dom, restore } = installDom();
   const targetCommit = commit("1", "history detail");
   targetCommit.refs = [
+    { kind: "head", name: "HEAD" },
     { kind: "branch", name: "feature/history-layout" },
     { kind: "tag", name: "v6.3.25" },
   ];
@@ -567,11 +578,27 @@ test("History detail はcommit metadata、changed file tree、file diffとOpen A
     assert.ok(commitButton);
     assert.match(commitButton.textContent ?? "", /feature\/history-layout/);
     assert.ok(commitButton.querySelector(".file-history-commit-row-ref-badges"));
+    const badgeStates = (container: ParentNode) => (
+      [...container.querySelectorAll<HTMLElement>(".file-history-ref-badge")].map((badge) => ({
+        kind: badge.dataset.refKind,
+        marker: badge.querySelector(".file-history-ref-badge-marker")?.textContent,
+        label: badge.getAttribute("aria-label"),
+      }))
+    );
+    const expectedBadges = [
+      { kind: "head", marker: "H", label: "HEAD" },
+      { kind: "branch", marker: "B", label: "Branch: feature/history-layout" },
+      { kind: "tag", marker: "T", label: "Tag: v6.3.25" },
+    ];
+    assert.deepEqual(badgeStates(commitButton), expectedBadges);
     await act(async () => commitButton.click());
     await flush();
     dom.window.dispatchEvent(new dom.window.Event("resize"));
     await flush();
     assert.match(dom.window.document.body.textContent ?? "", /history detail/);
+    const detailHeader = dom.window.document.querySelector(".file-history-detail-header");
+    assert.ok(detailHeader);
+    assert.deepEqual(badgeStates(detailHeader), expectedBadges);
     const fileButton = dom.window.document.querySelector<HTMLButtonElement>(
       ".workspace-change-row[title='src/example.ts']",
     );
@@ -591,6 +618,30 @@ test("History detail はcommit metadata、changed file tree、file diffとOpen A
     }
     restore();
   }
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "Git History ref badgeの共有primitiveがforeground、background、borderを明示し、HEAD、branch、tagのvariantは既存theme tokenでaccentを選ぶ"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// failure_mode = "badgeの背景またはborderが透明なまま文字色だけを変え、通常、hover、selected row、detail headerの背景上でref labelが埋もれる"
+// scope = "file-history-ref-badge-css"
+// lifecycle = "permanent"
+// distinction = "DOMでは算出できないCSSのforeground、background、border契約とvariantのtheme token利用を静的に検証する"
+// @end-test-value
+test("History ref badge CSS は共有primitiveでforeground、background、borderとtheme variantを定義する", async () => {
+  const css = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const badgeRule = css.match(/^\.file-history-ref-badge\s*\{(?<body>[\s\S]*?)\n\}/m)?.groups?.body ?? "";
+
+  assert.match(badgeRule, /--file-history-ref-foreground:\s*var\(--ink\);/);
+  assert.match(badgeRule, /--file-history-ref-background:\s*color-mix\([\s\S]*var\(--surface-strong\)[\s\S]*\);/);
+  assert.match(badgeRule, /--file-history-ref-border:\s*color-mix\([\s\S]*var\(--ink\)[\s\S]*\);/);
+  assert.match(badgeRule, /border:\s*1px solid var\(--file-history-ref-border\);/);
+  assert.match(badgeRule, /background:\s*var\(--file-history-ref-background\);/);
+  assert.match(badgeRule, /color:\s*var\(--file-history-ref-foreground\);/);
+  assert.match(css, /\.file-history-ref-badge--head\s*\{\s*--file-history-ref-accent:\s*var\(--character-main\);\s*\}/);
+  assert.match(css, /\.file-history-ref-badge--branch\s*\{\s*--file-history-ref-accent:\s*var\(--teal\);\s*\}/);
+  assert.match(css, /\.file-history-ref-badge--tag\s*\{\s*--file-history-ref-accent:\s*var\(--gold\);\s*\}/);
 });
 
 test("History は古いcommit detail結果を現在のcommitへ混入させない", async () => {

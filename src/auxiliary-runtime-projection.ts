@@ -1,5 +1,7 @@
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { CodexSpeed } from "./codex-speed.js";
+import type { CodexReviewer } from "./codex-reviewer.js";
 import type { ModelReasoningEffort } from "./model-catalog.js";
 import type { Message } from "./session-state.js";
 import type { CompanionSession } from "./companion-state.js";
@@ -19,6 +21,8 @@ export type AuxiliaryRuntimeProjectionInput = Pick<
   | "reasoningEffort"
   | "approvalMode"
   | "codexSandboxMode"
+  | "codexSpeed"
+  | "codexReviewer"
   | "customAgentName"
   | "allowedAdditionalDirectories"
   | "threadId"
@@ -32,6 +36,8 @@ type AuxiliaryRuntimeSessionProjectionCommon = {
   runState: AuxiliarySession["runState"];
   approvalMode: ApprovalMode;
   codexSandboxMode: CodexSandboxMode;
+  codexSpeed: CodexSpeed;
+  codexReviewer: CodexReviewer;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   customAgentName: string;
@@ -50,6 +56,8 @@ function buildAuxiliaryRuntimeSessionProjectionCommon(
     runState: auxiliary.runState,
     approvalMode: auxiliary.approvalMode,
     codexSandboxMode: auxiliary.codexSandboxMode,
+    codexSpeed: auxiliary.codexSpeed,
+    codexReviewer: auxiliary.codexReviewer,
     model: auxiliary.model,
     reasoningEffort: auxiliary.reasoningEffort,
     customAgentName: auxiliary.customAgentName,

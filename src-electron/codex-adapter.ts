@@ -2,6 +2,7 @@ import path from "node:path";
 
 import {
   Codex,
+  type CodexOptions,
   type Thread,
   type ThreadEvent,
   type ThreadItem,
@@ -27,11 +28,21 @@ import type {
   SessionMemoryDelta,
 } from "../src/app-state.js";
 import { getProviderAppSettings } from "../src/provider-settings-state.js";
-import { mapApprovalModeToCodexPolicy } from "../src/approval-mode.js";
+import { mapApprovalModeToCodexPolicy, type ApprovalMode } from "../src/approval-mode.js";
 import {
   resolveCodexSandboxThreadOptions,
   type CodexSdkSandboxMode,
 } from "../src/codex-sandbox-mode.js";
+import {
+  DEFAULT_CODEX_SPEED,
+  mapCodexSpeedToServiceTier,
+  type CodexServiceTier,
+} from "../src/codex-speed.js";
+import {
+  DEFAULT_CODEX_REVIEWER,
+  mapCodexReviewerToApprovalsReviewer,
+  type CodexApprovalsReviewer,
+} from "../src/codex-reviewer.js";
 import {
   reasoningEffortLabel,
   resolveModelSelection,
@@ -171,7 +182,10 @@ const DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS = 5_000;
 export type CodexAdapterOptions = {
   streamCloseGraceMs?: number;
   snapshotDeadlineMs?: number;
+  createClient?: (options: CodexOptions) => Codex;
 };
+
+type CodexClientScope = "foreground" | "background";
 
 const CODEX_STREAM_CLOSE_TIMEOUT = Symbol("codex-stream-close-timeout");
 const CODEX_SNAPSHOT_TIMEOUT = Symbol("codex-snapshot-timeout");
@@ -251,7 +265,7 @@ export type CodexThreadOptions = {
   workingDirectory: string;
   skipGitRepoCheck: true;
   sandboxMode: CodexSdkSandboxMode;
-  approvalPolicy: "never" | "on-request" | "on-failure" | "untrusted";
+  approvalPolicy: ApprovalMode;
   model: string;
   modelReasoningEffort: ModelReasoningEffort;
   networkAccessEnabled?: boolean;
@@ -265,11 +279,7 @@ export type CodexThreadSettings = {
 };
 
 function toCodexSdkThreadOptions(options: CodexThreadOptions): CodexSdkThreadOptions {
-  // Codex CLI accepts max/ultra, while the TypeScript SDK union still ends at xhigh.
-  return {
-    ...options,
-    modelReasoningEffort: options.modelReasoningEffort as CodexSdkThreadOptions["modelReasoningEffort"],
-  };
+  return options;
 }
 
 type CodexThreadConnector = Pick<Codex, "resumeThread" | "startThread">;
@@ -1373,6 +1383,8 @@ function toRunChecks(
   const checks: RunCheck[] = [
     { label: "provider", value: providerCatalog.label },
     { label: "approval", value: session.approvalMode },
+    { label: "reviewer", value: session.codexReviewer },
+    buildCodexSpeedRunCheck(session.codexSpeed),
     { label: "model", value: selection.resolvedModel },
     { label: "reasoning", value: reasoningEffortLabel(selection.resolvedReasoningEffort) },
   ];
@@ -1396,6 +1408,10 @@ function toRunChecks(
   }
 
   return checks;
+}
+
+export function buildCodexSpeedRunCheck(speed: Session["codexSpeed"]): RunCheck {
+  return { label: "speed", value: speed };
 }
 
 function summarizeSnapshotWarning(stats: SnapshotCaptureStats): string {
@@ -1584,7 +1600,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
     providerQuotaTelemetry: ProviderQuotaTelemetry | null;
   }> {
     const signal = input.signal ?? AbortSignal.timeout(input.timeoutMs);
-    const { client } = this.getClient(input.providerId, input.appSettings);
+    const { client } = this.getClient(
+      input.providerId,
+      input.appSettings,
+      null,
+      "background",
+      mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
+      mapCodexReviewerToApprovalsReviewer(DEFAULT_CODEX_REVIEWER),
+    );
     const thread = client.startThread(toCodexSdkThreadOptions(this.buildBackgroundThreadOptions(input)));
 
     const backgroundInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
@@ -1614,25 +1637,42 @@ export class CodexAdapter implements ProviderTurnAdapter {
     providerId: string,
     appSettings: AppSettings,
     agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
+    scope: CodexClientScope = "foreground",
+    serviceTier: CodexServiceTier = mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
+    approvalsReviewer: CodexApprovalsReviewer = mapCodexReviewerToApprovalsReviewer(DEFAULT_CODEX_REVIEWER),
   ): { client: Codex; clientKey: string } {
     const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
     const codexPathOverride = resolvePackagedProviderBinaryPath("codex");
     const bindingCacheKey = buildProviderAgentRuntimeBindingCacheKey(agentRuntimeBinding);
-    const clientKey = JSON.stringify([providerId, codingApiKey || null, codexPathOverride, bindingCacheKey]);
+    // Background prompts remain Standard and use a separate cache scope so a foreground Fast client cannot leak into them.
+    const clientKey = JSON.stringify([
+      providerId,
+      codingApiKey || null,
+      codexPathOverride,
+      bindingCacheKey,
+      scope,
+      serviceTier,
+      approvalsReviewer,
+    ]);
     const cached = this.clients.get(clientKey);
     if (cached) {
       return { client: cached, clientKey };
     }
 
-    const clientOptions = {
+    const clientOptions: CodexOptions = {
       ...(codingApiKey ? { apiKey: codingApiKey } : {}),
       ...(codexPathOverride ? { codexPathOverride } : {}),
+      config: {
+        // Keep Standard explicit so a user's global config.toml cannot silently opt this Session into Fast.
+        service_tier: serviceTier,
+        approvals_reviewer: approvalsReviewer,
+      },
       env: mergeDefinedProviderEnv(
         process.env,
         buildProviderAgentRuntimeBindingEnv(agentRuntimeBinding),
       ),
     };
-    const client = new Codex(clientOptions);
+    const client = this.options.createClient?.(clientOptions) ?? new Codex(clientOptions);
     this.clients.set(clientKey, client);
     return { client, clientKey };
   }
@@ -1642,6 +1682,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
       input.providerCatalog.id,
       input.appSettings,
       input.agentRuntimeBinding,
+      "foreground",
+      mapCodexSpeedToServiceTier(input.session.codexSpeed),
+      mapCodexReviewerToApprovalsReviewer(input.session.codexReviewer),
     );
     const previousClientKey = this.clientKeysBySession.get(input.session.id);
     if (previousClientKey && previousClientKey !== clientKey) {
@@ -2161,6 +2204,8 @@ export function buildCodexThreadSettings(
     session.allowedAdditionalDirectories,
   );
   const sandboxOptions = resolveCodexSandboxThreadOptions(session.codexSandboxMode);
+  const serviceTier = mapCodexSpeedToServiceTier(session.codexSpeed);
+  const approvalsReviewer = mapCodexReviewerToApprovalsReviewer(session.codexReviewer);
   const options: CodexThreadOptions = {
     workingDirectory: workspacePath,
     skipGitRepoCheck: true,
@@ -2183,6 +2228,8 @@ export function buildCodexThreadSettings(
       options.model,
       options.modelReasoningEffort,
       additionalDirectories,
+      serviceTier,
+      approvalsReviewer,
       clientKey,
     ]),
   };

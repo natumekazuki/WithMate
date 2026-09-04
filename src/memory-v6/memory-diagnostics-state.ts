@@ -6,20 +6,6 @@ export type MemoryV6RuntimeDiagnostics = {
   discoveryPublished: boolean;
 };
 
-export type MemoryV6SkillSyncDiagnostics = {
-  providerId: string;
-  skillRootConfigured: boolean;
-  status:
-    | "installed"
-    | "updated"
-    | "unchanged"
-    | "skipped-unpackaged"
-    | "skipped-unconfigured"
-    | "skipped-collision"
-    | "failed"
-    | "not-run";
-};
-
 export type MemoryV6CliShimDiagnostics = {
   platform: NodeJS.Platform;
   commandName: "withmate-memory";
@@ -45,11 +31,15 @@ export type MemoryV6DiagnosticEvent = {
 export type MemoryV6Diagnostics = {
   generatedAt: string;
   runtime: MemoryV6RuntimeDiagnostics;
-  providers: Array<{
-    providerId: string;
-    providerSupported: boolean;
-  }>;
-  skillSync: MemoryV6SkillSyncDiagnostics[];
   cliShim: MemoryV6CliShimDiagnostics;
   lastErrors: MemoryV6DiagnosticEvent[];
 };
+
+export function projectMemoryV6Diagnostics(input: MemoryV6Diagnostics): MemoryV6Diagnostics {
+  return {
+    generatedAt: input.generatedAt,
+    runtime: input.runtime,
+    cliShim: input.cliShim,
+    lastErrors: input.lastErrors,
+  };
+}

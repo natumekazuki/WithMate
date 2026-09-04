@@ -33,6 +33,8 @@ import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { CodexSpeed } from "./codex-speed.js";
+import { isCodexReviewerControlDisabled, type CodexReviewer } from "./codex-reviewer.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -3325,23 +3327,7 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${messageCollapseTarget ? " has-message-collapse-control" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
-                  {messageCollapseTarget && onToggleMessageCollapse ? (
-                    <div className="message-collapse-control">
-                      <button
-                        className="message-collapse-toggle"
-                        type="button"
-                        onClick={() => onToggleMessageCollapse(messageKey)}
-                        aria-expanded={!isMessageCollapsed}
-                        aria-controls={messageBodyId}
-                        aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
-                        title={messageCollapseLabel}
-                      >
-                        <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
-                        <span className="visually-hidden">{messageCollapseLabel}</span>
-                      </button>
-                    </div>
-                  ) : null}
+                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
                   <div className="message-card-content">
                     {artifact && !isAssistant ? (
                       <button
@@ -3361,25 +3347,43 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    <div
-                      id={messageBodyId}
-                      data-message-body="true"
-                      data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
-                    >
-                      {shouldRenderFullMessage ? (
-                        <MessageRichText
-                          text={message.text}
-                          forceFullRender={findOpen && hasFindQuery}
-                          displayMode={messageViewMode}
-                          onOpenPath={onOpenPath}
-                          markdownLinkFileContext={markdownLinkFileContext}
-                          glossaryAnnotationMatcher={glossaryAnnotationMatcher}
-                          glossaryAnnotationScopeKey={messageKey}
-                          onActivateGlossaryEntry={onActivateGlossaryEntry}
-                        />
-                      ) : (
-                        <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
-                      )}
+                    <div className={`message-text-wrapper${messageCollapseTarget ? " has-message-collapse-control" : ""}`}>
+                      {messageCollapseTarget && onToggleMessageCollapse ? (
+                        <div className="message-collapse-control">
+                          <button
+                            className="message-collapse-toggle"
+                            type="button"
+                            onClick={() => onToggleMessageCollapse(messageKey)}
+                            aria-expanded={!isMessageCollapsed}
+                            aria-controls={messageBodyId}
+                            aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
+                            title={messageCollapseLabel}
+                          >
+                            <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
+                            <span className="visually-hidden">{messageCollapseLabel}</span>
+                          </button>
+                        </div>
+                      ) : null}
+                      <div
+                        id={messageBodyId}
+                        data-message-body="true"
+                        data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
+                      >
+                        {shouldRenderFullMessage ? (
+                          <MessageRichText
+                            text={message.text}
+                            forceFullRender={findOpen && hasFindQuery}
+                            displayMode={messageViewMode}
+                            onOpenPath={onOpenPath}
+                            markdownLinkFileContext={markdownLinkFileContext}
+                            glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+                            glossaryAnnotationScopeKey={messageKey}
+                            onActivateGlossaryEntry={onActivateGlossaryEntry}
+                          />
+                        ) : (
+                          <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
+                        )}
+                      </div>
                     </div>
 
                     {artifact ? (
@@ -3697,8 +3701,12 @@ export type SessionComposerExpandedProps = {
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string }>;
   selectedApprovalMode: ApprovalMode;
+  reviewerOptions: Array<{ value: CodexReviewer; label: string }>;
+  selectedCodexReviewer: CodexReviewer;
   sandboxOptions: Array<{ value: CodexSandboxMode; label: string }>;
   selectedCodexSandboxMode: CodexSandboxMode;
+  speedOptions: Array<{ value: CodexSpeed; label: string }>;
+  selectedCodexSpeed: CodexSpeed;
   modelOptions: SessionSelectOption[];
   selectedModel: string;
   selectedModelFallbackLabel: string;
@@ -3728,7 +3736,9 @@ export type SessionComposerExpandedProps = {
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
   onChangeApprovalMode: (value: ApprovalMode) => void;
+  onChangeCodexReviewer: (value: CodexReviewer) => void;
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
+  onChangeCodexSpeed: (value: CodexSpeed) => void;
   onChangeModel: (value: string) => void;
   onChangeReasoningEffort: (value: string) => void;
   onMessageViewModeChange?: (mode: MessageViewMode) => void;
@@ -3773,8 +3783,12 @@ export function SessionComposerExpanded({
   isComposerBlockedFeedbackActive,
   approvalOptions,
   selectedApprovalMode,
+  reviewerOptions = [],
+  selectedCodexReviewer = "user",
   sandboxOptions,
   selectedCodexSandboxMode,
+  speedOptions = [],
+  selectedCodexSpeed = "standard",
   modelOptions,
   selectedModel,
   selectedModelFallbackLabel,
@@ -3804,7 +3818,9 @@ export function SessionComposerExpanded({
   onDraftCompositionEnd,
   onSendOrCancel,
   onChangeApprovalMode,
+  onChangeCodexReviewer = () => {},
   onChangeCodexSandboxMode,
+  onChangeCodexSpeed = () => {},
   onChangeModel,
   onChangeReasoningEffort,
   onMessageViewModeChange = () => {},
@@ -4170,6 +4186,28 @@ export function SessionComposerExpanded({
                 </select>
               </div>
 
+              {reviewerOptions.length > 0 ? (
+                <div className="composer-setting-field composer-setting-reviewer">
+                  <span>Reviewer</span>
+                  <select
+                    value={selectedCodexReviewer}
+                    onChange={(event) => onChangeCodexReviewer(event.target.value as CodexReviewer)}
+                    disabled={isCodexReviewerControlDisabled({
+                      approvalMode: selectedApprovalMode,
+                      isRunning,
+                      composerBlocked,
+                    })}
+                    aria-label="Reviewer"
+                  >
+                    {reviewerOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
               {sandboxOptions.length > 0 ? (
                 <div className="composer-setting-field composer-setting-sandbox">
                   <span>Sandbox</span>
@@ -4224,6 +4262,24 @@ export function SessionComposerExpanded({
               ))}
             </select>
           </div>
+
+          {speedOptions.length > 0 ? (
+            <div className="composer-setting-field composer-setting-speed">
+              <span>Speed</span>
+              <select
+                value={selectedCodexSpeed}
+                onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
+                disabled={isRunning || composerBlocked}
+                aria-label="Speed"
+              >
+                {speedOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
         </div>
 
         {isRunning ? null : (

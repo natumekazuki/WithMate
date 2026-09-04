@@ -31,6 +31,8 @@ import {
 import {
   buildSessionWithApprovalMode,
   buildSessionWithCodexSandboxMode,
+  buildSessionWithCodexSpeed,
+  buildSessionWithCodexReviewer,
   buildSessionWithModelChange,
   buildSessionWithReasoningEffort,
 } from "./runtime-option-state.js";
@@ -175,7 +177,10 @@ import {
   type SessionGlossaryProjection,
 } from "./glossary-contract.js";
 import { createGlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
-import { buildFileRootDiffPreviewWindowRequest } from "./file-explorer/file-explorer-contract.js";
+import {
+  buildFileRootDiffPreviewWindowRequest,
+  buildSessionFileExplorerRootsRevision,
+} from "./file-explorer/file-explorer-contract.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
   acknowledgePreviewChatMessageCount,
@@ -232,6 +237,8 @@ import {
 } from "./auxiliary-session-state.js";
 import {
   runAuxiliaryApprovalModeChangeOperation,
+  runAuxiliaryCodexSpeedChangeOperation,
+  runAuxiliaryCodexReviewerChangeOperation,
   runAuxiliaryModelChangeOperation,
   runAuxiliaryReasoningEffortChangeOperation,
   runAuxiliarySandboxModeChangeOperation,
@@ -2504,6 +2511,8 @@ export default function AgentSessionWindowApp() {
     modelSelectOptions,
     selectedModelFallbackLabel,
     reasoningSelectOptions,
+    speedSelectOptions,
+    reviewerSelectOptions,
   } = useMemo(
     () => buildRuntimeSelectionOptions({
       providerId: displayedSession?.provider,
@@ -2513,11 +2522,15 @@ export default function AgentSessionWindowApp() {
       reasoningEfforts: availableReasoningEfforts,
       selectedApprovalMode: displayedSession?.approvalMode ?? "untrusted",
       selectedCodexSandboxMode: displayedSession?.codexSandboxMode ?? "workspace-write",
+      selectedCodexSpeed: displayedSession?.codexSpeed ?? "standard",
+      selectedCodexReviewer: displayedSession?.codexReviewer ?? "user",
     }),
     [
       displayedSession?.provider,
       displayedSession?.approvalMode,
       displayedSession?.codexSandboxMode,
+      displayedSession?.codexSpeed,
+      displayedSession?.codexReviewer,
       displayedSession?.model,
       modelOptions,
       selectedProviderCatalog,
@@ -2737,6 +2750,7 @@ export default function AgentSessionWindowApp() {
         userMessage: messageText,
         clientRequestId,
         submitSource: options?.submitSource ?? "composer",
+        codexReviewer: updatedSession.codexReviewer,
       };
       try {
         const savedSession = await withmateApi.runSessionTurn(sessionId, request);
@@ -3072,6 +3086,39 @@ export default function AgentSessionWindowApp() {
     await persistSession(nextSession);
   };
 
+  const handleChangeCodexSpeed = async (codexSpeed: Session["codexSpeed"]) => {
+    if (
+      !selectedSession ||
+      selectedSession.provider !== "codex" ||
+      isSelectedSessionReadOnly ||
+      selectedSessionRunState === "running"
+    ) {
+      return;
+    }
+
+    const nextSession = buildSessionWithCodexSpeed(selectedSession, codexSpeed, currentTimestampLabel());
+    if (nextSession) {
+      await persistSession(nextSession);
+    }
+  };
+
+  const handleChangeCodexReviewer = async (codexReviewer: Session["codexReviewer"]) => {
+    if (
+      !selectedSession ||
+      selectedSession.provider !== "codex" ||
+      selectedSession.approvalMode === "never" ||
+      isSelectedSessionReadOnly ||
+      selectedSessionRunState === "running"
+    ) {
+      return;
+    }
+
+    const nextSession = buildSessionWithCodexReviewer(selectedSession, codexReviewer, currentTimestampLabel());
+    if (nextSession) {
+      await persistSession(nextSession);
+    }
+  };
+
   const handleStartTitleEdit = createStartTitleEditHandler({
     getTitle: () => selectedSession?.taskTitle,
     canStart: () => !!selectedSession && !isSelectedSessionReadOnly && selectedSessionRunState !== "running",
@@ -3191,6 +3238,25 @@ export default function AgentSessionWindowApp() {
   const handleChangeAuxiliarySandboxMode = async (codexSandboxMode: Session["codexSandboxMode"]) => {
     await runAuxiliarySandboxModeChangeOperation({
       codexSandboxMode,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  };
+
+  const handleChangeAuxiliaryCodexSpeed = async (codexSpeed: Session["codexSpeed"]) => {
+    await runAuxiliaryCodexSpeedChangeOperation({
+      codexSpeed,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  };
+
+  const handleChangeAuxiliaryCodexReviewer = async (codexReviewer: Session["codexReviewer"]) => {
+    if (activeAuxiliarySession?.approvalMode === "never") {
+      return;
+    }
+    await runAuxiliaryCodexReviewerChangeOperation({
+      codexReviewer,
       updateActiveAuxiliarySession,
       createTimestampLabel: currentTimestampLabel,
     });
@@ -3620,7 +3686,7 @@ export default function AgentSessionWindowApp() {
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
     applySelectedPathReferenceInsertionCommand({
       draft: currentDraft,
-      fallbackCaret: composerCaret,
+      fallbackCaret: targetAuxiliarySession ? composerCaret : mainComposerCaretRef.current,
       selectedPaths,
       textarea,
       workspacePath: selectedSession?.workspacePath ?? null,
@@ -4146,15 +4212,20 @@ export default function AgentSessionWindowApp() {
     return <ChatWindowStatusScreen message="Session が選択されていません。Home Window から session を開いてね。" />;
   }
 
-  const fileExplorerRootsRevision = [
-    activeRunSessionId ?? "",
-    ...(activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories),
-  ].join("\u0000");
+  const fileExplorerRootsRevision = buildSessionFileExplorerRootsRevision({
+    sessionId: activeRunSessionId,
+    workspacePath: selectedSession.workspacePath,
+    additionalDirectories:
+      activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories,
+  });
+  const canInsertFileTreePathReference = activeAuxiliarySession
+    ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
+    : !isComposerDisabled;
   const fileExplorerPane = (
     <SessionFileExplorerPane
       api={withmateApi}
       sessionId={activeRunSessionId}
-      enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable}
+      enabled={isSelectedWorkspaceAvailable}
       rootsRevision={fileExplorerRootsRevision}
       selectedFile={selectedFilePreview}
       activeTab={fileExplorerTab}
@@ -4173,11 +4244,19 @@ export default function AgentSessionWindowApp() {
           }
         });
       }}
-      changesContent={(
+      canInsertPathReference={canInsertFileTreePathReference}
+      onInsertPathReference={(ownerSessionId, absolutePath) => {
+        if (ownerSessionId !== activeRunSessionId || !canInsertFileTreePathReference) {
+          return;
+        }
+        insertReferencePaths([absolutePath]);
+      }}
+      renderChangesContent={(roots) => (
         <FileRootChangesPane
           api={withmateApi}
           sessionId={activeRunSessionId}
-          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable && fileExplorerTab === "changes"}
+          enabled={isSelectedWorkspaceAvailable}
+          roots={roots}
           rootsRevision={fileExplorerRootsRevision}
           refreshRevision={fileRootChangesRefreshRevision}
           onOpenFile={handleOpenFileRootFile}
@@ -4188,7 +4267,7 @@ export default function AgentSessionWindowApp() {
         <FileRootGitHistoryPane
           api={withmateApi}
           sessionId={activeRunSessionId}
-          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable && fileExplorerTab === "history"}
+          enabled={isSelectedWorkspaceAvailable}
           rootsRevision={fileExplorerRootsRevision}
           refreshRevision={fileRootGitHistoryRefreshRevision}
           onOpenDiff={handleShowFileRootGitHistoryDiff}
@@ -4389,6 +4468,8 @@ export default function AgentSessionWindowApp() {
           forceComposerBlockedFeedback && renderedComposerSendability.feedbackTone === "blocked",
         approvalChoiceOptions,
         sandboxChoiceOptions,
+        speedChoiceOptions: speedSelectOptions,
+        reviewerChoiceOptions: reviewerSelectOptions,
         modelSelectOptions,
         selectedModelFallbackLabel,
         reasoningSelectOptions,
@@ -4581,6 +4662,16 @@ export default function AgentSessionWindowApp() {
           shouldUseAuxiliary: !!activeAuxiliarySession,
           onAuxiliaryChange: handleChangeAuxiliarySandboxMode,
           onSelectedSessionChange: handleChangeCodexSandboxMode,
+        }),
+        onChangeCodexSpeed: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["codexSpeed"]>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryCodexSpeed,
+          onSelectedSessionChange: handleChangeCodexSpeed,
+        }),
+        onChangeCodexReviewer: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["codexReviewer"]>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryCodexReviewer,
+          onSelectedSessionChange: handleChangeCodexReviewer,
         }),
         onChangeModel: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
           shouldUseAuxiliary: !!activeAuxiliarySession,

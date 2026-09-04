@@ -12,6 +12,7 @@ import {
   projectGlossaryCheckoutAuthority,
 } from "../../src-electron/glossary-application-service.js";
 import { GlossaryRuntimeService } from "../../src-electron/glossary-runtime-service.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/provider-agent-runtime-turn-coordinator.js";
 import { createMemoryV6HttpServer } from "../../src-electron/memory-v6-http-server.js";
 import type { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
 import {
@@ -57,6 +58,7 @@ async function createRuntime(root: string, options: { proactiveLimit?: number | 
     bindingRegistry: registry,
     resolveActorSession: (sessionId) => sessionId === actor.id ? actor : null,
     getProactiveCreateLimit: () => options.proactiveLimit,
+    providerAgentRuntimeTurns: new ProviderAgentRuntimeTurnCoordinator(),
   });
   const call = (
     operation: keyof typeof GLOSSARY_RUNTIME_OPERATION_PATHS,

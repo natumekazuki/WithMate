@@ -372,6 +372,99 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "History diffはGitの改行設定がsystem/global由来でも、commit間で実際に変更された行だけを追加・削除として返す"
+// oracle = { type = "contract", ref = "User requirement: History diff reflects only committed content changes" }
+// failure_mode = "Git設定の隔離でcore.autocrlfが欠落し、1行だけ変更したtext fileを全行変更として表示する"
+// scope = "FileRootGitChangesService.getHistoryDiff"
+// lifecycle = "permanent"
+// distinction = "binary・renameのHistory検証ではなく、隔離前のglobal改行設定とtext patchの行単位結果を実Gitで検証する"
+// @end-test-value
+test("FileRootGitChangesService はglobal改行設定を維持してHistoryの実変更行だけを返す", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-eol-"));
+  const primaryRepositoryPath = path.join(tempRoot, "primary");
+  const repositoryPath = path.join(tempRoot, "worktree");
+  const homePath = path.join(tempRoot, "home");
+  const gitEnv = {
+    ...process.env,
+    HOME: homePath,
+    USERPROFILE: homePath,
+  };
+  const gitCalls: string[][] = [];
+  const runPrimaryGit = (args: string[]) => runGitForTest(primaryRepositoryPath, args, { env: gitEnv });
+  const runGit = (args: string[]) => runGitForTest(repositoryPath, args, { env: gitEnv });
+  try {
+    await mkdir(primaryRepositoryPath);
+    await mkdir(homePath);
+    await writeFile(path.join(homePath, ".gitconfig"), "[core]\n\tautocrlf = true\n");
+    assert.equal((await runPrimaryGit(["init", "--quiet"])).exitCode, 0);
+    const beforeLines = Array.from({ length: 12 }, (_, index) => (
+      index === 6 ? "before" : `unchanged-${index + 1}`
+    ));
+    await writeFile(path.join(primaryRepositoryPath, "tracked.txt"), `${beforeLines.join("\r\n")}\r\n`);
+    assert.equal((await runPrimaryGit(["add", "tracked.txt"])).exitCode, 0);
+    assert.equal((await runPrimaryGit([
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "before",
+    ])).exitCode, 0);
+    assert.equal((await runPrimaryGit(["worktree", "add", "--quiet", "-b", "history-eol", repositoryPath])).exitCode, 0);
+    const afterLines = [...beforeLines];
+    afterLines[6] = "after";
+    const mixedEolContent = afterLines.map((line, index) => `${line}${index === 6 ? "\n" : "\r\n"}`).join("");
+    await writeFile(path.join(repositoryPath, "tracked.txt"), mixedEolContent);
+    assert.equal((await runGit(["add", "tracked.txt"])).exitCode, 0);
+    assert.equal((await runGit([
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "after",
+    ])).exitCode, 0);
+    const commitId = (await runGit(["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
+      ],
+      resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+      processEnv: gitEnv,
+      runGit: async (workspacePath, args, options) => {
+        gitCalls.push(args);
+        return runGitForTest(workspacePath, args, {
+          env: options.env,
+          executablePath: options.executablePath,
+          stdin: options.stdin,
+          signal: options.signal,
+        });
+      },
+    });
+    const repositories = await service.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(repositories.status, "ok", JSON.stringify(repositories));
+    if (repositories.status !== "ok") {
+      return;
+    }
+    const repository = repositories.repositories[0]!;
+    const result = await service.getHistoryDiff({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId,
+      relativePath: "tracked.txt",
+    });
+
+    assert.equal(result.status, "ok", JSON.stringify(result));
+    if (result.status === "ok") {
+      const diffArgs = gitCalls.find((args) => args.includes("diff-tree") && args.includes("--patch"));
+      assert.ok(diffArgs);
+      assert.ok(diffArgs.includes("core.autocrlf=true"));
+      const patchLines = result.patch.split(/\r\n|\n|\r/);
+      assert.deepEqual(patchLines.filter((line) => line.startsWith("-") && !line.startsWith("---")), ["-before"]);
+      assert.deepEqual(patchLines.filter((line) => line.startsWith("+") && !line.startsWith("+++")), ["+after"]);
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("FileRootGitChangesService はmerge commitをfirst parentと比較する", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-merge-"));
   try {
@@ -795,6 +888,51 @@ test("FileRootGitChangesService は実際のnon-Git directoryをnot-gitで返す
     });
   } finally {
     await rm(workspacePath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v1
+// kind = "contract"
+// claim = "Changes用repository discoveryは認可rootごとのGit判定だけを返し、status取得を実行しない"
+// oracle = { type = "contract", ref = "accepted behavior: repository frames before manual Changes refresh" }
+// failure_mode = "repository枠の準備でnon-Git rootを含める、または明示Refresh前にGit statusを実行する"
+// scope = "FileRootGitChangesService repository discovery"
+// lifecycle = "permanent"
+// @end-test-value
+test("FileRootGitChangesService はChanges取得なしでGit repository rootを抽出する", async () => {
+  const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-root-discovery-"));
+  const repositoryPath = path.join(parentPath, "repository");
+  const nonGitPath = path.join(parentPath, "non-git");
+  const commands: string[][] = [];
+  try {
+    await initializeRepository(repositoryPath);
+    await mkdir(nonGitPath);
+    const roots = new Map([
+      ["repository", repositoryPath],
+      ["non-git", nonGitPath],
+    ]);
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async ({ rootId }) => {
+        const rootPath = roots.get(rootId);
+        return rootPath ? { rootPath } : null;
+      },
+      runGit: async (workspacePath, args, options) => {
+        commands.push(args);
+        return runGitForTest(workspacePath, args, options);
+      },
+    });
+
+    assert.deepEqual(await service.listChangesRepositories({
+      sessionId: "session-1",
+      rootIds: ["repository", "non-git", "missing"],
+    }), {
+      status: "ok",
+      repositories: [{ rootId: "repository" }],
+      failures: [],
+    });
+    assert.equal(commands.some((args) => args.includes("status")), false);
+  } finally {
+    await rm(parentPath, { recursive: true, force: true });
   }
 });
 

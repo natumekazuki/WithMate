@@ -30,6 +30,15 @@ function createIpcRendererStub() {
   };
 }
 
+// @test-value v1
+// kind = "contract"
+// claim = "preloadのinvoke APIはdomainごとのrequestを対応する専用IPC channelへ変換せず渡す"
+// oracle = { type = "contract", ref = "WithMateWindowApi invoke methods and withmate-ipc-channels" }
+// failure_mode = "renderer requestが別channelへ送られるか、引数の欠落または変換を受けてMainへ到達する"
+// scope = "preload invoke API"
+// lifecycle = "permanent"
+// distinction = "file tree context menuを含むinvoke method群のchannelと引数を一括して検証する"
+// @end-test-value
 test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる", async () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -306,6 +315,18 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:show-session-file-object-copy-context-menu",
     args: [fileCopyContextMenuRequest],
   });
+  const fileTreeContextMenuRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "src",
+    nodeKind: "directory" as const,
+    point: { x: 40, y: 60 },
+    canInsert: true,
+  };
+  assert.deepEqual(await api.showSessionFileTreeContextMenu(fileTreeContextMenuRequest), {
+    channel: "withmate:show-session-file-tree-context-menu",
+    args: [fileTreeContextMenuRequest],
+  });
   const markdownLinkRequest = {
     target: "docs/review-brief%20final.md",
     point: { x: 80, y: 160 },
@@ -317,6 +338,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   assert.deepEqual(await api.listFileRootChanges({ sessionId: "session-1", rootId: "workspace" }), {
     channel: "withmate:list-file-root-changes",
     args: [{ sessionId: "session-1", rootId: "workspace" }],
+  });
+  assert.deepEqual(await api.listFileRootChangesRepositories({
+    sessionId: "session-1",
+    rootIds: ["workspace", "additional:repo"],
+  }), {
+    channel: "withmate:list-file-root-changes-repositories",
+    args: [{ sessionId: "session-1", rootIds: ["workspace", "additional:repo"] }],
   });
   assert.deepEqual(await api.getFileRootDiff({
     sessionId: "session-1",
@@ -423,6 +451,15 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
   unsubscribe();
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "preloadの公開API surfaceはWithMateWindowApiの現行keyを過不足なくexposeする"
+// oracle = { type = "contract", ref = "WithMateWindowApi public surface" }
+// failure_mode = "型に存在するIPC methodがrendererへexposeされないか、廃止済みmethodが公開surfaceへ残る"
+// scope = "preload public API keys"
+// lifecycle = "permanent"
+// distinction = "tree path context menuを含む公開method集合全体とremoved key不在を検証する"
+// @end-test-value
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -504,6 +541,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionCharacterUsage",
     "listSessionSummaryPage",
     "listFileRootChanges",
+    "listFileRootChangesRepositories",
     "listFileRootGitHistoryRepositories",
     "listFileRootGitHistoryCommits",
     "getFileRootGitHistoryCommitDetail",
@@ -564,6 +602,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "setSessionPinned",
     "showSessionFilePreviewImageContextMenu",
     "showSessionFileObjectCopyContextMenu",
+    "showSessionFileTreeContextMenu",
     "showMarkdownLinkContextMenu",
     "startCharacterAuthoringSession",
     "stashCompanionTargetChanges",

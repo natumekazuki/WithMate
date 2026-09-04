@@ -12,6 +12,7 @@ import type {
   FileRootGitHistoryCommitDetailResult,
   FileRootGitHistoryCommitsResult,
   FileRootGitHistoryDiffRequest,
+  FileRootGitHistoryRef,
   FileRootGitHistoryRepositoriesResult,
   FileRootGitHistoryRepository,
 } from "./file-explorer-contract.js";
@@ -35,6 +36,18 @@ export type FileRootGitHistoryPaneProps = {
 };
 
 const HISTORY_SCOPES = [["commit", "Changed Files"]] as const satisfies readonly [FileRootGitChangeScope, string][];
+
+const HISTORY_REF_MARKERS = {
+  head: "H",
+  branch: "B",
+  tag: "T",
+} as const satisfies Record<FileRootGitHistoryRef["kind"], string>;
+
+const HISTORY_REF_KIND_LABELS = {
+  head: "HEAD",
+  branch: "Branch",
+  tag: "Tag",
+} as const satisfies Record<FileRootGitHistoryRef["kind"], string>;
 
 type HistoryPageIdentity = {
   generation: number;
@@ -73,6 +86,26 @@ function formatCommitDate(value: string): string {
 
 function commitAuthor(commit: FileRootGitHistoryCommit): string {
   return commit.authorName || commit.authorEmail || "Unknown author";
+}
+
+function HistoryRefBadge({ historyRef }: { historyRef: FileRootGitHistoryRef }) {
+  const label = historyRef.kind === "head" ? "HEAD" : historyRef.name;
+  const accessibleLabel = historyRef.kind === "head"
+    ? "HEAD"
+    : `${HISTORY_REF_KIND_LABELS[historyRef.kind]}: ${label}`;
+
+  return (
+    <span
+      className={`file-history-ref-badge file-history-ref-badge--${historyRef.kind}`}
+      data-ref-kind={historyRef.kind}
+      aria-label={accessibleLabel}
+    >
+      <span className="file-history-ref-badge-marker" aria-hidden="true">
+        {HISTORY_REF_MARKERS[historyRef.kind]}
+      </span>
+      <span className="file-history-ref-badge-label">{label}</span>
+    </span>
+  );
 }
 
 export function FileRootGitHistoryPane({
@@ -476,6 +509,7 @@ export function FileRootGitHistoryPane({
         label: repository.label,
         displayPath: repository.displayPath,
       },
+      status: changedEntries.length > 0 ? "success" : "empty",
       entries: changedEntries,
       message: "",
     };
@@ -525,9 +559,7 @@ export function FileRootGitHistoryPane({
                 </div>
                 <div className="file-history-ref-badges">
                   {selectedCommit.refs.map((ref) => (
-                    <span className={`file-history-ref-badge ${ref.kind}`} key={`${ref.kind}:${ref.name}`}>
-                      {ref.kind === "head" ? "HEAD" : ref.name}
-                    </span>
+                    <HistoryRefBadge historyRef={ref} key={`${ref.kind}:${ref.name}`} />
                   ))}
                 </div>
               </div>
@@ -608,9 +640,7 @@ export function FileRootGitHistoryPane({
                 {commit.refs.length > 0 ? (
                   <span className="file-history-ref-badges file-history-commit-row-ref-badges">
                     {commit.refs.map((ref) => (
-                      <span className={`file-history-ref-badge ${ref.kind}`} key={`${ref.kind}:${ref.name}`}>
-                        {ref.kind === "head" ? "HEAD" : ref.name}
-                      </span>
+                      <HistoryRefBadge historyRef={ref} key={`${ref.kind}:${ref.name}`} />
                     ))}
                   </span>
                 ) : null}

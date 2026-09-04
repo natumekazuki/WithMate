@@ -9,6 +9,45 @@ export type SessionFileRoot = {
 
 export type SessionDirectoryEntryKind = "directory" | "file" | "symbolic-link" | "other";
 
+export type SessionFileTreePathActionNodeKind = "root" | "directory" | "file";
+
+export type SessionFileTreePathActionPoint = {
+  x: number;
+  y: number;
+};
+
+export type SessionFileTreePathActionRequest = {
+  sessionId: string;
+  rootId: string;
+  relativePath: string;
+  nodeKind: SessionFileTreePathActionNodeKind;
+  point: SessionFileTreePathActionPoint;
+  canInsert: boolean;
+};
+
+export type SessionFileTreePathActionTargetRequest = Omit<
+  SessionFileTreePathActionRequest,
+  "point" | "canInsert"
+>;
+
+export type SessionFileTreePathActionContextMenuResult =
+  | { status: "copied-path" | "copied-file" }
+  | { status: "insert-path"; ownerSessionId: string; absolutePath: string }
+  | { status: "failed"; message: string }
+  | { status: "dismissed" };
+
+export function buildSessionFileExplorerRootsRevision(input: {
+  sessionId: string | null;
+  workspacePath: string | null;
+  additionalDirectories: readonly string[];
+}): string {
+  return JSON.stringify([
+    input.sessionId ?? "",
+    input.workspacePath ?? "",
+    ...input.additionalDirectories,
+  ]);
+}
+
 export type SessionDirectoryEntry = {
   name: string;
   relativePath: string;
@@ -246,6 +285,19 @@ export type FileRootChangesRequest = {
   sessionId: string;
   rootId: string;
 };
+
+export type FileRootChangesRepositoriesRequest = {
+  sessionId: string;
+  rootIds: string[];
+};
+
+export type FileRootChangesRepositoriesResult =
+  | {
+      status: "ok";
+      repositories: Array<{ rootId: string }>;
+      failures: Array<{ rootId: string; message: string }>;
+    }
+  | { status: "failed"; message: string };
 
 export type FileRootChangesResult =
   | { status: "ok"; entries: FileRootGitChangeEntry[] }

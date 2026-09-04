@@ -2,6 +2,7 @@
 
 - 状態: Accepted
 - 日付: 2026-08-03
+- 更新: 2026-08-31
 
 ## Context
 
@@ -20,7 +21,10 @@ Git process、repository identity、config、index、resource limit の隔離方
 - 一つの root の取得失敗は、その root の理由として表示し、他の root の結果を破棄しない
 - root は独立した表示 scope とする。親子関係にある root が同じ file を含む場合も重複を除去せず、それぞれの root からの相対 path で表示する
 - status、diff、未追跡 file の preview、通常 file preview からの Open Diff、diff の Reload は、同じ `rootId` を維持する
-- 複数 root の取得は逐次実行し、root 数に比例した Git operation を同時に queue へ投入しない。待機要求の置換単位は Session、root、operation kind の組とする
+- 複数 root の取得は、一つの Changes pane につき同時 2 件までの bounded parallel とする。3 件目以降は renderer 内で待機させ、root 数に比例した Git operation を Main process の queue へ同時投入しない
+- 再 Refresh では未開始の旧世代を破棄し、実行中の要求が完了した後に最新世代だけを続行する
+- 同時数 2 は、一つの遅い repository が別 repository の表示開始を止めず、かつ一つの pane が ADR 014 の process 全体の active 上限を超える要求を同時発行しない値として選ぶ
+- Main process における待機要求の置換単位は Session、root、operation kind の組とする
 
 ## Alternatives
 
@@ -36,10 +40,12 @@ Git process、repository identity、config、index、resource limit の隔離方
 - Files に表示される許可済み Git root を、同じ認可境界のまま Changes から確認できる
 - root ごとの scope と相対 path が Files と一致する
 - Additional Directory の追加、削除、包含関係によって認可境界や表示規則が変化しない
-- 多数の root を持つ Session でも、単一の表示更新が process 全体の Git operation 上限を一度に消費しない
+- 多数の root を持つ Session でも、単一の表示更新が Main process の待機 queue を root 数に比例して占有しない
+- 一つの repository が遅くても、もう一つの repository は先に取得と表示を進められる
 
 ### Negative
 
 - 包含関係にある root では、同じ実 file が異なる相対 path で複数回表示される
 - root ごとに status を取得するため、Git root 数に比例して表示完了までの時間が増える
 - 非 Git root は Changes に現れないため、Files の root 数と Changes の root 数は一致しない
+- 一つの Changes pane が process 全体の active 枠 2 件を一時的に使用し、別 Window の diff や history を global admission queue で待たせる場合がある

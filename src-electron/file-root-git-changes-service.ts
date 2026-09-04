@@ -16,6 +16,8 @@ import path from "node:path";
 
 import type {
   FileRootChangesRequest,
+  FileRootChangesRepositoriesRequest,
+  FileRootChangesRepositoriesResult,
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
@@ -1887,6 +1889,51 @@ export class FileRootGitChangesService {
     }
   }
 
+  async #listChangesRepositoriesRequest(
+    request: FileRootChangesRepositoriesRequest,
+    signal: AbortSignal,
+  ): Promise<FileRootChangesRepositoriesResult> {
+    const pendingCleanupError = await this.#cleanupPendingResources();
+    if (pendingCleanupError) {
+      return { status: "failed", message: pendingCleanupError.message };
+    }
+    const repositories: Array<{ rootId: string }> = [];
+    const failures: Array<{ rootId: string; message: string }> = [];
+    for (const rootId of request.rootIds) {
+      throwIfAborted(signal);
+      const operation = await this.#resolveOperation({ sessionId: request.sessionId, rootId }, signal);
+      if (!("workspacePath" in operation)) {
+        if (operation.status === "failed") {
+          failures.push({ rootId, message: operation.message });
+        }
+        continue;
+      }
+      const cleanupError = await this.#closeOperation(operation);
+      if (cleanupError) {
+        return { status: "failed", message: cleanupError.message };
+      }
+      repositories.push({ rootId });
+    }
+    return { status: "ok", repositories, failures };
+  }
+
+  async listChangesRepositories(
+    request: FileRootChangesRepositoriesRequest,
+  ): Promise<FileRootChangesRepositoriesResult> {
+    try {
+      return await runWorkspaceGitOperationWithAdmission(
+        `${request.sessionId}:changes:repositories`,
+        this.#operationTimeoutMs,
+        (signal) => this.#listChangesRepositoriesRequest(request, signal),
+      );
+    } catch (error) {
+      return {
+        status: "failed",
+        message: error instanceof Error ? error.message : "Git repositories could not be resolved.",
+      };
+    }
+  }
+
   async #getFileDiffRequest(
     request: FileRootFileDiffRequest,
     relativePath: string,
@@ -2510,7 +2557,9 @@ export class FileRootGitChangesService {
           const pathspecs = entry
             ? [entry.relativePath, ...(entry.previousRelativePath ? [entry.previousRelativePath] : [])]
             : [];
+          const workTreeConfigArgs = await this.#readWorkTreeConfigArgs(operation);
           const result = await this.#runIdentityBoundGit(operation, [
+            ...workTreeConfigArgs,
             "diff-tree",
             "--no-commit-id",
             "--patch",

@@ -34,6 +34,7 @@ import {
   GlossaryProactiveTurnCoordinator,
   type GlossaryProactiveTurnHandle,
 } from "./glossary-proactive-turn.js";
+import type { ProviderAgentRuntimeTurnCoordinator } from "./provider-agent-runtime-turn-coordinator.js";
 
 type BindingRegistry = {
   resolve(
@@ -54,6 +55,7 @@ export type GlossaryRuntimeServiceDeps = {
     sessionId: string,
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
   getProactiveCreateLimit: () => number | null | undefined;
+  providerAgentRuntimeTurns: ProviderAgentRuntimeTurnCoordinator;
 };
 
 type AuthorizedCheckout = {
@@ -154,13 +156,14 @@ export class GlossaryRuntimeService {
   readonly #bindingRegistry: BindingRegistry;
   readonly #resolveActorSession: GlossaryRuntimeServiceDeps["resolveActorSession"];
   readonly #getProactiveCreateLimit: GlossaryRuntimeServiceDeps["getProactiveCreateLimit"];
-  readonly #proactiveTurns = new GlossaryProactiveTurnCoordinator();
+  readonly #proactiveTurns: GlossaryProactiveTurnCoordinator;
 
   constructor(deps: GlossaryRuntimeServiceDeps) {
     this.#applicationService = deps.applicationService;
     this.#bindingRegistry = deps.bindingRegistry;
     this.#resolveActorSession = deps.resolveActorSession;
     this.#getProactiveCreateLimit = deps.getProactiveCreateLimit;
+    this.#proactiveTurns = new GlossaryProactiveTurnCoordinator(deps.providerAgentRuntimeTurns);
   }
 
   beginProviderTurn(

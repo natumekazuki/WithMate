@@ -92,13 +92,17 @@ function appendRequest(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
-function createSessionBindingPrincipal(characterId = "character-a"): MemoryV6SessionBindingPrincipal {
+function createSessionBindingPrincipal(
+  characterId = "character-a",
+  allowedProjectIds?: readonly string[],
+): MemoryV6SessionBindingPrincipal {
   return {
     type: "session_binding",
     bindingIdHash: "binding-a",
     sessionId: "session-a",
     providerId: "codex",
     characterId,
+    ...(allowedProjectIds ? { allowedProjectIds } : {}),
     permissions: LOCAL_USER_MEMORY_PERMISSIONS,
   };
 }
@@ -269,6 +273,44 @@ describe("MemoryV6Service", () => {
 
       assert.equal("error" in result, false);
       assert.deepEqual(result.items.map((item) => item.target.character?.id), ["character-a"]);
+      assert.equal(result.nextCursor, undefined);
+    });
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "session bindingのtarget inventoryは未許可Projectをpaginationとcursor生成より前に除外する"
+  // oracle = { type = "adr", ref = "ADR-024 actor-relative Memory target authority" }
+  // failure_mode = "未許可Projectがpageを消費する、または未許可target IDを含むcursorが返る"
+  // scope = "memory-service-list-targets-project-authority"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("session bindingのtarget inventoryは未許可Projectをpagination前に除外する", async () => {
+    await withService(({ service, storage }) => {
+      for (const projectId of ["project-a", "project-b"]) {
+        storage.appendEntry({
+          id: `mem-${projectId}`,
+          target: {
+            owner: { type: "project", id: projectId },
+            scope: { type: "project", id: projectId },
+          },
+          kind: "note",
+          title: projectId,
+          body: `${projectId} body`,
+          preview: projectId,
+          tags: [],
+          source: { type: "agent", sessionId: null, messageId: null, providerId: "codex" },
+        });
+      }
+
+      const result = service.listTargets(createSessionBindingPrincipal("character-a", ["project-a"]), {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        owner: "project",
+        limit: 1,
+      });
+
+      assert.equal("error" in result, false);
+      assert.deepEqual(result.items.map((item) => item.target.project?.id), ["project-a"]);
       assert.equal(result.nextCursor, undefined);
     });
   });

@@ -193,4 +193,38 @@ name: Mia
 
     assert.equal(skillTemplate.replace(/\r\n?/g, "\n"), buildDefaultCharacterNotes());
   });
+
+  // @test-value v1
+  // kind = "contract"
+  // claim = "新規Characterのdefault定義とnotes templateが固定返答例ではなくCharacter Kernelとevidence分離の推奨構造を提供する"
+  // oracle = { type = "adr", ref = "docs/adr/011-character-authoring-kernel.md" }
+  // failure_mode = "新規Characterが旧Examples中心の初期定義または記録欄不足のnotesから始まり、full authoringの品質契約と食い違う"
+  // scope = "character-definition-templates"
+  // lifecycle = "permanent"
+  // distinction = "appとSkill templateの単純な同一性では検出できない、両方が同じ誤った構造へdriftする欠陥を検出する"
+  // @end-test-value
+  it("default Character files は Kernel と evidence 分離の推奨構造を持つ", async () => {
+    const definition = buildDefaultCharacterDefinition("Muse");
+    const notes = buildDefaultCharacterNotes();
+
+    assert.match(definition, /# Character Kernel/);
+    assert.match(definition, /## Identity Core/);
+    assert.match(definition, /## Attention and Appraisal/);
+    assert.match(definition, /## Social Intent \/ User Relationship/);
+    assert.match(definition, /### Identity Invariants/);
+    assert.match(definition, /### Distributional Tendencies/);
+    assert.match(definition, /### Triggered Markers/);
+    assert.match(definition, /## State Modulation/);
+    assert.match(definition, /## Character Priority/);
+    assert.match(definition, /## Minimal Reliability/);
+    assert.doesNotMatch(definition, /^## Examples$/m);
+
+    assert.match(notes, /## Observation Log/);
+    assert.match(notes, /## Character Kernel Derivation/);
+    assert.match(notes, /## Voice Evidence/);
+    assert.match(notes, /## Runtime Handoff/);
+    assert.match(notes, /## Conflicts \/ Uncertainty/);
+    assert.match(notes, /## Revision Guardrails/);
+    assert.match(notes, /## Validation Summary/);
+  });
 });

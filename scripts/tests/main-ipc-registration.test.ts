@@ -49,9 +49,11 @@ import {
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
@@ -165,6 +167,15 @@ function createSessionRequest(workspace: Record<string, unknown>) {
   };
 }
 
+// @test-value v1
+// kind = "contract"
+// claim = "Main IPC registrationは現行の公開channelを登録し、廃止済みchannelを登録しない"
+// oracle = { type = "contract", ref = "withmate-ipc-channels public surface" }
+// failure_mode = "preloadが公開したchannelにMain handlerがないか、廃止済みchannelが再び呼び出し可能になる"
+// scope = "Main IPC public channel registration"
+// lifecycle = "permanent"
+// distinction = "file tree context menuを含む公開channel集合とremoved channel不在を検証する"
+// @end-test-value
 test("registerMainIpcHandlers は保持する public IPC だけを登録する", () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const { deps } = createDeps();
@@ -182,9 +193,11 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL));
@@ -649,6 +662,14 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
   ]);
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "Changes repository discovery IPCはowning Session senderを確認し、検証済みroot ID列だけをserviceへ渡す"
+// oracle = { type = "contract", ref = "Session File Explorer IPC authority boundary" }
+// failure_mode = "不正なroot ID列または別Session senderがrepository discovery serviceへ到達する"
+// scope = "Changes repository discovery IPC"
+// lifecycle = "permanent"
+// @end-test-value
 test("File Explorer IPC は owning Session window からだけ利用でき、Auxiliary ID を parent へ解決する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
@@ -668,6 +689,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   const historyDetailRequests: unknown[] = [];
   const historyDiffRequests: unknown[] = [];
   const changesRequests: unknown[] = [];
+  const changesRepositoryRequests: unknown[] = [];
   const diffRequests: unknown[] = [];
   const previewNavigationRequests: unknown[] = [];
   const { deps } = createDeps({
@@ -713,6 +735,10 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     listFileRootChanges: async (request: unknown) => {
       changesRequests.push(request);
       return { status: "ok", entries: [] };
+    },
+    listFileRootChangesRepositories: async (request: unknown) => {
+      changesRepositoryRequests.push(request);
+      return { status: "ok", repositories: [{ rootId: "workspace" }], failures: [] };
     },
     getFileRootDiff: async (request: unknown) => {
       diffRequests.push(request);
@@ -801,6 +827,19 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     entries: [],
   });
   assert.deepEqual(changesRequests, [changesRequest]);
+  const changesRepositoriesRequest = { sessionId: "aux-1", rootIds: ["workspace"] };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL)?.({}, changesRepositoriesRequest),
+    { status: "ok", repositories: [{ rootId: "workspace" }], failures: [] },
+  );
+  assert.deepEqual(changesRepositoryRequests, [changesRepositoriesRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL)?.({}, {
+      sessionId: "aux-1",
+      rootIds: ["workspace", "workspace"],
+    }) as Promise<unknown>,
+    /request is invalid/,
+  );
   const diffRequest = {
     sessionId: "aux-1",
     rootId: "workspace",
@@ -886,6 +925,11 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     /owning Session window/,
   );
   assert.deepEqual(changesRequests, [changesRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL)?.({}, changesRepositoriesRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.deepEqual(changesRepositoryRequests, [changesRepositoriesRequest]);
   await assert.rejects(
     () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest) as Promise<unknown>,
     /current Preview resource/,
@@ -1306,6 +1350,66 @@ test("file object copy IPCは認可対象resourceとowning senderだけを受け
     /current Preview resource/,
   );
   assert.deepEqual(copyRequests, [copyRequest]);
+});
+
+// @test-value v1
+// kind = "security"
+// claim = "file tree context menu IPCは限定fieldとnode kindを検証し、対象Sessionを所有するwindowだけへrequestを渡す"
+// oracle = { type = "contract", ref = "accepted behavior invariant 1: renderer request boundary" }
+// failure_mode = "absolute pathや余分なfieldを含むrequest、または非owner windowからのpath操作がMain serviceへ到達する"
+// scope = "main IPC file tree context menu boundary"
+// lifecycle = "permanent"
+// distinction = "file preview resourceではなくroot・directoryを含むtree node専用requestとowning Session windowを検証する"
+// @end-test-value
+test("file tree context menu IPCはstrict requestとowning Session windowだけを受け付ける", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  const requests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    showSessionFileTreeContextMenu: async (_event: unknown, request: unknown) => {
+      requests.push(request);
+      return { status: "dismissed" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = {
+    sessionId: "aux-1",
+    rootId: "workspace",
+    relativePath: "docs",
+    nodeKind: "directory",
+    point: { x: 24, y: 48 },
+    canInsert: false,
+  };
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL)?.({}, request),
+    { status: "dismissed" },
+  );
+  assert.deepEqual(requests, [request]);
+
+  for (const invalidRequest of [
+    { ...request, absolutePath: "C:/outside" },
+    { ...request, nodeKind: "symbolic-link" },
+    { ...request, point: { x: -1, y: 2 } },
+    { ...request, canInsert: "yes" },
+  ]) {
+    await assert.rejects(
+      () => handlers.get(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL)?.({}, invalidRequest) as Promise<unknown>,
+      /File tree context menu request is invalid/,
+    );
+  }
+
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL)?.({}, request) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.deepEqual(requests, [request]);
 });
 
 test("Markdown link context menu IPCはtargetと認可用file contextを変換せず渡す", async () => {
@@ -1779,6 +1883,14 @@ test("Auxiliary mutationはowner windowへ限定し、Companion Reviewからの�
   ]);
 });
 
+// @test-value v1
+// kind = "invariant"
+// claim = "Session windowのAuxiliary作成はReviewerを含むruntime optionの直接指定を拒否する"
+// oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-2" }
+// failure_mode = "rendererがReviewerを直接指定してMain Processの親継承を迂回する"
+// scope = "auxiliary-create-ipc"
+// lifecycle = "permanent"
+// @end-test-value
 test("Auxiliary create IPC は送信元 window と runtime selection mode を結び付ける", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
@@ -1816,6 +1928,15 @@ test("Auxiliary create IPC は送信元 window と runtime selection mode を結
       provider: "codex",
       runtimeSelection: "latest-session",
       approvalMode: undefined,
+    }) as Promise<unknown>,
+    /cannot specify runtime options directly/,
+  );
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      codexReviewer: undefined,
     }) as Promise<unknown>,
     /cannot specify runtime options directly/,
   );
