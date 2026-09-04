@@ -764,6 +764,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
     callOperatorFallback(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     markFallbackListed(bindingReference: string): ReturnType<typeof callWithMateMemoryRuntime>;
     markFallbackListedWithoutReporter(bindingReference: string): ReturnType<typeof callWithMateMemoryRuntime>;
+    rollbackFallbackListed(rollbackToken: string, bindingReference: string): ReturnType<typeof callWithMateMemoryRuntime>;
     markFallbackEligible(path: string, body: unknown, bindingReference: string, admissionToken?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     markFallbackEligibleControl(body: unknown, bindingReference: string): ReturnType<typeof callWithMateMemoryRuntime>;
     expireTurn(): void;
