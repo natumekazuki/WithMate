@@ -25619,7 +25619,7 @@ async function resolveFallbackAdmissionSecret(deps, connection) {
 	}
 }
 function createMcpFallbackAdmission(deps) {
-	let activeContext = null;
+	let deliveredContext = null;
 	let listedRegistration = null;
 	let listedDelivery = null;
 	const callControl = async (context, path, body) => {
@@ -25657,7 +25657,7 @@ function createMcpFallbackAdmission(deps) {
 			});
 			const registration = (async () => {
 				await previousRegistration;
-				let rollback = null;
+				let registered = null;
 				try {
 					const bindingReference = resolveAgentRuntimeBindingReference(deps.env);
 					const turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
@@ -25682,25 +25682,28 @@ function createMcpFallbackAdmission(deps) {
 					};
 					const listed = await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_PATH, {});
 					if (!listed?.ok) return null;
-					activeContext = context;
 					const rollbackToken = listed.value && typeof listed.value === "object" && typeof listed.value.rollbackToken === "string" ? listed.value.rollbackToken : null;
-					rollback = rollbackToken ? async () => {
-						await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH, { rollbackToken });
-					} : null;
+					registered = {
+						context,
+						rollback: rollbackToken ? async () => {
+							await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH, { rollbackToken });
+						} : null
+					};
 				} catch {
-					rollback = null;
+					registered = null;
 				}
-				return rollback;
+				return registered;
 			})();
 			listedRegistration = registration.then(() => void 0);
-			const rollback = await registration;
+			const registered = await registration;
 			return {
 				async commit() {
+					if (registered) deliveredContext = registered.context;
 					settleDelivery(true);
 				},
 				async rollback() {
 					try {
-						await rollback?.();
+						await registered?.rollback?.();
 					} finally {
 						settleDelivery(false);
 					}
@@ -25709,11 +25712,13 @@ function createMcpFallbackAdmission(deps) {
 		},
 		async markEligible(operation) {
 			await listedRegistration;
-			if (listedDelivery && !await listedDelivery) return false;
+			if (!deliveredContext) {
+				if (listedDelivery && !await listedDelivery) return false;
+			}
 			const pathname = new URL(operation.path, "http://127.0.0.1").pathname;
 			if (NON_RETRYABLE_FALLBACK_PATHS.has(pathname)) return false;
-			if (!activeContext) return false;
-			return (await callControl(activeContext, "/v1/fallback-admission/eligible", { fingerprint: createMemoryFallbackOperationFingerprint(operation) }))?.ok ?? false;
+			if (!deliveredContext) return false;
+			return (await callControl(deliveredContext, "/v1/fallback-admission/eligible", { fingerprint: createMemoryFallbackOperationFingerprint(operation) }))?.ok ?? false;
 		}
 	};
 }

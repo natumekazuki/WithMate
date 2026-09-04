@@ -224,7 +224,7 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
     turnCapability: string;
     fallbackAdmissionSecret: string;
   };
-  let activeContext: ControlContext | null = null;
+  let deliveredContext: ControlContext | null = null;
   let listedRegistration: Promise<void> | null = null;
   let listedDelivery: Promise<boolean> | null = null;
 
@@ -269,7 +269,10 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
       });
       const registration = (async () => {
         await previousRegistration;
-        let rollback: (() => Promise<void>) | null = null;
+        let registered: {
+          context: ControlContext;
+          rollback: (() => Promise<void>) | null;
+        } | null = null;
         try {
           const bindingReference = resolveAgentRuntimeBindingReference(deps.env);
           const turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
@@ -297,31 +300,36 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
           if (!listed?.ok) {
             return null;
           }
-          activeContext = context;
           const rollbackToken = listed.value
             && typeof listed.value === "object"
             && typeof (listed.value as Record<string, unknown>).rollbackToken === "string"
               ? (listed.value as Record<string, string>).rollbackToken
               : null;
-          rollback = rollbackToken
-            ? async () => {
-              await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH, { rollbackToken });
-            }
-            : null;
+          registered = {
+            context,
+            rollback: rollbackToken
+              ? async () => {
+                await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH, { rollbackToken });
+              }
+              : null,
+          };
         } catch {
-          rollback = null;
+          registered = null;
         }
-        return rollback;
+        return registered;
       })();
       listedRegistration = registration.then(() => undefined);
-      const rollback = await registration;
+      const registered = await registration;
       return {
         async commit(): Promise<void> {
+          if (registered) {
+            deliveredContext = registered.context;
+          }
           settleDelivery(true);
         },
         async rollback(): Promise<void> {
           try {
-            await rollback?.();
+            await registered?.rollback?.();
           } finally {
             settleDelivery(false);
           }
@@ -330,17 +338,19 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
     },
     async markEligible(operation): Promise<boolean> {
       await listedRegistration;
-      if (listedDelivery && !await listedDelivery) {
-        return false;
+      if (!deliveredContext) {
+        if (listedDelivery && !await listedDelivery) {
+          return false;
+        }
       }
       const pathname = new URL(operation.path, "http://127.0.0.1").pathname;
       if (NON_RETRYABLE_FALLBACK_PATHS.has(pathname)) {
         return false;
       }
-      if (!activeContext) {
+      if (!deliveredContext) {
         return false;
       }
-      return (await callControl(activeContext, WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH, {
+      return (await callControl(deliveredContext, WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH, {
         fingerprint: createMemoryFallbackOperationFingerprint(operation),
       }))?.ok ?? false;
     },
