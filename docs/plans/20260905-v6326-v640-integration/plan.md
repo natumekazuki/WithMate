@@ -165,6 +165,7 @@ TypeScript testを追加または意味変更した場合は、base `4f6004da0f3
 
 ### 実装結果
 
+- 計画commit `a8cee60a` を第一parent、`v6.3.26` のpeeled commit `750e7cd9010e7e7cdf721ca8a5a7180f85e81e1e` を第二parentとするmerge commit `13b3495d9182d9b80ff70c0d49aa1fab058d190b` を作成した。
 - `v6.3.26` を `--no-ff --no-commit` で通常 merge し、content 52件、add/add 8件を解消した。package/docs 6件、test 20件、Electron 17件、renderer 17件の計60件であり、解消後の conflict marker は0件である。
 - V6 schema は Role / WorkItem / coordination / execution / schedule / notification / transcript と、Memory / Character context / Affect afterglow を同じ required stateへ統合した。persistent store lifecycle は両runtimeの起動・終了順序を保持した。
 - Session storage/state は schema v6、immutable Role binding、WorkItem owner、`codexSpeed` / `codexReviewer`、running-turn atomic persistenceを共存させた。running-turnのcanonical summary生成ではRole binding列も同じtransaction snapshotから読む。
@@ -173,13 +174,15 @@ TypeScript testを追加または意味変更した場合は、base `4f6004da0f3
 - provider promptはSession context、pending coordination、SessionFolder attachment manifestを維持し、Affectは必要fieldだけを投影する。
 - package versionは`6.4.0`とし、v6.3.26の更新依存と`cron-parser`を統合した。`npm install --package-lock-only --ignore-scripts`でlockfileを再生成し、Memory / Session / Glossary CLIのbuild・packaging entryを共存させた。
 - TypeScript testの変更対象にはGit modeの`@test-value v1` metadataを付与した。source文字列位置を観測していたGlossary search revision testは、revision更新と遅延request競合を実DOMで観測するcomponent integration testへ置き換えた。
+- merge commitのreviewで検出した公開境界、永続化、UI interactionのblocking findingは、repair commit `6b5e7c9dcdf58fa62c22b88084e8fee4b9f99a51` で同じInvariant family内に修正した。provider bindingへSession Roleを復元し、Session runtime discoveryを共有multi-instance registryとowner selectorへ移行し、Glossary MCPをCodexとforeground Copilotへ到達可能にし、character-authoringのrelational owner復元とSchedule submit shortcutのowner選択を修正した。
 
 ### 検証結果
 
 - conflict marker: 0。`git diff --check`: pass（Windows改行予告のみ）。
 - schema/storage/migration、Session orchestration、Memory/Auth、IPC/UI/packageの責務別targeted check: pass。全体testで見つかったrunning-turn Role bindingの9 failureは、専用storage queryとtest fixtureを契約へ合わせて修正後に再検証した。
-- `review-test-value` Git mode: extract exit 0、diagnostics 0。各担当sliceのrecord reviewは全件ACCEPT。REDESIGNとなった1件はcomponent integration testへ変更後にACCEPT。
-- `npm test`: 3,425 tests、3,424 pass、0 fail、1 skip。
+- `review-test-value` Git mode: base `4f6004da0f3a030b13157c38808a98474e01630a`、head `6b5e7c9dcdf58fa62c22b88084e8fee4b9f99a51` でextract exit 0、682 records、diagnostics 0。merge時点の657 recordsとrepair差分の28 records（既存変更3件を含む）を審査し、全件ACCEPT。REDESIGNとなった1件はcomponent integration testへ変更後にACCEPT。
+- repair commit上の責務別targeted check: 17 test files、286 tests、286 pass、0 fail、0 skip。
+- `npm test`: 3,426 tests、3,425 pass、0 fail、1 skip。
 - `npm run typecheck`: pass。
 - `npm run build`: pass。renderer、Electron、Memory CLI、Session CLIを生成した。
 - `npm run dist:dir`: pass。`release/win-unpacked`へ`WithMate.exe`、Memory / Session / Glossaryの3 launcherと対応artifactを配置した。
@@ -187,10 +190,17 @@ TypeScript testを追加または意味変更した場合は、base `4f6004da0f3
 
 ### Review結果
 
-未実施。
+- merge commit `13b3495d9182d9b80ff70c0d49aa1fab058d190b` をclean detached worktreeへ固定し、一度だけcomplete-diff reviewを実施した。
+- blocking findingは、Session provider bindingからRole bindingが欠落する、Session runtime discoveryがlast-writer pointerを使う、Glossary MCPがproviderへ登録されない、character-authoring clear後のrunning turn開始でrelational `character_id`が復元されない、Schedule編集時のCtrl/Cmd+Enterがchat sendへ接続される、の5件だった。すべてrepair commit `6b5e7c9d` で修正し、direct checkを再実行した。
+- non-material findingは、`.gitattributes`に削除済みMemory artifact pathが残ることと、READMEのbuild説明がGlossary / Session CLI生成を列挙しないことの2件だった。統合契約の成立を妨げず、blocking repairとInvariant familyが異なるため本commitへ混在させない。
+- repair commit `6b5e7c9dcdf58fa62c22b88084e8fee4b9f99a51` はRuntime/public、Persistence、Schedule UIの3系統でtargeted closure reviewを実施し、全系統でapprove、未解決blocking finding 0件となった。complete-diff reviewは再実行していない。
+- Runtime/public closureでは、App Settings reset直後のGlossary Skill diagnosticsが旧custom rootを示し得る点をLow / non-materialとして分類した。Codex / Copilot MCP登録、packaged launcher、runtime authorityはこのcacheを使用せず、再起動または次回Settings保存で収束するため、operation到達性は妨げない。reset経路でもGlossary Skill同期を行う改善はhardening候補とする。
+- Persistence closureでは、clear→fresh後のmessage insert失敗に限定してrelational ownerのrollbackをread-backする追加caseをhardening候補とした。現行も同一transactionのsource、既存rollback test、clear→freshのDB read-backでaccepted contractは直接検証済みである。
 
 ### Validation gap / 残リスク
 
 - Windows UI操作サービスが`Trusted RPC service is not configured: sky`を返したため、起動済みvisual-check windowの画面キャプチャと主要導線の目視操作は未実施。process応答とHome window生成までは確認済みである。
 - `dist:dir`のunpacked artifactとlauncher配置は確認したが、NSIS installerを生成・installした状態からの全CLI起動は未実施。
+- 実Codex CLI設定への登録と、実Copilot account child processからのGlossary MCP起動は未実施。launcher内容、artifact配置、Codex add/read-back分岐、Copilot SessionConfig投影は直接testで確認した。
+- Session runtime cleanupがfilesystemまたはregistry errorで失敗した場合、heartbeat停止後から20秒のstale判定までentryが残り、unbound consumerが一時的にambiguousまたはunavailableとなる可能性がある。owner検証、identity challenge、AggregateErrorとlogで検知・回復可能であり、secret露出やauthority bypassにはつながらない。
 - provider固有shell/Git/toolがSession Runtime API外で行う副作用は、v6.4.0 autonomy計画に記載されたvalidation gapを引き継ぐ。
