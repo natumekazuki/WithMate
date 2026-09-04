@@ -13,7 +13,7 @@ export type SessionSkillSyncDiagnostics = {
   errorMessage?: string;
 };
 
-export type SessionCliLauncherDiagnostics = {
+export type ManagedMcpLauncherDiagnostics = {
   status:
     | "installed"
     | "not-installed"
@@ -21,10 +21,14 @@ export type SessionCliLauncherDiagnostics = {
     | "skipped-unpackaged"
     | "skipped-unsupported-platform"
     | "failed";
-  command: "withmate-session";
+  command: "withmate-session" | "withmate-glossary";
   resolvedPath: string | null;
   expectedPath: string | null;
   errorMessage?: string;
+};
+
+export type SessionCliLauncherDiagnostics = ManagedMcpLauncherDiagnostics & {
+  command: "withmate-session";
 };
 
 export type CodexSessionMcpRegistrationStatus =
@@ -36,12 +40,16 @@ export type CodexSessionMcpRegistrationStatus =
   | "skipped-unsupported-platform"
   | "failed";
 
-export type CodexSessionMcpRegistrationDiagnostics = {
+export type CodexManagedMcpRegistrationDiagnostics = {
   status: CodexSessionMcpRegistrationStatus;
-  name: "withmate-session";
+  name: "withmate-session" | "withmate-glossary";
   command: string;
   args: ["mcp-server"];
   errorMessage?: string;
+};
+
+export type CodexSessionMcpRegistrationDiagnostics = CodexManagedMcpRegistrationDiagnostics & {
+  name: "withmate-session";
 };
 
 export type SessionIntegrationDiagnostics = {
@@ -49,4 +57,7 @@ export type SessionIntegrationDiagnostics = {
   skillSync: SessionSkillSyncDiagnostics;
   launcher: SessionCliLauncherDiagnostics;
   codexMcp: CodexSessionMcpRegistrationDiagnostics;
+  glossarySkillSync: SessionSkillSyncDiagnostics;
+  glossaryLauncher: ManagedMcpLauncherDiagnostics & { command: "withmate-glossary" };
+  codexGlossaryMcp: CodexManagedMcpRegistrationDiagnostics & { name: "withmate-glossary" };
 };

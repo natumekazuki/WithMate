@@ -52,6 +52,12 @@ Accepted
 
 - `definition`はtooltipとright paneのどちらでもtext nodeとして描画し、MarkdownまたはHTMLとして解釈しない。tooltipはmessage DOM外へportalし、messageのselection、copy、find対象へ説明文を混入させない。
 
+### `GLOSSARY-MCP-PROVIDER-REGISTRATION`
+
+- Windows配布版は`withmate-glossary.cmd mcp-server`をGlossary MCPのcanonical stdio起動経路とする。launcherはinstall rootのWithMate executableと同梱Glossary artifactを指す5行のWithMate管理内容に完全一致し、artifactも存在する場合だけ利用できる。
+- Codexへの登録はSettingsの明示操作だけで行い、`withmate-session`と`withmate-glossary`を独立したMCP名として検査、登録、read-backする。同名設定が別transport、引数、環境、cwd、timeout、tool filterを持つ場合は上書きせずcollisionとする。一方のcollisionまたは失敗で他方の安全な登録を中止しない。
+- GitHub CopilotはWindows配布版のforeground provider Sessionにだけ、検証済みGlossary launcherを`SessionConfig.mcpServers.withmate-glossary`へ渡す。background処理、開発版、非Windows、launcherまたはartifactの検証失敗時には追加しない。MCP設定へsecretやruntime selectorを保存せず、foreground Sessionのcache identityには検証済みlauncher pathだけを含める。
+
 ## Consequences
 
 - repositoryの手編集とSession UIは単一fileのrevisionへ収束し、invalid fileを最後のvalid snapshotで隠さない。
@@ -65,7 +71,7 @@ Accepted
 - runtime authority、MCP、CLI: `src-electron/glossary-runtime-service.ts`、`src/glossary-operation-schema.ts`、`scripts/tests/glossary-runtime-service.test.ts`、`scripts/tests/withmate-glossary-cli-mcp.test.ts`
 - external update、renderer projection: `src-electron/glossary-session-projection-service.ts`、`src-electron/session-glossary-window-subscription.ts`、`scripts/tests/glossary-session-projection-service.test.ts`、`scripts/tests/session-glossary-window-subscription.test.ts`、`scripts/tests/session-glossary-pane.test.tsx`
 - annotation、keyboard、tooltip: `src/glossary/glossary-annotation-projection.ts`、`src/glossary/MessageGlossaryAnnotations.tsx`、`scripts/tests/glossary-annotation-projection.test.ts`、`scripts/tests/message-glossary-annotation.test.tsx`
-- managed distribution: `src-electron/managed-skill-distribution-service.ts`の`ManagedSkillDistributionService`、`scripts/tests/managed-glossary-skill-service.test.ts`
+- managed distribution / provider registration: `src-electron/managed-skill-distribution-service.ts`の`ManagedSkillDistributionService`、`src-electron/managed-mcp-launcher.ts`、`src-electron/codex-session-mcp-registration-service.ts`、`src-electron/copilot-adapter.ts`、`scripts/tests/managed-glossary-skill-service.test.ts`、`scripts/tests/codex-session-mcp-registration-service.test.ts`、`scripts/tests/copilot-adapter.test.ts`
 
 ## Alternatives
 

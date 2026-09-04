@@ -15,8 +15,10 @@ import {
 import { CoordinationEventValidationError } from "../src/coordination-event.js";
 import {
   SessionRuntimeClientError,
+  SessionRuntimeDiscoveryError,
   callSessionRuntime,
   discoverSessionRuntime,
+  mapSessionRuntimeDiscoveryCode,
   verifySessionRuntimeIdentity,
   type SessionRuntimeClientResponse,
   type SessionRuntimeConnection,
@@ -143,10 +145,21 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
       connection = await discover({
         env: deps.env,
         ...(parsed.apiUrl ? { apiUrl: parsed.apiUrl } : {}),
-        ...(parsed.discoveryFilePath ? { discoveryFilePath: parsed.discoveryFilePath } : {}),
-        ...(deps.read ? { read: deps.read } : {}),
+        ...(parsed.applicationInstanceId ? { applicationInstanceId: parsed.applicationInstanceId } : {}),
+        ...(parsed.runtimeGenerationId ? { runtimeGenerationId: parsed.runtimeGenerationId } : {}),
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof SessionRuntimeDiscoveryError
+        && error.code !== "runtime_selector_invalid"
+        && error.code !== "runtime_invalid") {
+        writeOutput(stdout, format, localError(
+          command,
+          mapSessionRuntimeDiscoveryCode(error.code),
+          "WithMate Session runtime discovery could not select a runtime.",
+          error.code === "runtime_unavailable" || error.code === "runtime_stale",
+        ));
+        return WITHMATE_SESSION_CLI_EXIT_CODES.runtimeUnavailable;
+      }
       throw new SessionCliUsageError("Session runtime connection options are invalid.");
     }
     if (!connection) {
@@ -164,7 +177,11 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
         schemaVersion: WITHMATE_SESSION_CLI_SCHEMA_VERSION,
         command,
         ok: true,
-        result: { available: true, runtimeInstanceId: connection.runtimeInstanceId },
+        result: {
+          available: true,
+          applicationInstanceId: connection.applicationInstanceId,
+          runtimeGenerationId: connection.runtimeGenerationId,
+        },
       });
       return WITHMATE_SESSION_CLI_EXIT_CODES.ok;
     }
@@ -236,7 +253,8 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   input?: unknown;
   format: OutputFormat;
   apiUrl?: string;
-  discoveryFilePath?: string;
+  applicationInstanceId?: string;
+  runtimeGenerationId?: string;
   timeoutMs: number;
 }> {
   const fileCommand = args[0] === "session" && args[1] === "files";
@@ -258,7 +276,8 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   let useStdin = false;
   let format: OutputFormat = "json";
   let apiUrl: string | undefined;
-  let discoveryFilePath: string | undefined;
+  let applicationInstanceId: string | undefined;
+  let runtimeGenerationId: string | undefined;
   let timeoutMs = 35_000;
   let timeoutExplicit = false;
   for (let index = optionStart; index < args.length; index += 1) {
@@ -275,7 +294,8 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
     else if (option === "--file") file = value;
     else if (option === "--format" && (value === "json" || value === "text")) format = value;
     else if (option === "--api-url") apiUrl = value;
-    else if (option === "--discovery-file") discoveryFilePath = value;
+    else if (option === "--instance") applicationInstanceId = value;
+    else if (option === "--generation") runtimeGenerationId = value;
     else if (option === "--timeout-ms" && Number.isSafeInteger(Number(value)) && Number(value) > 0) {
       timeoutMs = Number(value);
       timeoutExplicit = true;
@@ -314,7 +334,8 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
     ...(inputlessOperationCommands.has(command) ? { input: {} } : sources ? { input } : {}),
     format,
     ...(apiUrl ? { apiUrl } : {}),
-    ...(discoveryFilePath ? { discoveryFilePath } : {}),
+    ...(applicationInstanceId ? { applicationInstanceId } : {}),
+    ...(runtimeGenerationId ? { runtimeGenerationId } : {}),
     timeoutMs: timeoutExplicit ? timeoutMs : resolveSessionCliTransportTimeoutMs(command, input),
   };
 }

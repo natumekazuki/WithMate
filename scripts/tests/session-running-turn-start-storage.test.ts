@@ -364,6 +364,61 @@ it("character-authoringのrunning turn開始は最新snapshotと表示metadata�
 
 // @test-value v1
 // kind = "regression"
+// claim = "runtime metadataをclearしたcharacter-authoring Sessionは、次のrunning turn開始で最新snapshotとrelational Character ownerを同時に復元する"
+// oracle = { type = "contract", ref = "docs/design/character-storage.md#Runtime-Snapshot" }
+// failure_mode = "snapshot JSONだけ復元してsessions_v6.character_idがNULLに残り、Character Affect等のowner-bound consumerがSessionを拒否する"
+// scope = "SessionStorageV6.appendRunningTurnStart"
+// lifecycle = "permanent"
+// distinction = "既存snapshotの更新ではなく、専用clear transactionでrelational ownerを失った直後の再結合をDB read-backで観測する"
+// @end-test-value
+it("character-authoringのclear後のrunning turn開始はrelational Character ownerも復元する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-authoring-owner-rebind-"));
+  const dbPath = path.join(tempDirectory, "withmate-v6.db");
+  const storage = new SessionStorageV6(dbPath);
+
+  try {
+    const snapshot = createCharacterRuntimeSnapshot("Fresh");
+    insertCharacter(dbPath, snapshot);
+    const initial = storage.insertSession({
+      ...createSessionInput("authoring-owner-rebind", [], "character-authoring"),
+      character: snapshot.name,
+      characterIconPath: snapshot.iconFilePath,
+      characterThemeColors: snapshot.theme,
+      characterRuntimeSnapshot: snapshot,
+    });
+    storage.clearCharacterAuthoringRuntimeState({ sessionId: initial.id });
+
+    storage.appendRunningTurnStart({
+      sessionId: initial.id,
+      expectedMessageCount: 0,
+      userMessage: { role: "user", text: "restart" },
+      updatedAt: "2026-08-30T00:02:00.000Z",
+      characterRuntimeSnapshot: snapshot,
+    });
+
+    const inspectionDb = new DatabaseSync(dbPath);
+    try {
+      const row = inspectionDb.prepare(`
+        SELECT character_id, character_snapshot_json
+        FROM sessions_v6
+        WHERE id = ?
+      `).get(initial.id) as {
+        character_id: string | null;
+        character_snapshot_json: string | null;
+      };
+      assert.equal(row.character_id, snapshot.characterId);
+      assert.notEqual(row.character_snapshot_json, null);
+    } finally {
+      inspectionDb.close();
+    }
+  } finally {
+    storage.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v1
+// kind = "regression"
 // claim = "character-authoringのsnapshot clear、provider thread clear、running metadata、user messageは同一transactionで成功またはrollbackする"
 // oracle = { type = "contract", ref = "running-turn-start-persistence#1,#2,#6,#8;docs/design/character-storage.md#Runtime-Snapshot" }
 // failure_mode = "message append失敗時にsnapshotまたはthreadだけをclearするか、成功時に古いsnapshotとthreadを残す"

@@ -34,4 +34,8 @@ WithMateから起動したprovider Sessionではmanaged `withmate-glossary` Skil
 
 CLIとMCPは起動中のprovider Sessionのruntime bindingを必要とする。Session IDやabsolute pathを入力して別checkoutへ切り替えることはできない。`list-targets`が返すprimary targetだけを使用する。
 
+Windows配布版のCodexでは、Settingsの`Register Session + Glossary MCP for Codex`を実行する。WithMateはSessionとGlossaryの各launcher、同梱artifact、既存Codex設定を独立して検査し、同名の異なる設定を上書きしない。結果が一部成功の場合はDiagnosticsで各MCPの状態を確認する。登録後は新しいCodex Sessionを開始するかCodexを再起動する。
+
+GitHub Copilotでは、Windows配布版の通常Sessionへ検証済みGlossary MCPが自動で追加される。background処理、開発版、非Windowsでは追加されない。launcherまたはartifactが欠落・改変されている場合はGlossary MCPを起動せず、再インストールして配布物を復旧する。
+
 updateとdeleteはread時の`revision`を`expectedRevision`へ渡す。`effect: unknown`では自動retryせず、current valueをreadし直してからユーザーへ確認する。`outcome: converged`は現在値が要求postconditionに一致するという意味であり、そのretry試行がwriteしたことを示さない。

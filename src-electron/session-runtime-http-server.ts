@@ -16,7 +16,8 @@ import {
 import {
   SESSION_RUNTIME_CHALLENGE_HEADER,
   SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
-  SESSION_RUNTIME_INSTANCE_HEADER,
+  SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER,
+  SESSION_RUNTIME_GENERATION_HEADER,
   SESSION_RUNTIME_NONCE_HEADER,
   SESSION_RUNTIME_OPERATION_PATH,
   createSessionRuntimeChallenge,
@@ -44,7 +45,8 @@ export type SessionRuntimeHttpServerOptions = {
   apiSecret: string;
   cliSecret: string;
   mcpSecret: string;
-  runtimeInstanceId: string;
+  applicationInstanceId: string;
+  runtimeGenerationId: string;
   agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
   handle: SessionRuntimeHttpHandler;
   host?: string;
@@ -74,7 +76,8 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
   const apiSecret = requireSecret(options.apiSecret, "apiSecret");
   const cliSecret = requireSecret(options.cliSecret, "cliSecret");
   const mcpSecret = requireSecret(options.mcpSecret, "mcpSecret");
-  const runtimeInstanceId = requireSecret(options.runtimeInstanceId, "runtimeInstanceId");
+  const applicationInstanceId = requireSecret(options.applicationInstanceId, "applicationInstanceId");
+  const runtimeGenerationId = requireSecret(options.runtimeGenerationId, "runtimeGenerationId");
   const preAuthTimeoutMs = requirePositiveInteger(options.preAuthTimeoutMs ?? DEFAULT_PRE_AUTH_TIMEOUT_MS, "preAuthTimeoutMs");
   const shutdownGraceMs = requirePositiveInteger(options.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS, "shutdownGraceMs");
   const maxPreAuthConnections = requirePositiveInteger(
@@ -158,8 +161,19 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
         const nonce = url.searchParams.get("nonce")?.trim() ?? "";
         writeJson(response, 200, {
           ok: true,
-          runtimeInstanceId,
-          ...(nonce ? { challenge: { nonce, hmacSha256: createSessionRuntimeChallenge(apiSecret, runtimeInstanceId, nonce) } } : {}),
+          applicationInstanceId,
+          runtimeGenerationId,
+          ...(nonce ? {
+            challenge: {
+              nonce,
+              hmacSha256: createSessionRuntimeChallenge(
+                apiSecret,
+                applicationInstanceId,
+                runtimeGenerationId,
+                nonce,
+              ),
+            },
+          } : {}),
         });
         return;
       }
@@ -173,11 +187,12 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
       }
 
       const nonce = request.headers[SESSION_RUNTIME_NONCE_HEADER];
-      const expectedRuntimeInstanceId = request.headers[SESSION_RUNTIME_INSTANCE_HEADER];
+      const expectedApplicationInstanceId = request.headers[SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER];
+      const expectedRuntimeGenerationId = request.headers[SESSION_RUNTIME_GENERATION_HEADER];
       if (
         typeof nonce !== "string"
-        || typeof expectedRuntimeInstanceId !== "string"
-        || expectedRuntimeInstanceId !== runtimeInstanceId
+        || expectedApplicationInstanceId !== applicationInstanceId
+        || expectedRuntimeGenerationId !== runtimeGenerationId
       ) {
         writeJson(response, 401, transportError("UNAUTHORIZED", "Session runtime request is not authorized."));
         return;
@@ -193,8 +208,14 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
       }
       response.writeEarlyHints({
         link: `<${SESSION_RUNTIME_OPERATION_PATH}>; rel=preconnect`,
-        [SESSION_RUNTIME_INSTANCE_HEADER]: runtimeInstanceId,
-        [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(apiSecret, runtimeInstanceId, nonce),
+        [SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER]: applicationInstanceId,
+        [SESSION_RUNTIME_GENERATION_HEADER]: runtimeGenerationId,
+        [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(
+          apiSecret,
+          applicationInstanceId,
+          runtimeGenerationId,
+          nonce,
+        ),
       });
       const declaredLength = parseContentLength(request.headers["content-length"]);
       if (declaredLength !== null && declaredLength > SESSION_RUNTIME_MAX_BODY_BYTES) {

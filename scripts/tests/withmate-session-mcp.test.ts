@@ -11,7 +11,11 @@ import {
   SESSION_MCP_TOOL_DEFINITIONS,
   createWithMateSessionMcpServer,
 } from "../withmate-session-mcp.js";
-import { SessionRuntimeClientError, type SessionRuntimeConnection } from "../withmate-session-runtime-client.js";
+import {
+  SessionRuntimeClientError,
+  SessionRuntimeDiscoveryError,
+  type SessionRuntimeConnection,
+} from "../withmate-session-runtime-client.js";
 import {
   SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
   SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
@@ -25,7 +29,8 @@ const connection: SessionRuntimeConnection = {
   baseUrl: "http://127.0.0.1:1",
   apiSecret: "api-secret",
   adapterSecret: "mcp-secret",
-  runtimeInstanceId: "runtime-1",
+  applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+  runtimeGenerationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 };
 
 const executionInput = { sessionId: "session-1", executionId: "execution-1" };
@@ -140,6 +145,23 @@ function parseToolError(result: { content: unknown[] }): any {
 }
 
 describe("WithMate Session MCP contract", () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "unbound MCPは複数active Session runtimeを暗黙選択せずRUNTIME_AMBIGUOUS tool errorへ投影する"
+  // oracle = { type = "adr", ref = "ADR-023 Selection and binding" }
+  // failure_mode = "MCPだけが複数runtimeの一つへ暗黙接続するか、ambiguityをgeneric unavailableへ潰す"
+  // scope = "withmate-session-mcp-discovery-error-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("unbound MCPはambiguous discoveryを明示errorへ投影する", async () => {
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => { throw new SessionRuntimeDiscoveryError("runtime_ambiguous"); },
+    }), async (client) => {
+      const result = await client.callTool({ name: "turn.get", arguments: executionInput });
+      assert.equal(result.isError, true);
+      assert.equal(parseToolError(result as any).error.code, "RUNTIME_AMBIGUOUS");
+    });
+  });
   // @test-value v1
   // kind = "contract"
   // claim = "MCPはRoot WorkItem三操作を含む全38 toolをdotted name、strict schema、read/write annotation付きで公開する"

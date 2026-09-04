@@ -6,14 +6,23 @@ import { buildProviderAgentRuntimeAuthoritySnapshot } from "../../src-electron/p
 describe("buildProviderAgentRuntimeAuthoritySnapshot", () => {
   // @test-value v1
   // kind = "invariant"
-  // claim = "actor Sessionのcharacterとknown workspace projectだけがcanonical authorityへ投影される"
+  // claim = "actor Sessionのidentity・Role bindingとknown workspace projectがcanonical authorityへ投影される"
   // oracle = { type = "adr", ref = "ADR-024" }
-  // failure_mode = "binding authorityがcaller入力や未canonicalなworkspace値を許可集合へ投影する"
+  // failure_mode = "binding authorityがSession Roleを落とすか、caller入力や未canonicalなworkspace値を許可集合へ投影する"
   // scope = "provider-agent-runtime-authority-snapshot"
   // lifecycle = "permanent"
   // @end-test-value
   it("workspace projectをknown resolverのIDへcanonicalizeする", () => {
     const snapshot = buildProviderAgentRuntimeAuthoritySnapshot({
+      sessionId: "session-a",
+      sessionKind: "default",
+      sessionRoleBinding: {
+        sessionRole: "standalone",
+        roleContractRevision: 1,
+        rootSessionId: "session-a",
+        parentSessionId: null,
+        delegationDepth: 0,
+      },
       characterId: " character-a ",
       workspacePath: "C:/workspace",
       resolveCanonicalProjectId: (workspacePath) => {
@@ -26,6 +35,14 @@ describe("buildProviderAgentRuntimeAuthoritySnapshot", () => {
       userId: "local-user",
       characterId: "character-a",
       allowedProjectIds: ["project-z"],
+      sessionKind: "default",
+      sessionRoleBinding: {
+        sessionRole: "standalone",
+        roleContractRevision: 1,
+        rootSessionId: "session-a",
+        parentSessionId: null,
+        delegationDepth: 0,
+      },
     });
   });
 
@@ -40,6 +57,9 @@ describe("buildProviderAgentRuntimeAuthoritySnapshot", () => {
   // @end-test-value
   it("unresolved workspaceは空、空characterはnullにする", () => {
     assert.deepEqual(buildProviderAgentRuntimeAuthoritySnapshot({
+      sessionId: "authoring-session",
+      sessionKind: "character-authoring",
+      sessionRoleBinding: null,
       characterId: "character-a",
       workspacePath: "C:/missing",
       resolveCanonicalProjectId: () => null,
@@ -47,12 +67,38 @@ describe("buildProviderAgentRuntimeAuthoritySnapshot", () => {
       userId: "local-user",
       characterId: "character-a",
       allowedProjectIds: [],
+      sessionKind: "character-authoring",
     });
     assert.equal(buildProviderAgentRuntimeAuthoritySnapshot({
+      sessionId: "authoring-session",
+      sessionKind: "character-authoring",
+      sessionRoleBinding: null,
       characterId: "   ",
       workspacePath: "C:/workspace",
       resolveCanonicalProjectId: () => "project-a",
     }), null);
+    assert.throws(() => buildProviderAgentRuntimeAuthoritySnapshot({
+      sessionId: "session-a",
+      sessionKind: "default",
+      sessionRoleBinding: null,
+      characterId: "character-a",
+      workspacePath: "C:/workspace",
+      resolveCanonicalProjectId: () => "project-a",
+    }), /Session Role binding tuple is invalid/);
+    assert.throws(() => buildProviderAgentRuntimeAuthoritySnapshot({
+      sessionId: "authoring-session",
+      sessionKind: "character-authoring",
+      sessionRoleBinding: {
+        sessionRole: "standalone",
+        roleContractRevision: 1,
+        rootSessionId: "authoring-session",
+        parentSessionId: null,
+        delegationDepth: 0,
+      },
+      characterId: "character-a",
+      workspacePath: "C:/workspace",
+      resolveCanonicalProjectId: () => "project-a",
+    }), /Character-authoring Session cannot carry/);
   });
 
 });

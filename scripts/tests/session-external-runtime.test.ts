@@ -1,248 +1,186 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, open, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
 import {
-  SESSION_RUNTIME_DISCOVERY_FILE_NAME,
-  SESSION_RUNTIME_DISCOVERY_POINTER_SCHEMA_VERSION,
-  SESSION_RUNTIME_DISCOVERY_SCHEMA_VERSION,
+  SESSION_RUNTIME_CREDENTIAL_SCHEMA_VERSION,
+  SESSION_RUNTIME_KIND,
+  parseSessionRuntimeCredentialEnvelope,
 } from "../../src/session-runtime-discovery.js";
 import {
-  publishSessionRuntimeDiscovery,
-  resolveSessionRuntimeGenerationFilePath,
-  writeSessionRuntimeDiscoveryFile,
-} from "../../src-electron/session-external-runtime.js";
+  listRuntimeDiscoveryRegistryEntries,
+  readRuntimeDiscoveryCredential,
+} from "../../src/runtime-discovery/runtime-discovery-registry.js";
+import { publishSessionRuntimeDiscovery } from "../../src-electron/session-external-runtime.js";
+import {
+  SessionRuntimeDiscoveryError,
+  discoverSessionRuntime,
+} from "../withmate-session-runtime-client.js";
 
-test("Session discovery publishes separate CLI and MCP credentials under a Session-only schema", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-test-"));
+const FIRST_APPLICATION_ID = "11111111-1111-4111-8111-111111111111";
+const FIRST_GENERATION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const SECOND_APPLICATION_ID = "22222222-2222-4222-8222-222222222222";
+const SECOND_GENERATION_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const PROCESS_STARTED_AT = "2026-09-05T00:00:00.000Z";
+const security = async () => undefined;
+
+// @test-value v1
+// kind = "contract"
+// claim = "Session runtime publicationはshared registryへsafe metadataだけを公開し、CLIとMCPのcredentialをgeneric envelopeで分離する"
+// oracle = { type = "adr", ref = "ADR-023 Identity and registry ownership / Publish, lease, cleanup" }
+// failure_mode = "registry entryへsecretが露出するか、CLIとMCPが同じadapter credentialへ結合される"
+// scope = "session-runtime-discovery-publication"
+// lifecycle = "permanent"
+// @end-test-value
+test("Session runtimeはshared registryへadapter別generic credential envelopeを公開する", async () => {
+  const registryRootDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-session-registry-"));
   try {
     const publication = await publishSessionRuntimeDiscovery({
+      applicationInstanceId: FIRST_APPLICATION_ID,
+      runtimeGenerationId: FIRST_GENERATION_ID,
+      buildChannel: "development",
+      processStartedAt: PROCESS_STARTED_AT,
       baseUrl: "http://127.0.0.1:12345",
       apiSecret: "api-secret",
       cliSecret: "cli-secret",
       mcpSecret: "mcp-secret",
-      runtimeInstanceId: "runtime-1",
-    }, { resolveRuntimeDirectory: () => directory });
-    const pointer = JSON.parse(await readFile(publication.discoveryFilePath, "utf8")) as Record<string, unknown>;
-    assert.deepEqual(pointer, {
-      schemaVersion: SESSION_RUNTIME_DISCOVERY_POINTER_SCHEMA_VERSION,
-      runtimeInstanceId: "runtime-1",
+      registryRootDirectoryPath,
+      security,
     });
-    const cli = JSON.parse(await readFile(
-      resolveSessionRuntimeGenerationFilePath(publication.discoveryFilePath, "cli", "runtime-1"),
-      "utf8",
-    )) as Record<string, unknown>;
-    const mcp = JSON.parse(await readFile(
-      resolveSessionRuntimeGenerationFilePath(publication.discoveryFilePath, "mcp", "runtime-1"),
-      "utf8",
-    )) as Record<string, unknown>;
-    assert.equal(cli.schemaVersion, SESSION_RUNTIME_DISCOVERY_SCHEMA_VERSION);
-    assert.equal(mcp.schemaVersion, SESSION_RUNTIME_DISCOVERY_SCHEMA_VERSION);
-    assert.equal(cli.adapterSecret, "cli-secret");
-    assert.equal(mcp.adapterSecret, "mcp-secret");
-    assert.notEqual(cli.adapterSecret, mcp.adapterSecret);
-    assert.equal(path.basename(publication.discoveryFilePath), SESSION_RUNTIME_DISCOVERY_FILE_NAME);
-    await publication.cleanup();
+    const snapshot = await listRuntimeDiscoveryRegistryEntries(registryRootDirectoryPath);
+    assert.equal(snapshot.records.length, 1);
+    const record = snapshot.records[0]!;
+    assert.deepEqual(
+      {
+        applicationInstanceId: record.entry.applicationInstanceId,
+        runtimeKind: record.entry.runtimeKind,
+        runtimeGenerationId: record.entry.runtimeGenerationId,
+        buildChannel: record.entry.buildChannel,
+      },
+      {
+        applicationInstanceId: FIRST_APPLICATION_ID,
+        runtimeKind: SESSION_RUNTIME_KIND,
+        runtimeGenerationId: FIRST_GENERATION_ID,
+        buildChannel: "development",
+      },
+    );
+    assert.equal(JSON.stringify(record.entry).includes("secret"), false);
+    const cli = parseSessionRuntimeCredentialEnvelope(
+      (await readRuntimeDiscoveryCredential(record, "cli"))!,
+      record.entry,
+      "cli",
+    );
+    const mcp = parseSessionRuntimeCredentialEnvelope(
+      (await readRuntimeDiscoveryCredential(record, "mcp"))!,
+      record.entry,
+      "mcp",
+    );
+    assert.equal(cli?.credential.schemaVersion, SESSION_RUNTIME_CREDENTIAL_SCHEMA_VERSION);
+    assert.equal(cli?.credential.adapterSecret, "cli-secret");
+    assert.equal(mcp?.credential.adapterSecret, "mcp-secret");
+    assert.notEqual(cli?.credential.adapterSecret, mcp?.credential.adapterSecret);
+    await publication.unpublish();
+    await publication.cleanupGeneration();
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(registryRootDirectoryPath, { recursive: true, force: true });
   }
 });
 
-test("stopping an old Session runtime does not delete a newer publication", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-owner-test-"));
+// @test-value v1
+// kind = "regression"
+// claim = "複数Session runtimeはunbound discoveryで曖昧となり、後発runtime終了後は先発の生存runtimeを選択できる"
+// oracle = { type = "adr", ref = "ADR-023 Selection and binding / Consequences" }
+// failure_mode = "last-writer pointerまたは非owner cleanupにより、生存中の先発runtimeが選択不能になる"
+// scope = "session-runtime-discovery-selection-and-owner-cleanup"
+// lifecycle = "permanent"
+// distinction = "二つのapplication instanceを公開し、逆順終了後の再選択まで観測する"
+// @end-test-value
+test("Session runtimeの逆順終了後も生存instanceをshared registryから再選択する", async () => {
+  const registryRootDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-session-owner-"));
+  const common = {
+    buildChannel: "development" as const,
+    processStartedAt: PROCESS_STARTED_AT,
+    apiSecret: "api-secret",
+    cliSecret: "cli-secret",
+    mcpSecret: "mcp-secret",
+    registryRootDirectoryPath,
+    security,
+  };
   try {
     const first = await publishSessionRuntimeDiscovery({
+      ...common,
+      applicationInstanceId: FIRST_APPLICATION_ID,
+      runtimeGenerationId: FIRST_GENERATION_ID,
       baseUrl: "http://127.0.0.1:10001",
-      apiSecret: "api-1",
-      cliSecret: "cli-1",
-      mcpSecret: "mcp-1",
-      runtimeInstanceId: "runtime-1",
-    }, { resolveRuntimeDirectory: () => directory });
+    });
     const second = await publishSessionRuntimeDiscovery({
+      ...common,
+      applicationInstanceId: SECOND_APPLICATION_ID,
+      runtimeGenerationId: SECOND_GENERATION_ID,
       baseUrl: "http://127.0.0.1:10002",
-      apiSecret: "api-2",
-      cliSecret: "cli-2",
-      mcpSecret: "mcp-2",
-      runtimeInstanceId: "runtime-2",
-    }, { resolveRuntimeDirectory: () => directory });
-    await first.cleanup();
-    const pointer = JSON.parse(await readFile(second.discoveryFilePath, "utf8")) as { runtimeInstanceId: string };
-    assert.equal(pointer.runtimeInstanceId, "runtime-2");
-    await readFile(resolveSessionRuntimeGenerationFilePath(second.discoveryFilePath, "cli", "runtime-2"), "utf8");
-    await second.cleanup();
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("Session discovery cleans prepared generations when atomic publication fails", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-failure-test-"));
-  try {
-    await assert.rejects(() => publishSessionRuntimeDiscovery({
-      baseUrl: "http://127.0.0.1:12345",
-      apiSecret: "api-secret",
-      cliSecret: "cli-secret",
-      mcpSecret: "mcp-secret",
-      runtimeInstanceId: "runtime-failure",
-      beforeCommit: async () => { throw new Error("commit failed"); },
-    }, { resolveRuntimeDirectory: () => directory }));
-    assert.deepEqual(await readdir(directory), []);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("EXT-WIN-CRED-06: Windows publicationはdirectoryと全fileのACLをsecret公開前に検証する", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-windows-acl-"));
-  const securedPaths = new Map<string, string[]>();
-  try {
-    const publication = await publishSessionRuntimeDiscovery({
-      baseUrl: "http://127.0.0.1:12345",
-      apiSecret: "api-secret",
-      cliSecret: "cli-secret",
-      mcpSecret: "mcp-secret",
-      runtimeInstanceId: "runtime-windows-acl",
-    }, {
-      platform: "win32",
-      resolveRuntimeDirectory: () => directory,
-      secureWindowsPath: async (targetPath, targetKind) => {
-        const observations = securedPaths.get(targetPath) ?? [];
-        observations.push(targetKind === "file" ? await readFile(targetPath, "utf8") : targetKind);
-        securedPaths.set(targetPath, observations);
-      },
     });
 
-    assert.deepEqual(securedPaths.get(directory), ["directory"]);
-    const fileObservations = [...securedPaths.entries()]
-      .filter(([targetPath]) => targetPath !== directory)
-      .map(([, observations]) => observations);
-    assert.equal(fileObservations.length, 3);
-    for (const observations of fileObservations) {
-      assert.deepEqual(observations, [""]);
-    }
-    await publication.cleanup();
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("EXT-WIN-CRED-06: Windows directory ACLを検証できない場合はcredential fileを作らない", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-windows-directory-failure-"));
-  try {
-    await assert.rejects(() => publishSessionRuntimeDiscovery({
-      baseUrl: "http://127.0.0.1:12345",
-      apiSecret: "api-secret",
-      cliSecret: "cli-secret",
-      mcpSecret: "mcp-secret",
-      runtimeInstanceId: "runtime-windows-directory-failure",
-    }, {
-      platform: "win32",
-      resolveRuntimeDirectory: () => directory,
-      secureWindowsPath: async () => { throw new Error("ACL verification failed"); },
-    }));
-    assert.deepEqual(await readdir(directory), []);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("EXT-WIN-CRED-06: Windows file ACLの検証失敗は空の部分fileを除去する", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-windows-file-failure-"));
-  try {
-    await assert.rejects(() => publishSessionRuntimeDiscovery({
-      baseUrl: "http://127.0.0.1:12345",
-      apiSecret: "api-secret",
-      cliSecret: "cli-secret",
-      mcpSecret: "mcp-secret",
-      runtimeInstanceId: "runtime-windows-file-failure",
-    }, {
-      platform: "win32",
-      resolveRuntimeDirectory: () => directory,
-      secureWindowsPath: async (targetPath, targetKind) => {
-        if (targetKind === "directory") return;
-        assert.equal(await readFile(targetPath, "utf8"), "");
-        throw new Error("ACL verification failed");
-      },
-    }));
-    assert.deepEqual(await readdir(directory), []);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("DISCOVERY-CLEANUP-01: credential fileのpermission確定失敗は部分fileを残さない", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-write-failure-"));
-  const filePath = path.join(directory, "generation.json");
-  try {
-    await assert.rejects(() => writeSessionRuntimeDiscoveryFile(filePath, "secret", {
-      platform: "linux",
-      chmodFile: async () => { throw new Error("chmod failed"); },
-    }));
-    await assert.rejects(() => access(filePath));
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("DISCOVERY-CLEANUP-01: credential fileのwrite失敗は部分fileを残さない", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-write-failure-"));
-  const filePath = path.join(directory, "generation.json");
-  try {
-    await assert.rejects(() => writeSessionRuntimeDiscoveryFile(filePath, "secret", {
-      openFile: async (...args) => {
-        const file = await open(...args);
-        const writeFile = file.writeFile.bind(file);
-        file.writeFile = (async (...writeArgs) => {
-          await writeFile(...writeArgs);
-          throw new Error("write failed");
-        }) as typeof file.writeFile;
-        return file;
-      },
-    }));
-    await assert.rejects(() => access(filePath));
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("DISCOVERY-CLEANUP-01: credential fileのclose失敗は再close後に部分fileを除去する", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-close-failure-"));
-  const filePath = path.join(directory, "generation.json");
-  try {
-    await assert.rejects(() => writeSessionRuntimeDiscoveryFile(filePath, "secret", {
-      openFile: async (...args) => {
-        const file = await open(...args);
-        const close = file.close.bind(file);
-        let closeCalls = 0;
-        file.close = (async () => {
-          closeCalls += 1;
-          if (closeCalls === 1) throw new Error("close failed");
-          await close();
-        }) as typeof file.close;
-        return file;
-      },
-    }));
-    await assert.rejects(() => access(filePath));
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("DISCOVERY-CLEANUP-01: credential fileのcleanup失敗を元の失敗と共に通知する", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-cleanup-failure-"));
-  const filePath = path.join(directory, "generation.json");
-  try {
     await assert.rejects(
-      () => writeSessionRuntimeDiscoveryFile(filePath, "secret", {
-        platform: "linux",
-        chmodFile: async () => { throw new Error("chmod failed"); },
-        removeFile: async () => { throw new Error("remove failed"); },
-      }),
-      (error) => error instanceof AggregateError && error.errors.length === 2,
+      () => discoverSessionRuntime({ env: {}, registryRootDirectoryPath }),
+      (error) => error instanceof SessionRuntimeDiscoveryError
+        && error.code === "runtime_ambiguous",
     );
+
+    await second.unpublish();
+    await second.cleanupGeneration();
+    const selected = await discoverSessionRuntime({ env: {}, registryRootDirectoryPath });
+    assert.equal(selected?.applicationInstanceId, FIRST_APPLICATION_ID);
+    assert.equal(selected?.runtimeGenerationId, FIRST_GENERATION_ID);
+
+    await first.unpublish();
+    await first.cleanupGeneration();
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(registryRootDirectoryPath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v1
+// kind = "security"
+// claim = "binding-required discoveryはapplication instanceとSession generationの完全一致だけを選択する"
+// oracle = { type = "adr", ref = "ADR-023 Selection and binding" }
+// failure_mode = "provider-bound clientが指定generation不一致時に別generationまたはunbound runtimeへfallbackする"
+// scope = "session-runtime-bound-selection"
+// lifecycle = "permanent"
+// distinction = "同一applicationの存在下でstale generation selectorを指定しgeneration_changedを観測する"
+// @end-test-value
+test("provider-bound Session discoveryは指定generation不一致でfallbackしない", async () => {
+  const registryRootDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-session-bound-"));
+  try {
+    const publication = await publishSessionRuntimeDiscovery({
+      applicationInstanceId: FIRST_APPLICATION_ID,
+      runtimeGenerationId: FIRST_GENERATION_ID,
+      buildChannel: "development",
+      processStartedAt: PROCESS_STARTED_AT,
+      baseUrl: "http://127.0.0.1:12345",
+      apiSecret: "api-secret",
+      cliSecret: "cli-secret",
+      mcpSecret: "mcp-secret",
+      registryRootDirectoryPath,
+      security,
+    });
+    await assert.rejects(
+      () => discoverSessionRuntime({
+        env: {
+          WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+          WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-reference",
+          WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID: FIRST_APPLICATION_ID,
+          WITHMATE_SESSION_RUNTIME_GENERATION_ID: SECOND_GENERATION_ID,
+        },
+        registryRootDirectoryPath,
+      }),
+      (error) => error instanceof SessionRuntimeDiscoveryError
+        && error.code === "runtime_generation_changed",
+    );
+    await publication.unpublish();
+    await publication.cleanupGeneration();
+  } finally {
+    await rm(registryRootDirectoryPath, { recursive: true, force: true });
   }
 });

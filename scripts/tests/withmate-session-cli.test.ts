@@ -8,11 +8,6 @@ import { Readable } from "node:stream";
 import { describe, test } from "node:test";
 
 import {
-  SESSION_RUNTIME_DISCOVERY_POINTER_SCHEMA_VERSION,
-  SESSION_RUNTIME_DISCOVERY_SCHEMA_VERSION,
-  buildSessionRuntimeDiscoveryGenerationFileName,
-} from "../../src/session-runtime-discovery.js";
-import {
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SESSION_RUNTIME_MAX_BODY_BYTES,
   SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
@@ -21,7 +16,8 @@ import {
 } from "../../src/session-external-runtime-contract.js";
 import {
   SESSION_RUNTIME_CHALLENGE_HEADER,
-  SESSION_RUNTIME_INSTANCE_HEADER,
+  SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER,
+  SESSION_RUNTIME_GENERATION_HEADER,
   SESSION_RUNTIME_NONCE_HEADER,
   createSessionRuntimeChallenge,
 } from "../../src/session-runtime-exchange.js";
@@ -42,6 +38,7 @@ import {
 } from "../withmate-session.js";
 import {
   SessionRuntimeClientError,
+  SessionRuntimeDiscoveryError,
   callSessionRuntime,
   discoverSessionRuntime,
   resolveAgentRuntimeBindingReference,
@@ -53,7 +50,8 @@ const connection: SessionRuntimeConnection = {
   baseUrl: "http://127.0.0.1:4567",
   apiSecret: "api-secret",
   adapterSecret: "cli-secret",
-  runtimeInstanceId: "runtime-1",
+  applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+  runtimeGenerationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 };
 
 function capture() {
@@ -66,6 +64,14 @@ function capture() {
 }
 
 describe("withmate-session CLI", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "provider binding required markerがあるclientはbinding reference欠落時にdiscovery前でfail closedする"
+  // oracle = { type = "adr", ref = "ADR-023 Selection and binding" }
+  // failure_mode = "provider-bound clientがbinding referenceなしでoperator相当のSession runtime接続へdowngradeする"
+  // scope = "withmate-session-client-binding-admission"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("SESSION-SELF-CLIENT-01: provider bindingを解決しrequired marker欠落をfail closedにする", async () => {
     assert.equal(resolveAgentRuntimeBindingReference({
       [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: " opaque-reference ",
@@ -81,10 +87,27 @@ describe("withmate-session CLI", () => {
     await assert.rejects(
       () => discoverSessionRuntime({
         env: { [WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]: "1" },
-        discoveryFilePath: "unused",
       }),
       /requires its runtime binding reference/i,
     );
+  });
+
+  // @test-value v1
+  // kind = "contract"
+  // claim = "unbound CLIは複数active Session runtimeを暗黙選択せずRUNTIME_AMBIGUOUSとexit 2へ投影する"
+  // oracle = { type = "adr", ref = "ADR-023 Selection and binding" }
+  // failure_mode = "複数runtimeの一つを起動順で選ぶか、ambiguityをusage errorとして誤分類する"
+  // scope = "withmate-session-cli-discovery-error-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  test("unbound CLIはambiguous discoveryをruntime unavailable classへ投影する", async () => {
+    const output = capture();
+    const exitCode = await runWithMateSessionCli(["status"], {
+      stdout: output.stream,
+      discover: async () => { throw new SessionRuntimeDiscoveryError("runtime_ambiguous"); },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.runtimeUnavailable);
+    assert.equal(output.json().error.code, "RUNTIME_AMBIGUOUS");
   });
 
   test("CLI-WAIT-TIMEOUT-01: wait transport timeoutはapplication waitより5秒長い", () => {
@@ -102,30 +125,6 @@ describe("withmate-session CLI", () => {
       responseMode: "wait", waitTimeoutMs: 300_000,
     }), 305_000);
   });
-  test("discovery pointerからCLI generationだけを解決する", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "withmate-session-cli-"));
-    const pointerPath = join(directory, "session.current.json");
-    try {
-      await writeFile(pointerPath, JSON.stringify({
-        schemaVersion: SESSION_RUNTIME_DISCOVERY_POINTER_SCHEMA_VERSION,
-        runtimeInstanceId: "runtime-1",
-      }));
-      await writeFile(join(directory, buildSessionRuntimeDiscoveryGenerationFileName("cli", "runtime-1")), JSON.stringify({
-        schemaVersion: SESSION_RUNTIME_DISCOVERY_SCHEMA_VERSION,
-        adapter: "cli",
-        baseUrl: connection.baseUrl,
-        apiSecret: connection.apiSecret,
-        adapterSecret: connection.adapterSecret,
-        runtimeInstanceId: connection.runtimeInstanceId,
-        publishedAt: "2026-08-11T00:00:00.000Z",
-      }));
-
-      assert.deepEqual(await discoverSessionRuntime({ discoveryFilePath: pointerPath, env: {} }), connection);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
   test("identity mismatchではcredentialとoperation bodyをdispatchしない", async () => {
     const observedHeaders: Array<Record<string, string | string[] | undefined>> = [];
     let observedBytes = 0;
@@ -156,6 +155,14 @@ describe("withmate-session CLI", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "identity challenge後にpeerが切断されてもcredentialとoperation bodyを別peerへ再送しない"
+  // oracle = { type = "adr", ref = "ADR-023 Diagnostics and security" }
+  // failure_mode = "challenge後の接続差し替えへsecret-bearing bodyを自動再送する"
+  // scope = "withmate-session-authenticated-http-client"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("challenge後に同じportのpeerが差し替わってもcredentialとoperationを再送しない", async () => {
     let replacementRequests = 0;
     let replacementServer: ReturnType<typeof createServer> | null = null;
@@ -166,10 +173,12 @@ describe("withmate-session CLI", () => {
       const nonce = request.headers[SESSION_RUNTIME_NONCE_HEADER];
       response.writeEarlyHints({
         link: "</v1/operation>; rel=preconnect",
-        [SESSION_RUNTIME_INSTANCE_HEADER]: connection.runtimeInstanceId,
+        [SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER]: connection.applicationInstanceId,
+        [SESSION_RUNTIME_GENERATION_HEADER]: connection.runtimeGenerationId,
         [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(
           connection.apiSecret,
-          connection.runtimeInstanceId,
+          connection.applicationInstanceId,
+          connection.runtimeGenerationId,
           typeof nonce === "string" ? nonce : "",
         ),
       }, () => {
@@ -206,15 +215,25 @@ describe("withmate-session CLI", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Session runtime clientはresponse hard maximum超過を拒否しdispatch済み状態を保持する"
+  // oracle = { type = "contract", ref = "SESSION_RUNTIME_MAX_RESPONSE_BYTES" }
+  // failure_mode = "oversized responseを無制限に受信するか、dispatch済みmutationを未送信として扱う"
+  // scope = "withmate-session-runtime-response-limit"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("RL-01: response hard maximumを超えたpeer responseを全量受信せず拒否する", async () => {
     const server = createServer((request, response) => {
       const nonce = request.headers[SESSION_RUNTIME_NONCE_HEADER];
       response.writeEarlyHints({
         link: "</v1/operation>; rel=preconnect",
-        [SESSION_RUNTIME_INSTANCE_HEADER]: connection.runtimeInstanceId,
+        [SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER]: connection.applicationInstanceId,
+        [SESSION_RUNTIME_GENERATION_HEADER]: connection.runtimeGenerationId,
         [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(
           connection.apiSecret,
-          connection.runtimeInstanceId,
+          connection.applicationInstanceId,
+          connection.runtimeGenerationId,
           typeof nonce === "string" ? nonce : "",
         ),
       });
@@ -241,6 +260,14 @@ describe("withmate-session CLI", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "application instanceとgenerationを検証したCLI connectionはversioned operationをSession runtimeへ送る"
+  // oracle = { type = "adr", ref = "ADR-023 Selection and binding" }
+  // failure_mode = "正しいidentity tupleのconnectionがdispatch不能になるか、未検証peerへoperationを送る"
+  // scope = "withmate-session-cli-runtime-integration"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("verified CLI connectionはversioned operationをSession runtimeへ送る", async () => {
     const received: unknown[] = [];
     const registry = new AgentRuntimeBindingRegistry();
@@ -253,7 +280,8 @@ describe("withmate-session CLI", () => {
       apiSecret: connection.apiSecret,
       cliSecret: connection.adapterSecret,
       mcpSecret: "mcp-secret",
-      runtimeInstanceId: connection.runtimeInstanceId,
+      applicationInstanceId: connection.applicationInstanceId,
+      runtimeGenerationId: connection.runtimeGenerationId,
       agentRuntimeBindingRegistry: registry,
       async handle(operation, input, adapter) {
         received.push({ operation, input, adapter });

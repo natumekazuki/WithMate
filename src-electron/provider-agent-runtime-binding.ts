@@ -2,11 +2,18 @@ import { createHash } from "node:crypto";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ProviderAgentRuntimeAuthoritySnapshot } from "../src/agent-runtime/agent-runtime-binding-contract.js";
 import {
+  requireSessionRoleBinding,
+  type SessionRoleBinding,
+} from "../src/session-role-binding.js";
+import type { SessionKind } from "../src/session-state.js";
+import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
+  WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV,
 } from "../src/agent-runtime/agent-runtime-binding-contract.js";
 
 export {
@@ -16,6 +23,8 @@ export {
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
+  WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV,
 } from "../src/agent-runtime/agent-runtime-binding-contract.js";
 
 export type ProviderAgentRuntimeBindingCapability = {
@@ -31,6 +40,9 @@ export type ProviderAgentRuntimeBindingRedactor = {
 };
 
 export type ProviderAgentRuntimeAuthoritySnapshotInput = {
+  sessionId: string;
+  sessionKind: SessionKind;
+  sessionRoleBinding: SessionRoleBinding | null;
   characterId: string | null | undefined;
   workspacePath: string | null | undefined;
   resolveCanonicalProjectId: (workspacePath: string) => string | null | undefined;
@@ -43,7 +55,10 @@ export type ProviderAgentRuntimeAuthoritySnapshotInput = {
  */
 export function buildProviderAgentRuntimeAuthoritySnapshot(
   input: ProviderAgentRuntimeAuthoritySnapshotInput,
-): ProviderAgentRuntimeAuthoritySnapshot | null {
+): (ProviderAgentRuntimeAuthoritySnapshot & {
+  sessionKind: SessionKind;
+  sessionRoleBinding?: SessionRoleBinding;
+}) | null {
   const characterId = input.characterId?.trim() ?? "";
   if (!characterId) {
     return null;
@@ -51,10 +66,18 @@ export function buildProviderAgentRuntimeAuthoritySnapshot(
   const workspacePath = input.workspacePath?.trim() ?? "";
   const resolvedProjectId = workspacePath ? input.resolveCanonicalProjectId(workspacePath)?.trim() ?? "" : "";
   const allowedProjectIds = resolvedProjectId ? [resolvedProjectId] : [];
+  if (input.sessionKind !== "default" && input.sessionRoleBinding !== null) {
+    throw new Error("Character-authoring Session cannot carry a Session Role binding.");
+  }
+  const sessionRoleBinding = input.sessionKind === "default"
+    ? requireSessionRoleBinding(input.sessionId, input.sessionRoleBinding)
+    : undefined;
   return {
     userId: "local-user",
     characterId,
     allowedProjectIds,
+    sessionKind: input.sessionKind,
+    ...(sessionRoleBinding ? { sessionRoleBinding } : {}),
   };
 }
 
@@ -112,6 +135,9 @@ export function buildProviderAgentRuntimeBindingEnv(
   const memoryOwner = projection?.memoryRuntimeOwner;
   const memoryApplicationInstanceId = memoryOwner?.applicationInstanceId?.trim();
   const memoryGenerationId = memoryOwner?.runtimeGenerationId?.trim();
+  const sessionOwner = projection?.sessionRuntimeOwner;
+  const sessionApplicationInstanceId = sessionOwner?.applicationInstanceId?.trim();
+  const sessionGenerationId = sessionOwner?.runtimeGenerationId?.trim();
   return projection?.transport === "env"
       ? {
         [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: projection.bindingReference,
@@ -125,6 +151,12 @@ export function buildProviderAgentRuntimeBindingEnv(
             [WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV]: memoryGenerationId,
           }
           : {}),
+        ...(sessionApplicationInstanceId && sessionGenerationId
+          ? {
+            [WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV]: sessionApplicationInstanceId,
+            [WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV]: sessionGenerationId,
+          }
+          : {}),
       }
     : {};
 }
@@ -136,6 +168,7 @@ export function buildProviderAgentRuntimeBindingCacheKey(
     return "";
   }
   const memoryOwner = projection.memoryRuntimeOwner;
+  const sessionOwner = projection.sessionRuntimeOwner;
   return JSON.stringify([
     projection.bindingId,
     projection.providerId,
@@ -146,6 +179,8 @@ export function buildProviderAgentRuntimeBindingCacheKey(
       : null,
     memoryOwner?.applicationInstanceId ?? null,
     memoryOwner?.runtimeGenerationId ?? null,
+    sessionOwner?.applicationInstanceId ?? null,
+    sessionOwner?.runtimeGenerationId ?? null,
   ]);
 }
 
@@ -159,6 +194,8 @@ export function mergeDefinedProviderEnv(
   const turnCapabilityKey = WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV.toLowerCase();
   const memoryApplicationInstanceIdKey = WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase();
   const memoryGenerationIdKey = WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV.toLowerCase();
+  const sessionApplicationInstanceIdKey = WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase();
+  const sessionGenerationIdKey = WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV.toLowerCase();
   for (const [key, value] of Object.entries(baseEnv)) {
     const normalizedKey = key.toLowerCase();
     if (
@@ -167,6 +204,8 @@ export function mergeDefinedProviderEnv(
       && normalizedKey !== turnCapabilityKey
       && normalizedKey !== memoryApplicationInstanceIdKey
       && normalizedKey !== memoryGenerationIdKey
+      && normalizedKey !== sessionApplicationInstanceIdKey
+      && normalizedKey !== sessionGenerationIdKey
       && value !== undefined
     ) {
       merged[key] = value;

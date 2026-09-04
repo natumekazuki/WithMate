@@ -89,8 +89,35 @@ import {
   type ProviderAgentRuntimeBindingRedactor,
 } from "./provider-agent-runtime-binding.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
+import {
+  resolveVerifiedManagedMcpLauncher,
+  WITHMATE_GLOSSARY_MCP_LAUNCHER_SPEC,
+} from "./managed-mcp-launcher.js";
 
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
+
+export type CopilotManagedMcpEnvironment = {
+  foreground: boolean;
+  isPackagedApp: boolean;
+  platform?: NodeJS.Platform;
+  executablePath?: string;
+  resourcesPath?: string;
+  fileExists?: (filePath: string) => boolean;
+  readTextFile?: (filePath: string) => string;
+};
+
+export function resolveCopilotManagedGlossaryLauncher(input: CopilotManagedMcpEnvironment): string | null {
+  if (!input.foreground) return null;
+  return resolveVerifiedManagedMcpLauncher({
+    spec: WITHMATE_GLOSSARY_MCP_LAUNCHER_SPEC,
+    isPackagedApp: input.isPackagedApp,
+    platform: input.platform,
+    executablePath: input.executablePath,
+    resourcesPath: input.resourcesPath,
+    fileExists: input.fileExists,
+    readTextFile: input.readTextFile,
+  });
+}
 
 export function toCopilotReasoningEffort(reasoningEffort: ModelReasoningEffort): CopilotReasoningEffort {
   if (reasoningEffort === "minimal") {
@@ -1586,6 +1613,7 @@ export function buildCopilotSessionSettings(
   prompt: ProviderPromptComposition,
   clientKey: string,
   resolveCustomAgents: typeof resolveSessionCustomAgentConfigs = resolveSessionCustomAgentConfigs,
+  managedGlossaryLauncherPath: string | null = null,
 ): CopilotSessionSettings {
   const selection = resolveModelSelection(input.providerCatalog, input.session.model, input.session.reasoningEffort);
   const workspacePath = resolveRunWorkspacePath(input);
@@ -1607,6 +1635,15 @@ export function buildCopilotSessionSettings(
     ...(systemMessage ? { systemMessage } : {}),
     ...(resolvedCustomAgents.customAgents.length > 0 ? { customAgents: resolvedCustomAgents.customAgents } : {}),
     ...(resolvedCustomAgents.selectedAgentName ? { agent: resolvedCustomAgents.selectedAgentName } : {}),
+    ...(managedGlossaryLauncherPath ? {
+      mcpServers: {
+        "withmate-glossary": {
+          type: "stdio",
+          command: managedGlossaryLauncherPath,
+          args: ["mcp-server"],
+        },
+      },
+    } : {}),
   };
 
   return {
@@ -1621,6 +1658,7 @@ export function buildCopilotSessionSettings(
       systemMessage?.mode ?? "",
       systemMessage?.content ?? "",
       input.session.customAgentName,
+      managedGlossaryLauncherPath ?? "",
       resolvedCustomAgents.customAgents.map((agent) => JSON.stringify({
         name: agent.name,
         displayName: agent.displayName ?? "",
@@ -2014,6 +2052,12 @@ type CopilotAdapterOptions = {
   log?: (input: CopilotAdapterLogInput) => void;
   clientStopTimeoutMs?: number;
   sessionDisconnectTimeoutMs?: number;
+  isPackagedApp?: () => boolean;
+  platform?: NodeJS.Platform;
+  executablePath?: string;
+  resourcesPath?: string;
+  fileExists?: (filePath: string) => boolean;
+  readTextFile?: (filePath: string) => string;
 };
 
 const COPILOT_CLIENT_STOP_TIMEOUT_MS = 5_000;
@@ -2076,6 +2120,18 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   private readonly clientKeysBySession = new Map<string, string>();
 
   constructor(private options: CopilotAdapterOptions = {}) {}
+
+  private resolveManagedGlossaryLauncherPath(): string | null {
+    return resolveCopilotManagedGlossaryLauncher({
+      foreground: true,
+      isPackagedApp: this.options.isPackagedApp?.() ?? false,
+      platform: this.options.platform,
+      executablePath: this.options.executablePath,
+      resourcesPath: this.options.resourcesPath,
+      fileExists: this.options.fileExists,
+      readTextFile: this.options.readTextFile,
+    });
+  }
 
   private async stopClient(client: CopilotClient): Promise<void> {
     await stopCopilotClient(client, this.options.clientStopTimeoutMs);
@@ -2434,7 +2490,13 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const { client, clientKey } = this.getClient(input.providerCatalog.id, input);
     const previousClientKey = this.clientKeysBySession.get(input.session.id);
     this.clientKeysBySession.set(input.session.id, clientKey);
-    const nextSettings = buildCopilotSessionSettings(input, prompt, clientKey);
+    const nextSettings = buildCopilotSessionSettings(
+      input,
+      prompt,
+      clientKey,
+      resolveSessionCustomAgentConfigs,
+      this.resolveManagedGlossaryLauncherPath(),
+    );
     const resolved = await resolveCopilotSessionForSettings({
       cached: this.sessions.get(input.session.id),
       nextSettingsKey: nextSettings.settingsKey,

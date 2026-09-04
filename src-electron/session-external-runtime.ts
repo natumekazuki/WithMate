@@ -1,67 +1,95 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, rename, rm } from "node:fs/promises";
-import path from "node:path";
+import { chmod, lstat } from "node:fs/promises";
 
 import {
-  SESSION_RUNTIME_DISCOVERY_FILE_NAME,
-  SESSION_RUNTIME_DISCOVERY_POINTER_SCHEMA_VERSION,
-  SESSION_RUNTIME_DISCOVERY_SCHEMA_VERSION,
-  buildSessionRuntimeDiscoveryGenerationFileName,
-  resolveDefaultSessionRuntimeDirectory,
-  type SessionRuntimeDiscoveryDocument,
-  type SessionRuntimeDiscoveryPointer,
+  SESSION_RUNTIME_CREDENTIAL_SCHEMA_VERSION,
+  SESSION_RUNTIME_KIND,
+  parseSessionRuntimeCredentialEnvelope,
+  type SessionRuntimeCredentialEnvelope,
 } from "../src/session-runtime-discovery.js";
 import type { SessionRuntimeAdapterKind } from "../src/session-external-runtime-contract.js";
+import { createSessionRuntimeChallenge } from "../src/session-runtime-exchange.js";
+import {
+  isUuid,
+  type RuntimeBuildChannel,
+  type RuntimeDiscoveryClock,
+  type RuntimeDiscoveryRegistryLimits,
+  type RuntimeDiscoveryTimers,
+  SYSTEM_RUNTIME_DISCOVERY_CLOCK,
+} from "../src/runtime-discovery/runtime-discovery-contract.js";
+import {
+  publishRuntimeDiscoveryEntry,
+  readRuntimeDiscoveryCredential,
+  type RuntimeDiscoveryRegistryChallenge,
+  type RuntimeDiscoveryRegistryPublication,
+  type RuntimePathSecurity,
+} from "../src/runtime-discovery/runtime-discovery-registry.js";
 import {
   createSessionRuntimeHttpServer,
   type SessionRuntimeHttpServerOptions,
   type SessionRuntimeHttpHandler,
   type SessionRuntimeHttpServer,
 } from "./session-runtime-http-server.js";
-import { secureWindowsRuntimePath, type RuntimeAclTargetKind } from "./runtime-path-security.js";
+import { secureWindowsRuntimePath } from "./runtime-path-security.js";
 
 export type StartSessionExternalRuntimeOptions = {
+  applicationInstanceId: string;
+  buildChannel: RuntimeBuildChannel;
+  processStartedAt: string;
   handle: SessionRuntimeHttpHandler;
   agentRuntimeBindingRegistry?: SessionRuntimeHttpServerOptions["agentRuntimeBindingRegistry"];
+  registryRootDirectoryPath?: string;
+  runtimeDiscoveryLimits?: Partial<RuntimeDiscoveryRegistryLimits>;
+  runtimeDiscoveryClock?: RuntimeDiscoveryClock;
+  runtimeDiscoveryTimers?: RuntimeDiscoveryTimers;
+  runtimePathSecurity?: RuntimePathSecurity;
+  onHeartbeatError?: (error: unknown) => void;
 };
 
 export type SessionExternalRuntimeHandle = {
   baseUrl: string;
-  discoveryFilePath: string;
-  runtimeInstanceId: string;
+  applicationInstanceId: string;
+  runtimeGenerationId: string;
   stop(): Promise<void>;
 };
 
 export type PublishSessionRuntimeDiscoveryOptions = {
+  applicationInstanceId: string;
+  runtimeGenerationId?: string;
+  buildChannel: RuntimeBuildChannel;
+  processStartedAt: string;
   baseUrl: string;
   apiSecret: string;
   cliSecret: string;
   mcpSecret: string;
-  runtimeInstanceId?: string;
-  beforeCommit?: () => Promise<void>;
-};
-
-type SessionRuntimePublicationDeps = {
-  platform?: NodeJS.Platform;
-  resolveRuntimeDirectory?: () => string;
-  secureWindowsPath?: (targetPath: string, targetKind: RuntimeAclTargetKind) => Promise<void>;
+  registryRootDirectoryPath?: string;
+  limits?: Partial<RuntimeDiscoveryRegistryLimits>;
+  clock?: RuntimeDiscoveryClock;
+  timers?: RuntimeDiscoveryTimers;
+  security?: RuntimePathSecurity;
+  challenge?: RuntimeDiscoveryRegistryChallenge;
+  onHeartbeatError?: (error: unknown) => void;
 };
 
 export async function startSessionExternalRuntime(
   options: StartSessionExternalRuntimeOptions,
 ): Promise<SessionExternalRuntimeHandle> {
+  if (!isUuid(options.applicationInstanceId)) {
+    throw new Error("Session runtime applicationInstanceId must be a UUID.");
+  }
   const apiSecret = createSecret();
   const cliSecret = createSecret();
   const mcpSecret = createSecret();
-  const runtimeInstanceId = randomUUID();
+  const runtimeGenerationId = randomUUID();
   let server: SessionRuntimeHttpServer | null = null;
-  let publication: Awaited<ReturnType<typeof publishSessionRuntimeDiscovery>> | null = null;
+  let publication: RuntimeDiscoveryRegistryPublication | null = null;
   try {
     server = createSessionRuntimeHttpServer({
       apiSecret,
       cliSecret,
       mcpSecret,
-      runtimeInstanceId,
+      applicationInstanceId: options.applicationInstanceId,
+      runtimeGenerationId,
       agentRuntimeBindingRegistry: options.agentRuntimeBindingRegistry,
       handle: options.handle,
     });
@@ -72,191 +100,154 @@ export async function startSessionExternalRuntime(
     }
     const baseUrl = `http://127.0.0.1:${address.port}`;
     publication = await publishSessionRuntimeDiscovery({
+      applicationInstanceId: options.applicationInstanceId,
+      runtimeGenerationId,
+      buildChannel: options.buildChannel,
+      processStartedAt: options.processStartedAt,
       baseUrl,
       apiSecret,
       cliSecret,
       mcpSecret,
-      runtimeInstanceId,
+      ...(options.registryRootDirectoryPath
+        ? { registryRootDirectoryPath: options.registryRootDirectoryPath }
+        : {}),
+      ...(options.runtimeDiscoveryLimits ? { limits: options.runtimeDiscoveryLimits } : {}),
+      ...(options.runtimeDiscoveryClock ? { clock: options.runtimeDiscoveryClock } : {}),
+      ...(options.runtimeDiscoveryTimers ? { timers: options.runtimeDiscoveryTimers } : {}),
+      ...(options.runtimePathSecurity ? { security: options.runtimePathSecurity } : {}),
+      ...(options.onHeartbeatError ? { onHeartbeatError: options.onHeartbeatError } : {}),
     });
     return {
       baseUrl,
-      discoveryFilePath: publication.discoveryFilePath,
-      runtimeInstanceId,
+      applicationInstanceId: options.applicationInstanceId,
+      runtimeGenerationId,
       async stop(): Promise<void> {
         const errors: unknown[] = [];
+        await publication?.unpublish().catch((error) => errors.push(error));
         await server?.stop().catch((error) => errors.push(error));
-        await publication?.cleanup().catch((error) => errors.push(error));
+        await publication?.cleanupGeneration().catch((error) => errors.push(error));
         if (errors.length > 0) {
           throw new AggregateError(errors, "Session runtime cleanup failed.");
         }
       },
     };
   } catch (error) {
-    await publication?.cleanup().catch(() => undefined);
+    await publication?.unpublish().catch(() => undefined);
     await server?.stop().catch(() => undefined);
+    await publication?.cleanupGeneration().catch(() => undefined);
     throw error;
   }
 }
 
 export async function publishSessionRuntimeDiscovery(
   options: PublishSessionRuntimeDiscoveryOptions,
-  deps: SessionRuntimePublicationDeps = {},
-): Promise<{
-  discoveryFilePath: string;
-  runtimeInstanceId: string;
-  cleanup(): Promise<void>;
-}> {
-  const runtimeDirectoryPath = path.resolve(
-    deps.resolveRuntimeDirectory?.() ?? resolveDefaultSessionRuntimeDirectory(),
-  );
-  const discoveryFilePath = path.join(runtimeDirectoryPath, SESSION_RUNTIME_DISCOVERY_FILE_NAME);
-  const runtimeInstanceId = options.runtimeInstanceId ?? randomUUID();
-  await ensureSecureRuntimeDirectory(runtimeDirectoryPath, deps);
-  const generationFilePaths: string[] = [];
-  let pointerTemporaryFilePath: string | null = null;
-  try {
-    for (const adapter of ["cli", "mcp"] as const) {
-      const generationFilePath = path.join(
-        runtimeDirectoryPath,
-        buildSessionRuntimeDiscoveryGenerationFileName(adapter, runtimeInstanceId),
-      );
-      const document: SessionRuntimeDiscoveryDocument = {
-        schemaVersion: SESSION_RUNTIME_DISCOVERY_SCHEMA_VERSION,
-        adapter,
+): Promise<RuntimeDiscoveryRegistryPublication> {
+  const runtimeGenerationId = options.runtimeGenerationId ?? randomUUID();
+  if (!isUuid(options.applicationInstanceId) || !isUuid(runtimeGenerationId)) {
+    throw new Error("Session runtime discovery identity must contain UUIDs.");
+  }
+  const identity = {
+    applicationInstanceId: options.applicationInstanceId,
+    runtimeKind: SESSION_RUNTIME_KIND,
+    runtimeGenerationId,
+  } as const;
+  const clock = options.clock ?? SYSTEM_RUNTIME_DISCOVERY_CLOCK;
+  const security = options.security ?? secureSessionRuntimePath;
+  const credentialDocuments = ([
+    ["cli", options.cliSecret],
+    ["mcp", options.mcpSecret],
+  ] as const).map(([adapterKind, adapterSecret]) => ({
+    adapterKind,
+    document: {
+      schemaVersion: "withmate-runtime-credential-v1",
+      ...identity,
+      adapterKind,
+      credential: {
+        schemaVersion: SESSION_RUNTIME_CREDENTIAL_SCHEMA_VERSION,
         baseUrl: options.baseUrl,
         apiSecret: options.apiSecret,
-        adapterSecret: adapter === "cli" ? options.cliSecret : options.mcpSecret,
-        runtimeInstanceId,
-        publishedAt: new Date().toISOString(),
-      };
-      generationFilePaths.push(generationFilePath);
-      await writeExclusive(generationFilePath, `${JSON.stringify(document)}\n`, deps);
-    }
-    pointerTemporaryFilePath = `${discoveryFilePath}.${runtimeInstanceId}.tmp`;
-    const pointer: SessionRuntimeDiscoveryPointer = {
-      schemaVersion: SESSION_RUNTIME_DISCOVERY_POINTER_SCHEMA_VERSION,
-      runtimeInstanceId,
-    };
-    await writeExclusive(pointerTemporaryFilePath, `${JSON.stringify(pointer)}\n`, deps);
-    await options.beforeCommit?.();
-    await rename(pointerTemporaryFilePath, discoveryFilePath);
-    pointerTemporaryFilePath = null;
-  } catch (error) {
-    const cleanupResults = await Promise.allSettled([
-      ...generationFilePaths.map((filePath) => rm(filePath, { force: true })),
-      ...(pointerTemporaryFilePath ? [rm(pointerTemporaryFilePath, { force: true })] : []),
-    ]);
-    throwWithCleanupFailures(error, cleanupResults, "Session runtime publication cleanup failed.");
+        adapterSecret,
+      },
+    } satisfies SessionRuntimeCredentialEnvelope,
+  }));
+  const publication = await publishRuntimeDiscoveryEntry({
+    ...(options.registryRootDirectoryPath ? { rootDirectoryPath: options.registryRootDirectoryPath } : {}),
+    security,
+    ...(options.limits ? { limits: options.limits } : {}),
+    clock,
+    ...(options.timers ? { timers: options.timers } : {}),
+    identity,
+    buildChannel: options.buildChannel,
+    process: { pid: process.pid, startedAt: options.processStartedAt },
+    credentialDocuments,
+    challenge: options.challenge ?? challengeSessionRuntimeRegistryEntry,
+    ...(options.onHeartbeatError ? { onHeartbeatError: options.onHeartbeatError } : {}),
+  });
+  publication.startHeartbeat();
+  return publication;
+}
+
+async function challengeSessionRuntimeRegistryEntry(
+  entry: Parameters<RuntimeDiscoveryRegistryChallenge>[0],
+  slotDirectoryPath: string,
+): Promise<boolean> {
+  if (entry.runtimeKind !== SESSION_RUNTIME_KIND) {
+    return true;
   }
-  return {
-    discoveryFilePath,
-    runtimeInstanceId,
-    async cleanup(): Promise<void> {
-      await Promise.all(generationFilePaths.map((filePath) => rm(filePath, { force: true })));
-    },
-  };
+  const record = { slotName: "challenge", entry, slotDirectoryPath };
+  const serialized = await readRuntimeDiscoveryCredential(record, "cli");
+  if (!serialized) return false;
+  const envelope = parseSessionRuntimeCredentialEnvelope(serialized, record.entry, "cli");
+  if (!envelope) return false;
+  const credential = envelope.credential;
+  const nonce = randomBytes(16).toString("base64url");
+  try {
+    const response = await fetch(
+      new URL(`/v1/status?nonce=${encodeURIComponent(nonce)}`, credential.baseUrl),
+      { signal: AbortSignal.timeout(2_000) },
+    );
+    if (!response.ok) return false;
+    const value = await response.json() as Record<string, unknown>;
+    const challenge = value.challenge as Record<string, unknown> | undefined;
+    return value.applicationInstanceId === entry.applicationInstanceId
+      && value.runtimeGenerationId === entry.runtimeGenerationId
+      && challenge?.nonce === nonce
+      && challenge.hmacSha256 === createSessionRuntimeChallenge(
+        credential.apiSecret,
+        entry.applicationInstanceId,
+        entry.runtimeGenerationId,
+        nonce,
+      );
+  } catch {
+    return false;
+  }
 }
 
-export function resolveSessionRuntimeGenerationFilePath(
-  discoveryFilePath: string,
-  adapter: SessionRuntimeAdapterKind,
-  runtimeInstanceId: string,
-): string {
-  return path.join(path.dirname(discoveryFilePath), buildSessionRuntimeDiscoveryGenerationFileName(adapter, runtimeInstanceId));
-}
-
-async function ensureSecureRuntimeDirectory(
-  runtimeDirectoryPath: string,
-  deps: SessionRuntimePublicationDeps = {},
-): Promise<void> {
-  await mkdir(runtimeDirectoryPath, { recursive: true, mode: 0o700 });
-  const stats = await lstat(runtimeDirectoryPath);
-  if (!stats.isDirectory() || stats.isSymbolicLink()) {
-    throw new Error("Session runtime directory must be a real directory.");
+async function secureSessionRuntimePath(targetPath: string, targetKind: "directory" | "file"): Promise<void> {
+  if (process.platform === "win32") {
+    await secureWindowsRuntimePath(targetPath, targetKind);
+    return;
+  }
+  const expectedMode = targetKind === "directory" ? 0o700 : 0o600;
+  const stats = await lstat(targetPath);
+  const expectedType = targetKind === "directory" ? stats.isDirectory() : stats.isFile();
+  if (!expectedType || stats.isSymbolicLink()) {
+    throw new Error(`Session runtime ${targetKind} must be a real ${targetKind}.`);
   }
   const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
   if (currentUid !== null && stats.uid !== currentUid) {
-    throw new Error("Session runtime directory must be owned by the current user.");
+    throw new Error(`Session runtime ${targetKind} must be owned by the current OS user.`);
   }
-  const platform = deps.platform ?? process.platform;
-  if (platform === "win32") {
-    await (deps.secureWindowsPath ?? secureWindowsRuntimePath)(runtimeDirectoryPath, "directory");
-  } else if ((stats.mode & 0o077) !== 0) {
-    await chmod(runtimeDirectoryPath, 0o700);
+  if ((stats.mode & 0o777) !== expectedMode) {
+    await chmod(targetPath, expectedMode);
   }
-  const verified = await lstat(runtimeDirectoryPath);
-  if (!verified.isDirectory() || verified.isSymbolicLink()) {
-    throw new Error("Session runtime directory must remain a real directory.");
+  const verified = await lstat(targetPath);
+  if ((targetKind === "directory" ? !verified.isDirectory() : !verified.isFile())
+    || verified.isSymbolicLink()
+    || (currentUid !== null && verified.uid !== currentUid)
+    || (verified.mode & 0o777) !== expectedMode) {
+    throw new Error(`Session runtime ${targetKind} security verification failed.`);
   }
-  if (currentUid !== null && verified.uid !== currentUid) {
-    throw new Error("Session runtime directory owner changed during setup.");
-  }
-  if (platform !== "win32" && (verified.mode & 0o077) !== 0) {
-    throw new Error("Session runtime directory permissions are too broad.");
-  }
-}
-
-type SessionRuntimeDiscoveryFileDeps = {
-  openFile?: typeof open;
-  chmodFile?: typeof chmod;
-  removeFile?: typeof rm;
-  platform?: NodeJS.Platform;
-  secureWindowsPath?: (targetPath: string, targetKind: RuntimeAclTargetKind) => Promise<void>;
-};
-
-export async function writeSessionRuntimeDiscoveryFile(
-  filePath: string,
-  content: string,
-  deps: SessionRuntimeDiscoveryFileDeps = {},
-): Promise<void> {
-  let file: Awaited<ReturnType<typeof open>> | null = null;
-  try {
-    file = await (deps.openFile ?? open)(filePath, "wx", 0o600);
-    const platform = deps.platform ?? process.platform;
-    if (platform === "win32") {
-      await file.close();
-      file = null;
-      await (deps.secureWindowsPath ?? secureWindowsRuntimePath)(filePath, "file");
-      file = await (deps.openFile ?? open)(filePath, "r+");
-    }
-    await file.writeFile(content, "utf8");
-    await file.close();
-    file = null;
-    if (platform !== "win32") {
-      await (deps.chmodFile ?? chmod)(filePath, 0o600);
-    }
-  } catch (error) {
-    const cleanupResults: PromiseSettledResult<unknown>[] = [];
-    if (file) {
-      try {
-        await file.close();
-        cleanupResults.push({ status: "fulfilled", value: undefined });
-      } catch (cleanupError) {
-        cleanupResults.push({ status: "rejected", reason: cleanupError });
-      }
-    }
-    try {
-      await (deps.removeFile ?? rm)(filePath, { force: true });
-      cleanupResults.push({ status: "fulfilled", value: undefined });
-    } catch (cleanupError) {
-      cleanupResults.push({ status: "rejected", reason: cleanupError });
-    }
-    throwWithCleanupFailures(error, cleanupResults, "Session runtime credential file cleanup failed.");
-  }
-}
-
-const writeExclusive = writeSessionRuntimeDiscoveryFile;
-
-function throwWithCleanupFailures(
-  originalError: unknown,
-  cleanupResults: PromiseSettledResult<unknown>[],
-  message: string,
-): never {
-  const cleanupErrors = cleanupResults.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
-  if (cleanupErrors.length > 0) {
-    throw new AggregateError([originalError, ...cleanupErrors], message);
-  }
-  throw originalError;
 }
 
 function createSecret(): string {

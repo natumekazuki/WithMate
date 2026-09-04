@@ -348,7 +348,7 @@ import {
   runAuxiliarySessionSendOperationWithApi,
 } from "./auxiliary-session-send-operation.js";
 import {
-  applyComposerSubmitCommand,
+  applyActiveComposerSubmitCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyComposerReferenceInsertionCommand,
@@ -3490,28 +3490,38 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const handleComposerSubmitShortcut = () => applyComposerSubmitCommand({
-    isSubmitDisabled: () => (
-      activeAuxiliarySession
-        ? activeAuxiliarySession.runState === "running"
-        : false
-    ),
-    isSubmitBlocked: () => {
-      const activeSendability = activeAuxiliarySession
-        ? buildComposerSendabilityState({
-            runState: activeAuxiliarySession.runState,
-            busyReason: composerBusyReason,
-            blockedReason: sessionExecutionBlockedReason,
-            inputErrors: composerPreview.errors,
-            draftText: activeAuxiliarySession.composerDraft,
-          })
-        : composerSendability;
-      return activeAuxiliarySession
-        ? activeSendability.isSendDisabled || isAuxiliaryActionPending
-        : isSendDisabled;
+  const handleComposerSubmitShortcut = () => applyActiveComposerSubmitCommand({
+    ...(scheduleModeActive && scheduleDraft
+      ? {
+        schedule: {
+          isSubmitDisabled: () => !scheduleDraft.name.trim() || !scheduleDraft.prompt.trim(),
+          submit: () => void saveScheduleDraft(),
+        },
+      }
+      : {}),
+    chat: {
+      isSubmitDisabled: () => (
+        activeAuxiliarySession
+          ? activeAuxiliarySession.runState === "running"
+          : false
+      ),
+      isSubmitBlocked: () => {
+        const activeSendability = activeAuxiliarySession
+          ? buildComposerSendabilityState({
+              runState: activeAuxiliarySession.runState,
+              busyReason: composerBusyReason,
+              blockedReason: sessionExecutionBlockedReason,
+              inputErrors: composerPreview.errors,
+              draftText: activeAuxiliarySession.composerDraft,
+            })
+          : composerSendability;
+        return activeAuxiliarySession
+          ? activeSendability.isSendDisabled || isAuxiliaryActionPending
+          : isSendDisabled;
+      },
+      notifySubmitBlocked: triggerComposerBlockedFeedback,
+      submit: () => void handleSend(),
     },
-    notifySubmitBlocked: triggerComposerBlockedFeedback,
-    submit: () => void handleSend(),
   });
 
   useShortcutDispatcherSettings(appSettings.keyboardShortcuts);

@@ -36,6 +36,7 @@ import {
   resolveCopilotCliPath,
   resolveCopilotSessionForSettings,
   resolveNativeCopilotPackageName,
+  resolveCopilotManagedGlossaryLauncher,
   shouldRetryCopilotTurn,
   sortLiveBackgroundTasks,
   toProviderQuotaSnapshots,
@@ -1964,6 +1965,87 @@ it("Session完了後のquota telemetry停止はturn resultを待たせない", a
 });
 
 describe("CopilotAdapter session settings", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "検証済みWindows配布launcherだけがforeground SessionのGlossary MCP設定へ入り、環境値は保存されない"
+  // oracle = { type = "adr", ref = "docs/adr/022-repository-glossary-boundary.md#glossary-mcp-provider-registration" }
+  // failure_mode = "未検証launcherまたはsecret-bearing envをCopilot SessionConfigへ渡し、意図しないprocessへauthority情報を公開する"
+  // scope = "copilot-foreground-managed-mcp"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("packaged Windows foregroundへverified Glossary MCPだけを投影する", () => {
+    const executablePath = "C:\\Program Files\\WithMate\\WithMate.exe";
+    const resourcesPath = "C:\\Program Files\\WithMate\\resources";
+    const launcherPath = "C:\\Program Files\\WithMate\\withmate-glossary.cmd";
+    const artifactPath = "C:\\Program Files\\WithMate\\resources\\resources\\skills\\withmate-glossary\\bin\\withmate-glossary.mjs";
+    const launcherContent = [
+      "@echo off",
+      "setlocal",
+      "set ELECTRON_RUN_AS_NODE=1",
+      `"${executablePath}" "${artifactPath}" %*`,
+      "exit /b %ERRORLEVEL%",
+      "",
+    ].join("\r\n");
+    const resolvedLauncher = resolveCopilotManagedGlossaryLauncher({
+      foreground: true,
+      isPackagedApp: true,
+      platform: "win32",
+      executablePath,
+      resourcesPath,
+      fileExists: (filePath) => filePath === launcherPath || filePath === artifactPath,
+      readTextFile: () => launcherContent,
+    });
+    const settings = buildCopilotSessionSettings(
+      createRunSessionInput(),
+      EMPTY_PROMPT,
+      "client-key",
+      resolveCustomAgents,
+      resolvedLauncher,
+    );
+
+    assert.equal(resolvedLauncher, launcherPath);
+    assert.deepEqual(settings.config.mcpServers, {
+      "withmate-glossary": {
+        type: "stdio",
+        command: launcherPath,
+        args: ["mcp-server"],
+      },
+    });
+    assert.equal(Object.hasOwn(settings.config.mcpServers?.["withmate-glossary"] ?? {}, "env"), false);
+    assert.match(settings.settingsKey, /withmate-glossary\.cmd/i);
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "background、unpackaged、非Windows、artifact欠落、launcher改変ではGlossary MCP launcherを選択しない"
+  // oracle = { type = "adr", ref = "docs/adr/022-repository-glossary-boundary.md#glossary-mcp-provider-registration" }
+  // failure_mode = "unsupportedまたはunbound provider executionがGlossary MCP processを起動する"
+  // scope = "copilot-managed-mcp-eligibility"
+  // lifecycle = "permanent"
+  // distinction = "positiveなforeground投影に対し、全ての除外条件で選択結果nullを観測する"
+  // @end-test-value
+  it("backgroundと未検証環境ではGlossary MCPを追加しない", () => {
+    const base = {
+      foreground: true,
+      isPackagedApp: true,
+      platform: "win32" as const,
+      executablePath: "C:\\Program Files\\WithMate\\WithMate.exe",
+      resourcesPath: "C:\\Program Files\\WithMate\\resources",
+      fileExists: () => true,
+      readTextFile: () => "modified launcher",
+    };
+
+    assert.equal(resolveCopilotManagedGlossaryLauncher({ ...base, foreground: false }), null);
+    assert.equal(resolveCopilotManagedGlossaryLauncher({ ...base, isPackagedApp: false }), null);
+    assert.equal(resolveCopilotManagedGlossaryLauncher({ ...base, platform: "darwin" }), null);
+    assert.equal(resolveCopilotManagedGlossaryLauncher({ ...base, fileExists: () => false }), null);
+    assert.equal(resolveCopilotManagedGlossaryLauncher(base), null);
+    assert.equal(
+      buildCopilotSessionSettings(createRunSessionInput(), EMPTY_PROMPT, "client-key", resolveCustomAgents).config.mcpServers,
+      undefined,
+    );
+  });
+
   it("max / ultra は Copilot SDK 境界で拒否する", () => {
     assert.throws(() => toCopilotReasoningEffort("max"), /max/);
     assert.throws(() => toCopilotReasoningEffort("ultra"), /ultra/);

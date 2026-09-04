@@ -13,7 +13,8 @@ import {
 } from "../../src/session-external-runtime-contract.js";
 import {
   SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
-  SESSION_RUNTIME_INSTANCE_HEADER,
+  SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER,
+  SESSION_RUNTIME_GENERATION_HEADER,
   SESSION_RUNTIME_NONCE_HEADER,
   SESSION_RUNTIME_OPERATION_PATH,
   createSessionRuntimeChallenge,
@@ -29,7 +30,8 @@ const secrets = {
   apiSecret: "api-secret",
   cliSecret: "cli-secret",
   mcpSecret: "mcp-secret",
-  runtimeInstanceId: "runtime-1",
+  applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+  runtimeGenerationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 };
 
 const defaultBindingRegistry = new AgentRuntimeBindingRegistry();
@@ -512,6 +514,14 @@ test("ROOT-PARENT-01: root aggregation parent拒否をHTTP 409へ写像する", 
   }
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "Session runtime status challengeはapplication instanceとSession generationのidentity tupleへ結合される"
+// oracle = { type = "adr", ref = "ADR-023 Selection and binding / Diagnostics and security" }
+// failure_mode = "status challengeがgeneration単体へしか結合されず、別application instanceを同一runtimeとして受理する"
+// scope = "session-runtime-http-identity-challenge"
+// lifecycle = "permanent"
+// @end-test-value
 test("Session runtime status proves the discovered runtime identity", async () => {
   const server = createSessionRuntimeHttpServer({
     ...boundServerOptions,
@@ -523,11 +533,21 @@ test("Session runtime status proves the discovered runtime identity", async () =
     assert.ok(address);
     const response = await fetch(`http://127.0.0.1:${address.port}/v1/status?nonce=status-nonce`);
     assert.equal(response.status, 200);
-    const result = await response.json() as { runtimeInstanceId: string; challenge: { hmacSha256: string } };
-    assert.equal(result.runtimeInstanceId, secrets.runtimeInstanceId);
+    const result = await response.json() as {
+      applicationInstanceId: string;
+      runtimeGenerationId: string;
+      challenge: { hmacSha256: string };
+    };
+    assert.equal(result.applicationInstanceId, secrets.applicationInstanceId);
+    assert.equal(result.runtimeGenerationId, secrets.runtimeGenerationId);
     assert.equal(
       result.challenge.hmacSha256,
-      createSessionRuntimeChallenge(secrets.apiSecret, secrets.runtimeInstanceId, "status-nonce"),
+      createSessionRuntimeChallenge(
+        secrets.apiSecret,
+        secrets.applicationInstanceId,
+        secrets.runtimeGenerationId,
+        "status-nonce",
+      ),
     );
   } finally {
     await server.stop();
@@ -941,7 +961,8 @@ function exchangePayload(
 
 function challengeHeaders(nonce: string): Record<string, string> {
   return {
-    [SESSION_RUNTIME_INSTANCE_HEADER]: secrets.runtimeInstanceId,
+    [SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER]: secrets.applicationInstanceId,
+    [SESSION_RUNTIME_GENERATION_HEADER]: secrets.runtimeGenerationId,
     [SESSION_RUNTIME_NONCE_HEADER]: nonce,
   };
 }

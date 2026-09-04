@@ -1,20 +1,17 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { request as httpRequest, type IncomingMessage } from "node:http";
-import path from "node:path";
 
 import {
-  SESSION_RUNTIME_DISCOVERY_POINTER_SCHEMA_VERSION,
-  SESSION_RUNTIME_DISCOVERY_SCHEMA_VERSION,
-  buildSessionRuntimeDiscoveryGenerationFileName,
-  resolveDefaultSessionRuntimeDiscoveryFilePath,
-  type SessionRuntimeDiscoveryDocument,
-  type SessionRuntimeDiscoveryPointer,
+  SESSION_RUNTIME_KIND,
+  WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV,
+  parseSessionRuntimeCredentialEnvelope,
 } from "../src/session-runtime-discovery.js";
 import {
+  SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER,
   SESSION_RUNTIME_CHALLENGE_HEADER,
   SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
-  SESSION_RUNTIME_INSTANCE_HEADER,
+  SESSION_RUNTIME_GENERATION_HEADER,
   SESSION_RUNTIME_NONCE_HEADER,
   SESSION_RUNTIME_OPERATION_PATH,
   createSessionRuntimeChallenge,
@@ -23,6 +20,18 @@ import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
 } from "../src/agent-runtime/agent-runtime-binding-contract.js";
+import {
+  RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS,
+  isUuid,
+  type RuntimeDiscoveryClock,
+  type RuntimeDiscoverySelectionOutcomeCode,
+} from "../src/runtime-discovery/runtime-discovery-contract.js";
+import {
+  listRuntimeDiscoveryRegistryEntries,
+  readRuntimeDiscoveryCredential,
+  type RuntimeDiscoveryRegistryChallenge,
+} from "../src/runtime-discovery/runtime-discovery-registry.js";
+import { selectRuntimeDiscoveryRecord } from "../src/runtime-discovery/runtime-discovery-selector.js";
 import type {
   SessionRuntimeAdapterKind,
   SessionRuntimeRequestEnvelope,
@@ -37,7 +46,8 @@ export type SessionRuntimeConnection = {
   baseUrl: string;
   apiSecret: string;
   adapterSecret: string;
-  runtimeInstanceId: string;
+  applicationInstanceId: string;
+  runtimeGenerationId: string;
   agentRuntimeBindingReference?: string;
 };
 
@@ -57,16 +67,61 @@ export class SessionRuntimeClientError extends Error {
   }
 }
 
+export class SessionRuntimeDiscoveryError extends Error {
+  readonly code: RuntimeDiscoverySelectionOutcomeCode;
+
+  constructor(code: RuntimeDiscoverySelectionOutcomeCode) {
+    super(`Session runtime discovery failed: ${code}.`);
+    this.name = "SessionRuntimeDiscoveryError";
+    this.code = code;
+  }
+}
+
+export function mapSessionRuntimeDiscoveryCode(code: RuntimeDiscoverySelectionOutcomeCode): string {
+  switch (code) {
+    case "runtime_ambiguous": return "RUNTIME_AMBIGUOUS";
+    case "runtime_instance_mismatch": return "RUNTIME_INSTANCE_MISMATCH";
+    case "runtime_generation_changed": return "RUNTIME_GENERATION_CHANGED";
+    case "runtime_stale": return "RUNTIME_STALE";
+    case "runtime_credential_unavailable": return "RUNTIME_CREDENTIAL_UNAVAILABLE";
+    case "runtime_registry_capacity": return "RUNTIME_REGISTRY_CAPACITY";
+    case "runtime_selector_invalid":
+    case "runtime_invalid": return "RUNTIME_SELECTOR_INVALID";
+    case "runtime_unavailable": return "RUNTIME_UNAVAILABLE";
+  }
+}
+
 export async function discoverSessionRuntime(options: {
   adapter?: SessionRuntimeAdapterKind;
   env?: NodeJS.ProcessEnv;
   apiUrl?: string;
-  discoveryFilePath?: string;
-  read?: typeof readFile;
+  registryRootDirectoryPath?: string;
+  applicationInstanceId?: string;
+  runtimeGenerationId?: string;
+  clock?: RuntimeDiscoveryClock;
+  staleThresholdMs?: number;
+  challenge?: RuntimeDiscoveryRegistryChallenge;
 } = {}): Promise<SessionRuntimeConnection | null> {
   const adapter = options.adapter ?? "cli";
   const env = options.env ?? process.env;
   const agentRuntimeBindingReference = resolveAgentRuntimeBindingReference(env);
+  const bindingRequired = env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() === "1";
+  const envApplicationInstanceId = env[WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV]?.trim();
+  const envRuntimeGenerationId = env[WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV]?.trim();
+  if (bindingRequired && (!envApplicationInstanceId || !envRuntimeGenerationId)) {
+    throw new SessionRuntimeDiscoveryError("runtime_selector_invalid");
+  }
+  const applicationInstanceId = bindingRequired
+    ? envApplicationInstanceId
+    : options.applicationInstanceId ?? envApplicationInstanceId;
+  const runtimeGenerationId = bindingRequired
+    ? envRuntimeGenerationId
+    : options.runtimeGenerationId ?? envRuntimeGenerationId;
+  if ((applicationInstanceId && !isUuid(applicationInstanceId))
+    || (runtimeGenerationId && !isUuid(runtimeGenerationId))
+    || (runtimeGenerationId && !applicationInstanceId)) {
+    throw new SessionRuntimeDiscoveryError("runtime_selector_invalid");
+  }
   const explicitUrl = options.apiUrl ?? env.WITHMATE_SESSION_API_URL?.trim();
   if (explicitUrl) {
     const baseUrl = normalizeLoopbackBaseUrl(explicitUrl);
@@ -78,45 +133,67 @@ export async function discoverSessionRuntime(options: {
       baseUrl,
       apiSecret: env.WITHMATE_SESSION_API_SECRET,
       adapterSecret: adapter === "cli" ? env.WITHMATE_SESSION_CLI_SECRET : env.WITHMATE_SESSION_MCP_SECRET,
-      runtimeInstanceId: env.WITHMATE_SESSION_RUNTIME_INSTANCE_ID,
+      applicationInstanceId,
+      runtimeGenerationId,
       agentRuntimeBindingReference,
     });
   }
 
-  const discoveryFilePath = options.discoveryFilePath
-    ?? env.WITHMATE_SESSION_DISCOVERY_FILE?.trim()
-    ?? resolveDefaultSessionRuntimeDiscoveryFilePath(env);
-  const read = options.read ?? readFile;
   try {
-    const pointer = JSON.parse(await read(discoveryFilePath, "utf8")) as Partial<SessionRuntimeDiscoveryPointer>;
-    if (
-      pointer.schemaVersion !== SESSION_RUNTIME_DISCOVERY_POINTER_SCHEMA_VERSION
-      || typeof pointer.runtimeInstanceId !== "string"
-      || !pointer.runtimeInstanceId.trim()
-    ) {
-      return null;
+    const snapshot = await listRuntimeDiscoveryRegistryEntries(options.registryRootDirectoryPath);
+    const now = options.clock?.now() ?? new Date();
+    const staleThresholdMs = options.staleThresholdMs ?? RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS;
+    const outcome = await selectRuntimeDiscoveryRecord({
+      records: snapshot.records,
+      selector: {
+        runtimeKind: SESSION_RUNTIME_KIND,
+        ...(applicationInstanceId ? { applicationInstanceId } : {}),
+        ...(runtimeGenerationId ? { runtimeGenerationId } : {}),
+      },
+      now,
+      staleThresholdMs,
+      challenge: options.challenge ?? (async (entry, slotDirectoryPath) => {
+        const record = { slotName: "challenge", entry, slotDirectoryPath };
+        const serialized = await readRuntimeDiscoveryCredential(record, adapter);
+        if (!serialized) return false;
+        const envelope = parseSessionRuntimeCredentialEnvelope(serialized, entry, adapter);
+        const baseUrl = envelope ? normalizeLoopbackBaseUrl(envelope.credential.baseUrl) : null;
+        const connection = baseUrl && envelope ? buildConnection({
+          adapter,
+          baseUrl,
+          apiSecret: envelope.credential.apiSecret,
+          adapterSecret: envelope.credential.adapterSecret,
+          applicationInstanceId: entry.applicationInstanceId,
+          runtimeGenerationId: entry.runtimeGenerationId,
+        }) : null;
+        return connection
+          ? verifySessionRuntimeIdentity(connection, AbortSignal.timeout(2_000)).catch(() => false)
+          : false;
+      }),
+    });
+    if (outcome.kind === "error") {
+      if (outcome.code === "runtime_unavailable") return null;
+      throw new SessionRuntimeDiscoveryError(outcome.code);
     }
-    const generationPath = path.join(
-      path.dirname(discoveryFilePath),
-      buildSessionRuntimeDiscoveryGenerationFileName(adapter, pointer.runtimeInstanceId),
-    );
-    const document = JSON.parse(await read(generationPath, "utf8")) as Partial<SessionRuntimeDiscoveryDocument>;
-    if (
-      document.schemaVersion !== SESSION_RUNTIME_DISCOVERY_SCHEMA_VERSION
-      || document.adapter !== adapter
-      || document.runtimeInstanceId !== pointer.runtimeInstanceId
-      || typeof document.baseUrl !== "string"
-    ) {
-      return null;
+    const serialized = await readRuntimeDiscoveryCredential(outcome.record, adapter);
+    const envelope = serialized
+      ? parseSessionRuntimeCredentialEnvelope(serialized, outcome.record.entry, adapter)
+      : null;
+    const baseUrl = envelope ? normalizeLoopbackBaseUrl(envelope.credential.baseUrl) : null;
+    if (!envelope || !baseUrl) {
+      throw new SessionRuntimeDiscoveryError("runtime_credential_unavailable");
     }
-    const baseUrl = normalizeLoopbackBaseUrl(document.baseUrl);
-    return baseUrl ? buildConnection({
-      ...document,
+    return buildConnection({
       adapter,
       baseUrl,
+      apiSecret: envelope.credential.apiSecret,
+      adapterSecret: envelope.credential.adapterSecret,
+      applicationInstanceId: outcome.record.entry.applicationInstanceId,
+      runtimeGenerationId: outcome.record.entry.runtimeGenerationId,
       agentRuntimeBindingReference,
-    }) : null;
-  } catch {
+    });
+  } catch (error) {
+    if (error instanceof SessionRuntimeDiscoveryError) throw error;
     return null;
   }
 }
@@ -133,13 +210,14 @@ export async function verifySessionRuntimeIdentity(
   }
   const value = response.value as Record<string, unknown>;
   const challenge = value.challenge as Record<string, unknown> | undefined;
-  return value.runtimeInstanceId === connection.runtimeInstanceId
+  return value.applicationInstanceId === connection.applicationInstanceId
+    && value.runtimeGenerationId === connection.runtimeGenerationId
     && challenge?.nonce === nonce
     && typeof challenge.hmacSha256 === "string"
     && safeEqual(
       challenge.hmacSha256,
       createHmac("sha256", connection.apiSecret)
-        .update(`${connection.runtimeInstanceId}\n${nonce}`, "utf8")
+        .update(`${connection.applicationInstanceId}\n${connection.runtimeGenerationId}\n${nonce}`, "utf8")
         .digest("base64url"),
     );
 }
@@ -189,7 +267,8 @@ function requestAuthenticatedJson(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        [SESSION_RUNTIME_INSTANCE_HEADER]: connection.runtimeInstanceId,
+        [SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER]: connection.applicationInstanceId,
+        [SESSION_RUNTIME_GENERATION_HEADER]: connection.runtimeGenerationId,
         [SESSION_RUNTIME_NONCE_HEADER]: nonce,
       },
       signal,
@@ -219,11 +298,18 @@ function requestAuthenticatedJson(
     });
     request.on("information", (information) => {
       if (settled || identityVerified || information.statusCode !== 103) return;
-      const runtimeInstanceId = information.headers[SESSION_RUNTIME_INSTANCE_HEADER];
+      const applicationInstanceId = information.headers[SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER];
+      const runtimeGenerationId = information.headers[SESSION_RUNTIME_GENERATION_HEADER];
       const challenge = information.headers[SESSION_RUNTIME_CHALLENGE_HEADER];
-      const expected = createSessionRuntimeChallenge(connection.apiSecret, connection.runtimeInstanceId, nonce);
+      const expected = createSessionRuntimeChallenge(
+        connection.apiSecret,
+        connection.applicationInstanceId,
+        connection.runtimeGenerationId,
+        nonce,
+      );
       if (
-        runtimeInstanceId !== connection.runtimeInstanceId
+        applicationInstanceId !== connection.applicationInstanceId
+        || runtimeGenerationId !== connection.runtimeGenerationId
         || typeof challenge !== "string"
         || !safeEqual(challenge, expected)
       ) {
@@ -308,19 +394,22 @@ function buildConnection(input: {
   baseUrl: string;
   apiSecret?: string;
   adapterSecret?: string;
-  runtimeInstanceId?: string;
+  applicationInstanceId?: string;
+  runtimeGenerationId?: string;
   agentRuntimeBindingReference?: string;
 }): SessionRuntimeConnection | null {
   const apiSecret = input.apiSecret?.trim();
   const adapterSecret = input.adapterSecret?.trim();
-  const runtimeInstanceId = input.runtimeInstanceId?.trim();
-  return apiSecret && adapterSecret && runtimeInstanceId
+  const applicationInstanceId = input.applicationInstanceId?.trim();
+  const runtimeGenerationId = input.runtimeGenerationId?.trim();
+  return apiSecret && adapterSecret && applicationInstanceId && runtimeGenerationId
     ? {
         adapter: input.adapter,
         baseUrl: input.baseUrl,
         apiSecret,
         adapterSecret,
-        runtimeInstanceId,
+        applicationInstanceId,
+        runtimeGenerationId,
         ...(input.agentRuntimeBindingReference
           ? { agentRuntimeBindingReference: input.agentRuntimeBindingReference }
           : {}),

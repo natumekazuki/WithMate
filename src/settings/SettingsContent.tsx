@@ -357,6 +357,21 @@ export function HomeSettingsContent({
                     <strong>{sessionIntegrationDiagnostics?.codexMcp.status ?? "loading"}</strong>
                     <small>{sessionIntegrationDiagnostics?.codexMcp.errorMessage ?? "Start a new Codex Session after registration."}</small>
                   </div>
+                  <div className="settings-diagnostics-item">
+                    <span>Glossary Skill</span>
+                    <strong>{sessionIntegrationDiagnostics?.glossarySkillSync.status ?? "loading"}</strong>
+                    <small>{sessionIntegrationDiagnostics?.glossarySkillSync.skillPath ?? "managed Skill status unavailable"}</small>
+                  </div>
+                  <div className="settings-diagnostics-item">
+                    <span>Glossary CLI</span>
+                    <strong>{sessionIntegrationDiagnostics?.glossaryLauncher.status ?? "loading"}</strong>
+                    <small>{sessionIntegrationDiagnostics?.glossaryLauncher.resolvedPath ?? "launcher unavailable"}</small>
+                  </div>
+                  <div className="settings-diagnostics-item">
+                    <span>Codex Glossary MCP</span>
+                    <strong>{sessionIntegrationDiagnostics?.codexGlossaryMcp.status ?? "loading"}</strong>
+                    <small>{sessionIntegrationDiagnostics?.codexGlossaryMcp.errorMessage ?? "Start a new Codex Session after registration."}</small>
+                  </div>
                 </div>
               ) : (
                 <p className="settings-note">Memory V6 diagnostics を読み込んでいます。</p>
@@ -385,9 +400,10 @@ export function HomeSettingsContent({
                   className="launch-toggle"
                   type="button"
                   onClick={onRegisterCodexSessionMcp}
-                  disabled={sessionIntegrationDiagnostics?.launcher.status !== "installed"}
+                  disabled={sessionIntegrationDiagnostics?.launcher.status !== "installed"
+                    && sessionIntegrationDiagnostics?.glossaryLauncher.status !== "installed"}
                 >
-                  Register Session MCP for Codex
+                  Register Session + Glossary MCP for Codex
                 </button>
                 <button className="launch-toggle" type="button" onClick={onOpenAppLogFolder}>
                   {SETTINGS_OPEN_LOG_FOLDER_LABEL}

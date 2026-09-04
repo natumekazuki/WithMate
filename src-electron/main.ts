@@ -295,6 +295,7 @@ import {
 import {
   ManagedSkillDistributionService,
   type ManagedSkillBundleDescriptor,
+  type ManagedSkillSyncResult,
   WITHMATE_GLOSSARY_SKILL_NAME,
 } from "./managed-skill-distribution-service.js";
 import { MemoryCliShimService } from "./memory-cli-shim-service.js";
@@ -462,6 +463,10 @@ const codexAdapter = new CodexAdapter((input) => writeAppLog({
   process: "main",
 }));
 const copilotAdapter = new CopilotAdapter({
+  isPackagedApp: () => app.isPackaged,
+  platform: process.platform,
+  executablePath: process.execPath,
+  resourcesPath: process.resourcesPath,
   log: (input) => writeAppLog({
     ...input,
     process: "main",
@@ -480,6 +485,7 @@ let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
 let managedSessionSkillService: ManagedSessionSkillService | null = null;
 let managedSessionSkillSyncResult: ManagedSessionSkillSyncResult | null = null;
+let managedGlossarySkillSyncResult: ManagedSkillSyncResult | null = null;
 let codexSessionMcpRegistrationService: CodexSessionMcpRegistrationService | null = null;
 let managedSkillDistributionService: ManagedSkillDistributionService | null = null;
 let memoryCliShimService: MemoryCliShimService | null = null;
@@ -777,10 +783,13 @@ const glossaryRuntimeService = new GlossaryRuntimeService({
 });
 
 async function issueProviderAgentRuntimeBinding(
-  session: Pick<Session, "id" | "characterId" | "sessionKind" | "workspacePath">,
+  session: Pick<Session, "id" | "characterId" | "sessionKind" | "roleBinding" | "workspacePath">,
   providerId: string,
 ) {
   const memoryAuthority = buildProviderAgentRuntimeAuthoritySnapshot({
+    sessionId: session.id,
+    sessionKind: session.sessionKind,
+    sessionRoleBinding: session.roleBinding,
     characterId: session.characterId,
     workspacePath: session.workspacePath,
     resolveCanonicalProjectId: (workspacePath) => resolveMemoryV6ProjectCandidate(workspacePath)?.id,
@@ -801,7 +810,6 @@ async function issueProviderAgentRuntimeBinding(
     providerId,
     authoritySnapshot: {
       ...memoryAuthority,
-      sessionKind: session.sessionKind,
       ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}),
     },
     operationGrants: [
@@ -809,15 +817,25 @@ async function issueProviderAgentRuntimeBinding(
       ...(glossaryAuthority ? getGlossaryAgentRuntimeOperations() : []),
     ],
   });
-  return memoryV6RuntimeApi
-    ? {
-        ...binding,
+  return {
+    ...binding,
+    ...(memoryV6RuntimeApi
+      ? {
         memoryRuntimeOwner: {
           applicationInstanceId: memoryV6RuntimeApi.applicationInstanceId,
           runtimeGenerationId: memoryV6RuntimeApi.runtimeGenerationId,
         },
       }
-    : binding;
+      : {}),
+    ...(sessionExternalRuntime
+      ? {
+        sessionRuntimeOwner: {
+          applicationInstanceId: sessionExternalRuntime.applicationInstanceId,
+          runtimeGenerationId: sessionExternalRuntime.runtimeGenerationId,
+        },
+      }
+      : {}),
+  };
 }
 
 async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
@@ -904,6 +922,7 @@ async function syncManagedGlossarySkillBestEffort(): Promise<void> {
     const results = await requireManagedSkillDistributionService().syncConfiguredProviderSkills(
       MANAGED_GLOSSARY_SKILL_BUNDLE,
     );
+    managedGlossarySkillSyncResult = results.find((result) => result.providerId === "codex") ?? null;
     const failed = results.filter((result) => result.status === "failed");
     const collisions = results.filter((result) => result.status === "skipped-collision");
     writeAppLog({
@@ -916,6 +935,7 @@ async function syncManagedGlossarySkillBestEffort(): Promise<void> {
       },
     });
   } catch (error) {
+    managedGlossarySkillSyncResult = null;
     writeAppLog({
       level: "warn",
       kind: "glossary.skill.sync.failed",
@@ -2505,6 +2525,7 @@ function requireCodexSessionMcpRegistrationService(): CodexSessionMcpRegistratio
   if (!codexSessionMcpRegistrationService) {
     codexSessionMcpRegistrationService = new CodexSessionMcpRegistrationService({
       getSkillSyncResult: () => managedSessionSkillSyncResult,
+      getGlossarySkillSyncResult: () => managedGlossarySkillSyncResult,
       isPackagedApp: () => app.isPackaged,
       executablePath: process.execPath,
       resourcesPath: process.resourcesPath,
@@ -3165,6 +3186,9 @@ async function startSessionExternalRuntimeBestEffort(): Promise<void> {
   }
   try {
     sessionExternalRuntime = await startSessionExternalRuntime({
+      applicationInstanceId,
+      buildChannel: runtimeBuildChannel,
+      processStartedAt,
       agentRuntimeBindingRegistry,
       handle: async (operation, input, _adapter, context) => {
         const admission = sessionExecutionAdmissionGate.tryAdmit();
@@ -4377,6 +4401,7 @@ function closePersistentStores(): void {
   characterAuthoringService = null;
   managedSessionSkillService = null;
   managedSessionSkillSyncResult = null;
+  managedGlossarySkillSyncResult = null;
   codexSessionMcpRegistrationService = null;
   managedSkillDistributionService = null;
   memoryCliShimService = null;

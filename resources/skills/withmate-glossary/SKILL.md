@@ -7,6 +7,8 @@ description: Use the Session-bound withmate-glossary MCP server to list, search,
 
 Treat the active Session's Git checkout `.withmate/glossary.yaml` as the only source of truth. Use the Session-bound `withmate-glossary` MCP server for normal operations. Do not copy glossary contents into Memory, Session data, prompts, this Skill, or another cache.
 
+The Glossary MCP is a separate server from the Session MCP. If its tools are unavailable in Codex, use WithMate Settings to register both managed MCP launchers and start a new Codex Session. Do not treat Session MCP availability as proof that Glossary MCP is registered, and do not replace an existing same-name MCP configuration from the agent.
+
 ## Target and reads
 
 1. Call `glossary.list_targets` when an opaque checkout target is needed. The current implementation returns only the active Session's primary checkout.
@@ -50,6 +52,6 @@ After response loss, retry only the unchanged request. Never turn a partial batc
 
 ## CLI fallback
 
-Use the `withmate-glossary` CLI only when the MCP server is unavailable or an operator explicitly requests CLI work. The CLI must run inside the same active provider Session binding and reaches the same runtime schema, authority, and application service.
+Use the `withmate-glossary` CLI only when the MCP server was available to the provider Session and then failed at transport, or when an operator explicitly requests CLI work. A missing provider MCP registration is not CLI fallback authority. The CLI must run inside the same active provider Session binding and reaches the same runtime schema, authority, and application service.
 
 Do not use CLI after a structured validation, authority, revision, conflict, or effect-certainty error. Do not pass a checkout path or Session ID; those are not authority inputs.

@@ -373,7 +373,15 @@ describe("home-settings-actions", () => {
     assert.match(feedback, /アンインストール/);
   });
 
-  it("Codex Session MCP registration は diagnostics state と再起動案内を更新する", async () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Settingsの明示操作はSessionとGlossaryの登録結果をdiagnostics stateへ反映し、新しいCodex Sessionの開始を案内する"
+  // oracle = { type = "adr", ref = "docs/adr/022-repository-glossary-boundary.md#glossary-mcp-provider-registration" }
+  // failure_mode = "Glossary登録結果を欠落させるか、既存Codex Sessionで新しいtoolが直ちに見えると誤案内する"
+  // scope = "settings-managed-mcp-command"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Codex Session / Glossary MCP registration は diagnostics state と再起動案内を更新する", async () => {
     const settings = createDefaultAppSettings();
     let status = "not-installed";
     let feedback = "";
@@ -394,6 +402,19 @@ describe("home-settings-actions", () => {
             command: "withmate-session",
             args: ["mcp-server"],
           },
+          glossarySkillSync: { status: "unchanged", skillPath: "managed/withmate-glossary" },
+          glossaryLauncher: {
+            status: "installed",
+            command: "withmate-glossary",
+            resolvedPath: "managed/withmate-glossary.cmd",
+            expectedPath: "managed/withmate-glossary.cmd",
+          },
+          codexGlossaryMcp: {
+            status: "installed",
+            name: "withmate-glossary",
+            command: "withmate-glossary",
+            args: ["mcp-server"],
+          },
         }),
       } as Partial<WithMateWindowApi> as WithMateWindowApi),
       persistedSettingsDraft: settings,
@@ -404,15 +425,77 @@ describe("home-settings-actions", () => {
       },
       setMemoryV6Diagnostics: () => undefined,
       setSessionIntegrationDiagnostics: (diagnostics) => {
-        status = diagnostics.codexMcp.status;
+        status = `${diagnostics.codexMcp.status}/${diagnostics.codexGlossaryMcp.status}`;
       },
     });
 
     handlers.onRegisterCodexSessionMcp();
     await flushAsyncHandlers();
 
-    assert.equal(status, "installed");
+    assert.equal(status, "installed/installed");
     assert.match(feedback, /新しい Codex Session/);
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "Session MCP成功・Glossary MCP collisionの部分成功を成功扱いに潰さず、両方の状態を利用者へ示す"
+  // oracle = { type = "adr", ref = "docs/adr/022-repository-glossary-boundary.md#glossary-mcp-provider-registration" }
+  // failure_mode = "片方の登録結果だけを表示して、未登録のGlossary toolが利用可能だと利用者が判断する"
+  // scope = "settings-managed-mcp-partial-feedback"
+  // lifecycle = "permanent"
+  // distinction = "両方成功する案内ではなく、片方だけ成功するdiagnostics tupleを観測する"
+  // @end-test-value
+  it("Codex MCP registration の部分成功を個別statusで案内する", async () => {
+    let feedback = "";
+    const handlers = buildSettingsCommandHandlers({
+      getApi: () => ({
+        registerCodexSessionMcp: async () => ({
+          generatedAt: "2026-08-14T00:00:00.000Z",
+          skillSync: { status: "unchanged", skillPath: "managed/withmate-session" },
+          launcher: {
+            status: "installed",
+            command: "withmate-session",
+            resolvedPath: "managed/withmate-session.cmd",
+            expectedPath: "managed/withmate-session.cmd",
+          },
+          codexMcp: {
+            status: "installed",
+            name: "withmate-session",
+            command: "withmate-session",
+            args: ["mcp-server"],
+          },
+          glossarySkillSync: { status: "unchanged", skillPath: "managed/withmate-glossary" },
+          glossaryLauncher: {
+            status: "installed",
+            command: "withmate-glossary",
+            resolvedPath: "managed/withmate-glossary.cmd",
+            expectedPath: "managed/withmate-glossary.cmd",
+          },
+          codexGlossaryMcp: {
+            status: "collision",
+            name: "withmate-glossary",
+            command: "withmate-glossary",
+            args: ["mcp-server"],
+            errorMessage: "Glossary MCP collision",
+          },
+        }),
+      } as Partial<WithMateWindowApi> as WithMateWindowApi),
+      persistedSettingsDraft: createDefaultAppSettings(),
+      setAppSettings: () => undefined,
+      setSettingsDraft: () => undefined,
+      setSettingsFeedback: (nextFeedback) => {
+        feedback = nextFeedback;
+      },
+      setMemoryV6Diagnostics: () => undefined,
+      setSessionIntegrationDiagnostics: () => undefined,
+    });
+
+    handlers.onRegisterCodexSessionMcp();
+    await flushAsyncHandlers();
+
+    assert.match(feedback, /一部だけ/);
+    assert.match(feedback, /登録済み: Session/);
+    assert.match(feedback, /Glossary MCP collision/);
   });
 
 });

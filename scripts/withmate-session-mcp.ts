@@ -46,8 +46,10 @@ import {
 } from "../src/session-external-runtime-contract.js";
 import {
   SessionRuntimeClientError,
+  SessionRuntimeDiscoveryError,
   callSessionRuntime,
   discoverSessionRuntime,
+  mapSessionRuntimeDiscoveryCode,
   type SessionRuntimeClientResponse,
   type SessionRuntimeConnection,
 } from "./withmate-session-runtime-client.js";
@@ -936,7 +938,14 @@ async function executeOperation(
   let connection: SessionRuntimeConnection | null;
   try {
     connection = await (deps.discover ?? discoverSessionRuntime)({ adapter: "mcp", env: deps.env });
-  } catch {
+  } catch (error) {
+    if (error instanceof SessionRuntimeDiscoveryError) {
+      return toolResult(createSessionRuntimeError({
+        code: mapSessionRuntimeDiscoveryCode(error.code),
+        message: "WithMate Session runtime discovery could not select a runtime.",
+        retryable: error.code === "runtime_unavailable" || error.code === "runtime_stale",
+      }), true);
+    }
     connection = null;
   }
   if (!connection) {

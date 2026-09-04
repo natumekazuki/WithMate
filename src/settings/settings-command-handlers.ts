@@ -163,7 +163,7 @@ export function buildSettingsCommandHandlers({
           setSessionIntegrationDiagnostics(diagnostics);
           setSettingsFeedback(formatCodexSessionMcpFeedback(diagnostics));
         } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "Codex Session MCP の登録に失敗したよ。");
+          setSettingsFeedback(error instanceof Error ? error.message : "Codex Session / Glossary MCP の登録に失敗したよ。");
         }
       });
     },
@@ -279,16 +279,24 @@ export function buildSettingsCommandHandlers({
 }
 
 function formatCodexSessionMcpFeedback(diagnostics: SessionIntegrationDiagnostics): string {
-  switch (diagnostics.codexMcp.status) {
-    case "installed":
-      return "Codex Session MCP を登録したよ。新しい Codex Session を開始するか、Codex を再起動してね。";
-    case "unchanged":
-      return "Codex Session MCP は登録済みだよ。tools が見えない場合は新しい Codex Session を開始してね。";
-    case "collision":
-      return diagnostics.codexMcp.errorMessage ?? "同名のCodex MCP設定があるため上書きしなかったよ。";
-    default:
-      return diagnostics.codexMcp.errorMessage ?? `Codex Session MCP: ${diagnostics.codexMcp.status}`;
+  const entries = [
+    { label: "Session", diagnostics: diagnostics.codexMcp },
+    { label: "Glossary", diagnostics: diagnostics.codexGlossaryMcp },
+  ];
+  const ready = entries.filter(({ diagnostics: entry }) => entry.status === "installed" || entry.status === "unchanged");
+  const failed = entries.filter(({ diagnostics: entry }) => entry.status !== "installed" && entry.status !== "unchanged");
+  if (failed.length === 0) {
+    const installed = entries.some(({ diagnostics: entry }) => entry.status === "installed");
+    return installed
+      ? "Codex Session / Glossary MCP を登録したよ。新しい Codex Session を開始するか、Codex を再起動してね。"
+      : "Codex Session / Glossary MCP は登録済みだよ。tools が見えない場合は新しい Codex Session を開始してね。";
   }
+  const details = failed.map(({ label, diagnostics: entry }) => (
+    entry.errorMessage ?? `${label}: ${entry.status}`
+  )).join(" / ");
+  return ready.length > 0
+    ? `Codex MCP は一部だけ登録できたよ（登録済み: ${ready.map(({ label }) => label).join(", ")}）。${details}`
+    : details;
 }
 
 function formatCliShimActionFeedback(

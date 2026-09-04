@@ -1217,7 +1217,7 @@ export class SessionStorageV6 {
         SET state = 'active',
             runtime_policy_json = ?,
             character_snapshot_json = CASE WHEN ? = 1 THEN ? ELSE character_snapshot_json END,
-            character_id = CASE WHEN ? = 1 THEN NULL ELSE character_id END,
+            character_id = CASE WHEN ? = 1 THEN ? ELSE character_id END,
             thread_id = CASE WHEN ? = 1 THEN '' ELSE thread_id END,
             updated_at = ?,
             last_active_at = ?
@@ -1226,7 +1226,8 @@ export class SessionStorageV6 {
         runtimePolicyJson,
         updatesCharacterSnapshot ? 1 : 0,
         characterSnapshotJson,
-        clearsProviderThread ? 1 : 0,
+        updatesCharacterSnapshot ? 1 : 0,
+        nextCharacterSnapshot?.characterId ?? null,
         clearsProviderThread ? 1 : 0,
         input.updatedAt,
         input.updatedAt,
@@ -1250,7 +1251,9 @@ export class SessionStorageV6 {
         state: "active",
         runtime_policy_json: runtimePolicyJson,
         character_snapshot_json: characterSnapshotJson,
-        character_id: clearsProviderThread ? null : currentRow.character_id,
+        character_id: updatesCharacterSnapshot
+          ? nextCharacterSnapshot?.characterId ?? null
+          : currentRow.character_id,
         thread_id: clearsProviderThread ? "" : currentRow.thread_id,
         updated_at: input.updatedAt,
         last_active_at: input.updatedAt,

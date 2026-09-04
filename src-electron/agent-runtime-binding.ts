@@ -1,5 +1,8 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import type { MemoryRuntimeOwnerSelector } from "../src/agent-runtime/agent-runtime-binding-contract.js";
+import type {
+  MemoryRuntimeOwnerSelector,
+  SessionRuntimeOwnerSelector,
+} from "../src/agent-runtime/agent-runtime-binding-contract.js";
 import { getProviderAgentRuntimeBindingCapability } from "./provider-agent-runtime-binding.js";
 
 export type AgentRuntimeOperation = string;
@@ -27,6 +30,7 @@ export type ProviderAgentRuntimeBindingProjection = {
   expiresAt: string | null;
   turnCapability?: string;
   memoryRuntimeOwner?: MemoryRuntimeOwnerSelector;
+  sessionRuntimeOwner?: SessionRuntimeOwnerSelector;
 };
 
 export type ResolvedAgentRuntimeBinding = Omit<

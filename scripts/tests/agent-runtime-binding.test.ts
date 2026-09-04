@@ -8,6 +8,8 @@ import {
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
+  WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV,
   buildProviderAgentRuntimeBindingCacheKey,
   buildProviderAgentRuntimeBindingEnv,
   createProviderAgentRuntimeBindingRedactor,
@@ -333,13 +335,13 @@ describe("AgentRuntimeBindingRegistry", () => {
 
 // @test-value v1
 // kind = "invariant"
-// claim = "Memory runtime owner selector is projected only into the provider client environment and changes cache identity"
+// claim = "MemoryとSessionのruntime owner selectorはprovider client environmentだけへ投影され、各generationがcache identityを変える"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
 // failure_mode = "provider client leaks selector through process.env or reuses a client across runtime generations"
 // scope = "provider-agent-runtime-binding"
 // lifecycle = "permanent"
 // @end-test-value
-it("provider envはbindingとMemory owner selectorを投影しcache keyやglobal envへsecretを混ぜない", () => {
+it("provider envはbindingとruntime owner selectorを投影しcache keyやglobal envへsecretを混ぜない", () => {
   const registry = new AgentRuntimeBindingRegistry();
   const projection = registry.issueOrReuse({
     actorSessionId: "session-a",
@@ -349,12 +351,18 @@ it("provider envはbindingとMemory owner selectorを投影しcache keyやglobal
   const before = process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV];
   const beforeApplicationInstance = process.env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV];
   const beforeGeneration = process.env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV];
+  const beforeSessionApplicationInstance = process.env[WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV];
+  const beforeSessionGeneration = process.env[WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV];
   const turnProjection = {
     ...projection,
     turnCapability: "turn-capability-current",
     memoryRuntimeOwner: {
       applicationInstanceId: "app-instance-a",
       runtimeGenerationId: "memory-generation-a",
+    },
+    sessionRuntimeOwner: {
+      applicationInstanceId: "app-instance-a",
+      runtimeGenerationId: "session-generation-a",
     },
   };
   const env = mergeDefinedProviderEnv(
@@ -363,6 +371,8 @@ it("provider envはbindingとMemory owner selectorを投影しcache keyやglobal
       [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: "stale",
       [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()]: "stale-app",
       [WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV.toLowerCase()]: "stale-generation",
+      [WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()]: "stale-session-app",
+      [WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV.toLowerCase()]: "stale-session-generation",
       WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "stale",
       [WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV]: "stale-turn",
       EMPTY: undefined,
@@ -373,6 +383,8 @@ it("provider envはbindingとMemory owner selectorを投影しcache keyやglobal
   assert.equal(env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], projection.bindingReference);
   assert.equal(env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
   assert.equal(env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
+  assert.equal(env[WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
+  assert.equal(env[WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV], "session-generation-a");
   assert.equal(env.WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED, "1");
   assert.equal(env[WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV], turnProjection.turnCapability);
   assert.equal(env.PATH, "bin");
@@ -380,12 +392,21 @@ it("provider envはbindingとMemory owner selectorを投影しcache keyやglobal
   assert.equal(process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], before);
   assert.equal(process.env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], beforeApplicationInstance);
   assert.equal(process.env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], beforeGeneration);
+  assert.equal(process.env[WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV], beforeSessionApplicationInstance);
+  assert.equal(process.env[WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV], beforeSessionGeneration);
   const cacheKey = buildProviderAgentRuntimeBindingCacheKey(turnProjection);
   assert.doesNotMatch(cacheKey, new RegExp(projection.bindingReference));
   assert.doesNotMatch(cacheKey, new RegExp(turnProjection.turnCapability));
   assert.notEqual(
     cacheKey,
     buildProviderAgentRuntimeBindingCacheKey({ ...turnProjection, turnCapability: "turn-capability-next" }),
+  );
+  assert.notEqual(
+    cacheKey,
+    buildProviderAgentRuntimeBindingCacheKey({
+      ...turnProjection,
+      sessionRuntimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "session-generation-b" },
+    }),
   );
   assert.notEqual(
     cacheKey,

@@ -125,6 +125,21 @@ export function applyComposerSubmitCommand(input: {
   return true;
 }
 
+export function applyActiveComposerSubmitCommand(input: {
+  schedule?: {
+    isSubmitDisabled: MaybeLazyBoolean;
+    submit: () => void;
+  };
+  chat: {
+    isSubmitDisabled?: MaybeLazyBoolean;
+    isSubmitBlocked?: MaybeLazyBoolean;
+    notifySubmitBlocked?: () => void;
+    submit: () => void;
+  };
+}): boolean {
+  return applyComposerSubmitCommand(input.schedule ?? input.chat);
+}
+
 export function applyStartTitleEditCommand(input: {
   title: string;
   setTitleDraft: (title: string) => void;

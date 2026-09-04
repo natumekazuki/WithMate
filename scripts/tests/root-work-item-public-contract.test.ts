@@ -16,7 +16,8 @@ import {
 } from "../../src/session-external-runtime-contract.js";
 import {
   SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
-  SESSION_RUNTIME_INSTANCE_HEADER,
+  SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER,
+  SESSION_RUNTIME_GENERATION_HEADER,
   SESSION_RUNTIME_NONCE_HEADER,
   SESSION_RUNTIME_OPERATION_PATH,
 } from "../../src/session-runtime-exchange.js";
@@ -222,7 +223,8 @@ describe("Root WorkItem public contract", () => {
     apiSecret: "api-secret",
     cliSecret: "cli-secret",
     mcpSecret: "mcp-secret",
-    runtimeInstanceId: "runtime-root-public",
+    applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+    runtimeGenerationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     agentRuntimeBindingRegistry: registry,
     handle: async (operation, input, _adapter, context) => {
       calls.push({ operation, input, actorSessionId: context.agentRuntimeBinding?.actorSessionId ?? null });
@@ -481,7 +483,8 @@ test("application dispatchはRoot owner method・history cursor scope・revision
     baseUrl: "http://127.0.0.1:1",
     apiSecret: "api-secret",
     adapterSecret: "mcp-secret",
-    runtimeInstanceId: "runtime-1",
+    applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+    runtimeGenerationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   };
   const requests: Array<{ operation: string; input: unknown }> = [];
   const server = createWithMateSessionMcpServer({
@@ -585,7 +588,8 @@ test("application dispatchはRoot owner method・history cursor scope・revision
     baseUrl: "http://127.0.0.1:1",
     apiSecret: "api-secret",
     adapterSecret: "cli-secret",
-    runtimeInstanceId: "runtime-1",
+    applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+    runtimeGenerationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   };
   const requests: Array<{ operation: string; input: unknown }> = [];
   const cases = [
@@ -640,7 +644,8 @@ function postRawRuntime(port: number, payload: string): Promise<{ status: number
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        [SESSION_RUNTIME_INSTANCE_HEADER]: "runtime-root-public",
+        [SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER]: "11111111-1111-4111-8111-111111111111",
+        [SESSION_RUNTIME_GENERATION_HEADER]: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         [SESSION_RUNTIME_NONCE_HEADER]: "root-public-nonce",
       },
     }, (response) => {

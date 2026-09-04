@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import { resolvePathReferenceRemovalTargets } from "../../src/session-composer-paths.js";
 import {
+  applyActiveComposerSubmitCommand,
   applyAdditionalDirectoryListToggle,
   applyAgentPickerToggleCommand,
   applyCancelTitleEditCommand,
@@ -265,6 +266,43 @@ describe("applyComposerSubmitCommand", () => {
     );
 
     assert.deepEqual(events, ["disabled"]);
+  });
+});
+
+describe("applyActiveComposerSubmitCommand", () => {
+  // @test-value v1
+  // kind = "regression"
+  // claim = "Schedule編集surfaceのcomposer submit shortcutはSchedule保存を実行し、背後のchat Turnを開始しない"
+  // oracle = { type = "contract", ref = "docs/features/keyboard-shortcuts.md;Schedule composer save action" }
+  // failure_mode = "Ctrl/Cmd+Enterがschedule promptを保存せず、残ったchat draftをproviderへ送信する"
+  // scope = "session-shell-active-composer-submit"
+  // lifecycle = "permanent"
+  // distinction = "通常chatのsendabilityではなく、同scopeを所有するSchedule surfaceのsubmit owner選択を検証する"
+  // @end-test-value
+  it("Schedule編集中はshortcutをSchedule保存だけへ配線する", () => {
+    const events: string[] = [];
+
+    assert.equal(applyActiveComposerSubmitCommand({
+      schedule: {
+        isSubmitDisabled: false,
+        submit: () => events.push("schedule"),
+      },
+      chat: {
+        submit: () => events.push("chat"),
+      },
+    }), true);
+    assert.deepEqual(events, ["schedule"]);
+
+    assert.equal(applyActiveComposerSubmitCommand({
+      schedule: {
+        isSubmitDisabled: true,
+        submit: () => events.push("disabled-schedule"),
+      },
+      chat: {
+        submit: () => events.push("chat"),
+      },
+    }), false);
+    assert.deepEqual(events, ["schedule"]);
   });
 });
 

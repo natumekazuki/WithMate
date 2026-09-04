@@ -1,47 +1,64 @@
 import assert from "node:assert/strict";
-import path from "node:path";
 import { test } from "node:test";
 
 import {
-  SESSION_RUNTIME_DISCOVERY_FILE_NAME,
-  resolveDefaultSessionRuntimeDirectory,
-  resolveDefaultSessionRuntimeDiscoveryFilePath,
+  SESSION_RUNTIME_CREDENTIAL_SCHEMA_VERSION,
+  parseSessionRuntimeCredentialEnvelope,
 } from "../../src/session-runtime-discovery.js";
 
-test("EXT-WIN-CRED-06: Windows runtime discoveryはLOCALAPPDATA配下の固定rootを使う", () => {
-  const env = { LOCALAPPDATA: "C:\\Users\\alice\\AppData\\Local" };
-  const runtimeDirectoryPath = resolveDefaultSessionRuntimeDirectory(env, "win32");
+const identity = {
+  applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+  runtimeKind: "session",
+  runtimeGenerationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+};
 
-  assert.equal(
-    runtimeDirectoryPath,
-    "C:\\Users\\alice\\AppData\\Local\\WithMate\\session-runtime",
-  );
-  assert.equal(
-    resolveDefaultSessionRuntimeDiscoveryFilePath(env, "win32"),
-    path.win32.join(runtimeDirectoryPath, SESSION_RUNTIME_DISCOVERY_FILE_NAME),
-  );
+function credentialEnvelope(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    schemaVersion: "withmate-runtime-credential-v1",
+    ...identity,
+    adapterKind: "cli",
+    credential: {
+      schemaVersion: SESSION_RUNTIME_CREDENTIAL_SCHEMA_VERSION,
+      baseUrl: "http://127.0.0.1:12345",
+      apiSecret: "api-secret",
+      adapterSecret: "cli-secret",
+    },
+    ...overrides,
+  });
+}
+
+// @test-value v1
+// kind = "security"
+// claim = "Session credential envelopeはregistry identity tupleとadapterが完全一致する場合だけ受理される"
+// oracle = { type = "adr", ref = "ADR-023 Identity and registry ownership / Selection and binding" }
+// failure_mode = "別application、別generation、別adapterのcredentialを選択済みentryへ混入してsecret-bearing接続を構築する"
+// scope = "session-runtime-credential-envelope-parser"
+// lifecycle = "permanent"
+// @end-test-value
+test("Session credential envelopeはregistry identity tupleとの不一致を拒否する", () => {
+  assert.ok(parseSessionRuntimeCredentialEnvelope(credentialEnvelope(), identity, "cli"));
+  assert.equal(parseSessionRuntimeCredentialEnvelope(credentialEnvelope({
+    applicationInstanceId: "22222222-2222-4222-8222-222222222222",
+  }), identity, "cli"), null);
+  assert.equal(parseSessionRuntimeCredentialEnvelope(credentialEnvelope({
+    runtimeGenerationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  }), identity, "cli"), null);
+  assert.equal(parseSessionRuntimeCredentialEnvelope(credentialEnvelope(), identity, "mcp"), null);
 });
 
-test("EXT-WIN-CRED-06: Windowsではruntime directoryのenvironment overrideを拒否する", () => {
-  assert.throws(
-    () => resolveDefaultSessionRuntimeDirectory({
-      LOCALAPPDATA: "C:\\Users\\alice\\AppData\\Local",
-      WITHMATE_SESSION_RUNTIME_DIR: "C:\\shared\\runtime",
-    }, "win32"),
-    /WITHMATE_SESSION_RUNTIME_DIR is not supported on Windows/,
-  );
-});
-
-test("EXT-WIN-CRED-06: Windowsではabsolute LOCALAPPDATAを解決できない場合にfail closedする", () => {
-  assert.throws(
-    () => resolveDefaultSessionRuntimeDirectory({ LOCALAPPDATA: "relative" }, "win32"),
-    /LOCALAPPDATA must identify an absolute Windows directory/,
-  );
-});
-
-test("POSIXではruntime directoryのenvironment overrideを維持する", () => {
-  assert.equal(
-    resolveDefaultSessionRuntimeDirectory({ WITHMATE_SESSION_RUNTIME_DIR: "./runtime" }, "linux"),
-    path.resolve("./runtime"),
-  );
+// @test-value v1
+// kind = "security"
+// claim = "Session credential envelopeはunknown fieldを含む外部入力を拒否する"
+// oracle = { type = "adr", ref = "ADR-023 Diagnostics and security" }
+// failure_mode = "未定義fieldを内部credentialへ通し、schema境界を迂回する"
+// scope = "session-runtime-credential-envelope-parser"
+// lifecycle = "permanent"
+// distinction = "identity mismatchではなくouter envelopeのstrict shapeを観測する"
+// @end-test-value
+test("Session credential envelopeはunknown fieldを拒否する", () => {
+  assert.equal(parseSessionRuntimeCredentialEnvelope(
+    credentialEnvelope({ unexpected: "value" }),
+    identity,
+    "cli",
+  ), null);
 });
