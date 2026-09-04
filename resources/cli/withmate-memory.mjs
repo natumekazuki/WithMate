@@ -1370,7 +1370,8 @@ var WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER = "x-withmate-memory-app
 /** Canonical Memory runtime generation header; runtime-instance remains a legacy alias. */
 var WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER = "x-withmate-memory-runtime-generation";
 var WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER = "x-withmate-memory-runtime-challenge";
-var WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH = "/v1/fallback-admission/eligible";
+var WITHMATE_MEMORY_FALLBACK_LISTED_PATH = "/v1/fallback-admission/listed";
+var WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH = "/v1/fallback-admission/listed/rollback";
 var WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND = "mcp-fallback-admission";
 var WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-memory-runtime-exchange-v1";
 function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeGenerationId, nonce) {
@@ -25541,14 +25542,15 @@ var GENERAL_MEMORY_FILE_OPERATION_PATHS = /* @__PURE__ */ new Set([
 var NON_RETRYABLE_FALLBACK_PATHS = /* @__PURE__ */ new Set(["/v1/get_file", "/v1/export_files"]);
 var ToolsListTrackingTransport = class {
 	delegate;
-	onToolsListSuccess;
+	onToolsListStart;
 	#pendingToolsList = /* @__PURE__ */ new Set();
+	#toolsListSendQueue = Promise.resolve();
 	onclose;
 	onerror;
 	onmessage;
-	constructor(delegate, onToolsListSuccess) {
+	constructor(delegate, onToolsListStart) {
 		this.delegate = delegate;
-		this.onToolsListSuccess = onToolsListSuccess;
+		this.onToolsListStart = onToolsListStart;
 		delegate.onclose = () => this.onclose?.();
 		delegate.onerror = (error) => this.onerror?.(error);
 		delegate.onmessage = (message, extra) => {
@@ -25563,9 +25565,22 @@ var ToolsListTrackingTransport = class {
 		return this.delegate.start();
 	}
 	async send(message, options) {
-		const isSuccessfulToolsListResponse = "id" in message && message.id !== void 0 && !("method" in message) && this.#pendingToolsList.delete(message.id) && "result" in message;
-		await this.delegate.send(message, options);
-		if (isSuccessfulToolsListResponse) await this.onToolsListSuccess();
+		if (!("id" in message && message.id !== void 0 && !("method" in message) && this.#pendingToolsList.delete(message.id) && "result" in message)) {
+			await this.delegate.send(message, options);
+			return;
+		}
+		const send = this.#toolsListSendQueue.then(async () => {
+			const registration = await this.onToolsListStart();
+			try {
+				await this.delegate.send(message, options);
+			} catch (error) {
+				await registration.rollback();
+				throw error;
+			}
+			await registration.commit();
+		});
+		this.#toolsListSendQueue = send.catch(() => void 0);
+		await send;
 	}
 	close() {
 		return this.delegate.close();
@@ -25604,38 +25619,53 @@ async function resolveFallbackAdmissionSecret(deps, connection) {
 	}
 }
 function createMcpFallbackAdmission(deps) {
-	let connection = null;
-	let bindingReference;
-	let turnCapability;
-	let fallbackAdmissionSecret = null;
+	let deliveredAdmission = null;
 	let listedRegistration = null;
-	const callControl = async (path, body) => {
-		if (!connection || !bindingReference || !turnCapability || !fallbackAdmissionSecret) return false;
+	let listedDelivery = null;
+	let listedDeliveryPending = false;
+	const isSameControlContext = (left, right) => left.connection.api.runtimeGenerationId === right.connection.api.runtimeGenerationId && left.bindingReference === right.bindingReference && left.turnCapability === right.turnCapability && left.fallbackAdmissionSecret === right.fallbackAdmissionSecret;
+	const callControl = async (context, path, body) => {
 		const abortController = new AbortController();
 		const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 1e4);
 		try {
-			return (await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
+			return await (deps.runtimeCall ?? callWithMateMemoryRuntime)(context.connection, {
 				method: "POST",
 				path,
 				body
 			}, {
 				signal: abortController.signal,
-				bindingReference,
-				turnCapability,
-				fallbackAdmissionSecret
-			})).ok;
+				bindingReference: context.bindingReference,
+				turnCapability: context.turnCapability,
+				fallbackAdmissionSecret: context.fallbackAdmissionSecret
+			});
 		} catch {
-			return false;
+			return null;
 		} finally {
 			clearTimeout(timeout);
 		}
 	};
 	return {
 		async markListed() {
-			listedRegistration = (async () => {
+			const previousRegistration = listedRegistration;
+			let settleDelivery;
+			let deliverySettled = false;
+			listedDeliveryPending = true;
+			listedDelivery = new Promise((resolve) => {
+				settleDelivery = (delivered) => {
+					if (!deliverySettled) {
+						deliverySettled = true;
+						listedDeliveryPending = false;
+						resolve(delivered);
+					}
+				};
+			});
+			const registration = (async () => {
+				await previousRegistration;
+				let registered = null;
 				try {
-					bindingReference = resolveAgentRuntimeBindingReference(deps.env);
-					turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
+					const bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+					const turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
+					if (!bindingReference || !turnCapability) return null;
 					const resolution = await resolveWithMateMemoryApi({
 						adapter: "mcp",
 						env: deps.env,
@@ -25645,26 +25675,84 @@ function createMcpFallbackAdmission(deps) {
 						registryRootDirectoryPath: deps.registryRootDirectoryPath,
 						staleThresholdMs: deps.staleThresholdMs
 					});
-					connection = resolution.kind === "selected" ? resolution.connection : null;
-					fallbackAdmissionSecret = connection ? await resolveFallbackAdmissionSecret(deps, connection) : null;
-					if (!await callControl("/v1/fallback-admission/listed", {})) {
-						connection = null;
-						fallbackAdmissionSecret = null;
-					}
+					const connection = resolution.kind === "selected" ? resolution.connection : null;
+					const fallbackAdmissionSecret = connection ? await resolveFallbackAdmissionSecret(deps, connection) : null;
+					if (!connection || !fallbackAdmissionSecret) return null;
+					const context = {
+						connection,
+						bindingReference,
+						turnCapability,
+						fallbackAdmissionSecret
+					};
+					const listed = await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_PATH, {});
+					if (!listed?.ok) return null;
+					const rollbackToken = listed.value && typeof listed.value === "object" && typeof listed.value.rollbackToken === "string" ? listed.value.rollbackToken : null;
+					const admissionToken = listed.value && typeof listed.value === "object" && typeof listed.value.admissionToken === "string" ? listed.value.admissionToken.trim() : "";
+					if (!admissionToken) return null;
+					registered = {
+						context,
+						admissionToken,
+						rollback: rollbackToken ? async () => {
+							await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH, { rollbackToken });
+						} : null
+					};
 				} catch {
-					connection = null;
-					fallbackAdmissionSecret = null;
+					registered = null;
 				}
+				return registered;
 			})();
-			await listedRegistration;
+			listedRegistration = registration;
+			const registered = await registration;
+			return {
+				async commit() {
+					if (registered) deliveredAdmission = {
+						context: registered.context,
+						admissionToken: registered.admissionToken
+					};
+					settleDelivery(true);
+				},
+				async rollback() {
+					try {
+						await registered?.rollback?.();
+					} finally {
+						settleDelivery(false);
+					}
+				}
+			};
+		},
+		captureEligibility() {
+			const admissionAtStart = deliveredAdmission;
+			const registrationAtStart = listedRegistration;
+			const deliveryAtStart = listedDelivery;
+			const deliveryPendingAtStart = listedDeliveryPending;
+			return { async markEligible(operation) {
+				let admission = admissionAtStart;
+				if (deliveryPendingAtStart) {
+					const registered = await registrationAtStart;
+					if (Boolean(registered && (registered.rollback || !admissionAtStart || !isSameControlContext(registered.context, admissionAtStart.context) || registered.admissionToken !== admissionAtStart.admissionToken))) {
+						if (deliveryAtStart && !await deliveryAtStart) return false;
+						admission = registered;
+					} else admission = admissionAtStart;
+				}
+				if (!admission && deliveryAtStart && deliveryPendingAtStart && !await deliveryAtStart) return false;
+				const pathname = new URL(operation.path, "http://127.0.0.1").pathname;
+				if (NON_RETRYABLE_FALLBACK_PATHS.has(pathname) || !admission) return false;
+				return (await callControl(admission.context, "/v1/fallback-admission/eligible", {
+					admissionToken: admission.admissionToken,
+					fingerprint: createMemoryFallbackOperationFingerprint(operation)
+				}))?.ok ?? false;
+			} };
 		},
 		async markEligible(operation) {
-			await listedRegistration;
-			const pathname = new URL(operation.path, "http://127.0.0.1").pathname;
-			if (NON_RETRYABLE_FALLBACK_PATHS.has(pathname)) return false;
-			return callControl(WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH, { fingerprint: createMemoryFallbackOperationFingerprint(operation) });
+			const eligibility = this.captureEligibility?.();
+			if (!eligibility) return false;
+			return eligibility.markEligible(operation);
 		}
 	};
+}
+function captureFallbackEligibility(fallbackAdmission) {
+	if (!fallbackAdmission) return null;
+	return fallbackAdmission.captureEligibility?.() ?? fallbackAdmission;
 }
 function runtimeExchangeDiscoveryCode$1(error) {
 	return error.discoveryCode;
@@ -26093,6 +26181,7 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 ];
 [...CHARACTER_MCP_TOOL_DEFINITIONS, ...GENERAL_MEMORY_MCP_TOOL_DEFINITIONS];
 async function callRuntime(path, body, operationKind, deps) {
+	const fallbackEligibility = captureFallbackEligibility(deps.fallbackAdmission);
 	let bindingReference;
 	let turnCapability;
 	try {
@@ -26145,7 +26234,7 @@ async function callRuntime(path, body, operationKind, deps) {
 	} catch (error) {
 		const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError ? error.dispatched : dispatched;
 		const discoveryCode = error instanceof WithMateMemoryRuntimeExchangeError && !operationDispatched ? runtimeExchangeDiscoveryCode$1(error) : void 0;
-		const fallbackEligible = isTransportAvailabilityError(error) ? await deps.fallbackAdmission?.markEligible({
+		const fallbackEligible = isTransportAvailabilityError(error) ? await fallbackEligibility?.markEligible({
 			method: "POST",
 			path,
 			body
@@ -26164,6 +26253,7 @@ async function callRuntime(path, body, operationKind, deps) {
 	}
 }
 async function callMemoryRuntime(operation, deps) {
+	const fallbackEligibility = captureFallbackEligibility(deps.fallbackAdmission);
 	let bindingReference;
 	let turnCapability;
 	try {
@@ -26213,7 +26303,7 @@ async function callMemoryRuntime(operation, deps) {
 	} catch (error) {
 		const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError ? error.dispatched : dispatched;
 		const discoveryCode = error instanceof WithMateMemoryRuntimeExchangeError && !operationDispatched ? runtimeExchangeDiscoveryCode$1(error) : void 0;
-		const fallbackEligible = isTransportAvailabilityError(error) && isAgentCliFallbackEligibleOperation(operation) ? await deps.fallbackAdmission?.markEligible(operation) ?? false : false;
+		const fallbackEligible = isTransportAvailabilityError(error) && isAgentCliFallbackEligibleOperation(operation) ? await fallbackEligibility?.markEligible(operation) ?? false : false;
 		if (discoveryCode) return createMemoryRuntimeError(discoveryCode, "WithMate Memory runtime identity changed before dispatch.", {
 			retryable: discoveryCode === "WITHMATE_RUNTIME_UNAVAILABLE" || discoveryCode === "WITHMATE_RUNTIME_STALE",
 			conversationMayContinue: true,
