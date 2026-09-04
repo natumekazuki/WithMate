@@ -860,6 +860,90 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
   });
 
   // @test-value v1
+  // kind = "security"
+  // claim = "Memory operationは開始時に正常送出済みだったtools/list admissionだけをfallback判定へ使用する"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // failure_mode = "runtime request中に後発tools/listが成功すると、先行operationが後発registrationを取得してCLI fallbackへ昇格する"
+  // scope = "withmate-memory-mcp-fallback-admission"
+  // lifecycle = "permanent"
+  // distinction = "eligible要求送信後の割り込みではなく、runtime request開始後かつtransport failure判定前に後発tools/listが完了する交差を検証する"
+  // @end-test-value
+  it("operation開始後に成功したtools/listは先行operationへfallback認可を与えない", async () => {
+    let activeAdmissionToken: string | null = null;
+    let tokenSequence = 0;
+    const eligibleTokens: string[] = [];
+    let releaseRuntimeRequest!: () => void;
+    let notifyRuntimeRequestStarted!: () => void;
+    const runtimeRequestGate = new Promise<void>((resolve) => {
+      releaseRuntimeRequest = resolve;
+    });
+    const runtimeRequestStarted = new Promise<void>((resolve) => {
+      notifyRuntimeRequestStarted = resolve;
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: "api-secret",
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+        WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+        WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-a",
+      },
+      fallbackAdmissionSecret: "fallback-secret",
+      runtimeCall: async (_connection, operation) => {
+        if (operation.path === "/v1/fallback-admission/listed") {
+          tokenSequence += 1;
+          activeAdmissionToken = `admission-${tokenSequence}`;
+          return {
+            ok: true,
+            status: 200,
+            value: {
+              admissionToken: activeAdmissionToken,
+              rollbackToken: `rollback-${tokenSequence}`,
+            },
+          };
+        }
+        if (operation.path === "/v1/fallback-admission/eligible") {
+          const requestedToken = (operation.body as any).admissionToken;
+          eligibleTokens.push(requestedToken);
+          const eligible = requestedToken === activeAdmissionToken;
+          return { ok: eligible, status: eligible ? 200 : 403, value: {} };
+        }
+        notifyRuntimeRequestStarted();
+        await runtimeRequestGate;
+        throw new WithMateMemoryRuntimeExchangeError("transport failed", false, {
+          discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE",
+        });
+      },
+    });
+    const client = new Client({ name: "withmate-fallback-operation-snapshot-test", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      await client.listTools();
+      activeAdmissionToken = null;
+
+      const toolCall = client.callTool({
+        name: "memory.search",
+        arguments: { targets: [{ kind: "user-global" }], query: "operation-snapshot" },
+      });
+      await runtimeRequestStarted;
+      await client.listTools();
+      assert.equal(activeAdmissionToken, "admission-2");
+      releaseRuntimeRequest();
+
+      const result = await toolCall;
+      assert.equal((result.structuredContent as any).error.details?.fallbackEligible, undefined);
+      assert.deepEqual(eligibleTokens, ["admission-1"]);
+    } finally {
+      releaseRuntimeRequest();
+      await client.close();
+      await server.close();
+    }
+  });
+
+  // @test-value v1
   // kind = "contract"
   // claim = "一般Memory toolはactor-relative inputを対応runtime routeへ送りdomain rejectionを変更せず返す"
   // oracle = { type = "adr", ref = "ADR-024 exact MCP schema and failure boundary" }
