@@ -393,19 +393,36 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
 
   // @test-value v1
   // kind = "security"
-  // claim = "MCP adapterはtools/list成功後に観測したtransport failureだけをserver-side CLI fallback admissionへ昇格する"
+  // claim = "MCP adapterはtools/list成功をclientへ観測させる前にserver-side CLI fallback admissionを登録する"
   // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-  // failure_mode = "tools/list前またはdomain rejectionでfallback admissionを作り、callerの自己申告CLI fallbackを許可する"
+  // failure_mode = "clientがtools/list成功直後にMemory toolを呼ぶとlisted登録を追い越し、transport failureがfallback eligibleにならない"
   // scope = "withmate-memory-mcp-fallback-admission"
   // lifecycle = "permanent"
+  // distinction = "transport failureの分類ではなく、同期response配信と非同期listed登録の観測順序を検証する"
   // @end-test-value
   it("tools/list後のtransport failureだけをCLI fallback eligibleとして返す", async () => {
     let listed = false;
     let eligibilityAttempts = 0;
     let domainFailure = false;
+    let releaseListedRegistration!: () => void;
+    let markListedStarted!: () => void;
+    const listedRegistrationGate = new Promise<void>((resolve) => {
+      releaseListedRegistration = resolve;
+    });
+    const markListedStart = new Promise<void>((resolve) => {
+      markListedStarted = resolve;
+    });
     const fallbackAdmission = {
       async markListed() {
+        markListedStarted();
+        await listedRegistrationGate;
         listed = true;
+        return {
+          async commit() {},
+          async rollback() {
+            listed = false;
+          },
+        };
       },
       async markEligible() {
         eligibilityAttempts += 1;
@@ -441,7 +458,16 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       });
       assert.equal((beforeList.structuredContent as any).error.details?.fallbackEligible, undefined);
 
-      await client.listTools();
+      let listToolsObserved = false;
+      const listTools = client.listTools().then((result) => {
+        listToolsObserved = true;
+        return result;
+      });
+      await markListedStart;
+      await Promise.resolve();
+      assert.equal(listToolsObserved, false);
+      releaseListedRegistration();
+      await listTools;
       const afterList = await client.callTool({
         name: "memory.search",
         arguments: { targets: [{ kind: "user-global" }], query: "after" },
@@ -455,6 +481,67 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       });
       assert.equal((domain.structuredContent as any).error.details?.fallbackEligible, undefined);
       assert.equal(eligibilityAttempts, 2);
+    } finally {
+      releaseListedRegistration();
+      await client.close();
+      await server.close();
+    }
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "tools/list response送出が失敗した場合は、その送出用に登録したfallback admissionを残さない"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // failure_mode = "未送出のtools/list responseがlisted admissionを残し、後続transport failureをCLI fallbackへ昇格させる"
+  // scope = "withmate-memory-mcp-fallback-admission"
+  // lifecycle = "permanent"
+  // distinction = "成功responseの観測順序ではなく、transport send rejection後のrollbackを検証する"
+  // @end-test-value
+  it("tools/list response送出失敗時はfallback admissionをrollbackする", async () => {
+    let listed = false;
+    let rollbackCount = 0;
+    const fallbackAdmission = {
+      async markListed() {
+        listed = true;
+        return {
+          async commit() {},
+          async rollback() {
+            listed = false;
+            rollbackCount += 1;
+          },
+        };
+      },
+      async markEligible() {
+        return listed;
+      },
+    };
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const originalSend = serverTransport.send.bind(serverTransport);
+    let failNextResponse = false;
+    serverTransport.send = async (message, options) => {
+      if (failNextResponse && "result" in message && "id" in message) {
+        failNextResponse = false;
+        await serverTransport.close();
+        throw new Error("tools/list response send failed");
+      }
+      await originalSend(message, options);
+    };
+    const server = createWithMateMemoryMcpServer({
+      fallbackAdmission,
+      runtimeCall: async () => {
+        throw new WithMateMemoryRuntimeExchangeError("transport failed", false, {
+          discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE",
+        });
+      },
+    });
+    const client = new Client({ name: "withmate-fallback-rollback-test", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      failNextResponse = true;
+      await assert.rejects(client.listTools(), /closed/i);
+      assert.equal(await fallbackAdmission.markEligible(), false);
+      assert.equal(rollbackCount, 1);
     } finally {
       await client.close();
       await server.close();
@@ -739,7 +826,12 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
       },
       fallbackAdmission: {
-        async markListed() {},
+        async markListed() {
+          return {
+            async commit() {},
+            async rollback() {},
+          };
+        },
         async markEligible() {
           fallbackEligibilityAttempts += 1;
           return true;

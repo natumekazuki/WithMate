@@ -42,6 +42,7 @@ import {
   WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION,
   WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH,
   WITHMATE_MEMORY_FALLBACK_LISTED_PATH,
+  WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH,
   type WithMateMemoryFallbackAdmissionCredential,
 } from "../src/memory-v6/memory-runtime-exchange.js";
 import {
@@ -82,19 +83,23 @@ const GENERAL_MEMORY_FILE_OPERATION_PATHS = new Set([
 const NON_RETRYABLE_FALLBACK_PATHS = new Set(["/v1/get_file", "/v1/export_files"]);
 
 type McpFallbackAdmission = {
-  markListed(): Promise<void>;
+  markListed(): Promise<{
+    commit(): Promise<void>;
+    rollback(): Promise<void>;
+  }>;
   markEligible(operation: WithMateMemoryRuntimeOperation): Promise<boolean>;
 };
 
 class ToolsListTrackingTransport implements Transport {
   readonly #pendingToolsList = new Set<RequestId>();
+  #toolsListSendQueue = Promise.resolve();
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void;
 
   constructor(
     readonly delegate: Transport,
-    readonly onToolsListSuccess: () => Promise<void>,
+    readonly onToolsListStart: McpFallbackAdmission["markListed"],
   ) {
     delegate.onclose = () => this.onclose?.();
     delegate.onerror = (error) => this.onerror?.(error);
@@ -122,10 +127,22 @@ class ToolsListTrackingTransport implements Transport {
       && this.#pendingToolsList.delete(message.id)
       && "result" in message
     );
-    await this.delegate.send(message, options);
-    if (isSuccessfulToolsListResponse) {
-      await this.onToolsListSuccess();
+    if (!isSuccessfulToolsListResponse) {
+      await this.delegate.send(message, options);
+      return;
     }
+    const send = this.#toolsListSendQueue.then(async () => {
+      const registration = await this.onToolsListStart();
+      try {
+        await this.delegate.send(message, options);
+      } catch (error) {
+        await registration.rollback();
+        throw error;
+      }
+      await registration.commit();
+    });
+    this.#toolsListSendQueue = send.catch(() => undefined);
+    await send;
   }
 
   close(): Promise<void> {
@@ -201,43 +218,64 @@ async function resolveFallbackAdmissionSecret(
 }
 
 function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission {
-  let connection: WithMateMemoryRuntimeConnection | null = null;
-  let bindingReference: string | undefined;
-  let turnCapability: string | undefined;
-  let fallbackAdmissionSecret: string | null = null;
+  type ControlContext = {
+    connection: WithMateMemoryRuntimeConnection;
+    bindingReference: string;
+    turnCapability: string;
+    fallbackAdmissionSecret: string;
+  };
+  let activeContext: ControlContext | null = null;
   let listedRegistration: Promise<void> | null = null;
+  let listedDelivery: Promise<boolean> | null = null;
 
-  const callControl = async (path: string, body: unknown): Promise<boolean> => {
-    if (!connection || !bindingReference || !turnCapability || !fallbackAdmissionSecret) {
-      return false;
-    }
+  const callControl = async (
+    context: ControlContext,
+    path: string,
+    body: unknown,
+  ): Promise<WithMateMemoryRuntimeResponse | null> => {
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
     try {
-      const result = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
+      const result = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(context.connection, {
         method: "POST",
         path,
         body,
       }, {
         signal: abortController.signal,
-        bindingReference,
-        turnCapability,
-        fallbackAdmissionSecret,
+        bindingReference: context.bindingReference,
+        turnCapability: context.turnCapability,
+        fallbackAdmissionSecret: context.fallbackAdmissionSecret,
       });
-      return result.ok;
+      return result;
     } catch {
-      return false;
+      return null;
     } finally {
       clearTimeout(timeout);
     }
   };
 
   return {
-    async markListed(): Promise<void> {
-      listedRegistration = (async () => {
+    async markListed() {
+      const previousRegistration = listedRegistration;
+      let settleDelivery!: (delivered: boolean) => void;
+      let deliverySettled = false;
+      listedDelivery = new Promise<boolean>((resolve) => {
+        settleDelivery = (delivered) => {
+          if (!deliverySettled) {
+            deliverySettled = true;
+            resolve(delivered);
+          }
+        };
+      });
+      const registration = (async () => {
+        await previousRegistration;
+        let rollback: (() => Promise<void>) | null = null;
         try {
-          bindingReference = resolveAgentRuntimeBindingReference(deps.env);
-          turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
+          const bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+          const turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
+          if (!bindingReference || !turnCapability) {
+            return null;
+          }
           const resolution = await resolveWithMateMemoryApi({
             adapter: "mcp",
             env: deps.env,
@@ -247,30 +285,64 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
             registryRootDirectoryPath: deps.registryRootDirectoryPath,
             staleThresholdMs: deps.staleThresholdMs,
           });
-          connection = resolution.kind === "selected" ? resolution.connection : null;
-          fallbackAdmissionSecret = connection
+          const connection = resolution.kind === "selected" ? resolution.connection : null;
+          const fallbackAdmissionSecret = connection
             ? await resolveFallbackAdmissionSecret(deps, connection)
             : null;
-          if (!await callControl(WITHMATE_MEMORY_FALLBACK_LISTED_PATH, {})) {
-            connection = null;
-            fallbackAdmissionSecret = null;
+          if (!connection || !fallbackAdmissionSecret) {
+            return null;
           }
+          const context = { connection, bindingReference, turnCapability, fallbackAdmissionSecret };
+          const listed = await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_PATH, {});
+          if (!listed?.ok) {
+            return null;
+          }
+          activeContext = context;
+          const rollbackToken = listed.value
+            && typeof listed.value === "object"
+            && typeof (listed.value as Record<string, unknown>).rollbackToken === "string"
+              ? (listed.value as Record<string, string>).rollbackToken
+              : null;
+          rollback = rollbackToken
+            ? async () => {
+              await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH, { rollbackToken });
+            }
+            : null;
         } catch {
-          connection = null;
-          fallbackAdmissionSecret = null;
+          rollback = null;
         }
+        return rollback;
       })();
-      await listedRegistration;
+      listedRegistration = registration.then(() => undefined);
+      const rollback = await registration;
+      return {
+        async commit(): Promise<void> {
+          settleDelivery(true);
+        },
+        async rollback(): Promise<void> {
+          try {
+            await rollback?.();
+          } finally {
+            settleDelivery(false);
+          }
+        },
+      };
     },
     async markEligible(operation): Promise<boolean> {
       await listedRegistration;
+      if (listedDelivery && !await listedDelivery) {
+        return false;
+      }
       const pathname = new URL(operation.path, "http://127.0.0.1").pathname;
       if (NON_RETRYABLE_FALLBACK_PATHS.has(pathname)) {
         return false;
       }
-      return callControl(WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH, {
+      if (!activeContext) {
+        return false;
+      }
+      return (await callControl(activeContext, WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH, {
         fingerprint: createMemoryFallbackOperationFingerprint(operation),
-      });
+      }))?.ok ?? false;
     },
   };
 }

@@ -10,6 +10,7 @@ export const WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER = "x-withmate-memory-runti
 export const WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH = "/v1/exchange";
 export const WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH = "/v1/agent-runtime-extension-exchange";
 export const WITHMATE_MEMORY_FALLBACK_LISTED_PATH = "/v1/fallback-admission/listed";
+export const WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH = "/v1/fallback-admission/listed/rollback";
 export const WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH = "/v1/fallback-admission/eligible";
 export const WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND = "mcp-fallback-admission";
 export const WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION =

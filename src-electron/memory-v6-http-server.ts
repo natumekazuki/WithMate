@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -39,6 +39,7 @@ import {
   WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES,
   WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH,
   WITHMATE_MEMORY_FALLBACK_LISTED_PATH,
+  WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH,
   WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER,
   WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER,
@@ -1310,6 +1311,7 @@ type FallbackAdmissionRecord = {
   phase: "listed" | "eligible" | "consumed";
   expiresAtMs: number;
   fingerprint?: string;
+  rollbackToken?: string;
 };
 
 function fallbackAdmissionKey(bindingReference: string, turnCapability: string): string {
@@ -1329,19 +1331,36 @@ class MemoryFallbackAdmissionState {
     }
   }
 
-  markListed(bindingReference: string, turnCapability: string, nowMs: number): boolean {
+  markListed(
+    bindingReference: string,
+    turnCapability: string,
+    nowMs: number,
+  ): { ok: true; rollbackToken?: string } | { ok: false } {
     this.#purgeExpired(nowMs);
     const key = fallbackAdmissionKey(bindingReference, turnCapability);
     if (this.#records.has(key)) {
-      return true;
+      return { ok: true };
     }
     if (this.#records.size >= FALLBACK_ADMISSION_MAX_RECORDS) {
-      return false;
+      return { ok: false };
     }
+    const rollbackToken = randomUUID();
     this.#records.set(key, {
       phase: "listed",
       expiresAtMs: nowMs + FALLBACK_ADMISSION_TTL_MS,
+      rollbackToken,
     });
+    return { ok: true, rollbackToken };
+  }
+
+  rollbackListed(bindingReference: string, turnCapability: string, rollbackToken: string, nowMs: number): boolean {
+    this.#purgeExpired(nowMs);
+    const key = fallbackAdmissionKey(bindingReference, turnCapability);
+    const record = this.#records.get(key);
+    if (!record || record.phase !== "listed" || record.rollbackToken !== rollbackToken) {
+      return false;
+    }
+    this.#records.delete(key);
     return true;
   }
 
@@ -1495,6 +1514,7 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         }
         if (
           operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_PATH
+          || operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH
           || operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH
         ) {
           if (
@@ -1524,14 +1544,39 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
             const listed = fallbackAdmissions.markListed(actor.bindingReference, actor.turnCapability, nowMs());
             writeJson(
               response,
-              listed ? 200 : 503,
-              listed
-                ? { ok: true, fallbackAdmission: "listed" }
+              listed.ok ? 200 : 503,
+              listed.ok
+                ? {
+                  ok: true,
+                  fallbackAdmission: "listed",
+                  ...(listed.rollbackToken ? { rollbackToken: listed.rollbackToken } : {}),
+                }
                 : memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Fallback admission capacity is unavailable."),
             );
             return;
           }
           const body = payload.operation.body;
+          if (operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH) {
+            const rollbackToken = body && typeof body === "object" && !Array.isArray(body)
+              && typeof (body as Record<string, unknown>).rollbackToken === "string"
+              && Object.keys(body as Record<string, unknown>).length === 1
+                ? (body as Record<string, string>).rollbackToken.trim()
+                : "";
+            const rolledBack = Boolean(rollbackToken) && fallbackAdmissions.rollbackListed(
+              actor.bindingReference,
+              actor.turnCapability,
+              rollbackToken,
+              nowMs(),
+            );
+            writeJson(
+              response,
+              rolledBack ? 200 : 403,
+              rolledBack
+                ? { ok: true, fallbackAdmission: "rolled_back" }
+                : memoryTransportError("MEMORY_FORBIDDEN", "Fallback admission rollback does not match an active tools/list registration."),
+            );
+            return;
+          }
           const fingerprint = body && typeof body === "object" && !Array.isArray(body)
             && typeof (body as Record<string, unknown>).fingerprint === "string"
             && Object.keys(body as Record<string, unknown>).length === 1
