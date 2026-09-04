@@ -6,7 +6,8 @@ import {
   applyAdditionalDirectoryListToggle,
   applyAgentPickerToggleCommand,
   applyCancelTitleEditCommand,
-  applyComposerSubmitKeyCommand,
+  applyCentralSurfaceOpenCommand,
+  applyComposerSubmitCommand,
   applyComposerReferenceInsertionCommand,
   applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
@@ -34,7 +35,6 @@ import {
   createAgentPickerCloseHandler,
   createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
-  createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
@@ -190,110 +190,81 @@ describe("createTitleInputKeyHandler", () => {
   });
 });
 
-describe("applyComposerSubmitKeyCommand", () => {
-  it("Ctrl/Cmd+Enter で送信し、それ以外や disabled では何もしない", () => {
+describe("applyComposerSubmitCommand", () => {
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "composer submit commandは送信可能時だけsubmitしdisabled時は副作用を起こさない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+  // failure_mode = "disabled composerからTurnが開始される"
+  // scope = "session-shell-composer-submit-command"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("送信可能な場合だけ submit し、disabled では何もしない", () => {
     const events: string[] = [];
     const runCommand = (input: {
-      key: string;
-      ctrlKey?: boolean;
-      metaKey?: boolean;
       isSubmitDisabled?: boolean;
-    }) => applyComposerSubmitKeyCommand({
-      key: input.key,
-      ctrlKey: input.ctrlKey ?? false,
-      metaKey: input.metaKey ?? false,
+    }) => applyComposerSubmitCommand({
       isSubmitDisabled: input.isSubmitDisabled,
-      preventDefault: () => events.push(`prevent:${input.key}`),
       submit: () => events.push("submit"),
     });
 
-    assert.equal(runCommand({ key: "Tab", ctrlKey: true }), false);
-    assert.equal(runCommand({ key: "Enter" }), false);
-    assert.equal(runCommand({ key: "Enter", ctrlKey: true, isSubmitDisabled: true }), false);
+    assert.equal(runCommand({ isSubmitDisabled: true }), false);
     assert.deepEqual(events, []);
 
-    assert.equal(runCommand({ key: "Enter", ctrlKey: true }), true);
-    assert.equal(runCommand({ key: "Enter", metaKey: true }), true);
-    assert.deepEqual(events, ["prevent:Enter", "submit", "prevent:Enter", "submit"]);
+    assert.equal(runCommand({}), true);
+    assert.deepEqual(events, ["submit"]);
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "送信shortcutがblockedの場合はsubmitせずblocking feedbackだけを通知する"
+  // oracle = { type = "contract", ref = "docs/features/keyboard-shortcuts.md" }
+  // failure_mode = "blocked状態でTurnを開始する、または利用者へ理由を通知しない"
+  // scope = "session-shell-blocked-submit-feedback"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("送信 shortcut が blocked の場合は feedback だけ呼ぶ", () => {
     const events: string[] = [];
 
     assert.equal(
-      applyComposerSubmitKeyCommand({
-        key: "Enter",
-        ctrlKey: true,
-        metaKey: false,
+      applyComposerSubmitCommand({
         isSubmitBlocked: true,
-        preventDefault: () => events.push("prevent"),
         notifySubmitBlocked: () => events.push("blocked"),
         submit: () => events.push("submit"),
       }),
-      false,
+      true,
     );
 
-    assert.deepEqual(events, ["prevent", "blocked"]);
+    assert.deepEqual(events, ["blocked"]);
   });
 
-  it("shortcut ではない場合は disabled / blocked 判定を遅延評価しない", () => {
+  // @test-value v1
+  // kind = "regression"
+  // claim = "submit command実行時にdisabledとblockedを最新stateから遅延評価する"
+  // oracle = { type = "contract", ref = "docs/features/keyboard-shortcuts.md" }
+  // failure_mode = "登録時のstale stateでshortcut可否を判定し誤送信または誤blockする"
+  // scope = "session-shell-submit-state-evaluation"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("disabled と blocked の判定を遅延評価する", () => {
     const events: string[] = [];
 
     assert.equal(
-      applyComposerSubmitKeyCommand({
-        key: "a",
-        ctrlKey: false,
-        metaKey: false,
+      applyComposerSubmitCommand({
         isSubmitDisabled: () => {
           events.push("disabled");
-          return false;
+          return true;
         },
         isSubmitBlocked: () => {
           events.push("blocked");
           return false;
         },
-        preventDefault: () => events.push("prevent"),
         submit: () => events.push("submit"),
       }),
       false,
     );
 
-    assert.deepEqual(events, []);
-  });
-});
-
-describe("createComposerSubmitKeyHandler", () => {
-  it("keydown event から送信 shortcut command を実行する", () => {
-    const events: string[] = [];
-    const handleKeyDown = createComposerSubmitKeyHandler({
-      isSubmitDisabled: () => {
-        events.push("disabled");
-        return false;
-      },
-      submit: () => events.push("submit"),
-    });
-
-    assert.equal(
-      handleKeyDown({
-        key: "Tab",
-        ctrlKey: true,
-        metaKey: false,
-        preventDefault: () => events.push("prevent:Tab"),
-      }),
-      false,
-    );
-    assert.equal(events.length, 0);
-
-    assert.equal(
-      handleKeyDown({
-        key: "Enter",
-        ctrlKey: true,
-        metaKey: false,
-        preventDefault: () => events.push("prevent:Enter"),
-      }),
-      true,
-    );
-    assert.deepEqual(events, ["disabled", "prevent:Enter", "submit"]);
+    assert.deepEqual(events, ["disabled"]);
   });
 });
 
@@ -458,6 +429,57 @@ describe("createActionDockCollapseHandler", () => {
     collapse();
 
     assert.deepEqual(events, [false]);
+  });
+});
+
+describe("applyCentralSurfaceOpenCommand", () => {
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Templateの未保存変更を破棄しない選択では現在の中央surfaceを維持する"
+  // oracle = { type = "contract", ref = "docs/features/prompt-template-workspace.md" }
+  // failure_mode = "破棄拒否後もsurfaceが切り替わり未保存Templateを失う"
+  // scope = "session-shell-central-surface-unsaved-template"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Template編集の未保存変更が破棄拒否された場合は中央surfaceを切り替えない", () => {
+    let closeCount = 0;
+
+    const opened = applyCentralSurfaceOpenCommand({
+      isPromptTemplateWorkspaceOpen: true,
+      canClosePromptTemplate: () => false,
+      closeCentralSurface: () => {
+        closeCount += 1;
+      },
+    });
+
+    assert.equal(opened, false);
+    assert.equal(closeCount, 0);
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "新しい中央surfaceを開く前に現在のsurfaceをcloseしてownerを一つに保つ"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+  // failure_mode = "二つの中央surfaceが同時にactiveとなりstateとshortcut ownerが競合する"
+  // scope = "session-shell-central-surface-transition"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("現在の中央surfaceを閉じてから次のsurfaceへ進める", () => {
+    let centralSurface: "file-preview" | "skill" | null = "file-preview";
+
+    const opened = applyCentralSurfaceOpenCommand({
+      isPromptTemplateWorkspaceOpen: false,
+      canClosePromptTemplate: () => true,
+      closeCentralSurface: () => {
+        centralSurface = null;
+      },
+    });
+    if (opened) {
+      centralSurface = "skill";
+    }
+
+    assert.equal(opened, true);
+    assert.equal(centralSurface, "skill");
   });
 });
 

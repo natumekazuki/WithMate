@@ -4,6 +4,11 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * PowerShell payload used to apply and read back the runtime ACL.  The target
+ * path and kind are supplied through the environment so they never become
+ * command-line arguments (and therefore cannot be confused with switches).
+ */
 const WINDOWS_RUNTIME_ACL_SCRIPT = String.raw`
 $ErrorActionPreference = "Stop"
 $targetPath = $env:WITHMATE_RUNTIME_ACL_TARGET
@@ -56,6 +61,8 @@ if ($targetKind -eq "directory") {
   $targetInfo.SetAccessControl($acl)
 }
 
+# Read back both type and ACL.  This also detects a reparse-point/type swap
+# between the initial check and SetAccessControl.
 $verifiedAttributes = [System.IO.File]::GetAttributes($targetPath)
 $verifiedIsDirectory = ($verifiedAttributes -band [System.IO.FileAttributes]::Directory) -ne 0
 if (($verifiedAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
@@ -78,6 +85,11 @@ $expectedSidValues = @()
 foreach ($sid in $expectedSids) {
   $expectedSidValues += $sid.Value
 }
+$actualSidValues = @($actualRules | ForEach-Object { $_.IdentityReference.Value })
+if (@($actualSidValues | Sort-Object -Unique).Count -ne $expectedSidValues.Count -or
+    ($expectedSidValues | Where-Object { $actualSidValues -notcontains $_ }).Count -ne 0) {
+  throw "Runtime ACL contains unexpected identities."
+}
 foreach ($rule in $actualRules) {
   if ($rule.IsInherited -or
       $rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
@@ -94,10 +106,24 @@ const WINDOWS_RUNTIME_ACL_ENCODED_SCRIPT = Buffer.from(WINDOWS_RUNTIME_ACL_SCRIP
 
 export type RuntimeAclTargetKind = "directory" | "file";
 
+/**
+ * Restrict a runtime path to the current user, SYSTEM, and Administrators.
+ *
+ * The operation is intentionally fail-closed: invalid paths, missing
+ * SystemRoot, PowerShell failures, and ACL read-back mismatches all reject
+ * without exposing the target path in the returned error.
+ */
 export async function secureWindowsRuntimePath(
   targetPath: string,
   targetKind: RuntimeAclTargetKind,
 ): Promise<void> {
+  if (!targetPath || !path.win32.isAbsolute(targetPath)) {
+    throw new Error("Runtime ACL target must be an absolute Windows path.");
+  }
+  if (targetKind !== "directory" && targetKind !== "file") {
+    throw new Error("Runtime ACL target kind is invalid.");
+  }
+
   const systemRoot = process.env.SystemRoot?.trim();
   if (!systemRoot || !path.win32.isAbsolute(systemRoot)) {
     throw new Error("SystemRoot must identify an absolute Windows directory.");
@@ -127,7 +153,9 @@ export async function secureWindowsRuntimePath(
       timeout: 15_000,
       windowsHide: true,
     });
-  } catch (error) {
-    throw new Error(`Unable to secure runtime ${targetKind} Windows ACL.`, { cause: error });
+  } catch {
+    // Do not attach execFile's error as a cause: stderr can contain the
+    // target path (or inherited environment data) and must not be surfaced.
+    throw new Error(`Unable to secure runtime ${targetKind} Windows ACL.`);
   }
 }

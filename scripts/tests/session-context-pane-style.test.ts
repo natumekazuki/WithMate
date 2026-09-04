@@ -367,6 +367,35 @@ test("Markdown list はlogical paddingと階層ごとのmarkerを持つ", async 
   assert.doesNotMatch(stylesSource, /\.message-list\s*{[^}]*padding-left:/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "Markdown listは改行由来の余白を増やさずnative markerと本文を同じblock flowへ置く"
+// oracle = { type = "contract", ref = "docs/features/markdown-rendering-and-code-actions.md" }
+// failure_mode = "list item間が不自然に広がるかmarkerと本文の縦位置がずれる"
+// scope = "Session Markdown list layout CSS"
+// lifecycle = "permanent"
+// @end-test-value
+test("Markdown list はitem間の改行を余白にせずnative markerと本文を同じblock flowに置く", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+  const listRule = stylesSource.match(/\.message-list\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+
+  assert.match(listRule, /display:\s*block;/);
+  assert.doesNotMatch(listRule, /display:\s*grid;/);
+  assert.match(listRule, /white-space:\s*normal;/);
+  assert.doesNotMatch(
+    stylesSource,
+    /\.message-list\s*>\s*li\s*\+\s*li\s*{[^}]*margin-block-start:/,
+  );
+  assert.match(
+    stylesSource,
+    /\.message-list \.message-list\s*{\s*margin-block-start:\s*6px;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.message-list\s*>\s*li\s*>\s*\.message-paragraph\s*\+\s*\.message-paragraph\s*{\s*margin-block-start:\s*6px;/,
+  );
+});
+
 test("Markdown preview は中央本文を固定幅にせずcontent領域を使う", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 

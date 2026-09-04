@@ -1,94 +1,130 @@
 # WithMate
 
-WithMate は、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験をベースに、キャラクターロールプレイを重ねる Electron アプリです。
+WithMate は、Codex と GitHub Copilot の coding agent を、キャラクターと一緒に使う Electron デスクトップアプリです。ワークスペースを選んでセッションを開始し、チャット、コマンド実行の確認、ファイル参照、差分確認までを一つのアプリで扱います。
 
-現状は `Home Window` / `Session Window` / `Character Editor Window` / `Diff Window` を持つデスクトップ構成で、ワークスペース選択、セッション起動、キャラクター管理、差分確認、セッション継続までを扱います。
+対応 runtime は Electron です。Vite の画面をブラウザーだけで利用する構成はサポートしていません。
 
-## 何を目指すアプリか
+## 主な機能
 
-- coding agent としての操作感を CLI に近づける
-- `character.md` を通じて安定したキャラクター性をセッションへ注入する
-- 作業体験を壊さずに、WithMate 固有のキャラクター拡張を載せる
+- Codex または GitHub Copilot を選んで coding session を作成、再開
+- Character catalog からセッションごとのキャラクターを選択
+- approval、sandbox、model、depth など、provider が対応する実行オプションの変更
+- Markdown、添付ファイル、`@path` 参照を使った作業チャット
+- 実行中のコマンド、turn summary、監査ログの確認
+- Workspace、Session Folder、Additional Directory のファイル参照
+- Git の作業差分とcommit履歴の確認
+- checkout単位のRepository Glossaryの表示と検索
+- セッション、Character、Memory、model catalogなどのローカル永続化
 
-プロダクト方針の詳細は `docs/design/product-direction.md` を参照してください。
+providerごとの対応状況は[対応機能一覧](docs/design/coding-agent-capability-matrix.md)を参照してください。
 
-## 現在の構成
+## 画面構成
 
-### Window 構成
+### Home Window
 
-- `Home Window`
-  - セッション一覧の確認
-  - 全セッションのスケジュール一覧の確認
-  - 新規セッション起動
-  - キャラクター一覧の確認
-  - Settings Window の起点
-- `Session Window`
-  - coding agent との作業チャット
-  - Turn の一回限り／Cron スケジュールの作成と管理
-  - provider-specific approval mode の反映
-  - Codex sandbox mode の反映
-  - model / depth の反映
-  - turn ごとの結果確認
-  - 監査ログ確認
-- `Character Editor Window`
-  - キャラクター作成、編集、既定設定、archive
+セッションとCharacterを管理する入口です。
 
-設計の詳細は `docs/design/window-architecture.md` を参照してください。
+- `Recent Sessions`から既存セッションを検索、再開
+- `New Session`でtitle、workspace、provider、Characterを選択
+- `Session Monitor`で開いているセッションの状態を確認
+- `Characters`からCharacterの作成、編集を開始
+- `Schedules`で全Sessionのスケジュールを確認
+- Settings Windowと独立したSession Monitor Windowを開く
 
-### 技術スタック
+### Session Window
 
-- Electron
-- React
-- Vite
-- TypeScript
-- `@openai/codex-sdk`
-- `@github/copilot-sdk`
+coding agentと作業する中心画面です。
 
-## Session Turn のスケジュール実行
+- チャットの送信、応答のstreaming表示、実行中turnのcancel
+- approval、model、depthなどの実行オプションを変更
+- `Latest Command`、Copilotのbackground tasks、usage情報を確認
+- Audit Log、Terminal、session title変更、session削除へ移動
+- File Explorer、Repository Glossary、File Preview、Git Diffを同じ作業面から利用
+- Turnの一回限り／Cronスケジュールを作成、管理
 
-Session Header の時計アイコンから、その Session のスケジュール一覧を開けます。作成または編集を選ぶと、通常の Action Dock がスケジュール用の入力へ切り替わり、プロンプト、添付、Model、Depth、Approval、Sandbox または Custom Agent を設定できます。チャットの下書きとは別に保存されます。
+AgentとCompanionは同じchat layoutを使い、modeとprovider adapterで動作を切り替えます。
+
+### Session Turn のスケジュール実行
+
+Session Header の時計アイコンから、そのSessionのスケジュール一覧を開けます。作成または編集を選ぶと、通常のAction Dockがスケジュール用の入力へ切り替わり、プロンプト、添付、Model、Depth、Approval、SandboxまたはCustom Agentを設定できます。チャットの下書きとは別に保存されます。
 
 - 一回限りの実行は、PCのローカル日時を指定します。保存時のOS time zoneを使用するため、画面でtime zoneを選ぶ必要はありません。過去日時、存在しない時刻、曖昧な時刻は保存できません。
-- 定期実行は `minute hour day-of-month month day-of-week` の 5 field Cron で指定します。秒 field、名前、macro、`L`、`W`、`#`、`?` は利用できません。
-- Home Window の `Schedules` タブでは、全 Session のスケジュールを確認できます。Home では編集せず、対象の Session Window を開いて操作します。
-- WithMate の終了中や PC の休止中に複数回の予定を過ぎた場合、再開後は最新の一回だけを実行します。WithMate が終了している間は実行されません。
-- 発火した Turn は通常の Session queue に追加されます。キューが上限に達している場合や、保存後に Model／添付先の許可が無効になった場合は実行されず、結果がスケジュール一覧へ表示されます。
+- 定期実行は `minute hour day-of-month month day-of-week` の5 field Cronで指定します。秒field、名前、macro、`L`、`W`、`#`、`?` は利用できません。
+- Home Windowの`Schedules`タブでは、全Sessionのスケジュールを確認できます。Homeでは編集せず、対象のSession Windowを開いて操作します。
+- WithMateの終了中やPCの休止中に複数回の予定を過ぎた場合、再開後は最新の一回だけを実行します。WithMateが終了している間は実行されません。
+- 発火したTurnは通常のSession queueに追加されます。キューが上限に達している場合や、保存後にModel／添付先の許可が無効になった場合は実行されず、結果がスケジュール一覧へ表示されます。
 
-## セットアップ
+### File ExplorerとFile Preview
 
-### 前提
+Session WindowのFile Explorerには次のタブがあります。
+
+- `Files`: Workspace、Session Folder、許可済みAdditional Directoryのファイルを参照
+- `Changes`: Gitの作業ツリー差分を表示
+- `History`: repositoryのcommit履歴とcommit時点のファイル、差分を表示
+
+ファイルは中央の作業面または独立したFile Preview Windowで開けます。テキスト、Markdown、JSON、JSONC、YAML、画像、SVGに対応し、バイナリファイルは内容を展開せずに表示します。Git差分はSplitとInlineを切り替えられます。
+
+### Repository Glossary
+
+Git checkoutの`.withmate/glossary.yaml`にある用語、別名、定義をSession Windowで表示、検索します。checkoutに用語集がない場合やschemaが不正な場合は、その状態をpane内に表示します。
+
+### Character Editor Window
+
+Characterのprofile、icon、theme、`character.md`、`character-notes.md`を編集します。セッションは開始時点のCharacter snapshotを使うため、あとからCharacterを編集しても既存セッションへ自動反映されません。
+
+### Settings Window
+
+次のapp共通設定を管理します。
+
+- app起動、turn完了通知、Session Windowの表示動作
+- default microcopy
+- coding agent providerの有効化とprovider file settings
+- Memory API、managed Skill、CLI shim、logのdiagnostics
+- model catalogのimport、export
+- Repository Glossaryの自動追加上限
+- Memory file quotaと古いsessionの削除
+- keyboard shortcut
+
+### その他のWindow
+
+- `Session Monitor Window`: 開いているセッションを常時手前で確認するcompact window
+- `Diff Window`: 長い差分を広い領域で比較する独立window
+
+画面ごとの責務は[Window Architecture](docs/design/window-architecture.md)、現在のUI仕様は[Desktop UI](docs/design/desktop-ui.md)を参照してください。
+
+## ソースから起動する
+
+### 必要な環境
 
 - Node.js
 - npm
 
-### 依存関係のインストール
+依存関係をインストールします。
 
 ```bash
 npm install
 ```
 
-## 開発コマンド
-
-### Renderer 開発サーバー
+開発時は、最初のターミナルでVite rendererを起動します。
 
 ```bash
 npm run dev
 ```
 
-### Electron 開発起動
-
-別ターミナルで renderer を起動したうえで、Electron 側を立ち上げます。
+Viteが`http://localhost:4173`で起動したら、別のターミナルでElectronを起動します。
 
 ```bash
 npm run electron:dev
 ```
 
-`electron:dev` は既定で `http://localhost:4173` を参照します。
+`electron:dev`はElectron mainとMemory CLIをbuildしてから、開発用Electronを起動します。
 
-### 本番向けビルド
+## 開発と検証
+
+### 型チェック
 
 ```bash
-npm run build
+npm run typecheck
 ```
 
 ### テスト
@@ -97,100 +133,84 @@ npm run build
 npm test
 ```
 
-### ビルド済みアプリの起動
+テストは`scripts/tests/*.test.ts`と`scripts/tests/*.test.tsx`をNode test runnerで実行します。
+
+### 本番向けbuild
+
+```bash
+npm run build
+```
+
+renderer、Electron main、Memory CLIをbuildします。本番向けbuildとローカル起動をまとめて行う場合は、次を実行します。
 
 ```bash
 npm run electron:start
 ```
 
-### 配布ビルド
+### 分離したvisual check
 
-Windows installer と macOS 向け配布物の準備には `electron-builder` を使います。
+Windowsで現在のWorktreeをbuildし、専用のuser dataでElectronを起動します。
+
+```powershell
+& .\scripts\start-withmate-visual-check.ps1
+```
+
+このスクリプトは`%APPDATA%\WithMate-visual-check`を使用します。安全に識別できる既存のvisual check processがある場合は差し替えますが、インストール版WithMateは停止しません。
+
+## 配布物をbuildする
+
+`electron-builder`で配布物を作成します。
 
 ```bash
+# current platformの既定target
 npm run dist
+
+# Windows NSIS installer
+npm run dist:win
+
+# macOS DMG
+npm run dist:mac
+
+# unpacked directory
+npm run dist:dir
 ```
 
-- `npm run dist`
-  - current platform 向けの既定 target をビルドします
-- `npm run dist:win`
-  - Windows 向け NSIS installer をビルドします
-- `npm run dist:mac`
-  - macOS 向け DMG をビルドします
-- `npm run dist:dir`
-  - unpacked directory を出力して packaging 接続確認に使います
+macOS向けの実buildにはmacOS環境またはmacOS CI runnerが必要です。packagingの詳細は[Distribution Packaging](docs/design/distribution-packaging.md)を参照してください。
 
-注意:
+## ライセンスと利用上の注意
 
-- macOS の実ビルドは macOS マシンまたは macOS CI runner を前提にします
-- current task では signing / notarization は入れていません
-- installer icon は `build/icon.png` と `build/icon.ico` を packaging 入力として使います
+WithMateのソースコードは[ISC License](LICENSE)で提供します。
 
-### 型チェック
+本ソフトウェアは現状有姿で提供されます。機能、セキュリティ、機密性、可用性、特定目的への適合性、および本ソフトウェアに含まれるか本ソフトウェアが生成または保存する内容の完全性や正確性を保証しません。
 
-```bash
-npm run typecheck
-```
+導入前に、ソースコード、設定、依存関係、同梱物、および接続先サービスを自身で確認してください。本ソフトウェアの利用、改変、配布、外部サービスへの接続、およびデータの取り扱いは、利用者自身の判断と責任で行ってください。
 
-## ディレクトリガイド
+この節は利用上の注意をまとめたものです。ライセンス条件は[LICENSE](LICENSE)を参照してください。
 
-- `src/`
-  - React renderer 側の UI 実装
-- `src-electron/`
-  - Electron main process / preload / 永続化処理
-- `docs/design/`
-  - 現在の仕様と設計メモ
-- `docs/plans/`
-  - 実装タスクの計画と進捗ログ
+## Repository構成
 
-## まず読むとよいドキュメント
+- `src/`: React renderer、UI state、Window API型
+- `src-electron/`: Electron main、preload、IPC、永続化、provider連携
+- `scripts/`: build、生成、migration、検証用script
+- `scripts/tests/`: Node test runner用test
+- `docs/design/`: 現行設計の正本とdomain detail
+- `docs/features/`: 利用者向けの機能別ガイド
+- `docs/releases/`: versionごとのrepository内リリースノート
+- `docs/adr/`: 長期的な設計判断
+- `docs/plans/`: 複数sessionまたは高リスク作業のplan
+- `build/`: icon、installer、CLIなどのpackaging入力
 
-- `docs/design/product-direction.md`
-  - WithMate の優先順位と価値仮説
-- `docs/design/documentation-map.md`
-  - `docs/design/` の current 正本 / supporting / 統合候補の棚卸し
-- `docs/design/coding-agent-capability-matrix.md`
-  - coding agent wrapper 観点の対応機能一覧と current status
-- `docs/archive/2026/04/25/optimization-roadmap.md`
-  - 最適化候補、推奨 branch 名、着手順の参照先
-- `docs/design/window-architecture.md`
-  - Window ごとの責務分離
-- `docs/design/distribution-packaging.md`
-  - installer / app bundle の build 方針
-- `docs/design/desktop-ui.md`
-  - 現行 UI の構成
-- `docs/design/prompt-composition.md`
-  - settings prefix / character role / input prompt の合成方針
-- `docs/design/audit-log.md`
-  - Session 実行の監査ログ設計
-- `docs/design/app-log-base.md`
-  - Electron クラッシュ調査用の JSONL ログ基盤
-- `docs/design/database-schema.md`
-  - current の保存構造と DB / file storage の一覧
-- `docs/manual-test-checklist.md`
-  - 現行実装に対する実機テスト項目表
-- `docs/design/manual-test-checklist.md`
-  - 実機テスト項目表の運用方針
-- `docs/design/session-launch-ui.md`
-  - 新規セッション起動 UI の考え方
-- `docs/design/character-storage.md`
-  - キャラクター保存まわりの設計
-- `docs/design/electron-session-store.md`
-  - Electron 側の session / audit / memory 永続化の設計
+## 関連ドキュメント
 
-## 現在の状態
-
-- Electron 実行を正本とする desktop アプリ構成です
-- セッション情報は Electron 側で保持され、キャラクター情報はアプリ管理領域のストレージから読み込みます
-- Settings Window では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Mate Reset`、`Model Catalog` を管理します
-- Character 定義は Home の `Characters` panel から開く独立 `Character Editor Window` で管理し、V5 の runtime prompt には session / companion 開始時点の `CharacterRuntimeSnapshot` を使います
-- Provider Instruction Sync、Memory Extraction、Character Reflection の既存設定や保存領域は legacy 互換として残る場合がありますが、current UI には表示せず、V5 Character runtime prompt の主経路にも使いません
-
-## 補足
-
-- ルート `README.md` は人間向けの入口として維持します
-- 詳細仕様は `docs/` を正本とし、関連する設計・運用情報も `docs/` 配下で管理します
-- coding agent の対応状況を確認するときは `docs/design/coding-agent-capability-matrix.md` を最初に見ます
-- coding agent capability に影響する実装や改修では、同じ task の中で `docs/design/coding-agent-capability-matrix.md` を更新します
-- 永続化構造、SQLite schema、JSON カラム、DB 外保存の責務に変更がある task では、同じ task の中で `docs/design/database-schema.md` も更新します
-- provider ごとの詳細設計は `docs/design/provider-adapter.md` と `docs/design/codex-capability-matrix.md` を参照します
+- [Release Notes](docs/releases/README.md): versionごとの追加機能、変更、互換性、検証結果
+- [Feature Guides](docs/features/README.md): 利用者向けの機能別ガイド
+- [Product Direction](docs/design/product-direction.md): プロダクトの優先順位と判断基準
+- [Documentation Map](docs/design/documentation-map.md): 現行設計文書の分類と入口
+- [Window Architecture](docs/design/window-architecture.md): Window間の責務とlifecycle
+- [Desktop UI](docs/design/desktop-ui.md): 現在の画面構成と操作
+- [Settings UI](docs/design/settings-ui.md): Settings Windowの責務
+- [Coding Agent Capability Matrix](docs/design/coding-agent-capability-matrix.md): providerごとの対応機能
+- [Provider Adapter](docs/design/provider-adapter.md): CodexとCopilotのadapter境界
+- [Database Schema](docs/design/database-schema.md): SQLiteとfile storageの保存構造
+- [Session Local Files](docs/design/session-local-files.md): Session Folderと添付ファイル
+- [Manual Test Checklist](docs/manual-test-checklist.md): 実機確認項目

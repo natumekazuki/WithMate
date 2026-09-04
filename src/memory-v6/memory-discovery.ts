@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import type { RuntimeBuildChannel } from "../runtime-discovery/runtime-discovery-contract.js";
+
 export const WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v2" as const;
 export const WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION = "withmate-memory-discovery-pair-pointer-v1" as const;
 export const WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME = "memory-v6.current.json" as const;
@@ -16,20 +18,25 @@ export type WithMateMemoryDiscoveryDocument = {
   baseUrl: string;
   apiSecret: string;
   adapterSecret: string;
+  applicationInstanceId?: string;
+  runtimeGenerationId?: string;
+  buildChannel?: RuntimeBuildChannel;
+  /** @deprecated This field has runtime generation semantics. */
   runtimeInstanceId: string;
   publishedAt: string;
 };
 
 export type WithMateMemoryDiscoveryPointer = {
   schemaVersion: typeof WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION;
+  /** @deprecated This field has runtime generation semantics. */
   runtimeInstanceId: string;
 };
 
 export function buildWithMateMemoryDiscoveryGenerationFileName(
   adapter: WithMateMemoryAdapterKind,
-  runtimeInstanceId: string,
+  runtimeGenerationId: string,
 ): string {
-  const generationId = createHash("sha256").update(runtimeInstanceId, "utf8").digest("hex");
+  const generationId = createHash("sha256").update(runtimeGenerationId, "utf8").digest("hex");
   return `memory-v6-${adapter}.${generationId}.json`;
 }
 

@@ -165,11 +165,25 @@ TypeScript testを追加または意味変更した場合は、base `4f6004da0f3
 
 ### 実装結果
 
-未実施。
+- `v6.3.26` を `--no-ff --no-commit` で通常 merge し、content 52件、add/add 8件を解消した。package/docs 6件、test 20件、Electron 17件、renderer 17件の計60件であり、解消後の conflict marker は0件である。
+- V6 schema は Role / WorkItem / coordination / execution / schedule / notification / transcript と、Memory / Character context / Affect afterglow を同じ required stateへ統合した。persistent store lifecycle は両runtimeの起動・終了順序を保持した。
+- Session storage/state は schema v6、immutable Role binding、WorkItem owner、`codexSpeed` / `codexReviewer`、running-turn atomic persistenceを共存させた。running-turnのcanonical summary生成ではRole binding列も同じtransaction snapshotから読む。
+- Session external runtime、raw HTTP、CLI、MCP、runtime catalog、IPC、preload、window API、broadcast/subscriptionを維持し、Memory / Glossary runtime・CLI・MCP・fallback認可と共存させた。
+- Home はpagination、stale response rejection、in-flight guard、invalidation refreshに、Schedules、Coordination、diagnostics、window restoreを統合した。Session UIはRole / WorkItem / coordinationに、message collapse/navigation、Glossary、Markdown front matter、file操作を統合した。
+- provider promptはSession context、pending coordination、SessionFolder attachment manifestを維持し、Affectは必要fieldだけを投影する。
+- package versionは`6.4.0`とし、v6.3.26の更新依存と`cron-parser`を統合した。`npm install --package-lock-only --ignore-scripts`でlockfileを再生成し、Memory / Session / Glossary CLIのbuild・packaging entryを共存させた。
+- TypeScript testの変更対象にはGit modeの`@test-value v1` metadataを付与した。source文字列位置を観測していたGlossary search revision testは、revision更新と遅延request競合を実DOMで観測するcomponent integration testへ置き換えた。
 
 ### 検証結果
 
-未実施。
+- conflict marker: 0。`git diff --check`: pass（Windows改行予告のみ）。
+- schema/storage/migration、Session orchestration、Memory/Auth、IPC/UI/packageの責務別targeted check: pass。全体testで見つかったrunning-turn Role bindingの9 failureは、専用storage queryとtest fixtureを契約へ合わせて修正後に再検証した。
+- `review-test-value` Git mode: extract exit 0、diagnostics 0。各担当sliceのrecord reviewは全件ACCEPT。REDESIGNとなった1件はcomponent integration testへ変更後にACCEPT。
+- `npm test`: 3,425 tests、3,424 pass、0 fail、1 skip。
+- `npm run typecheck`: pass。
+- `npm run build`: pass。renderer、Electron、Memory CLI、Session CLIを生成した。
+- `npm run dist:dir`: pass。`release/win-unpacked`へ`WithMate.exe`、Memory / Session / Glossaryの3 launcherと対応artifactを配置した。
+- `scripts/start-withmate-visual-check.ps1`: isolated userDataの再作成、V6 DB snapshot、Electron 44.1.1起動までpass。process `40772`は応答中でwindow title `Home`を確認した。
 
 ### Review結果
 
@@ -177,5 +191,6 @@ TypeScript testを追加または意味変更した場合は、base `4f6004da0f3
 
 ### Validation gap / 残リスク
 
-- installed NSIS installerからの全CLI起動はpackaging smokeの実行範囲に依存する。
+- Windows UI操作サービスが`Trusted RPC service is not configured: sky`を返したため、起動済みvisual-check windowの画面キャプチャと主要導線の目視操作は未実施。process応答とHome window生成までは確認済みである。
+- `dist:dir`のunpacked artifactとlauncher配置は確認したが、NSIS installerを生成・installした状態からの全CLI起動は未実施。
 - provider固有shell/Git/toolがSession Runtime API外で行う副作用は、v6.4.0 autonomy計画に記載されたvalidation gapを引き継ぐ。

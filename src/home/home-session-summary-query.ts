@@ -53,7 +53,9 @@ export function mergeSessionSummaryEntries(...sources: readonly HomeSessionSumma
   return merged;
 }
 
-export function buildHomeSessionSummaryEntries(pages: HomeSessionSummaryPageCollection): HomeSessionSummary[] {
+export function buildHomeSessionSummaryEntries(
+  pages: HomeSessionSummaryPageCollection,
+): HomeSessionSummary[] {
   return mergeSessionSummaryEntries(
     ...pages.pinned.map(({ page }) => page.entries),
     ...pages.recent.map(({ page }) => page.entries),

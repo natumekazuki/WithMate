@@ -33,7 +33,12 @@ V6 DBは起動時のidempotentなschema ensureとSQLite WALを既存境界とし
 - Memory appendとAffect linkは別storage transactionである。両方を独自transactionへ統合せず、Memory commit後・link前の失敗を呼び出し側へ返し、event由来の同一idempotency keyによるretryで同じMemory entryへ収束してlinkを完了する。
 - Affect訂正eventは元Memory entry IDも保持する。Affect commit後・replacement Memory commit前に失敗しても、retryは同じpredecessorをMemory V6のsupersede境界へ再送する。初回はactive predecessorを事前検証し、Memory commit後・Affect link前のretryではMemory V6のidempotency replayをpredecessorの状態検証より先に解決する。
 - idempotency replayとconflict rejectionは状態監査と分けたobservationへ記録し、運用metricsで集計する。通常の並行更新はappend-only transactionで直列化し、状態merge conflictを作らない。
-- afterglowは初期版へ含めない。session終了時にsession affectをrelationshipへコピーせず、relationship更新は明示eventだけにする。
+- session終了時にsession affectをrelationshipへコピーせず、relationship更新は明示eventだけにする。別Sessionのsession-layer eventによるafterglowは、同一local-user・同一Characterの直近source Sessionからread-time projectionとしてだけ合成し、新規event、Character Memory episode、relationship stateとして保存しない。
+- afterglowのhard TTLは既存`sessionHalfLifeMs`から導出し、`ageMs >= sessionHalfLifeMs`を除外する。cross-session weightは`0.5 * 0.5 ^ (ageMs / sessionHalfLifeMs)`とし、既存session decayと同じAffect dimensionsへ適用する。age 0でも最大0.5に留め、0.5は永続設定にしない。
+- current Sessionを除くTTL内のactive session-layer eventから、`occurredAt DESC`、event ID昇順のcanonical順で最新のeligible eventを持つ1 Sessionだけをsourceにする。source選択後にcontinuity、same-target、component capを適用し、filter後の古いSession fallbackは行わない。source Session queryは64 event rows、afterglow componentは3件を上限とする。
+- current Sessionに同じcomponent identityがあるafterglowは除外する。identityは`targetType + targetId + family`とし、family nullのlegacy eventは`targetType + targetId + legacy label`とする。task、bug、artifact、selfはcurrent Sessionのreset後active eventに同じ`targetType + targetId`がある場合だけ候補にする。baseline、relationship event、query、transcript、reason、evidenceはcontinuity判定に使わない。
+- afterglowとbaselineまたはrelationshipが同じeffective identityへ合成される場合、afterglowは非afterglowの代表labelを上書きしない。current Sessionの同一identityはcandidate段階で除外するため、current eventのlabel、intensity、eventIds、versionもafterglowから変更しない。
+- afterglowは既存session layerとしてpublic projectionへ現れ、public schema、既存の`targetId` / `label` field、`contributingLayers`、current Sessionのversionを変更しない。afterglowのsource Session identity、reason、evidenceはpublic response、MCP、CLI、promptへ出さず、metricsにもsource Session identity、target ID、自由label、reason、evidenceを保存しない。metricsは固定分類のaggregate counterだけを持つ。bounded query indexはV6のadditive `CREATE INDEX IF NOT EXISTS`でensureし、table、column、data backfill、`user_version`変更は行わない。
 - rollout既定はshadow modeとし、application serviceがmodeをcontextへ明示する。応答への反映強度はcallerが段階的に選ぶ。
 
 ## Alternatives
@@ -46,9 +51,9 @@ V6 DBは起動時のidempotentなschema ensureとSQLite WALを既存境界とし
 
 bugやtaskへの一時感情までrelationshipへ転写し得るため採用しない。
 
-### afterglowを初期実装へ含める
+### afterglowを永続化する
 
-減衰clock、再起動時評価、relationshipとの優先順位を追加する割に、明示的なsession/relationship分離の検証を弱めるため後続Issueへ分離する。
+session終了時にafterglowを新規eventやrelationshipへコピーすると、短いread-timeの余韻が永続stateへ昇格し、task系targetの漏れ、retry/restart時の重複、owner境界の複雑化を招くため採用しない。afterglowは既存eventをread-timeにbounded projectionする。
 
 ## Migration and rollback
 

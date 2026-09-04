@@ -13,6 +13,7 @@ import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-bi
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
 import { settleCharacterAffectTurnWithRetry } from "../../src-electron/character-affect-turn-settler.js";
 import { getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory-v6-http-server.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/provider-agent-runtime-turn-coordinator.js";
 import { startMemoryV6RuntimeApi } from "../../src-electron/memory-v6-runtime.js";
 import { runWithMateMemoryCli } from "../withmate-memory.js";
 import { createWithMateMemoryMcpServer } from "../withmate-memory-mcp.js";
@@ -26,12 +27,24 @@ function outputBuffer() {
 }
 
 describe("Character context CLI / MCP integration", () => {
-  it("通常Sessionの即時event列とpost-turn appraisalが同じstate、scope、versionへ収束する", async () => {
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "bound MCPはcaller identityなしでactor Sessionを解決し、CLI/MCPのaffect event列とpost-turn appraisalを同じstate、scope、versionへ収束させる"
+  // oracle = { type = "contract", ref = "Character affect settlement and ADR-023" }
+  // failure_mode = "MCPがcaller identityを要求する、またはruntime selector導入でCLIとMCPが別instanceへ分岐して同一Sessionのstateかversionが不一致になる"
+  // scope = "character-context-cli-mcp-runtime-binding"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("owner-bound runtimeで通常Sessionの即時event列とpost-turn appraisalが同じstate、scope、versionへ収束する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-character-runtime-"));
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-character-discovery-"));
     const bindingRegistry = new AgentRuntimeBindingRegistry();
+    const turns = new ProviderAgentRuntimeTurnCoordinator();
     const runtime = await startMemoryV6RuntimeApi({
       userDataPath,
+      applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+      buildChannel: "development",
+      registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
       runtimeDirectoryPath,
       now: () => new Date("2026-08-09T09:00:00.000Z"),
       listCharacters: () => [{
@@ -57,6 +70,7 @@ describe("Character context CLI / MCP integration", () => {
         snapshotAt: "2026-08-09T00:00:00.000Z",
       } : null,
       agentRuntimeBindingRegistry: bindingRegistry,
+      providerAgentRuntimeTurns: turns,
       resolveActorSession: (sessionId) => sessionId === "session-a"
         ? { id: "session-a", providerId: "codex", characterId: "character-a" }
         : null,
@@ -76,58 +90,70 @@ describe("Character context CLI / MCP integration", () => {
     const binding = bindingRegistry.issueOrReuse({
       actorSessionId: "session-a",
       providerId: "codex",
+      authoritySnapshot: { userId: "local-user", characterId: "character-a", allowedProjectIds: [] },
       operationGrants: getMemoryV6AgentRuntimeOperations(),
     });
-    const cliEnv = {
-      WITHMATE_MEMORY_DISCOVERY_FILE: runtime.discoveryFilePath,
-      WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
-    };
+    const turn = turns.begin({ actorSessionId: "session-a", providerId: "codex" });
     const operatorCliEnv = {
       WITHMATE_MEMORY_DISCOVERY_FILE: runtime.discoveryFilePath,
     };
     const mcpEnv = {
       WITHMATE_MEMORY_DISCOVERY_FILE: runtime.mcpDiscoveryFilePath,
       WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
+      WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+      WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability,
+      WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: runtime.applicationInstanceId,
+      WITHMATE_MEMORY_RUNTIME_GENERATION_ID: runtime.runtimeGenerationId,
     };
+    const runCli = (args: readonly string[], deps: Parameters<typeof runWithMateMemoryCli>[1] = {}) => runWithMateMemoryCli(args, {
+      ...deps,
+      registryRootDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+    });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createWithMateMemoryMcpServer({ env: mcpEnv });
+    const server = createWithMateMemoryMcpServer({
+      env: mcpEnv,
+      registryRootDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+    });
     const client = new Client({ name: "withmate-cli-mcp-integration", version: "1.0.0" });
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
 
       const beforeOutput = outputBuffer();
-      assert.equal(await runWithMateMemoryCli([
+      const beforeExitCode = await runCli([
         "context-get",
-        "--fallback-from",
-        "mcp",
         "--json",
         JSON.stringify({
           schemaVersion: "withmate-character-context-v1",
           characterId: "character-a",
+          sessionId: "session-a",
         }),
-      ], { env: cliEnv, stdout: beforeOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: operatorCliEnv, stdout: beforeOutput.stream, stderr: outputBuffer().stream });
+      assert.equal(beforeExitCode, 0, JSON.stringify(beforeOutput.json()));
       const before = beforeOutput.json();
 
       const metricsOutput = outputBuffer();
-      assert.equal(await runWithMateMemoryCli([
+      const metricsExitCode = await runCli([
         "character-metrics",
-      ], { env: operatorCliEnv, stdout: metricsOutput.stream, stderr: outputBuffer().stream }), 0);
-      assert.equal(metricsOutput.json().metrics.fallbacks["mcp->cli"], 1);
+      ], { env: operatorCliEnv, stdout: metricsOutput.stream, stderr: outputBuffer().stream });
+      assert.equal(metricsExitCode, 0, JSON.stringify(metricsOutput.json()));
+      assert.equal(metricsOutput.json().metrics.fallbacks["mcp->cli"] ?? 0, 0);
 
       const rejectedCliOutput = outputBuffer();
-      assert.equal(await runWithMateMemoryCli([
+      const rejectedCliExitCode = await runCli([
         "affect-appraise",
         "--json",
         JSON.stringify({
           schemaVersion: "withmate-character-context-v1",
           characterId: "character-a",
+          sessionId: "session-a",
           expectedVersion: before.affect.version,
           authority: { kind: "operator", reason: "Unknown family integration check." },
           candidates: [{
             schemaVersion: "withmate-affect-v1",
             characterId: "character-a",
             userId: "local-user",
+            sessionId: "session-a",
             layer: "session",
             targetType: "task",
             targetId: "unknown-family",
@@ -140,19 +166,17 @@ describe("Character context CLI / MCP integration", () => {
             idempotencyKey: "cli-unknown-family",
           }],
         }),
-      ], { env: cliEnv, stdout: rejectedCliOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: operatorCliEnv, stdout: rejectedCliOutput.stream, stderr: outputBuffer().stream });
+      assert.equal(rejectedCliExitCode, 0, JSON.stringify(rejectedCliOutput.json()));
       assert.equal(rejectedCliOutput.json().saved.length, 0);
       assert.equal(rejectedCliOutput.json().rejected[0].code, "invalid_input");
 
       const frustrationRequest = {
         name: "character_affect.appraise",
         arguments: {
-          characterId: "character-a",
           expectedVersion: before.affect.version,
           candidates: [{
             schemaVersion: "withmate-affect-v1",
-            characterId: "character-a",
-            userId: "local-user",
             layer: "session",
             targetType: "bug",
             targetId: "mcp-integration",
@@ -189,7 +213,6 @@ describe("Character context CLI / MCP integration", () => {
       const linkedEpisodeReadBack = await client.callTool({
         name: "character_memory.search",
         arguments: {
-          characterId: "character-a",
           query: "Integration failure observed",
           scope: { scope: "character" },
           limit: 5,
@@ -203,12 +226,9 @@ describe("Character context CLI / MCP integration", () => {
       const relief = await client.callTool({
         name: "character_affect.appraise",
         arguments: {
-          characterId: "character-a",
           expectedVersion: replayState.version,
           candidates: [{
             schemaVersion: "withmate-affect-v1",
-            characterId: "character-a",
-            userId: "local-user",
             layer: "session",
             targetType: "bug",
             targetId: "mcp-integration",
@@ -228,12 +248,9 @@ describe("Character context CLI / MCP integration", () => {
       const laterFrustration = await client.callTool({
         name: "character_affect.appraise",
         arguments: {
-          characterId: "character-a",
           expectedVersion: reliefState.version,
           candidates: [{
             schemaVersion: "withmate-affect-v1",
-            characterId: "character-a",
-            userId: "local-user",
             layer: "session",
             targetType: "bug",
             targetId: "mcp-integration",
@@ -309,7 +326,7 @@ describe("Character context CLI / MCP integration", () => {
       }
 
       const inspectOutput = outputBuffer();
-      assert.equal(await runWithMateMemoryCli([
+      assert.equal(await runCli([
         "affect-inspect",
         "--json",
         JSON.stringify({
@@ -338,19 +355,20 @@ describe("Character context CLI / MCP integration", () => {
 
       const mcpContextCall = await client.callTool({
         name: "character_context.get",
-        arguments: { characterId: "character-a" },
+        arguments: {},
       });
       assert.equal(mcpContextCall.isError, undefined, JSON.stringify(mcpContextCall));
       const mcpContext = mcpContextCall.structuredContent as Record<string, any>;
       const cliContextOutput = outputBuffer();
-      assert.equal(await runWithMateMemoryCli([
+      assert.equal(await runCli([
         "context-get",
         "--json",
         JSON.stringify({
           schemaVersion: "withmate-character-context-v1",
           characterId: "character-a",
+          sessionId: "session-a",
         }),
-      ], { env: cliEnv, stdout: cliContextOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: operatorCliEnv, stdout: cliContextOutput.stream, stderr: outputBuffer().stream }), 0);
       const cliContext = cliContextOutput.json();
       const lifecycleContext = await runtime.characterContextService.getContext({
         schemaVersion: "withmate-character-context-v1",
@@ -365,7 +383,7 @@ describe("Character context CLI / MCP integration", () => {
       )), true);
 
       const appendOutput = outputBuffer();
-      assert.equal(await runWithMateMemoryCli([
+      assert.equal(await runCli([
         "character-memory-append-episode",
         "--json",
         JSON.stringify({
@@ -382,11 +400,11 @@ describe("Character context CLI / MCP integration", () => {
             observedFact: "The integration test completed the CLI write.",
           },
         }),
-      ], { env: cliEnv, stdout: appendOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: operatorCliEnv, stdout: appendOutput.stream, stderr: outputBuffer().stream }), 0);
       const appended = appendOutput.json();
 
       const correctOutput = outputBuffer();
-      assert.equal(await runWithMateMemoryCli([
+      assert.equal(await runCli([
         "character-memory-correct",
         "--json",
         JSON.stringify({
@@ -404,13 +422,12 @@ describe("Character context CLI / MCP integration", () => {
             observedFact: "The CLI correction completed.",
           },
         }),
-      ], { env: cliEnv, stdout: correctOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: operatorCliEnv, stdout: correctOutput.stream, stderr: outputBuffer().stream }), 0);
       const corrected = correctOutput.json();
 
       const search = await client.callTool({
         name: "character_memory.search",
         arguments: {
-          characterId: "character-a",
           query: "CLI correction visible MCP",
           scope: { scope: "character" },
           limit: 5,
@@ -424,7 +441,6 @@ describe("Character context CLI / MCP integration", () => {
       const forgotten = await client.callTool({
         name: "character_memory.forget",
         arguments: {
-          characterId: "character-a",
           entryId: corrected.entry.id,
           reason: "user_request",
           idempotencyKey: "mcp-forget-1",
@@ -438,7 +454,7 @@ describe("Character context CLI / MCP integration", () => {
       failureDb.close();
 
       const failedCliSearchOutput = outputBuffer();
-      assert.equal(await runWithMateMemoryCli([
+      assert.equal(await runCli([
         "character-memory-search",
         "--json",
         JSON.stringify({
@@ -448,14 +464,13 @@ describe("Character context CLI / MCP integration", () => {
           scope: { scope: "character" },
           limit: 3,
         }),
-      ], { env: cliEnv, stdout: failedCliSearchOutput.stream, stderr: outputBuffer().stream }), 3);
+      ], { env: operatorCliEnv, stdout: failedCliSearchOutput.stream, stderr: outputBuffer().stream }), 3);
       assert.equal(failedCliSearchOutput.json().error.code, "storage_unavailable");
       assert.equal(failedCliSearchOutput.json().error.effect, "none");
 
       const failedMcpSearch = await client.callTool({
         name: "character_memory.search",
         arguments: {
-          characterId: "character-a",
           query: "server failure",
           scope: { scope: "character" },
           limit: 3,
@@ -467,6 +482,7 @@ describe("Character context CLI / MCP integration", () => {
     } finally {
       await client.close();
       await server.close();
+      turns.end(turn);
       await runtime.stop();
       await rm(userDataPath, { recursive: true, force: true });
       await rm(runtimeDirectoryPath, { recursive: true, force: true });

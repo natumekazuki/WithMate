@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -16,7 +16,13 @@ import type {
 import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_HEADER,
   type AgentRuntimeBindingPolicy,
+  type ProviderAgentRuntimeAuthoritySnapshot,
 } from "../src/agent-runtime/agent-runtime-binding-contract.js";
+import type {
+  MemoryTargetSelector,
+  ProjectTargetRef,
+} from "../src/memory-v6/memory-contract.js";
+import { MEMORY_ABSOLUTE_PATH_PATTERN } from "../src/memory-v6/memory-validation.js";
 import {
   createCharacterContextError,
   isCharacterContextError,
@@ -27,12 +33,23 @@ import type {
 } from "./character-context-application-service.js";
 import {
   createWithMateMemoryRuntimeChallenge,
+  createWithMateMemoryRuntimeOwnerChallenge,
+  createMemoryFallbackOperationFingerprint,
+  WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+  WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES,
+  WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH,
+  WITHMATE_MEMORY_FALLBACK_LISTED_PATH,
+  WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH,
   WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER,
+  WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER,
   WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH,
   WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
   WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER,
   WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
 } from "../src/memory-v6/memory-runtime-exchange.js";
+import type { MemoryV6ProjectContext } from "./memory-v6-context-resolver.js";
+import type { ProviderAgentRuntimeTurnCoordinator } from "./provider-agent-runtime-turn-coordinator.js";
 
 export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
@@ -40,7 +57,12 @@ export type MemoryV6HttpServerOptions = {
   apiSecret: string;
   operatorApiSecret: string;
   mcpApiSecret: string;
-  runtimeInstanceId: string;
+  fallbackAdmissionApiSecret?: string;
+  /** @deprecated use runtimeGenerationId; retained as a wire-compatibility alias. */
+  runtimeInstanceId?: string;
+  applicationInstanceId?: string;
+  runtimeGenerationId?: string;
+  buildChannel?: "installed" | "development" | "visual-check" | "unknown";
   host?: string;
   port?: number;
   maxBodyBytes?: number;
@@ -48,15 +70,39 @@ export type MemoryV6HttpServerOptions = {
   fileOperationRequestTimeoutMs?: number;
   maxConcurrentRequests?: number;
   agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
+  providerAgentRuntimeTurns?: Pick<ProviderAgentRuntimeTurnCoordinator, "admit">;
+  resolveProjectById?: (id: string) => MemoryV6ProjectContext | null;
+  resolveProjectByPath?: (projectPath: string) => MemoryV6ProjectContext | null;
+  resolveKnownProjectByPath?: (projectPath: string) => MemoryV6ProjectContext | null;
   resolveActorSession?: (
     sessionId: string,
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
+  routeAgentRuntimeExtension?: (
+    request: AgentRuntimeExtensionRequest,
+  ) => Promise<AgentRuntimeExtensionResponse | null> | AgentRuntimeExtensionResponse | null;
+  now?: () => Date;
 };
 
 export type AgentRuntimeActorSession = {
   id: string;
   providerId: string;
   characterId: string;
+  workspacePath?: string;
+};
+
+export type AgentRuntimeExtensionRequest = {
+  method: "GET" | "POST";
+  path: string;
+  body: unknown;
+  transport: CharacterContextTransport;
+  bindingReference?: string;
+  turnCapability?: string;
+  fallbackFrom?: "mcp";
+};
+
+export type AgentRuntimeExtensionResponse = {
+  status: number;
+  value: unknown;
 };
 
 export type MemoryV6HttpServer = {
@@ -169,10 +215,15 @@ export function agentRuntimeOperationForMemoryRoute(route: MemoryV6Route): strin
   return `memory.route.${route}`;
 }
 
+export const MEMORY_V6_FALLBACK_ADMISSION_OPERATION = "memory.fallback.admission";
+
 export function getMemoryV6AgentRuntimeOperations(): string[] {
-  return (Object.keys(MEMORY_V6_ROUTE_BINDING_POLICIES) as MemoryV6Route[])
+  return [
+    ...(Object.keys(MEMORY_V6_ROUTE_BINDING_POLICIES) as MemoryV6Route[])
     .filter((route) => MEMORY_V6_ROUTE_BINDING_POLICIES[route] !== "none")
-    .map(agentRuntimeOperationForMemoryRoute);
+    .map(agentRuntimeOperationForMemoryRoute),
+    MEMORY_V6_FALLBACK_ADMISSION_OPERATION,
+  ];
 }
 
 const mcpRoutes = new Set<MemoryV6Route>([
@@ -502,14 +553,37 @@ function createStatusChallenge(apiSecret: string, nonce: string): string {
   return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
 }
 
-function buildStatusResponse(input: { apiSecret: string; runtimeInstanceId: string; requestUrl: string | undefined }): unknown {
+function buildStatusResponse(input: {
+  apiSecret: string;
+  applicationInstanceId: string;
+  runtimeGenerationId: string;
+  buildChannel: "installed" | "development" | "visual-check" | "unknown";
+  requestUrl: string | undefined;
+}): unknown {
   const url = new URL(input.requestUrl ?? "/", "http://127.0.0.1");
   const nonce = url.searchParams.get(STATUS_CHALLENGE_NONCE_QUERY)?.trim() ?? "";
   return {
     ok: true,
-    runtimeInstanceId: input.runtimeInstanceId,
+    applicationInstanceId: input.applicationInstanceId,
+    runtimeGenerationId: input.runtimeGenerationId,
+    // Explicit legacy alias. It has the generation semantics, never the app identity.
+    runtimeInstanceId: input.runtimeGenerationId,
+    buildChannel: input.buildChannel,
     ...(nonce
-      ? { challenge: { nonce, hmacSha256: createStatusChallenge(input.apiSecret, nonce) } }
+      ? {
+          challenge: {
+            nonce,
+            // Legacy challenge remains for 6.3.x clients.
+            hmacSha256: createStatusChallenge(input.apiSecret, nonce),
+            // New clients verify this before sending exchange credentials/body.
+            ownerHmacSha256: createWithMateMemoryRuntimeOwnerChallenge(
+              input.apiSecret,
+              input.applicationInstanceId,
+              input.runtimeGenerationId,
+              nonce,
+            ),
+          },
+        }
       : {}),
   };
 }
@@ -517,9 +591,11 @@ function buildStatusResponse(input: { apiSecret: string; runtimeInstanceId: stri
 type RuntimeExchangePayload = {
   schemaVersion: typeof WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION;
   apiSecret: string;
-  adapter: CharacterContextTransport;
+  adapter: CharacterContextTransport | "agent_cli_fallback";
   adapterSecret: string;
   bindingReference?: string;
+  turnCapability?: string;
+  fallbackAdmissionSecret?: string;
   operation: {
     method: "GET" | "POST";
     path: string;
@@ -537,9 +613,11 @@ function parseRuntimeExchangePayload(value: unknown): RuntimeExchangePayload | n
   if (
     payload.schemaVersion !== WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION
     || typeof payload.apiSecret !== "string"
-    || (payload.adapter !== "cli" && payload.adapter !== "mcp")
+    || (payload.adapter !== "cli" && payload.adapter !== "mcp" && payload.adapter !== "agent_cli_fallback")
     || typeof payload.adapterSecret !== "string"
     || (payload.bindingReference !== undefined && typeof payload.bindingReference !== "string")
+    || (payload.turnCapability !== undefined && typeof payload.turnCapability !== "string")
+    || (payload.fallbackAdmissionSecret !== undefined && typeof payload.fallbackAdmissionSecret !== "string")
     || !operation
     || (operation.method !== "GET" && operation.method !== "POST")
     || typeof operation.path !== "string"
@@ -562,6 +640,369 @@ function authenticateRuntimeExchange(
   return timingSafeStringEqual(payload.adapterSecret, expectedAdapterSecret);
 }
 
+const AGENT_IDENTITY_FIELDS = new Set(["userId", "characterId", "sessionId", "owner", "scope"]);
+const TURN_PROTECTED_ROUTES = new Set<MemoryV6Route>([
+  "get_file", "export_files", "append", "forget", "move_entry",
+  "character_affect_appraise", "character_memory_append_episode",
+  "character_memory_correct", "character_memory_forget",
+]);
+
+function resolveProviderAgentRuntimeAuthority(
+  binding: ResolvedAgentRuntimeBinding,
+  actorSession: AgentRuntimeActorSession,
+): ProviderAgentRuntimeAuthoritySnapshot | null {
+  if (!binding.authoritySnapshot || typeof binding.authoritySnapshot !== "object") {
+    return null;
+  }
+  const snapshot = binding.authoritySnapshot as Partial<ProviderAgentRuntimeAuthoritySnapshot>;
+  if (
+    snapshot.userId !== "local-user"
+    || typeof snapshot.characterId !== "string"
+    || snapshot.characterId.trim() !== actorSession.characterId
+    || !Array.isArray(snapshot.allowedProjectIds)
+    || snapshot.allowedProjectIds.some((id) => typeof id !== "string" || !id.trim())
+  ) {
+    return null;
+  }
+  return {
+    userId: "local-user",
+    characterId: snapshot.characterId.trim(),
+    allowedProjectIds: [...new Set(snapshot.allowedProjectIds.map((id) => id.trim()))].sort(),
+  };
+}
+
+function findCallerIdentityField(value: unknown, allowScope = false): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findCallerIdentityField(item, allowScope);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (AGENT_IDENTITY_FIELDS.has(key) && !(allowScope && key === "scope")) return key;
+    const found = findCallerIdentityField(item, allowScope);
+    if (found) return found;
+  }
+  return null;
+}
+
+function agentInputError(route: MemoryV6Route, field: string, message: string): unknown {
+  return route.startsWith("character_")
+    ? createCharacterContextError("invalid_input", message, {
+        field, retryable: false, conversationMayContinue: true, effect: "none",
+      })
+    : createMemoryErrorResponse({
+        code: "MEMORY_INVALID_FIELD", message, field,
+        retryable: false, conversationMayContinue: true, effect: "none",
+      });
+}
+
+function requiresCurrentTurnCapability(route: MemoryV6Route, body: unknown): boolean {
+  if (route === "forget" && body && typeof body === "object" && !Array.isArray(body)) {
+    return (body as { dryRun?: unknown }).dryRun !== true;
+  }
+  return TURN_PROTECTED_ROUTES.has(route);
+}
+
+function turnAdmissionFailure(route: MemoryV6Route): unknown {
+  return route.startsWith("character_")
+    ? createCharacterContextError("authority_denied", "This operation requires the current provider turn capability.", {
+        retryable: false, conversationMayContinue: true, effect: "none",
+      })
+    : createMemoryErrorResponse({
+        code: "MEMORY_FORBIDDEN",
+        message: "This operation requires the current provider turn capability.",
+        retryable: false, conversationMayContinue: true, effect: "none",
+      });
+}
+
+type ResolvedAllowedProject = {
+  project: MemoryV6ProjectContext;
+  ref: ProjectTargetRef;
+};
+
+function parseProjectTargetRef(ref: unknown): ProjectTargetRef | null {
+  if (!ref || typeof ref !== "object" || Array.isArray(ref)) return null;
+  const value = ref as Record<string, unknown>;
+  if (
+    value.type === "id"
+    && Object.keys(value).length === 2
+    && typeof value.id === "string"
+    && value.id.length >= 1
+    && value.id.length <= 200
+  ) {
+    return { type: "id", id: value.id };
+  }
+  if (
+    value.type === "path"
+    && Object.keys(value).length === 2
+    && typeof value.path === "string"
+    && value.path.length >= 1
+    && value.path.length <= 1_000
+    && MEMORY_ABSOLUTE_PATH_PATTERN.test(value.path)
+  ) {
+    return { type: "path", path: value.path };
+  }
+  return null;
+}
+
+function resolveAllowedProject(
+  options: MemoryV6HttpServerOptions,
+  ref: unknown,
+  authority: ProviderAgentRuntimeAuthoritySnapshot,
+): ResolvedAllowedProject | null {
+  const value = parseProjectTargetRef(ref);
+  if (!value) return null;
+  const project = value.type === "id"
+    ? options.resolveProjectById?.(value.id.trim()) ?? (
+        authority.allowedProjectIds.includes(value.id.trim())
+          ? { id: value.id.trim(), displayName: value.id.trim() }
+          : null
+      )
+    : value.type === "path"
+      ? options.resolveProjectByPath?.(value.path) ?? options.resolveKnownProjectByPath?.(value.path) ?? null
+      : null;
+  if (!project || !authority.allowedProjectIds.includes(project.id)) return null;
+  const canonicalRef: ProjectTargetRef = value.type === "path" && !options.resolveProjectById?.(project.id)
+    ? value
+    : { type: "id", id: project.id };
+  return { project, ref: canonicalRef };
+}
+
+function resolveActorRelativeTarget(
+  options: MemoryV6HttpServerOptions,
+  value: unknown,
+  authority: ProviderAgentRuntimeAuthoritySnapshot,
+): MemoryTargetSelector | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const target = value as Record<string, unknown>;
+  if (target.kind === "user-global" && Object.keys(target).length === 1) {
+    return { owner: "user", scope: "global" };
+  }
+  if (target.kind === "character" && Object.keys(target).length === 1) {
+    return { owner: "character", scope: "character", character: { type: "id", id: authority.characterId } };
+  }
+  if ((target.kind === "project" || target.kind === "character+project") && Object.keys(target).length === 2) {
+    const resolvedProject = resolveAllowedProject(options, target.project, authority);
+    if (!resolvedProject) return null;
+    return target.kind === "project"
+      ? { owner: "project", scope: "project", project: resolvedProject.ref }
+      : {
+          owner: "character", scope: "project",
+          character: { type: "id", id: authority.characterId },
+          project: resolvedProject.ref,
+        };
+  }
+  return null;
+}
+
+type AgentBodyResult = { ok: true; value: unknown } | { ok: false; error: unknown };
+
+function resolveAgentBoundRequestBody(
+  options: MemoryV6HttpServerOptions,
+  route: MemoryV6Route,
+  body: unknown,
+  actorSession: AgentRuntimeActorSession,
+  authority: ProviderAgentRuntimeAuthoritySnapshot,
+): AgentBodyResult {
+  if (route.startsWith("character_")) {
+    if (route === "character_memory_search") {
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return { ok: false, error: agentInputError(route, "body", "Character Memory request body must be an object.") };
+      }
+      const request = body as Record<string, unknown>;
+      const scope = request.scope;
+      if (!scope || typeof scope !== "object" || Array.isArray(scope)) {
+        return { ok: false, error: agentInputError(route, "scope", "Character Memory scope is invalid or not authorized.") };
+      }
+      const actorScope = scope as Record<string, unknown>;
+      if (actorScope.scope === "character" && Object.keys(actorScope).length === 1) {
+        return { ok: true, value: applyActorSessionToBody(route, body, actorSession, authority) };
+      }
+      if (actorScope.scope === "project" && Object.keys(actorScope).length === 2) {
+        const resolvedProject = resolveAllowedProject(options, actorScope.project, authority);
+        if (resolvedProject) {
+          return {
+            ok: true,
+            value: applyActorSessionToBody(route, {
+              ...request,
+              scope: { scope: "project", project: resolvedProject.ref },
+            }, actorSession, authority),
+          };
+        }
+      }
+      return { ok: false, error: agentInputError(route, "scope", "Character Memory scope is invalid or not authorized.") };
+    }
+    return { ok: true, value: applyActorSessionToBody(route, body, actorSession, authority) };
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, error: agentInputError(route, "body", "Memory request body must be an object.") };
+  }
+  const request = { ...(body as Record<string, unknown>) };
+  if (route === "file_usage") {
+    return Object.keys(request).every((key) => key === "schemaVersion")
+      ? { ok: true, value: request }
+      : { ok: false, error: agentInputError(route, "body", "Agent-bound file usage accepts no detail options.") };
+  }
+  if (route === "list_targets") {
+    const filter = request.filter;
+    delete request.filter;
+    if (filter !== undefined) {
+      if (!filter || typeof filter !== "object" || Array.isArray(filter)) {
+        return { ok: false, error: agentInputError(route, "filter", "Memory target filter is invalid or not authorized.") };
+      }
+      const actorFilter = filter as Record<string, unknown>;
+      if (actorFilter.kind === "project" && actorFilter.project === undefined && Object.keys(actorFilter).length === 1) {
+        Object.assign(request, { owner: "project", scope: "project" });
+      } else if (actorFilter.kind === "character+project" && actorFilter.project === undefined && Object.keys(actorFilter).length === 1) {
+        Object.assign(request, {
+          owner: "character",
+          scope: "project",
+          character: { type: "id", id: authority.characterId },
+        });
+      } else {
+        const resolved = resolveActorRelativeTarget(options, filter, authority);
+        if (!resolved) return { ok: false, error: agentInputError(route, "filter", "Memory target filter is invalid or not authorized.") };
+        Object.assign(request, resolved);
+      }
+    }
+    return { ok: true, value: request };
+  }
+  if (Array.isArray(request.targets)) {
+    const targets = request.targets.map((target) => resolveActorRelativeTarget(options, target, authority));
+    if (targets.some((target) => target === null)) {
+      return { ok: false, error: agentInputError(route, "targets", "A Memory target is invalid or not authorized.") };
+    }
+    request.targets = targets;
+    return { ok: true, value: request };
+  }
+  if (route === "move_entry") {
+    const from = resolveActorRelativeTarget(options, request.from, authority);
+    const to = resolveActorRelativeTarget(options, request.to, authority);
+    if (!from || !to) {
+      return { ok: false, error: agentInputError(route, !from ? "from" : "to", "A Memory target is invalid or not authorized.") };
+    }
+    request.from = from;
+    request.to = to;
+    return { ok: true, value: request };
+  }
+  const target = resolveActorRelativeTarget(options, request.target, authority);
+  if (!target) return { ok: false, error: agentInputError(route, "target", "Memory target is invalid or not authorized.") };
+  request.target = target;
+  return { ok: true, value: request };
+}
+
+function projectAgentBoundResponse(
+  route: MemoryV6Route,
+  requestBody: unknown,
+  result: unknown,
+  authority: ProviderAgentRuntimeAuthoritySnapshot,
+): unknown {
+  if (isMemoryErrorResponse(result) || isCharacterContextError(result) || route.startsWith("character_")) {
+    return result;
+  }
+  const targetForSelector = (value: unknown): Record<string, unknown> | null => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const selector = value as Record<string, unknown>;
+    if (selector.owner === "user" && selector.scope === "global") return { kind: "user-global" };
+    if (selector.owner === "project" && selector.scope === "project") {
+      const project = selector.project as { type?: unknown; id?: unknown } | undefined;
+      return project?.type === "id" && typeof project.id === "string" && authority.allowedProjectIds.includes(project.id)
+        ? { kind: "project", project: { type: "id", id: project.id } }
+        : null;
+    }
+    if (selector.owner === "character" && selector.scope === "character") {
+      const character = selector.character as { type?: unknown; id?: unknown } | undefined;
+      return character?.type === "id" && character.id === authority.characterId ? { kind: "character" } : null;
+    }
+    if (selector.owner === "character" && selector.scope === "project") {
+      const character = selector.character as { type?: unknown; id?: unknown } | undefined;
+      const project = selector.project as { type?: unknown; id?: unknown } | undefined;
+      return character?.type === "id" && character.id === authority.characterId
+        && project?.type === "id" && typeof project.id === "string" && authority.allowedProjectIds.includes(project.id)
+        ? { kind: "character+project", project: { type: "id", id: project.id } }
+        : null;
+    }
+    return null;
+  };
+  const targetForResolvedRefs = (value: Record<string, unknown>): Record<string, unknown> | null => {
+    const owner = value.owner as { type?: unknown; id?: unknown } | undefined;
+    const scope = value.scope as { type?: unknown; id?: unknown } | undefined;
+    if (owner?.type === "user" && owner.id === authority.userId && scope?.type === "global") {
+      return { kind: "user-global" };
+    }
+    if (owner?.type === "project" && scope?.type === "project" && owner.id === scope.id
+      && typeof owner.id === "string" && authority.allowedProjectIds.includes(owner.id)) {
+      return { kind: "project", project: { type: "id", id: owner.id } };
+    }
+    if (owner?.type === "character" && owner.id === authority.characterId && scope?.type === "character") {
+      return { kind: "character" };
+    }
+    if (owner?.type === "character" && owner.id === authority.characterId && scope?.type === "project"
+      && typeof scope.id === "string" && authority.allowedProjectIds.includes(scope.id)) {
+      return { kind: "character+project", project: { type: "id", id: scope.id } };
+    }
+    return null;
+  };
+  const projectionFailure = Symbol("projectionFailure");
+  const projectValue = (value: unknown, depth = 0): unknown | typeof projectionFailure => {
+    if (Array.isArray(value)) {
+      const items = value.map((item) => projectValue(item, depth + 1));
+      if (route === "list_targets" && depth === 1) {
+        return items.filter((item) => item !== projectionFailure);
+      }
+      return items.some((item) => item === projectionFailure) ? projectionFailure : items;
+    }
+    if (!value || typeof value !== "object") return value;
+    const source = value as Record<string, unknown>;
+    const projected: Record<string, unknown> = {};
+    const resolvedTarget = targetForResolvedRefs(source);
+    const hasResolvedTargetRefs = (
+      source.owner !== null
+      && typeof source.owner === "object"
+      && !Array.isArray(source.owner)
+      && "type" in source.owner
+    ) || (
+      source.scope !== null
+      && typeof source.scope === "object"
+      && !Array.isArray(source.scope)
+      && "type" in source.scope
+    );
+    if (hasResolvedTargetRefs && !resolvedTarget) return projectionFailure;
+    const selectorTarget = source.target === undefined ? null : targetForSelector(source.target);
+    if (source.target !== undefined && !selectorTarget) return projectionFailure;
+    if (resolvedTarget) {
+      projected.target = resolvedTarget;
+    }
+    for (const [key, item] of Object.entries(source)) {
+      if ((resolvedTarget || selectorTarget) && (key === "owner" || key === "scope")) continue;
+      if (key === "target" || key === "from" || key === "to") {
+        const target = targetForSelector(item);
+        if (!target) return projectionFailure;
+        projected[key] = target;
+        continue;
+      }
+      if ((resolvedTarget || selectorTarget) && (key === "project" || key === "character")) continue;
+      const nested = projectValue(item, depth + 1);
+      if (nested === projectionFailure) return projectionFailure;
+      projected[key] = nested;
+    }
+    return projected;
+  };
+  const projected = projectValue(result);
+  return projected !== projectionFailure ? projected : createMemoryErrorResponse({
+    code: "MEMORY_FORBIDDEN",
+    message: "Memory response target is outside the bound actor authority.",
+    retryable: false,
+    conversationMayContinue: true,
+    effect: requiresCurrentTurnCapability(route, requestBody) ? "unknown" : "none",
+  });
+}
+
 async function routeResolvedRequest(input: {
   options: MemoryV6HttpServerOptions;
   route: MemoryV6Route;
@@ -569,11 +1010,15 @@ async function routeResolvedRequest(input: {
   transport: CharacterContextTransport | null;
   fallbackFrom?: "mcp";
   bindingReference?: string;
+  turnCapability?: string;
 }): Promise<unknown> {
   if (!input.transport || !canTransportInvokeRoute(input.transport, input.route)) {
     return createTransportAuthorityError(input.route);
   }
   if (input.fallbackFrom === "mcp" && input.transport === "cli") {
+    return createTransportAuthorityError(input.route);
+  }
+  if (input.fallbackFrom === "mcp") {
     input.options.characterContextService?.recordFallback("mcp", "cli");
   }
   const bindingResolution = await resolveRouteAgentRuntimeBinding({
@@ -581,6 +1026,9 @@ async function routeResolvedRequest(input: {
     route: input.route,
     body: input.body,
     bindingReference: input.bindingReference,
+    transport: input.transport,
+    fallbackFrom: input.fallbackFrom,
+    turnCapability: input.turnCapability,
   });
   if (!bindingResolution.ok) {
     return bindingResolution.error;
@@ -589,7 +1037,7 @@ async function routeResolvedRequest(input: {
   if (mcpGeneralPolicyError) {
     return mcpGeneralPolicyError;
   }
-  return input.route.startsWith("character_")
+  const result = await (input.route.startsWith("character_")
     ? routeCharacterContextRequest(
         input.options.characterContextService,
         bindingResolution.principal ?? createLocalUserMemoryPrincipal(),
@@ -602,11 +1050,19 @@ async function routeResolvedRequest(input: {
         bindingResolution.principal ?? createLocalUserMemoryPrincipal(),
         input.route,
         bindingResolution.body,
-      );
+      ));
+  return bindingResolution.authority
+    ? projectAgentBoundResponse(input.route, bindingResolution.body, result, bindingResolution.authority)
+    : result;
 }
 
 type RouteBindingResolution =
-  | { ok: true; body: unknown; principal: MemoryV6Principal | null }
+  | {
+      ok: true;
+      body: unknown;
+      principal: MemoryV6Principal | null;
+      authority: ProviderAgentRuntimeAuthoritySnapshot | null;
+    }
   | { ok: false; error: unknown };
 
 function bindingFailure(
@@ -636,27 +1092,11 @@ function bindingFailure(
   });
 }
 
-function hasDifferentCharacterTarget(body: unknown, characterId: string): boolean {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return false;
-  }
-  const request = body as Record<string, unknown>;
-  if (typeof request.characterId === "string" && request.characterId.trim() !== characterId) {
-    return true;
-  }
-  return Array.isArray(request.candidates) && request.candidates.some((candidate) => (
-    Boolean(candidate)
-    && typeof candidate === "object"
-    && !Array.isArray(candidate)
-    && typeof (candidate as { characterId?: unknown }).characterId === "string"
-    && (candidate as { characterId: string }).characterId.trim() !== characterId
-  ));
-}
-
 function applyActorSessionToBody(
   route: MemoryV6Route,
   body: unknown,
   actorSession: AgentRuntimeActorSession,
+  authority: ProviderAgentRuntimeAuthoritySnapshot,
 ): unknown {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return body;
@@ -665,12 +1105,14 @@ function applyActorSessionToBody(
   if (route === "character_affect_appraise") {
     return {
       ...request,
+      characterId: actorSession.characterId,
       sessionId: actorSession.id,
       candidates: Array.isArray(request.candidates)
         ? request.candidates.map((candidate) => (
             candidate && typeof candidate === "object" && !Array.isArray(candidate)
               ? {
                   ...(candidate as Record<string, unknown>),
+                  userId: authority.userId,
                   characterId: actorSession.characterId,
                   sessionId: actorSession.id,
                 }
@@ -680,7 +1122,18 @@ function applyActorSessionToBody(
     };
   }
   if (route === "character_context_get" || route === "character_memory_append_episode") {
-    return { ...request, sessionId: actorSession.id };
+    return {
+      ...request,
+      characterId: actorSession.characterId,
+      sessionId: actorSession.id,
+    };
+  }
+  if (
+    route === "character_memory_search"
+    || route === "character_memory_correct"
+    || route === "character_memory_forget"
+  ) {
+    return { ...request, characterId: actorSession.characterId };
   }
   return body;
 }
@@ -690,19 +1143,31 @@ async function resolveRouteAgentRuntimeBinding(input: {
   route: MemoryV6Route;
   body: unknown;
   bindingReference?: string;
+  transport: CharacterContextTransport;
+  fallbackFrom?: "mcp";
+  turnCapability?: string;
 }): Promise<RouteBindingResolution> {
-  const policy = MEMORY_V6_ROUTE_BINDING_POLICIES[input.route];
+  const agentBound = input.transport === "mcp" || input.fallbackFrom === "mcp";
+  const configuredPolicy = MEMORY_V6_ROUTE_BINDING_POLICIES[input.route];
+  const policy: AgentRuntimeBindingPolicy = agentBound && mcpRoutes.has(input.route)
+    ? "required"
+    : input.transport === "cli" && configuredPolicy === "required"
+      ? "optional"
+      : configuredPolicy;
   if (policy === "none") {
     if (input.bindingReference !== undefined) {
       return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
     }
-    return { ok: true, body: input.body, principal: null };
+    return { ok: true, body: input.body, principal: null, authority: null };
   }
   const bindingWasPresented = input.bindingReference !== undefined;
+  if (input.transport === "cli" && bindingWasPresented && input.fallbackFrom === undefined) {
+    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
+  }
   const reference = input.bindingReference?.trim();
   if (!bindingWasPresented) {
     return policy === "optional"
-      ? { ok: true, body: input.body, principal: null }
+      ? { ok: true, body: input.body, principal: null, authority: null }
       : { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_REQUIRED") };
   }
   if (!reference) {
@@ -726,23 +1191,49 @@ async function resolveRouteAgentRuntimeBinding(input: {
   ) {
     return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
   }
-  if (
-    (input.route === "character_context_get" || input.route === "character_affect_appraise")
-    && hasDifferentCharacterTarget(input.body, actorSession.characterId)
-  ) {
-    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
-  }
   const binding = resolved.binding;
+  if (!agentBound) {
+    return {
+      ok: true,
+      body: input.body,
+      principal: createSessionBindingMemoryPrincipal(binding, actorSession),
+      authority: null,
+    };
+  }
+  const authority = resolveProviderAgentRuntimeAuthority(binding, actorSession);
+  if (!authority) {
+    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+  }
+  const identityField = findCallerIdentityField(input.body, input.route === "character_memory_search");
+  if (identityField) {
+    return { ok: false, error: agentInputError(input.route, identityField, "Caller identity is not accepted.") };
+  }
+  if (input.fallbackFrom === "mcp" || requiresCurrentTurnCapability(input.route, input.body)) {
+    const admission = input.options.providerAgentRuntimeTurns?.admit({
+      actorSessionId: binding.actorSessionId,
+      providerId: binding.providerId,
+      turnCapability: input.turnCapability,
+    });
+    if (!admission?.ok) {
+      return { ok: false, error: turnAdmissionFailure(input.route) };
+    }
+  }
+  const body = resolveAgentBoundRequestBody(input.options, input.route, input.body, actorSession, authority);
+  if (!body.ok) {
+    return { ok: false, error: body.error };
+  }
   return {
     ok: true,
-    body: applyActorSessionToBody(input.route, input.body, actorSession),
-    principal: createSessionBindingMemoryPrincipal(binding, actorSession),
+    body: body.value,
+    principal: createSessionBindingMemoryPrincipal(binding, actorSession, authority),
+    authority,
   };
 }
 
 function createSessionBindingMemoryPrincipal(
   binding: ResolvedAgentRuntimeBinding,
   actorSession: AgentRuntimeActorSession,
+  authority?: ProviderAgentRuntimeAuthoritySnapshot,
 ): MemoryV6Principal {
   return {
     type: "session_binding",
@@ -750,6 +1241,7 @@ function createSessionBindingMemoryPrincipal(
     sessionId: binding.actorSessionId,
     providerId: binding.providerId,
     characterId: actorSession.characterId,
+    ...(authority ? { allowedProjectIds: authority.allowedProjectIds } : {}),
     permissions: LOCAL_USER_MEMORY_PERMISSIONS,
   };
 }
@@ -787,21 +1279,168 @@ function validateMcpGeneralMutationPolicy(
   return null;
 }
 
+function validateFallbackAdmissionActor(input: {
+  options: MemoryV6HttpServerOptions;
+  bindingReference: unknown;
+  turnCapability: unknown;
+}): { ok: true; bindingReference: string; turnCapability: string } | { ok: false } {
+  const bindingReference = typeof input.bindingReference === "string" ? input.bindingReference.trim() : "";
+  const turnCapability = typeof input.turnCapability === "string" ? input.turnCapability.trim() : "";
+  if (!bindingReference || !turnCapability) {
+    return { ok: false };
+  }
+  const resolved = input.options.agentRuntimeBindingRegistry?.resolve(
+    bindingReference,
+    MEMORY_V6_FALLBACK_ADMISSION_OPERATION,
+  );
+  if (!resolved?.ok) {
+    return { ok: false };
+  }
+  const turn = input.options.providerAgentRuntimeTurns?.admit({
+    actorSessionId: resolved.binding.actorSessionId,
+    providerId: resolved.binding.providerId,
+    turnCapability,
+  });
+  return turn?.ok ? { ok: true, bindingReference, turnCapability } : { ok: false };
+}
+
+const FALLBACK_ADMISSION_TTL_MS = 60_000;
+const FALLBACK_ADMISSION_MAX_RECORDS = 256;
+
+type FallbackAdmissionRecord = {
+  phase: "listed" | "eligible" | "consumed";
+  expiresAtMs: number;
+  admissionToken: string;
+  fingerprint?: string;
+  rollbackToken?: string;
+};
+
+function fallbackAdmissionKey(bindingReference: string, turnCapability: string): string {
+  return createHash("sha256")
+    .update(`${bindingReference}\0${turnCapability}`, "utf8")
+    .digest("base64url");
+}
+
+class MemoryFallbackAdmissionState {
+  readonly #records = new Map<string, FallbackAdmissionRecord>();
+
+  #purgeExpired(nowMs: number): void {
+    for (const [key, record] of this.#records) {
+      if (record.expiresAtMs <= nowMs) {
+        this.#records.delete(key);
+      }
+    }
+  }
+
+  markListed(
+    bindingReference: string,
+    turnCapability: string,
+    nowMs: number,
+  ): { ok: true; admissionToken: string; rollbackToken?: string } | { ok: false } {
+    this.#purgeExpired(nowMs);
+    const key = fallbackAdmissionKey(bindingReference, turnCapability);
+    const existing = this.#records.get(key);
+    if (existing) {
+      return { ok: true, admissionToken: existing.admissionToken };
+    }
+    if (this.#records.size >= FALLBACK_ADMISSION_MAX_RECORDS) {
+      return { ok: false };
+    }
+    const admissionToken = randomUUID();
+    const rollbackToken = randomUUID();
+    this.#records.set(key, {
+      phase: "listed",
+      expiresAtMs: nowMs + FALLBACK_ADMISSION_TTL_MS,
+      admissionToken,
+      rollbackToken,
+    });
+    return { ok: true, admissionToken, rollbackToken };
+  }
+
+  rollbackListed(bindingReference: string, turnCapability: string, rollbackToken: string, nowMs: number): boolean {
+    this.#purgeExpired(nowMs);
+    const key = fallbackAdmissionKey(bindingReference, turnCapability);
+    const record = this.#records.get(key);
+    if (!record || record.phase !== "listed" || record.rollbackToken !== rollbackToken) {
+      return false;
+    }
+    this.#records.delete(key);
+    return true;
+  }
+
+  markEligible(
+    bindingReference: string,
+    turnCapability: string,
+    admissionToken: string,
+    fingerprint: string,
+    nowMs: number,
+  ): boolean {
+    this.#purgeExpired(nowMs);
+    const key = fallbackAdmissionKey(bindingReference, turnCapability);
+    const record = this.#records.get(key);
+    if (!record || record.phase !== "listed" || record.admissionToken !== admissionToken) {
+      return false;
+    }
+    this.#records.set(key, {
+      phase: "eligible",
+      expiresAtMs: nowMs + FALLBACK_ADMISSION_TTL_MS,
+      admissionToken: record.admissionToken,
+      fingerprint,
+    });
+    return true;
+  }
+
+  admit(
+    bindingReference: string,
+    turnCapability: string,
+    fingerprint: string,
+    nowMs: number,
+  ): boolean {
+    this.#purgeExpired(nowMs);
+    const key = fallbackAdmissionKey(bindingReference, turnCapability);
+    const record = this.#records.get(key);
+    if (
+      !record
+      || (record.phase !== "eligible" && record.phase !== "consumed")
+      || record.fingerprint !== fingerprint
+    ) {
+      return false;
+    }
+    this.#records.set(key, {
+      phase: "consumed",
+      expiresAtMs: record.expiresAtMs,
+      admissionToken: record.admissionToken,
+      fingerprint,
+    });
+    return true;
+  }
+}
+
 export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): MemoryV6HttpServer {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
   const apiSecret = requireNonEmptySecret(options.apiSecret, "apiSecret");
   const operatorApiSecret = requireNonEmptySecret(options.operatorApiSecret, "operatorApiSecret");
   const mcpApiSecret = requireNonEmptySecret(options.mcpApiSecret, "mcpApiSecret");
-  const runtimeInstanceId = requireNonEmptySecret(options.runtimeInstanceId, "runtimeInstanceId");
+  const fallbackAdmissionApiSecret = options.fallbackAdmissionApiSecret?.trim() ?? "";
+  const applicationInstanceId = requireNonEmptySecret(options.applicationInstanceId ?? "legacy", "applicationInstanceId");
+  const runtimeGenerationId = requireNonEmptySecret(
+    options.runtimeGenerationId ?? options.runtimeInstanceId ?? "",
+    "runtimeGenerationId",
+  );
+  const buildChannel = options.buildChannel ?? "unknown";
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const fileOperationRequestTimeoutMs = options.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS;
   const maxConcurrentRequests = options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
+  const fallbackAdmissions = new MemoryFallbackAdmissionState();
+  const nowMs = (): number => (options.now?.() ?? new Date()).getTime();
   let activeRequests = 0;
+  let activeAgentExtensionRequests = 0;
 
   const server = createServer(async (request, response) => {
     let admitted = false;
+    let admittedAgentExtension = false;
     try {
       if (!isLoopbackRemoteAddress(request.socket.remoteAddress)) {
         writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Memory API only accepts loopback requests."));
@@ -819,7 +1458,13 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
           return;
         }
-        writeJson(response, 200, buildStatusResponse({ apiSecret, runtimeInstanceId, requestUrl: request.url }));
+        writeJson(response, 200, buildStatusResponse({
+          apiSecret,
+          applicationInstanceId,
+          runtimeGenerationId,
+          buildChannel,
+          requestUrl: request.url,
+        }));
         return;
       }
 
@@ -830,10 +1475,14 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         }
         const nonce = request.headers[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER];
         const expectedRuntimeInstanceId = request.headers[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER];
+        const expectedRuntimeGenerationId = request.headers[WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER];
+        const expectedApplicationInstanceId = request.headers[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER];
         if (
           typeof nonce !== "string"
-          || typeof expectedRuntimeInstanceId !== "string"
-          || expectedRuntimeInstanceId !== runtimeInstanceId
+          || (typeof expectedRuntimeGenerationId !== "string" && typeof expectedRuntimeInstanceId !== "string")
+          || (expectedRuntimeGenerationId !== undefined && expectedRuntimeGenerationId !== runtimeGenerationId)
+          || (expectedRuntimeInstanceId !== undefined && expectedRuntimeInstanceId !== runtimeGenerationId)
+          || (expectedApplicationInstanceId !== undefined && expectedApplicationInstanceId !== applicationInstanceId)
         ) {
           writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Memory runtime identity challenge is invalid."));
           return;
@@ -848,10 +1497,12 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         response.setTimeout(requestTimeoutMs);
         response.writeEarlyHints({
           link: "</v1/exchange>; rel=preconnect",
-          [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: runtimeInstanceId,
+          [WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER]: runtimeGenerationId,
+          [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: runtimeGenerationId,
+          [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER]: applicationInstanceId,
           [WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER]: createWithMateMemoryRuntimeChallenge(
             apiSecret,
-            runtimeInstanceId,
+            runtimeGenerationId,
             nonce,
           ),
         });
@@ -861,8 +1512,113 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           return;
         }
         const operationUrl = new URL(payload.operation.path, "http://127.0.0.1");
+        if (payload.adapter === "cli" && payload.bindingReference !== undefined) {
+          writeJson(response, 403, memoryTransportError(
+            "MEMORY_FORBIDDEN",
+            "Operator CLI requests cannot use an Agent runtime binding.",
+          ));
+          return;
+        }
+        if (
+          operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_PATH
+          || operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH
+          || operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH
+        ) {
+          if (
+            payload.adapter !== "mcp"
+            || payload.operation.method !== "POST"
+            || payload.operation.fallbackFrom !== undefined
+            || !fallbackAdmissionApiSecret
+            || !payload.fallbackAdmissionSecret
+            || !timingSafeStringEqual(payload.fallbackAdmissionSecret, fallbackAdmissionApiSecret)
+          ) {
+            writeJson(response, 403, memoryTransportError(
+              "MEMORY_FORBIDDEN",
+              "Fallback admission control requires the dedicated MCP reporter credential.",
+            ));
+            return;
+          }
+          const actor = validateFallbackAdmissionActor({
+            options,
+            bindingReference: payload.bindingReference,
+            turnCapability: payload.turnCapability,
+          });
+          if (!actor.ok) {
+            writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Fallback admission requires the current bound turn."));
+            return;
+          }
+          if (operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_PATH) {
+            const listed = fallbackAdmissions.markListed(actor.bindingReference, actor.turnCapability, nowMs());
+            writeJson(
+              response,
+              listed.ok ? 200 : 503,
+              listed.ok
+                ? {
+                  ok: true,
+                  fallbackAdmission: "listed",
+                  admissionToken: listed.admissionToken,
+                  ...(listed.rollbackToken ? { rollbackToken: listed.rollbackToken } : {}),
+                }
+                : memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Fallback admission capacity is unavailable."),
+            );
+            return;
+          }
+          const body = payload.operation.body;
+          if (operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH) {
+            const rollbackToken = body && typeof body === "object" && !Array.isArray(body)
+              && typeof (body as Record<string, unknown>).rollbackToken === "string"
+              && Object.keys(body as Record<string, unknown>).length === 1
+                ? (body as Record<string, string>).rollbackToken.trim()
+                : "";
+            const rolledBack = Boolean(rollbackToken) && fallbackAdmissions.rollbackListed(
+              actor.bindingReference,
+              actor.turnCapability,
+              rollbackToken,
+              nowMs(),
+            );
+            writeJson(
+              response,
+              rolledBack ? 200 : 403,
+              rolledBack
+                ? { ok: true, fallbackAdmission: "rolled_back" }
+                : memoryTransportError("MEMORY_FORBIDDEN", "Fallback admission rollback does not match an active tools/list registration."),
+            );
+            return;
+          }
+          const fingerprint = body && typeof body === "object" && !Array.isArray(body)
+            && typeof (body as Record<string, unknown>).fingerprint === "string"
+            && typeof (body as Record<string, unknown>).admissionToken === "string"
+            && Object.keys(body as Record<string, unknown>).length === 2
+              ? (body as Record<string, string>).fingerprint.trim()
+              : "";
+          const admissionToken = body && typeof body === "object" && !Array.isArray(body)
+            && typeof (body as Record<string, unknown>).admissionToken === "string"
+              ? (body as Record<string, string>).admissionToken.trim()
+              : "";
+          const eligible = Boolean(fingerprint) && Boolean(admissionToken) && fallbackAdmissions.markEligible(
+            actor.bindingReference,
+            actor.turnCapability,
+            admissionToken,
+            fingerprint,
+            nowMs(),
+          );
+          writeJson(
+            response,
+            eligible ? 200 : 403,
+            eligible
+              ? { ok: true, fallbackAdmission: "eligible" }
+              : memoryTransportError("MEMORY_FORBIDDEN", "Fallback admission was not preceded by tools/list."),
+          );
+          return;
+        }
         if (operationUrl.pathname === "/v1/status" && payload.operation.method === "GET") {
-          writeJson(response, 200, { ok: true, runtimeInstanceId });
+          writeJson(response, 200, {
+            ok: true,
+            applicationInstanceId,
+            runtimeGenerationId,
+            runtimeInstanceId: runtimeGenerationId,
+            buildChannel,
+          });
           return;
         }
         const route = routeByPath.get(operationUrl.pathname);
@@ -870,7 +1626,11 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Memory API route was not found."));
           return;
         }
-        if (!canTransportInvokeRoute(payload.adapter, route)) {
+        const transport = payload.adapter === "agent_cli_fallback" ? "mcp" : payload.adapter;
+        const validFallbackMode = payload.adapter === "agent_cli_fallback"
+          ? payload.operation.fallbackFrom === "mcp" && Boolean(payload.bindingReference?.trim())
+          : payload.operation.fallbackFrom === undefined;
+        if (!validFallbackMode || !canTransportInvokeRoute(transport, route)) {
           const error = createTransportAuthorityError(route);
           writeJson(response, statusForMemoryResponse(error), error);
           return;
@@ -891,15 +1651,104 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           : route === "file_usage"
             ? buildFileUsageRequestOptions(payload.operation.path)
             : payload.operation.body;
+        if (payload.adapter === "agent_cli_fallback") {
+          const bindingReference = payload.bindingReference?.trim() ?? "";
+          const turnCapability = payload.turnCapability?.trim() ?? "";
+          const fingerprint = createMemoryFallbackOperationFingerprint({
+            method: payload.operation.method,
+            path: payload.operation.path,
+            body: payload.operation.body,
+          });
+          if (
+            route === "get_file"
+            || route === "export_files"
+            || !bindingReference
+            || !turnCapability
+            || !fallbackAdmissions.admit(bindingReference, turnCapability, fingerprint, nowMs())
+          ) {
+            writeJson(response, 403, memoryTransportError(
+              "MEMORY_FORBIDDEN",
+              "Agent CLI fallback requires a current server-verified MCP transport admission.",
+            ));
+            return;
+          }
+        }
         const result = await routeResolvedRequest({
           options,
           route,
           body,
-          transport: payload.adapter,
+          transport,
           bindingReference: payload.bindingReference,
+          turnCapability: payload.turnCapability,
           ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
         });
         writeJson(response, statusForMemoryResponse(result), result);
+        return;
+      }
+
+      if (pathname === WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH) {
+        if (request.method !== "POST" || !acceptsJsonRequest(request)) {
+          writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Agent runtime extension exchange requires JSON POST."));
+          return;
+        }
+        const nonce = request.headers[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER];
+        const expectedRuntimeInstanceId = request.headers[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER];
+        const expectedRuntimeGenerationId = request.headers[WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER];
+        const expectedApplicationInstanceId = request.headers[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER];
+        if (
+          typeof nonce !== "string"
+          || (typeof expectedRuntimeGenerationId !== "string" && typeof expectedRuntimeInstanceId !== "string")
+          || (expectedRuntimeGenerationId !== undefined && expectedRuntimeGenerationId !== runtimeGenerationId)
+          || (expectedRuntimeInstanceId !== undefined && expectedRuntimeInstanceId !== runtimeGenerationId)
+          || (expectedApplicationInstanceId !== undefined && expectedApplicationInstanceId !== applicationInstanceId)
+        ) {
+          writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Agent runtime identity challenge is invalid."));
+          return;
+        }
+        if (activeAgentExtensionRequests >= 1) {
+          writeJson(response, 429, memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Agent runtime extension exchange has an in-flight request."));
+          return;
+        }
+        activeAgentExtensionRequests += 1;
+        admittedAgentExtension = true;
+        request.setTimeout(requestTimeoutMs);
+        response.setTimeout(requestTimeoutMs);
+        response.writeEarlyHints({
+          link: `<${WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH}>; rel=preconnect`,
+          [WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER]: runtimeGenerationId,
+          [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: runtimeGenerationId,
+          [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER]: applicationInstanceId,
+          [WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER]: createWithMateMemoryRuntimeChallenge(
+            apiSecret,
+            runtimeGenerationId,
+            nonce,
+          ),
+        });
+        const payload = parseRuntimeExchangePayload(
+          await readJsonBody(request, WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES),
+        );
+        if (!payload || !authenticateRuntimeExchange(payload, apiSecret, operatorApiSecret, mcpApiSecret)) {
+          writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Agent runtime extension exchange is not authorized."));
+          return;
+        }
+        if (payload.adapter === "agent_cli_fallback" || payload.operation.fallbackFrom !== undefined) {
+          writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Agent runtime extension does not accept Memory CLI fallback mode."));
+          return;
+        }
+        const extensionResponse = await options.routeAgentRuntimeExtension?.({
+          method: payload.operation.method,
+          path: payload.operation.path,
+          body: payload.operation.body,
+          transport: payload.adapter,
+          bindingReference: payload.bindingReference,
+          turnCapability: payload.turnCapability,
+          ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
+        }) ?? null;
+        if (!extensionResponse) {
+          writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Agent runtime extension route was not found."));
+          return;
+        }
+        writeJson(response, extensionResponse.status, extensionResponse.value);
         return;
       }
 
@@ -973,6 +1822,9 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
     } finally {
       if (admitted) {
         activeRequests -= 1;
+      }
+      if (admittedAgentExtension) {
+        activeAgentExtensionRequests -= 1;
       }
     }
   });

@@ -4,7 +4,7 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { SessionDiffPreview, SessionFilePreview } from "./file-explorer/SessionFilePreview.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import type {
-  FileRootGitChangeScope,
+  FileRootGitDiffScope,
   SessionFilePreviewWindowPayload,
 } from "./file-explorer/file-explorer-contract.js";
 import {
@@ -14,7 +14,7 @@ import {
 } from "./file-explorer/file-explorer-contract.js";
 
 type DiffState = {
-  scope: FileRootGitChangeScope;
+  scope: FileRootGitDiffScope;
   patch: string;
   revision: number;
 };
@@ -49,9 +49,9 @@ export default function FilePreviewApp() {
   const api = getWithMateApi();
   const [payload, setPayload] = useState<SessionFilePreviewWindowPayload | null>(null);
   const [loadFinished, setLoadFinished] = useState(false);
-  const [diffScopes, setDiffScopes] = useState<FileRootGitChangeScope[]>([]);
+  const [diffScopes, setDiffScopes] = useState<FileRootGitDiffScope[]>([]);
   const [diffState, setDiffState] = useState<DiffState | null>(null);
-  const [diffLoadingScope, setDiffLoadingScope] = useState<FileRootGitChangeScope | null>(null);
+  const [diffLoadingScope, setDiffLoadingScope] = useState<FileRootGitDiffScope | null>(null);
   const [navigationMessage, setNavigationMessage] = useState("");
   const diffRequestRevisionRef = useRef(0);
 
@@ -124,7 +124,7 @@ export default function FilePreviewApp() {
     };
   }, [api, payload]);
 
-  const loadDiff = useCallback(async (scope: FileRootGitChangeScope): Promise<string | null> => {
+  const loadDiff = useCallback(async (scope: FileRootGitDiffScope): Promise<string | null> => {
     if (!api || !payload || !isSessionFileRootResource(payload.resource)) {
       return "Git diff is not available for this file.";
     }

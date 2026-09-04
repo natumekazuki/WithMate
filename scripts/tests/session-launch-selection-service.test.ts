@@ -49,13 +49,23 @@ function createLatestSessionSummary(
     reasoningEffort: "high",
     approvalMode: "never",
     codexSandboxMode: "danger-full-access",
+    codexSpeed: "fast",
+    codexReviewer: "auto-review",
     customAgentName: "reviewer",
     ...overrides,
   } as SessionSummary;
 }
 
 describe("SessionLaunchSelectionService", () => {
-  it("選択した provider の直近 Session から五つの実行設定をまとめて解決する", async () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "新規Sessionは直近SessionがFastかつAuto-reviewでもCodex speedをStandard、ReviewerをUserから開始する"
+  // oracle = { type = "contract", ref = "accepted behavior: new Session default" }
+  // failure_mode = "新規Sessionが直近SessionのFastまたはAuto-reviewを暗黙継承する"
+  // scope = "session-launch-selection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("選択した provider の直近 Session から実行設定をまとめて解決する", async () => {
     const queriedProviderIds: string[] = [];
     const service = new SessionLaunchSelectionService({
       getAppSettings: () => normalizeAppSettings({
@@ -81,10 +91,20 @@ describe("SessionLaunchSelectionService", () => {
       reasoningEffort: "high",
       approvalMode: "never",
       codexSandboxMode: "danger-full-access",
+      codexSpeed: "standard",
+      codexReviewer: "user",
       customAgentName: "reviewer",
     });
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "履歴のない新規SessionはCodex speedをStandard、ReviewerをUserで初期化する"
+  // oracle = { type = "contract", ref = "accepted behavior: new Session default" }
+  // failure_mode = "履歴のない新規SessionがFastまたはAuto-reviewで作成される"
+  // scope = "session-launch-selection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("対象 provider の履歴がなければ catalog と安全側の既定値を使う", async () => {
     const service = new SessionLaunchSelectionService({
       getAppSettings: () => normalizeAppSettings({
@@ -105,6 +125,8 @@ describe("SessionLaunchSelectionService", () => {
       reasoningEffort: "high",
       approvalMode: "untrusted",
       codexSandboxMode: "workspace-write",
+      codexSpeed: "standard",
+      codexReviewer: "user",
       customAgentName: "",
     });
   });

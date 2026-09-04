@@ -7,6 +7,14 @@ import { describe, it } from "node:test";
 import { parseBenchmarkArgs, runDataLoadingBenchmark } from "../benchmark-data-loading.js";
 
 describe("data loading benchmark", () => {
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 10 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-10" }
+  // failure_mode = "line 10 violates its expected output or boundary behavior"
+  // scope = "data-loading-benchmark.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("synthetic V2 DB を生成して主要 read path を計測できる", async () => {
     const dirPath = mkdtempSync(join(tmpdir(), "withmate-data-loading-benchmark-test-"));
     try {
@@ -28,18 +36,32 @@ describe("data loading benchmark", () => {
       assert.equal(result.generated.rawItems, 12);
       assert.ok(result.generated.dbBytes > 0);
       assert.equal(result.sample.sessionSummaryCount, 2);
+      assert.equal(result.sample.sessionSummaryPageCount, 2);
+      assert.equal(result.sample.searchSessionSummaryPageCount, 2);
+      assert.equal(result.sample.sessionCharacterUsageCount, 1);
       assert.equal(result.sample.firstSessionMessageCount, 4);
       assert.equal(result.sample.middleSessionMessageCount, 4);
       assert.equal(result.sample.firstAuditPageCount, 2);
       assert.equal(result.sample.firstAuditDetailOperationCount, 2);
       assert.ok(result.timingsMs.generateDatabase >= 0);
       assert.ok(result.timingsMs.listSessionSummaries >= 0);
+      assert.ok(result.timingsMs.listSessionSummaryPage >= 0);
+      assert.ok(result.timingsMs.searchSessionSummaryPage >= 0);
+      assert.ok(result.timingsMs.listSessionCharacterUsage >= 0);
       assert.ok(result.timingsMs.auditDetailFirstEntry >= 0);
     } finally {
       rmSync(dirPath, { recursive: true, force: true });
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 49 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-49" }
+  // failure_mode = "line 49 violates its expected output or boundary behavior"
+  // scope = "data-loading-benchmark.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("CLI 引数を benchmark options に変換できる", () => {
     assert.deepEqual(parseBenchmarkArgs([
       "--profile",

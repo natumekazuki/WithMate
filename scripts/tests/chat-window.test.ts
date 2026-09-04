@@ -70,6 +70,14 @@ function createChatWindowProps(
   };
 }
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 73 preserves its observable contract"
+// oracle = { type = "contract", ref = "-73" }
+// failure_mode = "line 73 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレンダリングする", () => {
   const html = renderToStaticMarkup(React.createElement(ChatWindowStatusScreen, { message: "準備しています。" }));
 
@@ -79,6 +87,14 @@ test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレン�
   assert.doesNotMatch(html, /session-plain/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 82 preserves its observable contract"
+// oracle = { type = "contract", ref = "-82" }
+// failure_mode = "line 82 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatWindow は preview と compact ActionDock の間に recovery actions を維持する", () => {
   const props = createChatWindowProps();
   props.mainContent = React.createElement("div", null, "File Preview");
@@ -93,6 +109,14 @@ test("ChatWindow は preview と compact ActionDock の間に recovery actions �
   assert.ok(html.indexOf("Retry Actions") < html.indexOf("session-action-dock-slot"));
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 96 preserves its observable contract"
+// oracle = { type = "contract", ref = "-96" }
+// failure_mode = "line 96 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatWindow composer はplaceholderなしでもaccessible nameを維持する", () => {
   const props = createChatWindowProps();
   props.composerProps = {
@@ -106,6 +130,14 @@ test("ChatWindow composer はplaceholderなしでもaccessible nameを維持す�
   assert.match(html, /<textarea[^>]*aria-label="スケジュールのプロンプト"/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 109 preserves its observable contract"
+// oracle = { type = "contract", ref = "-109" }
+// failure_mode = "line 109 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatWindow は ActionDock の展開状態に依存しない共通エラー領域を描画する", () => {
   const props = createChatWindowProps();
   props.isActionDockExpanded = false;
@@ -138,6 +170,14 @@ test("ChatWindow は ActionDock の展開状態に依存しない共通エラー
   assert.ok(html.indexOf("chat-error-surface") < html.indexOf("session-action-dock-slot"));
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 141 preserves its observable contract"
+// oracle = { type = "contract", ref = "-141" }
+// failure_mode = "line 141 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatWindow は submit pending を非表示の busy status として通知し、エラー表示しない", () => {
   const props = createChatWindowProps();
   props.composerProps = {
@@ -161,6 +201,14 @@ test("ChatWindow は submit pending を非表示の busy status として通知�
   assert.doesNotMatch(html, /composer-sendability-feedback/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 164 preserves its observable contract"
+// oracle = { type = "contract", ref = "-164" }
+// failure_mode = "line 164 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatWindow の共通エラー領域は owner が指定したdismissと回復操作を表示する", () => {
   const props = createChatWindowProps();
   props.errorNotices = [{
@@ -178,6 +226,14 @@ test("ChatWindow の共通エラー領域は owner が指定したdismissと回�
   assert.match(html, /aria-label="Workspaceエラーを閉じる"/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 181 preserves its observable contract"
+// oracle = { type = "contract", ref = "-181" }
+// failure_mode = "line 181 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("chat work surface は補助情報と共通エラーの有無に関係なく中央contentへ可変領域を割り当てる", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
   const stackRule = styles.match(/\.session-message-stack\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -190,6 +246,14 @@ test("chat work surface は補助情報と共通エラーの有無に関係な�
   assert.match(centralRule, /grid-row:\s*1/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 193 preserves its observable contract"
+// oracle = { type = "contract", ref = "-193" }
+// failure_mode = "line 193 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatWindow は追加Directory一覧をActionDock外の共通work surfaceへ描画する", () => {
   const props = createChatWindowProps();
   props.isActionDockExpanded = false;
@@ -216,6 +280,14 @@ test("ChatWindow は追加Directory一覧をActionDock外の共通work surface�
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 219 preserves its observable contract"
+// oracle = { type = "contract", ref = "-219" }
+// failure_mode = "line 219 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影する", () => {
   const html = renderToStaticMarkup(React.createElement(ChatAdditionalDirectoryList, {
     isOpen: true,
@@ -246,9 +318,16 @@ test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影す�
   assert.match(html, /class="chat-additional-directory-readonly">許可中/);
 });
 
-test("ChatWindow は preview を保持したまま Skill 候補を中央 work surface に重ねる", () => {
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 249 preserves its observable contract"
+// oracle = { type = "contract", ref = "-249" }
+// failure_mode = "line 249 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
+test("ChatWindow は Skill 候補を中央 work surface overlayとして描画する", () => {
   const props = createChatWindowProps();
-  props.mainContent = React.createElement("div", null, "File Preview");
   props.skillPickerProps = {
     isOpen: true,
     isLoading: false,
@@ -265,13 +344,19 @@ test("ChatWindow は preview を保持したまま Skill 候補を中央 work su
 
   const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
 
-  assert.match(html, /class="session-central-surface"><div>File Preview<\/div><\/div>/);
   assert.match(html, /class="chat-skill-picker-layer"/);
   assert.match(html, /role="listbox"/);
-  assert.ok(html.indexOf("File Preview") < html.indexOf("chat-skill-picker-layer"));
   assert.ok(html.indexOf("chat-skill-picker-layer") < html.indexOf("session-action-dock-slot"));
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 272 preserves its observable contract"
+// oracle = { type = "contract", ref = "-272" }
+// failure_mode = "line 272 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("Skill候補panelはchat work surfaceのほぼ全体を使う", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
   const layerRule = styles.match(/\.chat-skill-picker-layer\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -284,6 +369,14 @@ test("Skill候補panelはchat work surfaceのほぼ全体を使う", async () =>
   assert.doesNotMatch(panelRule, /max-height/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 284 preserves its observable contract"
+// oracle = { type = "contract", ref = "-284" }
+// failure_mode = "line 284 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatSkillPickerPanel は loading・empty・error状態を区別する", () => {
   const commonProps = {
     isOpen: true,
@@ -308,11 +401,20 @@ test("ChatSkillPickerPanel は loading・empty・error状態を区別する", ()
   assert.match(loadingHtml, /role="status"/);
   assert.match(loadingHtml, /aria-busy="true"/);
   assert.match(loadingHtml, /chat-skill-picker-spinner/);
-  assert.match(loadingHtml, /aria-label="Skill候補を閉じる">×<\/button>/);
+  assert.match(loadingHtml, /class="surface-close-button"/);
+  assert.match(loadingHtml, /aria-label="Close skill picker">×<\/button>/);
   assert.match(emptyHtml, /使える Skill がありません/);
   assert.match(errorHtml, /class="chat-skill-picker-state error">Skill error/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 314 preserves its observable contract"
+// oracle = { type = "contract", ref = "-314" }
+// failure_mode = "line 314 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("Skill候補検索はnameとdescriptionを対象にしsource labelを対象にしない", () => {
   const items = [
     {
@@ -339,6 +441,14 @@ test("Skill候補検索はnameとdescriptionを対象にしsource labelを対象
   assert.equal(filterChatSkillItems(items, "missing").length, 0);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 340 preserves its observable contract"
+// oracle = { type = "contract", ref = "-340" }
+// failure_mode = "line 340 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱う", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -471,7 +581,15 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
   }
 });
 
-test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操作を compact ActionDock へ共有する", async () => {
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 472 preserves its observable contract"
+// oracle = { type = "contract", ref = "-472" }
+// failure_mode = "line 472 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
+test("ChatWindow は button とshortcutで共有表示modeを双方向に切り替える", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -489,6 +607,14 @@ test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操�
     unobserve() {}
     disconnect() {}
   }
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value() {},
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value() {},
+  });
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
   Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
@@ -521,6 +647,20 @@ test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操�
     assert.ok(sourceButton);
     assert.ok(dom.window.document.querySelector("[data-pending-message-body='true'] a"));
 
+    const composerTextarea = dom.window.document.querySelector<HTMLTextAreaElement>("textarea");
+    assert.ok(composerTextarea);
+    composerTextarea.focus();
+    const editingShortcutEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "K",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => composerTextarea.dispatchEvent(editingShortcutEvent));
+    assert.equal(editingShortcutEvent.defaultPrevented, false);
+    assert.ok(dom.window.document.querySelector("[data-pending-message-body='true'] a"));
+
     const expandButton = dom.window.document.querySelector<HTMLButtonElement>(
       ".session-action-dock-compact-content .session-action-dock-compact-expand-button",
     );
@@ -540,6 +680,68 @@ test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操�
       )?.getAttribute("aria-pressed"),
       "true",
     );
+
+    const sourceText = source?.firstChild;
+    assert.ok(sourceText);
+    const selection = dom.window.getSelection();
+    assert.ok(selection);
+    const range = dom.window.document.createRange();
+    range.selectNodeContents(sourceText);
+    selection.addRange(range);
+    assert.equal(selection.rangeCount, 1);
+
+    const shortcutEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "K",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => dom.window.document.body.dispatchEvent(shortcutEvent));
+    assert.equal(shortcutEvent.defaultPrevented, true);
+    assert.equal(selection.rangeCount, 0);
+    assert.ok(dom.window.document.querySelector("[data-pending-message-body='true'] a"));
+    assert.equal(sourceButton.getAttribute("aria-pressed"), "false");
+    assert.equal(
+      dom.window.document.querySelector<HTMLButtonElement>(
+        ".session-action-dock-expanded-content .composer-message-view-mode-button:first-child",
+      )?.getAttribute("aria-pressed"),
+      "true",
+    );
+
+    const secondShortcutEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "k",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => dom.window.document.body.dispatchEvent(secondShortcutEvent));
+    assert.equal(secondShortcutEvent.defaultPrevented, true);
+    assert.equal(
+      dom.window.document.querySelector("[data-pending-message-body='true'] > .message-body")?.textContent,
+      "[label](https://example.test/source)",
+    );
+    assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
+
+    const rapidShortcutEvents = [0, 1].map(() => new dom.window.KeyboardEvent("keydown", {
+      key: "k",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    }));
+    await act(async () => {
+      for (const event of rapidShortcutEvents) {
+        dom.window.document.body.dispatchEvent(event);
+      }
+    });
+    assert.ok(rapidShortcutEvents.every((event) => event.defaultPrevented));
+    assert.equal(
+      dom.window.document.querySelector("[data-pending-message-body='true'] > .message-body")?.textContent,
+      "[label](https://example.test/source)",
+    );
+    assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -554,6 +756,14 @@ test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操�
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 639 preserves its observable contract"
+// oracle = { type = "contract", ref = "-639" }
+// failure_mode = "line 639 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatWindow は Quote 非対応 chat に表示 mode controls を出さない", () => {
   const html = renderToStaticMarkup(React.createElement(ChatWindow, createChatWindowProps({
     onQuoteMessageText: undefined,
@@ -563,12 +773,28 @@ test("ChatWindow は Quote 非対応 chat に表示 mode controls を出さな�
   assert.doesNotMatch(html, />Source<\/button>/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 648 preserves its observable contract"
+// oracle = { type = "contract", ref = "-648" }
+// failure_mode = "line 648 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatDockSplitter は resize handler がない場合に静的 splitter をレンダリングする", () => {
   const html = renderToStaticMarkup(React.createElement(ChatDockSplitter, { edge: "right" }));
 
   assert.equal(html, '<div class="session-dock-splitter edge-right is-static" aria-hidden="true"></div>');
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 654 preserves its observable contract"
+// oracle = { type = "contract", ref = "-654" }
+// failure_mode = "line 654 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatDockSplitter は resize handler がある場合に操作可能 splitter をレンダリングする", () => {
   const html = renderToStaticMarkup(
     React.createElement(ChatDockSplitter, {
@@ -583,6 +809,14 @@ test("ChatDockSplitter は resize handler がある場合に操作可能 splitte
   assert.match(html, /title="右ペインのサイズをドラッグで調整"/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 668 preserves its observable contract"
+// oracle = { type = "contract", ref = "-668" }
+// failure_mode = "line 668 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatDockSplitter は各辺の表示状態を切り替える affordance を示す", () => {
   const expandedHtml = renderToStaticMarkup(
     React.createElement(ChatDockSplitter, {
@@ -626,6 +860,14 @@ test("ChatDockSplitter は各辺の表示状態を切り替える affordance を
   assert.doesNotMatch(fixedHeaderHtml, /ドラッグでサイズを調整/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 711 preserves its observable contract"
+// oracle = { type = "contract", ref = "-711" }
+// failure_mode = "line 711 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionChatScreen は左右ペインを mounted のまま非表示・操作不可にする", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionChatScreen, {
@@ -656,6 +898,95 @@ test("SessionChatScreen は左右ペインを mounted のまま非表示・操�
   assert.match(html, /Latest Command/);
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "SessionChatScreenは左ペインのCollapseと再表示で同じchild instanceとstateを保持する"
+// oracle = { type = "contract", ref = "accepted behavior: preserve the complete left pane state while collapsed in the same Window" }
+// failure_mode = "左ペインのCollapseでchildがunmountされ、再表示時にtab、tree、Git結果などのlocal stateが初期化される"
+// scope = "SessionChatScreen left pane visibility lifecycle"
+// lifecycle = "permanent"
+// distinction = "Sessionやroot ownerの変更ではなく、同じWindow内の表示切替だけを検証する"
+// @end-test-value
+test("SessionChatScreen は左ペインのCollapse後もchild stateを保持する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  function StatefulLeftPane() {
+    const [count, setCount] = React.useState(0);
+    return React.createElement("button", {
+      type: "button",
+      "data-left-pane-state": "true",
+      onClick: () => setCount((current) => current + 1),
+    }, `state:${count}`);
+  }
+  const renderScreen = (visible: boolean) => React.createElement(SessionChatScreen, {
+    mode: "agent" as const,
+    header: null,
+    headerSplitter: null,
+    isHeaderVisible: true,
+    messageColumn: React.createElement("div", null, "Messages"),
+    actionDock: React.createElement("div", null, "Composer"),
+    actionDockSplitter: null,
+    isActionDockExpanded: true,
+    layoutPriority: "side-pane-first" as const,
+    splitter: null,
+    leftPane: React.createElement(StatefulLeftPane),
+    isLeftPaneVisible: visible,
+  });
+
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(renderScreen(true));
+    });
+    const button = dom.window.document.querySelector<HTMLButtonElement>("[data-left-pane-state='true']");
+    assert.ok(button);
+    await act(async () => button.click());
+    assert.equal(button.textContent, "state:1");
+
+    await act(async () => root?.render(renderScreen(false)));
+    assert.equal(dom.window.document.getElementById("session-left-pane")?.getAttribute("aria-hidden"), "true");
+    assert.equal(dom.window.document.querySelector("[data-left-pane-state='true']"), button);
+    assert.equal(button.textContent, "state:1");
+
+    await act(async () => root?.render(renderScreen(true)));
+    assert.equal(dom.window.document.querySelector("[data-left-pane-state='true']"), button);
+    assert.equal(button.textContent, "state:1");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 822 preserves its observable contract"
+// oracle = { type = "contract", ref = "-822" }
+// failure_mode = "line 822 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatDockSplitter は pointer と keyboard click の操作軸を通知する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -716,6 +1047,14 @@ test("ChatDockSplitter は pointer と keyboard click の操作軸を通知す�
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 882 preserves its observable contract"
+// oracle = { type = "contract", ref = "-882" }
+// failure_mode = "line 882 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionChatScreen は dock 優先を layout class へ投影する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionChatScreen, {
@@ -736,6 +1075,14 @@ test("SessionChatScreen は dock 優先を layout class へ投影する", () => 
   assert.match(html, /layout-priority-dock/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 902 preserves its observable contract"
+// oracle = { type = "contract", ref = "-902" }
+// failure_mode = "line 902 violates its expected output or boundary behavior"
+// scope = "chat-window.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionActionDockCompactRow は通常時の chat notice を下書き表示なしで維持する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {

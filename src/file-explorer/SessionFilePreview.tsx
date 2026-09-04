@@ -7,28 +7,28 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 
 import { MessageRichText } from "../MessageRichText.js";
 import { BackNavigationButton } from "../back-navigation-button.js";
+import { ImageViewport, ImageZoomControls, useImageViewport } from "../image-viewport.js";
 import { SelectionTextActionSurface } from "../session-components.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type {
   SessionFileDescriptor,
-  SessionFileResourceRequest,
+  SessionFilePreviewResourceRequest,
   SessionFileRoot,
-  FileRootGitChangeScope,
+  FileRootGitDiffScope,
 } from "./file-explorer-contract.js";
 import {
   getSessionFileResourceDisplayPath,
   isSessionFileAbsoluteResource,
+  isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "./file-explorer-contract.js";
 import {
-  calculateImageFitZoom,
   decodeSessionFileBytes,
   findPreviewTextMatches,
   formatFileByteLength,
@@ -42,6 +42,7 @@ import {
 } from "./file-preview-utils.js";
 import { isLikelyBinarySessionFile } from "./file-content-detection.js";
 import { SessionContentFindBar } from "../session-content-find-bar.js";
+import { useShortcutSettings } from "../shortcut-settings-context.js";
 import {
   applyRenderedTextHighlights,
   clearRenderedTextHighlights,
@@ -56,6 +57,12 @@ import {
 } from "./rendered-text-search.js";
 import { PreviewResourceQueue } from "./preview-resource-queue.js";
 import { clampFindMatchIndex } from "../find-text-matches.js";
+import {
+  getShortcutTooltip,
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+  useShortcutScope,
+} from "../shortcut-registry.js";
 import {
   parseUnifiedDiff,
   type UnifiedDiffContentRow,
@@ -82,20 +89,22 @@ type FilePreviewApi = Pick<
   | "openPath"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
+  | "isSessionFileObjectCopyAvailable"
+  | "copySessionFileObject"
 >;
 
 type SessionFilePreviewProps = {
   api: FilePreviewApi | null;
-  request: SessionFileResourceRequest;
+  request: SessionFilePreviewResourceRequest;
   backNavigation?: {
     label: string;
     onBack: () => void;
   };
   onCopyText: (text: string) => void;
   onQuoteText?: (text: string) => void;
-  diffScopes?: FileRootGitChangeScope[];
-  onOpenDiff?: (scope: FileRootGitChangeScope) => Promise<string | null>;
-  diffLoadingScope?: FileRootGitChangeScope | null;
+  diffScopes?: FileRootGitDiffScope[];
+  onOpenDiff?: (scope: FileRootGitDiffScope) => Promise<string | null>;
+  diffLoadingScope?: FileRootGitDiffScope | null;
   diffAvailabilityMessage?: string;
   chatNotice?: string;
 };
@@ -103,14 +112,6 @@ type SessionFilePreviewProps = {
 type LoadedFile = {
   descriptor: SessionFileDescriptor;
   bytes: Uint8Array;
-};
-
-type ImagePanSession = {
-  pointerId: number;
-  clientX: number;
-  clientY: number;
-  scrollLeft: number;
-  scrollTop: number;
 };
 
 type FileLoadState =
@@ -137,10 +138,6 @@ type StructuredTextProjectionState =
   };
 
 const MARKDOWN_LOCAL_IMAGE_CONCURRENCY = 4;
-const IMAGE_ZOOM_MIN = 10;
-const IMAGE_ZOOM_MAX = 800;
-const IMAGE_ZOOM_STEP = 10;
-
 const ENCODING_OPTIONS: Array<{ value: SessionFileEncodingSelection; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "utf-8", label: "UTF-8" },
@@ -189,9 +186,18 @@ async function readWholeResource(
   onProgress?: (loadedBytes: number) => void,
 ): Promise<Uint8Array> {
   let offset = 0;
-  const resource = isSessionFileAbsoluteResource(descriptor)
+  const resource: SessionFilePreviewResourceRequest = isSessionFileAbsoluteResource(descriptor)
     ? { sessionId: descriptor.sessionId, absolutePath: descriptor.absolutePath }
-    : {
+    : isSessionFileGitCommitResource(descriptor)
+      ? {
+          resourceKind: "git-commit-file",
+          sessionId: descriptor.sessionId,
+          rootId: descriptor.rootId,
+          repositoryId: descriptor.repositoryId,
+          commitId: descriptor.commitId,
+          relativePath: descriptor.relativePath,
+        }
+      : {
         sessionId: descriptor.sessionId,
         rootId: descriptor.rootId,
         relativePath: descriptor.relativePath,
@@ -200,7 +206,9 @@ async function readWholeResource(
     const result = await api.readSessionFileChunk({
       ...resource,
       offset,
-      length: Math.min(SESSION_FILE_READ_CHUNK_BYTES, descriptor.byteLength - offset),
+      length: isSessionFileGitCommitResource(resource)
+        ? descriptor.byteLength - offset
+        : Math.min(SESSION_FILE_READ_CHUNK_BYTES, descriptor.byteLength - offset),
       expectedRevision: descriptor.revision,
     });
     if (!isCurrent()) {
@@ -550,6 +558,15 @@ export function SessionFilePreview({
   diffAvailabilityMessage = "",
   chatNotice = "",
 }: SessionFilePreviewProps) {
+  const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
+  const currentFileActionsAvailable = !isSessionFileGitCommitResource(request);
+  const markdownLinkFileContext = useMemo(() => isSessionFileGitCommitResource(request)
+    ? undefined
+    : {
+        sessionId: request.sessionId,
+        baseResource: request,
+      }, [request]);
+  const keyboardShortcuts = useShortcutSettings();
   const loadRevisionRef = useRef(0);
   const activePreviewAccumulatorRef = useRef<PreviewByteAccumulator | null>(null);
   const markdownImageAccumulatorsRef = useRef(new Set<PreviewByteAccumulator>());
@@ -564,8 +581,6 @@ export function SessionFilePreview({
   const [structuredTextProjection, setStructuredTextProjection] = useState<StructuredTextProjectionState>({
     status: "idle",
   });
-  const [imageZoom, setImageZoom] = useState<"fit" | number>("fit");
-  const [imageFitZoom, setImageFitZoom] = useState(100);
   const [imageObjectUrl, setImageObjectUrl] = useState("");
   const [roots, setRoots] = useState<SessionFileRoot[]>([]);
   const [feedback, setFeedback] = useState("");
@@ -574,11 +589,7 @@ export function SessionFilePreview({
   const [currentMatch, setCurrentMatch] = useState(0);
   const [reloadRevision, setReloadRevision] = useState(0);
   const markdownSurfaceRef = useRef<HTMLDivElement | null>(null);
-  const imagePanSessionRef = useRef<ImagePanSession | null>(null);
-  const [isImagePanning, setIsImagePanning] = useState(false);
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const imageScrollRef = useRef<HTMLDivElement | null>(null);
-  const imageCanvasRef = useRef<HTMLDivElement | null>(null);
+  const imageViewport = useImageViewport(imageObjectUrl);
   const renderedMarkdownIndexRef = useRef<RenderedTextSearchIndex | null>(null);
   const renderedMarkdownMatchesRef = useRef<RenderedTextMatchOffsets>({
     offsets: new Uint32Array(0),
@@ -661,9 +672,6 @@ export function SessionFilePreview({
     setMarkdownMode("preview");
     setStructuredTextMode("formatted");
     setStructuredTextProjection({ status: "idle" });
-    setImageZoom("fit");
-    imagePanSessionRef.current = null;
-    setIsImagePanning(false);
     setImageObjectUrl("");
     setFeedback("");
     setFindOpen(false);
@@ -859,120 +867,32 @@ export function SessionFilePreview({
       setImageObjectUrl("");
       return;
     }
-    setImageZoom("fit");
-    setImageFitZoom(100);
     const objectUrl = URL.createObjectURL(new Blob([copyBytesToArrayBuffer(loaded.bytes)], { type: loaded.descriptor.mimeType }));
     setImageObjectUrl(objectUrl);
     return () => URL.revokeObjectURL(objectUrl);
   }, [loaded]);
 
-  const startImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (
-      event.button !== 0 ||
-      (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth &&
-        event.currentTarget.scrollHeight <= event.currentTarget.clientHeight)
-    ) {
-      return;
+  useShortcutScope("file-preview");
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewFind, () => {
+    if (previewKind === "text" || previewKind === "markdown") {
+      setFindOpen(true);
+      setFeedback("");
+    } else {
+      setFeedback("Find is available for text, Markdown, and Git diff previews.");
     }
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    imagePanSessionRef.current = {
-      pointerId: event.pointerId,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      scrollLeft: event.currentTarget.scrollLeft,
-      scrollTop: event.currentTarget.scrollTop,
-    };
-    setIsImagePanning(true);
-  }, []);
-
-  const moveImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const session = imagePanSessionRef.current;
-    if (!session || session.pointerId !== event.pointerId) {
-      return;
+    return true;
+  });
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewClose, () => {
+    if (findOpen) {
+      setFindOpen(false);
+      return true;
     }
-    event.preventDefault();
-    event.currentTarget.scrollLeft = session.scrollLeft - (event.clientX - session.clientX);
-    event.currentTarget.scrollTop = session.scrollTop - (event.clientY - session.clientY);
-  }, []);
-
-  const stopImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (imagePanSessionRef.current?.pointerId !== event.pointerId) {
-      return;
+    if (backNavigation) {
+      backNavigation.onBack();
+      return true;
     }
-    imagePanSessionRef.current = null;
-    setIsImagePanning(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  }, []);
-
-  const handleImagePanCaptureLoss = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (imagePanSessionRef.current?.pointerId === event.pointerId) {
-      imagePanSessionRef.current = null;
-      setIsImagePanning(false);
-    }
-  }, []);
-
-  const updateImageFitZoom = useCallback(() => {
-    const viewport = imageScrollRef.current;
-    const canvas = imageCanvasRef.current;
-    const image = imageRef.current;
-    if (!viewport || !canvas || !image) {
-      return;
-    }
-    const styles = window.getComputedStyle(canvas);
-    const horizontalPadding = (Number.parseFloat(styles.paddingLeft) || 0)
-      + (Number.parseFloat(styles.paddingRight) || 0);
-    const verticalPadding = (Number.parseFloat(styles.paddingTop) || 0)
-      + (Number.parseFloat(styles.paddingBottom) || 0);
-    setImageFitZoom(calculateImageFitZoom(
-      viewport.clientWidth - horizontalPadding,
-      viewport.clientHeight - verticalPadding,
-      image.naturalWidth,
-      image.naturalHeight,
-    ));
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!imageObjectUrl) {
-      return;
-    }
-    updateImageFitZoom();
-    if (typeof ResizeObserver === "undefined" || !imageScrollRef.current) {
-      return;
-    }
-    const observer = new ResizeObserver(updateImageFitZoom);
-    observer.observe(imageScrollRef.current);
-    return () => observer.disconnect();
-  }, [imageObjectUrl, updateImageFitZoom]);
-
-  const effectiveImageZoom = typeof imageZoom === "number" ? imageZoom : imageFitZoom;
-  const imageZoomLabel = `${effectiveImageZoom}%`;
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
-        event.preventDefault();
-        if (previewKind === "text" || previewKind === "markdown") {
-          setFindOpen(true);
-          setFeedback("");
-        } else {
-          setFeedback("Find is available for text, Markdown, and Git diff previews.");
-        }
-      } else if (event.key === "Escape") {
-        if (findOpen) {
-          event.preventDefault();
-          setFindOpen(false);
-        } else if (backNavigation) {
-          event.preventDefault();
-          backNavigation.onBack();
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [backNavigation, findOpen, previewKind]);
+    return false;
+  });
 
   const navigateMatch = useCallback((direction: 1 | -1) => {
     if (previewKind === "markdown" && markdownMode === "preview") {
@@ -1034,11 +954,28 @@ export function SessionFilePreview({
     }
   }, [api, request]);
 
-  const copyPreviewImage = useCallback(async () => {
-    if (!api || !imageRef.current || !imageScrollRef.current) {
+  const copyCurrentFile = useCallback(async () => {
+    if (!api || !fileObjectCopyAvailable) {
       return;
     }
-    const point = resolveVisibleImageCopyPoint(imageRef.current, imageScrollRef.current);
+    const revision = loadRevisionRef.current;
+    try {
+      const result = await api.copySessionFileObject({ resource: request });
+      if (loadRevisionRef.current === revision) {
+        setFeedback(result.message);
+      }
+    } catch {
+      if (loadRevisionRef.current === revision) {
+        setFeedback("File could not be copied.");
+      }
+    }
+  }, [api, fileObjectCopyAvailable, request]);
+
+  const copyPreviewImage = useCallback(async () => {
+    if (!api || !imageViewport.imageRef.current || !imageViewport.viewportRef.current) {
+      return;
+    }
+    const point = resolveVisibleImageCopyPoint(imageViewport.imageRef.current, imageViewport.viewportRef.current);
     if (!point) {
       setFeedback("The image is not currently visible.");
       return;
@@ -1173,7 +1110,7 @@ export function SessionFilePreview({
     });
   }, [api, encoding, markdownImageQueue, request, roots]);
 
-  const openDiff = useCallback(async (scope: FileRootGitChangeScope) => {
+  const openDiff = useCallback(async (scope: FileRootGitDiffScope) => {
     if (!onOpenDiff) {
       return;
     }
@@ -1210,6 +1147,7 @@ export function SessionFilePreview({
         ) : null}
         <div className="session-file-preview-title">
           <strong>{descriptor?.name ?? getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}</strong>
+          {isSessionFileGitCommitResource(request) ? <span>Commit {request.commitId.slice(0, 7)}</span> : null}
         </div>
         <div className="session-file-preview-actions">
           {descriptor && (previewKind === "text" || previewKind === "markdown") ? (
@@ -1245,22 +1183,11 @@ export function SessionFilePreview({
           {descriptor && (previewKind === "image" || previewKind === "svg") ? (
             <>
               <button type="button" disabled={!imageObjectUrl} onClick={() => void copyPreviewImage()}>Copy Image</button>
-              <div className="session-file-preview-segmented" role="group" aria-label="Image zoom">
-                <button
-                  type="button"
-                  aria-label="Zoom image out"
-                  disabled={effectiveImageZoom <= IMAGE_ZOOM_MIN}
-                  onClick={() => setImageZoom(Math.max(IMAGE_ZOOM_MIN, effectiveImageZoom - IMAGE_ZOOM_STEP))}
-                >−</button>
-                <button type="button" aria-label="Reset image zoom to 100%" onClick={() => setImageZoom(100)}>{imageZoomLabel}</button>
-                <button
-                  type="button"
-                  aria-label="Zoom image in"
-                  disabled={effectiveImageZoom >= IMAGE_ZOOM_MAX}
-                  onClick={() => setImageZoom(Math.min(IMAGE_ZOOM_MAX, effectiveImageZoom + IMAGE_ZOOM_STEP))}
-                >＋</button>
-                <button type="button" aria-label="Fit image to preview" className={imageZoom === "fit" ? "is-active" : ""} onClick={() => setImageZoom("fit")}>Fit</button>
-              </div>
+              <ImageZoomControls
+                controller={imageViewport}
+                className="session-file-preview-segmented"
+                fitAriaLabel="Fit image to preview"
+              />
             </>
           ) : null}
           {onOpenDiff && diffScopes.length > 0 ? diffScopes.map((scope) => (
@@ -1279,12 +1206,25 @@ export function SessionFilePreview({
                   : "Working Tree Diff"}
             </button>
           )) : null}
+          {currentFileActionsAvailable && fileObjectCopyAvailable ? (
+            <button type="button" onClick={() => void copyCurrentFile()}>Copy File</button>
+          ) : null}
           {previewKind === "text" || previewKind === "markdown" ? (
-            <button type="button" onClick={() => setFindOpen(true)}>Find</button>
+            <button
+              type="button"
+              onClick={() => setFindOpen(true)}
+              title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind, undefined, keyboardShortcuts)}
+            >
+              Find
+            </button>
           ) : null}
           <button type="button" onClick={() => setReloadRevision((current) => current + 1)}>Reload</button>
-          <button type="button" onClick={() => void openCurrentFile()}>Open</button>
-          <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+          {currentFileActionsAvailable ? (
+            <>
+              <button type="button" onClick={() => void openCurrentFile()}>Open</button>
+              <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+            </>
+          ) : null}
         </div>
       </header>
 
@@ -1317,7 +1257,9 @@ export function SessionFilePreview({
       {loadState.status === "large-warning" ? (
         <div className="session-file-preview-large-warning">
           <strong>Large file: {formatFileByteLength(loadState.descriptor.byteLength)}</strong>
-          <p>The file can still be opened. It is read in chunks and replaces the previous preview.</p>
+          <p>{isSessionFileGitCommitResource(request)
+            ? "The file can still be opened. Loading materializes the selected commit blob in memory and replaces the previous preview."
+            : "The file can still be opened. It is read in chunks and replaces the previous preview."}</p>
           <button type="button" onClick={() => void loadDescriptor(loadState.descriptor, loadRevisionRef.current)}>Load anyway</button>
         </div>
       ) : null}
@@ -1331,8 +1273,12 @@ export function SessionFilePreview({
             <div><dt>Size</dt><dd>{formatFileByteLength(descriptor.byteLength)}</dd></div>
             <div><dt>Modified</dt><dd>{descriptor.modifiedAt}</dd></div>
           </dl>
-          <button type="button" onClick={() => void openCurrentFile()}>Open in default app</button>
-          <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+          {currentFileActionsAvailable ? (
+            <>
+              <button type="button" onClick={() => void openCurrentFile()}>Open in default app</button>
+              <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -1359,6 +1305,7 @@ export function SessionFilePreview({
               className="session-file-markdown"
               onOpenPath={handleOpenMarkdownPath}
               resolveImageSource={resolveMarkdownImageSource}
+              markdownLinkFileContext={markdownLinkFileContext}
             />
           </SelectionTextActionSurface>
         ) : (
@@ -1372,33 +1319,17 @@ export function SessionFilePreview({
         )
       ) : null}
       {loadState.status === "ready" && loaded && descriptor && (previewKind === "image" || previewKind === "svg") ? (
-        <div
-          ref={imageScrollRef}
-          className={`session-file-image-scroll${isImagePanning ? " is-panning" : ""}`}
-          onPointerDown={startImagePan}
-          onPointerMove={moveImagePan}
-          onPointerUp={stopImagePan}
-          onPointerCancel={stopImagePan}
-          onLostPointerCapture={handleImagePanCaptureLoss}
-        >
-          <div
-            ref={imageCanvasRef}
-            className={`session-file-image-canvas${imageZoom === "fit" ? " is-fit" : ""}`}
-          >
-            {imageObjectUrl ? (
-              <img
-                ref={imageRef}
-                className={`session-file-image${imageZoom === "fit" ? " is-fit" : ""}`}
-                src={imageObjectUrl}
-                alt={descriptor.name}
-                draggable={false}
-                onContextMenu={(event) => void showPreviewImageContextMenu(event)}
-                onLoad={updateImageFitZoom}
-                style={imageZoom === "fit" ? undefined : { zoom: imageZoom / 100 }}
-              />
-            ) : null}
-          </div>
-        </div>
+        imageObjectUrl ? (
+          <ImageViewport
+            controller={imageViewport}
+            src={imageObjectUrl}
+            alt={descriptor.name}
+            viewportClassName="session-file-image-scroll"
+            canvasClassName="session-file-image-canvas"
+            imageClassName="session-file-image"
+            onImageContextMenu={(event) => void showPreviewImageContextMenu(event)}
+          />
+        ) : null
       ) : null}
       {previewFeedback.length > 0 ? (
         <p className="session-file-preview-feedback" role="alert">
@@ -1444,6 +1375,7 @@ export function SessionDiffPreview({
   reloadPending = false,
   chatNotice = "",
 }: SessionDiffPreviewProps) {
+  const keyboardShortcuts = useShortcutSettings();
   const [viewMode, setViewMode] = useState<"split" | "inline">("split");
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -1474,23 +1406,25 @@ export function SessionDiffPreview({
     setFeedback("");
   }, [previewIdentity]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!loading && (event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
-        event.preventDefault();
-        setFindOpen(true);
-      } else if (event.key === "Escape") {
-        event.preventDefault();
-        if (findOpen) {
-          setFindOpen(false);
-        } else if (backNavigation) {
-          backNavigation.onBack();
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [backNavigation, findOpen, loading]);
+  useShortcutScope("file-preview");
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewFind, () => {
+    if (loading) {
+      return false;
+    }
+    setFindOpen(true);
+    return true;
+  });
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewClose, () => {
+    if (findOpen) {
+      setFindOpen(false);
+      return true;
+    }
+    if (backNavigation) {
+      backNavigation.onBack();
+      return true;
+    }
+    return false;
+  });
 
   const navigate = (direction: 1 | -1) => {
     if (matches.length > 0) {
@@ -1578,7 +1512,14 @@ export function SessionDiffPreview({
               Open Preview
             </button>
           ) : null}
-          <button type="button" disabled={loading} onClick={() => setFindOpen(true)}>Find</button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => setFindOpen(true)}
+            title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind, undefined, keyboardShortcuts)}
+          >
+            Find
+          </button>
           {onReload ? (
             <button
               type="button"

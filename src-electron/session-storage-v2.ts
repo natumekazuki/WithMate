@@ -536,6 +536,10 @@ export class SessionStorageV2 {
   }
 
   listHomeSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult {
+    return this.listSessionSummaryPage(request);
+  }
+
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult {
     return this.withDb((db) => {
       const parsed = parseSessionSummaryPageRequest(request);
       const cursor = parsed.scope === "open"

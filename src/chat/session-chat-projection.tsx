@@ -14,6 +14,11 @@ import {
   type SessionRetryBannerProps,
 } from "../session-components.js";
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
+import type {
+  MessageCollapseTarget,
+  MessageJumpRequest,
+  MessageNavigatorEntry,
+} from "../session-message-collapse.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
 import type { ChatWindowProps } from "./chat-window.js";
 import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js";
@@ -45,6 +50,14 @@ export type AgentSessionChatProjectionInput = {
   originSessionDetails?: SessionMessageColumnProps["originSessionDetails"];
   onOpenOriginSession?: SessionMessageColumnProps["onOpenOriginSession"];
   cancelingExecutionIds?: SessionMessageColumnProps["cancelingExecutionIds"];
+  messageCollapseTargets?: readonly MessageCollapseTarget[];
+  collapsedMessageKeys?: ReadonlySet<string>;
+  messageJumpRequest?: MessageJumpRequest | null;
+  messageNavigatorEntries?: readonly MessageNavigatorEntry[];
+  messageNavigatorCharacter?: CharacterProfile;
+  glossaryPaneProps: SessionContextPaneProps["glossaryPaneProps"];
+  glossaryAnnotationMatcher?: SessionMessageColumnProps["glossaryAnnotationMatcher"];
+  onActivateGlossaryEntry?: SessionMessageColumnProps["onActivateGlossaryEntry"];
   expandedArtifacts: Record<string, boolean>;
   sessionThemeStyle: CSSProperties | undefined;
   sessionDockLayoutRef: RefObject<HTMLDivElement | null>;
@@ -109,7 +122,9 @@ export type AgentSessionChatProjectionInput = {
   composerSendButtonTitle: string | undefined;
   isComposerBlockedFeedbackActive: boolean;
   approvalChoiceOptions: SessionComposerExpandedProps["approvalOptions"];
+  reviewerChoiceOptions: SessionComposerExpandedProps["reviewerOptions"];
   sandboxChoiceOptions: SessionComposerExpandedProps["sandboxOptions"];
+  speedChoiceOptions: SessionComposerExpandedProps["speedOptions"];
   modelSelectOptions: SessionComposerExpandedProps["modelOptions"];
   selectedModelFallbackLabel: string;
   reasoningSelectOptions: SessionComposerExpandedProps["reasoningOptions"];
@@ -169,6 +184,9 @@ export type AgentSessionChatProjectionInput = {
   onOpenSessionExplorer: () => void;
   onOpenSessionFilesExplorer: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
+  onToggleMessageCollapse?: (key: string) => void;
+  onToggleAllMessageCollapse?: () => void;
+  onJumpToMessage?: (key: string) => void;
   onToggleArtifact: (artifactKey: string) => void;
   onLoadArtifactDetail: (messageIndex: number) => Promise<MessageArtifact | null>;
   onOpenDiff: SessionMessageColumnProps["onOpenDiff"];
@@ -205,14 +223,16 @@ export type AgentSessionChatProjectionInput = {
   onRemoveAdditionalDirectory: (path: string) => void;
   onDraftChange: SessionComposerExpandedProps["onDraftChange"];
   onDraftFocus: () => void;
-  onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  onDraftKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   onDraftPaste: SessionComposerExpandedProps["onDraftPaste"];
   onDraftSelect: (selectionStart: number) => void;
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
   onChangeApprovalMode: SessionComposerExpandedProps["onChangeApprovalMode"];
+  onChangeCodexReviewer: SessionComposerExpandedProps["onChangeCodexReviewer"];
   onChangeCodexSandboxMode: SessionComposerExpandedProps["onChangeCodexSandboxMode"];
+  onChangeCodexSpeed: SessionComposerExpandedProps["onChangeCodexSpeed"];
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
@@ -309,8 +329,12 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isComposerBlockedFeedbackActive: input.isComposerBlockedFeedbackActive,
       approvalOptions: input.approvalChoiceOptions,
       selectedApprovalMode: input.selectedSession.approvalMode,
+      reviewerOptions: input.reviewerChoiceOptions,
+      selectedCodexReviewer: input.selectedSession.codexReviewer,
       sandboxOptions: input.sandboxChoiceOptions,
       selectedCodexSandboxMode: input.selectedSession.codexSandboxMode,
+      speedOptions: input.speedChoiceOptions,
+      selectedCodexSpeed: input.selectedSession.codexSpeed,
       modelOptions: input.modelSelectOptions,
       selectedModel: input.selectedSession.model,
       selectedModelFallbackLabel: input.selectedModelFallbackLabel,
@@ -344,7 +368,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onSendOrCancel: input.onSendOrCancel,
       onCancelRun: input.onCancelRun,
       onChangeApprovalMode: input.onChangeApprovalMode,
+      onChangeCodexReviewer: input.onChangeCodexReviewer,
       onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
+      onChangeCodexSpeed: input.onChangeCodexSpeed,
       onChangeModel: input.onChangeModel,
       onChangeReasoningEffort: input.onChangeReasoningEffort,
     }),
@@ -361,6 +387,12 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       originSessionDetails: input.originSessionDetails,
       onOpenOriginSession: input.onOpenOriginSession,
       cancelingExecutionIds: input.cancelingExecutionIds,
+      messageCollapseTargets: input.messageCollapseTargets,
+      collapsedMessageKeys: input.collapsedMessageKeys,
+      messageJumpRequest: input.messageJumpRequest,
+      isContentActive: input.mainContent === undefined,
+      onToggleMessageCollapse: input.onToggleMessageCollapse,
+      onToggleAllMessageCollapse: input.onToggleAllMessageCollapse,
       expandedArtifacts: input.expandedArtifacts,
       messageListRef: input.messageListRef,
       isRunning: input.isSelectedSessionRunning,
@@ -385,6 +417,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onCopyMessageText: input.onCopyMessageText,
       onQuoteMessageText: input.onQuoteMessageText,
       onCancelQueuedTurn: input.onCancelQueuedTurn,
+      glossaryAnnotationMatcher: input.glossaryAnnotationMatcher,
+      onActivateGlossaryEntry: input.onActivateGlossaryEntry,
     }),
     composer: composerDockProps.composer,
     compactActionDock: composerDockProps.compactActionDock,
@@ -422,6 +456,10 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onHandoffRootWorkItem: input.onHandoffRootWorkItem,
     contextEmptyText: input.selectedContextEmptyText,
     latestCommandEmptyText: input.latestCommandEmptyText,
+    messageNavigatorEntries: input.messageNavigatorEntries,
+    messageNavigatorCharacter: input.messageNavigatorCharacter,
+    glossaryPaneProps: input.glossaryPaneProps,
+    onJumpToMessage: input.onJumpToMessage,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,
   });

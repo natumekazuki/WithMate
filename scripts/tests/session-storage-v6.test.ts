@@ -414,6 +414,64 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Main SessionのReviewerは新規作成でUserになり、V6 runtime policyでroundtripし未知値はUserへ正規化される"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-2" }
+  // failure_mode = "Auto-review選択が再起動で消える、新規値がUser以外になる、または未知値がAuto-reviewへ昇格する"
+  // scope = "session-storage-v6"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("ReviewerをV6 runtime policyでroundtripし新規・未知値をUserとして読む", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-speed-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const fastSession = storage.insertSession(buildNewSession({
+        id: "fast-session",
+        taskTitle: "Fast session",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        codexSpeed: "fast",
+        codexReviewer: "auto-review",
+      }));
+      const legacySession = storage.insertSession(buildNewSession({
+        id: "legacy-session",
+        taskTitle: "Legacy session",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      }));
+      assert.equal(storage.getSession(legacySession.id)?.codexReviewer, "user");
+      storage.close();
+      storage = null;
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare("UPDATE sessions_v6 SET runtime_policy_json = json_set(runtime_policy_json, '$.codexReviewer', 'unexpected') WHERE id = ?").run(legacySession.id);
+      db.close();
+
+      storage = new SessionStorageV6(dbPath);
+      assert.equal(storage.getSession(fastSession.id)?.codexSpeed, "fast");
+      assert.equal(storage.getSession(legacySession.id)?.codexSpeed, "standard");
+      assert.equal(storage.getSession(fastSession.id)?.codexReviewer, "auto-review");
+      assert.equal(storage.getSession(legacySession.id)?.codexReviewer, "user");
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("pin stateだけを更新し、updatedAtと本文を維持して再読込できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -450,6 +508,112 @@ describe("SessionStorageV6", () => {
       assert.equal(storage.getSession(session.id)?.isPinned, true);
       assert.equal(storage.setSessionPinned(session.id, false).isPinned, false);
       assert.throws(() => storage?.setSessionPinned("missing", true), /見つからない/);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "V6 summary pageはkeyset・検索・pinned/open scopeを守り、Character usageをfull Session非展開で取得する"
+  // oracle = { type = "contract", ref = "docs/features/home-session-pagination.md" }
+  // failure_mode = "page重複やscope逸脱が起きる、検索escapeを誤る、または一覧でfull Sessionをhydrateする"
+  // scope = "session-storage-v6-home-summary-pagination"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("summary page は keyset境界、検索、pinned/open projection、Character usageをboundedに扱う", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const baseInput = {
+        workspaceLabel: "Workspace Label",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      };
+      const insert = (
+        id: string,
+        taskTitle: string,
+        updatedAt: string,
+        characterId = "char-a",
+        sessionKind: "default" | "character-authoring" = "default",
+      ) => storage?.insertSession({
+        ...buildNewSession({ ...baseInput, id, taskTitle, characterId, sessionKind }),
+        updatedAt,
+      });
+
+      insert("same-a", "100% literal", "2026-08-10T00:00:00.000Z");
+      insert("same-b", "underscore_value", "2026-08-10T00:00:00.000Z");
+      insert("older", "Older", "2026-08-09T00:00:00.000Z", "char-b");
+      insert("new-character", "Character history", "2026-08-11T00:00:00.000Z", "char-b");
+      insert("old-character", "Old character history", "2026-08-08T00:00:00.000Z", "char-a");
+      insert("authoring", "Authoring history", "2026-08-12T00:00:00.000Z", "char-a", "character-authoring");
+      storage?.setSessionPinned("older", true);
+
+      const firstPage = storage?.listSessionSummaryPage({ scope: "recent", limit: 2 });
+      assert.deepEqual(firstPage?.entries.map((entry) => entry.id), ["authoring", "new-character"]);
+      assert.equal(firstPage?.hasMore, true);
+      assert.ok(firstPage?.nextCursor);
+      const secondPage = storage?.listSessionSummaryPage({ scope: "recent", limit: 2, cursor: firstPage?.nextCursor });
+      assert.deepEqual(secondPage?.entries.map((entry) => entry.id), ["same-b", "same-a"]);
+      assert.deepEqual(
+        new Set([...(firstPage?.entries ?? []), ...(secondPage?.entries ?? [])].map((entry) => entry.id)).size,
+        4,
+      );
+
+      const literalPercent = storage?.listSessionSummaryPage({ scope: "recent", searchText: "%", limit: 10 });
+      assert.deepEqual(literalPercent?.entries.map((entry) => entry.id), ["same-a"]);
+      const literalUnderscore = storage?.listSessionSummaryPage({ scope: "recent", searchText: "_", limit: 10 });
+      assert.deepEqual(literalUnderscore?.entries.map((entry) => entry.id), ["same-b"]);
+      assert.throws(
+        () => storage?.listSessionSummaryPage({ scope: "recent", cursor: firstPage?.nextCursor, searchText: "changed" }),
+        /一致しません/,
+      );
+
+      const pinnedPage = storage?.listSessionSummaryPage({ scope: "pinned" });
+      assert.deepEqual(pinnedPage?.entries.map((entry) => entry.id), ["older"]);
+      const openPage = storage?.listSessionSummaryPage({
+        scope: "open",
+        sessionIds: ["older", "same-a", "missing", "older"],
+        searchText: "",
+      });
+      assert.deepEqual(openPage?.entries.map((entry) => entry.id).sort(), ["older", "same-a"]);
+      assert.equal(openPage?.entries.length, 2);
+      assert.equal(openPage?.hasMore, false);
+      assert.equal(openPage?.nextCursor, null);
+      assert.deepEqual(Object.keys(openPage?.entries[0] ?? {}).sort(), [
+        "accessMode",
+        "character",
+        "characterIconPath",
+        "characterId",
+        "characterThemeColors",
+        "id",
+        "isPinned",
+        "runState",
+        "sessionKind",
+        "sourceSchemaVersion",
+        "status",
+        "taskTitle",
+        "updatedAt",
+        "workspaceLabel",
+        "workspacePath",
+      ]);
+      assert.equal("provider" in (openPage?.entries[0] ?? {}), false);
+      assert.equal("threadId" in (openPage?.entries[0] ?? {}), false);
+      assert.throws(
+        () => storage?.listSessionSummaryPage({ scope: "open", sessionIds: ["older", "same-a"], limit: 1 }),
+        /ID数以上/,
+      );
+
+      assert.deepEqual(storage?.listSessionCharacterUsage().map((entry) => entry.characterId), ["char-b", "char-a"]);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

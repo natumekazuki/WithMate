@@ -16,6 +16,11 @@ import {
   normalizeChatLayoutPreference,
   type ChatLayoutPreference,
 } from "./chat/chat-layout-preference.js";
+import {
+  createDefaultKeyboardShortcutSettings,
+  normalizeKeyboardShortcutSettings,
+  type KeyboardShortcutSettings,
+} from "./keyboard-shortcut-state.js";
 
 export type AppSettings = {
   memoryGenerationEnabled: boolean;
@@ -25,7 +30,9 @@ export type AppSettings = {
   autoCollapseActionDockOnSend: boolean;
   scrollToLatestOnSend: boolean;
   chatLayoutPreference: ChatLayoutPreference;
+  keyboardShortcuts: KeyboardShortcutSettings;
   memoryFileQuotaBytes: number;
+  glossaryProactiveCreateLimit: number | null;
   userMicrocopyCatalog: MicrocopyCatalog;
   mateMemoryGenerationSettings: MateMemoryGenerationSettings;
   codingProviderSettings: Record<string, ProviderAppSettings>;
@@ -77,6 +84,9 @@ export const DEFAULT_BACKGROUND_TIMEOUT_SECONDS = 180;
 export const MEMORY_FILE_QUOTA_DEFAULT_BYTES = 1_073_741_824;
 export const MEMORY_FILE_QUOTA_MIN_BYTES = 67_108_864;
 export const MEMORY_FILE_QUOTA_MAX_BYTES = 53_687_091_200;
+export const DEFAULT_GLOSSARY_PROACTIVE_CREATE_LIMIT = 5;
+export const GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN = 0;
+export const GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX = 100;
 
 export const DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS: MemoryExtractionProviderSettings = {
   model: DEFAULT_MODEL_ID,
@@ -106,7 +116,9 @@ export function createDefaultAppSettings(): AppSettings {
     autoCollapseActionDockOnSend: true,
     scrollToLatestOnSend: true,
     chatLayoutPreference: { ...DEFAULT_CHAT_LAYOUT_PREFERENCE },
+    keyboardShortcuts: createDefaultKeyboardShortcutSettings(),
     memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
+    glossaryProactiveCreateLimit: DEFAULT_GLOSSARY_PROACTIVE_CREATE_LIMIT,
     userMicrocopyCatalog: createDefaultUserMicrocopyCatalog(),
     mateMemoryGenerationSettings: {
       ...DEFAULT_MATE_MEMORY_GENERATION_SETTINGS,
@@ -211,6 +223,15 @@ export function normalizeMemoryFileQuotaBytes(value: unknown): number {
   }
 
   return normalized;
+}
+
+export function normalizeGlossaryProactiveCreateLimit(value: unknown): number | null {
+  return typeof value === "number"
+    && Number.isInteger(value)
+    && value >= GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN
+    && value <= GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX
+    ? value
+    : null;
 }
 
 function normalizeMemoryExtractionProviderSettings(value: unknown): MemoryExtractionProviderSettings {
@@ -334,7 +355,11 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     scrollToLatestOnSend:
       typeof candidate.scrollToLatestOnSend === "boolean" ? candidate.scrollToLatestOnSend : true,
     chatLayoutPreference: normalizeChatLayoutPreference(candidate.chatLayoutPreference),
+    keyboardShortcuts: normalizeKeyboardShortcutSettings(candidate.keyboardShortcuts),
     memoryFileQuotaBytes: normalizeMemoryFileQuotaBytes(candidate.memoryFileQuotaBytes),
+    glossaryProactiveCreateLimit: normalizeGlossaryProactiveCreateLimit(
+      candidate.glossaryProactiveCreateLimit,
+    ),
     userMicrocopyCatalog: normalizeUserMicrocopyCatalog(candidate.userMicrocopyCatalog),
     mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),
     codingProviderSettings,

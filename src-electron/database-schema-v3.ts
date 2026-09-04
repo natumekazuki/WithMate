@@ -3,6 +3,8 @@ import { DatabaseSync } from "node:sqlite";
 
 import { DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED } from "../src/codex-speed.js";
+import { DEFAULT_CODEX_REVIEWER } from "../src/codex-reviewer.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 
 export const APP_DATABASE_V3_FILENAME = "withmate-v3.db";
@@ -282,6 +284,8 @@ export const CREATE_V3_COMPANION_TABLES_SQL = `
     custom_agent_name TEXT NOT NULL DEFAULT '',
     approval_mode TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_APPROVAL_MODE)},
     codex_sandbox_mode TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_CODEX_SANDBOX_MODE)},
+    codex_speed TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_CODEX_SPEED)},
+    codex_reviewer TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_CODEX_REVIEWER)},
     character_id TEXT NOT NULL,
     character_name TEXT NOT NULL,
     character_role_preview TEXT NOT NULL DEFAULT '' CHECK (length(character_role_preview) <= ${V3_TEXT_PREVIEW_MAX_LENGTH}),

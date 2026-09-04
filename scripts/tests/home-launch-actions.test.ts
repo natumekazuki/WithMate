@@ -368,6 +368,14 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.startingStates, []);
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "open Session Window一覧が取得失敗ならrandom characterのCompanionを開始しない"
+  // oracle = { type = "adr", ref = "docs/adr/004-launch-character-random-selection.md" }
+  // failure_mode = "同時利用中characterを除外できない状態でCompanionを作成する"
+  // scope = "Home random character launch admission"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("open Session Window 一覧の取得失敗後はrandom選択のcompanionを開始しない", async () => {
     let createCount = 0;
     const harness = createStartHomeLaunchHarness({
@@ -376,6 +384,7 @@ describe("home-launch-actions", () => {
         characterSelectionMode: "random",
       },
       requestedMode: "companion",
+      sessionCharacterUsage: [{ characterId: "mia", sessionKind: "default" }],
       openSessionWindowIdsLoadStatus: "error",
       createCompanionSession: async () => {
         createCount += 1;

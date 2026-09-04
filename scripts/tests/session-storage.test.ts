@@ -185,30 +185,6 @@ describe("SessionStorage", () => {
     }
   });
 
-  it("legacy approval 値も read-path normalize で provider-neutral に読める", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
-    const dbPath = path.join(tempDirectory, "withmate.db");
-
-    try {
-      const storage = new SessionStorage(dbPath);
-      const session = storage.upsertSession(createSession("legacy", "workspace-legacy", "char-a", "A"));
-      storage.close();
-
-      const db = new DatabaseSync(dbPath);
-      db.prepare("UPDATE sessions SET approval_mode = ? WHERE id = ?").run("on-failure", session.id);
-      db.close();
-
-      const reopened = new SessionStorage(dbPath);
-      const loaded = reopened.getSession(session.id);
-      reopened.close();
-
-      assert.ok(loaded);
-      assert.equal(loaded.approvalMode, "on-failure");
-    } finally {
-      await removeDirectoryWithRetry(tempDirectory);
-    }
-  });
-
   it("customAgentName を保存して読み戻せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -302,6 +278,14 @@ describe("SessionStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "legacy Session summary projectionはdetail破損時もCodex speedとReviewerを既定値へ正規化する"
+  // oracle = { type = "contract", ref = "accepted behavior: existing saved data default" }
+  // failure_mode = "旧Session summaryの欠落runtime optionが誤った値へ変わるか一覧取得を壊す"
+  // scope = "session-storage-summary"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("listSessionSummaries は detail JSON が壊れていても summary だけ返せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -350,6 +334,8 @@ describe("SessionStorage", () => {
           runState: session.runState,
           approvalMode: session.approvalMode,
           codexSandboxMode: session.codexSandboxMode,
+          codexSpeed: "standard",
+          codexReviewer: "user",
           model: session.model,
           reasoningEffort: session.reasoningEffort,
           customAgentName: session.customAgentName,
@@ -360,6 +346,63 @@ describe("SessionStorage", () => {
       assert.equal(errors.length, 0);
     } finally {
       console.error = originalConsoleError;
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "legacy SessionStorageのHome pageは要求IDを正規化し一覧に必要なbounded summaryだけを返す"
+  // oracle = { type = "contract", ref = "docs/features/home-session-pagination.md" }
+  // failure_mode = "Home queryがprovider・thread・message等のfull Session情報を返す"
+  // scope = "legacy-session-storage-home-summary-page"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("listSessionSummaryPage は Home 用の bounded projection だけを返す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const session = storage.upsertSession({
+        ...createSession("home page", "workspace-home", "char-home", "Home"),
+        provider: "copilot",
+        model: "hidden-model",
+        threadId: "hidden-thread",
+        allowedAdditionalDirectories: ["C:/hidden"],
+      });
+      const secondSession = storage.upsertSession(createSession("another page", "workspace-another", "char-another", "Another"));
+
+      const page = storage.listSessionSummaryPage({
+        scope: "open",
+        sessionIds: [session.id, "missing", secondSession.id, session.id],
+        searchText: "",
+      });
+      assert.deepEqual(page.entries.map((entry) => entry.id).sort(), [session.id, secondSession.id].sort());
+      assert.equal(page.entries.length, 2);
+      assert.equal(page.hasMore, false);
+      assert.equal(page.nextCursor, null);
+      assert.deepEqual(Object.keys(page.entries[0] ?? {}).sort(), [
+        "accessMode",
+        "character",
+        "characterIconPath",
+        "characterId",
+        "characterThemeColors",
+        "id",
+        "isPinned",
+        "runState",
+        "sessionKind",
+        "sourceSchemaVersion",
+        "status",
+        "taskTitle",
+        "updatedAt",
+        "workspaceLabel",
+        "workspacePath",
+      ]);
+      assert.equal("provider" in (page.entries[0] ?? {}), false);
+      assert.equal("threadId" in (page.entries[0] ?? {}), false);
+      storage.close();
+    } finally {
       await removeDirectoryWithRetry(tempDirectory);
     }
   });

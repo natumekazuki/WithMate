@@ -1,4 +1,6 @@
 export const WITHMATE_OPEN_SESSION_CHANNEL = "withmate:open-session";
+export const WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL = "withmate:get-session-window-restore-set";
+export const WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL = "withmate:restore-session-windows";
 export const WITHMATE_OPEN_HOME_WINDOW_CHANNEL = "withmate:open-home-window";
 export const WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL = "withmate:open-session-monitor-window";
 export const WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL = "withmate:open-settings-window";
@@ -16,6 +18,8 @@ export const WITHMATE_GET_ROOT_WORK_ITEM_CHANNEL = "withmate:get-root-work-item"
 export const WITHMATE_LIST_ROOT_WORK_ITEM_HISTORY_CHANNEL = "withmate:list-root-work-item-history";
 export const WITHMATE_REVISE_ROOT_WORK_ITEM_CHANNEL = "withmate:revise-root-work-item";
 export const WITHMATE_APPEND_ROOT_WORK_ITEM_HISTORY_CHANNEL = "withmate:append-root-work-item-history";
+export const WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL = "withmate:get-session-glossary-projection";
+export const WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL = "withmate:search-session-glossary";
 export const WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL = "withmate:validate-session-workspace";
 export const WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL = "withmate:list-session-file-roots";
 export const WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL = "withmate:list-session-directory";
@@ -30,9 +34,24 @@ export const WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT =
 export const WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL = "withmate:copy-session-file-preview-image";
 export const WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL =
   "withmate:show-session-file-preview-image-context-menu";
+export const WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL = "withmate:copy-session-file-object";
+export const WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL =
+  "withmate:show-session-file-object-copy-context-menu";
+export const WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL =
+  "withmate:show-session-file-tree-context-menu";
 export const WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL = "withmate:show-markdown-link-context-menu";
 export const WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL = "withmate:list-file-root-changes";
+export const WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL =
+  "withmate:list-file-root-changes-repositories";
 export const WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL = "withmate:get-file-root-diff";
+export const WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL =
+  "withmate:list-file-root-git-history-repositories";
+export const WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL =
+  "withmate:list-file-root-git-history-commits";
+export const WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL =
+  "withmate:get-file-root-git-history-commit-detail";
+export const WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL =
+  "withmate:get-file-root-git-history-diff";
 export const WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL = "withmate:get-session-message-artifact";
 export const WITHMATE_GET_MODEL_CATALOG_CHANNEL = "withmate:get-model-catalog";
 export const WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL = "withmate:import-model-catalog";
@@ -177,7 +196,9 @@ export const WITHMATE_LIVE_SESSION_RUN_EVENT = "withmate:live-session-run";
 export const WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT = "withmate:provider-quota-telemetry";
 export const WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT = "withmate:session-context-telemetry";
 export const WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT = "withmate:session-background-activity";
+export const WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT = "withmate:session-glossary-changed";
 export const WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT = "withmate:open-session-windows-changed";
+export const WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT = "withmate:session-window-restore-set-changed";
 export const WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT = "withmate:open-companion-review-windows-changed";
 export const WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT = "withmate:companion-sessions-changed";
 export const WITHMATE_APP_BOOT_STATUS_EVENT = "withmate:app-boot-status";

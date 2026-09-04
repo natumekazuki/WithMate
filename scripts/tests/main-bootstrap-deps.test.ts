@@ -3,6 +3,14 @@ import test from "node:test";
 
 import { createMainBootstrapDeps } from "../../src-electron/main-bootstrap-deps.js";
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 6 preserves its observable contract"
+// oracle = { type = "contract", ref = "-6" }
+// failure_mode = "line 6 violates its expected output or boundary behavior"
+// scope = "main-bootstrap-deps.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMainIpcHandlers に渡す", async () => {
   const calls: string[] = [];
   let receivedDeps: unknown = null;
@@ -118,6 +126,15 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextCursor: null, hasMore: false }),
         listOpenCompanionReviewWindowIds: () => [],
         getSession: () => null,
+        getSessionGlossaryProjection: (sessionId: string) => ({
+          sessionId,
+          scopeRevision: "scope",
+          sequence: 1,
+          checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+          state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+        }),
+        searchSessionGlossary: () => ({ ok: true, revision: null, entries: [], total: 0, offset: 0, pageSize: 50 }),
+        ensureSessionGlossarySubscription: () => {},
         getSessionMessageArtifact: () => null,
         getDiffPreview: () => null,
         previewComposerInput: async () => null,

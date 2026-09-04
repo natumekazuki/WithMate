@@ -89,13 +89,38 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
   SessionFilePreviewWindowPayload,
+  SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFileTreePathActionContextMenuResult,
+  SessionFileTreePathActionRequest,
   FileRootChangesRequest,
+  FileRootChangesRepositoriesRequest,
+  FileRootChangesRepositoriesResult,
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
+  FileRootGitHistoryCommitDetailRequest,
+  FileRootGitHistoryCommitDetailResult,
+  FileRootGitHistoryCommitsRequest,
+  FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryDiffRequest,
+  FileRootGitHistoryDiffResult,
+  FileRootGitHistoryRepositoriesRequest,
+  FileRootGitHistoryRepositoriesResult,
 } from "../src/file-explorer/file-explorer-contract.js";
+import type {
+  SessionFileObjectCopyContextMenuRequest,
+  SessionFileObjectCopyContextMenuResult,
+  SessionFileObjectCopyRequest,
+  SessionFileObjectCopyResult,
+} from "../src/file-explorer/session-file-object-copy-contract.js";
+import type {
+  GlossaryListResult,
+  GlossaryOperationResult,
+  GlossarySearchRequest,
+  SessionGlossaryProjection,
+} from "../src/glossary-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type {
   CancelSessionExecutionRequest,
@@ -149,6 +174,7 @@ import type {
   RootWorkItemRevisionRequest,
 } from "../src/withmate-window-api.js";
 import type { RootWorkItem, WorkItemEvent } from "../src/work-item.js";
+import type { SessionWindowRestoreResult } from "../src/session-window-restore.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 
@@ -158,6 +184,8 @@ export type MainIpcWindowDepsArgs = {
   resolveSessionWindow(sessionId: string): MaybeWindow;
   resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<BrowserWindow>;
+  getSessionWindowRestoreSet(): Promise<string[]>;
+  restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
   openHomeWindow(): Promise<BrowserWindow>;
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
@@ -169,7 +197,7 @@ export type MainIpcWindowDepsArgs = {
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
-  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFileResourceRequest | null;
+  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFilePreviewResourceRequest | null;
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
   openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
@@ -197,6 +225,18 @@ export type MainIpcWindowDepsArgs = {
     event: IpcMainInvokeEvent,
     request: SessionFilePreviewImageActionRequest,
   ): Awaitable<SessionFilePreviewImageContextMenuResult>;
+  copySessionFileObject(
+    event: IpcMainInvokeEvent,
+    request: SessionFileObjectCopyRequest,
+  ): Awaitable<SessionFileObjectCopyResult>;
+  showSessionFileObjectCopyContextMenu(
+    event: IpcMainInvokeEvent,
+    request: SessionFileObjectCopyContextMenuRequest,
+  ): Awaitable<SessionFileObjectCopyContextMenuResult>;
+  showSessionFileTreeContextMenu(
+    event: IpcMainInvokeEvent,
+    request: SessionFileTreePathActionRequest,
+  ): Awaitable<SessionFileTreePathActionContextMenuResult>;
   showMarkdownLinkContextMenu(
     event: IpcMainInvokeEvent,
     request: MarkdownLinkContextMenuRequest,
@@ -292,10 +332,16 @@ export type MainIpcSessionQueryDepsArgs = {
   ): OpenSessionWindowIdsPageResult;
   listOpenCompanionReviewWindowIds(): string[];
   getSession(sessionId: string): Awaitable<Session | null>;
+  getSessionGlossaryProjection(sessionId: string): Awaitable<SessionGlossaryProjection>;
+  searchSessionGlossary(
+    sessionId: string,
+    request: GlossarySearchRequest,
+  ): Awaitable<GlossaryOperationResult<GlossaryListResult>>;
+  ensureSessionGlossarySubscription(sessionId: string): Awaitable<void>;
   getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
-  inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
+  inspectSessionFile(request: SessionFilePreviewResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
   openSessionFilePreviewWindow(
@@ -303,7 +349,22 @@ export type MainIpcSessionQueryDepsArgs = {
   ): Awaitable<SessionFilePreviewWindowOpenResult>;
   getSessionFilePreviewWindowPayload(token: string): SessionFilePreviewWindowPayload | null;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
+  listFileRootChangesRepositories(
+    request: FileRootChangesRepositoriesRequest,
+  ): Awaitable<FileRootChangesRepositoriesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
+  listFileRootGitHistoryRepositories(
+    request: FileRootGitHistoryRepositoriesRequest,
+  ): Awaitable<FileRootGitHistoryRepositoriesResult>;
+  listFileRootGitHistoryCommits(
+    request: FileRootGitHistoryCommitsRequest,
+  ): Awaitable<FileRootGitHistoryCommitsResult>;
+  getFileRootGitHistoryCommitDetail(
+    request: FileRootGitHistoryCommitDetailRequest,
+  ): Awaitable<FileRootGitHistoryCommitDetailResult>;
+  getFileRootGitHistoryDiff(
+    request: FileRootGitHistoryDiffRequest,
+  ): Awaitable<FileRootGitHistoryDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -452,6 +513,8 @@ export function createMainIpcRegistrationDeps(
     openSessionWindow: async (sessionId) => {
       await args.window.openSessionWindow(sessionId);
     },
+    getSessionWindowRestoreSet: () => args.window.getSessionWindowRestoreSet(),
+    restoreSessionWindows: () => args.window.restoreSessionWindows(),
     openHomeWindow: async () => {
       await args.window.openHomeWindow();
     },
@@ -499,6 +562,9 @@ export function createMainIpcRegistrationDeps(
     openSessionFilesTerminal: args.window.openSessionFilesTerminal,
     copySessionFilePreviewImage: args.window.copySessionFilePreviewImage,
     showSessionFilePreviewImageContextMenu: args.window.showSessionFilePreviewImageContextMenu,
+    copySessionFileObject: args.window.copySessionFileObject,
+    showSessionFileObjectCopyContextMenu: args.window.showSessionFileObjectCopyContextMenu,
+    showSessionFileTreeContextMenu: args.window.showSessionFileTreeContextMenu,
     showMarkdownLinkContextMenu: args.window.showMarkdownLinkContextMenu,
     openPathTarget: args.window.openPathTarget,
     openAppLogFolder: args.window.openAppLogFolder,
@@ -555,6 +621,9 @@ export function createMainIpcRegistrationDeps(
     listOpenSessionWindowIdsPage: args.sessionQuery.listOpenSessionWindowIdsPage,
     listOpenCompanionReviewWindowIds: args.sessionQuery.listOpenCompanionReviewWindowIds,
     getSession: args.sessionQuery.getSession,
+    getSessionGlossaryProjection: args.sessionQuery.getSessionGlossaryProjection,
+    searchSessionGlossary: args.sessionQuery.searchSessionGlossary,
+    ensureSessionGlossarySubscription: args.sessionQuery.ensureSessionGlossarySubscription,
     getSessionFileExplorerOwnerSessionId: args.sessionQuery.getSessionFileExplorerOwnerSessionId,
     listSessionFileRoots: args.sessionQuery.listSessionFileRoots,
     listSessionDirectory: args.sessionQuery.listSessionDirectory,
@@ -564,7 +633,12 @@ export function createMainIpcRegistrationDeps(
     openSessionFilePreviewWindow: args.sessionQuery.openSessionFilePreviewWindow,
     getSessionFilePreviewWindowPayload: args.sessionQuery.getSessionFilePreviewWindowPayload,
     listFileRootChanges: args.sessionQuery.listFileRootChanges,
+    listFileRootChangesRepositories: args.sessionQuery.listFileRootChangesRepositories,
     getFileRootDiff: args.sessionQuery.getFileRootDiff,
+    listFileRootGitHistoryRepositories: args.sessionQuery.listFileRootGitHistoryRepositories,
+    listFileRootGitHistoryCommits: args.sessionQuery.listFileRootGitHistoryCommits,
+    getFileRootGitHistoryCommitDetail: args.sessionQuery.getFileRootGitHistoryCommitDetail,
+    getFileRootGitHistoryDiff: args.sessionQuery.getFileRootGitHistoryDiff,
     getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,

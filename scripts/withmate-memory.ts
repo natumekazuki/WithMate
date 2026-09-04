@@ -11,6 +11,7 @@ import {
 import {
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+  normalizeWithMateMemoryApiBaseUrl,
 } from "../src/memory-v6/memory-discovery.js";
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
 import {
@@ -43,20 +44,37 @@ import {
   validateCharacterMemorySearchRequest,
 } from "../src/character-context/character-context-validation.js";
 import {
+  WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
+} from "../src/agent-runtime/agent-runtime-binding-contract.js";
+import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   callWithMateMemoryRuntime,
+  createCharacterRuntimeDiscoveryError,
+  createMemoryRuntimeDiscoveryError,
   discoverWithMateMemoryApi,
+  mapWithMateMemoryDiscoveryCode,
   mapRuntimeHttpFailureToCharacterContext,
   mapRuntimeHttpFailureToMemory,
+  resolveWithMateMemoryApi,
   resolveAgentRuntimeBindingReference,
+  resolveAgentRuntimeTurnCapability,
   verifyRuntimeIdentity,
   WithMateMemoryRuntimeExchangeError,
   WITHMATE_MEMORY_API_SECRET_HEADER,
   type WithMateMemoryRuntimeOperation,
+  type WithMateMemoryPublicDiscoveryCode,
+  type WithMateMemoryRuntimeResolution,
   type WithMateMemoryRuntimeResponse,
   type WithMateMemoryRuntimeConnection,
 } from "./withmate-memory-runtime-client.js";
+import { isUuid, type RuntimeDiscoveryClock } from "../src/runtime-discovery/runtime-discovery-contract.js";
 import { startWithMateMemoryMcpServer } from "./withmate-memory-mcp.js";
+import {
+  buildWithMateMemoryMcpRuntimeBody,
+  type WithMateMemoryMcpCommand,
+} from "./withmate-memory-mcp-operation.js";
 
 export {
   DEFAULT_REQUEST_TIMEOUT_MS,
@@ -77,6 +95,7 @@ export const WITHMATE_MEMORY_CLI_EXIT_CODES = {
 
 export type WithMateMemoryCliCommand =
   | "help"
+  | "instances"
   | "status"
   | "characters"
   | "file_usage"
@@ -105,7 +124,7 @@ export type WithMateMemoryCliCommand =
   | "schema"
   | "validate";
 
-export type WithMateMemoryApiCommand = Exclude<WithMateMemoryCliCommand, "help" | "schema" | "validate" | "mcp_server">;
+export type WithMateMemoryApiCommand = Exclude<WithMateMemoryCliCommand, "help" | "instances" | "schema" | "validate" | "mcp_server">;
 export type WithMateMemoryValidatedCommand = Exclude<WithMateMemoryApiCommand, "status" | "characters" | "file_usage" | "character_metrics">;
 
 export type WithMateMemoryCliRequest = {
@@ -114,6 +133,9 @@ export type WithMateMemoryCliRequest = {
   validateCommand?: WithMateMemoryValidatedCommand;
   discoveryFilePath?: string;
   apiUrl?: string;
+  applicationInstanceId?: string;
+  runtimeGenerationId?: string;
+  statusAll?: boolean;
   outputFormat?: "json" | "jsonl" | "markdown";
   fallbackFrom?: "mcp";
 };
@@ -126,9 +148,13 @@ export type WithMateMemoryCliDeps = {
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
-    options: { signal: AbortSignal; bindingReference?: string },
+    options: { signal: AbortSignal; bindingReference?: string; turnCapability?: string },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof readFile;
+  fetch?: typeof fetch;
+  clock?: RuntimeDiscoveryClock;
+  registryRootDirectoryPath?: string;
+  staleThresholdMs?: number;
   requestTimeoutMs?: number;
   fileOperationRequestTimeoutMs?: number;
 };
@@ -155,6 +181,24 @@ const CHARACTER_CONTEXT_WRITE_COMMANDS = new Set<WithMateMemoryApiCommand>([
   "character_memory_forget",
 ]);
 
+const AGENT_CLI_FALLBACK_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "file_usage",
+  "list_targets",
+  "list_entries",
+  "search",
+  "get_entry",
+  "list_tags",
+  "append",
+  "forget",
+  "move_entry",
+  "context_get",
+  "affect_appraise",
+  "character_memory_search",
+  "character_memory_append_episode",
+  "character_memory_correct",
+  "character_memory_forget",
+]);
+
 const GENERAL_MEMORY_WRITE_COMMANDS = new Set<WithMateMemoryApiCommand>([
   "append",
   "forget",
@@ -174,11 +218,15 @@ function generalMemoryOperationKind(request: WithMateMemoryCliRequest): "read" |
   return GENERAL_MEMORY_WRITE_COMMANDS.has(request.command as WithMateMemoryApiCommand) ? "write" : "read";
 }
 
-function characterRuntimeUnavailable(effect: "none" | "unknown" = "none") {
+function characterRuntimeUnavailable(
+  effect: "none" | "unknown" = "none",
+  discoveryCode: WithMateMemoryPublicDiscoveryCode = "WITHMATE_RUNTIME_UNAVAILABLE",
+) {
   return createCharacterContextError("storage_unavailable", "WithMate runtime is not available.", {
     retryable: true,
     conversationMayContinue: true,
     effect,
+    details: { discoveryCode },
   });
 }
 
@@ -238,6 +286,7 @@ const FILE_OPERATION_COMMANDS = new Set<WithMateMemoryApiCommand>([
 
 const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["help", "help"],
+  ["instances", "instances"],
   ["status", "status"],
   ["characters", "characters"],
   ["list-characters", "characters"],
@@ -288,6 +337,7 @@ const WITHMATE_MEMORY_CLI_HELP = `Usage:
 
 Commands:
   help
+  instances
   status
   characters
   file-usage
@@ -348,12 +398,16 @@ Shorthand options:
 Connection options:
   --api-url <url>
   --discovery-file <path>
+  --instance <application-instance-id>
+  --generation <runtime-generation-id>
   --fallback-from <mcp>
 
 Validation:
   validate --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>
 
 Examples:
+  withmate-memory instances
+  withmate-memory status --all
   withmate-memory status
   withmate-memory characters
   withmate-memory file-usage
@@ -402,12 +456,39 @@ function usageError(message: string): MemoryErrorResponse {
   });
 }
 
-function notRunningError(): MemoryErrorResponse {
+function notRunningError(
+  discoveryCode: WithMateMemoryPublicDiscoveryCode = "WITHMATE_RUNTIME_UNAVAILABLE",
+): MemoryErrorResponse {
   return createMemoryErrorResponse({
-    code: "WITHMATE_NOT_RUNNING",
+    code: discoveryCode,
     message: "WithMate Memory API is not running or could not be discovered.",
     effect: "none",
+    details: {
+      discoveryCode,
+      ...(discoveryCode === "WITHMATE_RUNTIME_UNAVAILABLE" ? { legacyCode: "WITHMATE_NOT_RUNNING" } : {}),
+    },
   });
+}
+
+function runtimeExchangeDiscoveryCode(error: WithMateMemoryRuntimeExchangeError): WithMateMemoryPublicDiscoveryCode | undefined {
+  return error.discoveryCode;
+}
+
+function buildRuntimeInstancesResponse(resolution: WithMateMemoryRuntimeResolution): unknown {
+  return {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    instances: resolution.candidates,
+    selection: resolution.kind === "selected"
+      ? {
+          status: "selected",
+          applicationInstanceId: resolution.candidate.applicationInstanceId,
+          runtimeGenerationId: resolution.candidate.runtimeGenerationId,
+        }
+      : {
+          status: "error",
+          discoveryCode: mapWithMateMemoryDiscoveryCode(resolution.code),
+        },
+  };
 }
 
 function requestTimeoutError(
@@ -494,7 +575,7 @@ export async function parseWithMateMemoryCliArgs(
   const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
   if (!command) {
     throw usageError(
-      "Usage: withmate-memory <status|characters|file-usage|list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry|context-get|affect-appraise|affect-inspect|affect-correct|affect-reset|character-memory-search|character-memory-append-episode|character-memory-correct|character-memory-forget|character-metrics|mcp-server|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--project <path>] [--tag <tag>] [options]",
+      "Usage: withmate-memory <instances|status|characters|file-usage|list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry|context-get|affect-appraise|affect-inspect|affect-correct|affect-reset|character-memory-search|character-memory-append-episode|character-memory-correct|character-memory-forget|character-metrics|mcp-server|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--project <path>] [--tag <tag>] [options]",
     );
   }
   if (command === "help" || rest.includes("--help") || rest.includes("-h")) {
@@ -506,6 +587,9 @@ export async function parseWithMateMemoryCliArgs(
   let stdinRequested = false;
   let apiUrl: string | undefined;
   let discoveryFilePath: string | undefined;
+  let applicationInstanceId: string | undefined;
+  let runtimeGenerationId: string | undefined;
+  let statusAll = false;
   let fallbackFrom: "mcp" | undefined;
   let validateCommand: WithMateMemoryValidatedCommand | undefined;
   let projectPath: string | undefined;
@@ -543,6 +627,15 @@ export async function parseWithMateMemoryCliArgs(
       apiUrl = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--discovery-file") {
       discoveryFilePath = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--instance") {
+      applicationInstanceId = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--generation") {
+      runtimeGenerationId = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--all") {
+      if (command !== "status") {
+        throw usageError("--all is only supported by status.");
+      }
+      statusAll = true;
     } else if (arg === "--fallback-from") {
       const value = requireOptionValue(rest, ++index, arg);
       if (value !== "mcp") {
@@ -635,7 +728,7 @@ export async function parseWithMateMemoryCliArgs(
     if (hasShorthandOptions({ projectPath, projectId, characterId, owner, scope, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, includeEmpty, includeBody, withCounts, allTargets, dryRun, sampleLimit, limit })) {
       body = buildShorthandBody(command, { projectPath, projectId, characterId, owner, scope, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, includeEmpty, includeBody, withCounts, allTargets, dryRun, sampleLimit, limit });
     }
-  } else if (command !== "status" && command !== "characters" && command !== "schema") {
+  } else if (command !== "instances" && command !== "status" && command !== "characters" && command !== "schema") {
     if (jsonInput !== null) {
       body = await parseJsonInput(jsonInput);
     } else if (filePath !== null) {
@@ -665,6 +758,9 @@ export async function parseWithMateMemoryCliArgs(
     ...(validateCommand ? { validateCommand } : {}),
     ...(apiUrl ? { apiUrl } : {}),
     ...(discoveryFilePath ? { discoveryFilePath } : {}),
+    ...(applicationInstanceId ? { applicationInstanceId } : {}),
+    ...(runtimeGenerationId ? { runtimeGenerationId } : {}),
+    ...(statusAll ? { statusAll: true } : {}),
     ...(outputFormat ? { outputFormat } : {}),
     ...(fallbackFrom ? { fallbackFrom } : {}),
   };
@@ -1053,6 +1149,7 @@ function buildSchemaResponse(): unknown {
     forgetReasons: [...MEMORY_FORGET_REASONS],
     commands: [
       "help",
+      "instances",
       "status",
       "characters",
       "file-usage",
@@ -1331,9 +1428,53 @@ export async function runWithMateMemoryCli(
 ): Promise<number> {
   const stdout = deps.stdout ?? process.stdout;
   const stderr = deps.stderr ?? process.stderr;
+  const env = deps.env ?? process.env;
 
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
+    const bindingRequired = env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() === "1";
+    const localOnlyCommand = request.command === "help"
+      || request.command === "mcp_server"
+      || request.command === "schema"
+      || request.command === "validate";
+    if (bindingRequired && request.fallbackFrom !== "mcp" && !localOnlyCommand) {
+      throw usageError("Provider-bound Memory CLI requests require an admitted --fallback-from mcp operation.");
+    }
+    if (request.fallbackFrom === "mcp") {
+      if (!bindingRequired) {
+        throw usageError("--fallback-from mcp requires the Agent runtime binding policy.");
+      }
+      if (!resolveAgentRuntimeBindingReference(env)) {
+        throw usageError("--fallback-from mcp requires an Agent runtime binding.");
+      }
+      const applicationInstanceId = env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV]?.trim();
+      const runtimeGenerationId = env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV]?.trim();
+      if (!isUuid(applicationInstanceId) || !isUuid(runtimeGenerationId)) {
+        throw usageError("--fallback-from mcp requires the runtime owner selected by the Agent binding.");
+      }
+      if (!AGENT_CLI_FALLBACK_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+        throw usageError("--fallback-from mcp supports only operations published by MCP tools/list.");
+      }
+      if (
+        typeof request.body === "object"
+        && request.body !== null
+        && !Array.isArray(request.body)
+        && Object.prototype.hasOwnProperty.call(request.body, "schemaVersion")
+      ) {
+        throw usageError("--fallback-from mcp accepts public MCP tool input and does not accept schemaVersion.");
+      }
+      if (request.apiUrl || request.discoveryFilePath || request.applicationInstanceId || request.runtimeGenerationId) {
+        throw usageError("--fallback-from mcp uses the runtime selected by the Agent binding and does not accept connection selectors.");
+      }
+      if (
+        request.command === "file_usage"
+        && typeof request.body === "object"
+        && request.body !== null
+        && Object.keys(request.body).length > 0
+      ) {
+        throw usageError("--fallback-from mcp file-usage accepts no detail selectors.");
+      }
+    }
     if (request.command === "help") {
       stdout.write(WITHMATE_MEMORY_CLI_HELP);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
@@ -1342,6 +1483,10 @@ export async function runWithMateMemoryCli(
       await startWithMateMemoryMcpServer({
         env: deps.env,
         readFile: deps.readFile,
+        fetch: deps.fetch,
+        clock: deps.clock,
+        registryRootDirectoryPath: deps.registryRootDirectoryPath,
+        staleThresholdMs: deps.staleThresholdMs,
         requestTimeoutMs: deps.requestTimeoutMs,
       });
       return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
@@ -1356,21 +1501,36 @@ export async function runWithMateMemoryCli(
       return result.exitCode;
     }
 
-    const connection = await discoverWithMateMemoryApi({
-      adapter: "cli",
+    const explicitApiUrl = request.apiUrl ?? env.WITHMATE_MEMORY_API_URL?.trim();
+    if (explicitApiUrl && !normalizeWithMateMemoryApiBaseUrl(explicitApiUrl)) {
+      throw usageError(`${request.apiUrl !== undefined ? "--api-url" : "WITHMATE_MEMORY_API_URL"} must be a valid loopback HTTP URL.`);
+    }
+    const resolution = await resolveWithMateMemoryApi({
+      adapter: request.fallbackFrom === "mcp" ? "mcp" : "cli",
       env: deps.env,
       apiUrl: request.apiUrl,
       discoveryFilePath: request.discoveryFilePath,
+      applicationInstanceId: request.applicationInstanceId,
+      runtimeGenerationId: request.runtimeGenerationId,
       readFile: deps.readFile,
+      fetch: deps.fetch,
+      clock: deps.clock,
+      registryRootDirectoryPath: deps.registryRootDirectoryPath,
+      staleThresholdMs: deps.staleThresholdMs,
     });
-    if (!connection) {
+    if (request.command === "instances" || (request.command === "status" && request.statusAll)) {
+      stdout.write(`${JSON.stringify(buildRuntimeInstancesResponse(resolution))}\n`);
+      return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
+    }
+    if (resolution.kind === "error") {
       if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
-        stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
+        stdout.write(`${JSON.stringify(createCharacterRuntimeDiscoveryError(resolution))}\n`);
         return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
-      stdout.write(`${JSON.stringify(notRunningError())}\n`);
+      stdout.write(`${JSON.stringify(createMemoryRuntimeDiscoveryError(resolution))}\n`);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
     }
+    const connection = resolution.connection;
 
     const route = routeByCommand[request.command];
     let response: Pick<Response, "ok" | "status">;
@@ -1379,14 +1539,18 @@ export async function runWithMateMemoryCli(
     const abortController = new AbortController();
     const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
     try {
+      const runtimeBody = request.fallbackFrom === "mcp"
+        ? buildWithMateMemoryMcpRuntimeBody(request.command as WithMateMemoryMcpCommand, request.body)
+        : request.body;
       const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
         method: route.method,
         path: buildRoutePath(request),
-        body: request.body,
+        body: runtimeBody,
         ...(request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}),
       }, {
         signal: abortController.signal,
         bindingReference: resolveAgentRuntimeBindingReference(deps.env),
+        ...(request.fallbackFrom ? { turnCapability: resolveAgentRuntimeTurnCapability(deps.env) } : {}),
       });
       response = runtimeResponse;
       responseJson = runtimeResponse.value;
@@ -1395,11 +1559,12 @@ export async function runWithMateMemoryCli(
         throw error;
       }
       if (error instanceof WithMateMemoryRuntimeExchangeError && !error.dispatched) {
+        const discoveryCode = runtimeExchangeDiscoveryCode(error) ?? "WITHMATE_RUNTIME_UNAVAILABLE";
         if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
-          stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
+          stdout.write(`${JSON.stringify(characterRuntimeUnavailable("none", discoveryCode))}\n`);
           return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
         }
-        stdout.write(`${JSON.stringify(notRunningError())}\n`);
+        stdout.write(`${JSON.stringify(notRunningError(discoveryCode))}\n`);
         return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
       }
       if (isAbortError(error) || error instanceof WithMateMemoryRuntimeExchangeError) {

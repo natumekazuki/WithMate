@@ -22,7 +22,6 @@ import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import type { OpenSessionWindowIdsState } from "./open-session-window-subscription.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
 import type { SessionIntegrationDiagnostics } from "./session-integration-diagnostics-state.js";
-import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "./memory-v6/provider-instruction-sample.js";
 import {
   buildHomeLaunchProjection,
 } from "./home/home-launch-projection.js";
@@ -98,6 +97,10 @@ import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js"
 import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
+import {
+  buildSessionWindowRestoreFeedback,
+  selectPendingSessionWindowRestoreIds,
+} from "./home/home-session-window-restore.js";
 import {
   createHomeActiveAuxiliarySessionRefresher,
   resolveHomeActiveAuxiliarySessionsState,
@@ -185,6 +188,15 @@ export default function HomeApp() {
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
   const [pendingSessionPinIds, setPendingSessionPinIds] = useState<string[]>([]);
+  const [sessionWindowRestoreIds, setSessionWindowRestoreIds] = useState<string[]>([]);
+  const [sessionWindowRestorePending, setSessionWindowRestorePending] = useState(false);
+  const [sessionWindowRestoreFeedback, setSessionWindowRestoreFeedback] = useState("");
+  const pendingSessionWindowRestoreIds = useMemo(
+    () => openSessionWindowIdsState.status === "loaded"
+      ? selectPendingSessionWindowRestoreIds(sessionWindowRestoreIds, openSessionWindowIds)
+      : [],
+    [openSessionWindowIds, openSessionWindowIdsState.status, sessionWindowRestoreIds],
+  );
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [sessionCleanupCutoffDate, setSessionCleanupCutoffDate] = useState("");
@@ -503,20 +515,11 @@ export default function HomeApp() {
     };
 
     let unsubscribeCompanionSessions: (() => void) | null = null;
-
-    const startOperationalHomeSummarySubscriptions = () => {
-      if (unsubscribeCompanionSessions) {
-        return;
-      }
-
-      unsubscribeCompanionSessions = startCompanionSessionSummariesSubscription({
-        api: withmateApi,
-        applySummaries: setCompanionSessions,
-        onInitialLoadError: handleInitialSummaryLoadError,
-      });
-    };
-
-    startOperationalHomeSummarySubscriptions();
+    unsubscribeCompanionSessions = startCompanionSessionSummariesSubscription({
+      api: withmateApi,
+      applySummaries: setCompanionSessions,
+      onInitialLoadError: handleInitialSummaryLoadError,
+    });
 
     void refreshMateStatus(withmateApi, { isActive: () => active }).then(() => {
       if (!active) {
@@ -658,6 +661,55 @@ export default function HomeApp() {
     setOpenSessionWindowIdsState,
     setOpenCompanionReviewWindowIds,
   });
+
+  useEffect(() => {
+    const api = getWithMateApi();
+    if (!api || isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) {
+      return;
+    }
+    let active = true;
+    let receivedSnapshotUpdate = false;
+    const unsubscribe = api.subscribeSessionWindowRestoreSet((sessionIds) => {
+      if (active) {
+        receivedSnapshotUpdate = true;
+        setSessionWindowRestoreIds(sessionIds);
+      }
+    });
+    void api.getSessionWindowRestoreSet().then((sessionIds) => {
+      if (active && !receivedSnapshotUpdate) {
+        setSessionWindowRestoreIds(sessionIds);
+      }
+    }).catch((error) => {
+      if (active) {
+        setSessionWindowRestoreFeedback(
+          error instanceof Error ? error.message : "前回のSession一覧を読み込めませんでした。",
+        );
+      }
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
+
+  const restoreSessionWindows = async () => {
+    const api = getWithMateApi();
+    if (!api || sessionWindowRestorePending) {
+      return;
+    }
+    setSessionWindowRestorePending(true);
+    setSessionWindowRestoreFeedback("");
+    try {
+      const result = await api.restoreSessionWindows();
+      setSessionWindowRestoreFeedback(buildSessionWindowRestoreFeedback(result));
+    } catch (error) {
+      setSessionWindowRestoreFeedback(
+        error instanceof Error ? error.message : "前回のSessionを復元できませんでした。",
+      );
+    } finally {
+      setSessionWindowRestorePending(false);
+    }
+  };
 
   useEffect(() => {
     const withmateApi = getWithMateApi();
@@ -887,19 +939,6 @@ export default function HomeApp() {
     deletingOldSessions,
     onChangeSessionCleanupCutoffDate: setSessionCleanupCutoffDate,
     onOpenMemoryV6Review: () => void openMemoryV6ReviewWindow(),
-    onCopyMemoryProviderInstructionSample: () => {
-      const clipboard = navigator.clipboard;
-      if (!clipboard?.writeText) {
-        setSettingsFeedback("この環境では clipboard copy を利用できません。");
-        return;
-      }
-
-      void clipboard.writeText(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE)
-        .then(() => setSettingsFeedback("WithMate Memory の provider instruction sample をコピーしたよ。"))
-        .catch((error) => {
-          setSettingsFeedback(error instanceof Error ? error.message : "provider instruction sample のコピーに失敗したよ。");
-        });
-    },
     ...settingsDraftHandlers,
     ...settingsCommandHandlers,
   };
@@ -973,12 +1012,16 @@ export default function HomeApp() {
         onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
         onOpenCoordinationWindow: () => void openCoordinationWindow(),
         onOpenSettingsWindow: () => void openSettingsWindow(),
+        onRestoreSessionWindows: () => void restoreSessionWindows(),
         onCreateCharacter: () => void openCharacterEditorWindow(),
         onEditCharacter: (characterId) => void openCharacterEditorWindow(characterId),
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       },
       canUsePrimaryFeatures,
+      sessionWindowRestoreIds: pendingSessionWindowRestoreIds,
+      sessionWindowRestorePending,
+      sessionWindowRestoreFeedback,
     }),
     launchDialog: buildHomeLaunchDialogProps({
       draft: launchDraft,

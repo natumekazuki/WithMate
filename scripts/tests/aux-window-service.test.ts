@@ -73,6 +73,14 @@ function createDiffPreview(): DiffPreviewPayload {
   };
 }
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 76 preserves its observable contract"
+// oracle = { type = "contract", ref = "-76" }
+// failure_mode = "line 76 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は singleton window を再利用する", async () => {
   const created: unknown[] = [];
   const homeLoads: string[] = [];
@@ -116,6 +124,14 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   assert.equal(service.isSettingsWindow(settings), false);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 119 preserves its observable contract"
+// oracle = { type = "contract", ref = "-119" }
+// failure_mode = "line 119 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は Coordination Window をsingletonとして識別しclose後に作り直す", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   const loads: unknown[] = [];
@@ -150,6 +166,14 @@ test("AuxWindowService は Coordination Window をsingletonとして識別しclo
   assert.equal(stubs.length, 2);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 153 preserves its observable contract"
+// oracle = { type = "contract", ref = "-153" }
+// failure_mode = "line 153 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は diff preview を保持し reset 時に close する", async () => {
   const diffLoads: string[] = [];
   const diffStub = createWindowStub();
@@ -187,6 +211,14 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
   assert.equal(service.getDiffPreview("diff-token"), null);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 190 preserves its observable contract"
+// oracle = { type = "contract", ref = "-190" }
+// failure_mode = "line 190 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は同じ file preview resource を再利用し close 後は作り直す", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   const createdOptions: Array<Record<string, unknown>> = [];
@@ -274,6 +306,14 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
   assert.equal(service.getFilePreviewPayload("preview-3"), null);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 277 preserves its observable contract"
+// oracle = { type = "contract", ref = "-277" }
+// failure_mode = "line 277 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は file preview entry load 失敗時に registry と window を残さない", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   const createdOptions: Array<Record<string, unknown>> = [];
@@ -321,6 +361,75 @@ test("AuxWindowService は file preview entry load 失敗時に registry と win
   assert.equal(service.getFilePreviewPayload("preview-1")?.windowTitle, "File Preview");
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 324 preserves its observable contract"
+// oracle = { type = "contract", ref = "-324" }
+// failure_mode = "line 324 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
+test("AuxWindowService は commit file preview を repository・commit・path 単位で再利用する", async () => {
+  const stubs: ReturnType<typeof createWindowStub>[] = [];
+  let tokenSequence = 0;
+  const service = new AuxWindowService({
+    createWindow() {
+      const stub = createWindowStub();
+      stubs.push(stub);
+      return stub.window;
+    },
+    async loadHomeEntry() {},
+    async loadDiffEntry() {},
+    async loadFilePreviewEntry() {},
+    async loadChatEntry() {},
+    async loadCompanionMergeReviewEntry() {},
+    async loadCharacterEditorEntry() {},
+    onCompanionReviewWindowsChanged() {},
+    generateDiffToken() {
+      tokenSequence += 1;
+      return `commit-preview-${tokenSequence}`;
+    },
+  });
+  const resource = {
+    resourceKind: "git-commit-file" as const,
+    sessionId: "session-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "src/file.ts",
+  };
+  const first = await service.openFilePreviewWindow({
+    resource,
+    ownerSessionId: "session-1",
+    windowTitle: "src/file.ts",
+  });
+  const reused = await service.openFilePreviewWindow({
+    resource: { ...resource },
+    ownerSessionId: "session-1",
+    windowTitle: "src/file.ts",
+  });
+  const otherCommit = await service.openFilePreviewWindow({
+    resource: { ...resource, commitId: "b".repeat(40) },
+    ownerSessionId: "session-1",
+    windowTitle: "src/file.ts",
+  });
+
+  assert.equal(first.disposition, "created");
+  assert.equal(reused.disposition, "focused");
+  assert.equal(reused.window, first.window);
+  assert.equal(otherCommit.disposition, "created");
+  assert.notEqual(otherCommit.window, first.window);
+  assert.equal(stubs.length, 2);
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 377 preserves its observable contract"
+// oracle = { type = "contract", ref = "-377" }
+// failure_mode = "line 377 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は absolute file preview を path 単位で再利用し close 後に破棄する", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   const createdOptions: Array<Record<string, unknown>> = [];
@@ -368,6 +477,14 @@ test("AuxWindowService は absolute file preview を path 単位で再利用し 
   assert.equal(service.getFilePreviewPayload("absolute-preview-2")?.windowTitle, "notes.md");
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 424 preserves its observable contract"
+// oracle = { type = "contract", ref = "-424" }
+// failure_mode = "line 424 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は大小文字だけが異なる absolute path を別 Preview として扱う", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   let tokenSequence = 0;
@@ -407,6 +524,14 @@ test("AuxWindowService は大小文字だけが異なる absolute path を別 Pr
   assert.equal(stubs.length, 2);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 463 preserves its observable contract"
+// oracle = { type = "contract", ref = "-463" }
+// failure_mode = "line 463 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は literal backslash を含む canonical path を separator path と区別する", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   let tokenSequence = 0;
@@ -446,6 +571,14 @@ test("AuxWindowService は literal backslash を含む canonical path を separa
   assert.equal(stubs.length, 2);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 502 preserves its observable contract"
+// oracle = { type = "contract", ref = "-502" }
+// failure_mode = "line 502 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は entry load 中に閉じた Session を opened 扱いにしない", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   let finishLoad: (() => void) | null = null;
@@ -485,6 +618,14 @@ test("AuxWindowService は entry load 中に閉じた Session を opened 扱い�
   assert.equal(service.getFilePreviewPayload("delayed-preview"), null);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 541 preserves its observable contract"
+// oracle = { type = "contract", ref = "-541" }
+// failure_mode = "line 541 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は共有 entry load 中に閉じた Session を reused 扱いにしない", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   let finishLoad: (() => void) | null = null;
@@ -527,6 +668,14 @@ test("AuxWindowService は共有 entry load 中に閉じた Session を reused �
   assert.equal(service.getFilePreviewPayload("shared-delayed-preview"), null);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 583 preserves its observable contract"
+// oracle = { type = "contract", ref = "-583" }
+// failure_mode = "line 583 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は close 済み Session の遅延 file preview admission を拒否する", async () => {
   const stubs: Array<ReturnType<typeof createWindowStub>> = [];
   const service = new AuxWindowService({
@@ -560,6 +709,14 @@ test("AuxWindowService は close 済み Session の遅延 file preview admission
   assert.equal(service.getFilePreviewPayload("preview-1"), null);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 616 preserves its observable contract"
+// oracle = { type = "contract", ref = "-616" }
+// failure_mode = "line 616 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は reset 時に Memory Review window を close する", async () => {
   const service = new AuxWindowService({
     createWindow() {
@@ -588,6 +745,14 @@ test("AuxWindowService は reset 時に Memory Review window を close する", 
   assert.deepEqual(service.listHomeWindows(), []);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 644 preserves its observable contract"
+// oracle = { type = "contract", ref = "-644" }
+// failure_mode = "line 644 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は companion chat と merge の entry を分けて開く", async () => {
   const chatLoads: unknown[] = [];
   const companionMergeLoads: string[] = [];
@@ -641,6 +806,14 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
   ]);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 697 preserves its observable contract"
+// oracle = { type = "contract", ref = "-697" }
+// failure_mode = "line 697 violates its expected output or boundary behavior"
+// scope = "aux-window-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は Character Editor window を create/edit key ごとに再利用する", async () => {
   const characterEditorLoads: Array<string | null | undefined> = [];
   const createdOptions: Array<Record<string, unknown>> = [];

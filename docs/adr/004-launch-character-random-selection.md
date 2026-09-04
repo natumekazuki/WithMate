@@ -54,7 +54,7 @@ provider ごとの実行設定は security boundary が異なるため、この�
 - 最近使っていない Character の選択確率を上げつつ、すべての active Character に選択可能性を残せる。
 - Agent と Companion で同じ抽選方針を使える。
 - launchの初期選択とcatalogの状態遷移が分離される。
-- 新しい永続化データと migration を追加せずに実現できる。
+- 新しい永続化データとmigrationを追加せずに実現できる。
 - 履歴未取得を履歴0件と誤認した均等抽選を防げる。
 
 ### Negative

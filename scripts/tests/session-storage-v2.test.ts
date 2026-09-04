@@ -404,6 +404,14 @@ describe("SessionStorageV2", () => {
     });
   });
 
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "V2の壊れたadditional-directories JSONはsummary一覧から除外しdetail取得では明示errorにする"
+  // oracle = { type = "contract", ref = "docs/features/home-session-pagination.md" }
+  // failure_mode = "壊れたdetailをHomeへ投影する、またはdetail取得で破損を正常値として扱う"
+  // scope = "session-storage-v2-summary-detail-failure-boundary"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("壊れた allowed_additional_directories_json は summary で skip し detail で throw する", async () => {
     await withTempV2Database((dbPath) => {
       const db = new DatabaseSync(dbPath);
@@ -425,6 +433,18 @@ describe("SessionStorageV2", () => {
       const storage = new SessionStorageV2(dbPath);
       try {
         assert.deepEqual(storage.listSessionSummaries().map((session) => session.id), ["session-valid"]);
+        const pageIds = storage.listSessionSummaryPage({ scope: "recent", limit: 10 }).entries.map((session) => session.id);
+        assert.deepEqual(new Set(pageIds), new Set(["session-valid", "session-bad-directories"]));
+        const openPage = storage.listSessionSummaryPage({
+          scope: "open",
+          sessionIds: ["session-valid", "session-bad-directories", "missing", "session-valid"],
+          searchText: "",
+        });
+        assert.deepEqual(openPage.entries.map((session) => session.id).sort(), ["session-bad-directories", "session-valid"]);
+        assert.equal(openPage.entries.length, 2);
+        assert.equal(openPage.hasMore, false);
+        assert.equal(openPage.nextCursor, null);
+        assert.equal("provider" in openPage.entries[0]!, false);
         assert.throws(() => {
           storage.getSession("session-bad-directories");
         });

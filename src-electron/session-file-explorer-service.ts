@@ -11,21 +11,23 @@ import type {
   SessionFileDescriptor,
   SessionFileOpenRequest,
   SessionFileAbsoluteResourceRequest,
-  SessionFileResourceKind,
+  SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRootResourceRequest,
   SessionFilePreviewTargetResolution,
   SessionFileRoot,
   SessionFileRootKind,
+  SessionFileTreePathActionNodeKind,
+  SessionFileTreePathActionTargetRequest,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileAbsoluteResource,
+  isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
+  detectSessionFileResourceKind,
   detectSessionFileEncoding,
-  isLikelyBinarySessionFile,
-  isUtf16SessionFile,
 } from "../src/file-explorer/file-content-detection.js";
 import type { OpenPathResult } from "../src/withmate-window-types.js";
 import {
@@ -117,11 +119,22 @@ export type SessionFileExplorerServiceDeps = {
   openResolvedPath?(targetPath: string, reveal: boolean): Promise<OpenPathResult>;
 };
 
+export type AuthorizedSessionFileOperationResult<T> = {
+  result: T;
+  targetStillCurrent: boolean;
+};
+
 export type ResolvedSessionFileRoot = SessionFileRoot & { absolutePath: string };
 
 type ResolvedTargetCandidate = {
   rootAbsolutePath: string;
   rootRealPath: string;
+  unresolvedTargetPath: string;
+};
+
+type ResolvedPathActionCandidate = {
+  rootAbsolutePath: string;
+  rootKind: SessionFileRootKind;
   unresolvedTargetPath: string;
 };
 
@@ -176,6 +189,9 @@ function makeAdditionalRootId(absolutePath: string): string {
 }
 
 function makeRoot(kind: SessionFileRootKind, absolutePath: string, id: string, label: string): ResolvedSessionFileRoot {
+  if (typeof absolutePath !== "string" || !absolutePath.trim()) {
+    throw new Error("file root path が空だよ。");
+  }
   return {
     id,
     kind,
@@ -226,52 +242,6 @@ function makeFileRevision(stats: Stats): string {
   return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
 }
 
-function detectResourceKind(filePath: string, bytes: Uint8Array): { kind: SessionFileResourceKind; mimeType: string } {
-  const extension = path.extname(filePath).toLocaleLowerCase("en-US");
-  const isMarkdown = extension === ".md" || extension === ".markdown";
-  const imageTypes: Record<string, string> = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".bmp": "image/bmp",
-    ".ico": "image/x-icon",
-    ".avif": "image/avif",
-  };
-  const headerText = new TextDecoder("utf-8").decode(bytes.subarray(0, Math.min(bytes.length, 1024))).trimStart();
-  const detectedImageMime =
-    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
-      ? "image/png"
-      : bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
-        ? "image/jpeg"
-        : headerText.startsWith("GIF87a") || headerText.startsWith("GIF89a")
-          ? "image/gif"
-          : headerText.startsWith("RIFF") && headerText.slice(8, 12) === "WEBP"
-            ? "image/webp"
-            : bytes[0] === 0x42 && bytes[1] === 0x4d
-              ? "image/bmp"
-              : null;
-  if (extension === ".svg" || /^<\?xml[\s\S]*?<svg\b/i.test(headerText) || /^<svg\b/i.test(headerText)) {
-    return { kind: "svg", mimeType: "image/svg+xml" };
-  }
-  if (detectedImageMime || imageTypes[extension]) {
-    return { kind: "image", mimeType: detectedImageMime ?? imageTypes[extension] };
-  }
-  if (isUtf16SessionFile(bytes)) {
-    return isMarkdown
-      ? { kind: "markdown", mimeType: "text/markdown" }
-      : { kind: "text", mimeType: "text/plain" };
-  }
-  if (isLikelyBinarySessionFile(bytes)) {
-    return { kind: "binary", mimeType: "application/octet-stream" };
-  }
-  if (isMarkdown) {
-    return { kind: "markdown", mimeType: "text/markdown" };
-  }
-  return { kind: "text", mimeType: "text/plain" };
-}
-
 export class SessionFileExplorerService {
   constructor(private readonly deps: SessionFileExplorerServiceDeps) {}
 
@@ -306,14 +276,97 @@ export class SessionFileExplorerService {
     return (await this.resolveRoots(sessionId)).find((candidate) => candidate.id === rootId) ?? null;
   }
 
+  async resolveHistoryRoots(sessionId: string): Promise<ResolvedSessionFileRoot[]> {
+    return (await this.resolveRoots(sessionId)).filter((root) => root.kind !== "session-folder");
+  }
+
+  async resolveHistoryRoot(sessionId: string, rootId: string): Promise<ResolvedSessionFileRoot | null> {
+    return (await this.resolveHistoryRoots(sessionId)).find((candidate) => candidate.id === rootId) ?? null;
+  }
+
+  async resolvePathActionTarget(request: SessionFileTreePathActionTargetRequest): Promise<string> {
+    if (!(["root", "directory", "file"] as const).includes(request.nodeKind)) {
+      throw new TypeError("File tree path action node kind is invalid.");
+    }
+    const candidate = await this.resolvePathActionCandidate(request);
+    if ((request.nodeKind === "root") !== (request.relativePath === "")) {
+      throw new Error("File tree path action node kind does not match its path.");
+    }
+    await this.confirmPathActionNodeKind(candidate, request.nodeKind);
+    const confirmedCandidate = await this.resolvePathActionCandidate(request);
+    if (
+      pathKey(confirmedCandidate.rootAbsolutePath) !== pathKey(candidate.rootAbsolutePath)
+      || pathKey(confirmedCandidate.unresolvedTargetPath) !== pathKey(candidate.unresolvedTargetPath)
+    ) {
+      throw new Error("File tree root changed during path authorization.");
+    }
+    await this.confirmPathActionNodeKind(confirmedCandidate, request.nodeKind);
+    return confirmedCandidate.unresolvedTargetPath;
+  }
+
+  private async resolvePathActionCandidate(
+    request: SessionFileTreePathActionTargetRequest,
+  ): Promise<ResolvedPathActionCandidate> {
+    validateRootFileResource(request);
+    const root = await this.resolveRoot(request.sessionId, request.rootId);
+    if (!root) {
+      throw new Error("指定された file root は現在の Session で利用できないよ。");
+    }
+    const relativePath = normalizeRelativePath(request.relativePath, request.nodeKind === "root");
+    return {
+      rootAbsolutePath: root.absolutePath,
+      rootKind: root.kind,
+      unresolvedTargetPath: relativePath
+        ? path.join(root.absolutePath, ...relativePath.split("/"))
+        : root.absolutePath,
+    };
+  }
+
+  private async confirmPathActionNodeKind(
+    candidate: ResolvedPathActionCandidate,
+    nodeKind: SessionFileTreePathActionNodeKind,
+  ): Promise<void> {
+    try {
+      const targetStats = nodeKind === "root"
+        ? await (this.deps.statPath ?? stat)(candidate.unresolvedTargetPath)
+        : await (this.deps.lstatPath ?? lstat)(candidate.unresolvedTargetPath);
+      const kindMatches = nodeKind === "file" ? targetStats.isFile() : targetStats.isDirectory();
+      if (!kindMatches) {
+        throw new Error("File tree path action node kind does not match the current target.");
+      }
+    } catch (error) {
+      if (nodeKind === "root" && candidate.rootKind === "session-folder" && isMissingPathError(error)) {
+        return;
+      }
+      throw error;
+    }
+  }
+
   async resolvePreviewTarget(
     sessionId: string,
     target: string,
-    baseResource?: SessionFileResourceRequest,
+    baseResource?: SessionFilePreviewResourceRequest,
   ): Promise<SessionFilePreviewTargetResolution> {
     const context = await this.deps.getSessionContext(sessionId);
     if (!context) {
       return { type: "failed", targetPath: target, message: "Session が見つからないよ。" };
+    }
+
+    try {
+      const externalTarget = resolveOpenPathTarget(target, { baseDirectory: context.workspacePath });
+      if (externalTarget.type === "external-url") {
+        return externalTarget;
+      }
+    } catch {
+      // Local target failures are reported after applying the appropriate preview base.
+    }
+
+    if (baseResource && isSessionFileGitCommitResource(baseResource)) {
+      return {
+        type: "not-previewable",
+        targetPath: target,
+        message: "Relative links from a Git commit file preview are not available.",
+      };
     }
 
     let baseDirectory = context.workspacePath;
@@ -608,6 +661,59 @@ export class SessionFileExplorerService {
     }
   }
 
+  async withAuthorizedFilePath<T>(
+    request: SessionFileResourceRequest,
+    operation: (targetRealPath: string) => Promise<T>,
+  ): Promise<AuthorizedSessionFileOperationResult<T>> {
+    const opened = await this.openLocalFile(request);
+    try {
+      const result = await operation(opened.targetRealPath);
+      let targetStillCurrent = false;
+      try {
+        const confirmedTargetRealPath = await this.confirmOpenedTarget(opened.candidate, opened.stats);
+        targetStillCurrent = pathKey(confirmedTargetRealPath) === pathKey(opened.targetRealPath);
+      } catch {
+        targetStillCurrent = false;
+      }
+      return { result, targetStillCurrent };
+    } finally {
+      await opened.handle.close();
+    }
+  }
+
+  async withAuthorizedTreeFilePath<T>(
+    request: SessionFileRootResourceRequest,
+    operation: (targetRealPath: string) => Promise<T>,
+  ): Promise<AuthorizedSessionFileOperationResult<T>> {
+    const candidate = await this.resolveTargetCandidate(request, false);
+    const lstatPath = this.deps.lstatPath ?? lstat;
+    const lexicalStats = await lstatPath(candidate.unresolvedTargetPath);
+    if (!lexicalStats.isFile()) {
+      throw new Error("File tree target is not a regular file.");
+    }
+    const opened = await this.openAuthorizedCandidate(candidate, "file");
+    try {
+      const confirmedLexicalStats = await lstatPath(candidate.unresolvedTargetPath);
+      if (!confirmedLexicalStats.isFile() || !isSameFileIdentity(opened.stats, confirmedLexicalStats)) {
+        throw new Error("File tree target changed during authorization.");
+      }
+      const result = await operation(opened.targetRealPath);
+      let targetStillCurrent = false;
+      try {
+        const finalLexicalStats = await lstatPath(candidate.unresolvedTargetPath);
+        const confirmedTargetRealPath = await this.confirmOpenedTarget(candidate, opened.stats);
+        targetStillCurrent = finalLexicalStats.isFile()
+          && isSameFileIdentity(opened.stats, finalLexicalStats)
+          && pathKey(confirmedTargetRealPath) === pathKey(opened.targetRealPath);
+      } catch {
+        targetStillCurrent = false;
+      }
+      return { result, targetStillCurrent };
+    } finally {
+      await opened.handle.close();
+    }
+  }
+
   async inspectFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor> {
     const opened = await this.openLocalFile(request);
     try {
@@ -619,7 +725,7 @@ export class SessionFileExplorerService {
         throw new Error("inspection 中に file が変更されたよ。再読み込みしてね。");
       }
       const inspectedBytes = inspection.subarray(0, bytesRead);
-      const resource = detectResourceKind(targetRealPath, inspectedBytes);
+      const resource = detectSessionFileResourceKind(targetRealPath, inspectedBytes);
       return {
         ...request,
         name: path.basename(targetRealPath),

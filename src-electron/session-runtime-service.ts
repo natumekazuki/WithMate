@@ -37,6 +37,7 @@ import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-
 import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
 import { toAuditTextPreview } from "./audit-payload-limits.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { SessionTurnTerminalNotification } from "./session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
@@ -88,6 +89,8 @@ export type SessionRuntimeServiceDeps = {
   includeNormalSessionRoleContext?: boolean;
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
+  persistRunningTurnStart?(session: Session, expectedMessageCount: number): Awaitable<Session>;
+  clearCharacterAuthoringRuntimeState?(session: Session): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   validateWorkspaceDirectory?: (targetPath: unknown) => Promise<WorkspaceDirectoryValidationResult>;
@@ -197,6 +200,15 @@ export type SessionRuntimeServiceDeps = {
     session: Session;
     provider: ModelCatalogProvider;
   }): Awaitable<ProviderAgentRuntimeBindingProjection | null>;
+  beginProviderAgentRuntimeTurn?(input: {
+    session: Session;
+    provider: ModelCatalogProvider;
+    binding: ProviderAgentRuntimeBindingProjection | null;
+  }): Awaitable<{
+    handle: unknown;
+    binding: ProviderAgentRuntimeBindingProjection | null;
+  } | undefined>;
+  endProviderAgentRuntimeTurn?(handle: unknown): void;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
@@ -204,12 +216,29 @@ export type SessionRuntimeServiceDeps = {
   getMateState?: () => MateStorageState;
   notifySessionTurnCompleted?: (session: Session, lastNonEmptyAssistantMessageText: string) => Awaitable<void>;
   onSessionRunAvailable?: (sessionId: string) => Awaitable<void>;
+  notifySessionTurnTerminal?: (notification: SessionTurnTerminalNotification) => Awaitable<void>;
   currentTimestampLabel?: () => string;
   currentDate?: () => Date;
   providerCancelGraceMs?: number;
   auditEnrichmentGraceMs?: number;
   appraisalReadyRetryMs?: number;
 };
+
+function notifySessionTurnTerminalBestEffort(
+  notify: SessionRuntimeServiceDeps["notifySessionTurnTerminal"],
+  notification: SessionTurnTerminalNotification,
+): void {
+  if (!notify) {
+    return;
+  }
+
+  try {
+    void Promise.resolve(notify(notification))
+      .catch((error) => console.warn("Session turn terminal notification failed", error));
+  } catch (error) {
+    console.warn("Session turn terminal notification failed", error);
+  }
+}
 
 function notifySessionTurnCompletedBestEffort(
   notify: SessionRuntimeServiceDeps["notifySessionTurnCompleted"],
@@ -1194,7 +1223,10 @@ export class SessionRuntimeService {
       ? { ...resolvedSession, threadId: "" }
       : resolvedSession;
     if (shouldResetCharacterAuthoringThread) {
-      session = await this.deps.upsertSession(session);
+      if (!this.deps.clearCharacterAuthoringRuntimeState) {
+        throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+      }
+      session = await this.deps.clearCharacterAuthoringRuntimeState(session);
       await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
     }
     throwIfRunCanceled(runAbortController.signal);
@@ -1325,7 +1357,11 @@ export class SessionRuntimeService {
       };
 
       const runningUpsertStartedAt = Date.now();
-      await this.deps.upsertSession(runningSession);
+      runningSession = await (
+        this.deps.persistRunningTurnStart?.(runningSession, session.messages.length)
+        ?? this.deps.upsertSession(runningSession)
+      );
+      setupRunningSessionSaved = true;
       if (externalExecutionId) {
         notifyExecutionUserMessagePersistedBestEffort(
           this.deps.notifyExecutionUserMessagePersisted,
@@ -1339,7 +1375,6 @@ export class SessionRuntimeService {
         elapsedMs: Date.now() - investigationStartedAt,
         messageCount: runningSession.messages.length,
       });
-      setupRunningSessionSaved = true;
       throwIfRunCanceled(runAbortController.signal);
       this.inFlightSessionRuns.add(sessionId);
       initialLiveState = {
@@ -1635,7 +1670,19 @@ export class SessionRuntimeService {
       );
     };
 
+    let providerAgentRuntimeTurnHandle: unknown;
     try {
+      const providerAgentRuntimeTurn = await Promise.resolve(
+        this.deps.beginProviderAgentRuntimeTurn?.({
+          session: activeRunningSession,
+          provider,
+          binding: agentRuntimeBinding,
+        }),
+      );
+      providerAgentRuntimeTurnHandle = providerAgentRuntimeTurn?.handle;
+      if (providerAgentRuntimeTurn) {
+        agentRuntimeBinding = providerAgentRuntimeTurn.binding;
+      }
       let result: RunSessionTurnResult | null = null;
       let didInternalRetry = false;
       while (true) {
@@ -1762,6 +1809,11 @@ export class SessionRuntimeService {
       });
       activeRunningSession = storedCompletedSession;
       if (!runAbortController.signal.aborted) {
+        notifySessionTurnTerminalBestEffort(this.deps.notifySessionTurnTerminal, {
+          outcome: "completed",
+          session: storedCompletedSession,
+          lastNonEmptyAssistantMessageText: result.lastNonEmptyAssistantMessageText ?? "",
+        });
         notifySessionTurnCompletedBestEffort(
           this.deps.notifySessionTurnCompleted,
           storedCompletedSession,
@@ -2059,6 +2111,12 @@ export class SessionRuntimeService {
         storedStatus: storedFailedSession.status,
       });
       activeRunningSession = storedFailedSession;
+      if (!canceled && !runAbortController.signal.aborted) {
+        notifySessionTurnTerminalBestEffort(this.deps.notifySessionTurnTerminal, {
+          outcome: "failed",
+          session: storedFailedSession,
+        });
+      }
       invalidateProviderSessionThreadBestEffort(
         this.deps.invalidateProviderSessionThread,
         storedFailedSession.provider,
@@ -2070,6 +2128,9 @@ export class SessionRuntimeService {
         terminalState: canceled ? "canceled" : "failed",
       };
     } finally {
+      if (providerAgentRuntimeTurnHandle !== undefined) {
+        this.deps.endProviderAgentRuntimeTurn?.(providerAgentRuntimeTurnHandle);
+      }
       if (runningSession.provider === "copilot") {
         this.deps.scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);
       }

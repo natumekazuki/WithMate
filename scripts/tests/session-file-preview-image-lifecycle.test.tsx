@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { SessionDiffPreview, SessionFilePreview } from "../../src/file-explorer/SessionFilePreview.js";
 import type {
   SessionFileDescriptor,
+  SessionFileGitCommitResourceRequest,
   SessionFileResourceRequest,
 } from "../../src/file-explorer/file-explorer-contract.js";
 import { STRUCTURED_TEXT_PREVIEW_MAX_BYTES } from "../../src/file-explorer/structured-text-preview.js";
@@ -17,10 +18,18 @@ type PreviewApi = NonNullable<React.ComponentProps<typeof SessionFilePreview>["a
 
 const DEFAULT_IMAGE_COPY_API: Pick<
   PreviewApi,
+  | "isSessionFileObjectCopyAvailable"
+  | "copySessionFileObject"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
   | "openSessionFilePreviewWindow"
 > = {
+  isSessionFileObjectCopyAvailable() {
+    return false;
+  },
+  async copySessionFileObject() {
+    return { status: "copied", message: "File copied." };
+  },
   async copySessionFilePreviewImage() {
     return { status: "copied" };
   },
@@ -387,6 +396,90 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
   }
 });
 
+// @test-value v1
+// kind = "invariant"
+// claim = "File PreviewはWindowsでだけCopy Fileを表示し、Copy Imageとは独立した結果を表示する"
+// oracle = { type = "contract", ref = "docs/features/windows-file-object-copy.md" }
+// failure_mode = "未対応platformへ操作を出す、またはfile/image copyの結果表示が混同される"
+// scope = "file-preview-copy-file-ui"
+// lifecycle = "permanent"
+// @end-test-value
+test("File Preview はWindowsだけCopy Fileを表示しCopy Imageと別contractで結果を表示する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const copyRequests: SessionFileResourceRequest[] = [];
+  const harness = createPreviewApi(async () => IMAGE_DESCRIPTOR);
+  const api: PreviewApi = {
+    ...harness.api,
+    isSessionFileObjectCopyAvailable() {
+      return true;
+    },
+    async copySessionFileObject(request) {
+      copyRequests.push(request.resource);
+      return { status: "effect-unknown", message: "File copy status is unknown." };
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, IMAGE_DESCRIPTOR);
+    await waitFor(() => Array.from(container.querySelectorAll("button"))
+      .some((button) => button.textContent === "Copy Image"));
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
+    assert.ok(buttons.some((button) => button.textContent === "Copy Image"));
+    const copyFile = buttons.find((button) => button.textContent === "Copy File");
+    assert.ok(copyFile);
+    await act(async () => {
+      copyFile.click();
+      await Promise.resolve();
+    });
+    assert.deepEqual(copyRequests, [IMAGE_DESCRIPTOR]);
+    assert.equal(
+      container.querySelector(".session-file-preview-feedback")?.textContent,
+      "File copy status is unknown.",
+    );
+
+    const unavailableApi: PreviewApi = {
+      ...api,
+      isSessionFileObjectCopyAvailable() {
+        return false;
+      },
+    };
+    await act(async () => {
+      root?.render(React.createElement(SessionFilePreview, {
+        api: unavailableApi,
+        request: IMAGE_DESCRIPTOR,
+        onClose() {},
+        onCopyText() {},
+        onQuoteText() {},
+      }));
+    });
+    assert.equal(Array.from(container.querySelectorAll("button"))
+      .some((button) => button.textContent === "Copy File"), false);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "Markdown preview内のlocal file linkはcurrent resource基準で解決しdetached Previewへ遷移する"
+// oracle = { type = "contract", ref = "docs/features/markdown-rendering-and-code-actions.md" }
+// failure_mode = "relative linkが誤ったrootへ解決される、またはSession UI内へ不正遷移する"
+// scope = "markdown-preview-local-file-navigation"
+// lifecycle = "permanent"
+// @end-test-value
 test("Markdown preview の local file link は current resource を基準に detached Preview navigation へ戻す", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -457,6 +550,131 @@ test("Markdown preview の local file link は current resource を基準に det
       target: "./next.md",
       baseResource: request,
     }]);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "commit時点のtext file previewは通常rendererを再利用しworking tree mutation操作を表示しない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md" }
+// failure_mode = "履歴上のfileにworking tree向け操作が表示され、現在fileへの操作と誤認される"
+// scope = "commit-file-preview-read-only-actions"
+// lifecycle = "permanent"
+// @end-test-value
+test("commit file preview は通常previewを再利用しworking tree操作を表示しない", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileGitCommitResourceRequest = {
+    resourceKind: "git-commit-file",
+    sessionId: "session-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "src/current.ts",
+  };
+  const api: PreviewApi = {
+    ...createTextPreviewApi(request, "current.ts", "const version = 'commit';\n", "b".repeat(40)),
+    isSessionFileObjectCopyAvailable() {
+      return true;
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.textContent?.includes("const version = 'commit';") === true);
+    assert.match(container.querySelector(".session-file-preview-title")?.textContent ?? "", /current\.tsCommit aaaaaaa/);
+    const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
+    assert.equal(labels.includes("Open"), false);
+    assert.equal(labels.includes("Show in Explorer"), false);
+    assert.equal(labels.includes("Copy File"), false);
+    assert.equal(labels.includes("Reload"), true);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "binary commit file previewはmetadata表示を維持しworking tree mutation操作を一切表示しない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md" }
+// failure_mode = "履歴上のbinary fileへCopy Pathなど現在tree前提の操作を提示する"
+// scope = "binary-commit-file-preview-read-only-actions"
+// lifecycle = "permanent"
+// @end-test-value
+test("binary commit file preview はmetadata内にもworking tree操作を表示しない", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const request: SessionFileGitCommitResourceRequest = {
+    resourceKind: "git-commit-file",
+    sessionId: "session-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "assets/archive.bin",
+  };
+  const descriptor: SessionFileDescriptor = {
+    ...request,
+    name: "archive.bin",
+    kind: "binary",
+    byteLength: 4,
+    modifiedAt: "2026-08-28T00:00:00.000Z",
+    mimeType: "application/octet-stream",
+    suggestedEncoding: "utf-8",
+    revision: "b".repeat(40),
+  };
+  const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
+    async listSessionFileRoots() {
+      return [];
+    },
+    async inspectSessionFile() {
+      return descriptor;
+    },
+    async readSessionFileChunk() {
+      assert.fail("Binary metadata preview must not read file contents.");
+    },
+    async openSessionFile() {
+      assert.fail("Commit resources must not invoke working tree open.");
+    },
+    async openPath(target) {
+      return { status: "opened", targetType: "local-path", target };
+    },
+    isSessionFileObjectCopyAvailable() {
+      return true;
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.querySelector(".session-file-preview-metadata") !== null);
+    const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
+    assert.equal(labels.includes("Open"), false);
+    assert.equal(labels.includes("Open in default app"), false);
+    assert.equal(labels.includes("Show in Explorer"), false);
+    assert.equal(labels.includes("Copy File"), false);
+    assert.equal(labels.includes("Reload"), true);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

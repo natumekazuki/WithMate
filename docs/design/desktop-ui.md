@@ -278,6 +278,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - Text、Markdown、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
   - Markdown は shared rich text renderer の Preview を既定とし、Source へ切り替えられる
   - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。Markdown内画像とchat画像は対象外とする
+  - File Explorerのroot、directory、regular file rowはnative context menuに`パスをコピー`と`パスを挿入`を表示する。pathはMain processが現在のSession rootから再解決し、copyはlexical absolute pathをclipboardへ書く。insertはworkspace内をworkspace相対、workspace外をslash正規化したabsolute pathとして、既存の`@path`挿入処理へ渡す。menu表示後にactive ownerまたはcomposerの書き込み可否が変わった場合は挿入しない。symbolic linkとother rowは対象外とする
+  - Windowsでは、File Explorerのregular file rowでpath操作の後ろをseparatorで区切り、file preview header、root-scopedなMarkdown local-file linkと同じく、既存regular file一件をExplorer互換のfile objectとしてclipboardへcopyできる。directoryとroot外Markdown linkは対象外とし、Copy Imageやpath文字列のcopyとは別操作にする
   - Ctrl+F は active な chat / Text / Markdown / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、live Git Diff の選択範囲には chat と同じ floating Copy / Quote を表示し、Quote は現在の writable composer へ挿入する。Preview 表示中の Ctrl+A は、Find input または Action Dock の入力中を除き、Window 全体ではなく表示中の document または diff の文字列だけを選択する
   - file、live Git Diff、Template workspace から chat へ戻る操作は、左向き icon-only control と具体的な accessible name を持つ同じ navigation primitive を使う。run、approval、elicitation の状態は preview 中も確認できる
   - Skill 候補のような一時 surface は右上の × と具体的な accessible name を使い、`Escape` でも dismiss できる。view 間 navigation の Back とは表現を分ける
@@ -290,7 +292,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - Auxiliary 起動 dialog と Audit Log overlay も backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
   - 破棄確認は単一の dialog surface に確認対象と操作を直接配置し、見出しと重複する補足文や装飾目的の card を置かない。破壊的操作は neutral なキャンセルと色・文言の両方で区別する
   - 同じ root-scoped resource は既存 Window を前面化し、異なる resource は複数 Window を開ける。navigation、認可、lifecycle の決定は ADR 020 を正本とする
-- live Git Diff と chat artifact Diff は別機能とする。既存 chat artifact の `Open Diff` は snapshot を inline modal / Diff Window に開く従来経路を維持し、File Explorer の Changes や中央 live Git Diff へ接続しない
+- live Git Diff と chat artifact Diff は別機能とする。artifact の永続化・Diff modelは維持するが、Details UIには `Changed Files` と `Open Diff` を表示しない。File Explorer の Changes や中央 live Git Diff へ接続する判断は別consumerの契約で扱う
 - 中央 live Git Diff は Split を既定表示とし、Inline へ切り替えられる。両表示は同じ unified patch と検索modelを投影し、Split でも表示rowをvirtualizeする
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす
@@ -342,10 +344,11 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 実行中は `Send` の代わりに `Cancel` を表示
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
-  - `Changed Files` は 1 ブロックでまとめて default closed とし、file list は開いた時だけ見せる
+  - `Changed Files` は Details UIには表示しない。artifactの永続化、audit、Diff model、Changes paneのデータはこの表示変更だけでは削除しない
   - `Run Checks`
     - approval は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する
-  - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline は item ごとに default closed とし、summary 1 行だけを先に見せる
+  - turn 内の operation timeline は arrival 順を保ち、全 operation を1つの `Operations` groupにまとめる。groupはdefault closedとし、summaryでは件数を示し、展開時は元のoperation単位・元順序で表示する
+  - `Operations` groupの展開内容は高さを制約し、長い内容はgroup内部でscrollできるようにする。Details本体、Operations group、各operationはkeyboardで開閉でき、native detailsのaccessible name / focus / expanded stateを維持する
 - composer 上の添付 toolbar
   - `Attach` button から単一の attachment popover を開く
   - popover の `Attach` section は元 path を参照する `File / Folder / Image` を1行にまとめる
@@ -362,7 +365,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer toolbar に `Add Directory` を置き、その横の toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
-- composer 下の `Approval / Model / Depth`
+- composer 下の runtime settings は shared chat composer を正本とし、`Approval / Sandbox / Model / Depth`を表示する。Codex providerでは`Approval`の直後にcompactな`Reviewer`選択、そのほかのruntime optionと同じ列に`Speed`選択を追加する。`Reviewer`は`User` / `Auto-review`、`Speed`は`Standard` / `Fast`をSession単位で保持する。Codex以外では両方を表示しない。`Reviewer`はrunning、read-only、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionは既存の制約に従う
   - approval chip は `自動実行 / 安全寄り / プロバイダー判断`
   - approval chip は single-select control として矢印キーで切り替えられる
 - session title は mate `main`

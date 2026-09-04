@@ -129,6 +129,7 @@ export type MemoryV6ListTargetsInput = {
   projectId?: string;
   characterId?: string;
   allowedCharacterId?: string;
+  allowedProjectIds?: readonly string[];
   includeEmpty?: boolean;
   limit?: number;
   cursor?: string;
@@ -983,6 +984,9 @@ export class MemoryV6Storage {
       .filter((item) => input.projectId === undefined || item.project?.id === input.projectId || (item.target.scope.type === "project" && item.target.scope.id === input.projectId))
       .filter((item) => input.characterId === undefined || item.character?.id === input.characterId || (item.target.owner.type === "character" && item.target.owner.id === input.characterId))
       .filter((item) => input.allowedCharacterId === undefined || item.target.owner.type !== "character" || item.target.owner.id === input.allowedCharacterId)
+      .filter((item) => input.allowedProjectIds === undefined
+        || (item.target.owner.type !== "project" || input.allowedProjectIds.includes(item.target.owner.id))
+          && (item.target.scope.type !== "project" || input.allowedProjectIds.includes(item.target.scope.id)))
       .sort(compareInventoryItems);
     const cursor = decodeCursor(input.cursor);
     const nextIndex = cursor ? filtered.findIndex((item) => inventoryItemFollowsCursor(item, cursor)) : 0;

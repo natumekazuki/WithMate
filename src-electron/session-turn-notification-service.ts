@@ -112,6 +112,17 @@ export type SessionTurnNotificationOptions<TIcon> = {
   icon?: TIcon;
 };
 
+export type SessionTurnTerminalNotification =
+  | {
+    outcome: "completed";
+    session: Session;
+    lastNonEmptyAssistantMessageText: string;
+  }
+  | {
+    outcome: "failed";
+    session: Session;
+  };
+
 export type SessionTurnNotificationCloseReason =
   | "userCanceled"
   | "applicationHidden"
@@ -145,13 +156,14 @@ export class SessionTurnNotificationService<TIcon> {
 
   constructor(private readonly deps: SessionTurnNotificationServiceDeps<TIcon>) {}
 
-  notifyTurnCompleted(session: Session, lastNonEmptyAssistantMessageText = ""): boolean {
+  notifyTurnTerminal(notificationInput: SessionTurnTerminalNotification): boolean {
+    const { session } = notificationInput;
     const sessionId = session.id;
     if (!this.isEligible(sessionId)) {
       return false;
     }
 
-    const content = this.buildNotificationContent(session, lastNonEmptyAssistantMessageText);
+    const content = this.buildNotificationContent(notificationInput);
     const options: SessionTurnNotificationOptions<TIcon> = {
       id: this.buildNotificationId(sessionId),
       groupId: SessionTurnNotificationService.notificationGroupId,
@@ -223,9 +235,16 @@ export class SessionTurnNotificationService<TIcon> {
   }
 
   private buildNotificationContent(
-    session: Session,
-    lastNonEmptyAssistantMessageText: string,
+    notificationInput: SessionTurnTerminalNotification,
   ): Pick<SessionTurnNotificationOptions<TIcon>, "title" | "body"> {
+    const { session } = notificationInput;
+    if (notificationInput.outcome === "failed") {
+      return {
+        title: "WithMate",
+        body: `「${session.taskTitle.trim() || "Session"}」のターンでエラーが発生しました`,
+      };
+    }
+
     const genericContent = {
       title: "WithMate",
       body: `「${session.taskTitle.trim() || "Session"}」のターンが完了しました`,
@@ -240,7 +259,7 @@ export class SessionTurnNotificationService<TIcon> {
     }
 
     try {
-      const preview = buildResponsePreview(lastNonEmptyAssistantMessageText);
+      const preview = buildResponsePreview(notificationInput.lastNonEmptyAssistantMessageText);
       if (!preview) {
         return genericContent;
       }

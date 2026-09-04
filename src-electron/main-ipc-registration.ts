@@ -113,15 +113,41 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
   SessionFilePreviewWindowPayload,
+  SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFileTreePathActionContextMenuResult,
+  SessionFileTreePathActionRequest,
   FileRootChangesRequest,
+  FileRootChangesRepositoriesRequest,
+  FileRootChangesRepositoriesResult,
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
+  FileRootGitHistoryCommitDetailRequest,
+  FileRootGitHistoryCommitDetailResult,
+  FileRootGitHistoryCommitsRequest,
+  FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryDiffRequest,
+  FileRootGitHistoryDiffResult,
+  FileRootGitHistoryRepositoriesRequest,
+  FileRootGitHistoryRepositoriesResult,
 } from "../src/file-explorer/file-explorer-contract.js";
+import type {
+  SessionFileObjectCopyContextMenuRequest,
+  SessionFileObjectCopyContextMenuResult,
+  SessionFileObjectCopyRequest,
+  SessionFileObjectCopyResult,
+} from "../src/file-explorer/session-file-object-copy-contract.js";
+import type {
+  GlossaryListResult,
+  GlossaryOperationResult,
+  GlossarySearchRequest,
+  SessionGlossaryProjection,
+} from "../src/glossary-contract.js";
 import {
   areSessionFileResourcesEqual,
+  isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -159,6 +185,7 @@ import type {
 } from "../src/withmate-window-api.js";
 import type { RootWorkItem, WorkItemEvent } from "../src/work-item.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { SessionWindowRestoreResult } from "../src/session-window-restore.js";
 import {
   resolveWorkspaceDirectoryValidationMessage,
   type WorkspaceDirectoryValidationResult,
@@ -217,6 +244,7 @@ import {
   WITHMATE_LIST_ROOT_WORK_ITEM_HISTORY_CHANNEL,
   WITHMATE_REVISE_ROOT_WORK_ITEM_CHANNEL,
   WITHMATE_APPEND_ROOT_WORK_ITEM_HISTORY_CHANNEL,
+  WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -227,9 +255,17 @@ import {
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -283,6 +319,8 @@ import {
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
+  WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
@@ -327,6 +365,7 @@ import {
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_SET_SESSION_PINNED_CHANNEL,
+  WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
 import {
   parseImageFilePickerPurpose,
@@ -361,6 +400,8 @@ export type MainIpcRegistrationDeps = {
   resolveSessionWindow(sessionId: string): MaybeWindow;
   resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<void>;
+  getSessionWindowRestoreSet(): Promise<string[]>;
+  restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
@@ -372,7 +413,7 @@ export type MainIpcRegistrationDeps = {
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
-  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFileResourceRequest | null;
+  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFilePreviewResourceRequest | null;
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
@@ -464,10 +505,16 @@ export type MainIpcRegistrationDeps = {
     sessionId: string,
     request: RootWorkItemHistoryAppendRequest,
   ): Awaitable<RootWorkItem>;
+  getSessionGlossaryProjection(sessionId: string): Awaitable<SessionGlossaryProjection>;
+  searchSessionGlossary(
+    sessionId: string,
+    request: GlossarySearchRequest,
+  ): Awaitable<GlossaryOperationResult<GlossaryListResult>>;
+  ensureSessionGlossarySubscription(sessionId: string): Awaitable<void>;
   getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
-  inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
+  inspectSessionFile(request: SessionFilePreviewResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
   openSessionFilePreviewWindow(
@@ -482,12 +529,39 @@ export type MainIpcRegistrationDeps = {
     event: IpcSenderEvent,
     request: SessionFilePreviewImageActionRequest,
   ): Awaitable<SessionFilePreviewImageContextMenuResult>;
+  copySessionFileObject(
+    event: IpcSenderEvent,
+    request: SessionFileObjectCopyRequest,
+  ): Awaitable<SessionFileObjectCopyResult>;
+  showSessionFileObjectCopyContextMenu(
+    event: IpcSenderEvent,
+    request: SessionFileObjectCopyContextMenuRequest,
+  ): Awaitable<SessionFileObjectCopyContextMenuResult>;
+  showSessionFileTreeContextMenu(
+    event: IpcSenderEvent,
+    request: SessionFileTreePathActionRequest,
+  ): Awaitable<SessionFileTreePathActionContextMenuResult>;
   showMarkdownLinkContextMenu(
     event: IpcSenderEvent,
     request: MarkdownLinkContextMenuRequest,
   ): Awaitable<MarkdownLinkContextMenuResult>;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
+  listFileRootChangesRepositories(
+    request: FileRootChangesRepositoriesRequest,
+  ): Awaitable<FileRootChangesRepositoriesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
+  listFileRootGitHistoryRepositories(
+    request: FileRootGitHistoryRepositoriesRequest,
+  ): Awaitable<FileRootGitHistoryRepositoriesResult>;
+  listFileRootGitHistoryCommits(
+    request: FileRootGitHistoryCommitsRequest,
+  ): Awaitable<FileRootGitHistoryCommitsResult>;
+  getFileRootGitHistoryCommitDetail(
+    request: FileRootGitHistoryCommitDetailRequest,
+  ): Awaitable<FileRootGitHistoryCommitDetailResult>;
+  getFileRootGitHistoryDiff(
+    request: FileRootGitHistoryDiffRequest,
+  ): Awaitable<FileRootGitHistoryDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
@@ -586,6 +660,8 @@ type MainIpcWindowDeps = Pick<
   | "resolveHomeWindow"
   | "resolveSessionWindow"
   | "openSessionWindow"
+  | "getSessionWindowRestoreSet"
+  | "restoreSessionWindows"
   | "openHomeWindow"
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
@@ -687,6 +763,7 @@ type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
   | "resolveSessionWindow"
+  | "resolveCompanionReviewWindow"
   | "isFilePreviewWindow"
   | "getFilePreviewWindowResource"
   | "isFilePreviewTokenWindow"
@@ -713,6 +790,9 @@ type MainIpcSessionQueryDeps = Pick<
   | "listOpenSessionWindowIdsPage"
   | "listOpenCompanionReviewWindowIds"
   | "getSession"
+  | "getSessionGlossaryProjection"
+  | "searchSessionGlossary"
+  | "ensureSessionGlossarySubscription"
   | "validateWorkspaceDirectory"
   | "getSessionFileExplorerOwnerSessionId"
   | "listSessionFileRoots"
@@ -724,9 +804,17 @@ type MainIpcSessionQueryDeps = Pick<
   | "getSessionFilePreviewWindowPayload"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
+  | "copySessionFileObject"
+  | "showSessionFileObjectCopyContextMenu"
+  | "showSessionFileTreeContextMenu"
   | "showMarkdownLinkContextMenu"
   | "listFileRootChanges"
+  | "listFileRootChangesRepositories"
   | "getFileRootDiff"
+  | "listFileRootGitHistoryRepositories"
+  | "listFileRootGitHistoryCommits"
+  | "getFileRootGitHistoryCommitDetail"
+  | "getFileRootGitHistoryDiff"
   | "getSessionMessageArtifact"
   | "getDiffPreview"
   | "previewComposerInput"
@@ -902,6 +990,17 @@ function assertSessionDeleteSender(
   throw new Error("Session delete IPC is only available from Home, Settings, or the target Session window.");
 }
 
+function assertOwningSessionWindowSender(
+  event: IpcMainInvokeEvent,
+  sessionId: string,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (!window || deps.resolveSessionWindow(sessionId) !== window) {
+    throw new Error("Glossary IPC is only available from the target Session window.");
+  }
+}
+
 async function assertSessionFileExplorerSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
@@ -912,7 +1011,7 @@ async function assertSessionFileExplorerSender(
     | "getSessionFileExplorerOwnerSessionId"
     | "getFilePreviewWindowResource"
   >,
-): Promise<SessionFileResourceRequest | null> {
+): Promise<SessionFilePreviewResourceRequest | null> {
   const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(sessionId);
   const window = deps.resolveEventWindow(event);
   if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
@@ -945,7 +1044,7 @@ async function assertOwningSessionFileExplorerSender(
 
 async function assertSessionFileResourceSender(
   event: IpcMainInvokeEvent,
-  resource: SessionFileResourceRequest,
+  resource: SessionFilePreviewResourceRequest,
   deps: Pick<
     MainIpcRegistrationDeps,
     | "resolveEventWindow"
@@ -976,11 +1075,12 @@ async function assertSessionFileResourceSender(
 async function assertSessionFileLinkSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
-  baseResource: SessionFileResourceRequest | undefined,
+  baseResource: SessionFilePreviewResourceRequest | undefined,
   deps: Pick<
     MainIpcRegistrationDeps,
     | "resolveEventWindow"
     | "resolveSessionWindow"
+    | "resolveCompanionReviewWindow"
     | "getSessionFileExplorerOwnerSessionId"
     | "getFilePreviewWindowResource"
   >,
@@ -988,6 +1088,9 @@ async function assertSessionFileLinkSender(
   const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(sessionId);
   const window = deps.resolveEventWindow(event);
   if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
+    return;
+  }
+  if (ownerSessionId && window && deps.resolveCompanionReviewWindow(ownerSessionId) === window) {
     return;
   }
   const currentResource = window
@@ -1003,10 +1106,10 @@ async function assertSessionFileLinkSender(
   throw new Error("File Preview navigation must use the current Preview resource as its base.");
 }
 
-function assertValidSessionFileResourceRequest(
+function assertValidSessionFilePreviewResourceRequest(
   input: unknown,
   expectedSessionId?: string,
-): asserts input is SessionFileResourceRequest {
+): asserts input is SessionFilePreviewResourceRequest {
   if (!input || typeof input !== "object") {
     throw new TypeError("File preview resource is invalid.");
   }
@@ -1016,6 +1119,26 @@ function assertValidSessionFileResourceRequest(
     || !candidate.sessionId
     || (expectedSessionId !== undefined && candidate.sessionId !== expectedSessionId)
   ) {
+    throw new TypeError("File preview resource is invalid.");
+  }
+  if (candidate.resourceKind === "git-commit-file") {
+    if (
+      Object.hasOwn(candidate, "absolutePath")
+      || typeof candidate.rootId !== "string"
+      || !candidate.rootId
+      || typeof candidate.repositoryId !== "string"
+      || !/^git:[0-9a-f]{24}$/u.test(candidate.repositoryId)
+      || typeof candidate.commitId !== "string"
+      || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(candidate.commitId)
+      || typeof candidate.relativePath !== "string"
+      || !candidate.relativePath
+    ) {
+      throw new TypeError("File preview resource is invalid.");
+    }
+    assertValidGitHistoryRelativePath(candidate.relativePath);
+    return;
+  }
+  if (candidate.resourceKind !== undefined) {
     throw new TypeError("File preview resource is invalid.");
   }
   const hasAbsolutePath = Object.hasOwn(candidate, "absolutePath");
@@ -1036,6 +1159,54 @@ function assertValidSessionFileResourceRequest(
     )
   ) {
     throw new TypeError("File preview resource is invalid.");
+  }
+}
+
+function assertValidGitHistoryRequest(input: unknown): asserts input is {
+  sessionId: string;
+  repositoryId: string;
+  rootId: string;
+} {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Git history request is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (
+    typeof candidate.sessionId !== "string"
+    || !candidate.sessionId
+    || typeof candidate.repositoryId !== "string"
+    || !/^git:[0-9a-f]{24}$/u.test(candidate.repositoryId)
+    || typeof candidate.rootId !== "string"
+    || !candidate.rootId
+  ) {
+    throw new TypeError("Git history request is invalid.");
+  }
+}
+
+function assertValidGitHistoryCommitId(commitId: unknown): asserts commitId is string {
+  if (typeof commitId !== "string" || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(commitId)) {
+    throw new TypeError("Git history commit id is invalid.");
+  }
+}
+
+function assertValidGitHistoryCursor(cursor: unknown): asserts cursor is string | null | undefined {
+  if (cursor !== undefined && cursor !== null && (typeof cursor !== "string" || !/^(?:0|[1-9][0-9]{0,8})$/u.test(cursor))) {
+    throw new TypeError("Git history cursor is invalid.");
+  }
+}
+
+function assertValidGitHistoryRelativePath(relativePath: unknown): asserts relativePath is string | null | undefined {
+  if (relativePath === undefined || relativePath === null) {
+    return;
+  }
+  if (
+    typeof relativePath !== "string"
+    || !relativePath
+    || relativePath.startsWith("/")
+    || /^[a-zA-Z]:[\\/]/u.test(relativePath)
+    || relativePath.replaceAll("\\", "/").split("/").some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    throw new TypeError("Git history file path is invalid.");
   }
 }
 
@@ -1065,11 +1236,128 @@ function parseSessionFilePreviewImageActionRequest(
   };
 }
 
+function hasOnlyObjectKeys(candidate: Record<string, unknown>, allowedKeys: readonly string[]): boolean {
+  const allowed = new Set(allowedKeys);
+  return Object.keys(candidate).every((key) => allowed.has(key));
+}
+
+function assertValidSessionFileResourceRequest(input: unknown): asserts input is SessionFileResourceRequest {
+  assertValidSessionFilePreviewResourceRequest(input);
+  if (isSessionFileGitCommitResource(input)) {
+    throw new TypeError("Working tree file resource is invalid.");
+  }
+}
+
+function assertStrictSessionFileResourceRequest(input: unknown): asserts input is SessionFileResourceRequest {
+  assertValidSessionFileResourceRequest(input);
+  const candidate = input as unknown as Record<string, unknown>;
+  const allowedKeys = Object.hasOwn(candidate, "absolutePath")
+    ? ["sessionId", "absolutePath"]
+    : ["sessionId", "rootId", "relativePath"];
+  if (!hasOnlyObjectKeys(candidate, allowedKeys)) {
+    throw new TypeError("File copy resource is invalid.");
+  }
+}
+
+function parseSessionFileObjectCopyRequest(input: unknown): SessionFileObjectCopyRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("File copy request is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (!hasOnlyObjectKeys(candidate, ["resource"])) {
+    throw new TypeError("File copy request is invalid.");
+  }
+  assertStrictSessionFileResourceRequest(candidate.resource);
+  return { resource: candidate.resource };
+}
+
+function parseSessionFileObjectCopyContextMenuRequest(
+  input: unknown,
+): SessionFileObjectCopyContextMenuRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("File copy context menu request is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (!hasOnlyObjectKeys(candidate, ["resource", "point"])) {
+    throw new TypeError("File copy context menu request is invalid.");
+  }
+  assertStrictSessionFileResourceRequest(candidate.resource);
+  const point = candidate.point;
+  if (
+    !point
+    || typeof point !== "object"
+    || !hasOnlyObjectKeys(point as Record<string, unknown>, ["x", "y"])
+    || !Number.isSafeInteger((point as Record<string, unknown>).x)
+    || ((point as Record<string, unknown>).x as number) < 0
+    || !Number.isSafeInteger((point as Record<string, unknown>).y)
+    || ((point as Record<string, unknown>).y as number) < 0
+  ) {
+    throw new TypeError("File copy context menu request is invalid.");
+  }
+  return {
+    resource: candidate.resource,
+    point: {
+      x: (point as Record<string, unknown>).x as number,
+      y: (point as Record<string, unknown>).y as number,
+    },
+  };
+}
+
+function parseSessionFileTreeContextMenuRequest(input: unknown): SessionFileTreePathActionRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("File tree context menu request is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (!hasOnlyObjectKeys(candidate, [
+    "sessionId",
+    "rootId",
+    "relativePath",
+    "nodeKind",
+    "point",
+    "canInsert",
+  ])) {
+    throw new TypeError("File tree context menu request is invalid.");
+  }
+  const point = candidate.point;
+  if (
+    typeof candidate.sessionId !== "string"
+    || !candidate.sessionId
+    || typeof candidate.rootId !== "string"
+    || !candidate.rootId
+    || typeof candidate.relativePath !== "string"
+    || !["root", "directory", "file"].includes(String(candidate.nodeKind))
+    || typeof candidate.canInsert !== "boolean"
+    || !point
+    || typeof point !== "object"
+    || !hasOnlyObjectKeys(point as Record<string, unknown>, ["x", "y"])
+    || !Number.isSafeInteger((point as Record<string, unknown>).x)
+    || ((point as Record<string, unknown>).x as number) < 0
+    || !Number.isSafeInteger((point as Record<string, unknown>).y)
+    || ((point as Record<string, unknown>).y as number) < 0
+  ) {
+    throw new TypeError("File tree context menu request is invalid.");
+  }
+  return {
+    sessionId: candidate.sessionId,
+    rootId: candidate.rootId,
+    relativePath: candidate.relativePath,
+    nodeKind: candidate.nodeKind as SessionFileTreePathActionRequest["nodeKind"],
+    canInsert: candidate.canInsert,
+    point: {
+      x: (point as Record<string, unknown>).x as number,
+      y: (point as Record<string, unknown>).y as number,
+    },
+  };
+}
+
 function parseMarkdownLinkContextMenuRequest(input: unknown): MarkdownLinkContextMenuRequest {
   if (!input || typeof input !== "object") {
     throw new TypeError("Markdown link context menu request is invalid.");
   }
   const candidate = input as Partial<MarkdownLinkContextMenuRequest>;
+  if (!hasOnlyObjectKeys(input as Record<string, unknown>, ["target", "point", "fileContext"])) {
+    throw new TypeError("Markdown link context menu request is invalid.");
+  }
   const point = candidate.point;
   if (
     typeof candidate.target !== "string"
@@ -1083,9 +1371,36 @@ function parseMarkdownLinkContextMenuRequest(input: unknown): MarkdownLinkContex
   ) {
     throw new TypeError("Markdown link context menu request is invalid.");
   }
+  let fileContext: MarkdownLinkContextMenuRequest["fileContext"];
+  if (candidate.fileContext !== undefined) {
+    if (!candidate.fileContext || typeof candidate.fileContext !== "object") {
+      throw new TypeError("Markdown link file context is invalid.");
+    }
+    const rawFileContext = candidate.fileContext as unknown as Record<string, unknown>;
+    if (
+      !hasOnlyObjectKeys(rawFileContext, ["sessionId", "baseResource"])
+      || typeof rawFileContext.sessionId !== "string"
+      || !rawFileContext.sessionId
+    ) {
+      throw new TypeError("Markdown link file context is invalid.");
+    }
+    if (rawFileContext.baseResource !== undefined) {
+      assertValidSessionFilePreviewResourceRequest(rawFileContext.baseResource);
+      if (rawFileContext.baseResource.sessionId !== rawFileContext.sessionId) {
+        throw new TypeError("Markdown link file context is invalid.");
+      }
+    }
+    fileContext = {
+      sessionId: rawFileContext.sessionId,
+      ...(rawFileContext.baseResource
+        ? { baseResource: rawFileContext.baseResource as SessionFilePreviewResourceRequest }
+        : {}),
+    };
+  }
   return {
     target: candidate.target,
     point: { x: point.x, y: point.y },
+    ...(fileContext ? { fileContext } : {}),
   };
 }
 
@@ -1133,6 +1448,8 @@ function assertAuxiliaryCreateModeForOwner(
     Object.hasOwn(input, "reasoningEffort") ||
     Object.hasOwn(input, "approvalMode") ||
     Object.hasOwn(input, "codexSandboxMode") ||
+    Object.hasOwn(input, "codexSpeed") ||
+    Object.hasOwn(input, "codexReviewer") ||
     Object.hasOwn(input, "customAgentName")
   ) {
     throw new Error("Session window Auxiliary creation cannot specify runtime options directly.");
@@ -1156,6 +1473,14 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
       return;
     }
     await deps.openSessionWindow(sessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL, async (event) => {
+    assertHomeWindowSender(event, deps);
+    return deps.getSessionWindowRestoreSet();
+  });
+  ipcMain.handle(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL, async (event) => {
+    assertHomeWindowSender(event, deps);
+    return deps.restoreSessionWindows();
   });
   ipcMain.handle(WITHMATE_OPEN_HOME_WINDOW_CHANNEL, async () => {
     await deps.openHomeWindow();
@@ -1515,6 +1840,24 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     }
     return deps.getSession(sessionId);
   });
+  ipcMain.handle(WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL, async (event, sessionId: string) => {
+    if (typeof sessionId !== "string" || !sessionId) {
+      throw new TypeError("Session ID is invalid.");
+    }
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    await deps.ensureSessionGlossarySubscription(sessionId);
+    return deps.getSessionGlossaryProjection(sessionId);
+  });
+  ipcMain.handle(
+    WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
+    async (event, sessionId: string, request: GlossarySearchRequest) => {
+      if (typeof sessionId !== "string" || !sessionId || !request || typeof request.query !== "string") {
+        throw new TypeError("Glossary search request is invalid.");
+      }
+      assertOwningSessionWindowSender(event, sessionId, deps);
+      return deps.searchSessionGlossary(sessionId, request);
+    },
+  );
   ipcMain.handle(WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL, async (event, sessionId: string) => {
     if (typeof sessionId !== "string" || !sessionId) {
       throw new TypeError("Session ID is invalid.");
@@ -1543,13 +1886,13 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.listSessionDirectory(request);
   });
-  ipcMain.handle(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, async (event, request: SessionFileResourceRequest) => {
-    assertValidSessionFileResourceRequest(request);
+  ipcMain.handle(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, async (event, request: SessionFilePreviewResourceRequest) => {
+    assertValidSessionFilePreviewResourceRequest(request);
     await assertSessionFileResourceSender(event, request, deps);
     return deps.inspectSessionFile(request);
   });
   ipcMain.handle(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL, async (event, request: SessionFileChunkRequest) => {
-    assertValidSessionFileResourceRequest(request);
+    assertValidSessionFilePreviewResourceRequest(request);
     await assertSessionFileResourceSender(event, request, deps);
     return deps.readSessionFileChunk(request);
   });
@@ -1565,9 +1908,9 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
         throw new TypeError("File preview navigation request is invalid.");
       }
       if (request.kind === "resource") {
-        assertValidSessionFileResourceRequest(request.resource);
-        if (!isSessionFileRootResource(request.resource)) {
-          throw new TypeError("Direct file preview resources must be root-scoped.");
+        assertValidSessionFilePreviewResourceRequest(request.resource);
+        if (!isSessionFileRootResource(request.resource) && !isSessionFileGitCommitResource(request.resource)) {
+          throw new TypeError("Direct file preview resources must be root-scoped or commit-scoped.");
         }
         if (
           request.view !== undefined
@@ -1583,13 +1926,16 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
         ) {
           throw new TypeError("File preview window view is invalid.");
         }
+        if (isSessionFileGitCommitResource(request.resource) && request.view?.kind === "diff") {
+          throw new TypeError("Git commit preview resources do not support working tree diff views.");
+        }
         await assertOwningSessionFileExplorerSender(event, request.resource.sessionId, deps);
       } else {
         if (typeof request.sessionId !== "string" || !request.sessionId || typeof request.target !== "string") {
           throw new TypeError("File preview navigation request is invalid.");
         }
         if (request.baseResource !== undefined) {
-          assertValidSessionFileResourceRequest(request.baseResource, request.sessionId);
+          assertValidSessionFilePreviewResourceRequest(request.baseResource, request.sessionId);
         }
         await assertSessionFileLinkSender(event, request.sessionId, request.baseResource, deps);
       }
@@ -1613,10 +1959,33 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     await assertSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.showSessionFilePreviewImageContextMenu(event, request);
   });
-  ipcMain.handle(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL, (event, input: unknown) => {
+  ipcMain.handle(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFileObjectCopyRequest(input);
+    await assertSessionFileResourceSender(event, request.resource, deps);
+    return deps.copySessionFileObject(event, request);
+  });
+  ipcMain.handle(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFileObjectCopyContextMenuRequest(input);
+    await assertSessionFileResourceSender(event, request.resource, deps);
+    return deps.showSessionFileObjectCopyContextMenu(event, request);
+  });
+  ipcMain.handle(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFileTreeContextMenuRequest(input);
+    await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.showSessionFileTreeContextMenu(event, request);
+  });
+  ipcMain.handle(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
     const request = parseMarkdownLinkContextMenuRequest(input);
     if (!deps.resolveEventWindow(event)) {
       throw new TypeError("Markdown link context menu is only available from a WithMate window.");
+    }
+    if (request.fileContext) {
+      await assertSessionFileLinkSender(
+        event,
+        request.fileContext.sessionId,
+        request.fileContext.baseResource,
+        deps,
+      );
     }
     return deps.showMarkdownLinkContextMenu(event, request);
   });
@@ -1653,6 +2022,24 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       })),
     };
   });
+  ipcMain.handle(
+    WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
+    async (event, request: FileRootChangesRepositoriesRequest) => {
+      if (
+        !request
+        || typeof request.sessionId !== "string"
+        || !request.sessionId
+        || !Array.isArray(request.rootIds)
+        || request.rootIds.length > 256
+        || request.rootIds.some((rootId) => typeof rootId !== "string" || !rootId)
+        || new Set(request.rootIds).size !== request.rootIds.length
+      ) {
+        throw new TypeError("Git repositories request is invalid.");
+      }
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.listFileRootChangesRepositories(request);
+    },
+  );
   ipcMain.handle(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, async (event, request: FileRootFileDiffRequest) => {
     if (
       !request
@@ -1673,6 +2060,44 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     }, deps);
     return deps.getFileRootDiff(request);
   });
+  ipcMain.handle(
+    WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
+    async (event, request: FileRootGitHistoryRepositoriesRequest) => {
+      if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
+        throw new TypeError("Git history repositories request is invalid.");
+      }
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.listFileRootGitHistoryRepositories(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
+    async (event, request: FileRootGitHistoryCommitsRequest) => {
+      assertValidGitHistoryRequest(request);
+      assertValidGitHistoryCursor(request.cursor);
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.listFileRootGitHistoryCommits(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+    async (event, request: FileRootGitHistoryCommitDetailRequest) => {
+      assertValidGitHistoryRequest(request);
+      assertValidGitHistoryCommitId(request.commitId);
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.getFileRootGitHistoryCommitDetail(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
+    async (event, request: FileRootGitHistoryDiffRequest) => {
+      assertValidGitHistoryRequest(request);
+      assertValidGitHistoryCommitId(request.commitId);
+      assertValidGitHistoryRelativePath(request.relativePath);
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.getFileRootGitHistoryDiff(request);
+    },
+  );
   ipcMain.handle(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, (_event, sessionId: string, messageIndex: number) => {
     if (!sessionId || !Number.isInteger(messageIndex) || messageIndex < 0) {
       return null;

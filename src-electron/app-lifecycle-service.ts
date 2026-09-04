@@ -11,6 +11,8 @@ type AppLifecycleServiceDeps = {
   shouldQuitWhenAllWindowsClosed(): boolean;
   confirmQuitWhileRunning(): boolean;
   shutdownSessionRuntime?(): Promise<void>;
+  prepareSessionWindowSnapshotForQuit?(): Promise<void>;
+  stopMemoryRuntime?(): Promise<void>;
   closePersistentStores(): void;
   invalidateAllProviderSessionThreads?(): Promise<void>;
   revokeAllAgentRuntimeBindings?(): void;
@@ -60,6 +62,11 @@ export class AppLifecycleService {
     if (!this.quitCleanupPromise) {
       this.quitCleanupPromise = (async () => {
         try {
+          await this.deps.prepareSessionWindowSnapshotForQuit?.();
+        } catch {
+          // Remaining cleanup must still run if the best-effort snapshot fails.
+        }
+        try {
           await this.deps.shutdownSessionRuntime?.();
         } catch {
           // Provider, binding, and persistent store cleanup must still run if Session runtime shutdown fails.
@@ -72,7 +79,12 @@ export class AppLifecycleService {
         try {
           this.deps.revokeAllAgentRuntimeBindings?.();
         } catch {
-          // Persistent stores and application shutdown must still complete if revocation fails.
+          // Runtime cleanup and application shutdown must still complete if revocation fails.
+        }
+        try {
+          await this.deps.stopMemoryRuntime?.();
+        } catch {
+          // Persistent stores and application shutdown must still complete if runtime cleanup fails.
         }
         try {
           this.deps.closePersistentStores();

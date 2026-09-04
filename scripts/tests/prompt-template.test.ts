@@ -12,10 +12,18 @@ import {
 import { PromptTemplateStorage } from "../../src-electron/prompt-template-storage.js";
 
 describe("prompt template contract", () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "template名を正規化し空本文と文字数上限超過をvalidationで拒否する"
+  // oracle = { type = "contract", ref = "docs/features/prompt-template-workspace.md" }
+  // failure_mode = "保存不能または過大なtemplate payloadが永続化境界へ到達する"
+  // scope = "prompt template validation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("名前を正規化し、空本文と上限超過を拒否する", () => {
     assert.equal(normalizePromptTemplateName("  Review   Brief  "), "Review Brief");
-    assert.throws(() => normalizePromptTemplateName("   "), /テンプレート名/);
-    assert.throws(() => normalizePromptTemplatePrompt("\n\t"), /プロンプト本文/);
+    assert.throws(() => normalizePromptTemplateName("   "), /template name/i);
+    assert.throws(() => normalizePromptTemplatePrompt("\n\t"), /prompt/i);
     assert.throws(
       () => normalizePromptTemplatePrompt("a".repeat(PROMPT_TEMPLATE_PROMPT_MAX_BYTES + 1)),
       /256 KiB/,
@@ -50,6 +58,14 @@ describe("PromptTemplateStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "template storageはcase-insensitiveな重複名と存在しないIDの更新を拒否する"
+  // oracle = { type = "contract", ref = "docs/features/prompt-template-workspace.md" }
+  // failure_mode = "同一視される重複templateを作るか更新を新規作成として扱う"
+  // scope = "prompt template storage mutation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("大文字小文字だけ異なる重複名と存在しないIDの変更を拒否する", () => {
     const directory = mkdtempSync(join(tmpdir(), "withmate-prompt-templates-"));
     const dbPath = join(directory, "withmate-v6.db");
@@ -59,13 +75,13 @@ describe("PromptTemplateStorage", () => {
       storage.createPromptTemplate({ name: "Review", prompt: "first" });
       assert.throws(
         () => storage.createPromptTemplate({ name: "review", prompt: "second" }),
-        /同じ名前/,
+        /same name/i,
       );
       assert.throws(
         () => storage.updatePromptTemplate({ id: "missing", name: "Missing", prompt: "body" }),
-        /見つかりません/,
+        /not found/i,
       );
-      assert.throws(() => storage.deletePromptTemplate("missing"), /見つかりません/);
+      assert.throws(() => storage.deletePromptTemplate("missing"), /not found/i);
       assert.equal(storage.listPromptTemplates().length, 1);
     } finally {
       storage?.close();

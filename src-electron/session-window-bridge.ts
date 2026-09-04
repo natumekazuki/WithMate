@@ -26,12 +26,20 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   getAllowQuitWithInFlightRuns(): boolean;
   confirmCloseWhileRunning(window: TWindow, sessionId: string): boolean;
   broadcastOpenSessionWindowIds(openSessionIds: string[]): void;
+  persistOpenSessionWindowIds?(openSessionIds: readonly string[]): Promise<void>;
+  onSnapshotPersistenceError?(error: unknown): void;
 };
+
+export type SessionWindowRestoreState =
+  | { kind: "settled-open" }
+  | { kind: "opening" };
 
 export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private readonly sessionWindows = new Map<string, TWindow>();
   private readonly openingSessionWindows = new Map<string, Promise<TWindow>>();
   private readonly allowCloseSessionWindows = new Set<TWindow>();
+  private readonly snapshotEligibleWindows = new Set<TWindow>();
+  private snapshotUpdatesSuspended = false;
 
   constructor(private readonly deps: SessionWindowBridgeDeps<TWindow>) {}
 
@@ -46,6 +54,40 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     return openSessionIds;
+  }
+
+  listSettledOpenSessionWindowIds(): string[] {
+    const settledOpenSessionIds: string[] = [];
+    for (const [sessionId, window] of this.sessionWindows.entries()) {
+      if (window.isDestroyed() || !this.snapshotEligibleWindows.has(window)) {
+        continue;
+      }
+
+      settledOpenSessionIds.push(sessionId);
+    }
+
+    return settledOpenSessionIds;
+  }
+
+  getSessionWindowRestoreStates(): ReadonlyMap<string, SessionWindowRestoreState> {
+    const states = new Map<string, SessionWindowRestoreState>();
+    for (const [sessionId, window] of this.sessionWindows.entries()) {
+      if (window.isDestroyed()) {
+        continue;
+      }
+
+      if (this.snapshotEligibleWindows.has(window)) {
+        states.set(sessionId, { kind: "settled-open" });
+        continue;
+      }
+
+      const openingPromise = this.openingSessionWindows.get(sessionId);
+      if (openingPromise) {
+        states.set(sessionId, { kind: "opening" });
+      }
+    }
+
+    return states;
   }
 
   getWindow(sessionId: string): TWindow | null {
@@ -89,7 +131,12 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     this.openingSessionWindows.set(sessionId, openingPromise);
 
     try {
-      return await openingPromise;
+      const openedWindow = await openingPromise;
+      if (this.sessionWindows.get(sessionId) === window && !window.isDestroyed()) {
+        this.snapshotEligibleWindows.add(window);
+        await this.persistSnapshotBestEffort();
+      }
+      return openedWindow;
     } finally {
       if (this.openingSessionWindows.get(sessionId) === openingPromise) {
         this.openingSessionWindows.delete(sessionId);
@@ -103,6 +150,10 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       this.sessionWindows.delete(sessionId);
       if (window) {
         this.allowCloseSessionWindows.delete(window);
+        const wasSnapshotEligible = this.snapshotEligibleWindows.delete(window);
+        if (wasSnapshotEligible) {
+          void this.persistSnapshotBestEffort();
+        }
       }
       this.broadcast();
       return;
@@ -119,7 +170,14 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     this.sessionWindows.clear();
     this.openingSessionWindows.clear();
     this.allowCloseSessionWindows.clear();
+    this.snapshotEligibleWindows.clear();
     this.broadcast();
+    void this.persistSnapshotBestEffort();
+  }
+
+  async prepareSnapshotForQuit(): Promise<void> {
+    this.snapshotUpdatesSuspended = true;
+    await this.persistSnapshotBestEffort(true);
   }
 
   private async loadSessionWindow(sessionId: string, window: TWindow): Promise<TWindow> {
@@ -166,10 +224,32 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     this.sessionWindows.delete(sessionId);
+    const wasSnapshotEligible = this.snapshotEligibleWindows.delete(window);
     this.broadcast();
+    if (wasSnapshotEligible) {
+      void this.persistSnapshotBestEffort();
+    }
   }
 
   private broadcast(): void {
     this.deps.broadcastOpenSessionWindowIds(this.listOpenSessionWindowIds());
+  }
+
+  private async persistSnapshotBestEffort(force = false): Promise<void> {
+    if (this.snapshotUpdatesSuspended && !force) {
+      return;
+    }
+    if (!this.deps.persistOpenSessionWindowIds) {
+      return;
+    }
+    try {
+      await this.deps.persistOpenSessionWindowIds(this.listSnapshotSessionWindowIds());
+    } catch (error) {
+      this.deps.onSnapshotPersistenceError?.(error);
+    }
+  }
+
+  private listSnapshotSessionWindowIds(): string[] {
+    return this.listSettledOpenSessionWindowIds();
   }
 }

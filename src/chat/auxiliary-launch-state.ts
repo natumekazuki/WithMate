@@ -21,7 +21,7 @@ export function buildAuxiliaryLaunchProviderItems(
 
 export type AuxiliaryLaunchSessionDefaults = Pick<
   AuxiliarySession,
-  "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "customAgentName"
+  "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "codexSpeed" | "customAgentName"
 >;
 
 export function buildCreateAuxiliarySessionInput(input: {
@@ -44,6 +44,7 @@ export function buildCreateAuxiliarySessionInput(input: {
     reasoningEffort: input.defaults?.reasoningEffort,
     approvalMode: input.defaults?.approvalMode,
     codexSandboxMode: input.defaults?.codexSandboxMode,
+    ...(input.defaults?.codexSpeed !== undefined ? { codexSpeed: input.defaults.codexSpeed } : {}),
     customAgentName: input.defaults?.customAgentName,
   };
 }

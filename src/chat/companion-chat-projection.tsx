@@ -100,9 +100,13 @@ export type CompanionChatProjectionInput = {
   sendButtonTitle: string | undefined;
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: SessionComposerExpandedProps["approvalOptions"];
+  reviewerOptions: SessionComposerExpandedProps["reviewerOptions"];
   selectedApprovalMode: SessionComposerExpandedProps["selectedApprovalMode"];
+  selectedCodexReviewer: SessionComposerExpandedProps["selectedCodexReviewer"];
   sandboxOptions: SessionComposerExpandedProps["sandboxOptions"];
   selectedCodexSandboxMode: SessionComposerExpandedProps["selectedCodexSandboxMode"];
+  speedOptions: SessionComposerExpandedProps["speedOptions"];
+  selectedCodexSpeed: SessionComposerExpandedProps["selectedCodexSpeed"];
   modelOptions: SessionComposerExpandedProps["modelOptions"];
   selectedModel: string;
   selectedModelFallbackLabel: string;
@@ -181,14 +185,16 @@ export type CompanionChatProjectionInput = {
   onRemoveAdditionalDirectory: (path: string) => void;
   onDraftChange: SessionComposerExpandedProps["onDraftChange"];
   onDraftFocus: () => void;
-  onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  onDraftKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   onDraftPaste: SessionComposerExpandedProps["onDraftPaste"];
   onDraftSelect: (selectionStart: number) => void;
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
   onChangeApprovalMode: SessionComposerExpandedProps["onChangeApprovalMode"];
+  onChangeCodexReviewer: SessionComposerExpandedProps["onChangeCodexReviewer"];
   onChangeCodexSandboxMode: SessionComposerExpandedProps["onChangeCodexSandboxMode"];
+  onChangeCodexSpeed: SessionComposerExpandedProps["onChangeCodexSpeed"];
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
@@ -281,8 +287,12 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isComposerBlockedFeedbackActive: input.isComposerBlockedFeedbackActive,
       approvalOptions: input.approvalOptions,
       selectedApprovalMode: input.selectedApprovalMode,
+      reviewerOptions: input.reviewerOptions,
+      selectedCodexReviewer: input.selectedCodexReviewer,
       sandboxOptions: input.sandboxOptions,
       selectedCodexSandboxMode: input.selectedCodexSandboxMode,
+      speedOptions: input.speedOptions,
+      selectedCodexSpeed: input.selectedCodexSpeed,
       modelOptions: input.modelOptions,
       selectedModel: input.selectedModel,
       selectedModelFallbackLabel: input.selectedModelFallbackLabel,
@@ -313,7 +323,9 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onDraftCompositionEnd: input.onDraftCompositionEnd,
       onSendOrCancel: input.onSendOrCancel,
       onChangeApprovalMode: input.onChangeApprovalMode,
+      onChangeCodexReviewer: input.onChangeCodexReviewer,
       onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
+      onChangeCodexSpeed: input.onChangeCodexSpeed,
       onChangeModel: input.onChangeModel,
       onChangeReasoningEffort: input.onChangeReasoningEffort,
     }),

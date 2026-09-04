@@ -81,7 +81,30 @@ export function resolveSessionWorkspaceBlockedReason(
   ) {
     return resolveSessionWorkspaceUnavailableMessage(state, sessionId, workspacePath);
   }
-  return "Workspace availability is being checked.";
+  return "";
+}
+
+export type SessionWorkspaceExecutionGate = {
+  isPending: boolean;
+  blockedReason: string;
+};
+
+export function resolveSessionWorkspaceExecutionGate(
+  state: SessionWorkspaceAvailabilityState,
+  sessionId: string,
+  workspacePath: string,
+): SessionWorkspaceExecutionGate {
+  const isUnavailable = state.status === "unavailable"
+    && state.sessionId === sessionId
+    && state.workspacePath === workspacePath;
+  const isPending = !isSessionWorkspaceAvailable(state, sessionId, workspacePath) && !isUnavailable;
+
+  return {
+    isPending,
+    blockedReason: isPending
+      ? ""
+      : resolveSessionWorkspaceBlockedReason(state, sessionId, workspacePath),
+  };
 }
 
 export function resolveSessionWorkspaceUnavailableMessage(

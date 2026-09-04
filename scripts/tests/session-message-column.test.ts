@@ -19,8 +19,11 @@ import { StableSessionMessageColumn } from "../../src/chat/chat-window.js";
 import { useCompanionCharacterProfile } from "../../src/companion-character-profile.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
+import { buildMessageCollapseTargets } from "../../src/session-message-collapse.js";
+import type { MessageListSource } from "../../src/auxiliary-session-message-projection.js";
 import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
+import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -140,6 +143,33 @@ function createArtifactMessage(): Message {
   };
 }
 
+function createOperationsArtifactMessage(): Message {
+  const message = createArtifactMessage();
+  message.artifact!.operationTimeline = [
+    {
+      type: "command_execution",
+      summary: "npm test",
+      details: "test output",
+    },
+    {
+      type: "command_execution",
+      summary: "npm run typecheck",
+      details: "typecheck output",
+    },
+    {
+      type: "mcp_tool_call",
+      summary: "filesystem/read",
+      details: "mcp output",
+    },
+    {
+      type: "command_execution",
+      summary: "npm run build",
+      details: "build output",
+    },
+  ];
+  return message;
+}
+
 function createLiveApprovalRequest(): LiveApprovalRequest {
   return {
     requestId: "approval-1",
@@ -187,7 +217,15 @@ function renderSessionMessageColumn(options: {
   turnExecutions?: SessionMessageColumnProps["turnExecutions"];
   originSessionDetails?: SessionMessageColumnProps["originSessionDetails"];
   onOpenOriginSession?: SessionMessageColumnProps["onOpenOriginSession"];
+  messageKeys?: SessionMessageColumnProps["messageKeys"];
+  messageCollapseTargets?: SessionMessageColumnProps["messageCollapseTargets"];
+  collapsedMessageKeys?: SessionMessageColumnProps["collapsedMessageKeys"];
+  messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
+  onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
+  onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
+  glossaryAnnotationMatcher?: SessionMessageColumnProps["glossaryAnnotationMatcher"];
+  onActivateGlossaryEntry?: SessionMessageColumnProps["onActivateGlossaryEntry"];
 }): string {
   return renderToStaticMarkup(
     React.createElement(SessionMessageColumn, {
@@ -224,6 +262,8 @@ function renderSessionMessageColumn(options: {
       onQuoteMessageText: options.withResponseActions ? () => {} : undefined,
       onCancelQueuedTurn: options.turnExecutions ? () => {} : undefined,
       messageViewMode: options.messageViewMode,
+      glossaryAnnotationMatcher: options.glossaryAnnotationMatcher,
+      onActivateGlossaryEntry: options.onActivateGlossaryEntry,
     }),
   );
 }
@@ -259,6 +299,12 @@ type MountedSessionMessageColumn = {
     isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
+    messageKeys?: SessionMessageColumnProps["messageKeys"];
+    messageCollapseTargets?: SessionMessageColumnProps["messageCollapseTargets"];
+    collapsedMessageKeys?: SessionMessageColumnProps["collapsedMessageKeys"];
+    messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
+    onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
+    onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
     messages?: Message[];
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
@@ -283,6 +329,12 @@ async function mountSessionMessageColumn(options: {
   turnExecutions?: SessionMessageColumnProps["turnExecutions"];
   originSessionDetails?: SessionMessageColumnProps["originSessionDetails"];
   onOpenOriginSession?: SessionMessageColumnProps["onOpenOriginSession"];
+  messageKeys?: SessionMessageColumnProps["messageKeys"];
+  messageCollapseTargets?: SessionMessageColumnProps["messageCollapseTargets"];
+  collapsedMessageKeys?: SessionMessageColumnProps["collapsedMessageKeys"];
+  messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
+  onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
+  onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
   pendingMessageGroupId?: string | null;
   pendingMessageText?: string;
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
@@ -433,6 +485,12 @@ async function mountSessionMessageColumn(options: {
     isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
+    messageKeys?: SessionMessageColumnProps["messageKeys"];
+    messageCollapseTargets?: SessionMessageColumnProps["messageCollapseTargets"];
+    collapsedMessageKeys?: SessionMessageColumnProps["collapsedMessageKeys"];
+    messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
+    onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
+    onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
     messages?: Message[];
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
@@ -445,10 +503,14 @@ async function mountSessionMessageColumn(options: {
           sessionId: "session-1",
           character,
           messages: callbacks.messages ?? options.messages,
+          messageKeys: callbacks.messageKeys ?? options.messageKeys,
           messageGroups: callbacks.messageGroups ?? options.messageGroups,
           turnExecutions: options.turnExecutions,
           originSessionDetails: options.originSessionDetails,
           onOpenOriginSession: options.onOpenOriginSession,
+          messageCollapseTargets: callbacks.messageCollapseTargets ?? options.messageCollapseTargets,
+          collapsedMessageKeys: callbacks.collapsedMessageKeys ?? options.collapsedMessageKeys,
+          messageJumpRequest: callbacks.messageJumpRequest ?? options.messageJumpRequest,
           expandedArtifacts,
           messageListRef,
           isRunning: options.isRunning ?? false,
@@ -464,6 +526,8 @@ async function mountSessionMessageColumn(options: {
           isMessageListFollowing: callbacks.isMessageListFollowing ?? false,
           isContentActive: callbacks.isContentActive ?? options.isContentActive ?? true,
           onMessageListScroll() {},
+          onToggleMessageCollapse: callbacks.onToggleMessageCollapse ?? options.onToggleMessageCollapse,
+          onToggleAllMessageCollapse: callbacks.onToggleAllMessageCollapse ?? options.onToggleAllMessageCollapse,
           onToggleArtifact() {},
           onOpenDiff() {},
           onResolveLiveApproval() {},
@@ -519,6 +583,9 @@ async function mountSessionMessageColumn(options: {
       });
     },
     async cleanup() {
+      for (const input of dom.window.document.querySelectorAll<HTMLInputElement>("input, textarea, [contenteditable='true']")) {
+        input.blur();
+      }
       if (dom.window.document.activeElement instanceof dom.window.HTMLElement) {
         dom.window.document.activeElement.blur();
       }
@@ -588,6 +655,216 @@ test("SessionMessageColumn は全履歴を仮想化し、最新メッセージ�
   assert.match(html, /message 100<\/p>/);
   assert.match(html, /session-message-virtual-row/);
   assert.doesNotMatch(html, /以前のメッセージを読み込む/);
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "valid Glossary annotationは通常message本文へだけ投影しSource表示には適用しない"
+// oracle = { type = "adr", ref = "docs/adr/022-repository-glossary-boundary.md" }
+// failure_mode = "source code内の用語が注釈化され、原文表示やcode操作を壊す"
+// scope = "session-message-column-glossary-annotation"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionMessageColumn はvalid glossaryを通常messageへだけ投影しSourceでは注釈しない", () => {
+  const glossaryAnnotationMatcher = createGlossaryAnnotationMatcher([{
+    term: "Runtime",
+    aliases: [],
+    definition: "Runtime definition",
+  }], "revision-1");
+  const messages: Message[] = [{
+    role: "assistant",
+    text: "Runtime",
+    artifact: {
+      title: "Runtime artifact",
+      activitySummary: [],
+      operationTimeline: [{ type: "command_execution", summary: "Runtime", details: "Runtime" }],
+      changedFiles: [],
+      runChecks: [],
+    },
+  }];
+  const previewHtml = renderSessionMessageColumn({
+    messages,
+    expandedArtifacts: { "message-0": true },
+    glossaryAnnotationMatcher,
+    onActivateGlossaryEntry: () => undefined,
+  });
+  const sourceHtml = renderSessionMessageColumn({
+    messages,
+    glossaryAnnotationMatcher,
+    onActivateGlossaryEntry: () => undefined,
+    messageViewMode: "source",
+  });
+
+  assert.equal((previewHtml.match(/class="glossary-annotation"/g) ?? []).length, 1);
+  assert.doesNotMatch(sourceHtml, /class="glossary-annotation"/);
+});
+
+// @test-value v1
+// kind = "contract"
+// claim = "個別collapse controlは状態と対象本文を支援技術へ公開しkeyboard focusとclickで操作でき、一括shortcutも維持される"
+// oracle = { type = "contract", ref = "accepted behavior: accessible name、aria-expanded、aria-controlsと一括shortcutを維持する" }
+// failure_mode = "個別controlがkeyboardから到達不能になるかARIAの状態・対象を失う、または一括shortcutが動作しなくなる"
+// scope = "SessionMessageColumn collapse controls"
+// lifecycle = "permanent"
+// distinction = "DOM owner境界ではなく、個別controlのaccessibility contractと一括shortcutの操作経路を検証する"
+// @end-test-value
+test("SessionMessageColumn は個別・一括collapseをnative controlで操作する", async () => {
+  const messages: Message[] = [
+    { role: "user", text: "first **collapsed** message" },
+    { role: "assistant", text: "second message" },
+  ];
+  const messageKeys = ["session-s-0", "session-s-1"];
+  const messageCollapseTargets = buildMessageCollapseTargets(
+    messages,
+    messages.map((_, messageIndex): MessageListSource => ({ kind: "session", messageIndex })),
+    messageKeys,
+  );
+  let toggledKey: string | null = null;
+  let allToggleCount = 0;
+  const collapsedMessageKeys = new Set(["session-s-0"]);
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    messageKeys,
+    messageCollapseTargets,
+    collapsedMessageKeys,
+    onToggleMessageCollapse: (key) => {
+      toggledKey = key;
+    },
+    onToggleAllMessageCollapse: () => {
+      allToggleCount += 1;
+    },
+  });
+
+  try {
+    const collapsedBody = mounted.container.querySelector("#message-body-session-s-0");
+    assert.ok(collapsedBody);
+    assert.equal(collapsedBody.querySelector(".rich-text"), null);
+    assert.equal(collapsedBody.querySelector(".message-collapsed-preview")?.textContent, "first collapsed message");
+    const individualButton = mounted.container.querySelector<HTMLButtonElement>(
+      "button[aria-label^='メッセージを展開']",
+    );
+    assert.ok(individualButton);
+    assert.equal(individualButton.getAttribute("aria-expanded"), "false");
+    assert.equal(individualButton.getAttribute("aria-controls"), "message-body-session-s-0");
+    await act(async () => {
+      individualButton.focus();
+    });
+    assert.equal(mounted.dom.window.document.activeElement, individualButton);
+    await act(async () => {
+      individualButton.click();
+    });
+    assert.equal(toggledKey, "session-s-0");
+
+    const shortcutEvent = new mounted.dom.window.KeyboardEvent("keydown", {
+      key: "M",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      mounted.dom.window.document.body.dispatchEvent(shortcutEvent);
+    });
+    assert.equal(allToggleCount, 1);
+    assert.equal(shortcutEvent.defaultPrevented, true);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "個別collapse controlとmessage本文は同じtext wrapperに属し、Detailsはそのwrapperの外側に残る"
+// oracle = { type = "contract", ref = "accepted behavior: 個別の縮小・展開controlはMessage本文領域だけをownerにする" }
+// failure_mode = "collapse controlのoverlay ownerがmessage card全体になり、展開したDetails上へcontrolが追従する"
+// scope = "SessionMessageColumn message text owner boundary"
+// lifecycle = "permanent"
+// distinction = "個別・一括操作の状態遷移ではなく、本文とDetailsのDOM owner境界を検証する"
+// @end-test-value
+test("SessionMessageColumn は個別collapse controlを本文wrapper内に保ちDetailsをownerに含めない", async () => {
+  const messages = [createArtifactMessage()];
+  messages[0]!.text = "long message ".repeat(80);
+  const messageKeys = ["session-s-0"];
+  const messageCollapseTargets = buildMessageCollapseTargets(
+    messages,
+    [{ kind: "session", messageIndex: 0 }],
+    messageKeys,
+  );
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    messageKeys,
+    messageCollapseTargets,
+    expandedArtifacts: { "session-1-0": true },
+    onToggleMessageCollapse: () => undefined,
+  });
+
+  try {
+    const card = mounted.container.querySelector(".message-card");
+    const textWrapper = card?.querySelector(".message-text-wrapper");
+    const collapseControl = card?.querySelector(".message-collapse-control");
+    const messageBody = card?.querySelector("[data-message-body='true']");
+    const artifactShell = card?.querySelector(".artifact-shell");
+
+    assert.ok(textWrapper);
+    assert.equal(collapseControl?.parentElement, textWrapper);
+    assert.equal(messageBody?.parentElement, textWrapper);
+    assert.equal(textWrapper.querySelector(".artifact-shell"), null);
+    assert.equal(artifactShell?.parentElement, textWrapper.parentElement);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "message検索中だけ一致する縮小messageを一時展開し、検索終了後は保存済みcollapse stateへ戻す"
+// oracle = { type = "contract", ref = "docs/features/session-message-collapse-and-navigation.md" }
+// failure_mode = "縮小本文の一致箇所へ到達できない、または検索が恒久的に展開状態を書き換える"
+// scope = "session-message-column-find-collapse-interaction"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionMessageColumn はfind中だけ縮小messageを一時展開する", async () => {
+  const messages: Message[] = [{ role: "assistant", text: "**needle** remains searchable" }];
+  const messageKeys = ["session-s-0"];
+  const messageCollapseTargets = buildMessageCollapseTargets(
+    messages,
+    [{ kind: "session", messageIndex: 0 }],
+    messageKeys,
+  );
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    messageKeys,
+    messageCollapseTargets,
+    collapsedMessageKeys: new Set(messageKeys),
+  });
+
+  try {
+    assert.ok(mounted.container.querySelector(".message-collapsed-preview"));
+    await act(async () => {
+      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+      }));
+    });
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      mounted.dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    await act(async () => {
+      setInputValue.call(input, "needle");
+      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+    });
+    assert.equal(mounted.container.querySelector(".message-collapsed-preview"), null);
+    assert.ok(mounted.container.querySelector("#message-body-session-s-0 > .rich-text"));
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 test("SessionMessageColumn は上方向へスクロールして先頭メッセージへ到達できる", async () => {
@@ -1191,30 +1468,14 @@ test("Companion draft 更新では既存 message column を再描画しない", 
   }
 });
 
-test("StableSessionMessageColumn は描画用 callback の更新を空表示文言へ反映する", async () => {
-  const message = createArtifactMessage();
-  message.artifact!.changedFiles = [];
-  const mounted = await mountSessionMessageColumn({
-    messages: [message],
-    expandedArtifacts: { "session-1-0": true },
-    component: StableSessionMessageColumn,
-    getChangedFilesEmptyText: () => "変更前の空表示",
-  });
-
-  try {
-    assert.match(mounted.container.textContent ?? "", /変更前の空表示/);
-
-    await mounted.rerender({
-      getChangedFilesEmptyText: () => "変更後の空表示",
-    });
-
-    assert.doesNotMatch(mounted.container.textContent ?? "", /変更前の空表示/);
-    assert.match(mounted.container.textContent ?? "", /変更後の空表示/);
-  } finally {
-    await mounted.cleanup();
-  }
-});
-
+// @test-value v1
+// kind = "regression"
+// claim = "message list自身は未追従状態でも新着jump UIを描画せず外側の単一ownerへ委ねる"
+// oracle = { type = "contract", ref = "docs/features/long-session-performance.md" }
+// failure_mode = "同じjump操作が複数箇所に表示され、layoutと操作ownerが重複する"
+// scope = "session-message-column-follow-jump-ownership"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionMessageColumn は未追従時に message list 内の jump UI を描画しない", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(2),
@@ -1225,17 +1486,179 @@ test("SessionMessageColumn は未追従時に message list 内の jump UI を描
   assert.doesNotMatch(html, /末尾へ移動/);
 });
 
-test("SessionMessageColumn は artifact 展開と diff 起動に必要な表示断片を維持する", () => {
+// @test-value v1
+// kind = "invariant"
+// claim = "artifact表示はChanged Filesを除外しRun Checksを維持し、Operationsを単一の初期closed groupへまとめる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+// failure_mode = "message本文が冗長なfile一覧で埋まる、または検証結果やoperation groupingが欠落する"
+// scope = "session-message-column-artifact-projection"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionMessageColumn はChanged Filesを描画せずRun Checksを維持し、Operationsを1groupで初期closedにする", () => {
   const html = renderSessionMessageColumn({
-    messages: [createArtifactMessage()],
+    messages: [createOperationsArtifactMessage()],
+    expandedArtifacts: { "session-1-0": true },
+  });
+  const dom = new JSDOM(html);
+  const operationsGroup = dom.window.document.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
+  const operationFolds = Array.from(operationsGroup?.querySelectorAll<HTMLDetailsElement>(".artifact-operation-fold") ?? []);
+
+  assert.match(html, /artifact-panel-session-1-0/);
+  assert.doesNotMatch(html, /Changed Files/);
+  assert.doesNotMatch(html, /src\/App\.tsx/);
+  assert.doesNotMatch(html, /Open Diff/);
+  assert.match(html, /snapshot files/);
+  assert.ok(operationsGroup);
+  assert.equal(operationsGroup.querySelector(".artifact-fold-summary-copy span")?.textContent, "4 operations");
+  assert.equal(operationsGroup.open, false);
+  assert.equal(operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+  assert.equal(operationFolds.length, 4);
+  assert.deepEqual(
+    operationFolds.map((operation) => operation.querySelector(".artifact-operation-type")?.textContent),
+    ["Command", "Command", "MCP", "Command"],
+  );
+  assert.deepEqual(
+    operationFolds.map((operation) => operation.querySelector(".artifact-operation-summary-text")?.textContent),
+    ["npm test", "npm run typecheck", "filesystem/read", "npm run build"],
+  );
+  for (const operation of operationFolds) {
+    assert.equal(operation.open, false);
+    assert.equal(operation.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+  }
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "Operations groupと個別operationを独立開閉でき、長文detailをgroup内部へ保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+// failure_mode = "operation detailが常時展開される、group外へ漏れる、または個別確認できない"
+// scope = "session-message-column-operation-disclosure"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionMessageColumn はOperationsと個別operationを開閉でき、長文operationをgroup内部へ保持する", async () => {
+  const message = createArtifactMessage();
+  message.artifact!.operationTimeline = [{
+    type: "command_execution",
+    summary: "npm test",
+    details: Array.from({ length: 120 }, (_, index) => `output line ${index + 1}`).join("\n"),
+  }];
+  const mounted = await mountSessionMessageColumn({
+    messages: [message],
     expandedArtifacts: { "session-1-0": true },
   });
 
-  assert.match(html, /aria-label="Details を閉じる"/);
-  assert.match(html, /artifact-panel-session-1-0/);
-  assert.match(html, /src\/App\.tsx/);
-  assert.match(html, /Open Diff/);
-  assert.match(html, /snapshot files/);
+  try {
+    const operationsGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
+    const operationGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    assert.ok(operationsGroup);
+    assert.ok(operationGroup);
+    const operationsSummary = operationsGroup.querySelector("summary");
+    const operationSummary = operationGroup.querySelector("summary");
+    assert.ok(operationsSummary);
+    assert.ok(operationSummary);
+    assert.equal(operationsGroup.open, false);
+    assert.equal(operationGroup.open, false);
+    assert.equal(operationsSummary.textContent?.includes("1 operation"), true);
+    assert.equal(operationsSummary.getAttribute("aria-controls"), operationsGroup.querySelector(".artifact-operations-body")?.id);
+    assert.equal(operationSummary.getAttribute("aria-controls"), operationGroup.querySelector(".artifact-operation-body")?.id);
+
+    await act(async () => {
+      operationsGroup.open = true;
+      operationsGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(operationsGroup.open, true);
+    assert.equal(operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+    assert.equal(operationGroup.open, false);
+    assert.match(operationsGroup.querySelector(".artifact-operations-body")?.textContent ?? "", /output line 120/);
+
+    await act(async () => {
+      operationGroup.open = true;
+      operationGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(operationGroup.open, true);
+    assert.equal(operationGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+
+    await act(async () => {
+      operationGroup.open = false;
+      operationGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(operationGroup.open, false);
+    assert.equal(operationGroup.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+
+    await act(async () => {
+      operationsGroup.open = false;
+      operationsGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(operationsGroup.open, false);
+    assert.equal(operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "virtualizationによるmessage row再mount後もOperations groupと個別operationの開閉状態を維持する"
+// oracle = { type = "contract", ref = "docs/features/long-session-performance.md" }
+// failure_mode = "scrollでrowが再生成されるたび利用者の開閉状態が失われる"
+// scope = "session-message-column-virtualized-disclosure-state"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionMessageColumn はvirtualizationでrowが再mountしてもOperationsとoperationの開閉状態を維持する", async () => {
+  const messages = Array.from({ length: 30 }, (_, index) => (
+    index === 0
+      ? createOperationsArtifactMessage()
+      : { role: "user" as const, text: `message ${index + 1}` }
+  ));
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    expandedArtifacts: { "session-1-0": true },
+  });
+
+  try {
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+    await act(async () => {
+      messageList.scrollTop = 0;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+
+    const initialOperationsGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
+    assert.ok(initialOperationsGroup);
+    await act(async () => {
+      initialOperationsGroup.open = true;
+      initialOperationsGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    const initialOperationGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    assert.ok(initialOperationGroup);
+    await act(async () => {
+      initialOperationGroup.open = true;
+      initialOperationGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(initialOperationsGroup.open, true);
+    assert.equal(initialOperationGroup.open, true);
+
+    await act(async () => {
+      messageList.scrollTop = messageList.scrollHeight;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+    assert.equal(mounted.container.querySelector(".artifact-operations-fold"), null);
+
+    await act(async () => {
+      messageList.scrollTop = 0;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+    const remountedOperationsGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
+    const remountedOperationGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    assert.ok(remountedOperationsGroup);
+    assert.ok(remountedOperationGroup);
+    assert.equal(remountedOperationsGroup.open, true);
+    assert.equal(remountedOperationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+    assert.equal(remountedOperationGroup.open, true);
+    assert.equal(remountedOperationGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 test("selection action geometry は viewport と ActionDock 境界内で flip と左右 clamp を行う", () => {

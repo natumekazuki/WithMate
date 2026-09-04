@@ -1,5 +1,7 @@
 import { type ApprovalMode } from "./approval-mode.js";
 import { type CodexSandboxMode } from "./codex-sandbox-mode.js";
+import { type CodexSpeed } from "./codex-speed.js";
+import { type CodexReviewer } from "./codex-reviewer.js";
 import { type ModelReasoningEffort } from "./model-catalog.js";
 
 export type DiffRow = {
@@ -370,6 +372,8 @@ export type RunSessionTurnRequest = {
   codexSandboxMode?: CodexSandboxMode;
   customAgentName?: string;
   attachments?: SessionTurnAttachmentReference[];
+  codexSpeed?: CodexSpeed;
+  codexReviewer?: CodexReviewer;
 };
 
 const SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

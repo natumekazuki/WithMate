@@ -11,6 +11,7 @@ import { SessionHeader } from "../../src/session-components.js";
 import {
   buildLiveSessionHeaderProps,
   createAuxiliaryHeaderActions,
+  createMessageCollapseHeaderAction,
   createWorkspaceExplorerAction,
   resolveAuxiliaryHeaderActionState,
 } from "../../src/chat/chat-header-actions.js";
@@ -18,6 +19,14 @@ const noop = () => {};
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 22 preserves its observable contract"
+// oracle = { type = "contract", ref = "-22" }
+// failure_mode = "line 22 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionHeader は低頻度の管理操作を menu にまとめる", () => {
   const html = renderToStaticMarkup(
     <SessionHeader
@@ -47,6 +56,14 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
   assert.match(html, /role="menuitem">Delete<\/button>/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 51 preserves its observable contract"
+// oracle = { type = "contract", ref = "-51" }
+// failure_mode = "line 51 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再クリックで閉じる", async () => {
   const previousGlobals = {
     window: globalThis.window,
@@ -144,6 +161,14 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 148 preserves its observable contract"
+// oracle = { type = "contract", ref = "-148" }
+// failure_mode = "line 148 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("createWorkspaceExplorerAction は共通の workspace Explorer action を描画する", () => {
   const html = renderToStaticMarkup(createWorkspaceExplorerAction({ onOpenExplorer: noop }));
 
@@ -153,6 +178,14 @@ test("createWorkspaceExplorerAction は共通の workspace Explorer action を�
   assert.doesNotMatch(html, /disabled/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 157 preserves its observable contract"
+// oracle = { type = "contract", ref = "-157" }
+// failure_mode = "line 157 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("createWorkspaceExplorerAction は disabled state を反映する", () => {
   const html = renderToStaticMarkup(createWorkspaceExplorerAction({
     disabled: true,
@@ -162,6 +195,86 @@ test("createWorkspaceExplorerAction は disabled state を反映する", () => {
   assert.match(html, /disabled=""/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 166 preserves its observable contract"
+// oracle = { type = "contract", ref = "-166" }
+// failure_mode = "line 166 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
+test("createMessageCollapseHeaderAction は既存header button語彙とshortcut名を使う", () => {
+  const html = renderToStaticMarkup(createMessageCollapseHeaderAction({
+    allMessagesCollapsed: false,
+    onToggle: noop,
+  }));
+
+  assert.match(html, /class="drawer-toggle compact secondary"/);
+  assert.match(html, /aria-label="完了済みmessageをすべて縮小"/);
+  assert.match(html, /title="完了済みmessageをすべて縮小 \(Ctrl\+Shift\+M\)"/);
+  assert.match(html, />Collapse<\/button>/);
+
+  const expandedHtml = renderToStaticMarkup(createMessageCollapseHeaderAction({
+    allMessagesCollapsed: true,
+    onToggle: noop,
+  }));
+  assert.match(expandedHtml, />Expand<\/button>/);
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 184 preserves its observable contract"
+// oracle = { type = "contract", ref = "-184" }
+// failure_mode = "line 184 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionHeader はmessage collapse actionをAuxiliaryの左隣へ描画する", () => {
+  const html = renderToStaticMarkup(
+    <SessionHeader
+      taskTitle="Session"
+      isEditingTitle={false}
+      titleDraft="Session"
+      isRunning={false}
+      actions={(
+        <>
+          {createMessageCollapseHeaderAction({ allMessagesCollapsed: false, onToggle: noop })}
+          {createAuxiliaryHeaderActions({
+            isActive: false,
+            onStart: noop,
+            onReturnToMain: noop,
+          })}
+        </>
+      )}
+      showTerminalButton={false}
+      showRenameButton={false}
+      showAuditLogButton={false}
+      showDeleteButton={false}
+      onOpenAuditLog={noop}
+      onOpenTerminal={noop}
+      onTitleDraftChange={noop}
+      onTitleInputKeyDown={noop}
+      onSaveTitle={noop}
+      onCancelTitleEdit={noop}
+      onStartTitleEdit={noop}
+      onDeleteSession={noop}
+    />,
+  );
+
+  assert.ok(
+    html.indexOf('aria-label="完了済みmessageをすべて縮小"')
+      < html.indexOf('aria-label="Auxiliary session actions"'),
+  );
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 222 preserves its observable contract"
+// oracle = { type = "contract", ref = "-222" }
+// failure_mode = "line 222 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("createAuxiliaryHeaderActions は idle 時の Auxiliary start action を描画する", () => {
   const html = renderToStaticMarkup(createAuxiliaryHeaderActions({
     isActive: false,
@@ -176,6 +289,14 @@ test("createAuxiliaryHeaderActions は idle 時の Auxiliary start action を描
   assert.match(html, /disabled=""/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 236 preserves its observable contract"
+// oracle = { type = "contract", ref = "-236" }
+// failure_mode = "line 236 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("createAuxiliaryHeaderActions は active 時の Return action を描画する", () => {
   const html = renderToStaticMarkup(createAuxiliaryHeaderActions({
     isActive: true,
@@ -189,6 +310,14 @@ test("createAuxiliaryHeaderActions は active 時の Return action を描画す�
   assert.match(html, /disabled=""/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 249 preserves its observable contract"
+// oracle = { type = "contract", ref = "-249" }
+// failure_mode = "line 249 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("createAuxiliaryHeaderActions は idle label を任意に表示する", () => {
   const html = renderToStaticMarkup(createAuxiliaryHeaderActions({
     isActive: false,
@@ -201,6 +330,14 @@ test("createAuxiliaryHeaderActions は idle label を任意に表示する", () 
   assert.match(html, />Auxiliary<\/button>/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 261 preserves its observable contract"
+// oracle = { type = "contract", ref = "-261" }
+// failure_mode = "line 261 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("resolveAuxiliaryHeaderActionState は start/return disabled state を解決する", () => {
   assert.deepEqual(
     resolveAuxiliaryHeaderActionState({
@@ -247,6 +384,14 @@ test("resolveAuxiliaryHeaderActionState は start/return disabled state を解�
   );
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 307 preserves its observable contract"
+// oracle = { type = "contract", ref = "-307" }
+// failure_mode = "line 307 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildLiveSessionHeaderProps は live session header の共通 action を組み立てる", () => {
   const onOpenSessionFilesExplorer = () => {};
   const onOpenSessionFilesTerminal = () => {};
@@ -284,6 +429,14 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
   assert.match(sessionFilesHtml, />Terminal<\/button>/);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 344 preserves its observable contract"
+// oracle = { type = "contract", ref = "-344" }
+// failure_mode = "line 344 violates its expected output or boundary behavior"
+// scope = "chat-header-actions.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionHeader はpin stateとpending stateを操作ボタンへ投影する", () => {
   const html = renderToStaticMarkup(<SessionHeader
     taskTitle="Pinned session"

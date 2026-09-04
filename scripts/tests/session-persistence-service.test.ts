@@ -859,6 +859,59 @@ describe("SessionPersistenceService", () => {
     );
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Main Sessionのfull-session更新は保存済みApprovalがneverの間、他項目を更新しても現在のReviewerを保持する"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-3" }
+  // failure_mode = "直接IPCまたはstale payloadがnever中のReviewerを変更し、後のinteractive復帰で意図しない値が有効になる"
+  // scope = "session-persistence-service"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("updateSession は保存済みApprovalがneverの間Reviewerを保持する", async () => {
+    const currentSession = createSession({
+      approvalMode: "never",
+      codexReviewer: "auto-review",
+    });
+    const storedSessions: Session[] = [currentSession];
+    const service = new SessionPersistenceService({
+      getSessions: () => storedSessions,
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession: (sessionId) => storedSessions.find((session) => session.id === sessionId) ?? null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession(session) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions: () => [...storedSessions],
+      deleteStoredSession() {},
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const updated = await service.updateSession({
+      ...currentSession,
+      taskTitle: "Renamed Session",
+      codexReviewer: "user",
+    });
+
+    assert.equal(updated.taskTitle, "Renamed Session");
+    assert.equal(updated.codexReviewer, "auto-review");
+    assert.equal(storedSessions[0]?.codexReviewer, "auto-review");
+  });
+
   it("updateSession は保存済み Character owner / runtime snapshot の差し替えを永続化前に拒否する", async () => {
     const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
     const storedSession = createSession({ characterRuntimeSnapshot });

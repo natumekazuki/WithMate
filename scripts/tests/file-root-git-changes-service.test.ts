@@ -18,6 +18,8 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  parseGitHistoryLog,
+  parseGitHistoryNameStatusZ,
   parseGitPorcelainV1Z,
   FileRootGitChangesService,
 } from "../../src-electron/file-root-git-changes-service.js";
@@ -78,6 +80,14 @@ async function initializeRepository(repositoryPath: string): Promise<void> {
   ])).exitCode, 0);
 }
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 83 preserves its observable contract"
+// oracle = { type = "contract", ref = "-83" }
+// failure_mode = "line 83 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("parseGitPorcelainV1Z は working tree / staged / untracked / rename を scope 付きで返す", () => {
   const output = Buffer.from(" M src/a.ts\0M  src/b.ts\0?? src/new.ts\0R  src/to.ts\0src/from.ts\0", "utf8");
   assert.deepEqual(parseGitPorcelainV1Z(output), [
@@ -88,6 +98,14 @@ test("parseGitPorcelainV1Z は working tree / staged / untracked / rename を sc
   ]);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 93 preserves its observable contract"
+// oracle = { type = "contract", ref = "-93" }
+// failure_mode = "line 93 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("parseGitPorcelainV1Z は nested Workspace の path を Workspace-relative にし scope ごとの kind を保つ", () => {
   const output = Buffer.from(
     "MD src/a.ts\0?? src/new.ts\0 M docs/outside.md\0R  src/in.ts\0docs/from.ts\0R  docs/out.ts\0src/old.ts\0",
@@ -121,6 +139,512 @@ test("parseGitPorcelainV1Z は nested Workspace の path を Workspace-relative 
   ]);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 126 preserves its observable contract"
+// oracle = { type = "contract", ref = "-126" }
+// failure_mode = "line 126 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
+test("Git history parser はcommit metadata、HEAD/local branch/tag、rename/copy statusをprojectionする", () => {
+  const firstCommitId = "a".repeat(40);
+  const secondCommitId = "b".repeat(40);
+  const output = Buffer.from(
+    `${firstCommitId}\0aaaaaaa\0Author\0author@example.invalid\x002026-08-22T00:00:00+00:00\0Add history\0${secondCommitId}\0HEAD -> refs/heads/main, refs/tags/v1.0, refs/remotes/origin/main\0\x01\n`
+      + `${secondCommitId}\0bbbbbbb\0Author\0author@example.invalid\x002026-08-21T00:00:00+00:00\0Base\0\0\0\x01\n`,
+    "utf8",
+  );
+  assert.deepEqual(parseGitHistoryLog(output), [
+    {
+      id: firstCommitId,
+      shortHash: "aaaaaaa",
+      subject: "Add history",
+      authorName: "Author",
+      authorEmail: "author@example.invalid",
+      authoredAt: "2026-08-22T00:00:00.000Z",
+      refs: [
+        { kind: "head", name: "HEAD" },
+        { kind: "branch", name: "main" },
+        { kind: "tag", name: "v1.0" },
+      ],
+      parentIds: [secondCommitId],
+    },
+    {
+      id: secondCommitId,
+      shortHash: "bbbbbbb",
+      subject: "Base",
+      authorName: "Author",
+      authorEmail: "author@example.invalid",
+      authoredAt: "2026-08-21T00:00:00.000Z",
+      refs: [],
+      parentIds: [],
+    },
+  ]);
+  assert.deepEqual(parseGitHistoryNameStatusZ(Buffer.from("R100\0src/old.ts\0src/new.ts\0C100\0src/new.ts\0src/copy.ts\0", "utf8")), [
+    {
+      relativePath: "src/new.ts",
+      previousRelativePath: "src/old.ts",
+      kinds: { commit: "renamed" },
+      scopes: ["commit"],
+    },
+    {
+      relativePath: "src/copy.ts",
+      previousRelativePath: "src/new.ts",
+      kinds: { commit: "copied" },
+      scopes: ["commit"],
+    },
+  ]);
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 176 preserves its observable contract"
+// oracle = { type = "contract", ref = "-176" }
+// failure_mode = "line 176 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
+test("FileRootGitChangesService はcanonical repository単位のhistory、root/parent diff、binary metadataを返す", async () => {
+  const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-"));
+  try {
+    await initializeRepository(repositoryPath);
+    await writeFile(path.join(repositoryPath, "tracked.txt"), "changed\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", "tracked.txt"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "changed",
+    ])).exitCode, 0);
+    await runGitForTest(repositoryPath, ["mv", "tracked.txt", "renamed.txt"]);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "rename",
+    ])).exitCode, 0);
+    await writeFile(path.join(repositoryPath, "binary.bin"), Buffer.from([0, 1, 2, 3, 255]));
+    assert.equal((await runGitForTest(repositoryPath, ["add", "binary.bin"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "binary",
+    ])).exitCode, 0);
+
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
+        { rootId: "additional:repo", label: "repo", displayPath: repositoryPath, rootPath: repositoryPath },
+      ],
+      resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+    });
+    const repositories = await service.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(repositories.status, "ok");
+    if (repositories.status !== "ok") {
+      return;
+    }
+    assert.equal(repositories.repositories.length, 1);
+    const repository = repositories.repositories[0]!;
+    const page = await service.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+    });
+    assert.equal(page.status, "ok");
+    if (page.status !== "ok") {
+      return;
+    }
+    assert.equal(page.page.entries[0]?.subject, "binary");
+    const binaryCommit = page.page.entries[0]!;
+    const binaryDetail = await service.getHistoryCommitDetail({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: binaryCommit.id,
+    });
+    assert.equal(binaryDetail.status, "ok");
+    if (binaryDetail.status !== "ok") {
+      return;
+    }
+    assert.deepEqual(binaryDetail.entries[0]?.kinds.commit, "added");
+    const binaryDiff = await service.getHistoryDiff({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: binaryCommit.id,
+      relativePath: "binary.bin",
+    });
+    assert.equal(binaryDiff.status, "ok");
+    if (binaryDiff.status === "ok") {
+      assert.match(binaryDiff.patch, /Binary files .* differ/);
+      assert.doesNotMatch(binaryDiff.patch, /GIT binary patch/);
+      assert.deepEqual(binaryDiff.previewResource, {
+        resourceKind: "git-commit-file",
+        sessionId: "session-1",
+        repositoryId: repository.repositoryId,
+        rootId: repository.rootId,
+        commitId: binaryCommit.id,
+        relativePath: "binary.bin",
+      });
+      let blobReadAttempts = 0;
+      let allowBlobInspection = false;
+      const metadataOnlyService = new FileRootGitChangesService({
+        resolveRootContext: async () => ({ rootPath: repositoryPath }),
+        resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+        runGit: async (workspacePath, args, options) => {
+          if (args.some((arg, index) => arg === "cat-file" && args[index + 1] === "blob")) {
+            blobReadAttempts += 1;
+            if (!allowBlobInspection) {
+              throw new Error("Blob contents must not be read during preview Window admission.");
+            }
+            assert.equal(options.captureStdoutBytes, 8 * 1024);
+          }
+          return runGitForTest(workspacePath, args, {
+            env: options.env,
+            executablePath: options.executablePath,
+            stdin: options.stdin,
+            signal: options.signal,
+          });
+        },
+      });
+      assert.deepEqual(
+        await metadataOnlyService.resolveHistoryFilePreview(binaryDiff.previewResource!),
+        { name: "binary.bin" },
+      );
+      assert.equal(blobReadAttempts, 0);
+      await writeFile(path.join(repositoryPath, "binary.bin"), Buffer.from([9, 9, 9]));
+      allowBlobInspection = true;
+      const descriptor = await metadataOnlyService.inspectHistoryFile(binaryDiff.previewResource!);
+      assert.equal(blobReadAttempts, 1);
+      assert.equal(descriptor.revision.length, binaryCommit.id.length);
+      assert.equal(descriptor.kind, "binary");
+      assert.equal(descriptor.byteLength, 5);
+      const chunk = await service.readHistoryFileChunk({
+        ...binaryDiff.previewResource!,
+        offset: 0,
+        length: descriptor.byteLength,
+        expectedRevision: descriptor.revision,
+      });
+      assert.deepEqual([...new Uint8Array(chunk.data)], [0, 1, 2, 3, 255]);
+    }
+
+    await unlink(path.join(repositoryPath, "binary.bin"));
+    assert.equal((await runGitForTest(repositoryPath, ["add", "--all", "binary.bin"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "delete binary",
+    ])).exitCode, 0);
+    const deletedCommitId = (await runGitForTest(repositoryPath, ["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+    const deletedDiff = await service.getHistoryDiff({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: deletedCommitId,
+      relativePath: "binary.bin",
+    });
+    assert.equal(deletedDiff.status, "ok");
+    if (deletedDiff.status === "ok") {
+      assert.equal(deletedDiff.previewResource, null);
+    }
+    assert.equal((await runGitForTest(repositoryPath, [
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${binaryCommit.id},vendor/example`,
+    ])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "add gitlink",
+    ])).exitCode, 0);
+    const gitlinkCommitId = (await runGitForTest(repositoryPath, ["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+    const gitlinkDiff = await service.getHistoryDiff({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: gitlinkCommitId,
+      relativePath: "vendor/example",
+    });
+    assert.equal(gitlinkDiff.status, "ok");
+    if (gitlinkDiff.status === "ok") {
+      assert.equal(gitlinkDiff.previewResource, null);
+    }
+
+    const renameCommit = page.page.entries.find((entry) => entry.subject === "rename");
+    assert.ok(renameCommit);
+    const renameDetail = await service.getHistoryCommitDetail({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: renameCommit.id,
+    });
+    assert.equal(renameDetail.status, "ok");
+    if (renameDetail.status === "ok") {
+      assert.equal(renameDetail.entries[0]?.kinds.commit, "renamed");
+      assert.equal(renameDetail.entries[0]?.previousRelativePath, "tracked.txt");
+    }
+
+    const rootCommitId = (await runGitForTest(repositoryPath, ["rev-list", "--max-parents=0", "HEAD"])).stdout
+      .toString("utf8").trim();
+    const rootDetail = await service.getHistoryCommitDetail({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: rootCommitId,
+    });
+    assert.equal(rootDetail.status, "ok");
+    if (rootDetail.status === "ok") {
+      assert.ok(rootDetail.entries.some((entry) => entry.relativePath === "tracked.txt"));
+    }
+    const invalidCommit = await service.getHistoryCommitDetail({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: "not-a-commit",
+    });
+    assert.equal(invalidCommit.status, "failed");
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "History diffはGitの改行設定がsystem/global由来でも、commit間で実際に変更された行だけを追加・削除として返す"
+// oracle = { type = "contract", ref = "User requirement: History diff reflects only committed content changes" }
+// failure_mode = "Git設定の隔離でcore.autocrlfが欠落し、1行だけ変更したtext fileを全行変更として表示する"
+// scope = "FileRootGitChangesService.getHistoryDiff"
+// lifecycle = "permanent"
+// distinction = "binary・renameのHistory検証ではなく、隔離前のglobal改行設定とtext patchの行単位結果を実Gitで検証する"
+// @end-test-value
+test("FileRootGitChangesService はglobal改行設定を維持してHistoryの実変更行だけを返す", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-eol-"));
+  const primaryRepositoryPath = path.join(tempRoot, "primary");
+  const repositoryPath = path.join(tempRoot, "worktree");
+  const homePath = path.join(tempRoot, "home");
+  const gitEnv = {
+    ...process.env,
+    HOME: homePath,
+    USERPROFILE: homePath,
+  };
+  const gitCalls: string[][] = [];
+  const runPrimaryGit = (args: string[]) => runGitForTest(primaryRepositoryPath, args, { env: gitEnv });
+  const runGit = (args: string[]) => runGitForTest(repositoryPath, args, { env: gitEnv });
+  try {
+    await mkdir(primaryRepositoryPath);
+    await mkdir(homePath);
+    await writeFile(path.join(homePath, ".gitconfig"), "[core]\n\tautocrlf = true\n");
+    assert.equal((await runPrimaryGit(["init", "--quiet"])).exitCode, 0);
+    const beforeLines = Array.from({ length: 12 }, (_, index) => (
+      index === 6 ? "before" : `unchanged-${index + 1}`
+    ));
+    await writeFile(path.join(primaryRepositoryPath, "tracked.txt"), `${beforeLines.join("\r\n")}\r\n`);
+    assert.equal((await runPrimaryGit(["add", "tracked.txt"])).exitCode, 0);
+    assert.equal((await runPrimaryGit([
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "before",
+    ])).exitCode, 0);
+    assert.equal((await runPrimaryGit(["worktree", "add", "--quiet", "-b", "history-eol", repositoryPath])).exitCode, 0);
+    const afterLines = [...beforeLines];
+    afterLines[6] = "after";
+    const mixedEolContent = afterLines.map((line, index) => `${line}${index === 6 ? "\n" : "\r\n"}`).join("");
+    await writeFile(path.join(repositoryPath, "tracked.txt"), mixedEolContent);
+    assert.equal((await runGit(["add", "tracked.txt"])).exitCode, 0);
+    assert.equal((await runGit([
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "after",
+    ])).exitCode, 0);
+    const commitId = (await runGit(["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
+      ],
+      resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+      processEnv: gitEnv,
+      runGit: async (workspacePath, args, options) => {
+        gitCalls.push(args);
+        return runGitForTest(workspacePath, args, {
+          env: options.env,
+          executablePath: options.executablePath,
+          stdin: options.stdin,
+          signal: options.signal,
+        });
+      },
+    });
+    const repositories = await service.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(repositories.status, "ok", JSON.stringify(repositories));
+    if (repositories.status !== "ok") {
+      return;
+    }
+    const repository = repositories.repositories[0]!;
+    const result = await service.getHistoryDiff({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId,
+      relativePath: "tracked.txt",
+    });
+
+    assert.equal(result.status, "ok", JSON.stringify(result));
+    if (result.status === "ok") {
+      const diffArgs = gitCalls.find((args) => args.includes("diff-tree") && args.includes("--patch"));
+      assert.ok(diffArgs);
+      assert.ok(diffArgs.includes("core.autocrlf=true"));
+      const patchLines = result.patch.split(/\r\n|\n|\r/);
+      assert.deepEqual(patchLines.filter((line) => line.startsWith("-") && !line.startsWith("---")), ["-before"]);
+      assert.deepEqual(patchLines.filter((line) => line.startsWith("+") && !line.startsWith("+++")), ["+after"]);
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 468 preserves its observable contract"
+// oracle = { type = "contract", ref = "-468" }
+// failure_mode = "line 468 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
+test("FileRootGitChangesService はmerge commitをfirst parentと比較する", async () => {
+  const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-merge-"));
+  try {
+    await initializeRepository(repositoryPath);
+    const mainBranch = (await runGitForTest(repositoryPath, ["branch", "--show-current"])).stdout
+      .toString("utf8").trim();
+    assert.ok(mainBranch);
+    assert.equal((await runGitForTest(repositoryPath, ["checkout", "-b", "history-side"])).exitCode, 0);
+    await writeFile(path.join(repositoryPath, "side.txt"), "side\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", "side.txt"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "side",
+    ])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, ["checkout", mainBranch])).exitCode, 0);
+    await writeFile(path.join(repositoryPath, "main.txt"), "main\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", "main.txt"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "main",
+    ])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "merge", "--no-ff", "--quiet", "-m", "merge side", "history-side",
+    ])).exitCode, 0);
+
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
+      ],
+      resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+    });
+    const repositories = await service.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(repositories.status, "ok");
+    if (repositories.status !== "ok") {
+      return;
+    }
+    const repository = repositories.repositories[0];
+    assert.ok(repository);
+    const page = await service.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+    });
+    assert.equal(page.status, "ok");
+    if (page.status !== "ok") {
+      return;
+    }
+    const mergeCommit = page.page.entries.find((entry) => entry.subject === "merge side");
+    assert.ok(mergeCommit);
+    const detail = await service.getHistoryCommitDetail({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: mergeCommit.id,
+    });
+    assert.equal(detail.status, "ok");
+    if (detail.status === "ok") {
+      assert.deepEqual(detail.entries.map((entry) => entry.relativePath), ["side.txt"]);
+    }
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 534 preserves its observable contract"
+// oracle = { type = "contract", ref = "-534" }
+// failure_mode = "line 534 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
+test("FileRootGitChangesService は空のrepository集合とhistory stdout上限を結果へ投影する", async () => {
+  const nonGitPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-empty-"));
+  const missingPath = path.join(nonGitPath, "missing");
+  try {
+    const emptyService = new FileRootGitChangesService({
+      resolveRootContext: async () => null,
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: nonGitPath, rootPath: nonGitPath },
+        { rootId: "missing", label: "Missing", displayPath: missingPath, rootPath: missingPath },
+      ],
+    });
+    assert.deepEqual(await emptyService.listHistoryRepositories({ sessionId: "session-1" }), {
+      status: "ok",
+      repositories: [],
+    });
+
+    const repositoryPath = path.join(nonGitPath, "repository");
+    await initializeRepository(repositoryPath);
+    const largeOutput = Buffer.alloc(2 * 1024 * 1024 + 1, 0x61);
+    const limitedService = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
+      ],
+      resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+      runGit: async (workspacePath, args, options) => {
+        if (args.includes("log")) {
+          return { exitCode: 0, stdout: largeOutput, stderr: "" };
+        }
+        return runGitForTest(workspacePath, args, {
+          env: options.env,
+          executablePath: options.executablePath,
+          stdin: options.stdin,
+          signal: options.signal,
+        });
+      },
+    });
+    const repositories = await limitedService.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(repositories.status, "ok");
+    if (repositories.status !== "ok") {
+      return;
+    }
+    const repository = repositories.repositories[0];
+    assert.ok(repository);
+    const page = await limitedService.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+    });
+    assert.equal(page.status, "failed");
+    if (page.status === "failed") {
+      assert.match(page.message, /stdout.*resource limit/i);
+    }
+  } finally {
+    await rm(nonGitPath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 592 preserves its observable contract"
+// oracle = { type = "contract", ref = "-592" }
+// failure_mode = "line 592 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は隔離した status / diff と非継承 Git 環境を使う", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-changes-"));
   const workspacePath = path.join(repositoryPath, "src");
@@ -236,6 +760,14 @@ test("FileRootGitChangesService は隔離した status / diff と非継承 Git �
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 707 preserves its observable contract"
+// oracle = { type = "contract", ref = "-707" }
+// failure_mode = "line 707 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は global core.excludesFile を隔離 status に限定して反映する", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-git-global-ignore-"));
   const repositoryPath = path.join(tempRoot, "repository");
@@ -296,6 +828,14 @@ test("FileRootGitChangesService は global core.excludesFile を隔離 status �
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 767 preserves its observable contract"
+// oracle = { type = "contract", ref = "-767" }
+// failure_mode = "line 767 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は Git boolean の有効な基数・単位表記を保持し範囲外値を拒否する", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-config-bool-"));
   try {
@@ -337,6 +877,14 @@ test("FileRootGitChangesService は Git boolean の有効な基数・単位表�
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 808 preserves its observable contract"
+// oracle = { type = "contract", ref = "-808" }
+// failure_mode = "line 808 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は Workspace 内の git command を起動候補にしない", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-decoy-"));
   const markerPath = path.join(repositoryPath, "decoy-ran.txt");
@@ -358,6 +906,14 @@ test("FileRootGitChangesService は Workspace 内の git command を起動候補
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 829 preserves its observable contract"
+// oracle = { type = "contract", ref = "-829" }
+// failure_mode = "line 829 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は Git executable resolver を最初のoperationまで起動しない", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-lazy-resolver-"));
   const unhandledReasons: unknown[] = [];
@@ -383,6 +939,14 @@ test("FileRootGitChangesService は Git executable resolver を最初のoperatio
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 854 preserves its observable contract"
+// oracle = { type = "contract", ref = "-854" }
+// failure_mode = "line 854 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService はGit localeを固定して non-Git rootを分類する", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-localized-not-repo-"));
   try {
@@ -408,6 +972,14 @@ test("FileRootGitChangesService はGit localeを固定して non-Git rootを分�
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 879 preserves its observable contract"
+// oracle = { type = "contract", ref = "-879" }
+// failure_mode = "line 879 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は実際のnon-Git directoryをnot-gitで返す", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-not-repo-"));
   try {
@@ -423,6 +995,59 @@ test("FileRootGitChangesService は実際のnon-Git directoryをnot-gitで返す
   }
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "Changes用repository discoveryは認可rootごとのGit判定だけを返し、status取得を実行しない"
+// oracle = { type = "contract", ref = "accepted behavior: repository frames before manual Changes refresh" }
+// failure_mode = "repository枠の準備でnon-Git rootを含める、または明示Refresh前にGit statusを実行する"
+// scope = "FileRootGitChangesService repository discovery"
+// lifecycle = "permanent"
+// @end-test-value
+test("FileRootGitChangesService はChanges取得なしでGit repository rootを抽出する", async () => {
+  const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-root-discovery-"));
+  const repositoryPath = path.join(parentPath, "repository");
+  const nonGitPath = path.join(parentPath, "non-git");
+  const commands: string[][] = [];
+  try {
+    await initializeRepository(repositoryPath);
+    await mkdir(nonGitPath);
+    const roots = new Map([
+      ["repository", repositoryPath],
+      ["non-git", nonGitPath],
+    ]);
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async ({ rootId }) => {
+        const rootPath = roots.get(rootId);
+        return rootPath ? { rootPath } : null;
+      },
+      runGit: async (workspacePath, args, options) => {
+        commands.push(args);
+        return runGitForTest(workspacePath, args, options);
+      },
+    });
+
+    assert.deepEqual(await service.listChangesRepositories({
+      sessionId: "session-1",
+      rootIds: ["repository", "non-git", "missing"],
+    }), {
+      status: "ok",
+      repositories: [{ rootId: "repository" }],
+      failures: [],
+    });
+    assert.equal(commands.some((args) => args.includes("status")), false);
+  } finally {
+    await rm(parentPath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 939 preserves its observable contract"
+// oracle = { type = "contract", ref = "-939" }
+// failure_mode = "line 939 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は同じSessionのrootIdごとに認可済みdirectoryとdiffを分離する", async () => {
   const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-file-roots-"));
   const workspacePath = path.join(parentPath, "workspace");
@@ -495,6 +1120,14 @@ test("FileRootGitChangesService は同じSessionのrootIdごとに認可済みdi
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1011 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1011" }
+// failure_mode = "line 1011 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は nested Workspace のisolated statusをrepository全体へ広げない", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-nested-scope-"));
   const workspacePath = path.join(repositoryPath, "src");
@@ -536,6 +1169,14 @@ test("FileRootGitChangesService は nested Workspace のisolated statusをreposi
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1052 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1052" }
+// failure_mode = "line 1052 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は先頭空白を含むnested Workspace prefixを保持する", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-space-prefix-"));
   const workspacePath = path.join(repositoryPath, " workspace");
@@ -563,6 +1204,14 @@ test("FileRootGitChangesService は先頭空白を含むnested Workspace prefix�
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1079 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1079" }
+// failure_mode = "line 1079 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService はextended index flagsとintent-to-add semanticsを保つ", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-index-flags-"));
   try {
@@ -616,6 +1265,14 @@ test("FileRootGitChangesService はextended index flagsとintent-to-add semantic
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1132 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1132" }
+// failure_mode = "line 1132 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は空fileのstaged renameをintent-to-addへ誤分類しない", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-empty-rename-"));
   try {
@@ -658,6 +1315,14 @@ test("FileRootGitChangesService は空fileのstaged renameをintent-to-addへ誤
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1174 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1174" }
+// failure_mode = "line 1174 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は削除済みintent-to-addをworking tree deletionとして返す", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-deleted-intent-"));
   try {
@@ -685,6 +1350,14 @@ test("FileRootGitChangesService は削除済みintent-to-addをworking tree dele
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1201 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1201" }
+// failure_mode = "line 1201 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は削除・移動済みsymlink intent-to-addのmodeを保持する", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-deleted-symlink-intent-"));
   try {
@@ -742,6 +1415,14 @@ test("FileRootGitChangesService は削除・移動済みsymlink intent-to-addの
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1258 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1258" }
+// failure_mode = "line 1258 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService はactive/pending operation数をprocess全体で制限する", async () => {
   let activeContextRequests = 0;
   let maximumActiveContextRequests = 0;
@@ -775,6 +1456,14 @@ test("FileRootGitChangesService はactive/pending operation数をprocess全体�
   assert.equal(maximumActiveContextRequests, 2);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1291 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1291" }
+// failure_mode = "line 1291 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は同じ file の staged / working-tree diff を隔離 index から分けて返す", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-two-scopes-"));
   try {
@@ -820,6 +1509,14 @@ test("FileRootGitChangesService は同じ file の staged / working-tree diff �
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1336 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1336" }
+// failure_mode = "line 1336 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は lease 中の canonical Workspace 差し替えを成立させない", async () => {
   const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-identity-"));
   const workspacePath = path.join(parentPath, "workspace");
@@ -852,6 +1549,14 @@ test("FileRootGitChangesService は lease 中の canonical Workspace 差し替�
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1368 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1368" }
+// failure_mode = "line 1368 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は隔離 status process failure を failed result として返す", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-process-failure-"));
   try {
@@ -874,6 +1579,14 @@ test("FileRootGitChangesService は隔離 status process failure を failed resu
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1390 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1390" }
+// failure_mode = "line 1390 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService はoperation deadline後にchild settlementを待ってresourceを解放する", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-operation-timeout-"));
   let isolatedRootPath = "";
@@ -921,6 +1634,14 @@ test("FileRootGitChangesService はoperation deadline後にchild settlementを�
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1437 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1437" }
+// failure_mode = "line 1437 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService はtimeout後のcleanup failureを優先して次のinstanceで再試行する", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-timeout-cleanup-"));
   let allowCleanup = false;
@@ -975,6 +1696,14 @@ test("FileRootGitChangesService はtimeout後のcleanup failureを優先して�
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1491 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1491" }
+// failure_mode = "line 1491 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService はtemp cleanup failureをtyped failureにして次のoperationで再試行する", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-temp-cleanup-"));
   let allowCleanup = false;
@@ -1021,6 +1750,14 @@ test("FileRootGitChangesService はtemp cleanup failureをtyped failureにして
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1537 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1537" }
+// failure_mode = "line 1537 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService はlease close failureをtyped failureにして次のoperationで再試行する", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-lease-cleanup-"));
   let allowClose = false;
@@ -1061,6 +1798,14 @@ test("FileRootGitChangesService はlease close failureをtyped failureにして�
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1577 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1577" }
+// failure_mode = "line 1577 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は active clean filter を実行せず typed failure を返す", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-filter-"));
   const markerPath = path.join(repositoryPath, "filter-ran.txt");
@@ -1103,6 +1848,14 @@ test("FileRootGitChangesService は active clean filter を実行せず typed fa
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1619 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1619" }
+// failure_mode = "line 1619 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は populated submodule の status / diff で clean filter を実行しない", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-git-submodule-filter-"));
   const repositoryPath = path.join(tempRoot, "repository");
@@ -1191,6 +1944,14 @@ test("FileRootGitChangesService は populated submodule の status / diff で cl
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1707 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1707" }
+// failure_mode = "line 1707 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は filter preflight 後に追加された command も実行しない", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-filter-race-"));
   const markerPath = path.join(repositoryPath, "filter-race-ran.txt");
@@ -1225,6 +1986,14 @@ test("FileRootGitChangesService は filter preflight 後に追加された comma
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1741 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1741" }
+// failure_mode = "line 1741 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は canonical root の A-B-A 差し替えで別 repository の diff を返さない", async () => {
   const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-canonical-aba-"));
   const workspacePath = path.join(parentPath, "workspace");
@@ -1268,6 +2037,14 @@ test("FileRootGitChangesService は canonical root の A-B-A 差し替えで別 
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "test declaration at line 1784 preserves its observable contract"
+// oracle = { type = "contract", ref = "-1784" }
+// failure_mode = "line 1784 violates its expected output or boundary behavior"
+// scope = "file-root-git-changes-service.test"
+// lifecycle = "permanent"
+// @end-test-value
 test("FileRootGitChangesService は Workspace junction の ABA 差し替え中も認可済み repository を読む", async () => {
   const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-junction-aba-"));
   const firstTargetPath = path.join(parentPath, "first-target");

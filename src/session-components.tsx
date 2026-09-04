@@ -1,4 +1,4 @@
-import { Component, Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
+import { Component, Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEvent as ReactKeyboardEvent, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
@@ -20,10 +20,10 @@ import type {
 } from "./app-state.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { MessageRichText, type MessageViewMode } from "./MessageRichText.js";
+import type { GlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
 import {
   approvalModeLabel,
   CharacterAvatar,
-  fileKindLabel,
   liveRunStepDetailsLabel,
   liveRunStepStatusLabel,
   operationTypeLabel,
@@ -35,6 +35,8 @@ import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
 import type { SessionQueuedTurn, SessionTurnExecutionProjection } from "./session-turn-execution.js";
 import type { RelatedSessionDetails } from "./related-session-details.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { CodexSpeed } from "./codex-speed.js";
+import { isCodexReviewerControlDisabled, type CodexReviewer } from "./codex-reviewer.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -48,6 +50,7 @@ import {
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { isWorkItemActive, type RootWorkItem } from "./work-item.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
+import { useShortcutSettings } from "./shortcut-settings-context.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
 import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
@@ -66,6 +69,21 @@ import {
   scrollRenderedTextMatchIntoView,
   type RenderedTextMatch,
 } from "./file-explorer/rendered-text-search.js";
+import {
+  appendShortcutLabel,
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+  useShortcutScope,
+} from "./shortcut-registry.js";
+import type {
+  MessageCollapseTarget,
+  MessageJumpRequest,
+  MessageNavigatorEntry,
+} from "./session-message-collapse.js";
+import {
+  SessionGlossaryPane,
+  type SessionGlossaryPaneProps,
+} from "./glossary/SessionGlossaryPane.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -507,7 +525,7 @@ export function shouldAdjustSessionMessageScrollPosition(input: {
   return input.itemStart < input.scrollOffset;
 }
 
-type MessageArtifactFoldSection = "files" | "operation";
+type MessageArtifactFoldSection = "operation" | "operations";
 
 function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFoldSection, index?: number): string {
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
@@ -1632,7 +1650,11 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   contextEmptyText: string;
   latestCommandEmptyText?: string;
+  messageNavigatorEntries?: readonly MessageNavigatorEntry[];
+  messageNavigatorCharacter?: CharacterProfile;
+  glossaryPaneProps?: SessionGlossaryPaneProps;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onJumpToMessage?: (key: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
   rootWorkItem?: RootWorkItem | null;
   rootWorkItemHistory?: readonly { revision: number; eventType: string; occurredAt: string; summary?: string }[];
@@ -1905,7 +1927,11 @@ export function SessionContextPane({
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
   latestCommandEmptyText = "",
+  messageNavigatorEntries = [],
+  messageNavigatorCharacter,
+  glossaryPaneProps,
   onCycleContextPaneTab,
+  onJumpToMessage,
   onOpenCompanionReview,
   rootWorkItem = null,
   rootWorkItemHistory = [],
@@ -1917,9 +1943,17 @@ export function SessionContextPane({
   onHandoffRootWorkItem,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const messageNavigatorButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [messageNavigatorFocusIndex, setMessageNavigatorFocusIndex] = useState(0);
   const taskEntries = backgroundTasks ?? [];
   const availableTabCount = availableContextPaneTabs.length;
   const canCycleContextPaneTab = availableTabCount > 1;
+  const glossaryContentSignature = [
+    glossaryPaneProps?.projection?.scopeRevision ?? "",
+    glossaryPaneProps?.projection?.state.revision ?? "",
+    glossaryPaneProps?.searchQuery ?? "",
+    glossaryPaneProps?.selectedTerm ?? "",
+  ].join("|");
   const contentScrollKey = useMemo(() => {
     switch (activeContextPaneTab) {
       case "latest-command":
@@ -1944,6 +1978,12 @@ export function SessionContextPane({
           .join("|");
       case "work-item":
         return `${rootWorkItem?.id ?? ""}:${rootWorkItem?.revision ?? 0}:${rootWorkItem?.state ?? ""}:${rootWorkItemLoading}:${rootWorkItemErrorMessage ?? ""}`;
+      case "messages":
+        return messageNavigatorEntries
+          .map((entry) => `${entry.key}:${entry.preview}:${entry.isCollapsed ? "collapsed" : "expanded"}`)
+          .join("|");
+      case "glossary":
+        return glossaryContentSignature;
       default:
         return "";
     }
@@ -1954,12 +1994,68 @@ export function SessionContextPane({
     liveRunReasoningText,
     runningDetailsEntries,
     isSelectedSessionRunning,
+    glossaryContentSignature,
+    messageNavigatorEntries,
     taskEntries,
     selectedSessionLiveRunErrorMessage,
     rootWorkItem,
     rootWorkItemErrorMessage,
     rootWorkItemLoading,
   ]);
+
+  useEffect(() => {
+    setMessageNavigatorFocusIndex((current) => messageNavigatorEntries.length === 0
+      ? 0
+      : Math.min(current, messageNavigatorEntries.length - 1));
+  }, [messageNavigatorEntries.length]);
+
+  const handleMessageNavigatorKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (messageNavigatorEntries.length === 0) {
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = (index + direction + messageNavigatorEntries.length) % messageNavigatorEntries.length;
+      const nextEntry = messageNavigatorEntries[nextIndex];
+      setMessageNavigatorFocusIndex(nextIndex);
+      nextEntry && messageNavigatorButtonRefs.current[nextEntry.key]?.focus();
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const entry = messageNavigatorEntries[index];
+      if (entry) {
+        onJumpToMessage?.(entry.key);
+      }
+    }
+  }, [messageNavigatorEntries, onJumpToMessage]);
+
+  const messageNavigatorCharacterName = messageNavigatorCharacter?.name.trim() || "Character";
+  const messageNavigatorSpeakerLabel = (entry: MessageNavigatorEntry): string => {
+    if (entry.role === "user") {
+      return "あなたのメッセージ";
+    }
+    return entry.sourceKind === "auxiliary"
+      ? `${messageNavigatorCharacterName}（Auxiliary）`
+      : messageNavigatorCharacterName;
+  };
+
+  const renderMessageNavigatorSpeaker = (entry: MessageNavigatorEntry) => {
+    if (entry.role === "user") {
+      return <span className="messages-navigator-speaker-glyph user" aria-hidden="true">↗</span>;
+    }
+    if (entry.sourceKind === "session" && messageNavigatorCharacter) {
+      return <CharacterAvatar character={messageNavigatorCharacter} size="tiny" />;
+    }
+    return (
+      <span className={`messages-navigator-speaker-glyph assistant${entry.accent ? " accent" : ""}`} aria-hidden="true">
+        ✦
+      </span>
+    );
+  };
 
   const renderCompanionGroupMonitorEntry = (entry: Extract<HomeMonitorEntry, { kind: "companion" }>) => {
     const { session, state } = entry;
@@ -1996,6 +2092,8 @@ export function SessionContextPane({
     }
 
     contentNode.scrollTop = activeContextPaneTab === "companion-group"
+      || activeContextPaneTab === "messages"
+      || activeContextPaneTab === "glossary"
       ? 0
       : contentNode.scrollHeight;
   }, [contentScrollKey]);
@@ -2194,6 +2292,50 @@ export function SessionContextPane({
                   <p className="command-monitor-empty">まだ Reasoning はないよ。</p>
                 </div>
               )
+            ) : null}
+
+            {activeContextPaneTab === "messages" ? (
+              messageNavigatorEntries.length > 0 ? (
+                <div className="messages-navigator" role="list" aria-label="Messages">
+                  {messageNavigatorEntries.map((entry, index) => {
+                    const speakerLabel = messageNavigatorSpeakerLabel(entry);
+                    return (
+                      <button
+                        key={entry.key}
+                        ref={(node) => {
+                          messageNavigatorButtonRefs.current[entry.key] = node;
+                        }}
+                        className={`messages-navigator-row${entry.isCollapsed ? " is-collapsed" : ""}`}
+                        type="button"
+                        tabIndex={index === messageNavigatorFocusIndex ? 0 : -1}
+                        aria-label={`${speakerLabel}: ${entry.preview}`}
+                        title={`${speakerLabel}: ${entry.preview}`}
+                        onFocus={() => setMessageNavigatorFocusIndex(index)}
+                        onKeyDown={(event) => handleMessageNavigatorKeyDown(event, index)}
+                        onClick={() => onJumpToMessage?.(entry.key)}
+                      >
+                        <span className={`messages-navigator-speaker${entry.accent ? " accent" : ""}`}>
+                          {renderMessageNavigatorSpeaker(entry)}
+                        </span>
+                        <span className="messages-navigator-copy">
+                          <span className="messages-navigator-preview">{entry.preview}</span>
+                          {entry.isCollapsed ? (
+                            <span className="messages-navigator-state" aria-label="縮小中">縮小中</span>
+                          ) : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="command-monitor-empty-shell">
+                  <p className="command-monitor-empty">メッセージはまだないよ。</p>
+                </div>
+              )
+            ) : null}
+
+            {activeContextPaneTab === "glossary" && glossaryPaneProps ? (
+              <SessionGlossaryPane {...glossaryPaneProps} />
             ) : null}
 
             {activeContextPaneTab === "companion-group" ? (
@@ -2401,6 +2543,9 @@ export type SessionMessageColumnProps = {
   character: CharacterProfile;
   messages: Message[];
   messageKeys?: string[];
+  messageCollapseTargets?: readonly MessageCollapseTarget[];
+  collapsedMessageKeys?: ReadonlySet<string>;
+  messageJumpRequest?: MessageJumpRequest | null;
   messageGroups?: Array<{
     id: string;
     label: string;
@@ -2423,6 +2568,8 @@ export type SessionMessageColumnProps = {
   pendingMessageGroupId?: string | null;
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
+  onToggleMessageCollapse?: (key: string) => void;
+  onToggleAllMessageCollapse?: () => void;
   onToggleArtifact: (artifactKey: string) => void;
   onLoadArtifactDetail?: (messageIndex: number) => Promise<MessageArtifact | null>;
   onOpenDiff: (title: string, file: ChangedFile) => void;
@@ -2435,6 +2582,8 @@ export type SessionMessageColumnProps = {
   onCancelQueuedTurn?: (execution: SessionQueuedTurn) => void;
   isContentActive?: boolean;
   messageViewMode?: MessageViewMode;
+  glossaryAnnotationMatcher?: GlossaryAnnotationMatcher;
+  onActivateGlossaryEntry?: (canonicalTerm: string) => void;
 };
 
 export type SessionOriginDetails = RelatedSessionDetails;
@@ -2632,33 +2781,22 @@ export function SelectionTextActionSurface({
     }
   }, []);
 
-  const handleKeyDown = useCallback((event: KeyboardEvent) => {
-    const target = event.target;
-    if (
-      event.defaultPrevented ||
-      !(event.ctrlKey || event.metaKey)
-      || event.key.toLocaleLowerCase() !== "a"
-      || (target instanceof HTMLElement && target.matches("input, textarea, select, [contenteditable='true']"))
-    ) {
-      return;
-    }
-
+  const handleSelectAllShortcut = useCallback((): boolean => {
     const surface = surfaceRef.current;
     const selectableBody = surface?.querySelector<HTMLElement>("[data-selection-copy-body='true']") ?? null;
     const selection = typeof window === "undefined" ? null : window.getSelection();
     if (!surface || !selectableBody || !selection) {
-      return;
+      return false;
     }
 
     const resolvedText = selectAllText
       ?? (typeof selectableBody.innerText === "string" ? selectableBody.innerText : selectableBody.textContent ?? "");
-    event.preventDefault();
     surface.focus({ preventScroll: true });
     clearLogicalSelectAll();
     selection.removeAllRanges();
     if (!resolvedText.trim()) {
       setSelectionToolbar(null);
-      return;
+      return true;
     }
 
     logicalSelectAllTextRef.current = resolvedText;
@@ -2666,7 +2804,10 @@ export function SelectionTextActionSurface({
     range.selectNodeContents(selectableBody);
     selection.addRange(range);
     updateSelectionToolbar();
+    return true;
   }, [clearLogicalSelectAll, selectAllText, surfaceRef, updateSelectionToolbar]);
+
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewSelectAll, handleSelectAllShortcut);
 
   const handleCopy = useCallback<ClipboardEventHandler<HTMLDivElement>>((event) => {
     const logicalText = logicalSelectAllTextRef.current;
@@ -2681,14 +2822,6 @@ export function SelectionTextActionSurface({
     clearLogicalSelectAll();
     setSelectionToolbar(null);
   }, [clearLogicalSelectAll, selectAllText]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
 
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") {
@@ -2743,6 +2876,9 @@ export function SessionMessageColumn({
   character,
   messages,
   messageKeys,
+  messageCollapseTargets = [],
+  collapsedMessageKeys = new Set(),
+  messageJumpRequest = null,
   messageGroups,
   turnExecutions,
   originSessionDetails = [],
@@ -2761,18 +2897,20 @@ export function SessionMessageColumn({
   pendingMessageGroupId = null,
   isMessageListFollowing,
   onMessageListScroll,
+  onToggleMessageCollapse,
+  onToggleAllMessageCollapse,
   onToggleArtifact,
   onLoadArtifactDetail,
-  onOpenDiff,
   onResolveLiveApproval,
   onResolveLiveElicitation,
   onOpenPath,
-  getChangedFilesEmptyText,
   onCopyMessageText,
   onQuoteMessageText,
   onCancelQueuedTurn,
   isContentActive = true,
   messageViewMode = "preview",
+  glossaryAnnotationMatcher,
+  onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
   const selectionActionOverlay = useContext(SelectionActionOverlayContext);
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
@@ -2782,8 +2920,51 @@ export function SessionMessageColumn({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
+  const [messageJumpHighlightKey, setMessageJumpHighlightKey] = useState<string | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
+  const handledMessageJumpRequestIdRef = useRef<number | null>(null);
+  const markdownLinkFileContext = useMemo(() => ({ sessionId }), [sessionId]);
+  const messageCollapseTargetByKey = useMemo(
+    () => new Map(messageCollapseTargets.map((target) => [target.key, target])),
+    [messageCollapseTargets],
+  );
+
+  useShortcutScope("message-list", isContentActive);
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.messageFind,
+    () => {
+      setFindOpen(true);
+      return true;
+    },
+    isContentActive,
+  );
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.messageCloseFind,
+    () => {
+      if (!findOpen) {
+        return false;
+      }
+      setFindOpen(false);
+      return true;
+    },
+    isContentActive,
+  );
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+    () => {
+      const targetCount = messageCollapseTargets.length;
+      const callbackAvailable = Boolean(onToggleAllMessageCollapse);
+      const accepted = targetCount > 0 && callbackAvailable;
+      if (!accepted || !onToggleAllMessageCollapse) {
+        return false;
+      }
+      onToggleAllMessageCollapse();
+      return true;
+    },
+    isContentActive,
+  );
+
   const getMessageKey = useCallback(
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
@@ -2812,6 +2993,37 @@ export function SessionMessageColumn({
     })
   );
   const virtualMessages = messageVirtualizer.getVirtualItems();
+  useEffect(() => {
+    if (!messageJumpRequest || messageJumpRequest.sessionId !== sessionId) {
+      return;
+    }
+    if (handledMessageJumpRequestIdRef.current === messageJumpRequest.requestId) {
+      return;
+    }
+    const messageIndex = messageKeys?.indexOf(messageJumpRequest.key) ?? -1;
+    if (messageIndex < 0) {
+      return;
+    }
+
+    handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
+    messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
+    setMessageJumpHighlightKey(messageJumpRequest.key);
+  }, [messageJumpRequest, messageKeys, messageVirtualizer, sessionId]);
+
+  useEffect(() => {
+    if (!messageJumpHighlightKey || typeof window === "undefined") {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setMessageJumpHighlightKey((current) => current === messageJumpHighlightKey ? null : current);
+    }, 1200);
+    return () => window.clearTimeout(timeoutId);
+  }, [messageJumpHighlightKey]);
+
+  useEffect(() => {
+    setMessageJumpHighlightKey(null);
+    handledMessageJumpRequestIdRef.current = null;
+  }, [sessionId]);
   const hasPendingMessageText =
     !hasLiveRunAssistantText &&
     liveApprovalRequest === null &&
@@ -2884,6 +3096,14 @@ export function SessionMessageColumn({
     }
     return matches;
   }, [findQuery, firstQueuedTurnIndex, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
+  const findMatchMessageIndexes = useMemo(
+    () => new Set(
+      messageFindMatches
+        .filter((match): match is Extract<typeof match, { kind: "message" }> => match.kind === "message")
+        .map((match) => match.messageIndex),
+    ),
+    [messageFindMatches],
+  );
   const activeCurrentFindMatch = clampFindMatchIndex(currentFindMatch, messageFindMatches.length);
   const canRenderGroupedPendingInlineContent =
     pendingMessageGroupEndIndex >= 0 &&
@@ -3024,23 +3244,6 @@ export function SessionMessageColumn({
     }
   }, [findQuery, firstFindScrollIndex, messageVirtualizer, sessionId]);
 
-  useEffect(() => {
-    if (!isContentActive) {
-      return;
-    }
-    const handleFindShortcut = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
-        event.preventDefault();
-        setFindOpen(true);
-      } else if (event.key === "Escape" && findOpen) {
-        event.preventDefault();
-        setFindOpen(false);
-      }
-    };
-    window.addEventListener("keydown", handleFindShortcut);
-    return () => window.removeEventListener("keydown", handleFindShortcut);
-  }, [findOpen, isContentActive]);
-
   const navigateFindMatch = useCallback((direction: 1 | -1) => {
     if (messageFindMatches.length === 0) {
       return;
@@ -3059,7 +3262,13 @@ export function SessionMessageColumn({
     });
   }, [getFindMatchScrollIndex, messageFindMatches, messageVirtualizer]);
 
-  const visibleMessageSignature = virtualMessages.map((message) => message.index).join(",");
+  const visibleMessageSignature = virtualMessages.map((message) => {
+    const key = getMessageKey(message.index);
+    const target = messageCollapseTargetByKey.get(key);
+    const isCollapsed = !!target && collapsedMessageKeys.has(key);
+    const isTemporarilyExpanded = findOpen && hasFindQuery && findMatchMessageIndexes.has(message.index);
+    return `${message.index}:${isCollapsed && !isTemporarilyExpanded ? "collapsed" : "expanded"}`;
+  }).join(",");
   useLayoutEffect(() => {
     const messageListElement = messageListRef.current;
     if (!isContentActive || !findOpen || !findQuery.trim() || !messageListElement) {
@@ -3122,6 +3331,8 @@ export function SessionMessageColumn({
     findQuery,
     isContentActive,
     messageFindMatches,
+    messageCollapseTargetByKey,
+    collapsedMessageKeys,
     messageListRef,
     pendingMessageGroupEndIndex,
     visibleMessageSignature,
@@ -3241,6 +3452,10 @@ export function SessionMessageColumn({
               forceFullRender={findOpen && hasFindQuery}
               displayMode={messageViewMode}
               onOpenPath={onOpenPath}
+              markdownLinkFileContext={markdownLinkFileContext}
+              glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+              glossaryAnnotationScopeKey={`${sessionId}:pending:${pendingMessageGroupId ?? "main"}`}
+              onActivateGlossaryEntry={onActivateGlossaryEntry}
             />
           </div>
         ) : null}
@@ -3353,8 +3568,6 @@ export function SessionMessageColumn({
                 : undefined;
             const artifact = loadedArtifactDetails[artifactKey] ?? message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
-            const artifactHasSnapshotRisk =
-              artifact?.runChecks.some((check) => check.label.startsWith("snapshot ")) ?? false;
             const artifactOperations =
               artifact?.operationTimeline ??
               artifact?.activitySummary.map((item) => ({
@@ -3363,7 +3576,14 @@ export function SessionMessageColumn({
                 details: undefined,
               })) ??
               [];
+            const artifactOperationsOpen = isArtifactFoldOpen(artifactKey, "operations");
             const canUseMessageTextActions = isAgentMessage && (onCopyMessageText || onQuoteMessageText);
+            const messageCollapseTarget = messageCollapseTargetByKey.get(messageKey);
+            const isMessageCollapsed = !!messageCollapseTarget && collapsedMessageKeys.has(messageKey);
+            const isFindMatch = findMatchMessageIndexes.has(absoluteIndex);
+            const shouldRenderFullMessage = !isMessageCollapsed || (findOpen && hasFindQuery && isFindMatch);
+            const messageBodyId = `message-body-${messageKey.replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
+            const messageCollapseLabel = isMessageCollapsed ? "メッセージを展開" : "メッセージを縮小";
 
             return (
               <div
@@ -3371,7 +3591,9 @@ export function SessionMessageColumn({
                 ref={messageVirtualizer.measureElement}
                 className={`session-message-virtual-row${
                   doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
-                }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}`}
+                }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}${
+                  messageJumpHighlightKey === messageKey ? " message-jump-highlight" : ""
+                }`}
                 data-index={absoluteIndex}
               >
                 {absoluteIndex === firstQueuedTurnIndex && canRenderPendingBeforeQueuedTurn
@@ -3437,182 +3659,152 @@ export function SessionMessageColumn({
                 {messageCharacter || outboundTurn ? (
                   <div className="message-character-name">{messageCharacter?.name}</div>
                 ) : null}
-                <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>
-                  {relatedSessionId && relatedSessionTitle && messageCharacter ? (
-                    <button
-                      className="related-session-route"
-                      type="button"
-                      onClick={() => {
-                        if (relatedSessionId && currentRelatedSessionTitle && onOpenOriginSession) {
-                          onOpenOriginSession(relatedSessionId);
-                        }
-                      }}
-                      disabled={!canOpenRelatedSession}
-                      aria-label={relatedSessionRouteLabel}
-                    >
-                      {outboundTurn ? (
-                        <>
-                          <span aria-hidden="true">@</span>
-                          <span className="related-session-character">{messageCharacter.name}</span>
-                          <span aria-hidden="true">·</span>
-                        </>
-                      ) : null}
-                      <span className="related-session-title">{relatedSessionTitle}</span>
-                    </button>
-                  ) : null}
-                  {artifact && !isAgentMessage ? (
-                    <button
-                      className="artifact-toggle artifact-toggle-icon"
-                      type="button"
-                      onClick={() => {
-                        if (!artifactExpanded) {
-                          loadArtifactDetail(artifactKey, absoluteIndex, artifact);
-                        }
-                        onToggleArtifact(artifactKey);
-                      }}
-                      aria-expanded={artifactExpanded}
-                      aria-controls={`artifact-panel-${artifactKey}`}
-                      aria-label={artifactExpanded ? "Details を閉じる" : "Details を開く"}
-                      title={artifactExpanded ? "Hide Details" : "Details"}
-                    >
-                      {artifactExpanded ? "−" : "i"}
-                    </button>
-                  ) : null}
-                  <div
-                    data-message-body="true"
-                    data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
-                  >
-                    <MessageRichText
-                      text={message.text}
-                      forceFullRender={findOpen && hasFindQuery}
-                      displayMode={messageViewMode}
-                      onOpenPath={onOpenPath}
-                    />
-                  </div>
-
-                  {relatedSessionId && originDetailsExpanded ? (
-                    <section
-                      id={`origin-session-panel-${turnExecution?.executionId}`}
-                      className="origin-session-details"
-                      aria-label={outboundTurn
-                        ? `${outboundTurn.relatedSession.titleSnapshot}への送信先Session情報`
-                        : "呼出元Session情報"}
-                    >
-                      <dl>
-                        <div>
-                          <dt>Session ID</dt>
-                          <dd><code>{relatedSessionId}</code></dd>
+                <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
+                  <div className="message-card-content">
+                    {relatedSessionId && relatedSessionTitle && messageCharacter ? (
+                      <button
+                        className="related-session-route"
+                        type="button"
+                        onClick={() => {
+                          if (relatedSessionId && currentRelatedSessionTitle && onOpenOriginSession) {
+                            onOpenOriginSession(relatedSessionId);
+                          }
+                        }}
+                        disabled={!canOpenRelatedSession}
+                        aria-label={relatedSessionRouteLabel}
+                      >
+                        {outboundTurn ? (
+                          <>
+                            <span aria-hidden="true">@</span>
+                            <span className="related-session-character">{messageCharacter.name}</span>
+                            <span aria-hidden="true">·</span>
+                          </>
+                        ) : null}
+                        <span className="related-session-title">{relatedSessionTitle}</span>
+                      </button>
+                    ) : null}
+                    {artifact && !isAgentMessage ? (
+                      <button
+                        className="artifact-toggle artifact-toggle-icon"
+                        type="button"
+                        onClick={() => {
+                          if (!artifactExpanded) {
+                            loadArtifactDetail(artifactKey, absoluteIndex, artifact);
+                          }
+                          onToggleArtifact(artifactKey);
+                        }}
+                        aria-expanded={artifactExpanded}
+                        aria-controls={`artifact-panel-${artifactKey}`}
+                        aria-label={artifactExpanded ? "Details を閉じる" : "Details を開く"}
+                        title={artifactExpanded ? "Hide Details" : "Details"}
+                      >
+                        {artifactExpanded ? "−" : "i"}
+                      </button>
+                    ) : null}
+                    <div className={`message-text-wrapper${messageCollapseTarget ? " has-message-collapse-control" : ""}`}>
+                      {messageCollapseTarget && onToggleMessageCollapse ? (
+                        <div className="message-collapse-control">
+                          <button
+                            className="message-collapse-toggle"
+                            type="button"
+                            onClick={() => onToggleMessageCollapse(messageKey)}
+                            aria-expanded={!isMessageCollapsed}
+                            aria-controls={messageBodyId}
+                            aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
+                            title={messageCollapseLabel}
+                          >
+                            <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
+                            <span className="visually-hidden">{messageCollapseLabel}</span>
+                          </button>
                         </div>
-                        {currentRelatedSession?.status === "found"
-                        || (currentRelatedSession?.status === "error" && currentRelatedSession.taskTitle) ? (
-                          <div>
-                            <dt>タイトル</dt>
-                            <dd>{currentRelatedSession.taskTitle}</dd>
-                          </div>
-                        ) : null}
-                        {outboundTurn && currentRelatedSession?.status === "missing" ? (
-                          <div>
-                            <dt>タイトル</dt>
-                            <dd>{outboundTurn.relatedSession.titleSnapshot}</dd>
-                          </div>
-                        ) : null}
-                        {outboundTurn && (!currentRelatedSession
-                          || currentRelatedSession.status === "loading"
-                          || (currentRelatedSession.status === "error" && !currentRelatedSession.taskTitle)) ? (
-                          <div>
-                            <dt>タイトル</dt>
-                            <dd>{outboundTurn.relatedSession.titleSnapshot}</dd>
-                          </div>
-                        ) : null}
-                      </dl>
-                    </section>
-                  ) : null}
-
-                  {queuedTurn ? (
-                    <div className="queued-turn-status" role="status" aria-label={`待機中 ${queuedTurn.queuePosition}番目`}>
-                      <span>{`待機中 ${queuedTurn.queuePosition}`}</span>
-                      {queuedTurn.canCancel && onCancelQueuedTurn ? (
-                        <button
-                          className="drawer-toggle compact secondary queued-turn-cancel-button"
-                          type="button"
-                          onClick={() => onCancelQueuedTurn(queuedTurn)}
-                          disabled={cancelingExecutionIds.has(queuedTurn.executionId)}
-                          aria-label={`待機中 ${queuedTurn.queuePosition}番目のTurnをキャンセル`}
-                        >
-                          キャンセル
-                        </button>
                       ) : null}
+                      <div
+                        id={messageBodyId}
+                        data-message-body="true"
+                        data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
+                      >
+                        {shouldRenderFullMessage ? (
+                          <MessageRichText
+                            text={message.text}
+                            forceFullRender={findOpen && hasFindQuery}
+                            displayMode={messageViewMode}
+                            onOpenPath={onOpenPath}
+                            markdownLinkFileContext={markdownLinkFileContext}
+                            glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+                            glossaryAnnotationScopeKey={messageKey}
+                            onActivateGlossaryEntry={onActivateGlossaryEntry}
+                          />
+                        ) : (
+                          <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
+                        )}
+                      </div>
                     </div>
-                  ) : null}
 
-                  {artifact ? (
-                    <section className="artifact-shell">
+                    {relatedSessionId && originDetailsExpanded ? (
+                      <section
+                        id={`origin-session-panel-${turnExecution?.executionId}`}
+                        className="origin-session-details"
+                        aria-label={outboundTurn
+                          ? `${outboundTurn.relatedSession.titleSnapshot}への送信先Session情報`
+                          : "呼出元Session情報"}
+                      >
+                        <dl>
+                          <div>
+                            <dt>Session ID</dt>
+                            <dd><code>{relatedSessionId}</code></dd>
+                          </div>
+                          {currentRelatedSession?.status === "found"
+                          || (currentRelatedSession?.status === "error" && currentRelatedSession.taskTitle) ? (
+                            <div>
+                              <dt>タイトル</dt>
+                              <dd>{currentRelatedSession.taskTitle}</dd>
+                            </div>
+                          ) : null}
+                          {outboundTurn && currentRelatedSession?.status === "missing" ? (
+                            <div>
+                              <dt>タイトル</dt>
+                              <dd>{outboundTurn.relatedSession.titleSnapshot}</dd>
+                            </div>
+                          ) : null}
+                          {outboundTurn && (!currentRelatedSession
+                            || currentRelatedSession.status === "loading"
+                            || (currentRelatedSession.status === "error" && !currentRelatedSession.taskTitle)) ? (
+                            <div>
+                              <dt>タイトル</dt>
+                              <dd>{outboundTurn.relatedSession.titleSnapshot}</dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                      </section>
+                    ) : null}
+
+                    {queuedTurn ? (
+                      <div className="queued-turn-status" role="status" aria-label={`待機中 ${queuedTurn.queuePosition}番目`}>
+                        <span>{`待機中 ${queuedTurn.queuePosition}`}</span>
+                        {queuedTurn.canCancel && onCancelQueuedTurn ? (
+                          <button
+                            className="drawer-toggle compact secondary queued-turn-cancel-button"
+                            type="button"
+                            onClick={() => onCancelQueuedTurn(queuedTurn)}
+                            disabled={cancelingExecutionIds.has(queuedTurn.executionId)}
+                            aria-label={`待機中 ${queuedTurn.queuePosition}番目のTurnをキャンセル`}
+                          >
+                            キャンセル
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {artifact ? (
+                      <section className="artifact-shell">
                       {artifactExpanded ? (
                         <div id={`artifact-panel-${artifactKey}`} className="artifact-block">
-                          <div className="artifact-grid">
-                            <section className="artifact-section">
-                              {artifactLoading ? (
-                                  <div className="artifact-file-item empty-state-card">
-                                    <p>Details を読み込んでいます...</p>
-                                  </div>
-                                ) : artifact.changedFiles.length > 0 ? (
-                                  <details
-                                    className="artifact-fold artifact-files-fold"
-                                    open={isArtifactFoldOpen(artifactKey, "files")}
-                                    onToggle={(event) => {
-                                      handleArtifactFoldToggle(artifactKey, "files", event.currentTarget.open);
-                                    }}
-                                  >
-                                    <summary className="artifact-fold-summary">
-                                      <span className="artifact-fold-summary-copy">
-                                        <strong>Changed Files</strong>
-                                        <span>{artifact.changedFiles.length} files</span>
-                                      </span>
-                                    </summary>
-                                    <div className="artifact-fold-body artifact-file-list">
-                                      {artifact.changedFiles.map((file) => (
-                                        <article key={`${file.kind}-${file.path}`} className="artifact-file-item">
-                                          <div className="artifact-file-meta">
-                                            <span className={`file-kind ${file.kind}`}>{fileKindLabel(file.kind)}</span>
-                                            <code>{file.path}</code>
-                                          </div>
-                                          <p>{file.summary}</p>
-                                          {file.diffRows.length > 0 ? (
-                                            <button
-                                              className="diff-button"
-                                              type="button"
-                                              onClick={() => onOpenDiff(artifact.title, file)}
-                                            >
-                                              Open Diff
-                                            </button>
-                                          ) : null}
-                                        </article>
-                                      ))}
-                                    </div>
-                                  </details>
-                                ) : (
-                                  <details
-                                    className="artifact-fold artifact-files-fold"
-                                    open={isArtifactFoldOpen(artifactKey, "files")}
-                                    onToggle={(event) => {
-                                      handleArtifactFoldToggle(artifactKey, "files", event.currentTarget.open);
-                                    }}
-                                  >
-                                    <summary className="artifact-fold-summary">
-                                      <span className="artifact-fold-summary-copy">
-                                        <strong>Changed Files</strong>
-                                        <span>0 files</span>
-                                      </span>
-                                    </summary>
-                                    <div className="artifact-fold-body artifact-file-list">
-                                      <article className="artifact-file-item empty-state-card">
-                                        <p>{getChangedFilesEmptyText(artifactKey, artifactHasSnapshotRisk)}</p>
-                                      </article>
-                                    </div>
-                                  </details>
-                                )}
-                            </section>
-
+                          {artifactLoading ? (
+                            <div className="artifact-detail-loading" role="status">
+                              Details を読み込んでいます...
+                            </div>
+                          ) : null}
+                          <div className="artifact-grid artifact-grid-single">
                             <section className="artifact-section compact">
                               <div className="artifact-section-header">
                                 <strong>Run Checks</strong>
@@ -3630,48 +3822,75 @@ export function SessionMessageColumn({
 
                           {artifactOperations.length > 0 ? (
                             <section className="artifact-section compact">
-                              <div className="artifact-section-header">
-                                <strong>Operations</strong>
-                              </div>
-                              <ul className="artifact-operation-list">
-                                {artifactOperations.map((operation, operationIndex) => {
-                                  const operationSummary = collapseSummaryText(operation.summary) || operationTypeLabel(operation.type);
-                                  return (
-                                    <li key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
-                                      <details
-                                        className="artifact-operation-fold"
-                                        open={isArtifactFoldOpen(artifactKey, "operation", operationIndex)}
-                                        onToggle={(event) => {
-                                          handleArtifactFoldToggle(artifactKey, "operation", event.currentTarget.open, operationIndex);
-                                        }}
-                                      >
-                                        <summary className="artifact-operation-summary" title={operationSummary}>
-                                          <div className="artifact-operation-head">
-                                            <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
-                                            <span className="artifact-operation-summary-text">{operationSummary}</span>
-                                          </div>
-                                        </summary>
-                                        <div className="artifact-operation-body">
-                                          {operation.type === "agent_message" ? (
-                                            <div className="artifact-operation-message">
-                                              <MessageRichText text={operation.summary} onOpenPath={onOpenPath} />
+                              <details
+                                className="artifact-fold artifact-operations-fold"
+                                open={artifactOperationsOpen}
+                                onToggle={(event) => {
+                                  handleArtifactFoldToggle(artifactKey, "operations", event.currentTarget.open);
+                                }}
+                              >
+                                <summary
+                                  className="artifact-fold-summary artifact-operations-summary"
+                                  aria-controls={`artifact-operations-panel-${artifactKey}`}
+                                  aria-expanded={artifactOperationsOpen}
+                                >
+                                  <span className="artifact-fold-summary-copy">
+                                    <strong>Operations</strong>
+                                    <span>{artifactOperations.length} {artifactOperations.length === 1 ? "operation" : "operations"}</span>
+                                  </span>
+                                </summary>
+                                <div id={`artifact-operations-panel-${artifactKey}`} className="artifact-fold-body artifact-operations-body">
+                                  {artifactOperations.map((operation, operationIndex) => {
+                                    const operationSummary = collapseSummaryText(operation.summary) || operationTypeLabel(operation.type);
+                                    const operationOpen = isArtifactFoldOpen(artifactKey, "operation", operationIndex);
+                                    const operationPanelId = `artifact-operation-panel-${artifactKey}-${operationIndex}`;
+                                    return (
+                                      <article key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
+                                        <details
+                                          className="artifact-operation-fold"
+                                          open={operationOpen}
+                                          onToggle={(event) => {
+                                            handleArtifactFoldToggle(artifactKey, "operation", event.currentTarget.open, operationIndex);
+                                          }}
+                                        >
+                                          <summary
+                                            className="artifact-operation-summary"
+                                            title={operationSummary}
+                                            aria-controls={operationPanelId}
+                                            aria-expanded={operationOpen}
+                                          >
+                                            <div className="artifact-operation-head">
+                                              <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
+                                              <span className="artifact-operation-summary-text">{operationSummary}</span>
                                             </div>
-                                          ) : (
-                                            <p>{operation.summary}</p>
-                                          )}
-                                          {operation.details ? <pre>{operation.details}</pre> : null}
-                                        </div>
-                                      </details>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
+                                          </summary>
+                                          <div id={operationPanelId} className="artifact-operation-body">
+                                            {operation.type === "agent_message" ? (
+                                              <div className="artifact-operation-message">
+                                                <MessageRichText
+                                                  text={operation.summary}
+                                                  onOpenPath={onOpenPath}
+                                                  markdownLinkFileContext={markdownLinkFileContext}
+                                                />
+                                              </div>
+                                            ) : (
+                                              <p>{operation.summary}</p>
+                                            )}
+                                            {operation.details ? <pre>{operation.details}</pre> : null}
+                                          </div>
+                                        </details>
+                                      </article>
+                                    );
+                                  })}
+                                </div>
+                              </details>
                             </section>
                           ) : null}
                         </div>
                       ) : null}
-                    </section>
-                  ) : null}
+                      </section>
+                    ) : null}
+                  </div>
                 </div>
                 </article>
                 {shouldRenderGroupedPending ? renderPendingRow("auxiliary-message-group-item auxiliary-message-group-end") : null}
@@ -3897,8 +4116,12 @@ export type SessionComposerExpandedProps = {
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string }>;
   selectedApprovalMode: ApprovalMode;
+  reviewerOptions: Array<{ value: CodexReviewer; label: string }>;
+  selectedCodexReviewer: CodexReviewer;
   sandboxOptions: Array<{ value: CodexSandboxMode; label: string }>;
   selectedCodexSandboxMode: CodexSandboxMode;
+  speedOptions: Array<{ value: CodexSpeed; label: string }>;
+  selectedCodexSpeed: CodexSpeed;
   modelOptions: SessionSelectOption[];
   selectedModel: string;
   selectedModelFallbackLabel: string;
@@ -3921,7 +4144,7 @@ export type SessionComposerExpandedProps = {
   onRemoveAttachment: (targets: string[]) => void;
   onDraftChange: (value: string, selectionStart: number) => void;
   onDraftFocus: () => void;
-  onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  onDraftKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   onDraftPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onDraftSelect: (selectionStart: number) => void;
   onDraftCompositionStart: () => void;
@@ -3929,7 +4152,9 @@ export type SessionComposerExpandedProps = {
   onSendOrCancel: () => void;
   onCancelRun?: () => void;
   onChangeApprovalMode: (value: ApprovalMode) => void;
+  onChangeCodexReviewer: (value: CodexReviewer) => void;
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
+  onChangeCodexSpeed: (value: CodexSpeed) => void;
   onChangeModel: (value: string) => void;
   onChangeReasoningEffort: (value: string) => void;
   onMessageViewModeChange?: (mode: MessageViewMode) => void;
@@ -3978,8 +4203,12 @@ export function SessionComposerExpanded({
   isComposerBlockedFeedbackActive,
   approvalOptions,
   selectedApprovalMode,
+  reviewerOptions = [],
+  selectedCodexReviewer = "user",
   sandboxOptions,
   selectedCodexSandboxMode,
+  speedOptions = [],
+  selectedCodexSpeed = "standard",
   modelOptions,
   selectedModel,
   selectedModelFallbackLabel,
@@ -4010,13 +4239,16 @@ export function SessionComposerExpanded({
   onSendOrCancel,
   onCancelRun = onSendOrCancel,
   onChangeApprovalMode,
+  onChangeCodexReviewer = () => {},
   onChangeCodexSandboxMode,
+  onChangeCodexSpeed = () => {},
   onChangeModel,
   onChangeReasoningEffort,
   onMessageViewModeChange = () => {},
 }: SessionComposerExpandedProps) {
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
+  const keyboardShortcuts = useShortcutSettings();
 
   useEffect(() => {
     if (!showAttachmentControls || isRunning || composerBlocked) {
@@ -4316,6 +4548,7 @@ export function SessionComposerExpanded({
         <div className={`composer-box${isRunning ? " running" : ""}${isRunning && allowSendWhileRunning ? " accepts-running-input" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
           <textarea
             ref={composerTextareaRef}
+            data-shortcut-scope="composer"
             value={draft}
             placeholder={placeholder}
             aria-label={composerTextareaLabel}
@@ -4376,6 +4609,28 @@ export function SessionComposerExpanded({
                 </select>
               </div>
 
+              {reviewerOptions.length > 0 ? (
+                <div className="composer-setting-field composer-setting-reviewer">
+                  <span>Reviewer</span>
+                  <select
+                    value={selectedCodexReviewer}
+                    onChange={(event) => onChangeCodexReviewer(event.target.value as CodexReviewer)}
+                    disabled={isCodexReviewerControlDisabled({
+                      approvalMode: selectedApprovalMode,
+                      isRunning,
+                      composerBlocked,
+                    })}
+                    aria-label="Reviewer"
+                  >
+                    {reviewerOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
               {sandboxOptions.length > 0 ? (
                 <div className="composer-setting-field composer-setting-sandbox">
                   <span>Sandbox</span>
@@ -4430,6 +4685,24 @@ export function SessionComposerExpanded({
               ))}
             </select>
           </div>
+
+          {speedOptions.length > 0 ? (
+            <div className="composer-setting-field composer-setting-speed">
+              <span>Speed</span>
+              <select
+                value={selectedCodexSpeed}
+                onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
+                disabled={isRunning || composerBlocked}
+                aria-label="Speed"
+              >
+                {speedOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
         </div>
 
         {isRunning && !allowSendWhileRunning ? null : (
@@ -4438,8 +4711,13 @@ export function SessionComposerExpanded({
             type="button"
             onClick={onSendOrCancel}
             disabled={isSendDisabled}
-            title={sendButtonTitle}
             aria-label={sendButtonIcon ? sendButtonLabel : undefined}
+            title={appendShortcutLabel(
+              sendButtonTitle,
+              SHORTCUT_COMMAND_IDS.composerSubmit,
+              undefined,
+              keyboardShortcuts,
+            )}
           >
             {sendButtonIcon ? <span aria-hidden="true">{sendButtonIcon}</span> : sendButtonLabel}
           </button>

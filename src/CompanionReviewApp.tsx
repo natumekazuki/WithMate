@@ -22,6 +22,8 @@ import {
 import {
   buildSessionWithApprovalMode,
   buildSessionWithCodexSandboxMode,
+  buildSessionWithCodexSpeed,
+  buildSessionWithCodexReviewer,
   buildSessionWithModelChange,
   buildSessionWithReasoningEffort,
 } from "./runtime-option-state.js";
@@ -31,6 +33,8 @@ import {
 } from "./auxiliary-session-state.js";
 import {
   runAuxiliaryApprovalModeChangeOperation,
+  runAuxiliaryCodexSpeedChangeOperation,
+  runAuxiliaryCodexReviewerChangeOperation,
   runAuxiliaryModelChangeOperation,
   runAuxiliaryReasoningEffortChangeOperation,
   runAuxiliarySandboxModeChangeOperation,
@@ -51,6 +55,8 @@ import type {
 } from "./app-state.js";
 import { currentTimestampLabel } from "./app-state.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { CodexSpeed } from "./codex-speed.js";
+import type { CodexReviewer } from "./codex-reviewer.js";
 import type { CompanionMergeRunSummary, CompanionSession, CompanionSessionSummary } from "./companion-state.js";
 import { createCompanionSessionSummary } from "./companion-state.js";
 import {
@@ -88,6 +94,7 @@ import {
   type AppSettings,
 } from "./provider-settings-state.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { ShortcutSettingsProvider } from "./shortcut-settings-context.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
@@ -236,7 +243,6 @@ import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
   applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
-  buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
@@ -265,6 +271,7 @@ import {
   runGuardedAuxiliarySessionReturnToMainOperationWithApi,
 } from "./auxiliary-session-return-operation.js";
 import {
+  applyComposerSubmitCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyComposerReferenceInsertionCommand,
@@ -279,7 +286,6 @@ import {
   createAgentPickerCloseHandler,
   createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
-  createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
@@ -292,6 +298,12 @@ import {
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
+import {
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+  useShortcutDispatcherSettings,
+  useShortcutScope,
+} from "./shortcut-registry.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
   return files[0] ?? null;
@@ -464,6 +476,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<ModelReasoningEffort>("high");
   const [selectedApprovalMode, setSelectedApprovalMode] = useState<ApprovalMode>("untrusted");
   const [selectedCodexSandboxMode, setSelectedCodexSandboxMode] = useState<CodexSandboxMode>("workspace-write");
+  const [selectedCodexSpeed, setSelectedCodexSpeed] = useState<CodexSpeed>("standard");
+  const [selectedCodexReviewer, setSelectedCodexReviewer] = useState<CodexReviewer>("user");
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const handleHeaderPreferenceChange = useCallback((value: "hidden" | "visible") => {
@@ -579,6 +593,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           setSelectedReasoningEffort(payload.session.reasoningEffort);
           setSelectedApprovalMode(payload.session.approvalMode);
           setSelectedCodexSandboxMode(payload.session.codexSandboxMode);
+          setSelectedCodexSpeed(payload.session.codexSpeed);
+          setSelectedCodexReviewer(payload.session.codexReviewer);
           setTitleDraft(payload.session.taskTitle);
           setPickerBaseDirectory(payload.session.worktreePath);
         }
@@ -1260,6 +1276,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const selectedRuntimeReasoningEffort = activeAuxiliarySession?.reasoningEffort ?? selectedReasoningEffort;
   const selectedRuntimeApprovalMode = activeAuxiliarySession?.approvalMode ?? selectedApprovalMode;
   const selectedRuntimeCodexSandboxMode = activeAuxiliarySession?.codexSandboxMode ?? selectedCodexSandboxMode;
+  const selectedRuntimeCodexSpeed = activeAuxiliarySession?.codexSpeed ?? selectedCodexSpeed;
+  const selectedRuntimeCodexReviewer = activeAuxiliarySession?.codexReviewer ?? selectedCodexReviewer;
   const selectedModelEntry =
     selectedProviderCatalog?.models.find((model) => model.id === selectedRuntimeModel) ??
     selectedProviderCatalog?.models.find((model) => model.id === selectedProviderCatalog.defaultModelId) ??
@@ -1279,6 +1297,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     modelSelectOptions,
     selectedModelFallbackLabel,
     reasoningSelectOptions,
+    speedSelectOptions,
+    reviewerSelectOptions,
   } = useMemo(
     () => buildRuntimeSelectionOptions({
       providerId: displayedSession?.provider,
@@ -1288,6 +1308,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       reasoningEfforts: reasoningEffortOptions,
       selectedApprovalMode: selectedRuntimeApprovalMode,
       selectedCodexSandboxMode: selectedRuntimeCodexSandboxMode,
+      selectedCodexSpeed: selectedRuntimeCodexSpeed,
+      selectedCodexReviewer: selectedRuntimeCodexReviewer,
     }),
     [
       displayedSession?.provider,
@@ -1296,6 +1318,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       reasoningEffortOptions,
       selectedRuntimeApprovalMode,
       selectedRuntimeCodexSandboxMode,
+      selectedRuntimeCodexSpeed,
+      selectedRuntimeCodexReviewer,
     ],
   );
   const companionComposerBlockedReason = COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE;
@@ -1914,6 +1938,33 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     await persistCompanionSession(nextSession);
   }
 
+  async function handleChangeCodexSpeed(codexSpeed: CodexSpeed): Promise<void> {
+    if (!snapshot || snapshot.session.provider !== "codex" || isSelectedSessionRunning) {
+      return;
+    }
+
+    const nextSession = buildSessionWithCodexSpeed(snapshot.session, codexSpeed, currentTimestampLabel());
+    if (nextSession) {
+      await persistCompanionSession(nextSession);
+    }
+  }
+
+  async function handleChangeCodexReviewer(codexReviewer: CodexReviewer): Promise<void> {
+    if (
+      !snapshot ||
+      snapshot.session.provider !== "codex" ||
+      snapshot.session.approvalMode === "never" ||
+      isSelectedSessionRunning
+    ) {
+      return;
+    }
+
+    const nextSession = buildSessionWithCodexReviewer(snapshot.session, codexReviewer, currentTimestampLabel());
+    if (nextSession) {
+      await persistCompanionSession(nextSession);
+    }
+  }
+
   async function handleChangeSelectedModel(model: string): Promise<void> {
     if (!snapshot || !selectedProviderCatalog || !modelCatalog || isSelectedSessionRunning) {
       return;
@@ -1956,6 +2007,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setSelectedReasoningEffort(savedSession.reasoningEffort);
     setSelectedApprovalMode(savedSession.approvalMode);
     setSelectedCodexSandboxMode(savedSession.codexSandboxMode);
+    setSelectedCodexSpeed(savedSession.codexSpeed);
+    setSelectedCodexReviewer(savedSession.codexReviewer);
     return savedSession;
   }
 
@@ -2027,6 +2080,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           reasoningEffort: selectedReasoningEffort,
           approvalMode: selectedApprovalMode,
           codexSandboxMode: selectedCodexSandboxMode,
+          codexSpeed: selectedCodexSpeed,
           customAgentName: snapshot.session.customAgentName,
         },
       });
@@ -2174,6 +2228,25 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   async function handleChangeAuxiliarySandboxMode(codexSandboxMode: CodexSandboxMode): Promise<void> {
     await runAuxiliarySandboxModeChangeOperation({
       codexSandboxMode,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  }
+
+  async function handleChangeAuxiliaryCodexSpeed(codexSpeed: CodexSpeed): Promise<void> {
+    await runAuxiliaryCodexSpeedChangeOperation({
+      codexSpeed,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  }
+
+  async function handleChangeAuxiliaryCodexReviewer(codexReviewer: CodexReviewer): Promise<void> {
+    if (activeAuxiliarySession?.approvalMode === "never") {
+      return;
+    }
+    await runAuxiliaryCodexReviewerChangeOperation({
+      codexReviewer,
       updateActiveAuxiliarySession,
       createTimestampLabel: currentTimestampLabel,
     });
@@ -2365,6 +2438,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setSelectedReasoningEffort(nextSession.reasoningEffort);
       setSelectedApprovalMode(nextSession.approvalMode);
       setSelectedCodexSandboxMode(nextSession.codexSandboxMode);
+      setSelectedCodexSpeed(nextSession.codexSpeed);
+      setSelectedCodexReviewer(nextSession.codexReviewer);
       return;
     }
 
@@ -2742,6 +2817,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         reasoningEffort: selectedReasoningEffort,
         approvalMode: selectedApprovalMode,
         codexSandboxMode: selectedCodexSandboxMode,
+        codexSpeed: selectedCodexSpeed,
+        codexReviewer: selectedCodexReviewer,
       });
       applyResolvedSessionRunUpdate({
         savedSession: nextSession,
@@ -2878,17 +2955,19 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
-  const handleCompanionSubmitKey = createComposerSubmitKeyHandler({
-    submit: () => void (
-      activeAuxiliarySession
-        ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft)
-        : sendCompanionTurn()
-    ),
+  const handleCompanionSubmitShortcut = () => applyComposerSubmitCommand({
+    submit: () => {
+      void (
+        activeAuxiliarySession
+          ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft)
+          : sendCompanionTurn()
+      );
+    },
   });
 
-  const handleCompanionDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = buildComposerDraftKeyDownHandler({
-    submit: handleCompanionSubmitKey,
-  });
+  useShortcutDispatcherSettings(appSettings.keyboardShortcuts);
+  useShortcutScope("composer");
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.composerSubmit, handleCompanionSubmitShortcut);
 
   async function openCompanionWorktree(): Promise<void> {
     const withmateApi = getWithMateApi();
@@ -3009,8 +3088,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   if (!isMergeView) {
     return (
-      <>
-      <ChatWindow {...buildCompanionChatWindowProps({
+      <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
+        <>
+        <ChatWindow {...buildCompanionChatWindowProps({
         session: displayedSession ?? snapshot.session,
         character: companionCharacterProfile!,
         displayedMessages: messageListMessages,
@@ -3075,6 +3155,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         selectedApprovalMode: selectedRuntimeApprovalMode,
         sandboxOptions: sandboxSelectOptions,
         selectedCodexSandboxMode: selectedRuntimeCodexSandboxMode,
+        speedOptions: speedSelectOptions,
+        selectedCodexSpeed: selectedRuntimeCodexSpeed,
+        reviewerOptions: reviewerSelectOptions,
+        selectedCodexReviewer: selectedRuntimeCodexReviewer,
         modelOptions: modelSelectOptions,
         selectedModel: selectedRuntimeModel,
         selectedModelFallbackLabel,
@@ -3197,7 +3281,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           });
         },
         onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
-        onDraftKeyDown: handleCompanionDraftKeyDown,
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
         onDraftSelect: buildOnDraftSelectHandler({
           setComposerCaret,
@@ -3227,6 +3310,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           onAuxiliaryChange: handleChangeAuxiliarySandboxMode,
           onSelectedSessionChange: handleChangeCodexSandboxMode,
         }),
+        onChangeCodexSpeed: buildAuxiliaryAwareRuntimeOptionChangeHandler<CodexSpeed>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryCodexSpeed,
+          onSelectedSessionChange: handleChangeCodexSpeed,
+        }),
+        onChangeCodexReviewer: buildAuxiliaryAwareRuntimeOptionChangeHandler<CodexReviewer>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryCodexReviewer,
+          onSelectedSessionChange: handleChangeCodexReviewer,
+        }),
         onChangeModel: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
           shouldUseAuxiliary: !!activeAuxiliarySession,
           onAuxiliaryChange: handleChangeAuxiliaryModel,
@@ -3249,26 +3342,28 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onLoadAuditLogDetail: handleLoadAuditLogDetail,
         onLoadAuditLogOperationDetail: handleLoadAuditLogOperationDetail,
         onCloseAuditLog: () => setAuditLogsOpen(false),
-      })} />
-      <AuxiliaryLaunchProviderDialog
-        open={auxiliaryLaunchDialogOpen}
-        providers={auxiliaryLaunchProviderItems}
-        selectedProviderId={auxiliaryLaunchProviderId}
-        feedback={auxiliaryLaunchFeedback}
-        starting={isAuxiliaryActionPending}
-        onClose={handleCloseAuxiliaryLaunchDialog}
-        onSelectProvider={handleSelectAuxiliaryLaunchProvider}
-        onStart={() => void handleStartAuxiliarySession()}
-      />
-      </>
+        })} />
+        <AuxiliaryLaunchProviderDialog
+          open={auxiliaryLaunchDialogOpen}
+          providers={auxiliaryLaunchProviderItems}
+          selectedProviderId={auxiliaryLaunchProviderId}
+          feedback={auxiliaryLaunchFeedback}
+          starting={isAuxiliaryActionPending}
+          onClose={handleCloseAuxiliaryLaunchDialog}
+          onSelectProvider={handleSelectAuxiliaryLaunchProvider}
+          onStart={() => void handleStartAuxiliarySession()}
+        />
+        </>
+      </ShortcutSettingsProvider>
     );
   }
 
   return (
-    <div
-      className={`page-shell companion-review-page theme-accent${isHeaderExpanded ? "" : " companion-review-page-header-collapsed"}`}
-      style={themeStyle}
-    >
+    <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
+      <div
+        className={`page-shell companion-review-page theme-accent${isHeaderExpanded ? "" : " companion-review-page-header-collapsed"}`}
+        style={themeStyle}
+      >
       <section className="companion-review-shell panel rise-1">
         {isHeaderExpanded ? (
           <SessionHeader
@@ -3565,6 +3660,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           </section>
         </div>
       </section>
-    </div>
+      </div>
+    </ShortcutSettingsProvider>
   );
 }

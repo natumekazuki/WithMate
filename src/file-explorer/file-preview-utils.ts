@@ -2,7 +2,7 @@ import type {
   SessionFileEncoding,
   SessionFileRoot,
   FileRootChangesResult,
-  FileRootGitChangeScope,
+  FileRootGitDiffScope,
 } from "./file-explorer-contract.js";
 import { findTextMatches } from "../find-text-matches.js";
 import { detectSessionFileEncoding } from "./file-content-detection.js";
@@ -54,29 +54,18 @@ export class PreviewByteAccumulator {
   }
 }
 
-export function calculateImageFitZoom(
-  viewportWidth: number,
-  viewportHeight: number,
-  imageWidth: number,
-  imageHeight: number,
-): number {
-  if (viewportWidth <= 0 || viewportHeight <= 0 || imageWidth <= 0 || imageHeight <= 0) {
-    return 100;
-  }
-  const scale = Math.min(1, viewportWidth / imageWidth, viewportHeight / imageHeight);
-  return Math.max(0.1, Math.round(scale * 1_000) / 10);
-}
-
 export function projectFileRootDiffAvailability(
   result: FileRootChangesResult,
   relativePath: string,
-): { scopes: FileRootGitChangeScope[]; message: string } {
+): { scopes: FileRootGitDiffScope[]; message: string } {
   if (result.status !== "ok") {
     return { scopes: [], message: "" };
   }
   const change = result.entries.find((entry) => entry.relativePath === relativePath);
   return {
-    scopes: change?.scopes.filter((scope) => change.kinds[scope] !== "untracked") ?? [],
+    scopes: change?.scopes.filter((scope): scope is FileRootGitDiffScope => (
+      scope !== "commit" && change.kinds[scope] !== "untracked"
+    )) ?? [],
     message: "",
   };
 }

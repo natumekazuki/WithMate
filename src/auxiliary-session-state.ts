@@ -1,9 +1,11 @@
-import type { ApprovalMode } from "./approval-mode.js";
+import { normalizeApprovalMode, type ApprovalMode } from "./approval-mode.js";
 import {
   addAllowedAdditionalDirectory,
   removeAllowedAdditionalDirectory,
 } from "./additional-directory-state.js";
 import { normalizeCodexSandboxMode, type CodexSandboxMode } from "./codex-sandbox-mode.js";
+import { normalizeCodexSpeed, type CodexSpeed } from "./codex-speed.js";
+import { normalizeCodexReviewer, type CodexReviewer } from "./codex-reviewer.js";
 import {
   isModelReasoningEffort,
   resolveModelChangeSelection,
@@ -24,6 +26,7 @@ export type CreateAuxiliarySessionInput = {
   reasoningEffort?: ModelReasoningEffort;
   approvalMode?: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;
+  codexSpeed?: CodexSpeed;
   customAgentName?: string;
 };
 
@@ -39,6 +42,8 @@ export type AuxiliarySession = {
   reasoningEffort: ModelReasoningEffort;
   approvalMode: ApprovalMode;
   codexSandboxMode: CodexSandboxMode;
+  codexSpeed: CodexSpeed;
+  codexReviewer: CodexReviewer;
   customAgentName: string;
   allowedAdditionalDirectories: string[];
   threadId: string;
@@ -66,7 +71,7 @@ export function applyAuxiliarySessionPatch(
 
 export function applyAuxiliarySessionRuntimeOptionsPatch(
   session: AuxiliarySession,
-  patch: Partial<Pick<AuxiliarySession, "approvalMode" | "codexSandboxMode">>,
+  patch: Partial<Pick<AuxiliarySession, "approvalMode" | "codexSandboxMode" | "codexSpeed" | "codexReviewer">>,
   updatedAt: string,
 ): AuxiliarySession {
   return applyAuxiliarySessionPatch(session, patch, updatedAt);
@@ -86,6 +91,22 @@ export function applyAuxiliarySessionCodexSandboxModeChange(
   updatedAt: string,
 ): AuxiliarySession {
   return applyAuxiliarySessionRuntimeOptionsPatch(session, { codexSandboxMode }, updatedAt);
+}
+
+export function applyAuxiliarySessionCodexSpeedChange(
+  session: AuxiliarySession,
+  codexSpeed: CodexSpeed,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionRuntimeOptionsPatch(session, { codexSpeed }, updatedAt);
+}
+
+export function applyAuxiliarySessionCodexReviewerChange(
+  session: AuxiliarySession,
+  codexReviewer: CodexReviewer,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionRuntimeOptionsPatch(session, { codexReviewer }, updatedAt);
 }
 
 export function applyAuxiliarySessionModelSelectionPatch(
@@ -439,14 +460,10 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
     reasoningEffort: isModelReasoningEffort(candidate.reasoningEffort)
       ? candidate.reasoningEffort
       : "medium",
-    approvalMode:
-      candidate.approvalMode === "never" ||
-      candidate.approvalMode === "on-request" ||
-      candidate.approvalMode === "on-failure"
-      || candidate.approvalMode === "untrusted"
-        ? candidate.approvalMode
-        : "untrusted",
+    approvalMode: normalizeApprovalMode(candidate.approvalMode),
     codexSandboxMode: normalizeCodexSandboxMode(candidate.codexSandboxMode),
+    codexSpeed: normalizeCodexSpeed(candidate.codexSpeed),
+    codexReviewer: normalizeCodexReviewer(candidate.codexReviewer),
     customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName : "",
     allowedAdditionalDirectories: Array.isArray(candidate.allowedAdditionalDirectories)
       ? candidate.allowedAdditionalDirectories.filter((entry): entry is string => typeof entry === "string")

@@ -54,6 +54,8 @@ function createLaunchSelection(
     reasoningEffort: "xhigh",
     approvalMode: "never",
     codexSandboxMode: "danger-full-access",
+    codexSpeed: "standard",
+    codexReviewer: "auto-review",
     customAgentName: "reviewer",
     ...overrides,
   };
@@ -85,6 +87,14 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("CompanionSessionService", () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Companion作成は起動時に解決したReviewerをSessionへ保存する"
+  // oracle = { type = "contract", ref = "codex-auto-review AR-2" }
+  // failure_mode = "Companion作成時にReviewerが欠落またはUserへ戻る"
+  // scope = "companion-create"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("CompanionSession 作成時に snapshot ref と shadow worktree を実体化する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-service-"));
     const repoPath = path.join(tempDirectory, "repo");
@@ -153,6 +163,7 @@ describe("CompanionSessionService", () => {
       assert.equal(session.reasoningEffort, "xhigh");
       assert.equal(session.approvalMode, "never");
       assert.equal(session.codexSandboxMode, "danger-full-access");
+      assert.equal(session.codexReviewer, "auto-review");
       assert.equal(session.customAgentName, "reviewer");
       assert.deepEqual(storage.getSession(session.id)?.characterRuntimeSnapshot, characterRuntimeSnapshot);
     } finally {

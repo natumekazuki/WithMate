@@ -82,11 +82,20 @@ function buildCharacterAffectContextSection(context: RunSessionTurnInput["charac
   }
   const snapshot = {
     characterAffect: {
-      effective: context.affect.effective,
+      effective: context.affect.effective.map((component) => ({
+        contributingLayers: component.contributingLayers,
+        targetType: component.targetType,
+        targetId: component.targetId,
+        family: component.family,
+        label: component.label,
+        valence: component.valence,
+        ...(component.arousal === undefined ? {} : { arousal: component.arousal }),
+        ...(component.dimensions === undefined ? {} : { dimensions: component.dimensions }),
+        intensity: component.intensity,
+      })),
       evaluatedAt: context.affect.evaluatedAt,
       version: context.affect.version,
       updatedAt: context.affect.updatedAt,
-      scope: context.scope,
     },
     relatedCharacterMemory: context.memory.items.map((item) => ({
       id: item.id,

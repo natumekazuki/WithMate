@@ -30,6 +30,15 @@ function createIpcRendererStub() {
   };
 }
 
+// @test-value v1
+// kind = "contract"
+// claim = "preloadのinvoke APIはdomainごとのrequestを対応する専用IPC channelへ変換せず渡す"
+// oracle = { type = "contract", ref = "WithMateWindowApi invoke methods and withmate-ipc-channels" }
+// failure_mode = "renderer requestが別channelへ送られるか、引数の欠落または変換を受けてMainへ到達する"
+// scope = "preload invoke API"
+// lifecycle = "permanent"
+// distinction = "file tree context menuを含むinvoke method群のchannelと引数を一括して検証する"
+// @end-test-value
 test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる", async () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -73,6 +82,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   assert.deepEqual(await api.openMemoryV6ReviewWindow(), {
     channel: "withmate:open-memory-v6-review-window",
     args: [],
+  });
+  assert.deepEqual(await api.getSessionGlossaryProjection("session-1"), {
+    channel: "withmate:get-session-glossary-projection",
+    args: ["session-1"],
+  });
+  assert.deepEqual(await api.searchSessionGlossary("session-1", { query: "runtime" }), {
+    channel: "withmate:search-session-glossary",
+    args: ["session-1", { query: "runtime" }],
   });
   assert.deepEqual(await api.getMemoryV6FileUsage(), {
     channel: "withmate:get-memory-v6-file-usage",
@@ -247,6 +264,8 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     args: ["session-1"],
   });
   const fileRequest = { sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx" };
+  assert.equal(api.isSessionFileObjectCopyAvailable(), true);
+  assert.equal(createWithMateWindowApi(ipcRenderer as never, "linux").isSessionFileObjectCopyAvailable(), false);
   assert.deepEqual(await api.listSessionFileRoots("session-1"), {
     channel: "withmate:list-session-file-roots",
     args: ["session-1"],
@@ -290,6 +309,28 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:show-session-file-preview-image-context-menu",
     args: [imageActionRequest],
   });
+  const fileCopyRequest = { resource: fileRequest };
+  assert.deepEqual(await api.copySessionFileObject(fileCopyRequest), {
+    channel: "withmate:copy-session-file-object",
+    args: [fileCopyRequest],
+  });
+  const fileCopyContextMenuRequest = { ...fileCopyRequest, point: { x: 40, y: 60 } };
+  assert.deepEqual(await api.showSessionFileObjectCopyContextMenu(fileCopyContextMenuRequest), {
+    channel: "withmate:show-session-file-object-copy-context-menu",
+    args: [fileCopyContextMenuRequest],
+  });
+  const fileTreeContextMenuRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "src",
+    nodeKind: "directory" as const,
+    point: { x: 40, y: 60 },
+    canInsert: true,
+  };
+  assert.deepEqual(await api.showSessionFileTreeContextMenu(fileTreeContextMenuRequest), {
+    channel: "withmate:show-session-file-tree-context-menu",
+    args: [fileTreeContextMenuRequest],
+  });
   const markdownLinkRequest = {
     target: "docs/review-brief%20final.md",
     point: { x: 80, y: 160 },
@@ -302,6 +343,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:list-file-root-changes",
     args: [{ sessionId: "session-1", rootId: "workspace" }],
   });
+  assert.deepEqual(await api.listFileRootChangesRepositories({
+    sessionId: "session-1",
+    rootIds: ["workspace", "additional:repo"],
+  }), {
+    channel: "withmate:list-file-root-changes-repositories",
+    args: [{ sessionId: "session-1", rootIds: ["workspace", "additional:repo"] }],
+  });
   assert.deepEqual(await api.getFileRootDiff({
     sessionId: "session-1",
     rootId: "workspace",
@@ -310,6 +358,29 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   }), {
     channel: "withmate:get-file-root-diff",
     args: [{ sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx", scope: "working-tree" }],
+  });
+  const historyRequest = {
+    sessionId: "session-1",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    rootId: "workspace",
+  };
+  assert.deepEqual(await api.listFileRootGitHistoryRepositories({ sessionId: "session-1" }), {
+    channel: "withmate:list-file-root-git-history-repositories",
+    args: [{ sessionId: "session-1" }],
+  });
+  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyRequest, cursor: "100" }), {
+    channel: "withmate:list-file-root-git-history-commits",
+    args: [{ ...historyRequest, cursor: "100" }],
+  });
+  const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
+  assert.deepEqual(await api.getFileRootGitHistoryCommitDetail(historyDetailRequest), {
+    channel: "withmate:get-file-root-git-history-commit-detail",
+    args: [historyDetailRequest],
+  });
+  const historyDiffRequest = { ...historyDetailRequest, relativePath: "src/App.tsx" };
+  assert.deepEqual(await api.getFileRootGitHistoryDiff(historyDiffRequest), {
+    channel: "withmate:get-file-root-git-history-diff",
+    args: [historyDiffRequest],
   });
   assert.deepEqual(await api.createAuxiliarySession({ parentSessionId: "session-1", provider: "copilot" }), {
     channel: "withmate:create-auxiliary-session",
@@ -347,12 +418,60 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
 
 // @test-value v1
 // kind = "contract"
-// claim = "preloadはRoot WorkItemの取得、改訂、履歴追加、履歴一覧を含むcurrent renderer API keyを欠落なく公開する"
-// oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-// failure_mode = "main IPCへ実装したRoot WorkItem操作がpreload APIから欠落しrendererだけが呼び出せない"
-// scope = "WithMateWindowApi preload surface"
+// claim = "Session Window restore API はsnapshotと対象別resultを検証して公開するが検証対象の公開契約を成立させる"
+// oracle = { type = "contract", ref = "scripts/tests/preload-api.test.ts:419 public contract" }
+// failure_mode = "Session Window restore API はsnapshotと対象別resultを検証して公開するの条件で、consumerから観測できる公開結果が欠落・誤配信・不正許可になる"
+// scope = "preload-api"
 // lifecycle = "permanent"
-// distinction = "個別invokeだけでなくpublic API全key集合の同期を一括検証する"
+// distinction = "対象テスト「Session Window restore API はsnapshotと対象別resultを検証して公開する」固有の入力、境界、またはwindow scopeを確認する"
+// @end-test-value
+test("Session Window restore API はsnapshotと対象別resultを検証して公開する", async () => {
+  const listeners = new Map<string, Listener>();
+  const api = createWithMateWindowApi({
+    invoke(channel: string) {
+      if (channel === "withmate:get-session-window-restore-set") {
+        return Promise.resolve(["session-a", "session-a", "session-b"]);
+      }
+      if (channel === "withmate:restore-session-windows") {
+        return Promise.resolve({
+          requestedSessionIds: ["session-a", "session-b"],
+          openedSessionIds: ["session-a"],
+          failures: [{ sessionId: "session-b", reason: "missing" }],
+        });
+      }
+      return Promise.resolve(undefined);
+    },
+    on(channel: string, listener: Listener) {
+      listeners.set(channel, listener);
+    },
+    removeListener(channel: string) {
+      listeners.delete(channel);
+    },
+    send() {},
+  } as never);
+
+  assert.deepEqual(await api.getSessionWindowRestoreSet(), ["session-a", "session-b"]);
+  assert.deepEqual(await api.restoreSessionWindows(), {
+    requestedSessionIds: ["session-a", "session-b"],
+    openedSessionIds: ["session-a"],
+    failures: [{ sessionId: "session-b", reason: "missing" }],
+  });
+
+  const snapshots: string[][] = [];
+  const unsubscribe = api.subscribeSessionWindowRestoreSet((sessionIds) => snapshots.push(sessionIds));
+  listeners.get("withmate:session-window-restore-set-changed")?.({}, ["session-c", "session-c"]);
+  assert.deepEqual(snapshots, [["session-c"]]);
+  unsubscribe();
+});
+
+// @test-value v1
+// kind = "contract"
+// claim = "preloadの公開API surfaceはWithMateWindowApiの現行keyを過不足なくexposeする"
+// oracle = { type = "contract", ref = "WithMateWindowApi public surface" }
+// failure_mode = "型に存在するIPC methodがrendererへexposeされないか、廃止済みmethodが公開surfaceへ残る"
+// scope = "preload public API keys"
+// lifecycle = "permanent"
+// distinction = "tree path context menuを含む公開method集合全体とremoved key不在を検証する"
 // @end-test-value
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -369,6 +488,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "closeAuxiliarySession",
     "copyFilesToSessionFiles",
     "copySessionFilePreviewImage",
+    "copySessionFileObject",
     "archiveCharacter",
     "createMate",
     "createAuxiliarySession",
@@ -405,6 +525,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getProviderQuotaTelemetry",
     "getRootWorkItem",
     "getSession",
+    "getSessionWindowRestoreSet",
+    "getSessionGlossaryProjection",
     "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection",
     "getSessionAuditLogOperationDetail",
@@ -447,6 +569,11 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listRootWorkItemHistory",
     "listSessionSummaryPage",
     "listFileRootChanges",
+    "listFileRootChangesRepositories",
+    "listFileRootGitHistoryRepositories",
+    "listFileRootGitHistoryCommits",
+    "getFileRootGitHistoryCommitDetail",
+    "getFileRootGitHistoryDiff",
     "listWorkspaceCustomAgents",
     "listWorkspaceSkills",
     "mergeCompanionSelectedFiles",
@@ -484,6 +611,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "previewCompanionComposerInput",
     "previewComposerInput",
     "inspectSessionFile",
+    "isSessionFileObjectCopyAvailable",
     "listSessionDirectory",
     "listSessionFileRoots",
     "listSessionSchedules",
@@ -493,6 +621,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "restoreCompanionTargetStash",
     "resumeSessionSchedule",
     "reviseRootWorkItem",
+    "restoreSessionWindows",
     "resolveLiveApproval",
     "resolveLiveElicitation",
     "resolveCoordinationEvent",
@@ -503,9 +632,12 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "runSessionTurn",
     "savePastedSessionFile",
     "searchMemoryV6Entries",
+    "searchSessionGlossary",
     "setMateAvatar",
     "setSessionPinned",
     "showSessionFilePreviewImageContextMenu",
+    "showSessionFileObjectCopyContextMenu",
+    "showSessionFileTreeContextMenu",
     "showMarkdownLinkContextMenu",
     "startCharacterAuthoringSession",
     "stashCompanionTargetChanges",
@@ -517,6 +649,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeModelCatalog",
     "subscribeOpenCompanionReviewWindowIds",
     "subscribeOpenSessionWindowIds",
+    "subscribeSessionWindowRestoreSet",
     "subscribePromptTemplates",
     "subscribeProviderQuotaTelemetry",
     "subscribeSessionExecutionsChanged",
@@ -525,6 +658,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeSessionSchedules",
     "subscribeSessionBackgroundActivity",
     "subscribeSessionContextTelemetry",
+    "subscribeSessionGlossary",
     "syncCompanionTarget",
     "forgetMemoryV6Entry",
     "uninstallMemoryV6CliShim",
@@ -567,6 +701,15 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   }
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "preload type surface は destructive storage maintenance API を Settings domain に置くが検証対象の公開契約を成立させる"
+// oracle = { type = "contract", ref = "scripts/tests/preload-api.test.ts:695 public contract" }
+// failure_mode = "preload type surface は destructive storage maintenance API を Settings domain に置くの条件で、consumerから観測できる公開結果が欠落・誤配信・不正許可になる"
+// scope = "preload-api"
+// lifecycle = "permanent"
+// distinction = "対象テスト「preload type surface は destructive storage maintenance API を Settings domain に置く」固有の入力、境界、またはwindow scopeを確認する"
+// @end-test-value
 test("preload type surface は destructive storage maintenance API を Settings domain に置く", () => {
   const settingsKeys = [
     "resetAppDatabase",
@@ -584,6 +727,15 @@ test("preload type surface は destructive storage maintenance API を Settings 
   assert.equal((sessionKeys as string[]).includes("deleteSessionsLastActiveBefore"), false);
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "createWithMateWindowApi は subscribe 系 API で payload を unwrap するが検証対象の公開契約を成立させる"
+// oracle = { type = "contract", ref = "scripts/tests/preload-api.test.ts:712 public contract" }
+// failure_mode = "createWithMateWindowApi は subscribe 系 API で payload を unwrap するの条件で、consumerから観測できる公開結果が欠落・誤配信・不正許可になる"
+// scope = "preload-api"
+// lifecycle = "permanent"
+// distinction = "対象テスト「createWithMateWindowApi は subscribe 系 API で payload を unwrap する」固有の入力、境界、またはwindow scopeを確認する"
+// @end-test-value
 test("createWithMateWindowApi は subscribe 系 API で payload を unwrap する", async () => {
   const { ipcRenderer, listeners } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -671,17 +823,30 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   assert.equal(listeners.has("withmate:prompt-templates-changed"), false);
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "createWithMateWindowApi は telemetry / background activity の payload も unwrap するが検証対象の公開契約を成立させる"
+// oracle = { type = "contract", ref = "scripts/tests/preload-api.test.ts:799 public contract" }
+// failure_mode = "createWithMateWindowApi は telemetry / background activity の payload も unwrap するの条件で、consumerから観測できる公開結果が欠落・誤配信・不正許可になる"
+// scope = "preload-api"
+// lifecycle = "permanent"
+// distinction = "対象テスト「createWithMateWindowApi は telemetry / background activity の payload も unwrap する」固有の入力、境界、またはwindow scopeを確認する"
+// @end-test-value
 test("createWithMateWindowApi は telemetry / background activity の payload も unwrap する", () => {
   const { ipcRenderer, listeners } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
   const quotaReceived: unknown[] = [];
   const backgroundReceived: unknown[] = [];
+  const glossaryReceived: unknown[] = [];
 
   const disposeQuota = api.subscribeProviderQuotaTelemetry((providerId, telemetry) => {
     quotaReceived.push({ providerId, telemetry });
   });
   const disposeBackground = api.subscribeSessionBackgroundActivity((sessionId, kind, state) => {
     backgroundReceived.push({ sessionId, kind, state });
+  });
+  const disposeGlossary = api.subscribeSessionGlossary((projection) => {
+    glossaryReceived.push(projection);
   });
 
   listeners.get("withmate:provider-quota-telemetry")?.({}, {
@@ -693,11 +858,27 @@ test("createWithMateWindowApi は telemetry / background activity の payload �
     kind: "monologue",
     state: { kind: "monologue", status: "running" },
   });
+  listeners.get("withmate:session-glossary-changed")?.({}, {
+    sessionId: "session-1",
+    scopeRevision: "scope-1",
+    sequence: 2,
+    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+  });
   disposeQuota();
   disposeBackground();
+  disposeGlossary();
 
   assert.deepEqual(quotaReceived, [{ providerId: "copilot", telemetry: { provider: "copilot", snapshots: [] } }]);
   assert.deepEqual(backgroundReceived, [
     { sessionId: "session-1", kind: "monologue", state: { kind: "monologue", status: "running" } },
   ]);
+  assert.deepEqual(glossaryReceived, [{
+    sessionId: "session-1",
+    scopeRevision: "scope-1",
+    sequence: 2,
+    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+  }]);
+  assert.equal(listeners.has("withmate:session-glossary-changed"), false);
 });

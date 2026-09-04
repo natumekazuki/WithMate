@@ -1,4 +1,4 @@
-import { type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { type CSSProperties, type ReactNode, type RefObject } from "react";
 
 import {
   ChatRightPaneShell,
@@ -11,7 +11,6 @@ import {
   createStaticChatHeaderProps,
   createStaticTextChatCompactActionDockProps,
   createStaticTextConversationMessageColumnProps,
-  isStaticChatSendDisabled,
   type StaticTextChatComposerCapabilityProps,
 } from "./chat-window-adapter.js";
 
@@ -53,7 +52,6 @@ export type TextChatWindowProjectionInput = {
   onToggleHeaderExpanded: () => void;
   isRunning: boolean;
   feedback: string;
-  submitOnKey?: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
   headerWorkspaceActions?: ReactNode;
   headerSessionFilesActions?: ReactNode;
   isActionDockExpanded?: boolean;
@@ -96,7 +94,6 @@ export function buildTextChatWindowProps({
   onToggleHeaderExpanded,
   isRunning,
   feedback,
-  submitOnKey,
   headerWorkspaceActions,
   headerSessionFilesActions,
   isActionDockExpanded = true,
@@ -106,8 +103,6 @@ export function buildTextChatWindowProps({
   rightPaneClassName,
   composerCapabilityProps,
 }: TextChatWindowProjectionInput): ChatWindowProps {
-  const isSendDisabled = isStaticChatSendDisabled({ draft, isRunning });
-
   return {
     mode,
     className: "",
@@ -148,12 +143,6 @@ export function buildTextChatWindowProps({
       reasoningOptions,
       selectedReasoningEffort,
       onDraftChange,
-      onDraftKeyDown: (event) => {
-        if (!isSendDisabled && submitOnKey?.(event)) {
-          event.preventDefault();
-          onSubmit();
-        }
-      },
       onSendOrCancel: onSubmit,
       onChangeModel,
       onChangeReasoningEffort,

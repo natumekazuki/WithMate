@@ -12,7 +12,7 @@ Memory CLIとMCP serverは、起動中のWithMateが公開するloopback runtime
 
 ```powershell
 npm run build:memory-cli
-node resources/skills/withmate-memory/bin/withmate-memory.mjs mcp-server
+node resources/cli/withmate-memory.mjs mcp-server
 ```
 
 配布版では同梱された`withmate-memory`へ`mcp-server`を渡す。MCP clientには、このstdio commandをserver commandとして登録する。
@@ -58,7 +58,7 @@ Character系の`get`と`search`、一般Memoryのsearch/get/list/usageはread-on
 | --- | --- | --- | --- | --- |
 | `help` | なし | MCPで代替済み | server instructions、`tools/list` | CLIの表示用helpをpublic APIにしない |
 | `status` | `/v1/status` | MCPで代替済み | MCP initializeと各toolのstructured availability error | runtime identity確認用routeをtool化しない |
-| `characters` | `/v1/characters` | MCPで代替済み | `memory.list_targets`で`owner: character`と`includeEmpty: true`を指定 | Character definitionを広げずtarget inventoryだけを使う |
+| `characters` | `/v1/characters` | MCPで代替済み | `memory.list_targets`で`filter: { kind: "character" }`と`includeEmpty: true`を指定 | Character definitionを広げずtarget inventoryだけを使う |
 | `file-usage` | `/v1/file_usage` | 公開 | `memory.file_usage` | optional |
 | `list-targets` | `/v1/list_targets` | 公開 | `memory.list_targets` | なし |
 | `list-entries` | `/v1/list_entries` | 公開 | `memory.list_entries` | なし |
@@ -106,13 +106,13 @@ $request | withmate-memory affect-inspect --stdin
 
 `character-memory-correct`の自由記述reasonは訂正監査とidempotency判定に使われる。`character-memory-forget`のreasonは`user_request`、`incorrect`、`outdated`、`privacy`、`other`のいずれかを指定する。
 
-MCP障害後に同じ一般MemoryまたはCharacter操作をCLIで明示的にfallbackする場合は`--fallback-from mcp`を付ける。
+MCPのinitializeと`tools/list`取得後にtransport availability failureが発生し、tool errorの`details.fallbackEligible`が`true`になった同じ一般MemoryまたはCharacter操作をCLIで明示的にfallbackする場合は`--fallback-from mcp`を付ける。fallbackはruntime bindingが選んだruntimeとMCP credentialを使い、operator-only command、接続先selector、caller指定identityは受け付けない。provider binding markerがあるprocessのflagなしCLIはoperator modeへ切り替えず拒否される。
 
 ```powershell
 $request | withmate-memory context-get --stdin --fallback-from mcp
 ```
 
-fallbackも同じruntime APIを使う。MCP serverの未設定、起動不能、transport-level availability failure以外ではfallbackしない。MemoryまたはCharacterのstructured domain error、authority拒否、invalid input、version conflict、idempotency conflict/replay、migration requiredをCLIで迂回してはならない。writeの`effect: unknown`はresponse lossの可能性を表すため、同じrequestとidempotency keyでreconcileする。
+fallbackも同じruntime APIを使う。MCP processは`tools/list` responseの正常送出後にserverへ短命な`listed` stateを登録し、後続toolの実transport exceptionでmethod、path、bodyのfingerprintを持つ`eligible` stateへ遷移させる。CLIは同じruntime generation、binding、current turn、operation fingerprintに一致するadmissionだけをconsumeする。MCP initialize前の未設定・起動不能、`tools/list`失敗、process terminationなどserverへ障害を報告できない場合は開始しない。MemoryまたはCharacterのstructured domain error、authority拒否、invalid input、version conflict、idempotency conflict/replay、migration requiredをCLIで迂回してはならない。変更request、期限切れ、stale turnも拒否される。idempotency keyを持つwriteの`effect: unknown`はresponse lossの可能性を表すため、同じrequestとidempotency keyでreconcileする。`memory.get_file`と`memory.export_files`はagent fallbackで自動再試行せず、出力先をread-onlyで確認するかoperatorによるmanual recoveryへ進む。
 
 ## Errorと再試行
 

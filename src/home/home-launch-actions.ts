@@ -68,8 +68,8 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
   if (input.draft.characterSelectionMode === "random" && input.sessionCharacterUsageLoadStatus !== "loaded") {
     input.setLaunchFeedback(
       input.sessionCharacterUsageLoadStatus === "loading"
-        ? "Loading Session history. Try again when loading is complete."
-        : "Random selection is unavailable because Session history could not be loaded.",
+        ? "Session 履歴を読み込んでるよ。完了してからもう一度開始してね。"
+        : "Session 履歴を読み込めていないため、ランダム選択を開始できないよ。",
     );
     return;
   }

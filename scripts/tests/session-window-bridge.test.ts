@@ -370,6 +370,87 @@ describe("SessionWindowBridge", () => {
     assert.equal(bridge.getWindow(session.id), null);
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "open通知はopening中のSessionを含み、restore除外集合はload完了したSessionだけを含む"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md" }
+  // failure_mode = "opening中Windowの通知が欠落する、またはload前のWindowを復元済みとして除外する"
+  // scope = "session-window-bridge-open-set-projections"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("open通知の集合にはopening中を含め、復元除外用の集合にはload完了後だけ含める", async () => {
+    const session = createSession();
+    let resolveLoad: (() => void) | null = null;
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      loadChatEntry: () => new Promise<void>((resolve) => {
+        resolveLoad = resolve;
+      }),
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+    });
+
+    const opening = bridge.openSessionWindow(session.id);
+
+    assert.deepEqual(bridge.listOpenSessionWindowIds(), [session.id]);
+    assert.deepEqual(bridge.listSettledOpenSessionWindowIds(), []);
+    assert.equal(bridge.getSessionWindowRestoreStates().get(session.id)?.kind, "opening");
+
+    assert.ok(resolveLoad);
+    resolveLoad();
+    await opening;
+
+    assert.deepEqual(bridge.listSettledOpenSessionWindowIds(), [session.id]);
+    assert.equal(bridge.getSessionWindowRestoreStates().get(session.id)?.kind, "settled-open");
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "別Sessionのopen完了時もloading中Windowをsnapshotへ含めず、load失敗後は候補から除去する"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md" }
+  // failure_mode = "未完了または失敗したWindowが次回起動の復元snapshotへ残る"
+  // scope = "session-window-bridge-snapshot-admission"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("別Sessionのopen完了時に読込中のWindowをsnapshotへ混ぜず、読込失敗後も残さない", async () => {
+    const sessionA = createSession({ id: "session-a" });
+    const sessionB = createSession({ id: "session-b" });
+    let rejectSessionA: ((error: Error) => void) | null = null;
+    const savedSnapshots: string[][] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      loadChatEntry(_window, mode) {
+        if (mode.sessionId === sessionA.id) {
+          return new Promise<void>((_resolve, reject) => {
+            rejectSessionA = reject;
+          });
+        }
+        return Promise.resolve();
+      },
+      getSession: (sessionId) => sessionId === sessionA.id ? sessionA : sessionB,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      async persistOpenSessionWindowIds(sessionIds) {
+        savedSnapshots.push([...sessionIds]);
+      },
+    });
+
+    const openingA = bridge.openSessionWindow(sessionA.id);
+    await bridge.openSessionWindow(sessionB.id);
+    assert.deepEqual(savedSnapshots, [[sessionB.id]]);
+
+    assert.ok(rejectSessionA);
+    rejectSessionA(new Error("load failed"));
+    await assert.rejects(openingA, /load failed/);
+
+    assert.deepEqual(savedSnapshots, [[sessionB.id]]);
+  });
+
   it("古い window の遅延 closed は同じ Session の新しい window claim を解放しない", async () => {
     const session = createSession();
     const windows: StubWindow[] = [];
@@ -472,5 +553,74 @@ describe("SessionWindowBridge", () => {
     window.close();
 
     assert.deepEqual(broadcasts.at(-1), []);
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "window snapshot保存に失敗してもSession Windowのopenとclose lifecycleを継続する"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md" }
+  // failure_mode = "補助的なsnapshot failureがWindow操作自体を失敗させる"
+  // scope = "session-window-bridge-snapshot-failure-isolation"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("snapshot保存失敗でもopenとcloseを維持する", async () => {
+    const session = createSession();
+    const errors: unknown[] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      async persistOpenSessionWindowIds() {
+        throw new Error("save failed");
+      },
+      onSnapshotPersistenceError(error) {
+        errors.push(error);
+      },
+    });
+
+    const window = await bridge.openSessionWindow(session.id);
+    assert.equal(bridge.getWindow(session.id), window);
+    window.close();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(bridge.getWindow(session.id), null);
+    assert.equal(errors.length, 2);
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "quit開始前に現在のopen集合を保存し、shutdown由来closeではそのsnapshotを上書きしない"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md" }
+  // failure_mode = "終了処理のclose eventで復元snapshotが空になり次回起動時にWindowを復元できない"
+  // scope = "session-window-bridge-quit-snapshot"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("quit前に現在集合を保存し、その後のWindow closeではsnapshotを空にしない", async () => {
+    const session = createSession();
+    const savedSnapshots: string[][] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => true,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      async persistOpenSessionWindowIds(sessionIds) {
+        savedSnapshots.push([...sessionIds]);
+      },
+    });
+
+    const window = await bridge.openSessionWindow(session.id);
+    savedSnapshots.splice(0);
+    await bridge.prepareSnapshotForQuit();
+    window.close();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(savedSnapshots, [[session.id]]);
   });
 });

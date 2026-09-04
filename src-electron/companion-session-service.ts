@@ -123,6 +123,8 @@ export class CompanionSessionService {
       customAgentName: launchSelection.customAgentName,
       approvalMode: launchSelection.approvalMode,
       codexSandboxMode: launchSelection.codexSandboxMode,
+      codexSpeed: launchSelection.codexSpeed,
+      codexReviewer: launchSelection.codexReviewer,
       characterId: input.characterId,
       character: input.character,
       characterRoleMarkdown: input.characterRoleMarkdown,

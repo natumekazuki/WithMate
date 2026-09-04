@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import type { MemoryRuntimeOwnerSelector } from "../src/agent-runtime/agent-runtime-binding-contract.js";
 import { getProviderAgentRuntimeBindingCapability } from "./provider-agent-runtime-binding.js";
 
 export type AgentRuntimeOperation = string;
@@ -24,6 +25,8 @@ export type ProviderAgentRuntimeBindingProjection = {
   executionGeneration: string;
   transport: "env" | "unsupported";
   expiresAt: string | null;
+  turnCapability?: string;
+  memoryRuntimeOwner?: MemoryRuntimeOwnerSelector;
 };
 
 export type ResolvedAgentRuntimeBinding = Omit<
@@ -50,6 +53,13 @@ export type IssueAgentRuntimeBindingInput = {
   operationGrants: readonly AgentRuntimeOperation[];
   now?: Date;
   expiresAt?: string | null;
+};
+
+export type AgentRuntimeBindingChange = {
+  actorSessionId: string;
+  providerId: string;
+  previousExecutionGeneration: string | null;
+  executionGeneration: string | null;
 };
 
 type ActiveBinding = {
@@ -109,6 +119,14 @@ function authorityFingerprint(snapshot: AgentRuntimeAuthoritySnapshot): string {
 export class AgentRuntimeBindingRegistry {
   private readonly bindingsByKey = new Map<string, ActiveBinding>();
   private readonly keysByReferenceHash = new Map<string, string>();
+  private readonly changeListeners = new Set<(change: AgentRuntimeBindingChange) => void>();
+
+  subscribeChanges(listener: (change: AgentRuntimeBindingChange) => void): () => void {
+    this.changeListeners.add(listener);
+    return () => {
+      this.changeListeners.delete(listener);
+    };
+  }
 
   issueOrReuse(input: IssueAgentRuntimeBindingInput): ProviderAgentRuntimeBindingProjection {
     const actorSessionId = input.actorSessionId.trim();
@@ -147,10 +165,6 @@ export class AgentRuntimeBindingRegistry {
     ) {
       return this.project(existing, transport);
     }
-    if (existing) {
-      this.revokeActiveBinding(key, existing);
-    }
-
     const bindingReference = randomBytes(32).toString("base64url");
     const record: AgentRuntimeBindingRecord = {
       bindingId: randomUUID(),
@@ -168,8 +182,17 @@ export class AgentRuntimeBindingRegistry {
       reference: bindingReference,
       authorityFingerprint: nextAuthorityFingerprint,
     };
+    if (existing) {
+      this.removeActiveBinding(key, existing);
+    }
     this.bindingsByKey.set(key, active);
     this.keysByReferenceHash.set(record.bindingReferenceHash, key);
+    this.emitChange({
+      actorSessionId,
+      providerId,
+      previousExecutionGeneration: existing?.record.executionGeneration ?? null,
+      executionGeneration: record.executionGeneration,
+    });
     return this.project(active, transport);
   }
 
@@ -228,8 +251,9 @@ export class AgentRuntimeBindingRegistry {
   }
 
   revokeAll(): void {
-    this.bindingsByKey.clear();
-    this.keysByReferenceHash.clear();
+    for (const [key, active] of [...this.bindingsByKey.entries()]) {
+      this.revokeActiveBinding(key, active);
+    }
   }
 
   getActiveBindingCount(now = new Date()): number {
@@ -239,6 +263,23 @@ export class AgentRuntimeBindingRegistry {
       }
     }
     return this.bindingsByKey.size;
+  }
+
+  getExecutionGeneration(
+    actorSessionId: string,
+    providerId: string,
+    now = new Date(),
+  ): string | null {
+    const key = bindingKey(actorSessionId.trim(), providerId.trim());
+    const active = this.bindingsByKey.get(key);
+    if (!active) {
+      return null;
+    }
+    if (isExpired(active.record, now)) {
+      this.revokeActiveBinding(key, active);
+      return null;
+    }
+    return active.record.executionGeneration;
   }
 
   private project(active: ActiveBinding, transport: "env"): ProviderAgentRuntimeBindingProjection {
@@ -253,7 +294,27 @@ export class AgentRuntimeBindingRegistry {
   }
 
   private revokeActiveBinding(key: string, active: ActiveBinding): void {
+    this.removeActiveBinding(key, active);
+    this.emitChange({
+      actorSessionId: active.record.actorSessionId,
+      providerId: active.record.providerId,
+      previousExecutionGeneration: active.record.executionGeneration,
+      executionGeneration: null,
+    });
+  }
+
+  private removeActiveBinding(key: string, active: ActiveBinding): void {
     this.bindingsByKey.delete(key);
     this.keysByReferenceHash.delete(active.record.bindingReferenceHash);
+  }
+
+  private emitChange(change: AgentRuntimeBindingChange): void {
+    for (const listener of [...this.changeListeners]) {
+      try {
+        listener({ ...change });
+      } catch {
+        // Binding state transitions must not fail because a projection listener failed.
+      }
+    }
   }
 }

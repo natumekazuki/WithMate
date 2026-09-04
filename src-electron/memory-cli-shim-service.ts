@@ -3,6 +3,12 @@ import path from "node:path";
 
 import type { MemoryV6CliShimDiagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
 
+type MemoryCliShimServiceDiagnostics = MemoryV6CliShimDiagnostics & {
+  shimDirectory: string | null;
+  shimPath: string | null;
+  message: string;
+};
+
 const POSIX_MANAGED_MARKER = "# Managed by WithMate Memory CLI shim";
 const POSIX_SHIM_FILE_NAME = "withmate-memory";
 const POSIX_SHIM_METADATA_FILE_NAME = ".withmate-memory-shim.json";
@@ -18,7 +24,7 @@ export type MemoryCliShimServiceDeps = {
 export class MemoryCliShimService {
   constructor(private readonly deps: MemoryCliShimServiceDeps) {}
 
-  async getDiagnostics(): Promise<MemoryV6CliShimDiagnostics> {
+  async getDiagnostics(): Promise<MemoryCliShimServiceDiagnostics> {
     const platform = this.resolvePlatform();
     if (platform === "win32") {
       return {
@@ -123,7 +129,7 @@ export class MemoryCliShimService {
     }
   }
 
-  async install(): Promise<MemoryV6CliShimDiagnostics> {
+  async install(): Promise<MemoryCliShimServiceDiagnostics> {
     const platform = this.resolvePlatform();
     if (!this.isPosixPlatform(platform)) {
       throw new Error("Memory CLI shim install is only available on macOS and Linux.");
@@ -154,7 +160,7 @@ export class MemoryCliShimService {
     return this.getDiagnostics();
   }
 
-  async uninstall(): Promise<MemoryV6CliShimDiagnostics> {
+  async uninstall(): Promise<MemoryCliShimServiceDiagnostics> {
     const platform = this.resolvePlatform();
     if (!this.isPosixPlatform(platform)) {
       throw new Error("Memory CLI shim uninstall is only available on macOS and Linux.");

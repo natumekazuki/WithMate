@@ -25,7 +25,10 @@ export class HomeSessionQueryGeneration {
   }
 
   capture(): HomeSessionQueryRequestToken {
-    return { generation: this.generation, queryKey: this.queryKey };
+    return {
+      generation: this.generation,
+      queryKey: this.queryKey,
+    };
   }
 
   isCurrent(token: HomeSessionQueryRequestToken): boolean {

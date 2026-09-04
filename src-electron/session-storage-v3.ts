@@ -987,6 +987,10 @@ export class SessionStorageV3 {
   }
 
   async listHomeSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult> {
+    return this.listSessionSummaryPage(request);
+  }
+
+  async listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult> {
     return this.withDb((db) => {
       const parsed = parseSessionSummaryPageRequest(request);
       const cursor = parsed.scope === "open"

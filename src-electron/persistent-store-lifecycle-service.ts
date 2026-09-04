@@ -46,6 +46,12 @@ import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
 import type { ConversationTimingStorageSnapshot } from "./conversation-timing.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
+import type {
+  SessionCharacterAuthoringRuntimeClearInput,
+  SessionCharacterAuthoringRuntimeClearResult,
+  SessionRunningTurnStartInput,
+  SessionRunningTurnStartResult,
+} from "./session-running-turn-start.js";
 
 type ClosableStore = {
   close(): void;
@@ -70,6 +76,7 @@ export type SessionStorageRead = AwaitableStorageMethods<
 > & Pick<SessionStorage, "close"> & {
   listSessionIdsWithChildren?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
   listHomeSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
 };
 export type SessionStorageWrite = AwaitableStorageMethods<
@@ -77,6 +84,10 @@ export type SessionStorageWrite = AwaitableStorageMethods<
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
 > & SessionStorageRead & {
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
+  appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
+  clearCharacterAuthoringRuntimeState?(
+    input: SessionCharacterAuthoringRuntimeClearInput,
+  ): Awaitable<SessionCharacterAuthoringRuntimeClearResult>;
 };
 export type SessionPinStorage = {
   setSessionPinned(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;

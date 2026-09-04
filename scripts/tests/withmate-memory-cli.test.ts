@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 
+import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src/character-context/character-context-contract.js";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import { createMemoryErrorResponse } from "../../src/memory-v6/memory-response-contract.js";
 import {
@@ -35,6 +36,7 @@ import {
   type WithMateMemoryRuntimeOperation,
   type WithMateMemoryRuntimeResponse,
 } from "../withmate-memory-runtime-client.js";
+import { publishRuntimeDiscoveryEntry } from "../../src/runtime-discovery/runtime-discovery-registry.js";
 
 it("provider execution markerがある場合はbinding省略をlocal-userへdowngradeしない", () => {
   assert.throws(
@@ -215,7 +217,195 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
 }
 
 describe("withmate-memory CLI", () => {
-  it("loopbackの環境変数URLをdiscovery結果として使う", async () => {
+// @test-value v1
+// kind = "security"
+// claim = "agent CLI fallbackはMCP credentialとbound runtime identityを選び、公開tool入力をMCPと同じruntime bodyへ変換してbindingとturn capabilityを伝搬する"
+// oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+// failure_mode = "fallbackがoperator credentialへ昇格する、別runtimeを選ぶ、binding/turnを欠く、またはMCP内部fieldを補わずadmissionと異なるbodyを送る"
+// scope = "withmate-memory-agent-cli-fallback"
+// lifecycle = "permanent"
+// @end-test-value
+it("agent CLI fallbackはMCP credentialとruntime bindingを使う", async () => {
+  const stdout = createOutputCapture();
+  const observed: Array<{ connection: WithMateMemoryRuntimeConnection; operation: WithMateMemoryRuntimeOperation; options: Record<string, unknown> }> = [];
+  const env = {
+    WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+    WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+    WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-a",
+    WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+    WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
+    WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "22222222-2222-4222-8222-222222222222",
+    WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777",
+    WITHMATE_MEMORY_API_SECRET: TEST_API_SECRET,
+    WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+    WITHMATE_MEMORY_OPERATOR_API_SECRET: TEST_OPERATOR_SECRET,
+  };
+  const runtimeCall: NonNullable<WithMateMemoryCliDeps["runtimeCall"]> = async (connection, operation, options) => {
+    observed.push({ connection, operation, options });
+    return { ok: true, status: 200, value: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, created: true } };
+  };
+  const body = {
+    target: { kind: "project", project: { type: "id", id: "project-a" } },
+    kind: "decision",
+    title: "Fallback",
+    body: "Fallback body",
+    preview: "Fallback preview",
+    tags: [],
+    idempotencyKey: "fallback-append-a",
+  };
+  const exitCode = await runWithMateMemoryCliImpl([
+    "append", "--fallback-from", "mcp", "--json", JSON.stringify(body),
+  ], {
+    env,
+    stdout: stdout.stream,
+    runtimeCall,
+  });
+
+  assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+  assert.equal(observed.length, 1);
+  assert.deepEqual(observed[0].connection.credential, { adapter: "mcp", adapterSecret: "mcp-secret" });
+  assert.equal(observed[0].operation.fallbackFrom, "mcp");
+  assert.deepEqual(observed[0].operation.body, {
+    ...body,
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+  });
+  assert.equal(observed[0].options.bindingReference, "binding-a");
+  assert.equal(observed[0].options.turnCapability, "turn-a");
+
+  const characterBody = {
+    query: "fallback defaults",
+    scope: { scope: "character" },
+  };
+  const characterExitCode = await runWithMateMemoryCliImpl([
+    "character-memory-search", "--fallback-from", "mcp", "--json", JSON.stringify(characterBody),
+  ], {
+    env,
+    stdout: createOutputCapture().stream,
+    runtimeCall,
+  });
+  assert.equal(characterExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+  assert.equal(observed.length, 2);
+  assert.deepEqual(observed[1].operation.body, {
+    ...characterBody,
+    limit: 5,
+    schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+  });
+});
+
+// @test-value v1
+// kind = "security"
+// claim = "provider-bound CLIは通常operator mode、不完全・operator-only・内部field付きfallback入力、非idempotent file exportをdispatch前に拒否する"
+// oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+// failure_mode = "bound processがfallback markerを省略してoperator credentialを選ぶ、markerでoperator authorityやcaller選択runtimeへ到達する、schemaVersion追加requestを同一admissionへ正規化する、またはget-file/export-filesをagent fallbackとしてdispatchする"
+// scope = "withmate-memory-agent-cli-fallback"
+// lifecycle = "permanent"
+// @end-test-value
+it("agent CLI fallbackは非対応入力とbound runtime情報の欠落・不正を拒否する", async () => {
+  const boundEnv = {
+    WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+    WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+    WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+    WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
+  };
+  for (const { args, env } of [
+    { args: ["search", "--json", JSON.stringify({})], env: boundEnv },
+    {
+      args: ["append", "--json", JSON.stringify({
+        schemaVersion: "withmate-memory-v1",
+        target: { owner: "user", scope: "global" },
+        kind: "decision",
+        title: "Bound no-flag write",
+        body: "Must not dispatch as operator.",
+        preview: "Bound no-flag writes are rejected.",
+        tags: [],
+        idempotencyKey: "bound-no-flag-write",
+      })],
+      env: boundEnv,
+    },
+    { args: ["audit", "--fallback-from", "mcp", "--all-targets"], env: boundEnv },
+    {
+      args: ["append", "--fallback-from", "mcp", "--json", JSON.stringify({
+        schemaVersion: "attacker-controlled",
+        target: { kind: "user-global" },
+        kind: "decision",
+        title: "Changed fallback input",
+        body: "Internal fields are not public MCP input.",
+        preview: "Internal fields must be rejected.",
+        tags: [],
+        idempotencyKey: "changed-fallback-schema-version",
+      })],
+      env: boundEnv,
+    },
+    {
+      args: ["get-file", "--fallback-from", "mcp", "--json", JSON.stringify({
+        target: { kind: "user-global" },
+        objectId: "a".repeat(32),
+        outputPath: "C:/tmp/memory.bin",
+      })],
+      env: boundEnv,
+    },
+    {
+      args: ["export-files", "--fallback-from", "mcp", "--json", JSON.stringify({
+        target: { kind: "user-global" },
+        entryId: "memory-a",
+        outputDirectoryPath: "C:/tmp/memory-export",
+      })],
+      env: boundEnv,
+    },
+    {
+      args: ["search", "--fallback-from", "mcp", "--api-url", "http://127.0.0.1:7777", "--json", JSON.stringify({})],
+      env: boundEnv,
+    },
+    { args: ["file-usage", "--fallback-from", "mcp", "--largest"], env: boundEnv },
+    { args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})], env: {} },
+    {
+      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+      env: {
+        WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+        WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+        WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
+      },
+    },
+    {
+      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+      env: {
+        WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+        WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+      },
+    },
+    {
+      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+      env: {
+        ...boundEnv,
+        WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "not-a-uuid",
+      },
+    },
+  ]) {
+    const stdout = createOutputCapture();
+    let dispatched = false;
+    const exitCode = await runWithMateMemoryCliImpl(args, {
+      env,
+      stdout: stdout.stream,
+      runtimeCall: async () => {
+        dispatched = true;
+        return { ok: true, status: 200, value: {} };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
+    assert.equal(dispatched, false);
+  }
+});
+
+// @test-value v1
+// kind = "contract"
+// claim = "loopback環境変数からruntime接続情報を解決する"
+// oracle = { type = "contract", ref = "memory runtime discovery" }
+// failure_mode = "不正URLやgeneration情報を誤って受理する"
+// scope = "memory-cli-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+it("loopbackの環境変数URLをdiscovery結果として使う", async () => {
     assert.deepEqual(
       await discoverWithMateMemoryApi({
         adapter: "cli",
@@ -225,7 +415,7 @@ describe("withmate-memory CLI", () => {
         },
       }),
       {
-        api: { baseUrl: "http://127.0.0.1:3456", apiSecret: TEST_API_SECRET, runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID },
+        api: { baseUrl: "http://127.0.0.1:3456", apiSecret: TEST_API_SECRET, runtimeGenerationId: TEST_RUNTIME_INSTANCE_ID, runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID },
         credential: { adapter: "cli", adapterSecret: TEST_OPERATOR_SECRET },
       },
     );
@@ -235,7 +425,7 @@ describe("withmate-memory CLI", () => {
         env: { ...TEST_RUNTIME_ENV, WITHMATE_MEMORY_API_URL: "http://[::1]:3456/" },
       }),
       {
-        api: { baseUrl: "http://[::1]:3456", apiSecret: TEST_API_SECRET, runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID },
+        api: { baseUrl: "http://[::1]:3456", apiSecret: TEST_API_SECRET, runtimeGenerationId: TEST_RUNTIME_INSTANCE_ID, runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID },
         credential: { adapter: "cli", adapterSecret: TEST_OPERATOR_SECRET },
       },
     );
@@ -263,7 +453,15 @@ describe("withmate-memory CLI", () => {
     );
   });
 
-  it("discovery fileからloopback API URLを解決する", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "legacy discovery fileをcanonical generationへ変換する"
+// oracle = { type = "contract", ref = "memory runtime discovery" }
+// failure_mode = "旧形式のruntime identityを誤解釈する"
+// scope = "memory-cli-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+it("discovery fileからloopback API URLを解決する", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-"));
     const discoveryFilePath = join(tempDirectory, "memory-v6-api.json");
     try {
@@ -280,7 +478,7 @@ describe("withmate-memory CLI", () => {
       assert.deepEqual(
         await discoverWithMateMemoryApi({ adapter: "cli", env: {}, discoveryFilePath }),
         {
-          api: { baseUrl: "http://localhost:4567", apiSecret: "discovery-secret", runtimeInstanceId: "runtime-from-discovery" },
+          api: { baseUrl: "http://localhost:4567", apiSecret: "discovery-secret", runtimeGenerationId: "runtime-from-discovery", runtimeInstanceId: "runtime-from-discovery" },
           credential: { adapter: "cli", adapterSecret: "operator-secret" },
         },
       );
@@ -289,7 +487,15 @@ describe("withmate-memory CLI", () => {
     }
   });
 
-  it("runtime directoryのdiscovery fileを既定で読む", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "runtime directoryのlegacy projectionを既定解決する"
+// oracle = { type = "contract", ref = "memory runtime discovery" }
+// failure_mode = "既定pathが別runtimeを参照する"
+// scope = "memory-cli-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+it("runtime directoryのdiscovery fileを既定で読む", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-runtime-"));
     try {
       await writeFile(join(tempDirectory, "memory-v6.current.json"), JSON.stringify({
@@ -311,7 +517,7 @@ describe("withmate-memory CLI", () => {
           },
         }),
         {
-          api: { baseUrl: "http://127.0.0.1:4567", apiSecret: "api-secret", runtimeInstanceId: "runtime-a" },
+          api: { baseUrl: "http://127.0.0.1:4567", apiSecret: "api-secret", runtimeGenerationId: "runtime-a", runtimeInstanceId: "runtime-a" },
           credential: { adapter: "cli", adapterSecret: "operator-secret" },
         },
       );
@@ -349,49 +555,78 @@ describe("withmate-memory CLI", () => {
     }
   });
 
-  it("WithMate未起動時はDB直読みに逃げずWITHMATE_NOT_RUNNINGを返す", async () => {
+// @test-value v1
+// kind = "regression"
+// claim = "runtime unavailable時にDB直読みにfallbackしない"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "停止runtimeへ接続できない"
+// scope = "memory-cli-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+it("WithMate未起動時はDB直読みに逃げずWITHMATE_NOT_RUNNINGを返す", async () => {
+    const registryRootDirectoryPath = await mkdtemp(join(tmpdir(), "withmate-memory-empty-registry-"));
     const stdout = createOutputCapture();
-    const exitCode = await runWithMateMemoryCli(["status"], {
-      env: {},
-      stdout: stdout.stream,
-      readFile: async () => {
-        throw new Error("missing discovery file");
-      },
-    });
+    try {
+      const exitCode = await runWithMateMemoryCli(["status"], {
+        env: {},
+        stdout: stdout.stream,
+        registryRootDirectoryPath,
+        readFile: async () => {
+          throw new Error("missing discovery file");
+        },
+      });
 
-    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
-    assert.equal(stdout.json().error.code, "WITHMATE_NOT_RUNNING");
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
+      assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
+    } finally {
+      await rm(registryRootDirectoryPath, { recursive: true, force: true });
+    }
   });
 
-  it("Character commandのruntime unavailableを共通error semanticsで返す", async () => {
+// @test-value v1
+// kind = "regression"
+// claim = "Character commandがruntime unavailableをstructured errorへ投影する"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "storage_unavailableの原因が識別不能になる"
+// scope = "memory-cli-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+it("Character commandのruntime unavailableを共通error semanticsで返す", async () => {
+    const registryRootDirectoryPath = await mkdtemp(join(tmpdir(), "withmate-memory-empty-registry-"));
     const stdout = createOutputCapture();
-    const exitCode = await runWithMateMemoryCli([
-      "context-get",
-      "--json",
-      JSON.stringify({
-        schemaVersion: "withmate-character-context-v1",
-        characterId: "character-a",
-        sessionId: "session-a",
-      }),
-    ], {
-      env: {},
-      stdout: stdout.stream,
-      readFile: async () => {
-        throw new Error("missing discovery file");
-      },
-    });
+    try {
+      const exitCode = await runWithMateMemoryCli([
+        "context-get",
+        "--json",
+        JSON.stringify({
+          schemaVersion: "withmate-character-context-v1",
+          characterId: "character-a",
+          sessionId: "session-a",
+        }),
+      ], {
+        env: {},
+        stdout: stdout.stream,
+        registryRootDirectoryPath,
+        readFile: async () => {
+          throw new Error("missing discovery file");
+        },
+      });
 
-    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
-    assert.deepEqual(stdout.json(), {
-      schemaVersion: "withmate-character-context-v1",
-      error: {
-        code: "storage_unavailable",
-        message: "WithMate runtime is not available.",
-        retryable: true,
-        conversationMayContinue: true,
-        effect: "none",
-      },
-    });
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+      assert.deepEqual(stdout.json(), {
+        schemaVersion: "withmate-character-context-v1",
+        error: {
+          code: "storage_unavailable",
+          message: "WithMate runtime discovery could not select a runtime.",
+          retryable: true,
+          conversationMayContinue: true,
+          effect: "none",
+          details: { discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE", candidates: [] },
+        },
+      });
+    } finally {
+      await rm(registryRootDirectoryPath, { recursive: true, force: true });
+    }
   });
 
   it("Character writeのdispatch後timeoutはeffect unknownを返す", async () => {
@@ -577,7 +812,15 @@ describe("withmate-memory CLI", () => {
     }
   });
 
-  it("stale discovery endpointへ接続できない場合もWITHMATE_NOT_RUNNINGを返す", async () => {
+// @test-value v1
+// kind = "regression"
+// claim = "stale endpoint接続失敗をruntime unavailableとして返す"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "終了済みruntimeへ接続を試みる"
+// scope = "memory-cli-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+it("stale discovery endpointへ接続できない場合もWITHMATE_NOT_RUNNINGを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["status"], {
       env: TEST_RUNTIME_ENV,
@@ -588,10 +831,18 @@ describe("withmate-memory CLI", () => {
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
-    assert.equal(stdout.json().error.code, "WITHMATE_NOT_RUNNING");
+    assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
   });
 
-  it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT_RUNNINGを返す", async () => {
+// @test-value v1
+// kind = "regression"
+// claim = "stale endpointの応答停止をtimeoutでboundedに処理する"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "応答しないruntimeがCLIを占有する"
+// scope = "memory-cli-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT_RUNNINGを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["status"], {
       env: TEST_RUNTIME_ENV,
@@ -603,7 +854,7 @@ describe("withmate-memory CLI", () => {
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
-    assert.equal(stdout.json().error.code, "WITHMATE_NOT_RUNNING");
+    assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
   });
 
   it("file operationは通常requestと別のtimeoutを使い、本体timeoutを明示する", async () => {
@@ -1434,7 +1685,15 @@ describe("withmate-memory CLI", () => {
     assert.match(stdout.json().error.message, /Unknown option: --session-project/);
   });
 
-  it("POST redirectは追従せずrequest bodyを転送しない", async () => {
+// @test-value v1
+// kind = "security"
+// claim = "redirect先へsecretとrequest bodyを転送しない"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "redirect経由でcredentialが漏洩する"
+// scope = "memory-cli-transport"
+// lifecycle = "permanent"
+// @end-test-value
+it("POST redirectは追従せずrequest bodyを転送しない", async () => {
     let destinationRequests = 0;
 
     await withHttpServer((request, response) => {
@@ -1468,14 +1727,22 @@ describe("withmate-memory CLI", () => {
         });
 
         assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
-        assert.equal(stdout.json().error.code, "WITHMATE_NOT_RUNNING");
+        assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
       });
     });
 
     assert.equal(destinationRequests, 0);
   });
 
-  it("runtime identityを検証できないport再利用先へmutation bodyやsecretを送らない", async () => {
+// @test-value v1
+// kind = "security"
+// claim = "identity challenge失敗時にmutation bodyとsecretを送信しない"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "port再利用先へ誤接続する"
+// scope = "memory-cli-transport"
+// lifecycle = "permanent"
+// @end-test-value
+it("runtime identityを検証できないport再利用先へmutation bodyやsecretを送らない", async () => {
     const stdout = createOutputCapture();
     const requestBody = {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -1505,7 +1772,7 @@ describe("withmate-memory CLI", () => {
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
-    assert.equal(stdout.json().error.code, "WITHMATE_NOT_RUNNING");
+    assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
     assert.equal(requests.length, 1);
     assert.match(requests[0].url, /^http:\/\/127\.0\.0\.1:7777\/v1\/status\?nonce=/);
     assert.deepEqual({
@@ -1519,7 +1786,15 @@ describe("withmate-memory CLI", () => {
     });
   });
 
-  it("challenge後に同じportのpeerが差し替わってもcredentialとmutationを再送せず偽成功を拒否する", async () => {
+// @test-value v1
+// kind = "security"
+// claim = "challenge後のpeer差替えでdispatchを再実行しない"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "偽peerへcredentialを再送する"
+// scope = "memory-cli-transport"
+// lifecycle = "permanent"
+// @end-test-value
+it("challenge後に同じportのpeerが差し替わってもcredentialとmutationを再送せず偽成功を拒否する", async () => {
     const firstObservedHeaders: Array<Record<string, string | string[] | undefined>> = [];
     let replacementRequests = 0;
     let replacementServer: ReturnType<typeof createServer> | null = null;
@@ -1572,7 +1847,7 @@ describe("withmate-memory CLI", () => {
       }
       assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
       assert.equal(stdout.json().error.code, "storage_unavailable");
-      assert.equal(stdout.json().error.effect, "unknown");
+      assert.equal(stdout.json().error.effect, "none");
       assert.equal(replacementRequests, 0);
       assert.equal(firstObservedHeaders.length, 1);
       assert.equal(firstObservedHeaders[0]["x-withmate-memory-api-secret"], undefined);
@@ -1860,5 +2135,83 @@ describe("withmate-memory CLI", () => {
     assert.match(message, /--stdin/);
     assert.match(message, /--project/);
     assert.match(message, /--tag/);
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "operator CLIは複数active候補を列挙でき、暗黙のlast-writer選択を行わない"
+  // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+  // failure_mode = "instances/status --allが一意性を確認せず後発runtimeへ接続する"
+  // scope = "withmate-memory-cli-discovery"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("instancesとstatus --allはactive候補をsafe metadataだけで列挙する", async () => {
+    const root = await mkdtemp(join(tmpdir(), "withmate-cli-registry-"));
+    const ids = [
+      ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
+      ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"],
+    ] as const;
+    const publications = [] as Array<{ unpublish(): Promise<boolean>; cleanupGeneration(): Promise<void> }>;
+    try {
+      for (const [applicationInstanceId, runtimeGenerationId] of ids) {
+        const publication = await publishRuntimeDiscoveryEntry({
+          rootDirectoryPath: root,
+          security: async () => undefined,
+          identity: { applicationInstanceId, runtimeKind: "memory", runtimeGenerationId },
+          buildChannel: "development",
+          process: { pid: 100, startedAt: "2026-08-30T00:00:00.000Z" },
+          credentialDocuments: [{ adapterKind: "cli", document: {
+            schemaVersion: "withmate-runtime-credential-v1",
+            applicationInstanceId,
+            runtimeKind: "memory",
+            runtimeGenerationId,
+            adapterKind: "cli",
+            credential: {
+              schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+              adapter: "cli",
+              applicationInstanceId,
+              runtimeGenerationId,
+              runtimeInstanceId: runtimeGenerationId,
+              baseUrl: "http://127.0.0.1:4567",
+              apiSecret: "secret",
+              adapterSecret: "operator-secret",
+            },
+          } }],
+          clock: { now: () => new Date("2026-08-30T00:00:00.000Z") },
+          timers: { setInterval: () => ({}) as ReturnType<typeof setInterval>, clearInterval: () => undefined },
+        });
+        publications.push(publication);
+      }
+      const env = {
+        WITHMATE_MEMORY_REGISTRY_ROOT_DIRECTORY: root,
+        WITHMATE_MEMORY_DISCOVERY_FILE: " ",
+      };
+      const output = createOutputCapture();
+      assert.equal(await runWithMateMemoryCli(["instances"], {
+        env,
+        registryRootDirectoryPath: root,
+        legacyDiscoveryFilePath: join(root, "none.json"),
+        readFile: async () => { throw new Error("no legacy projection"); },
+        stdout: output.stream,
+      }), WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+      const listed = output.json() as { instances: Array<Record<string, unknown>> };
+      assert.equal(listed.instances.length, 2);
+      assert.equal(JSON.stringify(listed).includes("secret"), false);
+      const allOutput = createOutputCapture();
+      assert.equal(await runWithMateMemoryCli(["status", "--all"], {
+        env,
+        registryRootDirectoryPath: root,
+        legacyDiscoveryFilePath: join(root, "none.json"),
+        readFile: async () => { throw new Error("no legacy projection"); },
+        stdout: allOutput.stream,
+      }), WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+      assert.equal((allOutput.json() as { instances: unknown[] }).instances.length, 2);
+    } finally {
+      for (const publication of publications.reverse()) {
+        await publication.unpublish();
+        await publication.cleanupGeneration();
+      }
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

@@ -43,6 +43,7 @@ function createLaunchSelection(
     reasoningEffort: "high",
     approvalMode: "untrusted",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
     customAgentName: "",
     ...overrides,
   };
@@ -578,7 +579,15 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
   );
 });
 
-test("MainSessionCommandFacade は IPC payload の余分な session ID と legacy workspace fields を無視する", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "Main Session作成時のMain-owned runtime optionsはIPC payloadではなくlaunch selectionから保存する"
+// oracle = { type = "contract", ref = "accepted behavior: new Session defaults and Main-owned runtime selection" }
+// failure_mode = "型境界を迂回したIPC payloadのruntime値が新規Sessionへ混入する"
+// scope = "main-session-create"
+// lifecycle = "permanent"
+// @end-test-value
+test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視する", async () => {
   let persistedInput: Record<string, unknown> | null = null;
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
@@ -626,6 +635,7 @@ test("MainSessionCommandFacade は IPC payload の余分な session ID と legac
     reasoningEffort: "low",
     approvalMode: "never",
     codexSandboxMode: "danger-full-access",
+    codexSpeed: "fast",
     customAgentName: "forged-agent",
   };
 
@@ -641,6 +651,7 @@ test("MainSessionCommandFacade は IPC payload の余分な session ID と legac
       reasoningEffort: persistedInput?.reasoningEffort,
       approvalMode: persistedInput?.approvalMode,
       codexSandboxMode: persistedInput?.codexSandboxMode,
+      codexSpeed: persistedInput?.codexSpeed,
       customAgentName: persistedInput?.customAgentName,
     },
     {
@@ -652,6 +663,7 @@ test("MainSessionCommandFacade は IPC payload の余分な session ID と legac
       reasoningEffort: "xhigh",
       approvalMode: "on-request",
       codexSandboxMode: "read-only",
+      codexSpeed: "standard",
       customAgentName: "stored-agent",
     },
   );

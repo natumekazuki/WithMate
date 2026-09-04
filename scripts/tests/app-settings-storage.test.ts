@@ -12,6 +12,58 @@ import {
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 
 describe("AppSettingsStorage", () => {
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 15 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-15" }
+  // failure_mode = "line 15 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("glossary proactive create limitは初期値5を保存し、0を維持し、欠落・不正値をfallbackしない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const initialStorage = new AppSettingsStorage(dbPath);
+      assert.equal(initialStorage.getSettings().glossaryProactiveCreateLimit, 5);
+      initialStorage.updateSettings({
+        ...initialStorage.getSettings(),
+        glossaryProactiveCreateLimit: 0,
+      });
+      assert.equal(initialStorage.getSettings().glossaryProactiveCreateLimit, 0);
+      initialStorage.close();
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("invalid", "glossary_proactive_create_limit");
+      invalidDatabase.close();
+      const invalidStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidStorage.getSettings().glossaryProactiveCreateLimit, null);
+      invalidStorage.close();
+
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("glossary_proactive_create_limit");
+      missingDatabase.close();
+      const missingStorage = new AppSettingsStorage(dbPath);
+      assert.equal(missingStorage.getSettings().glossaryProactiveCreateLimit, null);
+      missingStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 51 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-51" }
+  // failure_mode = "line 51 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("保存済みの旧 path error 既定値を読み込み時に現在の既定値へ移行する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -39,6 +91,14 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 78 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-78" }
+  // failure_mode = "line 78 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("legacy right pane visibility を canonical side pane へ一度だけ移行する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -77,6 +137,14 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 116 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-116" }
+  // failure_mode = "line 116 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Session turn notification setting の欠損値と不正値は既定の有効へ戻す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -113,6 +181,14 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 152 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-152" }
+  // failure_mode = "line 152 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Session turn notification response preview setting の欠損値と不正値は既定の無効へ戻す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -149,6 +225,14 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 188 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-188" }
+  // failure_mode = "line 188 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("send scroll setting の欠損値と不正値は既定の有効へ戻す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -181,6 +265,14 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 220 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-220" }
+  // failure_mode = "line 220 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("coding provider settings を canonical key で保存して再読込できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -201,6 +293,13 @@ describe("AppSettingsStorage", () => {
           actionDock: "expanded",
           sidePane: "context",
           priority: "dock-first",
+        },
+        keyboardShortcuts: {
+          overrides: {
+            "session.message.toggle-collapse": {
+              windows: { key: "x", ctrlKey: true, shiftKey: true },
+            },
+          },
         },
         memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
         userMicrocopyCatalog: {
@@ -279,6 +378,74 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 325 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-325" }
+  // failure_mode = "line 325 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("keyboard shortcutの無効なplatform overrideだけを除外して有効値を再loadできる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.close();
+
+      const persistedDatabase = new DatabaseSync(dbPath);
+      persistedDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run(JSON.stringify({
+          overrides: {
+            "session.message.toggle-collapse": {
+              windows: { key: "x" },
+              linux: { key: "x", altKey: true, shiftKey: true },
+              macos: { key: "x", metaKey: true, shiftKey: true },
+            },
+            "session.composer.submit": {
+              windows: { key: "Enter", altKey: true },
+              linux: { key: "Enter", ctrlKey: true, altKey: true },
+              macos: { key: "Enter", altKey: true },
+            },
+            "session.message.find": {
+              windows: { key: "g", ctrlKey: true },
+            },
+            "unknown.command": {
+              windows: { key: "x", ctrlKey: true, shiftKey: true },
+            },
+          },
+        }), "keyboard_shortcuts_json");
+      persistedDatabase.close();
+
+      const reopened = new AppSettingsStorage(dbPath);
+      const loaded = reopened.getSettings();
+      reopened.close();
+
+      assert.deepEqual(loaded.keyboardShortcuts.overrides, {
+        "session.message.toggle-collapse": {
+          linux: { key: "x", altKey: true, shiftKey: true },
+          macos: { key: "x", metaKey: true, shiftKey: true },
+        },
+        "session.composer.submit": {
+          windows: { key: "Enter", altKey: true },
+          macos: { key: "Enter", altKey: true },
+        },
+      });
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 377 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-377" }
+  // failure_mode = "line 377 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("chat layout の対象1項目だけを更新し、他の app settings と再読込結果を維持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -320,6 +487,14 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 418 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-418" }
+  // failure_mode = "line 418 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("chat layout 専用更新は指定された storage key だけを UPSERT する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -374,6 +549,14 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 472 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-472" }
+  // failure_mode = "line 472 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("通常の settings 更新は先に保存された chat layout を stale snapshot で巻き戻さない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -409,6 +592,14 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "test declaration at line 507 preserves its observable contract"
+  // oracle = { type = "contract", ref = "-507" }
+  // failure_mode = "line 507 violates its expected output or boundary behavior"
+  // scope = "app-settings-storage.test"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("resetSettings で app settings を canonical default へ戻し、再読込後も維持される", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

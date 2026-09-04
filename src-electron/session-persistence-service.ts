@@ -16,6 +16,7 @@ import {
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
+import { resolveCodexReviewerUpdate } from "../src/codex-reviewer.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
 import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
@@ -28,6 +29,12 @@ import { SessionIdCollisionError } from "./session-storage-errors.js";
 import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { sameSessionRoleBinding } from "../src/session-role-binding.js";
+import type {
+  SessionCharacterAuthoringRuntimeClearInput,
+  SessionCharacterAuthoringRuntimeClearResult,
+  SessionRunningTurnStartInput,
+  SessionRunningTurnStartResult,
+} from "./session-running-turn-start.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -50,6 +57,10 @@ export type SessionPersistenceServiceDeps = {
   ): Awaitable<readonly { id: string; parentSessionId: string; provider: string }[]>;
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
   upsertStoredTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
+  appendStoredRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
+  clearStoredCharacterAuthoringRuntimeState?(
+    input: SessionCharacterAuthoringRuntimeClearInput,
+  ): Awaitable<SessionCharacterAuthoringRuntimeClearResult>;
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
   setStoredSessionPinned?(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
   listStoredSessions(): Awaitable<Session[]>;
@@ -389,6 +400,84 @@ export class SessionPersistenceService {
     return this.enqueueSessionMutation(() => this.upsertSessionPreservingPinNow(nextSession, terminalCommit));
   }
 
+  async persistRunningTurnStart(
+    nextSession: Session,
+    expectedMessageCount: number,
+  ): Promise<Session> {
+    return this.enqueueSessionMutation(async () => {
+      const currentSession = this.deps.getSession(nextSession.id);
+      if (currentSession) {
+        assertSessionWritable(currentSession);
+      }
+      const userMessage = nextSession.messages[expectedMessageCount];
+      if (
+        nextSession.status !== "running"
+        || nextSession.runState !== "running"
+        || nextSession.messages.length !== expectedMessageCount + 1
+        || !userMessage
+        || userMessage.role !== "user"
+      ) {
+        throw new Error("running turn 開始のSession形式が不正だよ。");
+      }
+      if (!this.deps.appendStoredRunningTurnStart) {
+        throw new Error("running turn 開始のincremental storageが利用できないよ。");
+      }
+
+      const storedResult = await this.deps.appendStoredRunningTurnStart({
+        sessionId: nextSession.id,
+        expectedMessageCount,
+        userMessage,
+        updatedAt: nextSession.updatedAt,
+        characterRuntimeSnapshot: nextSession.sessionKind === "character-authoring"
+          ? nextSession.characterRuntimeSnapshot
+          : undefined,
+      });
+      const stored = cloneSessions([{
+        ...nextSession,
+        ...storedResult.summary,
+        characterRuntimeSnapshot: storedResult.characterRuntimeSnapshot,
+      }])[0];
+      this.runCommittedProjectionBestEffort("running turn", "cache update", () => {
+        this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+      });
+      this.runCommittedProjectionBestEffort("running turn", "broadcast", () => {
+        this.deps.broadcastSessions([stored.id]);
+      });
+      return stored;
+    });
+  }
+
+  async clearCharacterAuthoringRuntimeState(nextSession: Session): Promise<Session> {
+    return this.enqueueSessionMutation(async () => {
+      const currentSession = this.deps.getSession(nextSession.id);
+      if (currentSession) {
+        assertSessionWritable(currentSession);
+      }
+      if (nextSession.sessionKind !== "character-authoring") {
+        throw new Error("Character authoring runtime clearのownerが一致しないよ。");
+      }
+      if (!this.deps.clearStoredCharacterAuthoringRuntimeState) {
+        throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+      }
+
+      const storedResult = await this.deps.clearStoredCharacterAuthoringRuntimeState({
+        sessionId: nextSession.id,
+      });
+      const stored = cloneSessions([{
+        ...nextSession,
+        ...storedResult.summary,
+        characterRuntimeSnapshot: storedResult.characterRuntimeSnapshot,
+      }])[0];
+      this.runCommittedProjectionBestEffort("Character authoring runtime clear", "cache update", () => {
+        this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+      });
+      this.runCommittedProjectionBestEffort("Character authoring runtime clear", "broadcast", () => {
+        this.deps.broadcastSessions([stored.id]);
+      });
+      return stored;
+    });
+  }
+
   async upsertSessionPreservingPin(nextSession: Session): Promise<Session> {
     return this.enqueueSessionMutation(() => this.upsertSessionPreservingPinNow(nextSession));
   }
@@ -419,6 +508,7 @@ export class SessionPersistenceService {
     const storeStartedAt = Date.now();
     const normalizedSession = {
       ...sessionToStore,
+      codexReviewer: resolveCodexReviewerUpdate(currentSession, sessionToStore.codexReviewer),
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
         sessionToStore.workspacePath,
         sessionToStore.allowedAdditionalDirectories,
@@ -432,13 +522,14 @@ export class SessionPersistenceService {
     }
     const storeDurationMs = Date.now() - storeStartedAt;
     const cacheStartedAt = Date.now();
-    this.runCommittedProjectionBestEffort("dependency sync", () => this.syncStoredSession(stored));
-    this.runCommittedProjectionBestEffort("cache update", () => {
+    const projectionOwner = terminalCommit ? "terminal Session" : "Session";
+    this.runCommittedProjectionBestEffort(projectionOwner, "dependency sync", () => this.syncStoredSession(stored));
+    this.runCommittedProjectionBestEffort(projectionOwner, "cache update", () => {
       this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
     });
     const cacheDurationMs = Date.now() - cacheStartedAt;
     const broadcastStartedAt = Date.now();
-    this.runCommittedProjectionBestEffort("broadcast", () => this.deps.broadcastSessions([stored.id]));
+    this.runCommittedProjectionBestEffort(projectionOwner, "broadcast", () => this.deps.broadcastSessions([stored.id]));
     logSessionRunStuckInvestigation("persistence.upsert-session.done", {
       sessionId: stored.id,
       durationMs: Date.now() - startedAt,
@@ -592,11 +683,11 @@ export class SessionPersistenceService {
     this.deps.syncSessionDependencies(stored);
   }
 
-  private runCommittedProjectionBestEffort(label: string, operation: () => void): void {
+  private runCommittedProjectionBestEffort(owner: string, label: string, operation: () => void): void {
     try {
       operation();
     } catch (error) {
-      console.warn(`Committed Session ${label} failed`, error);
+      console.warn(`Committed ${owner} ${label} failed`, error);
     }
   }
 }

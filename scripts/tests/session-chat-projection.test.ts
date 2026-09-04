@@ -8,8 +8,9 @@ import {
   type AgentSessionChatProjectionInput,
 } from "../../src/chat/session-chat-projection.js";
 import type { CharacterProfile } from "../../src/app-state.js";
-import type { SessionContextPaneProps } from "../../src/session-components.js";
+import { SessionComposerExpanded, type SessionContextPaneProps } from "../../src/session-components.js";
 import type { Session } from "../../src/session-state.js";
+import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 
 const noop = () => {};
 
@@ -66,6 +67,7 @@ function createSession(): Session {
     runState: "idle",
     approvalMode: "never",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "fast",
     model: "gpt-test",
     reasoningEffort: "low",
     customAgentName: "",
@@ -141,6 +143,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     isComposerBlockedFeedbackActive: false,
     approvalChoiceOptions: [{ value: "never", label: "never" }],
     sandboxChoiceOptions: [{ value: "workspace-write", label: "workspace-write" }],
+    speedChoiceOptions: [{ value: "standard", label: "Standard" }, { value: "fast", label: "Fast" }],
     modelSelectOptions: [{ value: "gpt-test", label: "GPT Test" }],
     selectedModelFallbackLabel: "GPT Test",
     reasoningSelectOptions: [{ value: "low", label: "low" }],
@@ -235,6 +238,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onSendOrCancel: noop,
     onChangeApprovalMode: noop,
     onChangeCodexSandboxMode: noop,
+    onChangeCodexSpeed: noop,
     onChangeModel: noop,
     onChangeReasoningEffort: noop,
     onStartContextRailResize: noop,
@@ -392,6 +396,32 @@ test("buildAgentSessionChatWindowProps は submit pending の helper feedback �
   assert.equal(props.composerProps.composerSendability.isBusy, true);
 });
 
+// @test-value v1
+// kind = "invariant"
+// claim = "workspace再検証中のbusy状態は送信可否へ反映し、共通error表示へは投影しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+// failure_mode = "正常な再検証中にerror bannerが表示され、利用者がworkspace障害と誤認する"
+// scope = "agent-session-chat-projection-workspace-status"
+// lifecycle = "permanent"
+// @end-test-value
+test("buildAgentSessionChatWindowProps は workspace 再検証中の busy status を共通エラー領域へ投影しない", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      isBusy: true,
+      busyReason: "Workspace availability is being checked.",
+      primaryFeedback: "",
+      secondaryFeedback: [],
+      feedbackTone: null,
+      shouldShowFeedback: false,
+    },
+    isAuxiliaryMode: true,
+  }));
+
+  assert.deepEqual(props.errorNotices, []);
+  assert.equal(props.composerProps.composerSendability.isBusy, true);
+  assert.equal(props.composerProps.composerSendability.feedbackTone, null);
+});
+
 test("buildAgentSessionChatWindowProps は blank draft の helper feedback を共通エラー領域へ投影しない", () => {
   const props = buildAgentSessionChatWindowProps(createProjectionInput({
     composerSendability: {
@@ -415,6 +445,48 @@ test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操�
   assert.equal(auxiliaryProps.headerProps.showRenameButton, false);
   assert.equal(auxiliaryProps.headerProps.showAuditLogButton, true);
   assert.equal(auxiliaryProps.headerProps.showDeleteButton, false);
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "中央preview表示中はmessage操作shortcut scopeを無効にし、通常chat表示時だけ有効にする"
+// oracle = { type = "contract", ref = "docs/features/keyboard-shortcuts.md" }
+// failure_mode = "preview操作中のshortcutが背後のmessageへ誤作用する"
+// scope = "agent-session-chat-projection-shortcut-scope"
+// lifecycle = "permanent"
+// @end-test-value
+test("buildAgentSessionChatWindowProps は central preview 中に message shortcut scope を無効にする", () => {
+  const chatProps = buildAgentSessionChatWindowProps(createProjectionInput());
+  const previewProps = buildAgentSessionChatWindowProps(createProjectionInput({
+    mainContent: React.createElement("div", null, "preview"),
+  }));
+
+  assert.equal(chatProps.messageColumnProps.isContentActive, true);
+  assert.equal(previewProps.messageColumnProps.isContentActive, false);
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "Glossary annotation matcherとactivation callbackをmessage ownerへ同じprojectionとして渡す"
+// oracle = { type = "contract", ref = "docs/features/repository-glossary.md" }
+// failure_mode = "Session messageで用語注釈が欠落する、または注釈を選択してもGlossary detailを開けない"
+// scope = "agent-session-chat-projection-glossary"
+// lifecycle = "permanent"
+// @end-test-value
+test("buildAgentSessionChatWindowProps はglossary annotation projectionとactivationをmessage ownerへ渡す", () => {
+  const glossaryAnnotationMatcher = createGlossaryAnnotationMatcher([{
+    term: "Runtime",
+    aliases: [],
+    definition: "Runtime definition",
+  }], "revision-1");
+  const onActivateGlossaryEntry = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    glossaryAnnotationMatcher,
+    onActivateGlossaryEntry,
+  }));
+
+  assert.equal(props.messageColumnProps.glossaryAnnotationMatcher, glossaryAnnotationMatcher);
+  assert.equal(props.messageColumnProps.onActivateGlossaryEntry, onActivateGlossaryEntry);
 });
 
 test("buildAgentSessionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {
@@ -634,4 +706,29 @@ test("buildAgentSessionChatWindowProps は session runState ではなく running
 
   assert.equal(props.composerProps.isRunning, false);
   assert.equal(props.compactActionDockProps.isRunning, false);
+});
+
+// @test-value v1
+// kind = "contract"
+// claim = "shared composer projectionは表示中SessionのSpeedを渡し、running時は既存runtime option制約で変更不可にする"
+// oracle = { type = "contract", ref = "accepted behavior: shared UI" }
+// failure_mode = "表示中Sessionの選択値と表示がずれる、またはrun中にSpeedを変更できる"
+// scope = "session-chat-projection"
+// lifecycle = "permanent"
+// @end-test-value
+test("buildAgentSessionChatWindowProps はSpeed選択値とrunning制約をshared composerへ渡す", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    isSelectedSessionRunning: true,
+  }));
+
+  assert.equal(props.composerProps.selectedCodexSpeed, "fast");
+  assert.deepEqual(props.composerProps.speedOptions, [
+    { value: "standard", label: "Standard" },
+    { value: "fast", label: "Fast" },
+  ]);
+  const html = renderToStaticMarkup(React.createElement(
+    SessionComposerExpanded,
+    props.composerProps,
+  ));
+  assert.match(html, /disabled="" aria-label="Speed"/);
 });

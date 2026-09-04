@@ -38,6 +38,9 @@ export const SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL = "送信時にチャット
 export const SETTINGS_MEMORY_FILE_QUOTA_LABEL = "Memory file quota";
 export const SETTINGS_MEMORY_FILE_QUOTA_HELP =
   "Protected Object の全体容量上限。現在使用量が上限を超えている場合、新しい file append は失敗する。";
+export const SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL = "Glossary proactive create limit";
+export const SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP =
+  "Agentが1 turnで自発登録できる最大件数。0は自発登録だけを無効にし、明示的な作成依頼には影響しない。";
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
 export const SETTINGS_RESET_DATABASE_HELP =
   "Danger Zone: app settings などの DB 内容を初期化する。";
@@ -47,11 +50,6 @@ export const SETTINGS_DELETE_OLD_SESSIONS_HELP =
 export const SETTINGS_DIAGNOSTICS_LABEL = "Diagnostics";
 export const SETTINGS_OPEN_LOG_FOLDER_LABEL = "Open Logs";
 export const SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL = "Open Crash Dumps";
-export const SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL = "Provider Instruction Sample";
-export const SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP =
-  "必要な provider の user-level instruction file へ手動で貼り付けるための WithMate Memory 利用方針。WithMate は instruction file を自動編集しない。";
-export const SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL = "Copy Sample";
-
 export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarget, string> = {
   sessions: "sessions",
   auditLogs: "audit logs",

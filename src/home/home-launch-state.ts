@@ -1,4 +1,4 @@
-import type { CreateSessionRequest, SessionSummary } from "../app-state.js";
+import type { CreateSessionRequest, HomeSessionSummary } from "../app-state.js";
 import { DEFAULT_CHARACTER_THEME_COLORS, type CharacterThemeColors } from "../character-state.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import {

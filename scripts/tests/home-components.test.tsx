@@ -19,7 +19,6 @@ import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { MemoryV6Diagnostics } from "../../src/memory-v6/memory-diagnostics-state.js";
-import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../../src/memory-v6/provider-instruction-sample.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
 
@@ -61,7 +60,6 @@ describe("HomeSettingsContent", () => {
     providerSettingRows?: typeof providerSettingRows;
     providerCatalogLoaded?: boolean;
     memoryV6Diagnostics?: MemoryV6Diagnostics | null;
-    onCopyMemoryProviderInstructionSample?: () => void;
   };
 
   const buildSettingsContent = (params?: RenderSettingsParams) => HomeSettingsContent({
@@ -79,6 +77,7 @@ describe("HomeSettingsContent", () => {
     onChangeLaunchAtLoginEnabled: noOp,
     onChangeSessionTurnNotificationEnabled: noOp,
     onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
+    onChangeGlossaryProactiveCreateLimit: noOp,
     onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
@@ -95,7 +94,6 @@ describe("HomeSettingsContent", () => {
     onOpenMemoryV6Review: noOp,
     onInstallMemoryV6CliShim: noOp,
     onUninstallMemoryV6CliShim: noOp,
-    onCopyMemoryProviderInstructionSample: params?.onCopyMemoryProviderInstructionSample ?? noOp,
     onDeleteSessionsLastActiveBefore: noOp,
     onSaveSettings: noOp,
   });
@@ -109,6 +107,27 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Windows 通知に返答の冒頭を表示する"));
     assert.ok(html.includes("送信後に Action Dock を自動で閉じる"));
     assert.ok(html.includes("送信時にチャット末尾へ移動する"));
+  });
+
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Repository Glossaryのproactive create上限は0から100の数値入力として表示される"
+  // oracle = { type = "contract", ref = "docs/features/repository-glossary.md" }
+  // failure_mode = "設定画面が許容範囲外の上限を入力可能にする"
+  // scope = "Home settings glossary limit control"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Repository Glossaryにproactive create上限を0から100のnumber inputで表示する", () => {
+    const document = new JSDOM(renderSettings()).window.document;
+    const label = Array.from(document.querySelectorAll("label"))
+      .find((candidate) => candidate.textContent?.includes("Glossary proactive create limit"));
+    const input = label?.querySelector("input");
+
+    assert.equal(input?.type, "number");
+    assert.equal(input?.min, "0");
+    assert.equal(input?.max, "100");
+    assert.equal(input?.value, "5");
+    assert.ok(label?.textContent?.includes("明示的な作成依頼には影響しない"));
   });
 
   it("返答 preview toggle は Session turn notification が無効な間だけ操作できない", () => {
@@ -177,37 +196,34 @@ describe("HomeSettingsContent", () => {
     assert.match(html, /指定日より前に最後に使われた Session を削除する/);
   });
 
-  it("Memory V6 diagnostics はredacted summaryとして表示する", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "Memory diagnosticsはruntime、CLI Shim、Last Errorだけを表示し、managed Skillまたはprovider instructionを表示しない"
+  // oracle = { type = "adr", ref = "ADR-024 diagnostics projection" }
+  // failure_mode = "Settingsが廃止済みのMemory Skill同期状態またはprovider instruction copy導線を公開し続ける"
+  // scope = "memory-runtime-diagnostics-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Memory V6 diagnostics はinstance metadataだけのredacted summaryとして表示する", () => {
     const html = renderSettings({
       memoryV6Diagnostics: {
         generatedAt: "2026-06-27T00:00:00.000Z",
         runtime: {
           status: "running",
-          baseUrl: "http://127.0.0.1:12345",
-          dbPath: "C:/userdata/withmate-v6.db",
-          discoveryFilePath: "C:/runtime/memory-v6-api.json",
-          hasApiSecret: true,
+          applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+          runtimeGenerationId: "22222222-2222-4222-8222-222222222222",
+          buildChannel: "installed",
+          discoveryPublished: true,
         },
-        providers: [
-          { providerId: "codex", providerSupported: true },
-          { providerId: "custom", providerSupported: false },
-        ],
-        skillSync: [
-          { providerId: "codex", skillRootConfigured: true, skillPath: "C:/skills/withmate-memory", status: "unchanged" },
-          { providerId: "custom", skillRootConfigured: true, skillPath: null, status: "skipped-collision" },
-        ],
         cliShim: {
           platform: "darwin",
           commandName: "withmate-memory",
           supported: true,
           status: "installed",
-          shimDirectory: "/Users/test/.local/bin",
-          shimPath: "/Users/test/.local/bin/withmate-memory",
           pathContainsShimDirectory: true,
-          message: "withmate-memory is available from the configured shim directory.",
         },
         lastErrors: [
-          { kind: "memory-v6.runtime-api.start-failed", message: "startup failed", occurredAt: "2026-06-27T00:00:00.000Z" },
+          { kind: "memory-v6.runtime-api.start-failed", occurredAt: "2026-06-27T00:00:00.000Z" },
         ],
       },
     });
@@ -216,92 +232,16 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("running"));
     assert.ok(!html.includes("Active Bindings"));
     assert.ok(!html.includes("codex: env / custom: unsupported"));
-    assert.ok(html.includes("codex: unchanged / custom: skipped-collision"));
+    assert.ok(!html.includes("Managed Skill"));
     assert.ok(html.includes("CLI Shim"));
     assert.ok(html.includes("PATH ready"));
     assert.ok(html.includes("memory-v6.runtime-api.start-failed"));
-    assert.ok(html.includes("Provider Instruction Sample"));
-    assert.ok(html.includes("Copy Sample"));
-    assert.ok(html.includes("WithMate Memory Usage"));
-    assert.ok(html.includes("Do not read or write WithMate database files directly."));
+    assert.ok(!html.includes("Provider Instruction Sample"));
+    assert.ok(!html.includes("Copy Sample"));
     assert.ok(!html.includes("apiSecret"));
     assert.ok(!html.includes("bindingReference"));
-    assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_BINDING_REFERENCE"));
-    assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_API_SECRET"));
-    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /binding reference/i);
-    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /api secret/i);
-    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /discovery file path/i);
-    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /internal header/i);
-    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /local runtime identifier/i);
-  });
-
-  it("Provider Instruction Sample の copy button は handler を呼ぶ", async () => {
-    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
-    const previousWindow = globalThis.window;
-    const previousDocument = globalThis.document;
-    const previousHTMLElement = globalThis.HTMLElement;
-
-    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
-    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
-
-    const rootElement = dom.window.document.getElementById("root");
-    assert.ok(rootElement);
-    let root: Root | null = null;
-    let copyCount = 0;
-
-    try {
-      await act(async () => {
-        root = createRoot(rootElement);
-        root.render(buildSettingsContent({
-          onCopyMemoryProviderInstructionSample: () => {
-            copyCount += 1;
-          },
-          memoryV6Diagnostics: {
-            generatedAt: "2026-06-27T00:00:00.000Z",
-            runtime: {
-              status: "running",
-              baseUrl: "http://127.0.0.1:12345",
-              dbPath: "C:/userdata/withmate-v6.db",
-              discoveryFilePath: "C:/runtime/memory-v6-api.json",
-              hasApiSecret: true,
-            },
-            binding: { activeBindingCount: 0 },
-            providers: [],
-            skillSync: [],
-            cliShim: {
-              platform: "win32",
-              commandName: "withmate-memory",
-              supported: false,
-              status: "managed-by-installer",
-              shimDirectory: null,
-              shimPath: null,
-              pathContainsShimDirectory: true,
-              message: "Windows installer manages the withmate-memory command alias.",
-            },
-            lastErrors: [],
-          },
-        }));
-      });
-
-      const copyButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
-        button.textContent?.trim() === "Copy Sample"
-      );
-      assert.ok(copyButton);
-
-      await act(async () => {
-        copyButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-      });
-
-      assert.equal(copyCount, 1);
-    } finally {
-      await act(async () => {
-        root?.unmount();
-      });
-      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
-      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
-      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
-    }
+    assert.ok(!html.includes("C:/"));
+    assert.ok(!html.includes("/Users/"));
   });
 
   it("provider row が 0 件でも Coding Agent Providers section と empty state を表示する", () => {
@@ -769,13 +709,46 @@ describe("HomeRecentSessionsPanel", () => {
     assert.equal(newSessionButtons?.length, 1);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Homeの検索行は検索欄とNew Session操作だけを表示する"
+  // oracle = { type = "contract", ref = "docs/features/session-interface-refinements.md" }
+  // failure_mode = "復元操作など別責務のcontrolが検索行へ再混入する"
+  // scope = "Home recent sessions toolbar"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("検索行には検索欄とNew Sessionだけを表示する", () => {
+    const html = renderHomeRecentSessions();
+
+    assert.match(html, /class="toolbar-search-field"/);
+    assert.match(html, /class="start-session-button"/);
+    assert.doesNotMatch(html, /Restore Sessions|restore-session-windows-button/);
+  });
+
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Home Sessionの追加読み込み導線は一覧末尾sentinelだけで手動buttonを表示しない"
+  // oracle = { type = "contract", ref = "docs/features/home-session-pagination.md" }
+  // failure_mode = "自動paginationと重複する追加buttonが表示される"
+  // scope = "Home recent sessions pagination affordance"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("追加読み込みは一覧末尾のsentinelだけを使い、追加ボタンを表示しない", () => {
     const html = renderHomeRecentSessions({ hasMore: true });
+
     assert.match(html, /class="home-session-list-load-sentinel"/);
     assert.doesNotMatch(html, /Sessionをさらに読み込む|ピン留めをさらに読み込む/);
     assert.doesNotMatch(html, /class="secondary-button"/);
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Home Session一覧は末尾sentinelが交差した場合だけ追加読み込みcallbackを呼ぶ"
+  // oracle = { type = "contract", ref = "docs/features/home-session-pagination.md" }
+  // failure_mode = "非交差状態やloading中にも追加page要求を発行する"
+  // scope = "Home recent sessions intersection pagination"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("一覧末尾のsentinelが交差した時だけ追加読み込みcallbackを呼ぶ", async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
       pretendToBeVisual: true,
@@ -789,15 +762,24 @@ describe("HomeRecentSessionsPanel", () => {
     let loadMoreCount = 0;
 
     class TestIntersectionObserver {
-      constructor(callback: IntersectionObserverCallback) { observerCallback = callback; }
-      observe(target: Element) { observedTarget = target; }
+      constructor(callback: IntersectionObserverCallback) {
+        observerCallback = callback;
+      }
+
+      observe(target: Element) {
+        observedTarget = target;
+      }
+
       disconnect() {}
     }
 
     Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
     Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
     Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
-    Object.defineProperty(globalThis, "IntersectionObserver", { value: TestIntersectionObserver, configurable: true });
+    Object.defineProperty(globalThis, "IntersectionObserver", {
+      value: TestIntersectionObserver,
+      configurable: true,
+    });
 
     const rootElement = dom.window.document.getElementById("root");
     assert.ok(rootElement);
@@ -1008,6 +990,14 @@ describe("HomeRecentSessionsPanel", () => {
     assert.ok(html.includes(">Companion<"));
   });
 
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "Home履歴はMateアイコンを表示しV4以前のAgent Sessionを閲覧専用として開ける"
+  // oracle = { type = "contract", ref = "docs/features/session-interface-refinements.md" }
+  // failure_mode = "旧schema Sessionが通常編集可能になるか履歴から開けない"
+  // scope = "Home recent session compatibility projection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("履歴カードに Mate アイコンを表示し、V4 以前の Agent session は閲覧専用として開ける", () => {
     const html = renderHomeRecentSessions({
       filteredSessionEntries: [
@@ -1036,7 +1026,8 @@ describe("HomeRecentSessionsPanel", () => {
     assert.equal((html.match(/character-avatar tiny home-session-card-avatar/g) ?? []).length, 2);
     assert.ok(html.includes("mate.png"));
     assert.ok(html.includes("閲覧専用"));
-    assert.ok(!html.includes("disabled=\"\""));
+    assert.match(html, /class="home-session-card-open"[^>]*aria-disabled="false"/);
+    assert.match(html, /class="session-card home-session-card"[^>]*aria-disabled="false"/);
   });
 });
 
@@ -1177,6 +1168,9 @@ describe("HomeRightPane", () => {
   }],
     canUsePrimaryFeatures = true,
     characterListFeedback = "",
+    sessionWindowRestoreIds: readonly string[] = [],
+    sessionWindowRestorePending = false,
+    sessionWindowRestoreFeedback = "",
   ) => renderToStaticMarkup(
     <HomeRightPane
       rightPaneView={rightPaneView}
@@ -1188,11 +1182,15 @@ describe("HomeRightPane", () => {
       onChangeRightPaneView={noOp}
       onOpenSessionMonitorWindow={noOp}
       onOpenSettingsWindow={noOp}
+      onRestoreSessionWindows={noOp}
       onCreateCharacter={noOp}
       onEditCharacter={noOp}
       onOpenSession={noOp}
       onOpenCompanionReview={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
+      sessionWindowRestoreIds={sessionWindowRestoreIds}
+      sessionWindowRestorePending={sessionWindowRestorePending}
+      sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
     />,
   );
 
@@ -1286,6 +1284,61 @@ describe("HomeRightPane", () => {
     assert.doesNotMatch(characterHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
     assertNoMateTalkChatSurface(monitorHtml);
     assertNoMateTalkChatSurface(characterHtml);
+  });
+
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Restore Sessions操作は復元対象の有無と処理中状態をdisabledおよびaria-busyへ投影する"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#復元操作" }
+  // failure_mode = "対象がない状態または復元処理中に操作でき、重複した復元要求が発生する"
+  // scope = "HomeRightPane Restore Sessions control"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("一括復元操作を上部へ常設し、対象なし・処理中をdisabledにする", () => {
+    const emptyHtml = renderHomeRightPane("monitor");
+    const enabledHtml = renderHomeRightPane("monitor", undefined, true, "", ["session-a", "session-b"]);
+    const pendingHtml = renderHomeRightPane(
+      "monitor",
+      undefined,
+      true,
+      "",
+      ["session-a", "session-b"],
+      true,
+    );
+
+    assert.match(emptyHtml, /Restore Sessions/);
+    assert.match(emptyHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
+    assert.match(enabledHtml, /Restore Sessions/);
+    assert.doesNotMatch(enabledHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
+    assert.match(pendingHtml, /class="restore-session-windows-button"[^>]*disabled=""[^>]*aria-busy="true"/);
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "空の復元feedbackではstatus要素を描画せず、失敗feedbackではpoliteなlive statusとして対象と理由を描画する"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#失敗時の扱い" }
+  // failure_mode = "正常終了後も空または成功文のstatusが残るか、復元失敗時に対象と理由を支援技術へ通知できない"
+  // scope = "HomeRightPane session restore feedback rendering"
+  // lifecycle = "permanent"
+  // distinction = "builderの文字列変換ではなく、空文字によるDOM非表示と失敗文字列のlive status描画を検証する"
+  // @end-test-value
+  it("復元feedbackは正常系でstatusを描画せず、失敗時だけlive statusを描画する", () => {
+    const successHtml = renderHomeRightPane("monitor", undefined, true, "", ["session-a"]);
+    const failureHtml = renderHomeRightPane(
+      "monitor",
+      undefined,
+      true,
+      "",
+      ["session-b"],
+      false,
+      "復元できなかったSession: session-b（削除済み）",
+    );
+
+    assert.doesNotMatch(successHtml, /session-window-restore-feedback/);
+    assert.doesNotMatch(successHtml, /role="status"/);
+    assert.match(failureHtml, /session-b（削除済み）/);
+    assert.match(failureHtml, /role="status" aria-live="polite"/);
+    assert.doesNotMatch(failureHtml, /件のSessionを開きました/);
   });
 
   it("Character icon 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {

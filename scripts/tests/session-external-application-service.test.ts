@@ -735,6 +735,14 @@ test("RUNTIME-CATALOG-01: catalog欠落時はread-only errorへ収束しseedやe
   assert.equal("error" in response && response.error.effect, "not_applied");
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "turn.optionsは対象Sessionのproviderと現在のcatalogから、現行approval modeを含むpublic候補だけを返す"
+// oracle = { type = "contract", ref = "src/approval-mode.ts APPROVAL_MODE_VALUES and session runtime turn.options contract" }
+// failure_mode = "廃止済みapproval modeまたはprivate catalog fieldがpublic runtimeへ露出し、CLI/MCP consumerが選択不能な値を受け取る"
+// scope = "session-external-application turn.options projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("TURN-OPTIONS: 対象Sessionと同じcatalog snapshotからpublic候補だけを返す", async () => {
   let executionInvoked = false;
   let catalogReads = 0;
@@ -800,7 +808,6 @@ test("TURN-OPTIONS: 対象Sessionと同じcatalog snapshotからpublic候補だ�
       approvalModes: [
         { id: "never", label: "never" },
         { id: "on-request", label: "on-request" },
-        { id: "on-failure", label: "on-failure" },
         { id: "untrusted", label: "untrusted" },
       ],
       codexSandboxModes: [

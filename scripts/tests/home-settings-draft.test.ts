@@ -30,6 +30,7 @@ import {
   updateMemoryExtractionTimeoutSeconds,
   updateMemoryExtractionTimeoutSecondsDraft,
   updateMemoryFileQuotaMegabytesDraft,
+  updateGlossaryProactiveCreateLimitDraft,
   updateMemoryGenerationEnabled,
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
@@ -308,6 +309,22 @@ describe("home-settings-draft", () => {
     const next = updateMemoryFileQuotaMegabytesDraft(draft, "2048");
 
     assert.equal(next.memoryFileQuotaBytes, 2048 * 1024 * 1024);
+  });
+
+  // @test-value v1
+  // kind = "contract"
+  // claim = "glossary proactive create limitは0から100へclampし空入力を未指定として保持する"
+  // oracle = { type = "contract", ref = "docs/features/repository-glossary.md" }
+  // failure_mode = "範囲外値または空入力が意図しない作成上限として保存される"
+  // scope = "Home settings glossary draft normalization"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("glossary proactive create limitは0から100へ収め、空入力を無効値として保持する", () => {
+    const draft = createDefaultAppSettings();
+
+    assert.equal(updateGlossaryProactiveCreateLimitDraft(draft, "0").glossaryProactiveCreateLimit, 0);
+    assert.equal(updateGlossaryProactiveCreateLimitDraft(draft, "101").glossaryProactiveCreateLimit, 100);
+    assert.equal(updateGlossaryProactiveCreateLimitDraft(draft, "").glossaryProactiveCreateLimit, null);
   });
 
   it("microcopy slot draft は編集中の末尾改行を保持する", () => {

@@ -11,8 +11,10 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
+import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import type { Root } from "mdast";
@@ -21,11 +23,24 @@ import type { Plugin, PluggableList } from "unified";
 
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { toLocalFileUrl } from "./local-file-url.js";
+import {
+  formatMarkdownFrontmatterSource,
+  resolveMarkdownFrontmatterDisplay,
+} from "./markdown-frontmatter.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import type {
   MarkdownLinkContextMenuRequest,
   MarkdownLinkContextMenuResult,
 } from "./markdown-link-context-menu.js";
+import { getSessionFileObjectCopyFeedbackTone } from "./file-explorer/session-file-object-copy-contract.js";
+import { useDialogA11y } from "./a11y.js";
+import { ImageViewport, ImageZoomControls, useImageViewport } from "./image-viewport.js";
+import type { GlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
+import {
+  GlossaryAnnotationSpan,
+  MessageGlossaryAnnotationProvider,
+  useMessageGlossaryAnnotations,
+} from "./glossary/MessageGlossaryAnnotations.js";
 
 export type MessageViewMode = "preview" | "source";
 
@@ -36,6 +51,10 @@ type MessageRichTextProps = {
   displayMode?: MessageViewMode;
   onOpenPath?: (target: string) => void;
   resolveImageSource?: (target: string) => Promise<string | null>;
+  markdownLinkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
+  glossaryAnnotationMatcher?: GlossaryAnnotationMatcher;
+  glossaryAnnotationScopeKey?: string;
+  onActivateGlossaryEntry?: (canonicalTerm: string) => void;
 };
 
 type MarkdownRenderMode = "light" | "full";
@@ -194,6 +213,25 @@ function CodeBlockCopyButton({ code, onCopyResult }: CodeBlockCopyButtonProps) {
   );
 }
 
+function CodeBlockShell({
+  children,
+  code,
+  onCopyResult,
+}: {
+  children: ReactNode;
+  code: string;
+  onCopyResult: (feedback: MessageCopyFeedback) => void;
+}) {
+  return (
+    <div className="message-code-block-shell copyable">
+      <div className="message-code-block-actions">
+        <CodeBlockCopyButton code={code} onCopyResult={onCopyResult} />
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function resolveCodeLanguage(className?: string) {
   return /(?:^|\s)language-([^\s]+)/.exec(className ?? "")?.[1]?.toLowerCase();
 }
@@ -327,6 +365,7 @@ export async function handleMarkdownLinkContextMenu(
   event: MarkdownLinkContextMenuEvent,
   target: string,
   showContextMenu?: ShowMarkdownLinkContextMenu,
+  fileContext?: MarkdownLinkContextMenuRequest["fileContext"],
 ): Promise<MarkdownLinkContextMenuResult | null> {
   if (!target || target.startsWith("#") || hasUnsupportedUrlScheme(target)) {
     return null;
@@ -345,7 +384,7 @@ export async function handleMarkdownLinkContextMenu(
 
   event.preventDefault();
   try {
-    return await showMenu({ target, point });
+    return await showMenu({ target, point, ...(fileContext ? { fileContext } : {}) });
   } catch (error) {
     return {
       status: "failed",
@@ -387,13 +426,7 @@ function createFootnoteLabelIdPlugin(footnoteLabelId: string) {
   };
 }
 
-function MermaidDiagram({
-  source,
-  onCopyResult,
-}: {
-  source: string;
-  onCopyResult?: (feedback: MessageCopyFeedback) => void;
-}) {
+function MermaidDiagram({ source }: { source: string }) {
   const reactId = useId();
   const diagramId = useMemo(() => `message-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`, [reactId]);
   const diagramSource = source.trim();
@@ -435,9 +468,6 @@ function MermaidDiagram({
     return (
       <div className="message-code-block-shell mermaid">
         <div className="message-mermaid" dangerouslySetInnerHTML={{ __html: renderState.svg }} />
-        {onCopyResult ? (
-          <CodeBlockCopyButton code={resolveCodeBlockText(source)} onCopyResult={onCopyResult} />
-        ) : null}
       </div>
     );
   }
@@ -450,9 +480,6 @@ function MermaidDiagram({
           <code className="message-inline-code language-mermaid">{source}</code>
         </pre>
       </div>
-      {onCopyResult ? (
-        <CodeBlockCopyButton code={resolveCodeBlockText(source)} onCopyResult={onCopyResult} />
-      ) : null}
     </div>
   );
 }
@@ -538,12 +565,112 @@ const markdownComponents: Components = {
   ),
 };
 
+function renderMarkdownFrontmatter(_state: unknown, node: Node) {
+  const value = "value" in node && typeof node.value === "string" ? node.value : "";
+  const display = resolveMarkdownFrontmatterDisplay(value);
+  if (display.kind === "table") {
+    return {
+      type: "element" as const,
+      tagName: "table",
+      properties: {
+        className: ["message-frontmatter-table"],
+        "aria-label": "YAML frontmatter",
+      },
+      children: [{
+        type: "element" as const,
+        tagName: "tbody",
+        properties: {},
+        children: display.rows.map((row) => ({
+          type: "element" as const,
+          tagName: "tr",
+          properties: {},
+          children: [
+            {
+              type: "element" as const,
+              tagName: "th",
+              properties: { scope: "row" },
+              children: [{ type: "text" as const, value: row.key }],
+            },
+            {
+              type: "element" as const,
+              tagName: "td",
+              properties: {},
+              children: [{ type: "text" as const, value: row.value }],
+            },
+          ],
+        })),
+      }],
+    };
+  }
+
+  return {
+    type: "element" as const,
+    tagName: "pre",
+    properties: { className: ["message-frontmatter-block"] },
+    children: [{
+      type: "element" as const,
+      tagName: "code",
+      properties: { className: ["message-frontmatter-code", "language-yaml"] },
+      children: [{ type: "text" as const, value: formatMarkdownFrontmatterSource(value) }],
+    }],
+  };
+}
+
 type MarkdownImageProps = {
   source: string;
   alt?: string;
   title?: string;
   resolveImageSource?: (target: string) => Promise<string | null>;
 };
+
+type MessageImageLightboxProps = {
+  source: string;
+  alt: string;
+  onClose: () => void;
+};
+
+function MessageImageLightbox({ source, alt, onClose }: MessageImageLightboxProps) {
+  const initialFocusRef = useRef<HTMLElement | null>(null);
+  const imageViewport = useImageViewport(source);
+  const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
+    open: true,
+    onClose,
+    initialFocusRef,
+  });
+
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className="message-image-lightbox" onClick={onClose}>
+      <section
+        ref={(element) => {
+          dialogRef.current = element;
+          initialFocusRef.current = element;
+        }}
+        className="message-image-lightbox-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={alt ? `Image preview: ${alt}` : "Image preview"}
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={handleDialogKeyDown}
+      >
+        <ImageZoomControls controller={imageViewport} className="message-image-lightbox-controls" />
+        <ImageViewport
+          controller={imageViewport}
+          src={source}
+          alt={alt}
+          viewportClassName="message-image-lightbox-viewport"
+          canvasClassName="message-image-lightbox-canvas"
+          imageClassName="message-image-lightbox-image"
+        />
+      </section>
+    </div>,
+    document.body,
+  );
+}
 
 function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImageProps) {
   const canLoadDirectly = !resolveImageSource && isDirectMarkdownImageSource(source);
@@ -552,6 +679,7 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
   const [loadStatus, setLoadStatus] = useState<"resolving" | "loading" | "ready" | "error">(
     resolveImageSource ? "resolving" : canLoadDirectly ? "loading" : "error",
   );
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   useEffect(() => {
     if (!resolveImageSource) {
@@ -605,15 +733,30 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
         <span className="message-image-error" role="alert" title={source}>Image could not be loaded.</span>
       ) : null}
       {resolvedSource ? (
-        <img
-          className="message-image"
-          src={resolvedSource}
+        <button
+          className="message-image-trigger"
+          type="button"
+          aria-label={alt ? `Open image preview: ${alt}` : "Open image preview"}
+          disabled={loadStatus !== "ready"}
+          onClick={() => setLightboxOpen(true)}
+        >
+          <img
+            className="message-image"
+            src={resolvedSource}
+            alt={alt ?? ""}
+            title={title}
+            loading={shouldLoadEagerly ? "eager" : "lazy"}
+            fetchPriority={shouldLoadEagerly ? "high" : "auto"}
+            onLoad={() => setLoadStatus("ready")}
+            onError={() => setLoadStatus("error")}
+          />
+        </button>
+      ) : null}
+      {lightboxOpen && resolvedSource ? (
+        <MessageImageLightbox
+          source={resolvedSource}
           alt={alt ?? ""}
-          title={title}
-          loading={shouldLoadEagerly ? "eager" : "lazy"}
-          fetchPriority={shouldLoadEagerly ? "high" : "auto"}
-          onLoad={() => setLoadStatus("ready")}
-          onError={() => setLoadStatus("error")}
+          onClose={() => setLightboxOpen(false)}
         />
       ) : null}
     </span>
@@ -668,12 +811,14 @@ function createMarkdownComponents(
     markdown?: string;
     onCodeBlockCopyResult?: (feedback: MessageCopyFeedback) => void;
     onLinkContextMenuResult?: (result: MarkdownLinkContextMenuResult) => void;
+    linkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
     resolveImageSource?: (target: string) => Promise<string | null>;
   },
 ): Components {
   const enableMermaid = options?.enableMermaid ?? true;
   return {
     ...markdownComponents,
+    span: GlossaryAnnotationSpan,
     pre: ({ children, node, ...props }) => {
       const isFenced = isFencedCodeBlock(node, options?.markdown ?? "");
       const child = Children.toArray(children)[0];
@@ -683,7 +828,6 @@ function createMarkdownComponents(
           return (
             <MermaidDiagram
               source={extractTextContent(child.props.children)}
-              onCopyResult={isFenced ? options?.onCodeBlockCopyResult : undefined}
             />
           );
         }
@@ -695,13 +839,12 @@ function createMarkdownComponents(
         </pre>
       );
       return isFenced && options?.onCodeBlockCopyResult ? (
-        <div className="message-code-block-shell">
+        <CodeBlockShell
+          code={resolveCodeBlockText(children)}
+          onCopyResult={options.onCodeBlockCopyResult}
+        >
           {content}
-          <CodeBlockCopyButton
-            code={resolveCodeBlockText(children)}
-            onCopyResult={options.onCodeBlockCopyResult}
-          />
-        </div>
+        </CodeBlockShell>
       ) : content;
     },
     a: ({ children, href, node, ...props }) => {
@@ -710,7 +853,7 @@ function createMarkdownComponents(
         handleMarkdownLinkClick(event, target, onOpenPath);
       };
       const handleContextMenu = (event: MouseEvent<HTMLAnchorElement>) => {
-        void handleMarkdownLinkContextMenu(event, target).then((result) => {
+        void handleMarkdownLinkContextMenu(event, target, undefined, options?.linkFileContext).then((result) => {
           if (result && result.status !== "dismissed") {
             options?.onLinkContextMenuResult?.(result);
           }
@@ -744,12 +887,22 @@ function MessageMarkdownPreview({
   forceFullRender = false,
   onOpenPath,
   resolveImageSource,
+  markdownLinkFileContext,
+  glossaryAnnotationMatcher,
+  glossaryAnnotationScopeKey = "",
+  onActivateGlossaryEntry,
 }: MessageRichTextProps) {
   const reactId = useId();
   const footnotePrefix = useMemo(() => `message-footnote-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}-`, [reactId]);
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
   const shouldDefer = !forceFullRender && shouldDeferRichMarkdownRender();
   const [copyFeedback, setCopyFeedback] = useState<MessageCopyFeedback | null>(null);
+  const glossaryAnnotations = useMessageGlossaryAnnotations({
+    matcher: glossaryAnnotationMatcher,
+    scopeKey: glossaryAnnotationScopeKey,
+    text,
+    onActivate: onActivateGlossaryEntry,
+  });
   const [renderState, setRenderState] = useState<{ text: string; mode: MarkdownRenderMode }>(() => ({
     text,
     mode: shouldDefer ? "light" : "full",
@@ -757,8 +910,13 @@ function MessageMarkdownPreview({
   const renderMode = resolveMessageMarkdownRenderMode(forceFullRender, text, renderState, shouldDefer);
   const isFullRender = renderMode === "full";
   const handleLinkContextMenuResult = useCallback((result: MarkdownLinkContextMenuResult) => {
-    setCopyFeedback(result.status === "copied"
+    setCopyFeedback(result.status === "link-copied"
       ? { message: "リンクをコピーしました。", tone: "success" }
+      : result.status === "file-copy"
+        ? {
+            message: result.result.message,
+            tone: getSessionFileObjectCopyFeedbackTone(result.result),
+          }
       : result.status === "failed"
         ? { message: result.message, tone: "error" }
         : null);
@@ -772,19 +930,31 @@ function MessageMarkdownPreview({
       markdown: text,
       onCodeBlockCopyResult: handleCodeBlockCopyResult,
       onLinkContextMenuResult: handleLinkContextMenuResult,
+      linkFileContext: markdownLinkFileContext,
       resolveImageSource,
     }),
-    [handleCodeBlockCopyResult, handleLinkContextMenuResult, isFullRender, onOpenPath, resolveImageSource, text],
+    [
+      handleCodeBlockCopyResult,
+      handleLinkContextMenuResult,
+      isFullRender,
+      markdownLinkFileContext,
+      onOpenPath,
+      resolveImageSource,
+      text,
+    ],
   );
   const rehypePlugins = useMemo<PluggableList>(
-    () => (isFullRender ? [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)] : []),
-    [footnoteLabelId, isFullRender],
+    () => [
+      ...(isFullRender ? [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)] : []),
+      ...(glossaryAnnotations.rehypePlugin ? [glossaryAnnotations.rehypePlugin] : []),
+    ],
+    [footnoteLabelId, glossaryAnnotations.rehypePlugin, isFullRender],
   );
   const remarkPlugins = useMemo<PluggableList>(
     () => (
       isFullRender
-        ? [remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks]
-        : [remarkHtmlLineBreaks]
+        ? [remarkFrontmatter, remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks]
+        : [remarkFrontmatter, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks]
     ),
     [isFullRender],
   );
@@ -815,15 +985,20 @@ function MessageMarkdownPreview({
 
   return (
     <div className={`${className} rich-text`.trim()} data-markdown-render-mode={renderMode}>
-      <ReactMarkdown
-        components={components}
-        rehypePlugins={rehypePlugins}
-        urlTransform={markdownUrlTransform}
-        remarkPlugins={remarkPlugins}
-        remarkRehypeOptions={{ clobberPrefix: footnotePrefix }}
-      >
-        {text}
-      </ReactMarkdown>
+      <MessageGlossaryAnnotationProvider controller={glossaryAnnotations.controller}>
+        <ReactMarkdown
+          components={components}
+          rehypePlugins={rehypePlugins}
+          urlTransform={markdownUrlTransform}
+          remarkPlugins={remarkPlugins}
+          remarkRehypeOptions={{
+            clobberPrefix: footnotePrefix,
+            handlers: { yaml: renderMarkdownFrontmatter },
+          }}
+        >
+          {text}
+        </ReactMarkdown>
+      </MessageGlossaryAnnotationProvider>
       {copyFeedback ? (
         <span
           className={`message-copy-toast message-link-copy-toast ${copyFeedback.tone}`}

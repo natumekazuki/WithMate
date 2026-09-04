@@ -9,10 +9,12 @@ import {
   type ComponentProps,
   type MouseEventHandler,
   type PointerEventHandler,
+  type SetStateAction,
 } from "react";
 
 import type { MessageViewMode } from "../MessageRichText.js";
 import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
+import { CloseButton } from "../close-button.js";
 
 import {
   SESSION_ACTION_DOCK_ID,
@@ -33,6 +35,10 @@ import {
   type SessionSkillItem,
 } from "../session-components.js";
 import { focusRovingItemByKey } from "../a11y.js";
+import {
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+} from "../shortcut-registry.js";
 
 type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
 
@@ -205,7 +211,7 @@ export function ChatSkillPickerPanel({
             placeholder="Skillを検索"
             autoComplete="off"
           />
-          <button type="button" onClick={onDismiss} aria-label="Skill候補を閉じる">×</button>
+          <CloseButton ariaLabel="Close skill picker" onClose={onDismiss} />
         </div>
         <div
           className="chat-skill-picker-content"
@@ -261,6 +267,7 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const onOpenPath = useStableOptionalCallback(props.onOpenPath);
   const onCopyMessageText = useStableOptionalCallback(props.onCopyMessageText);
   const onQuoteMessageText = useStableOptionalCallback(props.onQuoteMessageText);
+  const onActivateGlossaryEntry = useStableOptionalCallback(props.onActivateGlossaryEntry);
 
   return (
     <MemoizedSessionMessageColumn
@@ -275,6 +282,7 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
       getChangedFilesEmptyText={props.getChangedFilesEmptyText}
       onCopyMessageText={onCopyMessageText}
       onQuoteMessageText={onQuoteMessageText}
+      onActivateGlossaryEntry={onActivateGlossaryEntry}
     />
   );
 }
@@ -342,10 +350,18 @@ export function ChatWindow({
   const skillButtonRef = useRef<HTMLButtonElement | null>(null);
   const wasSkillPickerOpenRef = useRef(false);
   const showMessageViewModeControls = messageColumnProps.onQuoteMessageText !== undefined;
-  const handleMessageViewModeChange = useCallback((mode: MessageViewMode) => {
+  const handleMessageViewModeChange = useCallback((mode: SetStateAction<MessageViewMode>) => {
     window.getSelection()?.removeAllRanges();
     setMessageViewMode(mode);
   }, []);
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.messageToggleViewMode,
+    () => {
+      handleMessageViewModeChange((currentMode) => currentMode === "preview" ? "source" : "preview");
+      return true;
+    },
+    showMessageViewModeControls,
+  );
 
   useEffect(() => {
     const isOpen = skillPickerProps?.isOpen ?? false;

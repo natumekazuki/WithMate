@@ -11,12 +11,21 @@ import {
 import { createDefaultAppSettings, getProviderAppSettings, normalizeAppSettings } from "../../src/provider-settings-state.js";
 
 describe("approval mode helpers", () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "現行approval値とlegacy aliasは共有normalizerでprovider-neutral modeへ変換される"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+  // failure_mode = "保存値やlegacy aliasが未正規化のままprovider adapterへ渡る"
+  // scope = "approval-mode"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("legacy/native approval 値を provider-neutral mode へ normalize できる", () => {
     assert.equal(normalizeApprovalMode("never"), "never");
     assert.equal(normalizeApprovalMode("untrusted"), "untrusted");
     assert.equal(normalizeApprovalMode("on-request"), "on-request");
-    assert.equal(normalizeApprovalMode("on-failure"), "on-failure");
-    assert.equal(normalizeApprovalMode("on-request"), "on-request");
+    assert.equal(normalizeApprovalMode("allow-all"), "never");
+    assert.equal(normalizeApprovalMode("safety"), "untrusted");
+    assert.equal(normalizeApprovalMode("provider-controlled"), "on-request");
   });
 
   it("provider-neutral approval mode を Codex native policy へ変換できる", () => {
@@ -25,6 +34,14 @@ describe("approval mode helpers", () => {
     assert.equal(mapApprovalModeToCodexPolicy("on-request"), "on-request");
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "session読込時にlegacy approval aliasだけを正規化し、artifactの実行記録は変更しない"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+  // failure_mode = "session metadataの正規化がartifactの過去記録まで書き換えるか、legacy aliasを残す"
+  // scope = "session-normalization"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("session normalize で approval と artifact run checks を provider-neutral に戻す", () => {
     const normalized = normalizeSession({
       ...buildNewSession({
@@ -38,7 +55,7 @@ describe("approval mode helpers", () => {
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
         approvalMode: DEFAULT_APPROVAL_MODE,
       }),
-      approvalMode: "on-failure",
+      approvalMode: "provider-controlled",
       messages: [
         {
           role: "assistant",
@@ -57,7 +74,7 @@ describe("approval mode helpers", () => {
     });
 
     assert.ok(normalized);
-    assert.equal(normalized.approvalMode, "on-failure");
+    assert.equal(normalized.approvalMode, "on-request");
     assert.deepEqual(normalized.messages[0]?.artifact?.runChecks, [
       { label: "approval", value: "never" },
       { label: "model", value: "gpt-5" },

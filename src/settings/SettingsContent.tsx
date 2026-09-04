@@ -1,7 +1,11 @@
 import type { AppSettings } from "../app-state.js";
+import {
+  GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
+  GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN,
+} from "../provider-settings-state.js";
+import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
 import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
 import type { SessionIntegrationDiagnostics } from "../session-integration-diagnostics-state.js";
-import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../memory-v6/provider-instruction-sample.js";
 import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
 import {
   getMemoryFileQuotaMegabytes,
@@ -10,13 +14,12 @@ import {
 } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
-  SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
+  SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP,
+  SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL,
   SETTINGS_LAUNCH_AT_LOGIN_LABEL,
-  SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
-  SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
   SETTINGS_MEMORY_FILE_QUOTA_HELP,
   SETTINGS_MEMORY_FILE_QUOTA_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
@@ -35,6 +38,7 @@ import {
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
 } from "./settings-ui.js";
+import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -49,10 +53,12 @@ export type HomeSettingsContentProps = {
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeScrollToLatestOnSend: (enabled: boolean) => void;
+  onChangeKeyboardShortcuts: (settings: KeyboardShortcutSettings) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
   onChangeMemoryFileQuotaMegabytes: (value: string) => void;
+  onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
@@ -70,7 +76,6 @@ export type HomeSettingsContentProps = {
   onInstallMemoryV6CliShim: () => void;
   onUninstallMemoryV6CliShim: () => void;
   onRegisterCodexSessionMcp: () => void;
-  onCopyMemoryProviderInstructionSample: () => void;
   onDeleteSessionsLastActiveBefore: () => void;
   onSaveSettings: () => void;
 };
@@ -112,10 +117,12 @@ export function HomeSettingsContent({
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
   onChangeScrollToLatestOnSend,
+  onChangeKeyboardShortcuts,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
   onChangeMemoryFileQuotaMegabytes,
+  onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
@@ -133,7 +140,6 @@ export function HomeSettingsContent({
   onInstallMemoryV6CliShim,
   onUninstallMemoryV6CliShim,
   onRegisterCodexSessionMcp,
-  onCopyMemoryProviderInstructionSample,
   onDeleteSessionsLastActiveBefore,
   onSaveSettings,
 }: HomeSettingsContentProps) {
@@ -320,12 +326,7 @@ export function HomeSettingsContent({
                   <div className="settings-diagnostics-item">
                     <span>Memory API</span>
                     <strong>{memoryV6Diagnostics.runtime.status}</strong>
-                    <small>{memoryV6Diagnostics.runtime.discoveryFilePath ? "discovery published" : "discovery unavailable"}</small>
-                  </div>
-                  <div className="settings-diagnostics-item">
-                    <span>Managed Skill</span>
-                    <strong>{formatSkillSyncSummary(memoryV6Diagnostics)}</strong>
-                    <small>{formatSkillSyncDetail(memoryV6Diagnostics)}</small>
+                    <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "discovery published" : "discovery unavailable"}</small>
                   </div>
                   <div className="settings-diagnostics-item">
                     <span>CLI Shim</span>
@@ -334,8 +335,12 @@ export function HomeSettingsContent({
                   </div>
                   <div className="settings-diagnostics-item settings-diagnostics-wide">
                     <span>Last Error</span>
-                    <strong>{memoryV6Diagnostics.lastErrors[0]?.kind ?? "none"}</strong>
-                    <small>{memoryV6Diagnostics.lastErrors[0]?.message ?? "Memory V6 diagnostics has no recorded error."}</small>
+                    <strong>
+                      {memoryV6Diagnostics.lastErrors[0]?.discoveryCode
+                        ?? memoryV6Diagnostics.lastErrors[0]?.kind
+                        ?? "none"}
+                    </strong>
+                    <small>{memoryV6Diagnostics.lastErrors.length > 0 ? "Review the application log for details." : "Memory V6 diagnostics has no recorded error."}</small>
                   </div>
                   <div className="settings-diagnostics-item">
                     <span>Session Skill</span>
@@ -391,22 +396,6 @@ export function HomeSettingsContent({
                   {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
                 </button>
               </div>
-              <section className="settings-provider-instruction-sample">
-                <div className="settings-provider-instruction-sample-head">
-                  <div>
-                    <strong>{SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL}</strong>
-                    <p className="settings-help">{SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP}</p>
-                  </div>
-                  <button
-                    className="launch-toggle compact"
-                    type="button"
-                    onClick={onCopyMemoryProviderInstructionSample}
-                  >
-                    {SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL}
-                  </button>
-                </div>
-                <pre>{WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE}</pre>
-              </section>
             </div>
           </section>
 
@@ -422,6 +411,27 @@ export function HomeSettingsContent({
                   Export Models
                 </button>
               </div>
+            </div>
+          </section>
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Repository Glossary</strong>
+              <label className="settings-provider-input">
+                <span>{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL}</span>
+                <div className="settings-inline-input-row">
+                  <input
+                    type="number"
+                    min={GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN}
+                    max={GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX}
+                    step={1}
+                    value={settingsDraft.glossaryProactiveCreateLimit ?? ""}
+                    onChange={(event) => onChangeGlossaryProactiveCreateLimit(event.target.value)}
+                  />
+                  <span className="settings-inline-unit">terms</span>
+                </div>
+                <p className="settings-help">{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP}</p>
+              </label>
             </div>
           </section>
 
@@ -466,6 +476,11 @@ export function HomeSettingsContent({
             </div>
           </section>
 
+          <KeyboardShortcutsHelpSection
+            settings={settingsDraft.keyboardShortcuts}
+            onChange={onChangeKeyboardShortcuts}
+          />
+
           </section>
         </div>
       </div>
@@ -479,30 +494,14 @@ export function HomeSettingsContent({
   );
 }
 
-function formatSkillSyncSummary(diagnostics: MemoryV6Diagnostics): string {
-  const ready = diagnostics.skillSync.filter((result) =>
-    result.status === "installed" || result.status === "updated" || result.status === "unchanged"
-  ).length;
-  return `${ready}/${diagnostics.skillSync.length}`;
-}
-
-function formatSkillSyncDetail(diagnostics: MemoryV6Diagnostics): string {
-  if (diagnostics.skillSync.length === 0) {
-    return "configured providers are unavailable";
-  }
-  return diagnostics.skillSync
-    .map((result) => `${result.providerId}: ${result.status}`)
-    .join(" / ");
-}
-
 function formatCliShimDetail(diagnostics: MemoryV6Diagnostics): string {
   const shim = diagnostics.cliShim;
   if (!shim.supported) {
-    return shim.message;
+    return shim.status === "managed-by-installer" ? "managed by installer" : "unsupported";
   }
 
   const pathStatus = shim.pathContainsShimDirectory ? "PATH ready" : "PATH missing";
-  return `${pathStatus}: ${shim.shimPath ?? shim.shimDirectory ?? shim.message}`;
+  return `${pathStatus}: ${shim.commandName}`;
 }
 
 function canUninstallCliShim(diagnostics: MemoryV6Diagnostics | null): boolean {

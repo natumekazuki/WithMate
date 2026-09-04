@@ -26,6 +26,7 @@ current milestone では、署名や notarization まで確定せず、まず未
 - Start Menu shortcut: `WithMate`
 - installer から導入した app は Start Menu 検索から `WithMate` で起動できる想定にする
 - Memory CLI は install root の `withmate-memory.cmd` と `%LOCALAPPDATA%\Microsoft\WindowsApps\withmate-memory.cmd` alias で公開し、user `Path` registry 値は直接編集しない
+- Memory CLI artifactのcanonical pathはrepositoryで`resources/cli/withmate-memory.mjs`、Windows install root基準で`resources/resources/cli/withmate-memory.mjs`とし、Skill catalog配下へ置かない
 
 ### macOS
 
@@ -33,7 +34,7 @@ current milestone では、署名や notarization まで確定せず、まず未
 - command: `npm run dist:mac`
 - output: `release/` 配下の `.dmg`
 - Memory CLI は Settings > Diagnostics から `~/.local/bin/withmate-memory` shim と管理 metadata を install / uninstall できる。既存の非管理 `withmate-memory` は上書き・削除しない
-- `~/.local/bin` が app process の `PATH` に無い場合、Diagnostics は `installed-path-missing` として表示し、managed Memory Skill は `bin/` helper fallback を同期する
+- `~/.local/bin` が app process の `PATH` に無い場合、Diagnostics は `installed-path-missing` として表示する。provider Skill directoryへのMemory CLI同期は行わない
 
 ## Script Policy
 
@@ -102,8 +103,8 @@ macOS artifact の実確認は macOS 環境で次を行う。
 3. `/Applications` へ配置する
 4. Spotlight で `WithMate` を検索して起動できることを確認する
 5. Settings > Diagnostics で CLI Shim が表示され、Install CLI Shim / Uninstall CLI Shim が `~/.local/bin/withmate-memory` を作成・削除できることを確認する
-6. `~/.local/bin` が `PATH` に含まれる環境では provider へ同期された `withmate-memory` Skill が `SKILL.md` と marker だけになり、`withmate-memory status` が machine-readable JSON を返すことを確認する
-7. `~/.local/bin` が `PATH` に含まれない環境では provider へ同期された `withmate-memory` Skill に `bin/withmate-memory.mjs` が含まれ、`node bin/withmate-memory.mjs status` が machine-readable JSON を返すことを確認する
+6. `~/.local/bin` が `PATH` に含まれる環境では`withmate-memory status`がmachine-readable JSONを返すことを確認する
+7. `~/.local/bin` が `PATH` に含まれない環境でもprovider Skill directoryを作成、更新、検査せず、Diagnosticsが`installed-path-missing`を返すことを確認する
 
 ## References
 

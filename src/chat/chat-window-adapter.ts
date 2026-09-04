@@ -1,5 +1,7 @@
 import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED } from "../codex-speed.js";
+import { DEFAULT_CODEX_REVIEWER } from "../codex-reviewer.js";
 import {
   DEFAULT_CHARACTER_SESSION_COPY,
   DEFAULT_CHARACTER_THEME_COLORS,
@@ -171,6 +173,12 @@ export type LiveSessionMessageColumnProps = {
   originSessionDetails?: ChatMessageColumnProps["originSessionDetails"];
   onOpenOriginSession?: ChatMessageColumnProps["onOpenOriginSession"];
   cancelingExecutionIds?: ChatMessageColumnProps["cancelingExecutionIds"];
+  messageCollapseTargets?: ChatMessageColumnProps["messageCollapseTargets"];
+  collapsedMessageKeys?: ChatMessageColumnProps["collapsedMessageKeys"];
+  messageJumpRequest?: ChatMessageColumnProps["messageJumpRequest"];
+  isContentActive?: ChatMessageColumnProps["isContentActive"];
+  onToggleMessageCollapse?: ChatMessageColumnProps["onToggleMessageCollapse"];
+  onToggleAllMessageCollapse?: ChatMessageColumnProps["onToggleAllMessageCollapse"];
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
@@ -195,6 +203,8 @@ export type LiveSessionMessageColumnProps = {
   onCopyMessageText?: ChatMessageColumnProps["onCopyMessageText"];
   onQuoteMessageText?: ChatMessageColumnProps["onQuoteMessageText"];
   onCancelQueuedTurn?: ChatMessageColumnProps["onCancelQueuedTurn"];
+  glossaryAnnotationMatcher?: ChatMessageColumnProps["glossaryAnnotationMatcher"];
+  onActivateGlossaryEntry?: ChatMessageColumnProps["onActivateGlossaryEntry"];
 };
 
 export type LiveSessionComposerProps = Omit<
@@ -348,6 +358,12 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     originSessionDetails: input.originSessionDetails,
     onOpenOriginSession: input.onOpenOriginSession,
     cancelingExecutionIds: input.cancelingExecutionIds,
+    messageCollapseTargets: input.messageCollapseTargets,
+    collapsedMessageKeys: input.collapsedMessageKeys,
+    messageJumpRequest: input.messageJumpRequest,
+    isContentActive: input.isContentActive,
+    onToggleMessageCollapse: input.onToggleMessageCollapse,
+    onToggleAllMessageCollapse: input.onToggleAllMessageCollapse,
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isRunning,
@@ -372,6 +388,8 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     onCopyMessageText: input.onCopyMessageText,
     onQuoteMessageText: input.onQuoteMessageText,
     onCancelQueuedTurn: input.onCancelQueuedTurn,
+    glossaryAnnotationMatcher: input.glossaryAnnotationMatcher,
+    onActivateGlossaryEntry: input.onActivateGlossaryEntry,
   };
 }
 
@@ -540,8 +558,12 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     isComposerBlockedFeedbackActive: false,
     approvalOptions: [{ value: DEFAULT_APPROVAL_MODE, label: DEFAULT_APPROVAL_MODE }],
     selectedApprovalMode: DEFAULT_APPROVAL_MODE,
+    reviewerOptions: [],
+    selectedCodexReviewer: DEFAULT_CODEX_REVIEWER,
     sandboxOptions: [],
     selectedCodexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+    speedOptions: [],
+    selectedCodexSpeed: DEFAULT_CODEX_SPEED,
     onPickFile: chatWindowNoop,
     onPickFolder: chatWindowNoop,
     onPickImage: chatWindowNoop,
@@ -557,7 +579,9 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     onDraftCompositionStart: chatWindowNoop,
     onDraftCompositionEnd: chatWindowNoop,
     onChangeApprovalMode: chatWindowNoop,
+    onChangeCodexReviewer: chatWindowNoop,
     onChangeCodexSandboxMode: chatWindowNoop,
+    onChangeCodexSpeed: chatWindowNoop,
     ...props,
   };
 }

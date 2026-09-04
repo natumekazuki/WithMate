@@ -151,6 +151,14 @@ function affectCandidate(overrides: Partial<AffectEventInput> = {}): AffectEvent
 }
 
 describe("CharacterContextApplicationService", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "Session bindingが許可しないCharacterは存在有無にかかわらずlookup前に同じauthority errorで拒否する"
+  // oracle = { type = "contract", ref = "docs/adr/021-agent-runtime-binding-authority-boundary.md" }
+  // failure_mode = "未許可Characterの存在差がerrorへ現れ、binding principalから存在確認oracleとして悪用される"
+  // scope = "character-context-binding-authority"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("session bindingは別Characterの存在有無をlookup前の同じauthority errorへ畳む", async () => {
     const fixture = createFixture();
     try {
@@ -186,6 +194,14 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "read-only Memory検索の予期しないstorage failureはretryableかつeffect noneのdomain errorへ写像する"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // failure_mode = "read-only failureをmutation済みまたは再試行不能として返し、consumerが安全なretry判断を失う"
+  // scope = "character-context-search-error-mapping"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("read-only Memory searchの予期しないfailureをeffect noneで返す", async () => {
     const fixture = createFixture({ failMemorySearch: true });
     try {
@@ -207,6 +223,14 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Context生成中のMemory検索failureはmemory_search stageと検索量を持つ安全なdiagnosticへ一度だけ写像する"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // failure_mode = "障害stageやbounded検索量が診断から欠落し、運用側がfailure boundaryを特定できない"
+  // scope = "character-context-stage-diagnostics"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Context内のMemory検索failureを検索量付きのstage diagnosticへ写像する", async () => {
     const diagnostics: CharacterContextUnexpectedErrorDiagnostic[] = [];
     const fixture = createFixture({
@@ -235,6 +259,14 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "Character context各stageのfailure diagnosticはstageを区別しつつqueryやMemory本文を含めない"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // failure_mode = "予期しないerror診断へqueryまたはMemory内容が混入し、ログconsumerへprivate dataが漏れる"
+  // scope = "character-context-diagnostic-redaction"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Context stage failureを内容なしの安全な診断へ分離する", async () => {
     const diagnostics: CharacterContextUnexpectedErrorDiagnostic[] = [];
     const fixture = createFixture({
@@ -277,7 +309,16 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
-  it("context、appraise、Memory episodeを同じ正本からversion付きでread-backする", async () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "Character contextの公開responseはidentity-freeなtop-levelとMemory preview fieldだけを返し、維持対象のbaseline・affect・memory version情報を保持する"
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md:59-61" }
+  // failure_mode = "内部request identityまたはMemory owner・scope・body・file・sourceが公開responseへ混入し、providerやagent consumerへactor identityまたは非公開Memory詳細が漏れる"
+  // scope = "CharacterContextApplicationService.getContext public projection"
+  // lifecycle = "permanent"
+  // distinction = "request authorityの内部identity維持ではなく、成功response assemblyのexact field projectionを検証する"
+  // @end-test-value
+  it("context、appraise、Memory episodeをidentity-free projectionでversion付きread-backする", async () => {
     const fixture = createFixture();
     try {
       const initial = await fixture.service.getContext({
@@ -324,13 +365,29 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(context.affect.effective[0]?.targetId, "bug-1");
       assert.equal(context.memory.items.length, 1);
       assert.equal(context.memory.items[0]?.title, "Bug reproduction");
-      assert.equal("body" in (context.memory.items[0] ?? {}), false);
-      assert.equal("events" in context, false);
+      assert.deepEqual(Object.keys(context).sort(), ["affect", "baseline", "memory", "schemaVersion"]);
+      assert.deepEqual(Object.keys(context.baseline).sort(), ["definitionSha256", "snapshotAt"]);
+      assert.deepEqual(Object.keys(context.affect).sort(), ["effective", "evaluatedAt", "mode", "updatedAt", "version"]);
+      assert.deepEqual(Object.keys(context.memory).sort(), ["items", "updatedAt"]);
+      assert.deepEqual(Object.keys(context.memory.items[0] ?? {}).sort(), ["id", "preview", "tags", "title", "updatedAt"]);
+      assert.equal(context.baseline.definitionSha256, "definition-hash");
+      assert.equal(context.baseline.snapshotAt, "2026-08-09T00:00:00.000Z");
+      assert.equal(context.affect.mode, "shadow");
+      assert.equal(context.affect.evaluatedAt, "2026-08-09T01:00:00.000Z");
+      assert.equal(context.memory.updatedAt, context.memory.items[0]?.updatedAt);
     } finally {
       fixture.close();
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Affect appraisalは同一idempotency keyの同一requestだけをreplayし、同motifでも別keyのeventは別 occurrenceとして保存する"
+  // oracle = { type = "contract", ref = "docs/adr/018-character-affect-event-persistence.md" }
+  // failure_mode = "意味が似た別eventを重複として消すか、同じretryでAffect eventを二重保存する"
+  // scope = "character-affect-idempotency"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("同じidempotency keyのretryだけを再生し、同motifの別eventを保存する", async () => {
     const fixture = createFixture();
     try {
@@ -364,6 +421,14 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "relationship層とsession層に同型のAffect componentがある場合は両方を保持してeffective stateへ合成する"
+  // oracle = { type = "contract", ref = "docs/adr/018-character-affect-event-persistence.md" }
+  // failure_mode = "一方のlayerが同family componentを上書きし、effective contextから寄与層が欠落する"
+  // scope = "character-affect-layer-composition"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("relationshipとsessionの同型componentをeffectiveへ合成する", async () => {
     const fixture = createFixture();
     try {
@@ -408,6 +473,73 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "cross-session afterglowはpublic context、MCP、CLIで同じschemaへ投影し、metricsにはsource session情報を含めない"
+  // oracle = { type = "contract", ref = "docs/features/cross-session-affect-afterglow.md" }
+  // failure_mode = "transport間でafterglow schemaが分岐するか、metricsからsource session情報が漏れる"
+  // scope = "character-affect-afterglow-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("afterglowをpublic context・MCP・CLIへ同じschemaで投影し、source情報をmetricsへ出さない", async () => {
+    const fixture = createFixture();
+    try {
+      const sourceStorage = new CharacterAffectStorage(fixture.dbPath, {
+        now: () => new Date("2026-08-09T01:00:00.000Z"),
+      });
+      try {
+        sourceStorage.recordEvent(affectCandidate({
+          sessionId: "session-b",
+          targetType: "user",
+          targetId: "private-target",
+          family: "gratitude",
+          value: { label: "public-afterglow", valence: 0.7 },
+          intensity: 0.5,
+          reason: "PRIVATE_AFTERGLOW_REASON",
+          evidence: "PRIVATE_AFTERGLOW_EVIDENCE",
+          occurredAt: "2026-08-09T00:59:00.000Z",
+          idempotencyKey: "public-afterglow",
+        }));
+      } finally {
+        sourceStorage.close();
+      }
+
+      const request = {
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        query: "continue",
+        memoryLimit: 0,
+      };
+      const internal = await fixture.service.getContext(request);
+      const mcp = await fixture.service.getContext(request, "mcp");
+      const cli = await fixture.service.getContext(request, "cli");
+      assert.equal(isCharacterContextError(internal), false);
+      assert.equal(isCharacterContextError(mcp), false);
+      assert.equal(isCharacterContextError(cli), false);
+      if (isCharacterContextError(internal) || isCharacterContextError(mcp) || isCharacterContextError(cli)) return;
+      assert.deepEqual(mcp.affect.effective, internal.affect.effective);
+      assert.deepEqual(cli.affect.effective, internal.affect.effective);
+      assert.equal(internal.affect.effective.some((component) => component.label === "public-afterglow"), true);
+      const publicJson = JSON.stringify(internal);
+      assert.doesNotMatch(publicJson, /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|sourceSessionId|session-b/);
+      const metricsJson = JSON.stringify(fixture.service.getMetrics());
+      assert.doesNotMatch(metricsJson, /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|private-target|session-b|sourceSessionId/);
+      assert.equal("eventIds" in internal.affect.effective[0]!, false);
+      assert.equal("reasons" in internal.affect.effective[0]!, false);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "Affect mutationはstale version、relationship layerの非relationship target、principal外scopeをcommit前に拒否する"
+  // oracle = { type = "contract", ref = "docs/adr/018-character-affect-event-persistence.md" }
+  // failure_mode = "versionまたはscope authorityを迂回したappraisalが別ownerや古いstateへcommitされる"
+  // scope = "character-affect-mutation-authority"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("stale version、relationship scopeの不正target、別scopeを拒否する", async () => {
     const fixture = createFixture();
     try {
@@ -458,6 +590,14 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "同一expectedVersionから競合するappraisalは一方だけをcommitし、他方をeffect noneのversion conflictへ収束させる"
+  // oracle = { type = "contract", ref = "docs/adr/018-character-affect-event-persistence.md" }
+  // failure_mode = "並行appraisalが両方commitされ、lost updateまたは同一versionの分岐を作る"
+  // scope = "character-affect-concurrency"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("同じexpectedVersionの同時appraisalは一方だけcommitしてversion conflictへ収束する", async () => {
     const fixture = createFixture();
     try {
@@ -498,6 +638,14 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Character Memory episodeの訂正とforgetはconversation authorityを検証し、idempotent resultとread-backを返す"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // failure_mode = "別conversationからepisodeを変更できるか、retryで重複mutationし、結果をread-backできない"
+  // scope = "character-memory-episode-mutation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("episodeの訂正とforgetをconversation authority、idempotency、read-back付きで行う", async () => {
     const fixture = createFixture();
     try {
@@ -600,6 +748,14 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "Character Memory appendはSession binding principalを永続化sourceとidempotency namespaceへそのまま引き渡す"
+  // oracle = { type = "contract", ref = "docs/adr/021-agent-runtime-binding-authority-boundary.md" }
+  // failure_mode = "binding identityが永続化境界で欠落し、別principalのretryと衝突するかsource attributionを失う"
+  // scope = "character-memory-binding-provenance"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Character Memory appendはbinding principalをsourceとidempotency namespaceへ引き渡す", async () => {
     const fixture = createFixture();
     try {
@@ -657,6 +813,14 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "Character context metricsはtransport別success、拒否理由、replay、fallbackを集計し、requestやMemory内容を保持しない"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // failure_mode = "運用metricsが結果区分を失うか、query・Memory本文・識別情報を収集してしまう"
+  // scope = "character-context-metrics"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("transport別結果、拒否理由、replay、fallbackを内容なしで集計する", async () => {
     const fixture = createFixture();
     try {
@@ -723,6 +887,14 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Affect event commit後にlinked episode保存だけが失敗した場合はcommitted rangeを示すpartial failureとして返す"
+  // oracle = { type = "contract", ref = "docs/adr/018-character-affect-event-persistence.md" }
+  // failure_mode = "部分commitを全成功またはeffect noneとして返し、consumerが保存済みAffectを誤って再送する"
+  // scope = "character-affect-partial-effect"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Affect保存後のepisode失敗をpartial failureとして返し、成功に見せない", async () => {
     const fixture = createFixture({ failEpisodeWrite: true });
     try {

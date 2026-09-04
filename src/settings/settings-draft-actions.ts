@@ -1,10 +1,12 @@
 import type { ModelCatalogSnapshot } from "../model-catalog.js";
 import type { MicrocopySlot } from "../microcopy-state.js";
+import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
 import type { AppSettings } from "../provider-settings-state.js";
 import {
   addMateMemoryGenerationPriorityDraft,
   removeMateMemoryGenerationPriorityDraft,
   updateAutoCollapseActionDockOnSend,
+  updateGlossaryProactiveCreateLimitDraft,
   updateCodingProviderEnabledDraft,
   updateCodingProviderInstructionRelativePathDraft,
   updateCodingProviderSkillRelativePathDraft,
@@ -21,6 +23,7 @@ import {
   updateMemoryExtractionTimeoutSecondsDraft,
   updateMemoryFileQuotaMegabytesDraft,
   updateMemoryGenerationEnabled,
+  updateKeyboardShortcuts,
   updateScrollToLatestOnSend,
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
@@ -89,6 +92,12 @@ export function handleChangeScrollToLatestOnSend(input: SettingsDraftActionInput
   input.setSettingsDraft((current) => updateScrollToLatestOnSend(current, input.enabled));
 }
 
+export function handleChangeKeyboardShortcuts(input: SettingsDraftActionInput & {
+  keyboardShortcuts: KeyboardShortcutSettings;
+}): void {
+  input.setSettingsDraft((current) => updateKeyboardShortcuts(current, input.keyboardShortcuts));
+}
+
 export function handleChangeLaunchAtLoginEnabled(input: SettingsDraftActionInput & {
   enabled: boolean;
 }): void {
@@ -112,6 +121,12 @@ export function handleChangeMemoryFileQuotaMegabytes(input: SettingsDraftActionI
   value: string;
 }): void {
   input.setSettingsDraft((current) => updateMemoryFileQuotaMegabytesDraft(current, input.value));
+}
+
+export function handleChangeGlossaryProactiveCreateLimit(input: SettingsDraftActionInput & {
+  value: string;
+}): void {
+  input.setSettingsDraft((current) => updateGlossaryProactiveCreateLimitDraft(current, input.value));
 }
 
 export function handleChangeUserMicrocopySlot(input: SettingsDraftActionInput & {
