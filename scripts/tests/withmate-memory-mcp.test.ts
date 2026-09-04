@@ -431,6 +431,12 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
     };
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: "api-secret",
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+      },
       fallbackAdmission,
       runtimeCall: async () => {
         if (domainFailure) {
@@ -594,6 +600,12 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       await originalSend(message, options);
     };
     const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: "api-secret",
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+      },
       fallbackAdmission,
       runtimeCall: async () => {
         throw new WithMateMemoryRuntimeExchangeError("transport failed", false, {
