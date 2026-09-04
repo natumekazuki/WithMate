@@ -616,6 +616,72 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(calls.length, 1);
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "fallback eligibleは正常送出済みregistrationと同じopaque admission tokenを持つlisted stateだけを遷移させる"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // failure_mode = "古いregistrationのeligible要求が、期限切れ後に作成された未送出の新規listed stateを消費する"
+  // scope = "memory-runtime-fallback-admission-state"
+  // lifecycle = "permanent"
+  // distinction = "bindingとturnが同じでもregistration世代が異なる逆順interleavingをserver ownerで検証する"
+  // @end-test-value
+  it("fallback eligibleは同じlisted registration tokenだけを消費する", async () => {
+    const registry = new AgentRuntimeBindingRegistry();
+    const binding = registry.issueOrReuse({
+      actorSessionId: "session-a",
+      providerId: "codex",
+      authoritySnapshot: { userId: "local-user", characterId: "character-a", allowedProjectIds: ["project-a"] },
+      operationGrants: getMemoryV6AgentRuntimeOperations(),
+    });
+    let nowMs = Date.parse("2026-09-04T00:00:00.000Z");
+    const runtime = await startServer({ registry, now: () => new Date(nowMs) });
+    const body = {
+      schemaVersion: "withmate-memory-v1",
+      targets: [{ kind: "user-global" }],
+      query: "fallback",
+    };
+
+    const firstListed = await runtime.markFallbackListed(binding.bindingReference);
+    const firstAdmissionToken = (firstListed.value as any).admissionToken;
+    assert.equal(typeof firstAdmissionToken, "string");
+    const duplicateListed = await runtime.markFallbackListed(binding.bindingReference);
+    assert.equal((duplicateListed.value as any).admissionToken, firstAdmissionToken);
+    assert.equal((duplicateListed.value as any).rollbackToken, undefined);
+    nowMs += 60_001;
+    const secondListed = await runtime.markFallbackListed(binding.bindingReference);
+    const secondAdmissionToken = (secondListed.value as any).admissionToken;
+    const secondRollbackToken = (secondListed.value as any).rollbackToken;
+    assert.equal(typeof secondAdmissionToken, "string");
+    assert.equal(typeof secondRollbackToken, "string");
+    assert.notEqual(secondAdmissionToken, firstAdmissionToken);
+    assert.equal(
+      (await runtime.markFallbackEligible("/v1/search", body, binding.bindingReference, firstAdmissionToken)).status,
+      403,
+    );
+    assert.equal((await runtime.rollbackFallbackListed(secondRollbackToken, binding.bindingReference)).status, 200);
+    assert.equal((await runtime.callFallback("/v1/search", body, binding.bindingReference)).status, 403);
+
+    const thirdListed = await runtime.markFallbackListed(binding.bindingReference);
+    const thirdAdmissionToken = (thirdListed.value as any).admissionToken;
+    const fingerprint = createMemoryFallbackOperationFingerprint({ method: "POST", path: "/v1/search", body });
+    assert.equal(
+      (await runtime.markFallbackEligibleControl({ fingerprint }, binding.bindingReference)).status,
+      403,
+    );
+    assert.equal(
+      (await runtime.markFallbackEligibleControl({
+        admissionToken: thirdAdmissionToken,
+        fingerprint,
+        unexpected: true,
+      }, binding.bindingReference)).status,
+      403,
+    );
+    assert.equal(
+      (await runtime.markFallbackEligible("/v1/search", body, binding.bindingReference, thirdAdmissionToken)).status,
+      200,
+    );
+  });
+
   it("optional routeでも提示済みの空白bindingを未提示へfallbackしない", async () => {
     const calls: unknown[] = [];
     const service = {
@@ -698,7 +764,8 @@ describe("Memory HTTP agent runtime binding policy", () => {
     callOperatorFallback(path: string, body: unknown, bindingReference?: string): ReturnType<typeof callWithMateMemoryRuntime>;
     markFallbackListed(bindingReference: string): ReturnType<typeof callWithMateMemoryRuntime>;
     markFallbackListedWithoutReporter(bindingReference: string): ReturnType<typeof callWithMateMemoryRuntime>;
-    markFallbackEligible(path: string, body: unknown, bindingReference: string): ReturnType<typeof callWithMateMemoryRuntime>;
+    markFallbackEligible(path: string, body: unknown, bindingReference: string, admissionToken?: string): ReturnType<typeof callWithMateMemoryRuntime>;
+    markFallbackEligibleControl(body: unknown, bindingReference: string): ReturnType<typeof callWithMateMemoryRuntime>;
     expireTurn(): void;
   }> {
     const turns = new ProviderAgentRuntimeTurnCoordinator();
@@ -736,6 +803,27 @@ describe("Memory HTTP agent runtime binding policy", () => {
       },
       credential: { adapter: "mcp" as const, adapterSecret: MCP_SECRET },
     };
+    const fallbackAdmissionTokens = new Map<string, string>();
+    const markFallbackListed = async (bindingReference: string) => {
+      const result = await callWithMateMemoryRuntime(
+        connection,
+        { method: "POST", path: WITHMATE_MEMORY_FALLBACK_LISTED_PATH, body: {} },
+        {
+          signal: new AbortController().signal,
+          bindingReference,
+          turnCapability: turn.capability,
+          fallbackAdmissionSecret: FALLBACK_ADMISSION_SECRET,
+        },
+      );
+      const admissionToken = result.value && typeof result.value === "object"
+        && typeof (result.value as Record<string, unknown>).admissionToken === "string"
+          ? (result.value as Record<string, string>).admissionToken
+          : null;
+      if (admissionToken) {
+        fallbackAdmissionTokens.set(bindingReference, admissionToken);
+      }
+      return result;
+    };
     return {
       call: (path, body, bindingReference) => callWithMateMemoryRuntime(
         connection,
@@ -768,16 +856,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
         { method: "POST", path, body, fallbackFrom: "mcp" },
         { signal: new AbortController().signal, bindingReference, turnCapability: turn.capability },
       ),
-      markFallbackListed: (bindingReference) => callWithMateMemoryRuntime(
-        connection,
-        { method: "POST", path: WITHMATE_MEMORY_FALLBACK_LISTED_PATH, body: {} },
-        {
-          signal: new AbortController().signal,
-          bindingReference,
-          turnCapability: turn.capability,
-          fallbackAdmissionSecret: FALLBACK_ADMISSION_SECRET,
-        },
-      ),
+      markFallbackListed,
       markFallbackListedWithoutReporter: (bindingReference) => callWithMateMemoryRuntime(
         connection,
         { method: "POST", path: WITHMATE_MEMORY_FALLBACK_LISTED_PATH, body: {} },
@@ -797,13 +876,26 @@ describe("Memory HTTP agent runtime binding policy", () => {
           fallbackAdmissionSecret: FALLBACK_ADMISSION_SECRET,
         },
       ),
-      markFallbackEligible: (path, body, bindingReference) => callWithMateMemoryRuntime(
+      markFallbackEligible: (path, body, bindingReference, admissionToken) => callWithMateMemoryRuntime(
         connection,
         {
           method: "POST",
           path: WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH,
-          body: { fingerprint: createMemoryFallbackOperationFingerprint({ method: "POST", path, body }) },
+          body: {
+            fingerprint: createMemoryFallbackOperationFingerprint({ method: "POST", path, body }),
+            admissionToken: admissionToken ?? fallbackAdmissionTokens.get(bindingReference) ?? "",
+          },
         },
+        {
+          signal: new AbortController().signal,
+          bindingReference,
+          turnCapability: turn.capability,
+          fallbackAdmissionSecret: FALLBACK_ADMISSION_SECRET,
+        },
+      ),
+      markFallbackEligibleControl: (body, bindingReference) => callWithMateMemoryRuntime(
+        connection,
+        { method: "POST", path: WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH, body },
         {
           signal: new AbortController().signal,
           bindingReference,

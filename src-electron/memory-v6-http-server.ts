@@ -1310,6 +1310,7 @@ const FALLBACK_ADMISSION_MAX_RECORDS = 256;
 type FallbackAdmissionRecord = {
   phase: "listed" | "eligible" | "consumed";
   expiresAtMs: number;
+  admissionToken: string;
   fingerprint?: string;
   rollbackToken?: string;
 };
@@ -1335,22 +1336,25 @@ class MemoryFallbackAdmissionState {
     bindingReference: string,
     turnCapability: string,
     nowMs: number,
-  ): { ok: true; rollbackToken?: string } | { ok: false } {
+  ): { ok: true; admissionToken: string; rollbackToken?: string } | { ok: false } {
     this.#purgeExpired(nowMs);
     const key = fallbackAdmissionKey(bindingReference, turnCapability);
-    if (this.#records.has(key)) {
-      return { ok: true };
+    const existing = this.#records.get(key);
+    if (existing) {
+      return { ok: true, admissionToken: existing.admissionToken };
     }
     if (this.#records.size >= FALLBACK_ADMISSION_MAX_RECORDS) {
       return { ok: false };
     }
+    const admissionToken = randomUUID();
     const rollbackToken = randomUUID();
     this.#records.set(key, {
       phase: "listed",
       expiresAtMs: nowMs + FALLBACK_ADMISSION_TTL_MS,
+      admissionToken,
       rollbackToken,
     });
-    return { ok: true, rollbackToken };
+    return { ok: true, admissionToken, rollbackToken };
   }
 
   rollbackListed(bindingReference: string, turnCapability: string, rollbackToken: string, nowMs: number): boolean {
@@ -1367,18 +1371,20 @@ class MemoryFallbackAdmissionState {
   markEligible(
     bindingReference: string,
     turnCapability: string,
+    admissionToken: string,
     fingerprint: string,
     nowMs: number,
   ): boolean {
     this.#purgeExpired(nowMs);
     const key = fallbackAdmissionKey(bindingReference, turnCapability);
     const record = this.#records.get(key);
-    if (!record || record.phase !== "listed") {
+    if (!record || record.phase !== "listed" || record.admissionToken !== admissionToken) {
       return false;
     }
     this.#records.set(key, {
       phase: "eligible",
       expiresAtMs: nowMs + FALLBACK_ADMISSION_TTL_MS,
+      admissionToken: record.admissionToken,
       fingerprint,
     });
     return true;
@@ -1403,6 +1409,7 @@ class MemoryFallbackAdmissionState {
     this.#records.set(key, {
       phase: "consumed",
       expiresAtMs: record.expiresAtMs,
+      admissionToken: record.admissionToken,
       fingerprint,
     });
     return true;
@@ -1549,6 +1556,7 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
                 ? {
                   ok: true,
                   fallbackAdmission: "listed",
+                  admissionToken: listed.admissionToken,
                   ...(listed.rollbackToken ? { rollbackToken: listed.rollbackToken } : {}),
                 }
                 : memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Fallback admission capacity is unavailable."),
@@ -1579,12 +1587,18 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           }
           const fingerprint = body && typeof body === "object" && !Array.isArray(body)
             && typeof (body as Record<string, unknown>).fingerprint === "string"
-            && Object.keys(body as Record<string, unknown>).length === 1
+            && typeof (body as Record<string, unknown>).admissionToken === "string"
+            && Object.keys(body as Record<string, unknown>).length === 2
               ? (body as Record<string, string>).fingerprint.trim()
               : "";
-          const eligible = Boolean(fingerprint) && fallbackAdmissions.markEligible(
+          const admissionToken = body && typeof body === "object" && !Array.isArray(body)
+            && typeof (body as Record<string, unknown>).admissionToken === "string"
+              ? (body as Record<string, string>).admissionToken.trim()
+              : "";
+          const eligible = Boolean(fingerprint) && Boolean(admissionToken) && fallbackAdmissions.markEligible(
             actor.bindingReference,
             actor.turnCapability,
+            admissionToken,
             fingerprint,
             nowMs(),
           );

@@ -224,10 +224,15 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
     turnCapability: string;
     fallbackAdmissionSecret: string;
   };
-  let deliveredContext: ControlContext | null = null;
+  type DeliveredAdmission = {
+    context: ControlContext;
+    admissionToken: string;
+  };
+  let deliveredAdmission: DeliveredAdmission | null = null;
   let listedRegistration: Promise<void> | null = null;
   let listedDelivery: Promise<boolean> | null = null;
   let listedDeliveryRequiresSettlement = false;
+  let listedDeliveryPending = false;
 
   const isSameControlContext = (left: ControlContext, right: ControlContext): boolean => (
     left.connection.api.runtimeGenerationId === right.connection.api.runtimeGenerationId
@@ -267,10 +272,12 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
       const previousRegistration = listedRegistration;
       let settleDelivery!: (delivered: boolean) => void;
       let deliverySettled = false;
+      listedDeliveryPending = true;
       listedDelivery = new Promise<boolean>((resolve) => {
         settleDelivery = (delivered) => {
           if (!deliverySettled) {
             deliverySettled = true;
+            listedDeliveryPending = false;
             resolve(delivered);
           }
         };
@@ -279,6 +286,7 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
         await previousRegistration;
         let registered: {
           context: ControlContext;
+          admissionToken: string;
           rollback: (() => Promise<void>) | null;
         } | null = null;
         try {
@@ -313,8 +321,17 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
             && typeof (listed.value as Record<string, unknown>).rollbackToken === "string"
               ? (listed.value as Record<string, string>).rollbackToken
               : null;
+          const admissionToken = listed.value
+            && typeof listed.value === "object"
+            && typeof (listed.value as Record<string, unknown>).admissionToken === "string"
+              ? (listed.value as Record<string, string>).admissionToken.trim()
+              : "";
+          if (!admissionToken) {
+            return null;
+          }
           registered = {
             context,
+            admissionToken,
             rollback: rollbackToken
               ? async () => {
                 await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH, { rollbackToken });
@@ -330,12 +347,15 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
       const registered = await registration;
       listedDeliveryRequiresSettlement = Boolean(
         registered?.rollback
-        || (registered && deliveredContext && !isSameControlContext(registered.context, deliveredContext)),
+        || (registered && deliveredAdmission && !isSameControlContext(registered.context, deliveredAdmission.context)),
       );
       return {
         async commit(): Promise<void> {
           if (registered) {
-            deliveredContext = registered.context;
+            deliveredAdmission = {
+              context: registered.context,
+              admissionToken: registered.admissionToken,
+            };
           }
           settleDelivery(true);
         },
@@ -349,9 +369,24 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
       };
     },
     async markEligible(operation): Promise<boolean> {
-      await listedRegistration;
-      if (!deliveredContext || listedDeliveryRequiresSettlement) {
-        if (listedDelivery && !await listedDelivery) {
+      const admissionAtStart = deliveredAdmission;
+      const registrationAtStart = listedRegistration;
+      const deliveryAtStart = listedDelivery;
+      const deliveryPendingAtStart = listedDeliveryPending;
+      let admission = admissionAtStart;
+      if (deliveryPendingAtStart) {
+        await registrationAtStart;
+        if (listedDeliveryRequiresSettlement) {
+          if (deliveryAtStart && !await deliveryAtStart) {
+            return false;
+          }
+          admission = deliveredAdmission;
+        } else {
+          admission = admissionAtStart;
+        }
+      }
+      if (!admission) {
+        if (deliveryAtStart && deliveryPendingAtStart && !await deliveryAtStart) {
           return false;
         }
       }
@@ -359,10 +394,11 @@ function createMcpFallbackAdmission(deps: McpRuntimeDeps): McpFallbackAdmission 
       if (NON_RETRYABLE_FALLBACK_PATHS.has(pathname)) {
         return false;
       }
-      if (!deliveredContext) {
+      if (!admission) {
         return false;
       }
-      return (await callControl(deliveredContext, WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH, {
+      return (await callControl(admission.context, WITHMATE_MEMORY_FALLBACK_ELIGIBLE_PATH, {
+        admissionToken: admission.admissionToken,
         fingerprint: createMemoryFallbackOperationFingerprint(operation),
       }))?.ok ?? false;
     },

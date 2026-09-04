@@ -25619,10 +25619,11 @@ async function resolveFallbackAdmissionSecret(deps, connection) {
 	}
 }
 function createMcpFallbackAdmission(deps) {
-	let deliveredContext = null;
+	let deliveredAdmission = null;
 	let listedRegistration = null;
 	let listedDelivery = null;
 	let listedDeliveryRequiresSettlement = false;
+	let listedDeliveryPending = false;
 	const isSameControlContext = (left, right) => left.connection.api.runtimeGenerationId === right.connection.api.runtimeGenerationId && left.bindingReference === right.bindingReference && left.turnCapability === right.turnCapability && left.fallbackAdmissionSecret === right.fallbackAdmissionSecret;
 	const callControl = async (context, path, body) => {
 		const abortController = new AbortController();
@@ -25649,10 +25650,12 @@ function createMcpFallbackAdmission(deps) {
 			const previousRegistration = listedRegistration;
 			let settleDelivery;
 			let deliverySettled = false;
+			listedDeliveryPending = true;
 			listedDelivery = new Promise((resolve) => {
 				settleDelivery = (delivered) => {
 					if (!deliverySettled) {
 						deliverySettled = true;
+						listedDeliveryPending = false;
 						resolve(delivered);
 					}
 				};
@@ -25685,8 +25688,11 @@ function createMcpFallbackAdmission(deps) {
 					const listed = await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_PATH, {});
 					if (!listed?.ok) return null;
 					const rollbackToken = listed.value && typeof listed.value === "object" && typeof listed.value.rollbackToken === "string" ? listed.value.rollbackToken : null;
+					const admissionToken = listed.value && typeof listed.value === "object" && typeof listed.value.admissionToken === "string" ? listed.value.admissionToken.trim() : "";
+					if (!admissionToken) return null;
 					registered = {
 						context,
+						admissionToken,
 						rollback: rollbackToken ? async () => {
 							await callControl(context, WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH, { rollbackToken });
 						} : null
@@ -25698,10 +25704,13 @@ function createMcpFallbackAdmission(deps) {
 			})();
 			listedRegistration = registration.then(() => void 0);
 			const registered = await registration;
-			listedDeliveryRequiresSettlement = Boolean(registered?.rollback || registered && deliveredContext && !isSameControlContext(registered.context, deliveredContext));
+			listedDeliveryRequiresSettlement = Boolean(registered?.rollback || registered && deliveredAdmission && !isSameControlContext(registered.context, deliveredAdmission.context));
 			return {
 				async commit() {
-					if (registered) deliveredContext = registered.context;
+					if (registered) deliveredAdmission = {
+						context: registered.context,
+						admissionToken: registered.admissionToken
+					};
 					settleDelivery(true);
 				},
 				async rollback() {
@@ -25714,14 +25723,28 @@ function createMcpFallbackAdmission(deps) {
 			};
 		},
 		async markEligible(operation) {
-			await listedRegistration;
-			if (!deliveredContext || listedDeliveryRequiresSettlement) {
-				if (listedDelivery && !await listedDelivery) return false;
+			const admissionAtStart = deliveredAdmission;
+			const registrationAtStart = listedRegistration;
+			const deliveryAtStart = listedDelivery;
+			const deliveryPendingAtStart = listedDeliveryPending;
+			let admission = admissionAtStart;
+			if (deliveryPendingAtStart) {
+				await registrationAtStart;
+				if (listedDeliveryRequiresSettlement) {
+					if (deliveryAtStart && !await deliveryAtStart) return false;
+					admission = deliveredAdmission;
+				} else admission = admissionAtStart;
+			}
+			if (!admission) {
+				if (deliveryAtStart && deliveryPendingAtStart && !await deliveryAtStart) return false;
 			}
 			const pathname = new URL(operation.path, "http://127.0.0.1").pathname;
 			if (NON_RETRYABLE_FALLBACK_PATHS.has(pathname)) return false;
-			if (!deliveredContext) return false;
-			return (await callControl(deliveredContext, "/v1/fallback-admission/eligible", { fingerprint: createMemoryFallbackOperationFingerprint(operation) }))?.ok ?? false;
+			if (!admission) return false;
+			return (await callControl(admission.context, "/v1/fallback-admission/eligible", {
+				admissionToken: admission.admissionToken,
+				fingerprint: createMemoryFallbackOperationFingerprint(operation)
+			}))?.ok ?? false;
 		}
 	};
 }

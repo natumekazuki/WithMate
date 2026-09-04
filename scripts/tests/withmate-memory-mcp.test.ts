@@ -674,7 +674,14 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         if (operation.path === "/v1/fallback-admission/listed") {
           listed = true;
           listedGeneration += 1;
-          return { ok: true, status: 200, value: { rollbackToken: `rollback-${listedGeneration}` } };
+          return {
+            ok: true,
+            status: 200,
+            value: {
+              admissionToken: `admission-${listedGeneration}`,
+              rollbackToken: `rollback-${listedGeneration}`,
+            },
+          };
         }
         if (operation.path === "/v1/fallback-admission/listed/rollback") {
           listed = false;
@@ -713,6 +720,138 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       assert.equal(listed, false);
       assert.equal(eligibilityAttempts, 0);
     } finally {
+      releaseResponse();
+      await client.close();
+      await recreatedList;
+      await server.close();
+    }
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "Memory operationが先行しても、正常送出済みtools/listと異なる新規listed stateをfallback eligibleへ遷移させない"
+  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // failure_mode = "先行operationのeligible要求が後発の未送出tools/listで作られたlisted stateを消費し、送出失敗後もCLI fallbackを許可する"
+  // scope = "withmate-memory-mcp-fallback-admission"
+  // lifecycle = "permanent"
+  // distinction = "tools/listが先行する送出待機ではなく、operation開始後に新規listed登録が割り込む逆順interleavingを検証する"
+  // @end-test-value
+  it("先行eligible要求は未送出の新規listed stateを消費しない", async () => {
+    let activeAdmissionToken: string | null = null;
+    let activeRollbackToken: string | null = null;
+    let phase: "absent" | "listed" | "eligible" = "absent";
+    let tokenSequence = 0;
+    let failNextResponse = false;
+    let releaseEligibleRequest!: () => void;
+    let notifyEligibleStarted!: () => void;
+    let releaseResponse!: () => void;
+    let notifyResponseStarted!: () => void;
+    let notifyRollbackCompleted!: () => void;
+    const eligibleRequestGate = new Promise<void>((resolve) => {
+      releaseEligibleRequest = resolve;
+    });
+    const eligibleStarted = new Promise<void>((resolve) => {
+      notifyEligibleStarted = resolve;
+    });
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
+    const responseStarted = new Promise<void>((resolve) => {
+      notifyResponseStarted = resolve;
+    });
+    const rollbackCompleted = new Promise<void>((resolve) => {
+      notifyRollbackCompleted = resolve;
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const originalSend = serverTransport.send.bind(serverTransport);
+    serverTransport.send = async (message, options) => {
+      if (failNextResponse && "result" in message && "id" in message) {
+        failNextResponse = false;
+        notifyResponseStarted();
+        await responseGate;
+        throw new Error("interleaved tools/list response send failed");
+      }
+      await originalSend(message, options);
+    };
+    const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: "api-secret",
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+        WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
+        WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-a",
+      },
+      fallbackAdmissionSecret: "fallback-secret",
+      runtimeCall: async (_connection, operation) => {
+        if (operation.path === "/v1/fallback-admission/listed") {
+          tokenSequence += 1;
+          activeAdmissionToken = `admission-${tokenSequence}`;
+          activeRollbackToken = `rollback-${tokenSequence}`;
+          phase = "listed";
+          return {
+            ok: true,
+            status: 200,
+            value: {
+              admissionToken: activeAdmissionToken,
+              rollbackToken: activeRollbackToken,
+            },
+          };
+        }
+        if (operation.path === "/v1/fallback-admission/listed/rollback") {
+          if (phase === "listed" && (operation.body as any).rollbackToken === activeRollbackToken) {
+            activeAdmissionToken = null;
+            activeRollbackToken = null;
+            phase = "absent";
+            notifyRollbackCompleted();
+            return { ok: true, status: 200, value: {} };
+          }
+          return { ok: false, status: 403, value: {} };
+        }
+        if (operation.path === "/v1/fallback-admission/eligible") {
+          notifyEligibleStarted();
+          await eligibleRequestGate;
+          const requestedToken = (operation.body as any).admissionToken;
+          const eligible = phase === "listed" && (
+            requestedToken === undefined
+            || requestedToken === activeAdmissionToken
+          );
+          if (eligible) {
+            phase = "eligible";
+          }
+          return { ok: eligible, status: eligible ? 200 : 403, value: {} };
+        }
+        throw new WithMateMemoryRuntimeExchangeError("transport failed", false, {
+          discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE",
+        });
+      },
+    });
+    const client = new Client({ name: "withmate-fallback-operation-first-test", version: "1.0.0" });
+    let recreatedList: Promise<unknown> | null = null;
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      await client.listTools();
+      activeAdmissionToken = null;
+      activeRollbackToken = null;
+      phase = "absent";
+
+      const toolCall = client.callTool({
+        name: "memory.search",
+        arguments: { targets: [{ kind: "user-global" }], query: "operation-first" },
+      });
+      await eligibleStarted;
+      failNextResponse = true;
+      recreatedList = client.listTools().catch(() => undefined);
+      await responseStarted;
+      releaseEligibleRequest();
+      const result = await toolCall;
+      assert.equal((result.structuredContent as any).error.details?.fallbackEligible, undefined);
+      releaseResponse();
+      await rollbackCompleted;
+      assert.equal(phase, "absent");
+    } finally {
+      releaseEligibleRequest();
       releaseResponse();
       await client.close();
       await recreatedList;
