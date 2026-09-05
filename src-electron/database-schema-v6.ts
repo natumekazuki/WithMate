@@ -14,6 +14,7 @@ import {
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
 const SESSION_EXECUTION_ORIGIN_MIGRATION_SETTING_KEY = "session_execution_origins_v6_migrated_at";
+const RESOURCE_HISTORY_MIGRATION_SETTING_KEY = "resource_history_v6_migrated_at";
 
 export const V6_SCHEMA_STATUS = "foundation";
 
@@ -247,7 +248,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "updated_at",
   ],
   work_item_events_v6: [
-    "sequence", "work_item_id", "revision", "event_type", "actor_session_id",
+    "sequence", "work_item_id", "revision", "event_type", "actor_session_id", "principal_kind",
     "payload_json", "created_at",
   ],
   work_item_idempotency_v6: [
@@ -311,7 +312,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "expires_at",
   ],
   coordination_events_v6: [
-    "decision_class",
+    "decision_class", "creation_principal_kind",
     "sequence", "id", "actor_session_id", "session_role", "role_contract_revision",
     "root_session_id", "parent_session_id", "delegation_depth", "kind", "summary",
     "payload_json", "execution_id", "target_session_id", "corrected_event_id", "options_json",
@@ -1655,6 +1656,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
       'handoff', 'state_transitioned', 'result_reported'
     )),
     actor_session_id TEXT,
+    principal_kind TEXT NOT NULL DEFAULT 'system' CHECK (principal_kind IN ('user', 'agent', 'system')),
     payload_json TEXT NOT NULL CHECK (
       json_valid(payload_json)
       AND json_type(payload_json) = 'object'
@@ -2000,6 +2002,8 @@ export const CREATE_V6_COORDINATION_EVENT_TABLES_SQL = `
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     actor_session_id TEXT NOT NULL,
+    creation_principal_kind TEXT NOT NULL DEFAULT 'system'
+      CHECK (creation_principal_kind IN ('agent', 'system')),
     session_role TEXT NOT NULL CHECK (session_role IN ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')),
     role_contract_revision INTEGER NOT NULL CHECK (role_contract_revision = 1),
     root_session_id TEXT NOT NULL,
@@ -3270,14 +3274,16 @@ function rebuildWorkItemIdempotencyV2(db: DatabaseSync): void {
 }
 
 function rebuildWorkItemEventsPayloadLimit(db: DatabaseSync): void {
+  const columns = tableColumnNames(db, "work_item_events_v6");
+  const principalKind = columns.has("principal_kind") ? "principal_kind" : "'system'";
   db.exec(`
     ALTER TABLE work_item_events_v6 RENAME TO work_item_events_v6_legacy;
     DROP INDEX IF EXISTS idx_v6_work_item_events_item_sequence;
     ${CREATE_V6_WORK_ITEM_TABLES_SQL}
     INSERT INTO work_item_events_v6 (
-      sequence, work_item_id, revision, event_type, actor_session_id, payload_json, created_at
+      sequence, work_item_id, revision, event_type, actor_session_id, principal_kind, payload_json, created_at
     )
-    SELECT sequence, work_item_id, revision, event_type, actor_session_id, payload_json, created_at
+    SELECT sequence, work_item_id, revision, event_type, actor_session_id, ${principalKind}, payload_json, created_at
     FROM work_item_events_v6_legacy;
     DROP TABLE work_item_events_v6_legacy;
   `);
@@ -3300,6 +3306,36 @@ function upgradeWorkItemContractV2(db: DatabaseSync): void {
     )
   ) {
     rebuildWorkItemEventsPayloadLimit(db);
+  }
+  const eventColumns = tableColumnNames(db, "work_item_events_v6");
+  if (!eventColumns.has("principal_kind")) {
+    db.exec(`
+      ALTER TABLE work_item_events_v6
+        ADD COLUMN principal_kind TEXT NOT NULL DEFAULT 'system'
+        CHECK (principal_kind IN ('user', 'agent', 'system'));
+    `);
+    if (tableExists(db, "resource_event_headers_v6")) {
+      db.exec(`
+        UPDATE work_item_events_v6
+        SET principal_kind = COALESCE((
+        SELECT header.principal_kind
+        FROM resource_event_headers_v6 AS header
+        WHERE header.event_id = 'work-item:' || work_item_events_v6.work_item_id
+          || ':revision:' || work_item_events_v6.revision
+      ), CASE
+        WHEN event_type = 'migration_baseline' OR actor_session_id IS NULL THEN 'system'
+        ELSE 'agent'
+      END);
+      `);
+    } else {
+      db.exec(`
+        UPDATE work_item_events_v6
+        SET principal_kind = CASE
+          WHEN event_type = 'migration_baseline' OR actor_session_id IS NULL THEN 'system'
+          ELSE 'agent'
+        END;
+      `);
+    }
   }
   if (tableExists(db, "work_item_idempotency_v6")) {
     const idempotencySql = tableSql(db, "work_item_idempotency_v6");
@@ -3390,13 +3426,14 @@ function backfillRootWorkItemsAndBaselines(db: DatabaseSync): void {
       );
 
     INSERT INTO work_item_events_v6 (
-      work_item_id, revision, event_type, actor_session_id, payload_json, created_at
+      work_item_id, revision, event_type, actor_session_id, principal_kind, payload_json, created_at
     )
     SELECT
       item.id,
       item.revision,
       'migration_baseline',
       NULL,
+      'system',
       json_object(
         'kind', item.kind,
         'rootSessionId', item.root_session_id,
@@ -3468,10 +3505,11 @@ export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
   }
 }
 
-function ensureV6SchemaUnsafe(db: DatabaseSync): void {
+function ensureV6SchemaUnsafe(db: DatabaseSync, options: { backfillLegacyHistory: boolean }): void {
   const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
   const sessionRoleBindingsExisted = tableExists(db, "session_role_bindings_v6");
   upgradeLegacyCoordinationEventActionSchema(db);
+  upgradeCoordinationEventCreationPrincipal(db);
   if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
     throw new Error("Session terminal failure notification delivery schema is invalid.");
   }
@@ -3517,7 +3555,9 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     `);
   }
 
-  backfillRootWorkItemsAndBaselines(db);
+  if (options.backfillLegacyHistory) {
+    backfillRootWorkItemsAndBaselines(db);
+  }
   backfillWorkItemAggregations(db);
 
   if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
@@ -3850,11 +3890,52 @@ export function ensureV6Schema(db: DatabaseSync): void {
     );
   }
   runWithSavepoint(db, "ensure_v6_schema", () => {
-    ensureV6SchemaUnsafe(db);
+    const resourceHistoryMigrationCompleted = tableExists(db, "app_settings")
+      && db.prepare("SELECT 1 FROM app_settings WHERE setting_key = ?")
+        .get(RESOURCE_HISTORY_MIGRATION_SETTING_KEY) !== undefined;
+    const backfillLegacyHistory = !resourceHistoryMigrationCompleted;
+    ensureV6SchemaUnsafe(db, { backfillLegacyHistory });
     backfillBaselineSessionAuthority(db, new Date().toISOString());
-    ensureResourceHistorySchema(db);
-    ensureSessionInteractionAuthoritySchema(db);
-    ensureCoordinationEventAuthoritySchema(db);
+    ensureResourceHistorySchema(db, { backfillLegacyHistory });
+    ensureSessionInteractionAuthoritySchema(db, { backfillLegacyHistory });
+    ensureCoordinationEventAuthoritySchema(db, { backfillLegacyHistory });
     verifyResourceHistoryProjections(db);
+    const hasTrackedResource = db.prepare(`
+      SELECT 1 FROM sessions_v6
+      UNION ALL SELECT 1 FROM session_executions_v6
+      UNION ALL SELECT 1 FROM work_items_v6
+      UNION ALL SELECT 1 FROM session_file_write_idempotency_v6
+      UNION ALL SELECT 1 FROM session_transcript_export_idempotency_v6
+      UNION ALL SELECT 1 FROM session_interactions_v6
+      UNION ALL SELECT 1 FROM coordination_events_v6
+      LIMIT 1
+    `).get() !== undefined;
+    if (backfillLegacyHistory && hasTrackedResource) {
+      db.prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, '1', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      `).run(RESOURCE_HISTORY_MIGRATION_SETTING_KEY);
+    }
   });
+}
+
+function upgradeCoordinationEventCreationPrincipal(db: DatabaseSync): void {
+  if (!tableExists(db, "coordination_events_v6")) return;
+  const columns = tableColumnNames(db, "coordination_events_v6");
+  if (columns.has("creation_principal_kind")) return;
+  db.exec(`
+    ALTER TABLE coordination_events_v6
+      ADD COLUMN creation_principal_kind TEXT NOT NULL DEFAULT 'system'
+      CHECK (creation_principal_kind IN ('agent', 'system'));
+  `);
+  if (!tableExists(db, "resource_event_headers_v6")) return;
+  db.exec(`
+    UPDATE coordination_events_v6
+    SET creation_principal_kind = COALESCE((
+      SELECT CASE header.principal_kind WHEN 'agent' THEN 'agent' ELSE 'system' END
+      FROM resource_event_headers_v6 AS header
+      WHERE header.event_id = coordination_events_v6.id
+        AND header.event_kind = 'coordination_event_created'
+    ), 'system');
+  `);
 }

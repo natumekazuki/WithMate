@@ -41,7 +41,10 @@ export const CREATE_COORDINATION_EVENT_AUTHORITY_TABLES_SQL = `
   END;
 `;
 
-export function ensureCoordinationEventAuthoritySchema(db: DatabaseSync): void {
+export function ensureCoordinationEventAuthoritySchema(
+  db: DatabaseSync,
+  options: { backfillLegacyHistory: boolean },
+): void {
   db.exec("SAVEPOINT coordination_event_authority_schema");
   try {
     db.exec(CREATE_COORDINATION_EVENT_AUTHORITY_TABLES_SQL);
@@ -89,7 +92,7 @@ export function ensureCoordinationEventAuthoritySchema(db: DatabaseSync): void {
 
     backfillUserReceipts(db);
     ensurePrincipalScopedIdempotency(db);
-    backfillCoordinationEventHeaders(db);
+    if (options.backfillLegacyHistory) backfillCoordinationEventHeaders(db);
     verifyDecisionClassRegistry(db);
     db.exec("RELEASE coordination_event_authority_schema");
   } catch (error) {

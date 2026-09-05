@@ -1036,13 +1036,14 @@ export class WorkItemStorageV6 {
     const payloadJson = serializeJson(input.payload, "Work Item event payload");
     this.db.prepare(`
       INSERT INTO work_item_events_v6 (
-        work_item_id, revision, event_type, actor_session_id, payload_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        work_item_id, revision, event_type, actor_session_id, principal_kind, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.workItemId,
       input.revision,
       input.type,
       input.actorSessionId,
+      input.proof.principal.kind,
       payloadJson,
       input.createdAt,
     );

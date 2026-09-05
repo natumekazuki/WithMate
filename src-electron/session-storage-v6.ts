@@ -1997,8 +1997,8 @@ export class SessionStorageV6 {
     );
     this.db.prepare(`
       INSERT INTO work_item_events_v6 (
-        work_item_id, revision, event_type, actor_session_id, payload_json, created_at
-      ) VALUES (?, 1, 'created', ?, ?, ?)
+        work_item_id, revision, event_type, actor_session_id, principal_kind, payload_json, created_at
+      ) VALUES (?, 1, 'created', ?, 'system', ?, ?)
     `).run(workItemId, session.id, JSON.stringify(payload), session.updatedAt);
     appendWorkItemEventHeader(this.db, {
       workItemId,

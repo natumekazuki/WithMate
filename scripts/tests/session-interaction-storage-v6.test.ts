@@ -10,6 +10,7 @@ import { verifyResourceHistoryProjections } from "../../src-electron/resource-hi
 import {
   CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL,
   CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL,
+  ensureV6Schema,
 } from "../../src-electron/database-schema-v6.js";
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
 import { ensureSessionInteractionAuthoritySchema } from "../../src-electron/session-interaction-authority-schema.js";
@@ -259,9 +260,9 @@ describe("SessionInteractionStorageV6", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "user responseのprojection、revision、event、principal-scoped idempotencyがatomicに保存され、startup verifierがevent projection改変を拒否する"
+  // claim = "user responseのprojection、revision、event、principal-scoped idempotencyがatomicに保存され、startup verifierがevent改変とrevision欠落を拒否する"
   // oracle = { type = "contract", ref = "AUTONOMY-USER-01/AUTONOMY-HISTORY-04/AUTONOMY-MUTATION-05" }
-  // failure_mode = "response loss後のretryで二重eventを作るか、projectionとprovenanceが部分保存されるか、改変eventをcurrent interactionとして受理する"
+  // failure_mode = "response loss後のretryで二重eventを作るか、projectionとprovenanceが部分保存されるか、改変eventまたは先頭revision欠落をstartupが補完して受理する"
   // scope = "session-interaction-storage"
   // lifecycle = "permanent"
   // @end-test-value
@@ -287,6 +288,7 @@ describe("SessionInteractionStorageV6", () => {
         (error) => error instanceof SessionInteractionTargetMismatchError,
       );
       const answered = fixture.storage.respond(input);
+      const { responseFingerprint: _responseFingerprint, ...publicProjection } = answered.interaction;
       const replay = fixture.storage.respond(input);
       assert.equal(answered.replayed, false);
       assert.equal(answered.interaction.state, "answered");
@@ -339,7 +341,6 @@ describe("SessionInteractionStorageV6", () => {
         ]);
         assert.match(String(events[1]?.idempotency_key_fingerprint), /^[0-9a-f]{64}$/);
         assert.notEqual(events[1]?.idempotency_key_fingerprint, "respond-1");
-        const { responseFingerprint: _responseFingerprint, ...publicProjection } = answered.interaction;
         assert.deepEqual(JSON.parse(String(events[1]?.projection_json)), publicProjection);
         const headers = db.prepare(`
           SELECT resource_kind, resource_id, root_id, owner_id, event_kind,
@@ -392,6 +393,23 @@ describe("SessionInteractionStorageV6", () => {
         assert.throws(
           () => verifyResourceHistoryProjections(replayDb),
           /interaction event replay does not match the current projection/,
+        );
+        replayDb.prepare(`
+          UPDATE session_interaction_events_v6
+          SET projection_json = ?
+          WHERE interaction_id = 'interaction-1' AND interaction_revision = 2
+        `).run(JSON.stringify(publicProjection));
+        replayDb.exec(`
+          DROP TRIGGER resource_event_headers_no_delete_v6;
+          DROP TRIGGER session_interaction_events_no_delete_v6;
+          DELETE FROM resource_event_headers_v6
+          WHERE event_id = 'interaction:interaction-1:revision:1';
+          DELETE FROM session_interaction_events_v6
+          WHERE interaction_id = 'interaction-1' AND interaction_revision = 1;
+        `);
+        assert.throws(
+          () => ensureV6Schema(replayDb),
+          /interaction event history is incomplete/,
         );
       } finally {
         replayDb.close();
@@ -540,6 +558,7 @@ describe("SessionInteractionStorageV6", () => {
           DROP TABLE session_interaction_events_v6;
           DROP TABLE session_interaction_idempotency_v6;
           DROP TABLE session_interactions_v6;
+          DELETE FROM app_settings WHERE setting_key = 'resource_history_v6_migrated_at';
         `);
         db.exec(CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL);
         db.exec(CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL);

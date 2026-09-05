@@ -18,7 +18,10 @@ const SESSION_RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES = SESSION_RUNTIME_MAX_BODY_BY
 const SESSION_EXECUTION_HISTORY_PAYLOAD_LIMIT_BYTES =
   SESSION_RUNTIME_MAX_BODY_BYTES + SESSION_RUNTIME_MAX_RESPONSE_BYTES + RESOURCE_HISTORY_ENVELOPE_BYTES;
 
-export function ensureResourceHistorySchema(db: DatabaseSync): void {
+export function ensureResourceHistorySchema(
+  db: DatabaseSync,
+  options: { backfillLegacyHistory: boolean },
+): void {
   const sessionColumns = tableColumnNames(db, "sessions_v6");
   if (!sessionColumns.has("resource_revision")) {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN resource_revision INTEGER NOT NULL DEFAULT 1 CHECK (resource_revision >= 1)");
@@ -146,8 +149,10 @@ export function ensureResourceHistorySchema(db: DatabaseSync): void {
     END;
   `);
 
-  backfillSagaOperationIds(db);
-  backfillResourceHistory(db);
+  if (options.backfillLegacyHistory) {
+    backfillSagaOperationIds(db);
+    backfillResourceHistory(db);
+  }
 }
 
 export function verifyResourceHistoryProjections(db: DatabaseSync): void {
@@ -264,11 +269,13 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
     projectionTable: "session_file_write_idempotency_v6",
     eventTable: "session_file_write_events_v6",
     label: "Session file write",
+    operationKind: "session-file-write",
   });
   verifySagaProjection(db, {
     projectionTable: "session_transcript_export_idempotency_v6",
     eventTable: "session_transcript_export_events_v6",
     label: "Session transcript export",
+    operationKind: "session-transcript-export",
   });
   verifyInteractionReplay(db);
   verifyCoordinationReplay(db);
@@ -315,7 +322,10 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     UNION ALL
     SELECT 'work-item:' || event.work_item_id || ':revision:' || event.revision,
       'work_item', event.work_item_id, item.root_session_id, item.target_session_id,
-      event.event_type, event.revision, NULL, NULL, NULL, 1, 'committed'
+      event.event_type, event.revision,
+      event.principal_kind,
+      CASE WHEN event.principal_kind = 'agent' THEN event.actor_session_id ELSE NULL END,
+      NULL, 1, 'committed'
     FROM work_item_events_v6 AS event
     INNER JOIN work_items_v6 AS item ON item.id = event.work_item_id
     UNION ALL
@@ -349,7 +359,9 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id
     UNION ALL
     SELECT event.id, 'coordination_event', event.id, event.root_session_id, event.actor_session_id,
-      'coordination_event_created', NULL, NULL, NULL, event.corrected_event_id, 1, 'committed'
+      'coordination_event_created', NULL, event.creation_principal_kind,
+      CASE WHEN event.creation_principal_kind = 'agent' THEN event.actor_session_id ELSE NULL END,
+      event.corrected_event_id, 1, 'committed'
     FROM coordination_events_v6 AS event
     UNION ALL
     SELECT action.id, 'coordination_event', action.event_id, event.root_session_id, event.actor_session_id,
@@ -432,7 +444,12 @@ function verifyHeaderGrant(db: DatabaseSync, header: StoredHeaderRow): void {
     FROM session_authority_grants_v6
     WHERE grant_id = ?
   `).get(header.grant_id) as { grantee_session_id: string; revision: number } | undefined;
-  if (!grant || grant.grantee_session_id !== header.actor_session_id || header.grant_revision > grant.revision) {
+  const grantEvent = db.prepare(`
+    SELECT 1
+    FROM session_authority_grant_events_v6
+    WHERE grant_id = ? AND grant_revision = ?
+  `).get(header.grant_id, header.grant_revision);
+  if (!grant || !grantEvent || grant.grantee_session_id !== header.actor_session_id || header.grant_revision > grant.revision) {
     throw new Error(`Resource event header grant does not match its agent principal: ${header.event_id}`);
   }
 }
@@ -618,11 +635,33 @@ function verifyInteractionReplay(db: DatabaseSync): void {
     FROM session_interactions_v6 AS interaction
     INNER JOIN session_executions_v6 AS execution ON execution.id = interaction.execution_id
   `).all() as Array<Record<string, string | number | null>>;
+  const readHistory = db.prepare(`
+    SELECT COUNT(*) AS event_count, MIN(interaction_revision) AS first_revision,
+      MAX(interaction_revision) AS last_revision,
+      MAX(CASE WHEN event_kind = 'migration_baseline' THEN interaction_revision END) AS baseline_revision
+    FROM session_interaction_events_v6
+    WHERE interaction_id = ?
+  `);
   const readLatest = db.prepare(`
     SELECT projection_json FROM session_interaction_events_v6
     WHERE interaction_id = ? ORDER BY interaction_revision DESC LIMIT 1
   `);
   for (const row of interactions) {
+    const history = readHistory.get(row.id) as {
+      event_count: number;
+      first_revision: number | null;
+      last_revision: number | null;
+      baseline_revision: number | null;
+    };
+    const firstRevision = history.first_revision;
+    const lastRevision = history.last_revision;
+    if (firstRevision === null
+      || lastRevision === null
+      || lastRevision !== row.revision
+      || history.event_count !== lastRevision - firstRevision + 1
+      || (firstRevision !== 1 && history.baseline_revision !== firstRevision)) {
+      throw new Error(`Session interaction event history is incomplete: ${row.id}`);
+    }
     const latest = readLatest.get(row.id) as { projection_json: string } | undefined;
     const principalKind = row.response_principal_kind;
     const resolvedBy = principalKind === "agent" && typeof row.response_actor_session_id === "string"
@@ -651,6 +690,19 @@ function verifyInteractionReplay(db: DatabaseSync): void {
     if (!latest || stableJson(JSON.parse(latest.projection_json)) !== stableJson(projection)) {
       throw new Error(`Session interaction event replay does not match the current projection: ${row.id}`);
     }
+  }
+  const missingSupersedesTarget = db.prepare(`
+    SELECT header.event_id
+    FROM resource_event_headers_v6 AS header
+    LEFT JOIN resource_event_headers_v6 AS superseded
+      ON superseded.event_id = header.supersedes_event_id
+    WHERE header.resource_kind = 'interaction'
+      AND header.supersedes_event_id IS NOT NULL
+      AND superseded.event_id IS NULL
+    LIMIT 1
+  `).get() as { event_id: string } | undefined;
+  if (missingSupersedesTarget) {
+    throw new Error(`Session interaction event supersedes target is missing: ${missingSupersedesTarget.event_id}`);
   }
 }
 
@@ -699,6 +751,7 @@ function verifySagaProjection(db: DatabaseSync, input: {
   projectionTable: string;
   eventTable: string;
   label: string;
+  operationKind: "session-file-write" | "session-transcript-export";
 }): void {
   const mismatch = db.prepare(`
     SELECT projection.idempotency_key AS id
@@ -722,6 +775,80 @@ function verifySagaProjection(db: DatabaseSync, input: {
     LIMIT 1
   `).get() as { id: string } | undefined;
   if (mismatch) throw new Error(`${input.label} projection has no matching resource event: ${mismatch.id}`);
+
+  const projections = db.prepare(`
+    SELECT idempotency_key, request_fingerprint, session_id, relative_path, temp_name,
+      state, result_json, principal_kind, principal_id, operation_id
+    FROM ${input.projectionTable}
+  `).all() as Array<{
+    idempotency_key: string;
+    request_fingerprint: string;
+    session_id: string;
+    relative_path: string;
+    temp_name: string;
+    state: "pending" | "applied" | "rejected";
+    result_json: string | null;
+    principal_kind: string;
+    principal_id: string;
+    operation_id: string;
+  }>;
+  const readEvents = db.prepare(`
+    SELECT event.revision, event.session_id, event.event_kind, event.payload_json,
+      header.principal_kind, header.actor_session_id, header.operation_id,
+      header.idempotency_key_fingerprint
+    FROM ${input.eventTable} AS event
+    INNER JOIN resource_event_headers_v6 AS header ON header.event_id = event.event_id
+    WHERE event.operation_id = ?
+    ORDER BY event.revision
+  `);
+  for (const projection of projections) {
+    const expectedOperationId = createSagaOperationId(
+      input.operationKind,
+      `${projection.principal_kind}:${projection.principal_id}:${projection.idempotency_key}`,
+      projection.request_fingerprint,
+    );
+    const legacyOperationId = `${input.operationKind}:${projection.request_fingerprint}`;
+    const events = readEvents.all(projection.operation_id) as Array<{
+      revision: number;
+      session_id: string;
+      event_kind: string;
+      payload_json: string;
+      principal_kind: string;
+      actor_session_id: string | null;
+      operation_id: string;
+      idempotency_key_fingerprint: string | null;
+    }>;
+    const expectedFingerprint = createHash("sha256").update(projection.idempotency_key).digest("hex");
+    const invalidEvent = events.find((event) => {
+      if (event.session_id !== projection.session_id) return true;
+      if (projection.principal_kind === "legacy_unknown") {
+        return !event.operation_id.startsWith("migration:")
+          || event.idempotency_key_fingerprint !== null
+          || event.principal_kind !== "system"
+          || event.actor_session_id !== null;
+      }
+      return event.operation_id !== projection.operation_id
+        || event.idempotency_key_fingerprint !== expectedFingerprint
+        || event.principal_kind !== projection.principal_kind
+        || (projection.principal_kind === "agent" && event.actor_session_id !== projection.principal_id)
+        || (projection.principal_kind !== "agent" && event.actor_session_id !== null);
+    });
+    const prepared = events.find((event) => event.revision === 1);
+    const latest = events.at(-1);
+    const preparedPayload = prepared ? JSON.parse(prepared.payload_json) as Record<string, unknown> : null;
+    const latestPayload = latest ? JSON.parse(latest.payload_json) as Record<string, unknown> : null;
+    const terminalKey = projection.state === "applied" ? "result" : "error";
+    const expectedResult = projection.result_json === null ? undefined : JSON.parse(projection.result_json) as unknown;
+    if ((projection.operation_id !== expectedOperationId
+      && !(projection.principal_kind === "legacy_unknown" && projection.operation_id === legacyOperationId))
+      || invalidEvent
+      || preparedPayload?.relativePath !== projection.relative_path
+      || preparedPayload?.tempName !== projection.temp_name
+      || latestPayload?.relativePath !== projection.relative_path
+      || (projection.state !== "pending" && stableJson(latestPayload?.[terminalKey]) !== stableJson(expectedResult))) {
+      throw new Error(`${input.label} idempotency replay does not match its resource history: ${projection.idempotency_key}`);
+    }
+  }
 }
 
 export function getSessionResourceRevision(db: DatabaseSync, sessionId: string): number | null {
@@ -1225,12 +1352,16 @@ function backfillResourceHistory(db: DatabaseSync): void {
       write.session_id,
       1,
       CASE write.state WHEN 'pending' THEN 'prepared' WHEN 'applied' THEN 'applied' ELSE 'rejected' END,
-      json_object(
+      json_patch(json_object(
         'relativePath', write.relative_path,
         'tempName', write.temp_name,
         'migrationBaseline', 1,
         'occurredAt', write.created_at
-      )
+      ), CASE write.state
+        WHEN 'applied' THEN json_object('result', json(write.result_json))
+        WHEN 'rejected' THEN json_object('error', json(write.result_json))
+        ELSE json_object()
+      END)
     FROM session_file_write_idempotency_v6 AS write;
 
     INSERT OR IGNORE INTO session_transcript_export_events_v6 (
@@ -1242,12 +1373,16 @@ function backfillResourceHistory(db: DatabaseSync): void {
       export.session_id,
       1,
       CASE export.state WHEN 'pending' THEN 'prepared' WHEN 'applied' THEN 'applied' ELSE 'rejected' END,
-      json_object(
+      json_patch(json_object(
         'relativePath', export.relative_path,
         'tempName', export.temp_name,
         'migrationBaseline', 1,
         'occurredAt', export.created_at
-      )
+      ), CASE export.state
+        WHEN 'applied' THEN json_object('result', json(export.result_json))
+        WHEN 'rejected' THEN json_object('error', json(export.result_json))
+        ELSE json_object()
+      END)
     FROM session_transcript_export_idempotency_v6 AS export;
 
     INSERT OR IGNORE INTO session_file_write_events_v6 (
@@ -1259,12 +1394,16 @@ function backfillResourceHistory(db: DatabaseSync): void {
       write.session_id,
       history.last_revision + 1,
       CASE write.state WHEN 'pending' THEN 'prepared' WHEN 'applied' THEN 'applied' ELSE 'rejected' END,
-      json_object(
+      json_patch(json_object(
         'relativePath', write.relative_path,
         'tempName', write.temp_name,
         'migrationReconciliation', 1,
         'occurredAt', write.created_at
-      )
+      ), CASE write.state
+        WHEN 'applied' THEN json_object('result', json(write.result_json))
+        WHEN 'rejected' THEN json_object('error', json(write.result_json))
+        ELSE json_object()
+      END)
     FROM session_file_write_idempotency_v6 AS write
     INNER JOIN (
       SELECT operation_id, MAX(revision) AS last_revision
@@ -1285,12 +1424,16 @@ function backfillResourceHistory(db: DatabaseSync): void {
       export.session_id,
       history.last_revision + 1,
       CASE export.state WHEN 'pending' THEN 'prepared' WHEN 'applied' THEN 'applied' ELSE 'rejected' END,
-      json_object(
+      json_patch(json_object(
         'relativePath', export.relative_path,
         'tempName', export.temp_name,
         'migrationReconciliation', 1,
         'occurredAt', export.created_at
-      )
+      ), CASE export.state
+        WHEN 'applied' THEN json_object('result', json(export.result_json))
+        WHEN 'rejected' THEN json_object('error', json(export.result_json))
+        ELSE json_object()
+      END)
     FROM session_transcript_export_idempotency_v6 AS export
     INNER JOIN (
       SELECT operation_id, MAX(revision) AS last_revision
@@ -1426,8 +1569,9 @@ function backfillResourceHistory(db: DatabaseSync): void {
       'work-item:' || event.work_item_id || ':revision:' || event.revision,
       'work_item', event.work_item_id, item.root_session_id, 'session', item.target_session_id,
       event.event_type, event.revision,
-      CASE WHEN event.actor_session_id IS NULL THEN 'system' ELSE 'agent' END,
-      event.actor_session_id, NULL, NULL, 'migration:work-item-history', NULL,
+      event.principal_kind,
+      CASE WHEN event.principal_kind = 'agent' THEN event.actor_session_id ELSE NULL END,
+      NULL, NULL, 'migration:work-item-history', NULL,
       event.created_at, event.created_at, NULL, 1, 'committed'
     FROM work_item_events_v6 AS event
     INNER JOIN work_items_v6 AS item ON item.id = event.work_item_id;

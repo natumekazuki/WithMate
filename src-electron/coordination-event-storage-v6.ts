@@ -778,10 +778,10 @@ export class CoordinationEventStorageV6 {
     const binding = input.roleBinding;
     this.db.prepare(`
       INSERT INTO coordination_events_v6 (
-        id, actor_session_id, session_role, role_contract_revision, root_session_id,
+        id, actor_session_id, creation_principal_kind, session_role, role_contract_revision, root_session_id,
         parent_session_id, delegation_depth, kind, decision_class, summary, payload_json, execution_id,
         target_session_id, corrected_event_id, options_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.eventId,
       input.principal.sessionId,

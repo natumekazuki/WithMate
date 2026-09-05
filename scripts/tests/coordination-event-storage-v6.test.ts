@@ -1021,9 +1021,9 @@ describe("CoordinationEventStorageV6", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "再起動後もCoordination本文、action履歴、revisionを復元し、startup verifierがidempotencyのresult revision改変を拒否する"
+  // claim = "再起動後もCoordination本文、action履歴、revisionを復元し、startup verifierがcreated principalとidempotency result revisionの改変を拒否する"
   // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
-  // failure_mode = "event header導入後の再読込で本文またはsuperseded projectionが失われるか、再送ledgerを存在しないresult revisionへ帰属できる"
+  // failure_mode = "event header導入後の再読込で本文またはsuperseded projectionが失われるか、agent作成eventをsystemへ誤帰属できるか、再送ledgerを存在しないresult revisionへ帰属できる"
   // scope = "CoordinationEventStorageV6 replay projection"
   // lifecycle = "permanent"
   // @end-test-value
@@ -1056,6 +1056,36 @@ describe("CoordinationEventStorageV6", () => {
       const replayDb = new DatabaseSync(fixture.dbPath);
       try {
         assert.doesNotThrow(() => verifyResourceHistoryProjections(replayDb));
+        replayDb.exec("DROP TRIGGER resource_event_headers_no_update_v6");
+        const createdHeader = replayDb.prepare(`
+          SELECT principal_kind, actor_session_id, grant_id, grant_revision
+          FROM resource_event_headers_v6 WHERE event_id = ?
+        `).get(target.eventId) as {
+          principal_kind: string;
+          actor_session_id: string | null;
+          grant_id: string | null;
+          grant_revision: number | null;
+        };
+        replayDb.prepare(`
+          UPDATE resource_event_headers_v6
+          SET principal_kind = 'system', actor_session_id = NULL, grant_id = NULL, grant_revision = NULL
+          WHERE event_id = ?
+        `).run(target.eventId);
+        assert.throws(
+          () => verifyResourceHistoryProjections(replayDb),
+          /header principal does not match its typed event/,
+        );
+        replayDb.prepare(`
+          UPDATE resource_event_headers_v6
+          SET principal_kind = ?, actor_session_id = ?, grant_id = ?, grant_revision = ?
+          WHERE event_id = ?
+        `).run(
+          createdHeader.principal_kind,
+          createdHeader.actor_session_id,
+          createdHeader.grant_id,
+          createdHeader.grant_revision,
+          target.eventId,
+        );
         replayDb.prepare(`
           UPDATE coordination_event_idempotency_v6
           SET result_revision = result_revision + 1

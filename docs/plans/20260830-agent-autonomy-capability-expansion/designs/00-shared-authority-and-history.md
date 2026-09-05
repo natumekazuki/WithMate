@@ -88,9 +88,11 @@ resource event は共通 header と resource 固有 payload を持つ。
 
 訂正は旧 event を削除せず、新 event の `supersedes` で表す。current projection は active event chain から構成できなければならない。
 
-Session と execution の event payload schema revision 2 は、各 revision 適用後の canonical projection snapshot を保持する。Session は durable Session row、execution は request、result、error、authority proof、Work Item association を含む。Work Item、aggregation、interaction、Coordination、file write、transcript exportもresource固有eventからcurrent projectionまたはidempotency resultを再生できなければならない。
+Session と execution の event payload schema revision 2 は、各 revision 適用後の canonical projection snapshot を保持する。Session は durable Session row、execution は request、result、error、authority proof、Work Item association を含む。Work Item、aggregation、interaction、Coordination、file write、transcript exportもresource固有eventからcurrent projectionまたはidempotency resultを再生できなければならない。Work Item typed eventはheaderと独立にprincipal kindを保持し、actorとgrant provenanceの照合元にする。Coordination eventも作成時principal kindをtyped projectionへ保持し、作成headerのprincipalとactorを照合する。file writeとtranscript exportは、session、path、principal、request fingerprintから導出するoperation identity、terminal resultまたはerrorをeventから再構成し、retry ledgerと一致させる。
 
-startup verifierは全resourceについてtyped eventと共通headerの一対一対応を確認し、resource ID、root、owner、event kind、revision、principal、actor、根拠grant、supersedes、payload schema revision、effectを照合する。その後、revision順にeventを再生した結果とcurrent projectionまたはledgerを比較する。revision数またはheaderのschema revisionだけが一致してもmigration完了と扱わない。
+startup verifierは全resourceについてtyped eventと共通headerの一対一対応を確認し、resource ID、root、owner、event kind、revision、principal、actor、根拠grant、supersedes、payload schema revision、effectを照合する。agent headerのgrant revisionは正数であるだけでなく、同じgrant IDとrevisionのgrant eventが存在しなければならない。その後、revision順にeventを再生した結果とcurrent projectionまたはledgerを比較する。interactionはmigration baselineからcurrent revisionまでの連続性とsupersedes参照先も検証する。revision数またはheaderのschema revisionだけが一致してもmigration完了と扱わない。
+
+legacy projectionからtyped eventとheaderを生成するbackfillは、`app_settings`のresource history migration markerがない初回migrationに限る。markerはtracked resourceが存在し、全backfillとstartup verifierが同一transactionで成功した後に記録する。marker記録後のstartupは欠落eventやheaderを再生成せず、履歴破損としてfail closedにする。
 
 payload 上限は resource 固有の入力上限から導出する。Session は runtime body 上限に envelope 分を加え、execution は request と response の両上限に envelope 分を加える。上限超過を payload の切り捨てや一部 projection への置換で成功扱いにしない。
 

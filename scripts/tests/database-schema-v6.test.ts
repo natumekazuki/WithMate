@@ -354,7 +354,16 @@ describe("database-schema-v6", () => {
     }
   });
 
-  it("ORCH-OUTBOUND-MIGRATE-01: 既存cross-Session executionをorigin snapshotへ一度だけ補完する", () => {
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "cross-Session execution originは初回migrationだけで補完し、完了後に履歴なしで注入されたexecutionを次回startupが補完せず拒否する"
+  // oracle = { type = "contract", ref = "ORCH-OUTBOUND-MIGRATE-01/AUTONOMY-HISTORY-04" }
+  // failure_mode = "migration完了後もstartupがoriginとresource historyを再生成し、非canonical executionを正規の履歴として受理する"
+  // scope = "ensureV6Schema execution origin and resource history migration markers"
+  // lifecycle = "permanent"
+  // distinction = "初回のlegacy executionはoriginと履歴を補完し、その後に同じ形で注入したexecutionは二回目のstartupで履歴欠落として拒否される"
+  // @end-test-value
+  it("ORCH-OUTBOUND-MIGRATE-01: 既存cross-Session executionを初回だけ補完する", () => {
     const db = createV6Schema();
     try {
       db.exec("DROP TABLE session_execution_origins_v6;");
@@ -405,7 +414,10 @@ describe("database-schema-v6", () => {
         "2026-08-23T00:00:02.000Z",
         "2026-08-23T00:00:02.000Z",
       );
-      ensureV6Schema(db);
+      assert.throws(
+        () => ensureV6Schema(db),
+        /Session execution projection has no matching resource event/,
+      );
 
       const origins = db.prepare(`
         SELECT execution_id, source_session_id, target_session_id,

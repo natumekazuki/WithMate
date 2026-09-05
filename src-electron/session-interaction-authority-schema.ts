@@ -3,7 +3,12 @@ import type { DatabaseSync } from "node:sqlite";
 
 const AUTHORITY_SCHEMA_SAVEPOINT = "session_interaction_authority_schema";
 
-export function ensureSessionInteractionAuthoritySchema(db: DatabaseSync): void {
+export function ensureSessionInteractionAuthoritySchema(
+  db: DatabaseSync,
+  options: { backfillLegacyHistory: boolean } = {
+    backfillLegacyHistory: !tableExists(db, "session_interaction_events_v6"),
+  },
+): void {
   db.exec(`SAVEPOINT ${AUTHORITY_SCHEMA_SAVEPOINT};`);
   try {
     const interactionColumns = tableColumnNames(db, "session_interactions_v6");
@@ -46,8 +51,10 @@ export function ensureSessionInteractionAuthoritySchema(db: DatabaseSync): void 
     `);
 
     db.exec(CREATE_SESSION_INTERACTION_EVENTS_SQL);
-    backfillInteractionBaselines(db);
-    backfillInteractionEventHeaders(db);
+    if (options.backfillLegacyHistory) {
+      backfillInteractionBaselines(db);
+      backfillInteractionEventHeaders(db);
+    }
     db.exec(`RELEASE SAVEPOINT ${AUTHORITY_SCHEMA_SAVEPOINT};`);
   } catch (error) {
     try {
@@ -260,4 +267,9 @@ function serializeBaselineProjection(row: Record<string, string | number | null>
 function tableColumnNames(db: DatabaseSync, tableName: string): Set<string> {
   const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: unknown }>;
   return new Set(rows.flatMap((row) => typeof row.name === "string" ? [row.name] : []));
+}
+
+function tableExists(db: DatabaseSync, tableName: string): boolean {
+  return db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?")
+    .get(tableName) !== undefined;
 }

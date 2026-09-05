@@ -200,6 +200,15 @@ describe("SessionTranscriptStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "transcript exportはprepared proofとterminal resultをidempotency ledgerとresource eventへ一致して保存し、startupで改変ledgerを拒否する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04/AUTONOMY-MUTATION-05" }
+  // failure_mode = "出力identityの異なる完了を受理するか、eventと異なるresult_jsonをretry結果として返せる"
+  // scope = "SessionTranscriptStorageV6 export idempotency replay"
+  // lifecycle = "permanent"
+  // distinction = "prepared outputの一致、正常retry、fingerprint conflictに加え、terminal eventを保ったままledger resultだけを改変してstartup拒否を観測する"
+  // @end-test-value
   it("EXT-EXPORT-14: pending output hashを固定しapplied/rejected replayとconflictを表す", async () => {
     const f = await fixture();
     try {
@@ -288,6 +297,20 @@ describe("SessionTranscriptStorageV6", () => {
         }),
         SessionTranscriptIdempotencyConflictError,
       );
+      const replayDb = new DatabaseSync(f.dbPath);
+      try {
+        replayDb.prepare(`
+          UPDATE session_transcript_export_idempotency_v6
+          SET result_json = json_object('destination', 'tampered')
+          WHERE idempotency_key = 'export-1'
+        `).run();
+        assert.throws(
+          () => ensureV6Schema(replayDb),
+          /idempotency replay does not match its resource history/,
+        );
+      } finally {
+        replayDb.close();
+      }
     } finally {
       f.storage.close();
       await rm(f.directory, { recursive: true, force: true });
