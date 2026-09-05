@@ -111,6 +111,7 @@ import {
   resolveCharacterAuthoringRuntimeSessionForTurn,
 } from "./character-authoring-service.js";
 import { CodexAdapter } from "./codex-adapter.js";
+import { CodexManagedMcpConfigService } from "./codex-managed-mcp-config.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
 import { resolveComposerPreview, resolveSessionFolderAttachments } from "./composer-attachments.js";
 import {
@@ -458,10 +459,18 @@ const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({
     : Promise.resolve(null),
   copyFile: (resource) => sessionFileObjectCopyService.copyResource(resource),
 });
+const codexManagedMcpConfigService = new CodexManagedMcpConfigService({
+  isPackagedApp: () => app.isPackaged,
+  platform: process.platform,
+  executablePath: process.execPath,
+  resourcesPath: process.resourcesPath,
+});
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
-}));
+}), {
+  resolveManagedMcpConfig: (input) => codexManagedMcpConfigService.resolve(input),
+});
 const copilotAdapter = new CopilotAdapter({
   isPackagedApp: () => app.isPackaged,
   platform: process.platform,

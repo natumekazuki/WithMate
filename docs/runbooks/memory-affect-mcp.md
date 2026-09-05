@@ -50,6 +50,28 @@ Character系の`get`と`search`、一般Memoryのsearch/get/list/usageはread-on
 
 `memory.list_tags`は`targets`へ明示targetを1件だけ指定する。`limit`で1 pageのtag総数を制限し、`nextCursor`が返る間は同じtargetとcount条件で継続する。cursorはruntime発行値だけを使う。`sampleLimit`は`withCounts: true`時の各tagのsample数だけを制限し、tag総数の上限には使わない。
 
+## CodexのSession binding転送
+
+Windows配布版のWithMateは、bindingを持つforeground Codex turnの開始前に、同梱Codexで対象workspaceのMCP設定を検査する。`withmate-character-context`と`withmate-glossary`には、検証済みの管理launcherと5変数名の`env_vars`をその実行だけに適用する。未登録ならSession限定で定義を追加する。global `config.toml`へ登録やbinding値の保存は行わない。
+
+既存定義がdisabled、別command、引数、固定`env`、cwd、timeout、tool filterを持つ場合は、turnを開始せず設定の衝突として失敗する。`env_vars`は未設定、空配列、次の5変数名の完全な集合だけを受け付ける。手動設定済みの同じallowlistは順序を問わず利用できる。衝突時は利用者が設定を確認し、対象定義を管理launcherに合わせるか、不要な定義を取り除いてから再実行する。
+
+```toml
+env_vars = [
+  "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE",
+  "WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED",
+  "WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY",
+  "WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID",
+  "WITHMATE_MEMORY_RUNTIME_GENERATION_ID",
+]
+```
+
+開発版と非Windowsではこの自動設定を行わない。既存の`[mcp_servers.withmate-character-context]`と`[mcp_servers.withmate-glossary]`それぞれへ上記`env_vars`を指定する。`env_vars`は変数名のallowlistであり、値を`env`、指示ファイル、ログへコピーしない。bindingのないCodexへ値を手動で注入してはならない。[CodexのMCP設定仕様](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)を参照する。
+
+修正の導入や手動設定の変更後は、新しいWithMate Codex Sessionを開始してMCP processを起動し直す。すでに起動したMCPには環境変更が届かない。`initialize`や`tools/list`の成功だけでは確認できないため、同じSessionで`memory.list_targets`と`glossary.list_targets`を呼び、後者がprimary checkoutを返すことを確認する。前者の`MEMORY_PRINCIPAL_REQUIRED`、後者の`GLOSSARY_SESSION_BINDING_REQUIRED`は転送不足の手掛かりになる。認可拒否をCLI fallbackで回避しない。
+
+各turnで設定を再検査し、bindingやturn capability、MCP定義が変わればCodex clientを更新する。unbound Sessionとbackground処理にはこのoverrideを適用しない。設定の検査直後に外部からdisabledなどを変更する競合は、現在のCodex APIではatomicに検出できない。検査済みの転送先定義を実行中固定し、次turnの検査で変更を検出する。
+
 ## CLI commandとMCP公開範囲
 
 「公開」は同名のruntime routeを一般またはCharacter MCP toolから呼び出せることを表す。「MCPで代替済み」は専用toolを増やさず、MCP protocolまたは別の公開toolで同じ利用目的を満たすことを表す。

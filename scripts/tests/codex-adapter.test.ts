@@ -1670,6 +1670,109 @@ describe("CodexAdapter background structured prompt", () => {
 });
 
 describe("CodexAdapter agent runtime binding", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "bound foregroundだけへMCP overrideを渡し、turn更新とinvalidationで環境を更新する"
+  // oracle = { type = "issue", ref = "Issue #453: Session限定MCP転送とbackground分離" }
+  // failure_mode = "MCP転送設定が欠落するか、旧turnまたは別Sessionのbindingが再利用される"
+  // scope = "CodexAdapter public turn execution / SDK options"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("MCP設定をbound turnごとに解決しclient環境とともに分離する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-mcp-options-"));
+    const created: CodexOptions[] = [];
+    let inspections = 0;
+    let overrides = ['mcp_servers.withmate-glossary={command="verified-launcher",env_vars=["WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE"]}'];
+    const adapter = new CodexAdapter(undefined, {
+      resolveManagedMcpConfig: async (input) => {
+        assert.equal(input.workspacePath, workspacePath);
+        inspections += 1;
+        return [...overrides];
+      },
+      createClient: (options) => {
+        created.push(options);
+        const thread = {
+          id: "mcp-options-thread",
+          runStreamed: async () => ({ events: createCodexStreamFromEvents([
+            { type: "item.completed", item: { id: "message", type: "agent_message", text: "done" } },
+            { type: "turn.completed", usage: null },
+          ]) }),
+          run: async () => ({ finalResponse: '{"answer":"ok"}', usage: null }),
+        };
+        return { startThread: () => thread, resumeThread: () => thread } as unknown as Codex;
+      },
+    });
+    try {
+      const input = createCodexRunSessionTurnInput(workspacePath);
+      input.agentRuntimeBinding = {
+        bindingId: "mcp-binding-a", bindingReference: "mcp-reference-a", providerId: "codex",
+        executionGeneration: "mcp-generation-a", transport: "env", expiresAt: null,
+        turnCapability: "mcp-turn-a",
+        memoryRuntimeOwner: { applicationInstanceId: "mcp-app-a", runtimeGenerationId: "mcp-runtime-a" },
+      };
+      await adapter.runSessionTurn(input);
+      await adapter.runSessionTurn(input);
+      assert.equal(inspections, 2);
+      assert.equal(created.length, 1);
+      assert.deepEqual(created[0].configOverrides, overrides);
+
+      input.agentRuntimeBinding = { ...input.agentRuntimeBinding, turnCapability: "mcp-turn-next" };
+      await adapter.runSessionTurn(input);
+      assert.equal(created[1].env?.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY, "mcp-turn-next");
+      overrides = ['mcp_servers.withmate-glossary={command="updated-verified-launcher"}'];
+      await adapter.runSessionTurn(input);
+      assert.deepEqual(created[2].configOverrides, overrides);
+
+      const other = createCodexRunSessionTurnInput(workspacePath);
+      other.session.id = "mcp-session-b";
+      other.agentRuntimeBinding = {
+        ...input.agentRuntimeBinding, bindingId: "mcp-binding-b", bindingReference: "mcp-reference-b",
+        executionGeneration: "mcp-generation-b", turnCapability: "mcp-turn-b",
+      };
+      await adapter.runSessionTurn(other);
+      assert.equal(created[3].env?.WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE, "mcp-reference-b");
+      await adapter.runBackgroundStructuredPrompt(createCodexBackgroundPromptInput({ workspacePath }));
+      await adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath));
+      assert.equal(inspections, 5);
+      for (const options of created.slice(4)) {
+        assert.equal(options.configOverrides, undefined);
+        assert.equal(options.env?.WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE, undefined);
+        assert.equal(options.env?.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY, undefined);
+      }
+      await adapter.invalidateSessionThread(other.session.id);
+      await adapter.runSessionTurn(other);
+      assert.equal(created.length, 7);
+      for (const options of created) {
+        assert.doesNotMatch(JSON.stringify([options.config, options.configOverrides]), /mcp-reference-|mcp-turn-|mcp-app-|mcp-runtime-/);
+      }
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "MCP設定の照合失敗時はbindingを持つCodex clientを起動しない"
+  // oracle = { type = "issue", ref = "Issue #453: 対象名衝突とdisabled設定の保護" }
+  // failure_mode = "MCP設定の拒否を無視して認可情報を未確認のprocessへ渡す"
+  // scope = "CodexAdapter public turn execution"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("MCP設定の拒否をturn開始前のerrorとして返す", async () => {
+    let created = false;
+    const adapter = new CodexAdapter(undefined, {
+      resolveManagedMcpConfig: async () => { throw new Error("Managed MCP configuration collision."); },
+      createClient: () => { created = true; throw new Error("Unexpected client creation."); },
+    });
+    const input = createCodexRunSessionTurnInput(process.cwd());
+    input.agentRuntimeBinding = {
+      bindingId: "rejected-binding", bindingReference: "rejected-reference", providerId: "codex",
+      executionGeneration: "rejected-generation", transport: "env", expiresAt: null,
+    };
+    await assert.rejects(adapter.runSessionTurn(input), /Managed MCP configuration collision/);
+    assert.equal(created, false);
+  });
+
 // @test-value v1
 // kind = "invariant"
 // claim = "Codex clients for different Memory owners receive distinct selectors while background clients remain unbound"
