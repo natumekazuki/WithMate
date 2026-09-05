@@ -22,6 +22,7 @@ import {
   backfillBaselineSessionAuthority,
   createDelegatedChildAuthority,
   revokeSessionAuthorityGrant,
+  verifySessionAuthorityMigration,
 } from "../../src-electron/session-authority-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
@@ -122,6 +123,136 @@ describe("Session authority", () => {
         assert.equal(secondEvents.count, firstEvents.count);
       } finally {
         db.close();
+      }
+    } finally {
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "baseline由来grantはRole templateのaction、relation、target Role、delegable、child ceilingと完全一致する場合だけmigration完了になる"
+  // oracle = { type = "contract", ref = "AUTONOMY-GRANT-02" }
+  // failure_mode = "baseline grantへ余分なactionまたは広いscopeを混ぜてもstartup verifierが受理し、Role templateを超える認可に使われる"
+  // scope = "Session authority baseline migration verifier"
+  // lifecycle = "permanent"
+  // distinction = "正規baseline集合の再実行成功と、同じprovenanceを保った過大action改変のfail-closedを対比する"
+  // @end-test-value
+  it("過大なbaseline grantをmigration完了として受理しない", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-authority-overgrant-"));
+    const dbPath = path.join(directory, "db.sqlite");
+    const storage = new SessionStorageV6(dbPath);
+    try {
+      storage.insertSession(makeRoot("root-a"));
+      const db = new DatabaseSync(dbPath);
+      try {
+        const grant = db.prepare(`
+          SELECT grant_id, actions_json, relation_selector, target_session_roles_json, delegable, child_ceiling_json
+          FROM session_authority_grants_v6
+          WHERE grantee_session_id = 'root-a'
+            AND actions_json = '["session.rename"]'
+            AND json_extract(provenance_json, '$.source') = 'role-baseline'
+        `).get() as {
+          grant_id: string;
+          actions_json: string;
+          relation_selector: string;
+          target_session_roles_json: string;
+          delegable: number;
+          child_ceiling_json: string;
+        };
+        const cases = [
+          { column: "actions_json", invalid: JSON.stringify(["session.rename", "session.get"]), original: grant.actions_json },
+          { column: "relation_selector", invalid: "root_member", original: grant.relation_selector },
+          { column: "target_session_roles_json", invalid: JSON.stringify(["executor"]), original: grant.target_session_roles_json },
+          { column: "delegable", invalid: 1, original: grant.delegable },
+          {
+            column: "child_ceiling_json",
+            invalid: JSON.stringify([{
+              mode: "exercise",
+              action: "session.rename",
+              resourceKind: "session",
+              relationSelector: "self",
+              targetSessionRoles: [],
+              effectClass: "local_mutation",
+            }]),
+            original: grant.child_ceiling_json,
+          },
+        ] as const;
+        for (const candidate of cases) {
+          db.prepare(`UPDATE session_authority_grants_v6 SET ${candidate.column} = ? WHERE grant_id = ?`)
+            .run(candidate.invalid, grant.grant_id);
+          assert.throws(
+            () => verifySessionAuthorityMigration(db),
+            (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_MIGRATION_REQUIRED",
+            candidate.column,
+          );
+          db.prepare(`UPDATE session_authority_grants_v6 SET ${candidate.column} = ? WHERE grant_id = ?`)
+            .run(candidate.original, grant.grant_id);
+        }
+        assert.doesNotThrow(() => verifySessionAuthorityMigration(db));
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "正規baseline grantのrevokeはmigration証拠を保持したままactive authorityだけを縮小し、startup backfillで権限を復活させない"
+  // oracle = { type = "contract", ref = "AUTONOMY-GRANT-02" }
+  // failure_mode = "revoke済みbaselineを欠落扱いしてstartupを停止するか、backfillが同じpermissionを再発行して失効を取り消す"
+  // scope = "Session authority baseline migration and active grant evaluation"
+  // lifecycle = "permanent"
+  // distinction = "grant総数とmigration成功に加え、revoke対象operationが再起動相当のservice生成後も拒否されることを観測する"
+  // @end-test-value
+  it("revoke済みbaselineを再発行せずstartupと権限縮小を両立する", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-authority-revoked-baseline-"));
+    const dbPath = path.join(directory, "db.sqlite");
+    const storage = new SessionStorageV6(dbPath);
+    try {
+      storage.insertSession(makeRoot("root-a"));
+      const db = new DatabaseSync(dbPath);
+      let grantCount = 0;
+      try {
+        const grant = db.prepare(`
+          SELECT grant_id, revision
+          FROM session_authority_grants_v6
+          WHERE grantee_session_id = 'root-a'
+            AND actions_json = '["session.rename"]'
+            AND json_extract(provenance_json, '$.source') = 'role-baseline'
+        `).get() as { grant_id: string; revision: number };
+        grantCount = (db.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6").get() as { count: number }).count;
+        revokeSessionAuthorityGrant(db, {
+          grantId: grant.grant_id,
+          expectedRevision: grant.revision,
+          principal: { kind: "system", service: "test" },
+          revokedAt: "2026-09-05T12:01:00.000Z",
+        });
+        backfillBaselineSessionAuthority(db, "2026-09-05T12:02:00.000Z");
+        assert.equal(
+          (db.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6").get() as { count: number }).count,
+          grantCount,
+        );
+      } finally {
+        db.close();
+      }
+
+      const service = new SessionAuthorityService({
+        databasePath: dbPath,
+        getExecutionGeneration: () => "generation-1",
+        now: () => new Date("2026-09-05T12:02:00.000Z"),
+      });
+      try {
+        assert.throws(
+          () => service.authorize(binding("root-a"), "session.rename", { sessionId: "root-a" }),
+          (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_FORBIDDEN",
+        );
+      } finally {
+        service.close();
       }
     } finally {
       storage.close();
@@ -331,6 +462,105 @@ describe("Session authority", () => {
       service.close();
       storage.close();
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "security"
+  // claim = "terminal failure通知先のturn.enqueue grantはsource executionのrun/enqueue admissionと同じtransactionで再検証される"
+  // oracle = { type = "contract", ref = "TN-AUTH-REVOKE-08" }
+  // failure_mode = "通知先proof発行後にgrantをrevokeしても、通知設定を含むexecution、idempotency、履歴、container revisionがcommitされる"
+  // scope = "SessionExecutionStorageV6 terminal failure notification admission"
+  // lifecycle = "permanent"
+  // distinction = "primary execution proofは有効なまま、通知先proofだけをrevokeし、turn.runとturn.enqueueの両方で全書込みがrollbackされることを確認する"
+  // @end-test-value
+  it("通知先grantの失効後はrunとenqueueを永続化しない", async () => {
+    for (const operation of ["turn.run", "turn.enqueue"] as const) {
+      const directory = await mkdtemp(path.join(os.tmpdir(), `withmate-notification-revoke-${operation.slice(5)}-`));
+      const dbPath = path.join(directory, "db.sqlite");
+      const sessionStorage = new SessionStorageV6(dbPath);
+      const root = makeRoot("root-a");
+      const target = makeChild("executor-a", root, "executor");
+      sessionStorage.insertSession(root);
+      sessionStorage.insertSession(target);
+      const authority = new SessionAuthorityService({
+        databasePath: dbPath,
+        getExecutionGeneration: () => "generation-1",
+        now: () => new Date(NOW),
+      });
+      const executionStorage = new SessionExecutionStorageV6(dbPath);
+      const db = new DatabaseSync(dbPath);
+      try {
+        const notificationProof = authority.authorizeSessionAct(root.id, "turn.enqueue", {
+          sessionId: target.id,
+        }).proof;
+        revokeSessionAuthorityGrant(db, {
+          grantId: notificationProof.grantId!,
+          expectedRevision: notificationProof.grantRevision!,
+          principal: { kind: "system", service: "test" },
+          revokedAt: "2026-09-05T12:01:00.000Z",
+        });
+        const containerRevision = executionStorage.getSessionContainerRevision(root.id);
+        const sourceSession = {
+          kind: "session" as const,
+          sessionId: root.id,
+          character: { characterId: "character-a", name: "A", iconFilePath: "" },
+        };
+        const input = {
+          id: `execution-${operation.slice(5)}`,
+          expectedContainerRevision: containerRevision,
+          sessionId: root.id,
+          request: {
+            initiator: sourceSession,
+            catalogRevision: 1,
+            terminalFailureNotification: {
+              contractVersion: 1 as const,
+              targetSessionId: target.id,
+              sourceSession,
+            },
+            turn: { provider: "codex", userMessage: "notify on failure" },
+          },
+          idempotencyKey: `notification-${operation}`,
+          requestFingerprint: `notification-${operation}-fingerprint`,
+          createdAt: "2026-09-05T12:02:00.000Z",
+          expiresAt: "2026-09-06T12:02:00.000Z",
+          proof: {
+            principal: { kind: "system" as const, service: "test" },
+            operation,
+            mappingRevision: 1 as const,
+            action: operation,
+            resolvedScope: {
+              resourceKind: "execution" as const,
+              resourceId: root.id,
+              rootSessionId: root.id,
+              ownerKind: "session" as const,
+              ownerId: root.id,
+              relation: "self" as const,
+            },
+            effectClass: "external_side_effect" as const,
+            grantId: null,
+            grantRevision: null,
+            evaluatedAt: NOW,
+          },
+          terminalFailureNotificationProof: notificationProof,
+        };
+        assert.throws(
+          () => operation === "turn.run"
+            ? executionStorage.startImmediate(input)
+            : executionStorage.enqueue(input),
+          (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_GRANT_REVISION_CONFLICT",
+        );
+        assert.equal(db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6").get().count, 0);
+        assert.equal(db.prepare("SELECT COUNT(*) AS count FROM session_execution_idempotency_v6").get().count, 0);
+        assert.equal(db.prepare("SELECT COUNT(*) AS count FROM session_execution_events_v6").get().count, 0);
+        assert.equal(executionStorage.getSessionContainerRevision(root.id), containerRevision);
+      } finally {
+        db.close();
+        executionStorage.close();
+        authority.close();
+        sessionStorage.close();
+        await rm(directory, { recursive: true, force: true });
+      }
     }
   });
 

@@ -167,7 +167,7 @@ import {
 } from "./work-item-storage-v6.js";
 
 export type SessionExternalApplicationServiceDeps = {
-  authorityService: Pick<SessionAuthorityService, "authorize" | "canSessionAct">;
+  authorityService: Pick<SessionAuthorityService, "authorize" | "authorizeSessionAct" | "canSessionAct">;
   executionService: Pick<
     SessionExecutionService,
     "beginShutdown" | "run" | "enqueue" | "get" | "listPage" | "cancel" | "waitForTerminal" | "resolveReplay"
@@ -426,14 +426,18 @@ export class SessionExternalApplicationService {
     if (!replay) {
       this.requireCurrentCatalog(input.catalogRevision);
     }
+    const terminalNotification = replay ? null : await this.resolveTerminalFailureNotification(input);
     const execution = replay ?? await this.deps.executionService.run({
       ...mutation,
+      ...(terminalNotification?.proof
+        ? { terminalFailureNotificationProof: terminalNotification.proof }
+        : {}),
       ...this.resolveWorkItemAssociation(input, agentRuntimeBinding),
       ...await this.resolveTurnAcceptance(agentRuntimeBinding.actorSessionId, input.sessionId, input.turn.userMessage, proof.operation),
       request: {
         initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
         catalogRevision: input.catalogRevision,
-        ...await this.resolveTerminalFailureNotification(input),
+        ...terminalNotification?.request,
         turn: input.turn,
       },
     });
@@ -521,14 +525,18 @@ export class SessionExternalApplicationService {
     if (!replay) {
       this.requireCurrentCatalog(input.catalogRevision);
     }
+    const terminalNotification = replay ? null : await this.resolveTerminalFailureNotification(input);
     const execution = replay ?? await this.deps.executionService.enqueue({
       ...mutation,
+      ...(terminalNotification?.proof
+        ? { terminalFailureNotificationProof: terminalNotification.proof }
+        : {}),
       ...this.resolveWorkItemAssociation(input, agentRuntimeBinding),
       ...await this.resolveTurnAcceptance(agentRuntimeBinding.actorSessionId, input.sessionId, input.turn.userMessage, proof.operation),
       request: {
         initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
         catalogRevision: input.catalogRevision,
-        ...await this.resolveTerminalFailureNotification(input),
+        ...terminalNotification?.request,
         turn: input.turn,
       },
     });
@@ -537,9 +545,12 @@ export class SessionExternalApplicationService {
 
   private async resolveTerminalFailureNotification(
     input: SessionRuntimeEnqueueInput,
-  ): Promise<{ terminalFailureNotification?: SessionExecutionTerminalFailureNotification }> {
+  ): Promise<{
+    request: { terminalFailureNotification?: SessionExecutionTerminalFailureNotification };
+    proof?: MutationAdmissionProof;
+  }> {
     const notification = input.terminalFailureNotification;
-    if (!notification) return {};
+    if (!notification) return { request: {} };
     if (notification.targetSessionId === input.sessionId) {
       throw new SessionRuntimeValidationError(
         "The terminal failure notification target must differ from the source Session.",
@@ -548,13 +559,21 @@ export class SessionExternalApplicationService {
       );
     }
     this.requireSessionTurnAuthority(input.sessionId, notification.targetSessionId, "turn.enqueue");
+    const proof = this.deps.authorityService.authorizeSessionAct(
+      input.sessionId,
+      "turn.enqueue",
+      { sessionId: notification.targetSessionId },
+    ).proof;
     const sourceSession = await this.requireTurnInitiator(input.sessionId);
     return {
-      terminalFailureNotification: {
-        contractVersion: TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
-        targetSessionId: notification.targetSessionId,
-        sourceSession,
+      request: {
+        terminalFailureNotification: {
+          contractVersion: TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
+          targetSessionId: notification.targetSessionId,
+          sourceSession,
+        },
       },
+      proof,
     };
   }
 

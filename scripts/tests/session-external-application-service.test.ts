@@ -109,6 +109,10 @@ const defaultAuthorityService: SessionExternalApplicationServiceDeps["authorityS
   canSessionAct() {
     return true;
   },
+  authorizeSessionAct(actorSessionId, operation, input) {
+    const binding = { ...actorBinding, actorSessionId };
+    return { input, proof: admittedProof(binding, operation) };
+  },
 };
 
 class SessionExternalApplicationService extends RuntimeSessionExternalApplicationService {
@@ -1585,6 +1589,15 @@ test("ID-03: actor Sessionのcharacter snapshotを解決できない場合はexe
   assert.equal(runInvoked, false);
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "terminal failure通知はouter callerとは別にsource Sessionからtarget Sessionへのproofとsource character snapshotをexecution admissionへ渡す"
+// oracle = { type = "contract", ref = "TN-AUTH-01/TN-SNAPSHOT-02" }
+// failure_mode = "outer callerのproofを通知先認可へ流用するか、通知元と異なるSession snapshotを保存して失効競合の再検証を迂回する"
+// scope = "SessionExternalApplicationService terminal failure notification admission wiring"
+// lifecycle = "permanent"
+// distinction = "outer proofのactor、通知proofのsource actorとtarget resource、保存snapshotのsourceを別々に観測する"
+// @end-test-value
 test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsource snapshotをactorと分離して保存する", async () => {
   const mutations: any[] = [];
   const resolvedSessions: string[] = [];
@@ -1599,6 +1612,29 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
       },
     }),
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    authorityService: {
+      authorize(binding, operation, input) {
+        return { input, proof: admittedProof(binding, operation) };
+      },
+      canSessionAct() { return true; },
+      authorizeSessionAct(actorSessionId, operation, input: any) {
+        const proof = admittedProof({ ...actorBinding, actorSessionId }, operation);
+        return {
+          input,
+          proof: {
+            ...proof,
+            resolvedScope: {
+              resourceKind: "execution",
+              resourceId: input.sessionId,
+              rootSessionId: "actor-session",
+              ownerKind: "session",
+              ownerId: input.sessionId,
+              relation: "direct_child",
+            },
+          },
+        };
+      },
+    },
     getTurnAuthoritySession(sessionId) {
       if (sessionId === "actor-session") {
         return communicationSession(sessionId, "overall-coordinator", sessionId, null, 0);
@@ -1662,6 +1698,9 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
   assert.equal(mutations[0].request.terminalFailureNotification.sourceSession.sessionId, "source-session");
   assert.equal(mutations[0].request.terminalFailureNotification.sourceSession.character.name,
     "Character source-session");
+  assert.equal(mutations[0].terminalFailureNotificationProof.principal.actorSessionId, "source-session");
+  assert.equal(mutations[0].terminalFailureNotificationProof.resolvedScope.resourceId, "target-session");
+  assert.equal(mutations[0].proof.principal.actorSessionId, "actor-session");
   assert.deepEqual(resolvedSessions, []);
 
   const beforeRejected = mutations.length;

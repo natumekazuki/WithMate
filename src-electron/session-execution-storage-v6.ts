@@ -53,6 +53,7 @@ export type EnqueueSessionExecutionInput = {
   origin?: SessionExecutionOriginSnapshot;
   workItemId?: string;
   proof: MutationAuthorityProof;
+  terminalFailureNotificationProof?: MutationAuthorityProof;
 };
 
 export type EnqueueSessionExecutionResult = {
@@ -140,6 +141,7 @@ export class SessionExecutionStorageV6 {
         return { execution, replayed: true };
       }
       assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
+      this.assertTerminalFailureNotificationAuthority(input);
 
       const queuedCount = this.db.prepare(`
         SELECT COUNT(*) AS count
@@ -229,6 +231,7 @@ export class SessionExecutionStorageV6 {
         return { execution: this.getRequired(replay.execution_id), replayed: true };
       }
       assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
+      this.assertTerminalFailureNotificationAuthority(input);
 
       const occupied = this.db.prepare(`
         SELECT id
@@ -926,6 +929,60 @@ export class SessionExecutionStorageV6 {
     `).run(expiresAt, executionId);
   }
 
+  private assertTerminalFailureNotificationAuthority(input: EnqueueSessionExecutionInput): void {
+    const request = input.request && typeof input.request === "object" && !Array.isArray(input.request)
+      ? input.request as Record<string, unknown>
+      : {};
+    const notification = request.terminalFailureNotification as {
+      targetSessionId?: unknown;
+      sourceSession?: { sessionId?: unknown };
+    } | null | undefined;
+    const proof = input.terminalFailureNotificationProof;
+    if (!notification) {
+      if (proof) throw new TypeError("A terminal failure notification proof requires a notification request.");
+      return;
+    }
+    if (!proof || proof.principal.kind !== "agent") {
+      throw new TypeError("A terminal failure notification requires an agent authority proof.");
+    }
+    const sourceId = notification.sourceSession?.sessionId;
+    const targetId = notification.targetSessionId;
+    if (typeof sourceId !== "string" || typeof targetId !== "string") {
+      throw new TypeError("The terminal failure notification source and target Session IDs are required.");
+    }
+    if (sourceId !== input.sessionId || sourceId === targetId) {
+      throw new TypeError("The terminal failure notification source or target does not match the execution.");
+    }
+    const bindings = this.db.prepare(`
+      SELECT session_id, session_role, root_session_id, parent_session_id
+      FROM session_role_bindings_v6
+      WHERE session_id IN (?, ?)
+      ORDER BY session_id
+    `).all(sourceId, targetId) as Array<{
+      session_id: string;
+      session_role: "standalone" | "overall-coordinator" | "task-coordinator" | "executor";
+      root_session_id: string;
+      parent_session_id: string | null;
+    }>;
+    const source = bindings.find((row) => row.session_id === sourceId);
+    const target = bindings.find((row) => row.session_id === targetId);
+    const scope = proof.resolvedScope;
+    if (!source || !target || source.root_session_id !== target.root_session_id
+      || proof.principal.actorSessionId !== sourceId
+      || proof.operation !== "turn.enqueue"
+      || proof.action !== "turn.enqueue"
+      || proof.effectClass !== "external_side_effect"
+      || scope.resourceKind !== "execution"
+      || scope.resourceId !== targetId
+      || scope.rootSessionId !== source.root_session_id
+      || scope.ownerKind !== "session"
+      || scope.ownerId !== targetId
+      || !sessionRelationMatches(source, target, scope.relation)) {
+      throw new TypeError("The terminal failure notification authority proof does not match its canonical Session scope.");
+    }
+    assertGrantProofCurrent(this.db, proof, new Date(input.createdAt), target.session_role);
+  }
+
   private appendStoredExecutionEvent(
     executionId: string,
     eventKind: string,
@@ -1047,6 +1104,21 @@ function mutationPrincipalIdentity(proof: MutationAuthorityProof): {
     return { kind: "user", id: "local-user" };
   }
   return { kind: "system", id: proof.principal.service };
+}
+
+function sessionRelationMatches(
+  source: { session_id: string; root_session_id: string; parent_session_id: string | null },
+  target: { session_id: string; root_session_id: string; parent_session_id: string | null },
+  relation: MutationAuthorityProof["resolvedScope"]["relation"],
+): boolean {
+  if (source.session_id === target.session_id) return relation === "self";
+  return (source.parent_session_id === target.session_id && relation === "parent")
+    || (target.parent_session_id === source.session_id && relation === "direct_child")
+    || (source.parent_session_id !== null
+      && source.parent_session_id === target.parent_session_id
+      && relation === "sibling")
+    || (target.session_id === source.root_session_id && relation === "root_owner")
+    || (source.session_id === source.root_session_id && relation === "root_member");
 }
 
 function executionHistoryPayload(execution: SessionExecutionStorageRecord): Readonly<Record<string, unknown>> {

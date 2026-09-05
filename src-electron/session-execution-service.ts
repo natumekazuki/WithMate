@@ -22,6 +22,7 @@ export type SessionExecutionDispatchResult = {
 
 export type CreateSessionExecutionInput = {
   proof: MutationAuthorityProof;
+  terminalFailureNotificationProof?: MutationAuthorityProof;
   expectedContainerRevision: number;
   sessionId: string;
   request: unknown;
@@ -186,6 +187,7 @@ export class SessionExecutionService {
       const createdAt = this.deps.currentTimestamp();
       const started = this.deps.storage.startImmediate({
         proof: input.proof,
+        terminalFailureNotificationProof: input.terminalFailureNotificationProof,
         expectedContainerRevision: input.expectedContainerRevision,
         id: this.issueExecutionId(),
         sessionId: input.sessionId,
@@ -217,6 +219,7 @@ export class SessionExecutionService {
       const createdAt = this.deps.currentTimestamp();
       return this.deps.storage.enqueue({
         proof: input.proof,
+        terminalFailureNotificationProof: input.terminalFailureNotificationProof,
         expectedContainerRevision: input.expectedContainerRevision,
         id: this.issueExecutionId(),
         sessionId: input.sessionId,

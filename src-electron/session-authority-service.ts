@@ -89,15 +89,27 @@ export class SessionAuthorityService {
     now = this.now(),
   ): boolean {
     try {
-      this.authorizeCanonicalSession(actorSessionId, operation, input, now, {
-        providerId: "internal",
-        executionGeneration: "internal",
-      });
+      this.authorizeSessionAct(actorSessionId, operation, input, now);
       return true;
     } catch (error) {
       if (error instanceof SessionAuthorityError) return false;
       throw error;
     }
+  }
+
+  authorizeSessionAct<T>(
+    actorSessionId: string,
+    operation: SessionRuntimeOperation,
+    input: T,
+    now = this.now(),
+  ): AuthorizedOperation<T> {
+    return {
+      input,
+      proof: this.authorizeCanonicalSession(actorSessionId, operation, input, now, {
+        providerId: "internal",
+        executionGeneration: "internal",
+      }),
+    };
   }
 
   private authorizeCanonicalSession(
