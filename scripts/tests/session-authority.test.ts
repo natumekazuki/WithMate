@@ -656,12 +656,12 @@ describe("Session authority", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "Sessionとexecutionの各eventはrevision後のcanonical projectionを保持し、replay結果とcurrent rowの不一致をstartup verifierが拒否する"
+  // claim = "Sessionとexecutionの各eventはcanonical projectionを保持し、startup verifierがheaderのowner・agent grantとprojection replayの不一致を拒否する"
   // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
-  // failure_mode = "eventがrequestやresultを欠落したままrevisionだけ一致し、current projectionの改変をverifierが見逃す"
+  // failure_mode = "eventがrequestやresultを欠落するか、headerを別ownerまたはgrantなしagentへ改変してもstartup verifierが受理する"
   // scope = "Session and execution resource event replay verifier"
   // lifecycle = "permanent"
-  // distinction = "rich projectionをevent payloadから直接確認した後、revisionを変えないcurrent row改変を反証として検出する"
+  // distinction = "rich projectionを確認後、execution headerのowner、grant tuple、current projectionを順に一箇所だけ改変して各反証を検出する"
   // @end-test-value
   it("Sessionとexecutionのevent replayをcurrent projectionと照合する", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-resource-history-"));
@@ -732,6 +732,27 @@ describe("Session authority", () => {
       });
       assert.deepEqual(executionPayload.projection.result, { assistantText: "history result" });
       assert.ok(executionPayload.projection.authorityProof);
+      assert.doesNotThrow(() => verifyResourceHistoryProjections(db));
+
+      db.exec("DROP TRIGGER resource_event_headers_no_update_v6");
+      db.prepare(`
+        UPDATE resource_event_headers_v6 SET owner_id = 'tampered-owner'
+        WHERE event_id = 'execution:execution-history:revision:2'
+      `).run();
+      assert.throws(() => verifyResourceHistoryProjections(db), /ownerId does not match its typed event/);
+      db.prepare(`
+        UPDATE resource_event_headers_v6 SET owner_id = ?
+        WHERE event_id = 'execution:execution-history:revision:2'
+      `).run(root.id);
+      db.prepare(`
+        UPDATE resource_event_headers_v6 SET grant_id = NULL, grant_revision = NULL
+        WHERE event_id = 'execution:execution-history:revision:2'
+      `).run();
+      assert.throws(() => verifyResourceHistoryProjections(db), /has no agent grant identity/);
+      db.prepare(`
+        UPDATE resource_event_headers_v6 SET grant_id = ?, grant_revision = ?
+        WHERE event_id = 'execution:execution-history:revision:2'
+      `).run(proof.grantId, proof.grantRevision);
       assert.doesNotThrow(() => verifyResourceHistoryProjections(db));
 
       db.prepare("UPDATE session_executions_v6 SET reason = 'tampered' WHERE id = 'execution-history'").run();

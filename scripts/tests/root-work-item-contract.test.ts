@@ -429,12 +429,12 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "Root ownerのcontract revision、progress、handoffは一つの単調revisionでcurrent projectionとappend-only eventへ保存され、同一keyの再送は新しいrevisionを作らず、trusted GUI向けrecent historyは最新pageを時系列順で返す"
+  // claim = "Root ownerのcontract revision、progress、handoffは一つの単調revisionでcurrent projectionとappend-only eventへ保存され、startup verifierがdelta replayとの不一致を拒否する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#改訂と進捗の履歴" }
-  // failure_mode = "応答喪失後の再送、stale revision、process再起動、または先頭page固定でcurrent projectionと最新履歴が分岐し次の行動を一意に復元できない"
+  // failure_mode = "応答喪失後の再送、stale revision、process再起動、またはevent payload改変でcurrent projectionと最新履歴が分岐し次の行動を一意に復元できない"
   // scope = "WorkItemService root mutation and WorkItemStorageV6 event stream"
   // lifecycle = "permanent"
-  // distinction = "contract、progress、handoffの三種を連続更新し、replay、異payload key再利用、stale revision、restart recoveryを同じstreamで検証する"
+  // distinction = "contract、progress、handoffの三種を連続更新し、正常replay後に最終handoff payloadだけを改変してstartup verifierの反証を観測する"
   // @end-test-value
   it("RW-2: contract、progress、handoffを単調revisionと履歴へ直列化してreplayする", async () => {
     const harness = await createHarness();
@@ -537,6 +537,21 @@ describe("Root WorkItem contract", () => {
         afterSequence: null,
         limit: 10,
       }, runtimeBinding("root")), history);
+      const tampered = new DatabaseSync(harness.dbPath);
+      try {
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(tampered));
+        tampered.prepare(`
+          UPDATE work_item_events_v6
+          SET payload_json = json_set(payload_json, '$.nextAction', 'tampered')
+          WHERE work_item_id = ? AND revision = 4
+        `).run(rootItem.id);
+        assert.throws(
+          () => verifyResourceHistoryProjections(tampered),
+          /Work Item event replay does not match the current projection/,
+        );
+      } finally {
+        tampered.close();
+      }
     } finally {
       await closeHarness(harness);
     }
@@ -1225,12 +1240,12 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "regression"
-  // claim = "Session tree削除は未確定nested delegated WorkItemを拒否し、root finalization後はtreeをtombstone化してaggregation履歴と再送ledgerを保持する"
+  // claim = "Session tree削除は未確定nested delegated WorkItemを拒否し、tombstone後もaggregation履歴を保持してdecision replayとの不一致をstartup verifierが拒否する"
   // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
-  // failure_mode = "未確定nested resultを削除するか、確定後のtree tombstoneがWorkItem・aggregation・executionの履歴とidempotencyをcascade消去する"
+  // failure_mode = "未確定nested resultを削除するか、tree tombstoneが履歴を消すか、aggregation event改変をcurrent decisionと同じものとして受理する"
   // scope = "SessionStorageV6 Work Item-aware tree tombstone retention"
   // lifecycle = "permanent"
-  // distinction = "nested delegatedをterminal化した直後の拒否、aggregation decision後のroot finalization、三階層bulk tombstone後の全関連表を同じfixtureで観測する"
+  // distinction = "nested delegatedの保護と三階層tombstone後の保持を確認し、最後にaccepted eventだけを改変してdecision replayの反証を観測する"
   // @end-test-value
   it("RW-6B: decision済みnested delegatedを履歴・ledger保持付きでtombstone化する", async () => {
     const harness = await createHarness();
@@ -1322,6 +1337,22 @@ describe("Root WorkItem contract", () => {
       assert.equal(tableCount(harness.dbPath, "work_item_aggregations_v6") > 0, true);
       assert.equal(tableCount(harness.dbPath, "work_item_aggregation_decisions_v6") > 0, true);
       assert.equal(tableCount(harness.dbPath, "work_item_aggregation_idempotency_v6") > 0, true);
+      const replayDb = new DatabaseSync(harness.dbPath);
+      try {
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(replayDb));
+        replayDb.exec("DROP TRIGGER work_item_aggregation_events_no_update_v6");
+        replayDb.prepare(`
+          UPDATE work_item_aggregation_events_v6
+          SET payload_json = json_set(payload_json, '$.decision', 'excluded')
+          WHERE parent_work_item_id = ? AND event_kind = 'decided'
+        `).run(branch.id);
+        assert.throws(
+          () => verifyResourceHistoryProjections(replayDb),
+          /aggregation decision replay does not match/,
+        );
+      } finally {
+        replayDb.close();
+      }
     } finally {
       await closeHarness(harness);
     }
@@ -1667,6 +1698,8 @@ function prepareV1WorkItemDatabase(dbPath: string): void {
   try {
     db.exec("PRAGMA foreign_keys = OFF;");
     db.exec(`
+      DROP TRIGGER IF EXISTS resource_event_headers_no_delete_v6;
+      DELETE FROM resource_event_headers_v6 WHERE resource_kind = 'work_item';
       DROP TRIGGER IF EXISTS trg_v6_work_items_protect_session_delete;
       DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;
       DROP INDEX IF EXISTS idx_v6_work_item_aggregation_idempotency_expiry;

@@ -9,6 +9,7 @@ import {
   SESSION_RUNTIME_MAX_BODY_BYTES,
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
 } from "../src/session-external-runtime-contract.js";
+import { WORK_ITEM_CONTRACT_REVISION } from "../src/work-item.js";
 import { appendResourceEventHeader } from "./session-authority-storage.js";
 
 const RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES = 64 * 1024;
@@ -147,7 +148,6 @@ export function ensureResourceHistorySchema(db: DatabaseSync): void {
 
   backfillSagaOperationIds(db);
   backfillResourceHistory(db);
-  verifyResourceHistoryProjections(db);
 }
 
 export function verifyResourceHistoryProjections(db: DatabaseSync): void {
@@ -257,6 +257,8 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
   if (missingAggregation) {
     throw new Error(`Work Item aggregation projection has no matching resource event: ${missingAggregation.id}`);
   }
+  verifyWorkItemReplay(db);
+  verifyWorkItemAggregationReplay(db);
 
   verifySagaProjection(db, {
     projectionTable: "session_file_write_idempotency_v6",
@@ -268,6 +270,429 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
     eventTable: "session_transcript_export_events_v6",
     label: "Session transcript export",
   });
+  verifyInteractionReplay(db);
+  verifyCoordinationReplay(db);
+  verifyResourceEventHeaders(db);
+}
+
+type ExpectedHeaderRow = {
+  event_id: string;
+  resource_kind: string;
+  resource_id: string;
+  root_id: string;
+  owner_id: string;
+  event_kind: string;
+  resource_revision: number | null;
+  principal_kind: string | null;
+  actor_session_id: string | null;
+  supersedes_event_id: string | null;
+  payload_schema_revision: number;
+  effect: string;
+};
+
+type StoredHeaderRow = ExpectedHeaderRow & {
+  owner_kind: string;
+  grant_id: string | null;
+  grant_revision: number | null;
+  operation_id: string;
+};
+
+function verifyResourceEventHeaders(db: DatabaseSync): void {
+  const expected = db.prepare(`
+    SELECT event.event_id, 'session' AS resource_kind, event.session_id AS resource_id,
+      COALESCE(binding.root_session_id, event.session_id) AS root_id, event.session_id AS owner_id,
+      event.event_kind, event.revision AS resource_revision, NULL AS principal_kind,
+      NULL AS actor_session_id, NULL AS supersedes_event_id, 2 AS payload_schema_revision,
+      'committed' AS effect
+    FROM session_resource_events_v6 AS event
+    LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id
+    UNION ALL
+    SELECT event.event_id, 'execution', event.execution_id,
+      COALESCE(binding.root_session_id, event.session_id), event.session_id,
+      event.event_kind, event.revision, NULL, NULL, NULL, 2, 'committed'
+    FROM session_execution_events_v6 AS event
+    LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id
+    UNION ALL
+    SELECT 'work-item:' || event.work_item_id || ':revision:' || event.revision,
+      'work_item', event.work_item_id, item.root_session_id, item.target_session_id,
+      event.event_type, event.revision, NULL, NULL, NULL, 1, 'committed'
+    FROM work_item_events_v6 AS event
+    INNER JOIN work_items_v6 AS item ON item.id = event.work_item_id
+    UNION ALL
+    SELECT event.event_id, 'work_item', event.parent_work_item_id,
+      item.root_session_id, item.target_session_id, event.event_kind,
+      event.aggregate_revision, NULL, NULL, NULL, 1, 'committed'
+    FROM work_item_aggregation_events_v6 AS event
+    INNER JOIN work_items_v6 AS item ON item.id = event.parent_work_item_id
+    UNION ALL
+    SELECT event.event_id, 'session_files', event.operation_id,
+      COALESCE(binding.root_session_id, event.session_id), event.session_id,
+      event.event_kind, event.revision, NULL, NULL, NULL, 1,
+      CASE event.event_kind WHEN 'prepared' THEN 'none' WHEN 'applied' THEN 'committed' ELSE 'unknown' END
+    FROM session_file_write_events_v6 AS event
+    LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id
+    UNION ALL
+    SELECT event.event_id, 'transcript', event.operation_id,
+      COALESCE(binding.root_session_id, event.session_id), event.session_id,
+      event.event_kind, event.revision, NULL, NULL, NULL, 1,
+      CASE event.event_kind WHEN 'prepared' THEN 'none' WHEN 'applied' THEN 'committed' ELSE 'unknown' END
+    FROM session_transcript_export_events_v6 AS event
+    LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id
+    UNION ALL
+    SELECT event.id, 'interaction', event.interaction_id,
+      COALESCE(binding.root_session_id, event.session_id), event.session_id,
+      event.event_kind, event.interaction_revision, event.principal_kind, event.actor_session_id,
+      CASE WHEN event.interaction_revision = 1 OR event.event_kind = 'migration_baseline' THEN NULL
+        ELSE 'interaction:' || event.interaction_id || ':revision:' || (event.interaction_revision - 1) END,
+      1, 'committed'
+    FROM session_interaction_events_v6 AS event
+    LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id
+    UNION ALL
+    SELECT event.id, 'coordination_event', event.id, event.root_session_id, event.actor_session_id,
+      'coordination_event_created', NULL, NULL, NULL, event.corrected_event_id, 1, 'committed'
+    FROM coordination_events_v6 AS event
+    UNION ALL
+    SELECT action.id, 'coordination_event', action.event_id, event.root_session_id, event.actor_session_id,
+      'coordination_event_' || action.action_type,
+      (SELECT COUNT(*) FROM coordination_event_actions_v6 AS prior
+       WHERE prior.event_id = action.event_id AND prior.sequence <= action.sequence),
+      action.principal_kind, action.actor_session_id, NULL, 1, 'committed'
+    FROM coordination_event_actions_v6 AS action
+    INNER JOIN coordination_events_v6 AS event ON event.id = action.event_id
+  `).all() as ExpectedHeaderRow[];
+  const actual = db.prepare(`
+    SELECT event_id, resource_kind, resource_id, root_id, owner_kind, owner_id,
+      event_kind, resource_revision, principal_kind, actor_session_id, grant_id,
+      grant_revision, operation_id, supersedes_event_id, payload_schema_revision, effect
+    FROM resource_event_headers_v6
+    WHERE resource_kind IN ('session', 'execution', 'work_item', 'session_files',
+      'transcript', 'interaction', 'coordination_event')
+  `).all() as StoredHeaderRow[];
+  const actualById = new Map(actual.map((row) => [row.event_id, row]));
+  if (actualById.size !== expected.length || actual.length !== expected.length) {
+    throw new Error("Resource event header coverage does not match the typed event history.");
+  }
+  for (const row of expected) {
+    const header = actualById.get(row.event_id);
+    if (!header) throw new Error(`Resource event header is missing: ${row.event_id}`);
+    const comparable = {
+      resourceKind: header.resource_kind,
+      resourceId: header.resource_id,
+      rootId: header.root_id,
+      ownerKind: header.owner_kind,
+      ownerId: header.owner_id,
+      eventKind: header.event_kind,
+      resourceRevision: header.resource_revision,
+      supersedesEventId: header.supersedes_event_id,
+      payloadSchemaRevision: header.payload_schema_revision,
+      effect: header.effect,
+    };
+    const expectedComparable = {
+      resourceKind: row.resource_kind,
+      resourceId: row.resource_id,
+      rootId: row.root_id,
+      ownerKind: "session",
+      ownerId: row.owner_id,
+      eventKind: row.event_kind,
+      resourceRevision: row.resource_revision,
+      supersedesEventId: row.supersedes_event_id,
+      payloadSchemaRevision: row.payload_schema_revision,
+      effect: row.effect,
+    };
+    if (stableJson(comparable) !== stableJson(expectedComparable)) {
+      const differingField = Object.keys(expectedComparable).find((key) =>
+        stableJson(comparable[key as keyof typeof comparable])
+          !== stableJson(expectedComparable[key as keyof typeof expectedComparable]));
+      throw new Error(`Resource event header ${differingField ?? "fields"} does not match its typed event: ${row.event_id}`);
+    }
+    if (row.principal_kind !== null
+      && (header.principal_kind !== row.principal_kind || header.actor_session_id !== row.actor_session_id)) {
+      throw new Error(`Resource event header principal does not match its typed event: ${row.event_id}`);
+    }
+    verifyHeaderGrant(db, header);
+  }
+}
+
+function verifyHeaderGrant(db: DatabaseSync, header: StoredHeaderRow): void {
+  if (header.principal_kind !== "agent") {
+    if (header.actor_session_id !== null || header.grant_id !== null || header.grant_revision !== null) {
+      throw new Error(`Resource event header has an invalid non-agent grant tuple: ${header.event_id}`);
+    }
+    return;
+  }
+  if (header.actor_session_id === null) {
+    throw new Error(`Resource event header has no agent identity: ${header.event_id}`);
+  }
+  if (header.grant_id === null || header.grant_revision === null) {
+    if (header.operation_id.startsWith("migration:")) return;
+    throw new Error(`Resource event header has no agent grant identity: ${header.event_id}`);
+  }
+  const grant = db.prepare(`
+    SELECT grantee_session_id, revision
+    FROM session_authority_grants_v6
+    WHERE grant_id = ?
+  `).get(header.grant_id) as { grantee_session_id: string; revision: number } | undefined;
+  if (!grant || grant.grantee_session_id !== header.actor_session_id || header.grant_revision > grant.revision) {
+    throw new Error(`Resource event header grant does not match its agent principal: ${header.event_id}`);
+  }
+}
+
+function verifyWorkItemReplay(db: DatabaseSync): void {
+  const items = db.prepare(`
+    SELECT id, sequence, contract_revision, kind, root_session_id, creator_session_id,
+      target_session_id, parent_work_item_id, goal, scope, completion_criteria, authority,
+      source_identity_json, state, revision, progress_summary, blockers_json, next_action,
+      result_json, created_at, updated_at
+    FROM work_items_v6
+  `).all() as Array<Record<string, string | number | null>>;
+  const readEvents = db.prepare(`
+    SELECT revision, event_type, payload_json, created_at
+    FROM work_item_events_v6
+    WHERE work_item_id = ?
+    ORDER BY revision
+  `);
+  for (const item of items) {
+    const events = readEvents.all(item.id) as Array<{
+      revision: number;
+      event_type: string;
+      payload_json: string;
+      created_at: string;
+    }>;
+    const first = events[0];
+    if (!first) throw new Error(`Work Item event replay is empty: ${item.id}`);
+    const initial = JSON.parse(first.payload_json) as Record<string, unknown>;
+    const replay = {
+      kind: initial.kind,
+      rootSessionId: initial.rootSessionId,
+      creatorSessionId: initial.creatorSessionId,
+      targetSessionId: initial.targetSessionId,
+      parentWorkItemId: initial.parentWorkItemId,
+      sourceIdentity: initial.sourceIdentity,
+      contract: initial.contract,
+      progress: initial.progress,
+      state: initial.state,
+      result: initial.result,
+      updatedAt: first.created_at,
+    };
+    for (const event of events.slice(1)) {
+      const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
+      if (event.event_type === "contract_revised") {
+        if (stableJson(payload.before) !== stableJson(replay.contract)) {
+          throw new Error(`Work Item contract event cannot replay from its predecessor: ${item.id}`);
+        }
+        replay.contract = payload.after;
+      } else if (event.event_type === "progress" || event.event_type === "handoff") {
+        replay.progress = payload;
+      } else if (event.event_type === "state_transitioned") {
+        if (payload.from !== replay.state) {
+          throw new Error(`Work Item state event cannot replay from its predecessor: ${item.id}`);
+        }
+        replay.state = payload.to;
+      } else if (event.event_type === "result_reported") {
+        if (payload.from !== replay.state) {
+          throw new Error(`Work Item result event cannot replay from its predecessor: ${item.id}`);
+        }
+        replay.state = payload.to;
+        replay.result = payload.result;
+      } else {
+        throw new Error(`Work Item event kind cannot follow the baseline: ${item.id}`);
+      }
+      replay.updatedAt = event.created_at;
+    }
+    const current = {
+      kind: item.kind,
+      rootSessionId: item.root_session_id,
+      creatorSessionId: item.creator_session_id,
+      targetSessionId: item.target_session_id,
+      parentWorkItemId: item.parent_work_item_id,
+      sourceIdentity: JSON.parse(String(item.source_identity_json)),
+      contract: {
+        goal: item.goal,
+        scope: item.scope,
+        completionCriteria: item.completion_criteria,
+        authority: item.authority,
+      },
+      progress: {
+        progressSummary: item.progress_summary,
+        blockers: JSON.parse(String(item.blockers_json)),
+        nextAction: item.next_action,
+      },
+      state: item.state,
+      result: item.result_json === null ? null : JSON.parse(String(item.result_json)),
+      updatedAt: item.updated_at,
+    };
+    if (stableJson(replay) !== stableJson(current)
+      || Number(item.contract_revision) !== WORK_ITEM_CONTRACT_REVISION
+      || Number(item.sequence) < 1
+      || (first.event_type === "created" && first.created_at !== item.created_at)) {
+      throw new Error(`Work Item event replay does not match the current projection: ${item.id}`);
+    }
+  }
+}
+
+function verifyWorkItemAggregationReplay(db: DatabaseSync): void {
+  const aggregations = db.prepare(`
+    SELECT parent_work_item_id, aggregate_revision, updated_at
+    FROM work_item_aggregations_v6
+  `).all() as Array<{ parent_work_item_id: string; aggregate_revision: number; updated_at: string }>;
+  const readEvents = db.prepare(`
+    SELECT event.child_work_item_id, event.aggregate_revision, event.event_kind,
+      event.payload_json, header.occurred_at
+    FROM work_item_aggregation_events_v6 AS event
+    INNER JOIN resource_event_headers_v6 AS header ON header.event_id = event.event_id
+    WHERE event.parent_work_item_id = ?
+    ORDER BY event.aggregate_revision
+  `);
+  for (const aggregation of aggregations) {
+    const events = readEvents.all(aggregation.parent_work_item_id) as Array<{
+      child_work_item_id: string;
+      aggregate_revision: number;
+      event_kind: string;
+      payload_json: string;
+      occurred_at: string;
+    }>;
+    if (events.length !== aggregation.aggregate_revision
+      || events.at(-1)?.occurred_at !== aggregation.updated_at) {
+      throw new Error(`Work Item aggregation event replay does not match the current projection: ${aggregation.parent_work_item_id}`);
+    }
+    const childAdditions = new Set<string>();
+    const decisions = new Map<string, Record<string, unknown>>();
+    for (const event of events) {
+      const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
+      if (payload.childWorkItemId !== undefined && payload.childWorkItemId !== event.child_work_item_id) {
+        throw new Error(`Work Item aggregation event child identity is inconsistent: ${aggregation.parent_work_item_id}`);
+      }
+      if (event.event_kind === "child_added") childAdditions.add(event.child_work_item_id);
+      if (event.event_kind === "decided" || event.event_kind === "retry_requested") {
+        decisions.set(event.child_work_item_id, payload);
+      }
+    }
+    const children = db.prepare(`
+      SELECT id FROM work_items_v6 WHERE parent_work_item_id = ?
+    `).all(aggregation.parent_work_item_id) as Array<{ id: string }>;
+    if (children.some((child) => !childAdditions.has(child.id)) || childAdditions.size !== children.length) {
+      throw new Error(`Work Item aggregation child replay does not match the current projection: ${aggregation.parent_work_item_id}`);
+    }
+    const storedDecisions = db.prepare(`
+      SELECT child_work_item_id, child_revision, decision_type, reason, replacement_work_item_id
+      FROM work_item_aggregation_decisions_v6
+      WHERE parent_work_item_id = ?
+    `).all(aggregation.parent_work_item_id) as Array<{
+      child_work_item_id: string;
+      child_revision: number;
+      decision_type: string;
+      reason: string | null;
+      replacement_work_item_id: string | null;
+    }>;
+    for (const decision of storedDecisions) {
+      const replayed = decisions.get(decision.child_work_item_id);
+      const expected = {
+        childRevision: decision.child_revision,
+        decision: decision.decision_type,
+        reason: decision.reason,
+        replacementWorkItemId: decision.replacement_work_item_id,
+      };
+      if (!replayed || stableJson({
+        childRevision: replayed.childRevision,
+        decision: replayed.decision,
+        reason: replayed.reason ?? null,
+        replacementWorkItemId: replayed.replacementWorkItemId ?? null,
+      }) !== stableJson(expected)) {
+        throw new Error(`Work Item aggregation decision replay does not match the current projection: ${decision.child_work_item_id}`);
+      }
+    }
+    if (decisions.size !== storedDecisions.length) {
+      throw new Error(`Work Item aggregation decision history has no current projection: ${aggregation.parent_work_item_id}`);
+    }
+  }
+}
+
+function verifyInteractionReplay(db: DatabaseSync): void {
+  const interactions = db.prepare(`
+    SELECT interaction.id, interaction.sequence, interaction.revision, execution.session_id,
+      interaction.execution_id, interaction.kind, interaction.decision_class, interaction.state,
+      interaction.public_payload_json, interaction.response_action,
+      interaction.response_submitted_fields_json, interaction.response_principal_kind,
+      interaction.response_actor_session_id, interaction.expiry_reason, interaction.created_at,
+      interaction.resolved_at, interaction.updated_at
+    FROM session_interactions_v6 AS interaction
+    INNER JOIN session_executions_v6 AS execution ON execution.id = interaction.execution_id
+  `).all() as Array<Record<string, string | number | null>>;
+  const readLatest = db.prepare(`
+    SELECT projection_json FROM session_interaction_events_v6
+    WHERE interaction_id = ? ORDER BY interaction_revision DESC LIMIT 1
+  `);
+  for (const row of interactions) {
+    const latest = readLatest.get(row.id) as { projection_json: string } | undefined;
+    const principalKind = row.response_principal_kind;
+    const resolvedBy = principalKind === "agent" && typeof row.response_actor_session_id === "string"
+      ? { kind: "agent", sessionId: row.response_actor_session_id }
+      : principalKind === "user" || principalKind === "system" ? { kind: principalKind } : null;
+    const projection = {
+      sequence: row.sequence,
+      revision: row.revision,
+      id: row.id,
+      sessionId: row.session_id,
+      executionId: row.execution_id,
+      kind: row.kind,
+      decisionClass: row.decision_class,
+      state: row.state,
+      publicPayload: JSON.parse(String(row.public_payload_json)),
+      response: row.response_action === null ? null : {
+        action: row.response_action,
+        submittedFields: JSON.parse(String(row.response_submitted_fields_json)),
+      },
+      expiryReason: row.expiry_reason,
+      createdAt: row.created_at,
+      resolvedAt: row.resolved_at,
+      resolvedBy,
+      updatedAt: row.updated_at,
+    };
+    if (!latest || stableJson(JSON.parse(latest.projection_json)) !== stableJson(projection)) {
+      throw new Error(`Session interaction event replay does not match the current projection: ${row.id}`);
+    }
+  }
+}
+
+function verifyCoordinationReplay(db: DatabaseSync): void {
+  const rows = db.prepare(`
+    SELECT operation, principal_kind, result_event_id, target_event_id, result_revision, operation_id
+    FROM coordination_event_idempotency_v6
+  `).all() as Array<{
+    operation: string;
+    principal_kind: string;
+    result_event_id: string;
+    target_event_id: string | null;
+    result_revision: number;
+    operation_id: string;
+  }>;
+  const findHeader = db.prepare(`
+    SELECT 1 FROM resource_event_headers_v6
+    WHERE operation_id = ? AND resource_kind = 'coordination_event'
+      AND resource_id = ? AND COALESCE(resource_revision, 0) = ?
+    LIMIT 1
+  `);
+  const findRevision = db.prepare(`
+    SELECT 1 FROM resource_event_headers_v6
+    WHERE resource_kind = 'coordination_event'
+      AND resource_id = ? AND COALESCE(resource_revision, 0) = ?
+    LIMIT 1
+  `);
+  for (const row of rows) {
+    const resultRevision = row.operation === "coordination.event.correct" ? 0 : row.result_revision;
+    const findReplayHeader = row.principal_kind === "legacy_unknown" ? findRevision : findHeader;
+    const result = row.principal_kind === "legacy_unknown"
+      ? findReplayHeader.get(row.result_event_id, resultRevision)
+      : findReplayHeader.get(row.operation_id, row.result_event_id, resultRevision);
+    const target = row.operation !== "coordination.event.correct" || row.target_event_id === null
+      ? true
+      : (row.principal_kind === "legacy_unknown"
+        ? findRevision.get(row.target_event_id, row.result_revision)
+        : findHeader.get(row.operation_id, row.target_event_id, row.result_revision)) !== undefined;
+    if (result === undefined || !target) {
+      throw new Error(`Coordination event idempotency cannot replay its result revision: ${row.result_event_id}`);
+    }
+  }
 }
 
 function verifySagaProjection(db: DatabaseSync, input: {

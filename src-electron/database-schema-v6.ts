@@ -1,7 +1,7 @@
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { backfillBaselineSessionAuthority } from "./session-authority-storage.js";
-import { ensureResourceHistorySchema } from "./resource-history-schema.js";
+import { ensureResourceHistorySchema, verifyResourceHistoryProjections } from "./resource-history-schema.js";
 import { ensureSessionInteractionAuthoritySchema } from "./session-interaction-authority-schema.js";
 import { ensureCoordinationEventAuthoritySchema } from "./coordination-event-authority-schema.js";
 
@@ -3855,5 +3855,6 @@ export function ensureV6Schema(db: DatabaseSync): void {
     ensureResourceHistorySchema(db);
     ensureSessionInteractionAuthoritySchema(db);
     ensureCoordinationEventAuthoritySchema(db);
+    verifyResourceHistoryProjections(db);
   });
 }

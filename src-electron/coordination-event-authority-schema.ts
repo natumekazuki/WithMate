@@ -89,6 +89,7 @@ export function ensureCoordinationEventAuthoritySchema(db: DatabaseSync): void {
 
     backfillUserReceipts(db);
     ensurePrincipalScopedIdempotency(db);
+    backfillCoordinationEventHeaders(db);
     verifyDecisionClassRegistry(db);
     db.exec("RELEASE coordination_event_authority_schema");
   } catch (error) {
@@ -96,6 +97,40 @@ export function ensureCoordinationEventAuthoritySchema(db: DatabaseSync): void {
     db.exec("RELEASE coordination_event_authority_schema");
     throw error;
   }
+}
+
+function backfillCoordinationEventHeaders(db: DatabaseSync): void {
+  db.exec(`
+    INSERT OR IGNORE INTO resource_event_headers_v6 (
+      event_id, resource_kind, resource_id, root_id, owner_kind, owner_id,
+      event_kind, resource_revision, principal_kind, actor_session_id,
+      grant_id, grant_revision, operation_id, idempotency_key_fingerprint,
+      occurred_at, committed_at, supersedes_event_id, payload_schema_revision, effect
+    )
+    SELECT
+      event.id, 'coordination_event', event.id, event.root_session_id, 'session', event.actor_session_id,
+      'coordination_event_created', NULL, 'system', NULL, NULL, NULL,
+      'migration:coordination-event-history', NULL, event.created_at, event.created_at,
+      event.corrected_event_id, 1, 'committed'
+    FROM coordination_events_v6 AS event;
+
+    INSERT OR IGNORE INTO resource_event_headers_v6 (
+      event_id, resource_kind, resource_id, root_id, owner_kind, owner_id,
+      event_kind, resource_revision, principal_kind, actor_session_id,
+      grant_id, grant_revision, operation_id, idempotency_key_fingerprint,
+      occurred_at, committed_at, supersedes_event_id, payload_schema_revision, effect
+    )
+    SELECT
+      action.id, 'coordination_event', action.event_id, event.root_session_id, 'session', event.actor_session_id,
+      'coordination_event_' || action.action_type,
+      (SELECT COUNT(*) FROM coordination_event_actions_v6 AS prior
+       WHERE prior.event_id = action.event_id AND prior.sequence <= action.sequence),
+      action.principal_kind, action.actor_session_id, NULL, NULL,
+      'migration:coordination-event-history', NULL, action.created_at, action.created_at,
+      NULL, 1, 'committed'
+    FROM coordination_event_actions_v6 AS action
+    INNER JOIN coordination_events_v6 AS event ON event.id = action.event_id;
+  `);
 }
 
 function seedDecisionClassRegistry(db: DatabaseSync): void {

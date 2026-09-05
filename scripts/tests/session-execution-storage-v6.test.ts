@@ -10,6 +10,7 @@ import {
   type MutationAuthorityProof,
 } from "../../src/session-authority.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
+import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import { verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 import {
@@ -18,6 +19,9 @@ import {
   SessionExecutionQueueFullError,
   SessionExecutionStorageV6,
 } from "../../src-electron/session-execution-storage-v6.js";
+import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
+import { WorkItemService } from "../../src-electron/work-item-service.js";
+import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
 import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
 
 const CREATED_AT = "2026-08-10T00:00:00.000Z";
@@ -45,6 +49,132 @@ function trustedExecutionProof(
     grantRevision: null,
     evaluatedAt: CREATED_AT,
   };
+}
+
+function trustedWorkProof(
+  operation: "work.transition" | "work.result",
+  sessionId: string,
+): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-execution-storage-test" },
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: operation,
+    resolvedScope: {
+      resourceKind: "work_item",
+      resourceId: null,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "state_change",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: CREATED_AT,
+  };
+}
+
+function trustedSessionProof(sessionId: string): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-execution-storage-test" },
+    operation: "session.rename",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "session.rename",
+    resolvedScope: {
+      resourceKind: "session",
+      resourceId: sessionId,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "state_change",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: CREATED_AT,
+  };
+}
+
+function renameSession(dbPath: string, sessionId: string, title: string): void {
+  const storage = new SessionStorageV6(dbPath);
+  try {
+    const session = storage.getSessionSummary(sessionId);
+    assert.ok(session);
+    const revisionDb = new DatabaseSync(dbPath);
+    let expectedRevision: number;
+    try {
+      expectedRevision = (revisionDb.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?")
+        .get(sessionId) as { resource_revision: number }).resource_revision;
+    } finally {
+      revisionDb.close();
+    }
+    const renamed = storage.renameSessionIdempotently({
+      operation: "session.rename",
+      sessionId,
+      title,
+      expectedRevision,
+      proof: trustedSessionProof(sessionId),
+      idempotencyKey: "rename:" + sessionId,
+      requestFingerprint: "rename:" + sessionId + ":" + title,
+      createdAt: CREATED_AT,
+      expiresAt: EXPIRES_AT,
+      projectResult: (stored) => ({ sessionId: stored.id }),
+    });
+    assert.equal(renamed?.session.taskTitle, title);
+  } finally {
+    storage.close();
+  }
+}
+
+function tombstoneSession(dbPath: string, sessionId: string): void {
+  const sessionStorage = new SessionStorageV6(dbPath);
+  const workItemStorage = new WorkItemStorageV6(dbPath);
+  try {
+    const service = new WorkItemService({
+      storage: workItemStorage,
+      getTurnAuthoritySession: (id) => sessionStorage.getSessionTurnAuthority(id),
+      createWorkItemId: () => "unused-session-execution-deletion-fixture",
+      currentTimestamp: () => CREATED_AT,
+    });
+    const rootWorkItem = workItemStorage.get("root-work-item:" + sessionId);
+    assert.ok(rootWorkItem);
+    const binding: ResolvedAgentRuntimeBinding = {
+      bindingId: "binding-" + sessionId,
+      bindingIdHash: "hash-" + sessionId,
+      actorSessionId: sessionId,
+      providerId: "codex",
+      executionGeneration: "generation-1",
+      authoritySnapshot: {},
+      operationGrants: ["session.runtime.invoke"],
+      createdAt: CREATED_AT,
+      expiresAt: null,
+    };
+    const active = service.transition({
+      workItemId: rootWorkItem.id,
+      state: "in_progress",
+      expectedRevision: rootWorkItem.revision,
+      idempotencyKey: "complete-for-deletion:" + sessionId + ":start",
+    }, binding, trustedWorkProof("work.transition", sessionId));
+    service.reportResult({
+      workItemId: rootWorkItem.id,
+      state: "completed",
+      expectedRevision: active.revision,
+      result: {
+        summary: "Session deletion fixture completed.",
+        changes: [],
+        verificationResults: [],
+        findings: [],
+        unverifiedItems: [],
+        remainingWork: [],
+      },
+      idempotencyKey: "complete-for-deletion:" + sessionId + ":result",
+    }, binding, trustedWorkProof("work.result", sessionId));
+    sessionStorage.deleteSession(sessionId);
+  } finally {
+    workItemStorage.close();
+    sessionStorage.close();
+  }
 }
 
 async function createFixture(): Promise<{
@@ -125,12 +255,12 @@ function enqueueInput(index: number) {
 describe("SessionExecutionStorageV6", () => {
   // @test-value v1
   // kind = "compatibility"
-  // claim = "terminal Root WorkItemを持つtarget Sessionの削除後もoutbound execution origin snapshotはsource queryから復元できる"
+  // claim = "terminal Root WorkItemを持つtarget Sessionのtombstone後もexecutionとoutbound origin snapshotは保持される"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
-  // failure_mode = "Root WorkItem削除保護への対応で削除可能なtargetのorigin snapshotまで失いsource側の履歴が復元できない"
-  // scope = "SessionExecutionStorageV6 outbound origin deletion lifecycle"
+  // failure_mode = "target Sessionのtombstoneと同時にexecutionかorigin snapshotを失い、保持期間中の履歴を復元できない"
+  // scope = "SessionExecutionStorageV6 outbound origin retention lifecycle"
   // lifecycle = "permanent"
-  // distinction = "targetのRoot WorkItemをterminal化し、target execution削除後もsource-owned snapshotだけを保持する"
+  // distinction = "target Sessionだけをtombstone化し、execution本体とsource-owned snapshotの両方を再起動後に観測する"
   // @end-test-value
   it("ORCH-OUTBOUND-01: origin snapshotをacceptanceと同時保存しtarget削除後もsource queryから復元する", async () => {
     const fixture = await createFixture();
@@ -184,31 +314,14 @@ describe("SessionExecutionStorageV6", () => {
         ["execution-1", "execution-2"],
       );
 
-      const renameDb = new DatabaseSync(fixture.dbPath);
-      try {
-        renameDb.prepare("UPDATE sessions_v6 SET title = ? WHERE id = ?").run("Renamed target", "session-2");
-      } finally {
-        renameDb.close();
-      }
+      renameSession(fixture.dbPath, "session-2", "Renamed target");
       assert.equal(fixture.storage.listSessionOutboundExecutions("session-1")[0]?.targetSessionTitle, "Session 2");
 
       fixture.storage.close();
-      const db = new DatabaseSync(fixture.dbPath);
-      try {
-        db.exec("PRAGMA foreign_keys = ON;");
-        db.prepare(`
-          UPDATE work_items_v6
-          SET state = 'completed', revision = revision + 1, result_json = ?, updated_at = ?
-          WHERE kind = 'root' AND root_session_id = ?
-        `).run(JSON.stringify({ outcome: "completed" }), CREATED_AT, "session-2");
-        db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = ?").run("session-2");
-        db.prepare("DELETE FROM sessions_v6 WHERE id = ?").run("session-2");
-      } finally {
-        db.close();
-      }
+      tombstoneSession(fixture.dbPath, "session-2");
       const restarted = new SessionExecutionStorageV6(fixture.dbPath);
       try {
-        assert.equal(restarted.get("execution-1"), null);
+        assert.equal(restarted.get("execution-1")?.id, "execution-1");
         assert.deepEqual(
           restarted.listSessionOutboundExecutions("session-1").map((record) => record.targetSessionTitle),
           ["Session 2", "Session 2"],
@@ -223,12 +336,12 @@ describe("SessionExecutionStorageV6", () => {
 
   // @test-value v1
   // kind = "regression"
-  // claim = "source Session削除でsource-owned originがcascadeしても、target-owned executionのevent replayはcurrent projectionと一致する"
+  // claim = "source Sessionのtombstone後もoriginとtarget-owned executionを保持し、event replayがcurrent projectionと一致する"
   // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
-  // failure_mode = "originをexecution canonical projectionへ混在させ、source削除後のstartup verifierが保持対象executionを破損扱いする"
-  // scope = "Session execution history replay across source Session deletion"
+  // failure_mode = "source Sessionのtombstoneでoriginを失うか、startup verifierが保持対象executionを破損扱いする"
+  // scope = "Session execution history replay across source Session tombstone"
   // lifecycle = "permanent"
-  // distinction = "target Sessionとexecutionを保持したままsource Sessionだけを削除し、origin cascade後の直接replayを観測する"
+  // distinction = "target Sessionとexecutionを保持したままsource Sessionだけをtombstone化し、origin保持と直接replayを観測する"
   // @end-test-value
   it("source Session削除後もtarget executionのevent replayを維持する", async () => {
     const fixture = await createFixture();
@@ -246,18 +359,11 @@ describe("SessionExecutionStorageV6", () => {
       });
       fixture.storage.close();
 
+      tombstoneSession(fixture.dbPath, "session-1");
       const db = new DatabaseSync(fixture.dbPath);
       try {
         db.exec("PRAGMA foreign_keys = ON;");
-        db.prepare(`
-          UPDATE work_items_v6
-          SET state = 'completed', revision = revision + 1, result_json = ?, updated_at = ?
-          WHERE kind = 'root' AND root_session_id = ?
-        `).run(JSON.stringify({ outcome: "completed" }), CREATED_AT, "session-1");
-        db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = ?").run("session-1");
-        db.prepare("DELETE FROM sessions_v6 WHERE id = ?").run("session-1");
-
-        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_execution_origins_v6").get() as { count: number }).count, 0);
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_execution_origins_v6").get() as { count: number }).count, 1);
         assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6 WHERE id = 'execution-1'").get() as { count: number }).count, 1);
         assert.doesNotThrow(() => verifyResourceHistoryProjections(db));
       } finally {
@@ -681,37 +787,31 @@ describe("SessionExecutionStorageV6", () => {
   });
 
   // @test-value v1
-  // kind = "compatibility"
-  // claim = "削除可能なterminal root Sessionの物理削除はexecutionとexecution idempotencyをcascade削除する"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
-  // failure_mode = "Root WorkItem削除契約の追加後にexecutionまたはidempotency ledgerが孤児として残る"
-  // scope = "SessionExecutionStorageV6 Session deletion cascade"
+  // kind = "regression"
+  // claim = "terminal root Sessionのtombstone後もexecutionとexecution idempotencyを保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "Sessionの通常削除でexecutionまたはretry identityを物理削除し、保持期間中の再送を復元できない"
+  // scope = "SessionExecutionStorageV6 Session tombstone retention"
   // lifecycle = "permanent"
-  // distinction = "active rootの削除ではなくterminal化済みrootの外部key cascadeを直接観測する"
+  // distinction = "terminal化済みrootだけをtombstone化し、executionとidempotency rowの継続保持を直接観測する"
   // @end-test-value
-  it("Session削除時にexecutionとidempotencyをcascade削除する", async () => {
+  it("Session tombstone後もexecutionとidempotencyを保持する", async () => {
     const fixture = await createFixture();
     try {
       fixture.storage.enqueue(enqueueInput(1));
+      fixture.storage.close();
+      tombstoneSession(fixture.dbPath, "session-1");
       const db = new DatabaseSync(fixture.dbPath);
       try {
         db.exec("PRAGMA foreign_keys = ON;");
-        db.prepare(`
-          UPDATE work_items_v6
-          SET state = 'completed', revision = revision + 1, result_json = ?, updated_at = ?
-          WHERE kind = 'root' AND root_session_id = ?
-        `).run(JSON.stringify({ outcome: "completed" }), CREATED_AT, "session-1");
-        db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = ?").run("session-1");
-        db.prepare("DELETE FROM sessions_v6 WHERE id = ?").run("session-1");
         const executionCount = db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6").get() as { count: number };
         const idempotencyCount = db.prepare("SELECT COUNT(*) AS count FROM session_execution_idempotency_v6").get() as { count: number };
-        assert.equal(executionCount.count, 0);
-        assert.equal(idempotencyCount.count, 0);
+        assert.equal(executionCount.count, 1);
+        assert.equal(idempotencyCount.count, 1);
       } finally {
         db.close();
       }
     } finally {
-      fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
     }
   });

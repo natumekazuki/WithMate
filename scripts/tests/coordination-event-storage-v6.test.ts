@@ -20,7 +20,7 @@ import {
 } from "../../src-electron/coordination-event-storage-v6.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import { revokeSessionAuthorityGrant } from "../../src-electron/session-authority-storage.js";
-import { getSessionResourceRevision } from "../../src-electron/resource-history-schema.js";
+import { getSessionResourceRevision, verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 import type { SessionRuntimeOperation } from "../../src/session-external-runtime-contract.js";
 import { SessionAuthorityError } from "../../src/session-authority.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
@@ -1021,9 +1021,9 @@ describe("CoordinationEventStorageV6", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "再起動後もCoordination本文、action履歴、revisionから同じprojectionを復元する"
+  // claim = "再起動後もCoordination本文、action履歴、revisionを復元し、startup verifierがidempotencyのresult revision改変を拒否する"
   // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
-  // failure_mode = "event header導入後の再読込で本文またはsuperseded projectionが失われる"
+  // failure_mode = "event header導入後の再読込で本文またはsuperseded projectionが失われるか、再送ledgerを存在しないresult revisionへ帰属できる"
   // scope = "CoordinationEventStorageV6 replay projection"
   // lifecycle = "permanent"
   // @end-test-value
@@ -1053,6 +1053,21 @@ describe("CoordinationEventStorageV6", () => {
       assert.equal(reopened.getVisible(principal("executor-a"), target.eventId).state, "superseded");
       assert.equal(reopened.getVisible(principal("executor-a"), corrected.result.correction.eventId).state, "recorded");
       assert.equal(reopened.getVisible(principal("executor-a"), target.eventId).payload.summary, "作業を開始した");
+      const replayDb = new DatabaseSync(fixture.dbPath);
+      try {
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(replayDb));
+        replayDb.prepare(`
+          UPDATE coordination_event_idempotency_v6
+          SET result_revision = result_revision + 1
+          WHERE operation = 'coordination.event.correct' AND idempotency_key = 'correct-restart'
+        `).run();
+        assert.throws(
+          () => verifyResourceHistoryProjections(replayDb),
+          /Coordination event idempotency cannot replay its result revision/,
+        );
+      } finally {
+        replayDb.close();
+      }
     } finally {
       if (!originalClosed) fixture.storage.close();
       reopened?.close();

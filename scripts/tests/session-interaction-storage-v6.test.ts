@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
+import { verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 import {
   CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL,
   CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL,
@@ -258,9 +259,9 @@ describe("SessionInteractionStorageV6", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "user responseのprojection、revision、event、principal-scoped idempotencyが同じtransactionで一度だけ保存される"
+  // claim = "user responseのprojection、revision、event、principal-scoped idempotencyがatomicに保存され、startup verifierがevent projection改変を拒否する"
   // oracle = { type = "contract", ref = "AUTONOMY-USER-01/AUTONOMY-HISTORY-04/AUTONOMY-MUTATION-05" }
-  // failure_mode = "response loss後のretryで二重eventを作るか、projectionとprovenanceが部分保存される"
+  // failure_mode = "response loss後のretryで二重eventを作るか、projectionとprovenanceが部分保存されるか、改変eventをcurrent interactionとして受理する"
   // scope = "session-interaction-storage"
   // lifecycle = "permanent"
   // @end-test-value
@@ -378,6 +379,22 @@ describe("SessionInteractionStorageV6", () => {
         ]);
       } finally {
         db.close();
+      }
+      const replayDb = new DatabaseSync(fixture.dbPath);
+      try {
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(replayDb));
+        replayDb.exec("DROP TRIGGER session_interaction_events_no_update_v6");
+        replayDb.prepare(`
+          UPDATE session_interaction_events_v6
+          SET projection_json = json_set(projection_json, '$.state', 'pending')
+          WHERE interaction_id = 'interaction-1' AND interaction_revision = 2
+        `).run();
+        assert.throws(
+          () => verifyResourceHistoryProjections(replayDb),
+          /interaction event replay does not match the current projection/,
+        );
+      } finally {
+        replayDb.close();
       }
     } finally {
       fixture.storage.close();

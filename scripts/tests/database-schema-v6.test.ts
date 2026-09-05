@@ -1411,6 +1411,15 @@ describe("database-schema-v6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "V6 schemaはSession tombstone列とproject、message、auditの必須列・外部参照を同時に公開する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "Session削除をretention中の物理削除へ戻すschema変更、または既存のproject、message、audit境界の欠落を受理する"
+  // scope = "V6 project, Session tombstone, message, and audit schema"
+  // lifecycle = "permanent"
+  // distinction = "個別migration SQLの文字列ではなく、fresh databaseが公開する列と外部keyをSQLite metadataから観測する"
+  // @end-test-value
   it("V6 project scope と session/message/audit の最小 schema を固定する", () => {
     const db = createV6Schema();
     try {
@@ -1450,6 +1459,7 @@ describe("database-schema-v6", () => {
         "created_at",
         "updated_at",
         "last_active_at",
+        "deleted_at",
       ]);
       assert.equal(findForeignKey(db, "sessions_v6", "character_id")?.table, "characters");
       assert.equal(findForeignKey(db, "sessions_v6", "project_scope_id")?.table, "project_scopes_v6");
