@@ -298,6 +298,9 @@ describe("Root WorkItem public contract", () => {
           details: { operation: "work.revise", workItemId: rootWorkItem.id },
         });
       }
+      if (operation === "work.revise") return createSessionRuntimeResult(operation, rootWorkItem);
+      if (operation === "work.history.append") return createSessionRuntimeResult(operation, rootWorkItem);
+      if (operation === "work.history.list") return createSessionRuntimeResult(operation, { items: [] });
       return createSessionRuntimeResult(operation, {} as never);
     },
   });
