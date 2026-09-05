@@ -306,7 +306,7 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 続くreviewでは、通知先grantの失効競合、Session通常削除によるretention履歴とidempotencyの消失、baseline grantの過剰許可とrevoke後の起動失敗、全resourceのstartup replay検証不足、raw client／CLIの公開応答未検証、MCPだけ異なるunknown field errorをblockingと分類した。修正コミット `04a5f6c1` は通知先proofをexecution admission transactionへ渡し、baseline grantをRole templateの完全一致として検証してmigration完了とactive authorityを分離した。`ce4c4ede` はapplication dispatch前とraw client受信後にcanonical response validatorを適用し、CLIとMCPのversioned error semanticsを統一した。`45ad0622` はSession通常削除をtombstone化し、retention対象の履歴とretry identityを保持した。`0af8fdcf` は全typed eventと共通headerを照合し、Work Item、aggregation、Session、execution、interaction、Coordination、file write、transcript exportのprojectionまたはledgerをstartupで再生検証する。
 
-最初のreview修正後の直接検証は `npm run typecheck`、`npm test`（3452 tests、3451 pass、1 skip、0 fail）、`npm run build`、`git diff --check` を通過した。今回のblocking修正に対する最終の全test、build、commit-bound review結果は、このplanの完了前に追記する。`review-test-value` の Git mode は開始コミットからの TypeScript test 135 件を診断 0 で抽出した。今回追加または意味変更したrecordは、claim、failure mode、observableの対応を確認して全件`ACCEPT`とした。
+最初のreview修正後の直接検証は `npm run typecheck`、`npm test`（3452 tests、3451 pass、1 skip、0 fail）、`npm run build`、`git diff --check` を通過した。今回のblocking修正後は`npm run typecheck`、`npm run build`、`npm test`（3458 tests、3457 pass、1 skip、0 fail）、`git diff --check`を通過した。全testの初回実行では無関係な画像preview lifecycle testが30秒でtimeoutしたが、同testの単独再実行は成功し、全testの再実行も成功した。`review-test-value`のGit modeは開始コミットからのTypeScript test 139件を診断0で抽出し、今回追加または意味変更したrecordはclaim、failure mode、observableの対応を確認して全件`ACCEPT`とした。commit-bound review結果は、このplanの完了前に追記する。
 
 基本 check は次の順で実行する。
 
