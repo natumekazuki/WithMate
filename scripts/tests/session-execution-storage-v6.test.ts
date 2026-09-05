@@ -11,6 +11,7 @@ import {
 } from "../../src/session-authority.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
+import { verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 import {
   SessionExecutionBusyError,
   SessionExecutionIdempotencyConflictError,
@@ -214,6 +215,53 @@ describe("SessionExecutionStorageV6", () => {
         );
       } finally {
         restarted.close();
+      }
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "source Session削除でsource-owned originがcascadeしても、target-owned executionのevent replayはcurrent projectionと一致する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "originをexecution canonical projectionへ混在させ、source削除後のstartup verifierが保持対象executionを破損扱いする"
+  // scope = "Session execution history replay across source Session deletion"
+  // lifecycle = "permanent"
+  // distinction = "target Sessionとexecutionを保持したままsource Sessionだけを削除し、origin cascade後の直接replayを観測する"
+  // @end-test-value
+  it("source Session削除後もtarget executionのevent replayを維持する", async () => {
+    const fixture = await createFixture();
+    try {
+      fixture.storage.enqueue({
+        ...enqueueInput(1),
+        sessionId: "session-2",
+        request: { turn: { userMessage: "delegate this" } },
+        origin: {
+          sourceSessionId: "session-1",
+          targetSessionTitle: "Session 2",
+          targetSessionRole: "standalone",
+          userMessage: "delegate this",
+        },
+      });
+      fixture.storage.close();
+
+      const db = new DatabaseSync(fixture.dbPath);
+      try {
+        db.exec("PRAGMA foreign_keys = ON;");
+        db.prepare(`
+          UPDATE work_items_v6
+          SET state = 'completed', revision = revision + 1, result_json = ?, updated_at = ?
+          WHERE kind = 'root' AND root_session_id = ?
+        `).run(JSON.stringify({ outcome: "completed" }), CREATED_AT, "session-1");
+        db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = ?").run("session-1");
+        db.prepare("DELETE FROM sessions_v6 WHERE id = ?").run("session-1");
+
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_execution_origins_v6").get() as { count: number }).count, 0);
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6 WHERE id = 'execution-1'").get() as { count: number }).count, 1);
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(db));
+      } finally {
+        db.close();
       }
     } finally {
       await rm(fixture.directory, { recursive: true, force: true });

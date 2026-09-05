@@ -702,12 +702,9 @@ function readSessionExecutionProjection(db: DatabaseSync, executionId: string): 
     SELECT execution.sequence, execution.operation, execution.state, execution.request_json,
       execution.result_json, execution.error_code, execution.reason, execution.created_at,
       execution.admitted_at, execution.completed_at, execution.updated_at,
-      execution.authority_proof_json, association.work_item_id,
-      origin.source_session_id, origin.target_session_title_snapshot, origin.target_session_role_snapshot,
-      origin.source_message_seq_anchor, origin.user_message, origin.accepted_at
+      execution.authority_proof_json, association.work_item_id
     FROM session_executions_v6 AS execution
     LEFT JOIN work_item_execution_associations_v6 AS association ON association.execution_id = execution.id
-    LEFT JOIN session_execution_origins_v6 AS origin ON origin.execution_id = execution.id
     WHERE execution.id = ?
   `).get(executionId) as {
     sequence: number;
@@ -723,12 +720,6 @@ function readSessionExecutionProjection(db: DatabaseSync, executionId: string): 
     updated_at: string;
     authority_proof_json: string | null;
     work_item_id: string | null;
-    source_session_id: string | null;
-    target_session_title_snapshot: string | null;
-    target_session_role_snapshot: string | null;
-    source_message_seq_anchor: number | null;
-    user_message: string | null;
-    accepted_at: string | null;
   } | undefined;
   if (!row) throw new Error(`Session execution was not found: ${executionId}`);
   return {
@@ -745,14 +736,6 @@ function readSessionExecutionProjection(db: DatabaseSync, executionId: string): 
     updatedAt: row.updated_at,
     authorityProof: row.authority_proof_json === null ? null : JSON.parse(row.authority_proof_json) as unknown,
     workItemId: row.work_item_id,
-    origin: row.source_session_id === null ? null : {
-      sourceSessionId: row.source_session_id,
-      targetSessionTitle: row.target_session_title_snapshot,
-      targetSessionRole: row.target_session_role_snapshot,
-      sourceMessageSequence: row.source_message_seq_anchor,
-      userMessage: row.user_message,
-      acceptedAt: row.accepted_at,
-    },
   };
 }
 
