@@ -3,6 +3,11 @@ export const SESSION_INTERACTION_PAGE_MAX = 500;
 
 export type SessionInteractionKind = "approval" | "elicitation";
 export type SessionInteractionState = "pending" | "answered" | "expired";
+export type SessionInteractionDecisionClass = "user_only" | "agent_delegable" | "deny_or_cancel";
+export type SessionInteractionResponsePrincipal =
+  | { kind: "user" }
+  | { kind: "agent"; sessionId: string }
+  | { kind: "system" };
 export type SessionInteractionExpiryReason =
   | "runtime_restarted"
   | "runtime_shutdown"
@@ -86,10 +91,12 @@ export type SessionInteractionPublicPayload =
 
 type SessionInteractionBase = {
   sequence: number;
+  revision: number;
   id: string;
   sessionId: string;
   executionId: string;
   kind: SessionInteractionKind;
+  decisionClass: SessionInteractionDecisionClass;
   publicPayload: SessionInteractionPublicPayload;
   createdAt: string;
   updatedAt: string;
@@ -100,6 +107,7 @@ export type PendingSessionInteraction = SessionInteractionBase & {
   response: null;
   expiryReason: null;
   resolvedAt: null;
+  resolvedBy: null;
 };
 
 export type AnsweredSessionInteraction = SessionInteractionBase & {
@@ -107,6 +115,7 @@ export type AnsweredSessionInteraction = SessionInteractionBase & {
   response: SessionInteractionResponseSummary;
   expiryReason: null;
   resolvedAt: string;
+  resolvedBy: SessionInteractionResponsePrincipal | null;
 };
 
 export type ExpiredSessionInteraction = SessionInteractionBase & {
@@ -114,6 +123,7 @@ export type ExpiredSessionInteraction = SessionInteractionBase & {
   response: null;
   expiryReason: SessionInteractionExpiryReason;
   resolvedAt: string;
+  resolvedBy: Extract<SessionInteractionResponsePrincipal, { kind: "system" }>;
 };
 
 export type SessionInteraction =

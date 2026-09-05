@@ -24,13 +24,21 @@ function createLegacyV6(db: DatabaseSync): void {
   }
 }
 
-test("旧v6はvalidのままschedule schemaをadditiveかつidempotentに適用できる", () => {
+// @test-value v1
+// kind = "compatibility"
+// claim = "現行必須tableを欠く旧V6はmigration前にinvalidであり、additive migrationを再実行するとdataを破壊せずvalidへ収束する"
+// oracle = { type = "contract", ref = "MIGRATION-09" }
+// failure_mode = "旧V6を現行schemaと誤認するか、migration再実行で失敗して起動不能になる"
+// scope = "V6 schema migration and deep validation"
+// lifecycle = "permanent"
+// @end-test-value
+test("旧v6へscheduleを含む現行schemaをadditiveかつidempotentに適用できる", () => {
   const directory = mkdtempSync(join(tmpdir(), "withmate-schedule-schema-"));
   const dbPath = join(directory, APP_DATABASE_V6_FILENAME);
   const db = new DatabaseSync(dbPath);
   try {
     createLegacyV6(db);
-    assert.equal(isValidV6Database(dbPath), true);
+    assert.equal(isValidV6Database(dbPath), false);
 
     ensureV6Schema(db);
     ensureV6Schema(db);
@@ -89,12 +97,24 @@ test("schedule schemaの途中失敗はsavepointで片側tableを残さない", 
   }
 });
 
+// @test-value v1
+// kind = "invariant"
+// claim = "schedule table片側または必須indexを欠く部分schemaをdeep validationがvalidとして受理しない"
+// oracle = { type = "schema", ref = "CREATE_V6_SESSION_SCHEDULES_TABLE_SQL / CREATE_V6_SESSION_SCHEDULE_FIRES_TABLE_SQL" }
+// failure_mode = "部分適用databaseをvalidと判定し、後続schedule read/writeが欠落tableまたはindex前提で動作する"
+// scope = "V6 schema deep validation"
+// lifecycle = "permanent"
+// distinction = "migration成功ではなく、片側table欠落と必須index欠落のnegative validationを観測する"
+// @end-test-value
 test("schedule schemaが片側だけまたはindex欠落ならdeep validationで拒否する", () => {
   const directory = mkdtempSync(join(tmpdir(), "withmate-schedule-invalid-"));
   const dbPath = join(directory, APP_DATABASE_V6_FILENAME);
   const db = new DatabaseSync(dbPath);
   try {
     createLegacyV6(db);
+    ensureV6Schema(db);
+    db.exec("DROP TABLE session_schedule_fires_v6");
+    db.exec("DROP TABLE session_schedules_v6");
     db.exec(CREATE_V6_SESSION_SCHEDULES_TABLE_SQL);
     assert.equal(isValidV6Database(dbPath), false);
 

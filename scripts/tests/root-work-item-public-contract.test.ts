@@ -6,6 +6,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  SESSION_AUTHORITY_OPERATION_DEFINITIONS,
+  type MutationAdmissionProof,
+} from "../../src/session-authority.js";
+import {
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
   SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
@@ -13,6 +18,7 @@ import {
   createSessionRuntimeError,
   createSessionRuntimeResult,
   parseSessionRuntimeOperationInput,
+  type SessionRuntimeOperation,
 } from "../../src/session-external-runtime-contract.js";
 import {
   SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
@@ -30,7 +36,10 @@ import {
   type WorkItemEvent,
 } from "../../src/work-item.js";
 import { AgentRuntimeBindingRegistry, type ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
-import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
+import {
+  SessionExternalApplicationService as RuntimeSessionExternalApplicationService,
+  type SessionExternalApplicationServiceDeps,
+} from "../../src-electron/session-external-application-service.js";
 import { createSessionRuntimeHttpServer } from "../../src-electron/session-runtime-http-server.js";
 import {
   WorkItemIdempotencyResponseUnavailableError,
@@ -45,6 +54,58 @@ import {
   runWithMateSessionCli,
 } from "../withmate-session.js";
 import type { SessionRuntimeConnection } from "../withmate-session-runtime-client.js";
+
+function admittedProof(
+  binding: ResolvedAgentRuntimeBinding,
+  operation: SessionRuntimeOperation,
+): MutationAdmissionProof {
+  const definition = SESSION_AUTHORITY_OPERATION_DEFINITIONS[operation];
+  return {
+    principal: {
+      kind: "agent",
+      agent: "session-runtime",
+      actorSessionId: binding.actorSessionId,
+      runtimeGeneration: binding.executionGeneration,
+    },
+    providerId: binding.providerId,
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: definition.action,
+    resolvedScope: {
+      resourceKind: definition.resourceKind,
+      resourceId: binding.actorSessionId,
+      rootSessionId: binding.actorSessionId,
+      ownerKind: "session",
+      ownerId: binding.actorSessionId,
+      relation: "self",
+    },
+    effectClass: definition.effectClass,
+    grantId: `grant-${binding.actorSessionId}-${operation}`,
+    grantRevision: 1,
+    evaluatedAt: "2026-08-30T00:00:00.000Z",
+  };
+}
+
+const defaultAuthorityService: SessionExternalApplicationServiceDeps["authorityService"] = {
+  authorize(binding, operation, input) {
+    return { input, proof: admittedProof(binding, operation) };
+  },
+  canSessionAct() {
+    return true;
+  },
+};
+
+class SessionExternalApplicationService extends RuntimeSessionExternalApplicationService {
+  constructor(
+    deps: Omit<SessionExternalApplicationServiceDeps, "authorityService"> &
+      Partial<Pick<SessionExternalApplicationServiceDeps, "authorityService">>,
+  ) {
+    super({
+      ...deps,
+      authorityService: deps.authorityService ?? defaultAuthorityService,
+    });
+  }
+}
 
 const rootWorkItem = {
   id: "work-root",

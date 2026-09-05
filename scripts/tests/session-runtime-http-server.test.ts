@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { SessionAuthorityError } from "../../src/session-authority.js";
 import { request as httpRequest, type ClientRequest } from "node:http";
 import { connect as connectSocket, type Socket } from "node:net";
 import { test } from "node:test";
@@ -59,12 +60,12 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   "runtime.catalog": {},
   "session.self": {},
   "session.create": {
-    sessionRole: "executor", title: "Session", provider: "codex", catalogRevision: 4,
+    expectedContainerRevision: 1, sessionRole: "executor", title: "Session", provider: "codex", catalogRevision: 4,
     workspace: { kind: "session_folder" }, idempotencyKey: "create-key",
   },
   "session.list": {},
   "session.get": { sessionId: "session-1" },
-  "session.rename": { sessionId: "session-1", title: "Renamed", idempotencyKey: "rename-key" },
+  "session.rename": { expectedRevision: 1, sessionId: "session-1", title: "Renamed", idempotencyKey: "rename-key" },
   "session.files.list": { sessionId: "session-1" },
   "session.files.read_text": { sessionId: "session-1", relativePath: "brief.md" },
   "session.files.write_text": {
@@ -72,7 +73,7 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
     idempotencyKey: "write-key",
   },
   "work.create": {
-    targetSessionId: "session-1", goal: "goal", scope: "scope", completionCriteria: "done",
+    expectedContainerRevision: 1, targetSessionId: "session-1", goal: "goal", scope: "scope", completionCriteria: "done",
     authority: "local", sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
     idempotencyKey: "work-create-key",
   },
@@ -107,34 +108,34 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   },
   "turn.options": { sessionId: "session-1" },
   "turn.run": {
-    sessionId: "session-1", catalogRevision: 4, idempotencyKey: "run-key",
+    expectedContainerRevision: 1, sessionId: "session-1", catalogRevision: 4, idempotencyKey: "run-key",
     responseMode: "deferred", terminalFailureNotification: { targetSessionId: "target-session" }, turn: turnInput,
   },
   "turn.enqueue": {
-    sessionId: "session-1", catalogRevision: 4, idempotencyKey: "enqueue-key",
+    expectedContainerRevision: 1, sessionId: "session-1", catalogRevision: 4, idempotencyKey: "enqueue-key",
     terminalFailureNotification: { targetSessionId: "target-session" }, turn: turnInput,
   },
   "turn.list": { sessionId: "session-1" },
   "turn.get": { sessionId: "session-1", executionId: "execution-1" },
-  "turn.cancel": { sessionId: "session-1", executionId: "execution-1", idempotencyKey: "cancel-key" },
+  "turn.cancel": { expectedRevision: 1, sessionId: "session-1", executionId: "execution-1", idempotencyKey: "cancel-key" },
   "interaction.list": { sessionId: "session-1" },
   "interaction.respond": {
-    sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+    sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1", expectedRevision: 1,
     response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-key",
     responseMode: "deferred",
   },
   "coordination.event.create": {
-    kind: "progress", payload: { summary: "Started" }, idempotencyKey: "coord-create-key",
+    expectedContainerRevision: 1, kind: "progress", payload: { summary: "Started" }, idempotencyKey: "coord-create-key",
   },
   "coordination.event.list": { scope: "self" },
   "coordination.event.get": { eventId: "coordination-1" },
-  "coordination.event.resolve": { eventId: "coordination-1", note: "Continue", idempotencyKey: "coord-resolve-key" },
+  "coordination.event.resolve": { eventId: "coordination-1", note: "Continue", expectedRevision: 0, idempotencyKey: "coord-resolve-key" },
   "coordination.event.consume": {
     eventId: "coordination-1", expectedResolutionSequence: 4, idempotencyKey: "coord-consume-key",
   },
-  "coordination.event.cancel": { eventId: "coordination-1", idempotencyKey: "coord-cancel-key" },
+  "coordination.event.cancel": { eventId: "coordination-1", expectedRevision: 0, idempotencyKey: "coord-cancel-key" },
   "coordination.event.correct": {
-    eventId: "coordination-1", payload: { summary: "Corrected" }, idempotencyKey: "coord-correct-key",
+    eventId: "coordination-1", payload: { summary: "Corrected" }, expectedRevision: 0, idempotencyKey: "coord-correct-key",
   },
   "transcript.export": {
     sessionId: "session-1", format: "json", maxBytes: 1024, destination: { kind: "inline" },
@@ -239,9 +240,21 @@ test("Session runtime authenticates identity and adapter before invoking handler
   }
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "CLIとMCPへapplication authorityの拒否を403で伝えmutationを実行しない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "transportがauthority拒否を潰すか拒否後にmutationを実行する"
+// scope = "Session Runtime HTTP authority error propagation"
+// lifecycle = "permanent"
+// @end-test-value
 test("ORCH-AUTH-02: CLIとMCPのHTTP transportはshared application authorityへ収束する", async () => {
   let mutationCount = 0;
   const application = new SessionExternalApplicationService({
+    authorityService: {
+      authorize() { throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Cross-root grant is unavailable."); },
+      canSessionAct() { return false; },
+    },
     resolveTurnInitiator: async (actorSessionId) => ({
       kind: "session",
       sessionId: actorSessionId,
@@ -319,6 +332,7 @@ test("ORCH-AUTH-02: CLIとMCPのHTTP transportはshared application authorityへ
         schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
         operation: "turn.run",
         input: {
+          expectedContainerRevision: 1,
           sessionId: "session-other-root",
           catalogRevision: 4,
           idempotencyKey: `${adapter}-forbidden`,
@@ -331,7 +345,7 @@ test("ORCH-AUTH-02: CLIとMCPのHTTP transportはshared application authorityへ
     assert.deepEqual(responses.map((response) => response.status), [403, 403]);
     assert.deepEqual(
       responses.map((response) => JSON.parse(response.body).error.code),
-      ["SESSION_TURN_FORBIDDEN", "SESSION_TURN_FORBIDDEN"],
+      ["AUTHORITY_FORBIDDEN", "AUTHORITY_FORBIDDEN"],
     );
     assert.equal(mutationCount, 0);
   } finally {
@@ -581,6 +595,14 @@ test("RL-01: Session runtime replaces an oversized success response with a stabl
   }
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "応答上限超過時もcommit済みmutationのeffectとresource IDを失わない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "応答上限がcommit済み結果を未適用と誤報してconsumerの重複実行を誘う"
+// scope = "Session Runtime HTTP effect projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectとresource IDを返す", async () => {
   const createResult = createBoundarySessionResult("session-created");
   const renameResult = createBoundarySessionResult("session-1");
@@ -617,6 +639,10 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
     );
   }
   const application = new SessionExternalApplicationService({
+    authorityService: {
+      authorize(_binding, _operation, input) { return { input, proof: {} as never }; },
+      canSessionAct() { return true; },
+    },
     resolveTurnInitiator: async (actorSessionId) => ({
       kind: "session",
       sessionId: actorSessionId,
@@ -641,6 +667,7 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
         : {
           sessionId,
           title: "Target",
+          expectedContainerRevision: 1,
           sessionRole: "executor",
           roleContractRevision: 1,
           rootSessionId: "session-actor",
@@ -677,6 +704,7 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
         return {
           sessionId,
           title: "Target",
+          expectedContainerRevision: 1,
           sessionRole: "executor",
           roleContractRevision: 1,
           rootSessionId: "session-actor",
@@ -700,6 +728,7 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
       {
         operation: "session.create",
         input: {
+          expectedContainerRevision: 1,
           sessionRole: "executor",
           title: "New Session",
           provider: "codex",
@@ -710,11 +739,12 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
       },
       {
         operation: "session.rename",
-        input: { sessionId: "session-1", title: "Renamed", idempotencyKey: "rename-key" },
+        input: { expectedRevision: 1, sessionId: "session-1", title: "Renamed", idempotencyKey: "rename-key" },
       },
       {
         operation: "turn.run",
         input: {
+          expectedContainerRevision: 1,
           sessionId: "session-1",
           catalogRevision: 4,
           idempotencyKey: "run-key",

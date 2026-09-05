@@ -1,3 +1,4 @@
+import type { MutationAuthorityProof } from "../src/session-authority.js";
 import {
   type SessionExecution,
   type SessionExecutionOriginSnapshot,
@@ -20,6 +21,8 @@ export type SessionExecutionDispatchResult = {
 };
 
 export type CreateSessionExecutionInput = {
+  proof: MutationAuthorityProof;
+  expectedContainerRevision: number;
   sessionId: string;
   request: unknown;
   idempotencyKey: string;
@@ -29,6 +32,8 @@ export type CreateSessionExecutionInput = {
 };
 
 export type CancelSessionExecutionInput = {
+  proof: MutationAuthorityProof;
+  expectedRevision: number;
   sessionId: string;
   executionId: string;
   idempotencyKey: string;
@@ -46,6 +51,7 @@ export type SessionExecutionServiceDeps = {
     | "completeRunning"
     | "enqueue"
     | "get"
+    | "getSessionContainerRevision"
     | "interruptRunningForRestart"
     | "interruptRunningForShutdown"
     | "listSessionExecutions"
@@ -130,6 +136,10 @@ export class SessionExecutionService {
     );
   }
 
+  getSessionContainerRevision(sessionId: string): number {
+    return this.deps.storage.getSessionContainerRevision(sessionId);
+  }
+
   beginShutdown(): void {
     this.acceptingDispatches = false;
     for (const retry of this.drainRetryTimers.values()) {
@@ -162,6 +172,7 @@ export class SessionExecutionService {
       this.requireDispatchAdmission();
       const replay = this.deps.storage.resolveIdempotency(
         "turn.run",
+        input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
       );
@@ -174,6 +185,8 @@ export class SessionExecutionService {
 
       const createdAt = this.deps.currentTimestamp();
       const started = this.deps.storage.startImmediate({
+        proof: input.proof,
+        expectedContainerRevision: input.expectedContainerRevision,
         id: this.issueExecutionId(),
         sessionId: input.sessionId,
         request: validatedRequest,
@@ -203,6 +216,8 @@ export class SessionExecutionService {
       this.requireDispatchAdmission();
       const createdAt = this.deps.currentTimestamp();
       return this.deps.storage.enqueue({
+        proof: input.proof,
+        expectedContainerRevision: input.expectedContainerRevision,
         id: this.issueExecutionId(),
         sessionId: input.sessionId,
         request: validatedRequest,
@@ -260,6 +275,7 @@ export class SessionExecutionService {
     this.requirePersistenceAvailable();
     const replay = this.deps.storage.resolveIdempotency(
       operation,
+      input.proof,
       input.idempotencyKey,
       input.requestFingerprint,
     );
@@ -270,6 +286,7 @@ export class SessionExecutionService {
     this.requirePersistenceAvailable();
     const replay = this.deps.storage.resolveIdempotency(
       "turn.cancel",
+      input.proof,
       input.idempotencyKey,
       input.requestFingerprint,
     );
@@ -286,6 +303,7 @@ export class SessionExecutionService {
       this.requirePersistenceAvailable();
       const lockedReplay = this.deps.storage.resolveIdempotency(
         "turn.cancel",
+        input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
       );
@@ -306,6 +324,8 @@ export class SessionExecutionService {
       const expiresAt = this.deps.resolveIdempotencyExpiresAt(createdAt);
       if (execution.state === "queued") {
         const canceled = this.deps.storage.cancelQueuedIdempotent({
+            proof: input.proof,
+            expectedRevision: input.expectedRevision,
             executionId: execution.id,
             idempotencyKey: input.idempotencyKey,
             requestFingerprint: input.requestFingerprint,
@@ -318,6 +338,8 @@ export class SessionExecutionService {
       }
       if (execution.state === "running") {
         const canonical = this.deps.storage.recordIdempotency({
+          proof: input.proof,
+          expectedRevision: input.expectedRevision,
           operation: "turn.cancel",
           idempotencyKey: input.idempotencyKey,
           requestFingerprint: input.requestFingerprint,
@@ -655,6 +677,7 @@ export class SessionExecutionShuttingDownError extends Error {
 export function toPublicExecution(execution: SessionExecutionStorageRecord): SessionExecution {
   return {
     id: execution.id,
+    revision: execution.revision,
     sessionId: execution.sessionId,
     operation: execution.operation,
     state: execution.state,

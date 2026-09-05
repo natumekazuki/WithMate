@@ -44,20 +44,20 @@ operation inputはJSON objectとし、`--json`、`--file`、`--stdin`のいず�
 ```powershell
 withmate-session turn options --json '{"sessionId":"SESSION_ID"}'
 withmate-session turn get --json '{"sessionId":"SESSION_ID","executionId":"EXECUTION_ID"}'
-withmate-session turn cancel --json '{"sessionId":"SESSION_ID","executionId":"EXECUTION_ID","idempotencyKey":"CANCEL_KEY"}'
+withmate-session turn cancel --json '{"sessionId":"SESSION_ID","executionId":"EXECUTION_ID","expectedRevision":1,"idempotencyKey":"CANCEL_KEY"}'
 ```
 
 一つの委譲を複数Turnまたは再依頼にまたがって追跡する場合は、先にWork Itemを作成する。Work ItemはSessionやexecutionとは別のidentityであり、`overall-coordinator`または`task-coordinator`だけが既存の通信authorityで送信可能な直属targetへ作成できる。
 
 ```powershell
-withmate-session work create --json '{"targetSessionId":"TARGET_SESSION_ID","goal":"実装を完了する","scope":"対象moduleのみ","completionCriteria":"targeted testが成功する","authority":"対象Worktree内の変更と検証","sourceIdentity":{"workspace":null,"repository":null,"branch":null,"base":null,"head":null},"idempotencyKey":"work-create-001"}'
+withmate-session work create --json '{"expectedContainerRevision":1,"targetSessionId":"TARGET_SESSION_ID","goal":"実装を完了する","scope":"対象moduleのみ","completionCriteria":"targeted testが成功する","authority":"対象Worktree内の変更と検証","sourceIdentity":{"workspace":null,"repository":null,"branch":null,"base":null,"head":null},"idempotencyKey":"work-create-001"}'
 withmate-session work transition --json '{"workItemId":"WORK_ITEM_ID","state":"in_progress","expectedRevision":1,"idempotencyKey":"work-start-001"}'
 withmate-session work revise --json '{"workItemId":"ROOT_WORK_ITEM_ID","goal":"実装を完了する","scope":"対象moduleのみ","completionCriteria":"全検証が成功する","authority":"対象Worktree内の変更と検証","expectedRevision":1,"idempotencyKey":"root-revise-001"}'
 withmate-session work history append --json '{"workItemId":"ROOT_WORK_ITEM_ID","type":"handoff","summary":"公開adapterまで完了","blockers":[],"nextAction":"全体検証を実行する","expectedRevision":2,"idempotencyKey":"root-handoff-001"}'
 withmate-session work history list --json '{"workItemId":"ROOT_WORK_ITEM_ID","limit":50}'
 ```
 
-`turn run`または`turn enqueue`のtop-levelへ任意の`workItemId`を指定すると、root、target、active state、actor authorityをexecution作成前に検証し、関連付けを保存する。`workItemId`はTurnのidempotency fingerprintへ含まれるため、同じkeyで関連先だけを変更するとconflictになる。executionのterminal stateはWork Itemを暗黙に完了させない。target Sessionが`work result`で`completed`、`partially_completed`、`failed`のstateとstrict resultを同時に報告する。creator Sessionは非terminal Work Itemを`work cancel`で取消せる。全mutationはcurrent `expectedRevision`とidempotency keyを要求する。
+`work.create`はtarget Sessionのcurrent `revision`を`expectedContainerRevision`へ指定する。`turn run`または`turn enqueue`もtarget Sessionのcurrent `revision`を`expectedContainerRevision`へ指定し、top-levelへ任意の`workItemId`を渡すと、root、target、active state、actor authorityをexecution作成前に検証して関連付けを保存する。`workItemId`はTurnのidempotency fingerprintへ含まれるため、同じkeyで関連先だけを変更するとconflictになる。executionのterminal stateはWork Itemを暗黙に完了させない。target Sessionが`work result`で`completed`、`partially_completed`、`failed`のstateとstrict resultを同時に報告する。creator Sessionは非terminal Work Itemを`work cancel`で取消せる。全mutationはcurrent revisionとidempotency keyを要求する。
 
 直属子を持つWork Itemでは、親のtarget Sessionが`work aggregation get/list`でbounded summaryを取得し、terminalな直属子へ`work aggregation decide`または`work aggregation retry`を実行する。`retry`はdecisionとreplacement Work Itemを同一transactionで作成する。すべての直属子がterminalかつdecision済みになった後、`work result`へcurrent `expectedAggregateRevision`を指定して親resultを確定する。孫Work Itemは親集約へ直接含めず、result本文の詳細は`work get`で取得する。
 
@@ -75,14 +75,14 @@ Agent起点の`turn run`と`turn enqueue`は、runtime bindingで確定したact
 異なるroot、`overall-coordinator`から孫executor、`executor`から兄弟または別branch、存在しないtargetはexecutionまたはqueue作成前に拒否される。requestへactor Role、root、parent、depthを指定してもauthorityには使われない。GUIからユーザーが直接送信するTurnは別のtrusted invocation境界であり、このAgent間matrixを適用しない。`runtime catalog`の`sessionTurnCommunicationContractRevision`で対応する通信契約revisionを確認する。
 
 ```powershell
-withmate-session turn run --json '{"sessionId":"SESSION_ID","catalogRevision":1,"idempotencyKey":"run-codex-001","responseMode":"deferred","turn":{"provider":"codex","userMessage":"確認して","model":"gpt-5.4","reasoningEffort":"high","approvalMode":"on-request","codexSandboxMode":"workspace-write"}}'
-withmate-session turn enqueue --json '{"sessionId":"SESSION_ID","catalogRevision":1,"idempotencyKey":"run-copilot-001","turn":{"provider":"copilot","userMessage":"確認して","model":"claude-sonnet","reasoningEffort":"high","approvalMode":"on-request","customAgentName":""}}'
+withmate-session turn run --json '{"expectedContainerRevision":1,"sessionId":"SESSION_ID","catalogRevision":1,"idempotencyKey":"run-codex-001","responseMode":"deferred","turn":{"provider":"codex","userMessage":"確認して","model":"gpt-5.4","reasoningEffort":"high","approvalMode":"on-request","codexSandboxMode":"workspace-write"}}'
+withmate-session turn enqueue --json '{"expectedContainerRevision":2,"sessionId":"SESSION_ID","catalogRevision":1,"idempotencyKey":"run-copilot-001","turn":{"provider":"copilot","userMessage":"確認して","model":"claude-sonnet","reasoningEffort":"high","approvalMode":"on-request","customAgentName":""}}'
 ```
 
 source Turnが`failed`または`interrupted`になった場合だけ、別の通常Sessionへ通知TurnをFIFO登録するには、`turn run`または`turn enqueue`へ通知先を明示する。
 
 ```powershell
-withmate-session turn run --json '{"sessionId":"SOURCE_SESSION_ID","catalogRevision":1,"idempotencyKey":"run-with-terminal-notify-001","responseMode":"deferred","terminalFailureNotification":{"targetSessionId":"TARGET_SESSION_ID"},"turn":{"provider":"codex","userMessage":"確認して","model":"gpt-5.4","reasoningEffort":"high","approvalMode":"on-request","codexSandboxMode":"workspace-write"}}'
+withmate-session turn run --json '{"expectedContainerRevision":1,"sessionId":"SOURCE_SESSION_ID","catalogRevision":1,"idempotencyKey":"run-with-terminal-notify-001","responseMode":"deferred","terminalFailureNotification":{"targetSessionId":"TARGET_SESSION_ID"},"turn":{"provider":"codex","userMessage":"確認して","model":"gpt-5.4","reasoningEffort":"high","approvalMode":"on-request","codexSandboxMode":"workspace-write"}}'
 ```
 
 通知先は自動補完されない。sourceと同じSession、存在しないSession、通常Session以外はsource execution作成前に拒否される。同じidempotency keyを再送するときは同じ通知先を指定する。通知先だけを変更するとconflictになる。
@@ -94,16 +94,16 @@ execution resultの`terminalFailureNotification`は、未設定なら`null`、�
 通常Sessionの作成、一覧、取得、名前変更を公開する。
 
 ```powershell
-withmate-session session create --json '{"title":"計画を分解する","sessionRole":"task-coordinator","provider":"codex","catalogRevision":1,"workspace":{"kind":"directory","path":"C:\\work"},"idempotencyKey":"create-20260812-001"}'
-withmate-session session create --json '{"title":"実装する","sessionRole":"executor","provider":"copilot","catalogRevision":1,"workspace":{"kind":"session_folder"},"idempotencyKey":"create-copilot-20260812-001"}'
+withmate-session session create --json '{"expectedContainerRevision":1,"title":"計画を分解する","sessionRole":"task-coordinator","provider":"codex","catalogRevision":1,"workspace":{"kind":"directory","path":"C:\\work"},"idempotencyKey":"create-20260812-001"}'
+withmate-session session create --json '{"expectedContainerRevision":2,"title":"実装する","sessionRole":"executor","provider":"copilot","catalogRevision":1,"workspace":{"kind":"session_folder"},"idempotencyKey":"create-copilot-20260812-001"}'
 withmate-session session list --json '{}'
 withmate-session session get --json '{"sessionId":"SESSION_ID"}'
-withmate-session session rename --json '{"sessionId":"SESSION_ID","title":"新しい名前","idempotencyKey":"rename-20260812-001"}'
+withmate-session session rename --json '{"sessionId":"SESSION_ID","expectedRevision":1,"title":"新しい名前","idempotencyKey":"rename-20260812-001"}'
 ```
 
-`session.create`は現在のbinding actorのchildだけを作成する。`overall-coordinator`は`task-coordinator`または`executor`、`task-coordinator`は`executor`を作成できる。`standalone`と`executor`はchildを作成できない。actor、parent、root、depth、Character identityは入力せず、WithMateがcurrent bindingから導出する。
+`session.create`は現在のbinding actorのchildだけを作成する。作成可能なchild Roleの初期上限は`baselineChildSessionRoleTemplates`からgrantへ発行され、実際のrequestはその時点のactive grantとcanonical resource relationで判定される。actor、parent、root、depth、Character identityは入力せず、WithMateがcurrent bindingから導出する。
 
-`session.self`、`session.create`、`session.list`、`session.get`は`sessionRole`、`roleContractRevision`、`rootSessionId`、`parentSessionId`、`delegationDepth`を同じ形で返す。`runtime catalog`はRole contract revision、対応Role、child規則、最大depthを返す。
+`session.self`、`session.create`、`session.list`、`session.get`は`revision`、`sessionRole`、`roleContractRevision`、`rootSessionId`、`parentSessionId`、`delegationDepth`を同じ形で返す。`session.create`はactorのcurrent `revision`を`expectedContainerRevision`へ、`session.rename`は対象Sessionのcurrent `revision`を`expectedRevision`へ指定する。`runtime catalog`の`baselineChildSessionRoleTemplates`はbaseline grant発行時のtemplateであり、現在のactorに対する認可結果ではない。実際の認可は保存済みactive grantとcanonical resource relationからrequestごとに評価される。
 
 `session.create`と`session.rename`の`idempotencyKey`は必須で、callerが生成して保持する。response loss後の再送では同じkeyを使う。create keyはactorごとのscopeであり、同じactorでRoleまたは他のcreate入力を変えて再利用すると`IDEMPOTENCY_CONFLICT`になる。
 
@@ -123,11 +123,10 @@ listの`limit`は既定50、最大500である。read/writeの`maxBytes`は既�
 
 ## InteractionとTranscript
 
-実行中にproviderから確認が返った場合は、`interaction list`でpending interactionを取得し、`interaction respond`で回答する。`responseMode:"wait"`では回答後の次のpendingまたはterminal executionまで待つ。
+実行中にproviderから確認が返った場合は、`interaction list`でpending interactionの`decisionClass`と`revision`を取得する。provider approvalとelicitationは現在`user_only`であり、Agent bindingを使うCLIの`interaction respond`では回答できない。WithMateのtrusted GUIからユーザーが回答するまで待機する。
 
 ```powershell
 withmate-session interaction list --json '{"sessionId":"SESSION_ID","state":"pending"}'
-withmate-session interaction respond --json '{"sessionId":"SESSION_ID","executionId":"EXECUTION_ID","interactionId":"INTERACTION_ID","response":{"kind":"approval","decision":"approve"},"idempotencyKey":"respond-20260813-001","responseMode":"wait"}'
 ```
 
 Transcriptはpublic message、Turn、interaction projectionだけから生成される。inlineはJSONまたはMarkdownを返し、SessionFolder出力は同一SessionFolder配下へatomic publishする。SessionFolder出力ではresponse loss後も同じ`destination.idempotencyKey`で再送する。
@@ -165,7 +164,7 @@ MCP clientにはこのcommandをserver commandとして登録する。公開tool
 
 ## Coordination event
 
-通常responseと別に進行や判断を記録する場合は、CLIで`coordination event create|list|get|resolve|consume|cancel|correct --json <input>`を使う。mutationにはcaller-owned idempotency keyが必須である。responseを失った場合は同じkeyの`coordination event get`、既知のevent ID、または同一input・同一keyのreplayでcanonical resultを再照合する。
+通常responseと別に進行や判断を記録する場合は、CLIで`coordination event create|list|get|resolve|consume|cancel|correct --json <input>`を使う。createはactor Sessionのcurrent `revision`を`expectedContainerRevision`へ、resolve、cancel、correctはeventのcurrent `revision`を`expectedRevision`へ指定する。mutationにはcaller-owned idempotency keyが必須である。responseを失った場合は同じkeyの`coordination event get`、既知のevent ID、または同一input・同一keyのreplayでcanonical resultを再照合する。
 
 `list`のscopeは`self`または`subtree`で、subtreeはcoordinatorだけが使える。default limitは50、maximumは100である。cursorはprincipal Session、scope、kind、stateへ結び付くため、別Sessionまたは別filterへ流用しない。権限外、cross-root、非ancestorは存在を区別せず拒否される。
 

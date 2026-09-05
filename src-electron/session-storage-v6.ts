@@ -27,6 +27,10 @@ import {
 } from "../src/session-role-binding.js";
 import type { SessionTurnAuthoritySession } from "../src/session-turn-communication-authority.js";
 import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  type MutationAuthorityProof,
+} from "../src/session-authority.js";
+import {
   assertWorkItemEventPayloadWithinLimit,
   type WorkItemCreatedEventPayload,
 } from "../src/work-item.js";
@@ -49,6 +53,20 @@ import {
 import { deleteAuditEventsForSessionTargets } from "./audit-log-storage-v6.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import {
+  appendSessionFileSagaEvent,
+  appendSessionResourceEvent,
+  appendWorkItemEventHeader,
+  claimSessionContainerRevision,
+  createSagaOperationId,
+  getSessionResourceRevision as readSessionResourceRevision,
+  SessionResourceRevisionConflictError,
+} from "./resource-history-schema.js";
+import {
+  assertGrantProofCurrent,
+  createDelegatedChildAuthority,
+  ensureBaselineSessionAuthority,
+} from "./session-authority-storage.js";
 import {
   SessionIdCollisionError,
   SessionRunningTurnStartConflictError,
@@ -282,6 +300,7 @@ type SessionRoleBindingRow = {
 };
 
 type SessionFileWriteIdempotencyRow = {
+  operation_id: string;
   request_fingerprint: string;
   session_id: string;
   relative_path: string;
@@ -293,6 +312,7 @@ type SessionFileWriteIdempotencyRow = {
   file_inode: string | null;
   target_precondition_json: string | null;
   result_json: string | null;
+  authority_proof_json: string | null;
 };
 
 export type SessionFileWritePreparedProof = {
@@ -318,6 +338,16 @@ export class SessionCrudIdempotencyConflictError extends Error {
   constructor() {
     super("The idempotency key was already used with different input.");
     this.name = "SessionCrudIdempotencyConflictError";
+  }
+}
+
+export class SessionCrudIdempotencyResponseUnavailableError extends Error {
+  readonly code = "IDEMPOTENCY_RESPONSE_UNAVAILABLE";
+  readonly effect = "applied" as const;
+
+  constructor(readonly operation: SessionCrudOperation, readonly idempotencyKey: string) {
+    super(`The original Session mutation response is unavailable after migration: ${operation}`);
+    this.name = "SessionCrudIdempotencyResponseUnavailableError";
   }
 }
 
@@ -351,6 +381,17 @@ export class SessionFileWriteIdempotencyConflictError extends Error {
   constructor() {
     super("The idempotency key was already used with different input.");
     this.name = "SessionFileWriteIdempotencyConflictError";
+  }
+}
+
+export class SessionFileWriteIdempotencyResponseUnavailableError extends Error {
+  readonly code = "IDEMPOTENCY_RESPONSE_UNAVAILABLE";
+  readonly effect: "applied" | "indeterminate";
+
+  constructor(readonly idempotencyKey: string, readonly state: "pending" | "applied" | "rejected") {
+    super("The original Session file write response is unavailable after migration.");
+    this.name = "SessionFileWriteIdempotencyResponseUnavailableError";
+    this.effect = state === "applied" ? "applied" : "indeterminate";
   }
 }
 type DecodedSessionV6RuntimeState = {
@@ -709,11 +750,22 @@ export class SessionStorageV6 {
     return row ? this.rowToSessionSummaryProjection(row) : null;
   }
 
+  getSessionResourceRevision(sessionId: string): number | null {
+    return readSessionResourceRevision(this.db, sessionId);
+  }
+
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult;
-  listSessionSummaryPage(limit: number, position?: SessionSummaryPagePosition): SessionSummaryPageEntry[];
+  listSessionSummaryPage(
+    limit: number,
+    position?: SessionSummaryPagePosition,
+    rootSessionId?: string,
+    sessionId?: string,
+  ): SessionSummaryPageEntry[];
   listSessionSummaryPage(
     requestOrLimit?: SessionSummaryPageRequest | null | number,
     position?: SessionSummaryPagePosition,
+    rootSessionId?: string,
+    sessionId?: string,
   ): HomeSessionSummaryPageResult | SessionSummaryPageEntry[] {
     if (typeof requestOrLimit !== "number") {
       return this.queryHomeSessionSummaryPage(requestOrLimit);
@@ -724,17 +776,36 @@ export class SessionStorageV6 {
           SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
           FROM sessions_v6
           WHERE session_kind = 'default'
+            AND (? IS NULL OR EXISTS (
+              SELECT 1 FROM session_role_bindings_v6 AS root_scope
+              WHERE root_scope.session_id = sessions_v6.id AND root_scope.root_session_id = ?
+            ))
+            AND (? IS NULL OR sessions_v6.id = ?)
             AND (last_active_at < ? OR (last_active_at = ? AND id < ?))
           ORDER BY last_active_at DESC, id DESC
           LIMIT ?
-        `).all(position.lastActiveAt, position.lastActiveAt, position.sessionId, limit)
+        `).all(
+          rootSessionId ?? null,
+          rootSessionId ?? null,
+          sessionId ?? null,
+          sessionId ?? null,
+          position.lastActiveAt,
+          position.lastActiveAt,
+          position.sessionId,
+          limit,
+        )
       : this.db.prepare(`
           SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
           FROM sessions_v6
           WHERE session_kind = 'default'
+            AND (? IS NULL OR EXISTS (
+              SELECT 1 FROM session_role_bindings_v6 AS root_scope
+              WHERE root_scope.session_id = sessions_v6.id AND root_scope.root_session_id = ?
+            ))
+            AND (? IS NULL OR sessions_v6.id = ?)
           ORDER BY last_active_at DESC, id DESC
           LIMIT ?
-        `).all(limit)) as SessionV6SummaryRow[];
+        `).all(rootSessionId ?? null, rootSessionId ?? null, sessionId ?? null, sessionId ?? null, limit)) as SessionV6SummaryRow[];
     return rows.map((row) => ({
       summary: this.rowToSessionSummaryProjection(row),
       lastActiveAt: row.last_active_at,
@@ -743,7 +814,7 @@ export class SessionStorageV6 {
 
   resolveSessionCrudIdempotency(
     operation: SessionCrudOperation,
-    principalSessionId: string,
+    proof: MutationAuthorityProof,
     idempotencyKey: string,
     resolveExpectedFingerprint: string | ((result: unknown) => string),
     nowIso: string,
@@ -751,7 +822,7 @@ export class SessionStorageV6 {
     this.cleanupSessionCrudIdempotency(nowIso);
     return this.resolveSessionCrudIdempotencyWithoutCleanup(
       operation,
-      principalSessionId,
+      sessionPrincipalKey(proof),
       idempotencyKey,
       resolveExpectedFingerprint,
     );
@@ -783,6 +854,8 @@ export class SessionStorageV6 {
       requestFingerprint: string;
       createdAt: string;
       expiresAt: string;
+      expectedContainerRevision: number;
+      proof: MutationAuthorityProof;
       projectResult(session: Session): unknown;
       resolveReplayFingerprint(result: unknown): string;
     },
@@ -792,7 +865,7 @@ export class SessionStorageV6 {
     try {
       const replay = this.resolveSessionCrudIdempotencyWithoutCleanup(
         input.operation,
-        input.principalSessionId,
+        sessionPrincipalKey(input.proof),
         input.idempotencyKey,
         input.resolveReplayFingerprint,
       );
@@ -805,7 +878,58 @@ export class SessionStorageV6 {
         return { session: stored, result: replay.result, replayed: true };
       }
 
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
+      const currentContainerRevision = readSessionResourceRevision(this.db, input.principalSessionId);
+      if (currentContainerRevision === null) {
+        throw new Error(`Session container was not found: ${input.principalSessionId}`);
+      }
+      if (currentContainerRevision !== input.expectedContainerRevision) {
+        throw new SessionResourceRevisionConflictError(
+          input.principalSessionId,
+          input.expectedContainerRevision,
+          currentContainerRevision,
+        );
+      }
+
       this.writeSession(normalized, "create");
+      if (input.proof.principal.kind === "agent") {
+        createDelegatedChildAuthority(this.db, {
+          parentProof: input.proof,
+          childSessionId: normalized.id,
+          operationId: sessionOperationId(input.operation, input.proof, input.requestFingerprint),
+          createdAt: input.createdAt,
+        });
+      } else {
+        ensureBaselineSessionAuthority(this.db, normalized.id, input.createdAt);
+      }
+      appendSessionResourceEvent(this.db, {
+        sessionId: normalized.id,
+        revision: 1,
+        eventKind: "created",
+        proof: input.proof,
+        operationId: sessionOperationId(input.operation, input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.createdAt,
+        payload: {
+          title: normalized.taskTitle,
+          state: toV6State(normalized),
+          sessionKind: normalized.sessionKind,
+          providerId: normalized.provider,
+          modelId: normalized.model,
+          workspacePath: normalized.workspacePath,
+          updatedAt: normalized.updatedAt,
+        },
+      });
+      claimSessionContainerRevision(this.db, {
+        sessionId: input.principalSessionId,
+        expectedRevision: input.expectedContainerRevision,
+        eventKind: "child_created",
+        proof: input.proof,
+        operationId: sessionOperationId(input.operation, input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.createdAt,
+        payload: { childSessionId: normalized.id },
+      });
       const stored = this.getSession(normalized.id) ?? normalized;
       const result = input.projectResult(stored);
       this.insertSessionCrudIdempotency(input, stored.id, result);
@@ -818,10 +942,12 @@ export class SessionStorageV6 {
   }
 
   renameSessionIdempotently(input: {
-      operation: "session.rename";
+    operation: "session.rename";
     principalSessionId?: string;
     sessionId: string;
     title: string;
+    expectedRevision: number;
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     createdAt: string;
@@ -832,7 +958,7 @@ export class SessionStorageV6 {
     try {
       const replay = this.resolveSessionCrudIdempotencyWithoutCleanup(
         input.operation,
-        input.principalSessionId ?? "",
+        sessionPrincipalKey(input.proof),
         input.idempotencyKey,
         input.requestFingerprint,
       );
@@ -845,16 +971,33 @@ export class SessionStorageV6 {
         return { session: stored, result: replay.result, replayed: true };
       }
 
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
+
       const current = this.getSessionSummary(input.sessionId);
       if (!current || current.sessionKind !== "default") {
         this.db.exec("COMMIT");
         return null;
       }
-      this.db.prepare(`
+      const changed = this.db.prepare(`
         UPDATE sessions_v6
-        SET title = ?, updated_at = ?
-        WHERE id = ? AND session_kind = 'default'
-      `).run(input.title, input.createdAt, input.sessionId);
+        SET title = ?, updated_at = ?, resource_revision = resource_revision + 1
+        WHERE id = ? AND session_kind = 'default' AND resource_revision = ?
+      `).run(input.title, input.createdAt, input.sessionId, input.expectedRevision);
+      const actualRevision = readSessionResourceRevision(this.db, input.sessionId);
+      if (changed.changes !== 1 || actualRevision !== input.expectedRevision + 1) {
+        if (actualRevision === null) return null;
+        throw new SessionResourceRevisionConflictError(input.sessionId, input.expectedRevision, actualRevision);
+      }
+      appendSessionResourceEvent(this.db, {
+        sessionId: input.sessionId,
+        revision: actualRevision,
+        eventKind: "renamed",
+        proof: input.proof,
+        operationId: sessionOperationId(input.operation, input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.createdAt,
+        payload: { beforeTitle: current.taskTitle, title: input.title, updatedAt: input.createdAt },
+      });
       const stored = this.getSessionSummary(input.sessionId);
       if (!stored) {
         throw new Error("Renamed Session could not be read back.");
@@ -885,21 +1028,30 @@ export class SessionStorageV6 {
     tempName: string;
     createdAt: string;
     expiresAt: string;
+    proof: MutationAuthorityProof;
   }): SessionFileWriteReplayResult {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.cleanupAppliedSessionFileWriteIdempotency(input.createdAt);
-      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      const existing = this.findSessionFileWriteIdempotency(input.proof, input.idempotencyKey);
       if (existing) {
         const resolved = resolveSessionFileWriteIdempotency(existing, input.requestFingerprint);
         this.db.exec("COMMIT");
         return resolved;
       }
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
+      const principal = mutationPrincipalIdentity(input.proof);
+      const operationId = createSagaOperationId(
+        "session-file-write",
+        `${principal.kind}:${principal.id}:${input.idempotencyKey}`,
+        input.requestFingerprint,
+      );
       this.db.prepare(`
         INSERT INTO session_file_write_idempotency_v6 (
           operation, idempotency_key, request_fingerprint, session_id, relative_path,
-          temp_name, state, result_json, created_at, expires_at
-        ) VALUES ('session.files.write_text', ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+          temp_name, state, result_json, created_at, expires_at, authority_proof_json, operation_id,
+          principal_kind, principal_id
+        ) VALUES ('session.files.write_text', ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?, ?, ?)
       `).run(
         input.idempotencyKey,
         input.requestFingerprint,
@@ -908,7 +1060,24 @@ export class SessionStorageV6 {
         input.tempName,
         input.createdAt,
         input.expiresAt,
+        JSON.stringify(input.proof),
+        operationId,
+        principal.kind,
+        principal.id,
       );
+      appendSessionFileSagaEvent(this.db, {
+        table: "session_file_write_events_v6",
+        resourceKind: "session_files",
+        operationId,
+        sessionId: input.sessionId,
+        revision: 1,
+        eventKind: "prepared",
+        proof: input.proof,
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.createdAt,
+        effect: "none",
+        payload: { relativePath: input.relativePath, tempName: input.tempName },
+      });
       this.db.exec("COMMIT");
       return {
         kind: "pending",
@@ -925,13 +1094,14 @@ export class SessionStorageV6 {
   }
 
   recordPreparedSessionFileWrite(input: {
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     prepared: SessionFileWritePreparedProof;
   }): void {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      const existing = this.findSessionFileWriteIdempotency(input.proof, input.idempotencyKey);
       if (!existing) throw new Error("Prepared Session file write idempotency record is missing.");
       const resolved = resolveSessionFileWriteIdempotency(existing, input.requestFingerprint);
       if (resolved.kind !== "pending") {
@@ -941,16 +1111,20 @@ export class SessionStorageV6 {
       if (resolved.prepared && !samePreparedProof(resolved.prepared, input.prepared)) {
         throw new Error("Pending Session file write proof changed between retries.");
       }
+      const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         UPDATE session_file_write_idempotency_v6
         SET output_sha256 = ?, byte_length = ?, file_device = ?, file_inode = ?, target_precondition_json = ?
-        WHERE operation = 'session.files.write_text' AND idempotency_key = ? AND state = 'pending'
+        WHERE operation = 'session.files.write_text'
+          AND principal_kind = ? AND principal_id = ? AND idempotency_key = ? AND state = 'pending'
       `).run(
         input.prepared.sha256,
         input.prepared.byteLength,
         input.prepared.device,
         input.prepared.inode,
         JSON.stringify(input.prepared.targetPrecondition),
+        principal.kind,
+        principal.id,
         input.idempotencyKey,
       );
       this.db.exec("COMMIT");
@@ -961,6 +1135,7 @@ export class SessionStorageV6 {
   }
 
   completeSessionFileWrite(input: {
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     prepared: SessionFileWritePreparedProof;
@@ -970,7 +1145,7 @@ export class SessionStorageV6 {
   }): unknown {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      const existing = this.findSessionFileWriteIdempotency(input.proof, input.idempotencyKey);
       if (!existing) {
         throw new Error("Prepared Session file write idempotency record is missing.");
       }
@@ -986,11 +1161,32 @@ export class SessionStorageV6 {
         throw new Error("Session file write completion does not match the prepared proof.");
       }
       const resultJson = JSON.stringify(input.result);
+      const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         UPDATE session_file_write_idempotency_v6
         SET state = 'applied', result_json = ?, created_at = ?, expires_at = ?
-        WHERE operation = 'session.files.write_text' AND idempotency_key = ?
-      `).run(resultJson, input.completedAt, input.expiresAt, input.idempotencyKey);
+        WHERE operation = 'session.files.write_text'
+          AND principal_kind = ? AND principal_id = ? AND idempotency_key = ?
+      `).run(resultJson, input.completedAt, input.expiresAt, principal.kind, principal.id, input.idempotencyKey);
+      const proof = decodeStoredMutationProof(
+        this.db,
+        existing.session_id,
+        existing.authority_proof_json,
+        input.completedAt,
+      );
+      appendSessionFileSagaEvent(this.db, {
+        table: "session_file_write_events_v6",
+        resourceKind: "session_files",
+        operationId: existing.operation_id,
+        sessionId: existing.session_id,
+        revision: 2,
+        eventKind: "applied",
+        proof,
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.completedAt,
+        effect: "committed",
+        payload: { relativePath: existing.relative_path, result: input.result },
+      });
       this.db.exec("COMMIT");
       return JSON.parse(resultJson) as unknown;
     } catch (error) {
@@ -1000,6 +1196,7 @@ export class SessionStorageV6 {
   }
 
   rejectSessionFileWrite(input: {
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     error: unknown;
@@ -1008,7 +1205,7 @@ export class SessionStorageV6 {
   }): unknown {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      const existing = this.findSessionFileWriteIdempotency(input.proof, input.idempotencyKey);
       if (!existing) {
         throw new Error("Prepared Session file write idempotency record is missing.");
       }
@@ -1021,11 +1218,32 @@ export class SessionStorageV6 {
         throw new Error("Applied Session file write cannot be completed as rejected.");
       }
       const errorJson = JSON.stringify(input.error);
+      const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         UPDATE session_file_write_idempotency_v6
         SET state = 'rejected', result_json = ?, created_at = ?, expires_at = ?
-        WHERE operation = 'session.files.write_text' AND idempotency_key = ?
-      `).run(errorJson, input.completedAt, input.expiresAt, input.idempotencyKey);
+        WHERE operation = 'session.files.write_text'
+          AND principal_kind = ? AND principal_id = ? AND idempotency_key = ?
+      `).run(errorJson, input.completedAt, input.expiresAt, principal.kind, principal.id, input.idempotencyKey);
+      const proof = decodeStoredMutationProof(
+        this.db,
+        existing.session_id,
+        existing.authority_proof_json,
+        input.completedAt,
+      );
+      appendSessionFileSagaEvent(this.db, {
+        table: "session_file_write_events_v6",
+        resourceKind: "session_files",
+        operationId: existing.operation_id,
+        sessionId: existing.session_id,
+        revision: 2,
+        eventKind: "rejected",
+        proof,
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.completedAt,
+        effect: "unknown",
+        payload: { relativePath: existing.relative_path, error: input.error },
+      });
       this.db.exec("COMMIT");
       return JSON.parse(errorJson) as unknown;
     } catch (error) {
@@ -1289,6 +1507,27 @@ export class SessionStorageV6 {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.writeSession(normalized, operation);
+      if (operation === "create" && normalized.sessionKind === "default" && normalized.roleBinding) {
+        ensureBaselineSessionAuthority(this.db, normalized.id, normalized.updatedAt);
+        appendSessionResourceEvent(this.db, {
+          sessionId: normalized.id,
+          revision: 1,
+          eventKind: "created",
+          proof: systemSessionProof(normalized, "session.create", "local_mutation", normalized.updatedAt),
+          operationId: `system:session.create:${normalized.id}`,
+          idempotencyKey: null,
+          occurredAt: normalized.updatedAt,
+          payload: {
+            title: normalized.taskTitle,
+            state: toV6State(normalized),
+            sessionKind: normalized.sessionKind,
+            providerId: normalized.provider,
+            modelId: normalized.model,
+            workspacePath: normalized.workspacePath,
+            updatedAt: normalized.updatedAt,
+          },
+        });
+      }
       if (terminalCommit) {
         writeSessionTurnTerminalCommit(this.db, terminalCommit);
       }
@@ -1420,6 +1659,13 @@ export class SessionStorageV6 {
       WHERE operation = ? AND principal_session_id = ? AND idempotency_key = ?
     `).get(operation, principalSessionId, idempotencyKey) as SessionCrudIdempotencyRow | undefined;
     if (!row) {
+      const legacy = this.db.prepare(`
+        SELECT 1
+        FROM session_crud_idempotency_v6
+        WHERE operation = ? AND principal_session_id LIKE 'legacy_unknown:%' AND idempotency_key = ?
+        LIMIT 1
+      `).get(operation, idempotencyKey);
+      if (legacy) throw new SessionCrudIdempotencyResponseUnavailableError(operation, idempotencyKey);
       return { kind: "absent" };
     }
     const result = JSON.parse(row.result_json) as unknown;
@@ -1440,6 +1686,7 @@ export class SessionStorageV6 {
     input: {
       operation: SessionCrudOperation;
       principalSessionId?: string;
+      proof: MutationAuthorityProof;
       idempotencyKey: string;
       requestFingerprint: string;
       createdAt: string;
@@ -1461,7 +1708,7 @@ export class SessionStorageV6 {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.operation,
-      input.principalSessionId ?? "",
+      sessionPrincipalKey(input.proof),
       input.idempotencyKey,
       input.requestFingerprint,
       sessionId,
@@ -1471,13 +1718,29 @@ export class SessionStorageV6 {
     );
   }
 
-  private findSessionFileWriteIdempotency(idempotencyKey: string): SessionFileWriteIdempotencyRow | undefined {
-    return this.db.prepare(`
-      SELECT request_fingerprint, session_id, relative_path, temp_name, state,
-        output_sha256, byte_length, file_device, file_inode, target_precondition_json, result_json
+  private findSessionFileWriteIdempotency(
+    proof: MutationAuthorityProof,
+    idempotencyKey: string,
+  ): SessionFileWriteIdempotencyRow | undefined {
+    const principal = mutationPrincipalIdentity(proof);
+    const row = this.db.prepare(`
+      SELECT operation_id, request_fingerprint, session_id, relative_path, temp_name, state,
+        output_sha256, byte_length, file_device, file_inode, target_precondition_json, result_json,
+        authority_proof_json
       FROM session_file_write_idempotency_v6
-      WHERE operation = 'session.files.write_text' AND idempotency_key = ?
-    `).get(idempotencyKey) as SessionFileWriteIdempotencyRow | undefined;
+      WHERE operation = 'session.files.write_text'
+        AND principal_kind = ? AND principal_id = ? AND idempotency_key = ?
+    `).get(principal.kind, principal.id, idempotencyKey) as SessionFileWriteIdempotencyRow | undefined;
+    if (row) return row;
+    const legacy = this.db.prepare(`
+      SELECT state
+      FROM session_file_write_idempotency_v6
+      WHERE operation = 'session.files.write_text'
+        AND principal_kind = 'legacy_unknown' AND idempotency_key = ?
+      LIMIT 1
+    `).get(idempotencyKey) as { state: "pending" | "applied" | "rejected" } | undefined;
+    if (legacy) throw new SessionFileWriteIdempotencyResponseUnavailableError(idempotencyKey, legacy.state);
+    return undefined;
   }
 
   private findSessionRoleBindingRow(sessionId: string): SessionRoleBindingRow | undefined {
@@ -1747,6 +2010,15 @@ export class SessionStorageV6 {
         work_item_id, revision, event_type, actor_session_id, payload_json, created_at
       ) VALUES (?, 1, 'created', ?, ?, ?)
     `).run(workItemId, session.id, JSON.stringify(payload), session.updatedAt);
+    appendWorkItemEventHeader(this.db, {
+      workItemId,
+      revision: 1,
+      eventKind: "created",
+      proof: systemSessionProof(session, "session.create", "local_mutation", session.updatedAt),
+      operationId: `system:root-work-item.create:${session.id}`,
+      idempotencyKey: null,
+      occurredAt: session.updatedAt,
+    });
   }
 
   private rowToSessionSummaryProjection(row: SessionV6SummaryRow): SessionSummary {
@@ -2122,6 +2394,84 @@ export class SessionStorageV6 {
     `).all(...validParentSessionIds) as SessionIdRow[];
     return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
   }
+}
+
+function sessionOperationId(operation: SessionCrudOperation, proof: MutationAuthorityProof, requestFingerprint: string): string {
+  return `session-operation:${operation}:${sessionPrincipalKey(proof)}:${requestFingerprint}`;
+}
+
+function sessionPrincipalKey(proof: MutationAuthorityProof): string {
+  const principal = mutationPrincipalIdentity(proof);
+  return `${principal.kind}:${principal.id}`;
+}
+
+function mutationPrincipalIdentity(proof: MutationAuthorityProof): {
+  kind: "agent" | "user" | "system";
+  id: string;
+} {
+  if (proof.principal.kind === "agent") {
+    return { kind: "agent", id: proof.principal.actorSessionId };
+  }
+  if (proof.principal.kind === "user") {
+    return { kind: "user", id: "local-user" };
+  }
+  return { kind: "system", id: proof.principal.service };
+}
+
+function decodeStoredMutationProof(
+  db: DatabaseSync,
+  sessionId: string,
+  serialized: string | null,
+  evaluatedAt: string,
+): MutationAuthorityProof {
+  if (serialized !== null) return JSON.parse(serialized) as MutationAuthorityProof;
+  const binding = db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?")
+    .get(sessionId) as { root_session_id: string } | undefined;
+  return {
+    principal: { kind: "system", service: "session-file-write-migration-recovery" },
+    operation: "session.files.write_text",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "session.files.write_text",
+    resolvedScope: {
+      resourceKind: "session_files",
+      resourceId: sessionId,
+      rootSessionId: binding?.root_session_id ?? sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt,
+  };
+}
+
+function systemSessionProof(
+  session: Session,
+  operation: "session.create",
+  effectClass: "local_mutation",
+  evaluatedAt: string,
+): MutationAuthorityProof {
+  const binding = requireSessionRoleBinding(session.id, session.roleBinding);
+  return {
+    principal: { kind: "system", service: "session-storage" },
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: operation,
+    resolvedScope: {
+      resourceKind: "session_namespace",
+      resourceId: session.id,
+      rootSessionId: binding.rootSessionId,
+      ownerKind: "session",
+      ownerId: session.id,
+      relation: "self",
+    },
+    effectClass,
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt,
+  };
 }
 
 function resolveSessionFileWriteIdempotency(

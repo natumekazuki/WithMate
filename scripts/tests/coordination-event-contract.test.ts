@@ -12,28 +12,41 @@ import {
 import { parseSessionRuntimeOperationInput } from "../../src/session-external-runtime-contract.js";
 
 describe("Coordination event contract", () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Agent向けCoordination operationはrevisionを含むstrict inputとkind固有fieldを検証する"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "createまたはmutationがrevisionなしで通る、またはkind外fieldとunknown fieldを受理する"
+  // scope = "session runtime coordination input parser"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("COORD-EVENT-01: kindごとのfield組合せとunknown fieldをstrictに検証する", () => {
     assert.deepEqual(parseSessionRuntimeOperationInput("coordination.event.create", {
+      expectedContainerRevision: 1,
       kind: "progress",
       payload: { summary: "検証を開始した" },
       idempotencyKey: "create-1",
     }), {
+      expectedContainerRevision: 1,
       kind: "progress",
       payload: { summary: "検証を開始した" },
       idempotencyKey: "create-1",
     });
     assert.throws(() => parseSessionRuntimeOperationInput("coordination.event.create", {
+      expectedContainerRevision: 1,
       kind: "progress",
       payload: { summary: "検証を開始した" },
       targetSessionId: "session-parent",
       idempotencyKey: "create-2",
     }), /targetSessionId/);
     assert.throws(() => parseSessionRuntimeOperationInput("coordination.event.create", {
+      expectedContainerRevision: 1,
       kind: "user_decision_required",
       payload: { summary: "方針を選んでください" },
       idempotencyKey: "create-3",
     }), /options/);
     assert.throws(() => parseSessionRuntimeOperationInput("coordination.event.create", {
+      expectedContainerRevision: 1,
       kind: "progress",
       payload: { summary: "検証を開始した", rawLog: "private" },
       idempotencyKey: "create-4",
@@ -44,18 +57,21 @@ describe("Coordination event contract", () => {
     }), /Exactly one/);
     assert.deepEqual(parseSessionRuntimeOperationInput("coordination.event.resolve", {
       eventId: "event-1",
+      expectedRevision: 0,
       idempotencyKey: "resolve-1",
-    }), { eventId: "event-1", idempotencyKey: "resolve-1" });
+    }), { eventId: "event-1", expectedRevision: 0, idempotencyKey: "resolve-1" });
     assert.throws(() => parseSessionRuntimeOperationInput("coordination.event.resolve", {
       eventId: "event-1",
+      expectedRevision: 0,
       optionId: "a",
       idempotencyKey: "resolve-2",
     }), /Unknown field/);
     assert.deepEqual(parseSessionRuntimeOperationInput("coordination.event.resolve", {
       eventId: "event-1",
+      expectedRevision: 0,
       note: "自由回答",
       idempotencyKey: "resolve-3",
-    }), { eventId: "event-1", note: "自由回答", idempotencyKey: "resolve-3" });
+    }), { eventId: "event-1", expectedRevision: 0, note: "自由回答", idempotencyKey: "resolve-3" });
     assert.deepEqual(parseSessionRuntimeOperationInput("coordination.event.consume", {
       eventId: "event-1",
       expectedResolutionSequence: 7,
@@ -73,19 +89,19 @@ describe("Coordination event contract", () => {
     }), /expectedResolutionSequence/);
     for (const kind of ["progress", "decision", "blocker", "result"] as const) {
       const parsed = parseSessionRuntimeOperationInput("coordination.event.create", {
-        kind, payload: { summary: kind }, idempotencyKey: `create-${kind}`,
+        expectedContainerRevision: 1, kind, payload: { summary: kind }, idempotencyKey: `create-${kind}`,
       }) as { kind: string };
       assert.equal(parsed.kind, kind);
     }
     assert.equal((parseSessionRuntimeOperationInput("coordination.event.create", {
-      kind: "escalation", payload: { summary: "escalate" }, targetSessionId: "ancestor-1", idempotencyKey: "escalate",
+      expectedContainerRevision: 1, kind: "escalation", payload: { summary: "escalate" }, targetSessionId: "ancestor-1", idempotencyKey: "escalate",
     }) as { kind: string }).kind, "escalation");
     assert.equal((parseSessionRuntimeOperationInput("coordination.event.create", {
-      kind: "user_decision_required", payload: { summary: "choose" },
+      expectedContainerRevision: 1, kind: "user_decision_required", payload: { summary: "choose" },
       options: [{ id: "a", label: "A" }, { id: "b", label: "B" }], idempotencyKey: "choose",
     }) as { kind: string }).kind, "user_decision_required");
     assert.equal((parseSessionRuntimeOperationInput("coordination.event.correct", {
-      eventId: "event-1", payload: { summary: "corrected" }, idempotencyKey: "correct",
+      eventId: "event-1", expectedRevision: 0, payload: { summary: "corrected" }, idempotencyKey: "correct",
     }) as { eventId: string }).eventId, "event-1");
     assert.deepEqual([
       initialCoordinationEventState("progress"),
@@ -100,6 +116,14 @@ describe("Coordination event contract", () => {
     assert.throws(() => parseSessionRuntimeOperationInput("coordination.event.list", { scope: "self", limit: 101 }), /limit/i);
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "Coordination payload、option、noteはcanonical validatorでsecret、private path、size超過を拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260821-coordination-event-api/plan.md#COORD-EVENT-01" }
+  // failure_mode = "Agent/GUI境界からsecretやprivate pathをCoordination履歴へ永続化する"
+  // scope = "coordination content validation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("COORD-EVENT-01: payload、option、secret/pathの上限をcanonical validatorで拒否する", () => {
     assert.throws(
       () => validateCoordinationEventPayload({ summary: "x".repeat(241) }),
@@ -159,6 +183,7 @@ describe("Coordination event contract", () => {
     );
     assert.throws(
       () => parseSessionRuntimeOperationInput("coordination.event.create", {
+        expectedContainerRevision: 1,
         kind: "progress",
         payload: { summary: "key=-----BEGIN ENCRYPTED PRIVATE KEY-----" },
         idempotencyKey: "encrypted-key",
@@ -167,6 +192,7 @@ describe("Coordination event contract", () => {
     );
     assert.throws(
       () => parseSessionRuntimeOperationInput("coordination.event.create", {
+        expectedContainerRevision: 1,
         kind: "user_decision_required",
         payload: { summary: "選択" },
         options: [
@@ -180,6 +206,7 @@ describe("Coordination event contract", () => {
     assert.throws(
       () => parseSessionRuntimeOperationInput("coordination.event.cancel", {
         eventId: "event-1",
+        expectedRevision: 0,
         note: "[local](C:\\Users\\someone\\secret.txt)",
         idempotencyKey: "note-path",
       }),
@@ -187,6 +214,14 @@ describe("Coordination event contract", () => {
     );
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "trusted GUI listは全Session既定とserver-side filterを保持し、Agent scope fieldを受理しない"
+  // oracle = { type = "contract", ref = "docs/adr/027-coordination-event-api.md" }
+  // failure_mode = "GUI feedがAgent scopeへ狭まり、別rootの回答待ちを表示できない"
+  // scope = "trusted Coordination list parser"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("COORD-FEED-02: trusted GUI listは全Sessionを既定にし、server-side Session filterを検証する", () => {
     assert.deepEqual(parseCoordinationEventTrustedListInput({}), { limit: 50 });
     assert.deepEqual(parseCoordinationEventTrustedListInput({ sessionId: "session-a", state: "open", limit: 25 }), {
@@ -204,25 +239,38 @@ describe("Coordination event contract", () => {
     assert.throws(() => parseCoordinationEventTrustedListInput({ limit: 101 }), /limit/i);
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "Agent resolveとtrusted GUI user responseはrevision付きの別入力surfaceとして検証する"
+  // oracle = { type = "contract", ref = "AUTONOMY-USER-01 / AUTONOMY-MUTATION-05" }
+  // failure_mode = "Agent surfaceからoption回答を作る、またはstale GUI回答をrevisionなしで受理する"
+  // scope = "coordination resolve input parsers"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("COORD-RESOLVE-SURFACE-01: agent解決とtrusted GUI回答の入力契約を分離する", () => {
     assert.deepEqual(parseSessionRuntimeOperationInput("coordination.event.resolve", {
       eventId: "blocker-1",
+      expectedRevision: 0,
       idempotencyKey: "resolve-blocker-1",
     }), {
       eventId: "blocker-1",
+      expectedRevision: 0,
       idempotencyKey: "resolve-blocker-1",
     });
     assert.deepEqual(parseCoordinationEventTrustedResolveInput({
       eventId: "decision-1",
+      expectedRevision: 0,
       optionId: "continue",
       idempotencyKey: "resolve-decision-1",
     }), {
       eventId: "decision-1",
+      expectedRevision: 0,
       optionId: "continue",
       idempotencyKey: "resolve-decision-1",
     });
     assert.throws(() => parseCoordinationEventTrustedResolveInput({
       eventId: "decision-1",
+      expectedRevision: 0,
       idempotencyKey: "resolve-decision-2",
     }), /Exactly one/);
   });

@@ -10,10 +10,12 @@ import {
 function createPending(kind: "approval" | "elicitation"): SessionInteraction {
   return {
     sequence: 1,
+    revision: 1,
     id: `interaction-${kind}`,
     sessionId: "session-1",
     executionId: "execution-1",
     kind,
+    decisionClass: "user_only",
     state: "pending",
     publicPayload: kind === "approval"
       ? { title: "Approve", summary: "Run command" }
@@ -22,15 +24,24 @@ function createPending(kind: "approval" | "elicitation"): SessionInteraction {
     expiryReason: null,
     createdAt: "2026-08-13T00:00:00.000Z",
     resolvedAt: null,
+    resolvedBy: null,
     updatedAt: "2026-08-13T00:00:00.000Z",
   };
 }
 
 describe("Session interaction GUI bridge", () => {
-  it("EXT-INTERACTION-11: matching requestだけをdurable approval responseへ渡す", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "matching GUI requestだけがtrusted responderへcurrent interaction revision付きで渡る"
+  // oracle = { type = "contract", ref = "AUTONOMY-USER-01" }
+  // failure_mode = "stale renderer requestが別interactionを解決するか、revisionなしのuser receiptが発行される"
+  // scope = "session-interaction-gui-bridge"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("matching requestだけをtrusted approval responderへ渡す", () => {
     const responses: unknown[] = [];
     const deps = {
-      interactionService: {
+      trustedResponder: {
         getPendingForExecution: () => createPending("approval"),
         respond: (input: unknown) => { responses.push(input); return {} as never; },
       },
@@ -49,6 +60,7 @@ describe("Session interaction GUI bridge", () => {
       sessionId: "session-1",
       executionId: "execution-1",
       interactionId: "interaction-approval",
+      expectedRevision: 1,
       response: { kind: "approval", decision: "approve" },
       idempotencyKey: "gui:interaction-approval",
       respondedAt: "2026-08-13T00:01:00.000Z",
@@ -56,10 +68,18 @@ describe("Session interaction GUI bridge", () => {
     }]);
   });
 
-  it("EXT-INTERACTION-11: elicitation responseをexact unionのままdurable responseへ渡す", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "GUI elicitation responseはtrusted responderへcurrent revisionとexact response unionのまま渡る"
+  // oracle = { type = "contract", ref = "AUTONOMY-USER-01" }
+  // failure_mode = "trusted GUI境界でresponse actionまたはrevisionが失われ、別の回答として保存される"
+  // scope = "session-interaction-gui-bridge"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("elicitation responseをrevision付きexact unionでtrusted responderへ渡す", () => {
     const responses: Array<{ response: unknown }> = [];
     const deps = {
-      interactionService: {
+      trustedResponder: {
         getPendingForExecution: () => createPending("elicitation"),
         respond: (input: { response: unknown }) => { responses.push(input); return {} as never; },
       },

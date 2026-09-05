@@ -6,6 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  type MutationAuthorityProof,
+} from "../../src/session-authority.js";
 import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
 import { buildNewSession, type MessageArtifact } from "../../src/session-state.js";
@@ -17,6 +21,31 @@ import {
 } from "../../src-electron/session-storage-v6.js";
 import { WorkItemService } from "../../src-electron/work-item-service.js";
 import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
+
+function trustedMutationProof(
+  operation: MutationAuthorityProof["operation"],
+  sessionId: string,
+  resourceKind: MutationAuthorityProof["resolvedScope"]["resourceKind"],
+): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-storage-test" },
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: operation,
+    resolvedScope: {
+      resourceKind,
+      resourceId: sessionId,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "local_mutation",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: "2026-08-30T00:00:00.000Z",
+  };
+}
 
 async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {
   for (let index = 0; index < attempts; index += 1) {
@@ -232,7 +261,7 @@ function completeRootWorkItemsForDeletion(
         state: "in_progress",
         expectedRevision: rootWorkItem.revision,
         idempotencyKey: "complete-for-deletion:" + sessionId + ":start",
-      }, binding);
+      }, binding, trustedMutationProof("work.transition", sessionId, "work_item"));
       service.reportResult({
         workItemId: rootWorkItem.id,
         state: "completed",
@@ -246,7 +275,7 @@ function completeRootWorkItemsForDeletion(
           remainingWork: [],
         },
         idempotencyKey: "complete-for-deletion:" + sessionId + ":result",
-      }, binding);
+      }, binding, trustedMutationProof("work.result", sessionId, "work_item"));
     }
   } finally {
     workItemStorage.close();
@@ -254,6 +283,15 @@ function completeRootWorkItemsForDeletion(
 }
 
 describe("SessionStorageV6", () => {
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Session create/renameはcontainer/resource revisionと権限証明を同じ永続transactionで検証し、同一keyを再起動後もreplayする"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Mutation and idempotency contract" }
+  // failure_mode = "Session投影だけが更新され履歴、container revision、またはidempotency結果が不整合になる"
+  // scope = "SessionStorageV6 create and rename transaction"
+  // lifecycle = "permanent"
+  // distinction = "createの親container revisionとrename対象revisionを別々に競合検証し、storage再生成後のreplayも観測する"
+  // @end-test-value
   it("SESSION-CREATE-IDEMPOTENCY-02: create/renameを永続replayし、一覧を安定順序でページングする", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -261,6 +299,19 @@ describe("SessionStorageV6", () => {
 
     try {
       storage = new SessionStorageV6(dbPath);
+      const actorSession = buildNewSession({
+        id: "actor-a",
+        taskTitle: "Actor",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      });
+      storage.insertSession({ ...actorSession, updatedAt: "2026-08-10T00:00:00.000Z" });
       const makeSession = (id: string, title: string, updatedAt: string) => ({
         ...buildNewSession({
           id,
@@ -285,6 +336,8 @@ describe("SessionStorageV6", () => {
           requestFingerprint: "fingerprint-a",
           createdAt: "2026-08-11T00:00:00.000Z",
           expiresAt: "2026-08-12T00:00:00.000Z",
+          expectedContainerRevision: 1,
+          proof: trustedMutationProof("session.create", "actor-a", "session_namespace"),
           projectResult: (session) => ({ sessionId: session.id, title: session.taskTitle }),
           resolveReplayFingerprint: () => "fingerprint-a",
         },
@@ -302,6 +355,8 @@ describe("SessionStorageV6", () => {
           requestFingerprint: "fingerprint-a",
           createdAt: "2026-08-11T00:01:00.000Z",
           expiresAt: "2026-08-12T00:01:00.000Z",
+          expectedContainerRevision: 1,
+          proof: trustedMutationProof("session.create", "actor-a", "session_namespace"),
           projectResult: () => ({ unexpected: true }),
           resolveReplayFingerprint: () => "fingerprint-a",
         },
@@ -312,7 +367,7 @@ describe("SessionStorageV6", () => {
       assert.throws(
         () => storage?.resolveSessionCrudIdempotency(
           "session.create",
-          "actor-a",
+          trustedMutationProof("session.create", "actor-a", "session_namespace"),
           "create-key",
           "different-fingerprint",
           "2026-08-11T00:02:00.000Z",
@@ -328,6 +383,8 @@ describe("SessionStorageV6", () => {
         operation: "session.rename",
         sessionId: "session-a",
         title: "Renamed",
+        expectedRevision: 1,
+        proof: trustedMutationProof("session.rename", "session-a", "session"),
         idempotencyKey: "rename-key",
         requestFingerprint: "rename-fingerprint",
         createdAt: "2026-08-11T00:04:00.000Z",
@@ -339,13 +396,15 @@ describe("SessionStorageV6", () => {
         lastActiveAt: firstPage[1]!.lastActiveAt,
         sessionId: firstPage[1]!.summary.id,
       });
-      assert.deepEqual(secondPage.map((entry) => entry.summary.id), ["session-a"]);
+      assert.deepEqual(secondPage.map((entry) => entry.summary.id), ["session-a", "actor-a"]);
 
       assert.deepEqual(renamed?.result, { sessionId: "session-a", title: "Renamed" });
       const renamedReplay = storage.renameSessionIdempotently({
         operation: "session.rename",
         sessionId: "session-a",
         title: "Renamed",
+        expectedRevision: 1,
+        proof: trustedMutationProof("session.rename", "session-a", "session"),
         idempotencyKey: "rename-key",
         requestFingerprint: "rename-fingerprint",
         createdAt: "2026-08-11T00:05:00.000Z",
@@ -358,7 +417,7 @@ describe("SessionStorageV6", () => {
       assert.deepEqual(
         storage.resolveSessionCrudIdempotency(
           "session.create",
-          "actor-a",
+          trustedMutationProof("session.create", "actor-a", "session_namespace"),
           "create-key",
           "different-fingerprint",
           "2026-08-13T00:00:00.000Z",

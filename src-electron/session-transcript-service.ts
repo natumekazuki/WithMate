@@ -1,3 +1,4 @@
+import type { MutationAuthorityProof } from "../src/session-authority.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -81,11 +82,11 @@ export class SessionTranscriptService {
 
   constructor(private readonly deps: SessionTranscriptServiceDeps) {}
 
-  export(input: SessionTranscriptExportInput): Promise<SessionTranscriptExportResult> {
+  export(input: SessionTranscriptExportInput, proof: MutationAuthorityProof): Promise<SessionTranscriptExportResult> {
     validateMaxBytes(input);
     return input.destination.kind === "inline"
       ? this.exportInline(input)
-      : this.enqueueMutation(() => this.exportFolder(input));
+      : this.enqueueMutation(() => this.exportFolder(input, proof));
   }
 
   private async exportInline(input: SessionTranscriptExportInput): Promise<SessionTranscriptExportResult> {
@@ -102,7 +103,7 @@ export class SessionTranscriptService {
     };
   }
 
-  private async exportFolder(input: SessionTranscriptExportInput): Promise<SessionTranscriptFolderResult> {
+  private async exportFolder(input: SessionTranscriptExportInput, proof: MutationAuthorityProof): Promise<SessionTranscriptFolderResult> {
     if (input.destination.kind !== "session_folder") {
       throw new TypeError("SessionFolder transcript export requires a SessionFolder destination.");
     }
@@ -122,6 +123,7 @@ export class SessionTranscriptService {
     let prepared;
     try {
       prepared = this.deps.storage.prepareExport({
+        proof,
         idempotencyKey: input.destination.idempotencyKey,
         requestFingerprint: fingerprint,
         sessionId: input.sessionId,
@@ -222,6 +224,7 @@ export class SessionTranscriptService {
               outputInode = staged.inode;
               targetPrecondition = staged.targetPrecondition;
               this.deps.storage.recordPreparedOutput({
+                proof,
                 idempotencyKey,
                 requestFingerprint: fingerprint,
                 outputSha256,
@@ -266,6 +269,7 @@ export class SessionTranscriptService {
       };
       const completedAt = this.now();
       const canonical = normalizeFolderResult(this.deps.storage.completeExport({
+        proof,
         idempotencyKey: input.destination.idempotencyKey,
         requestFingerprint: fingerprint,
         outputSha256,
@@ -299,7 +303,7 @@ export class SessionTranscriptService {
         && error.effect === "not_applied"
         && !error.retryable
       ) {
-        const terminal = this.reject(input.destination.idempotencyKey, fingerprint, error);
+        const terminal = this.reject(proof, input.destination.idempotencyKey, fingerprint, error);
         throw terminal;
       }
       throw error;
@@ -350,12 +354,14 @@ export class SessionTranscriptService {
   }
 
   private reject(
+    proof: MutationAuthorityProof,
     idempotencyKey: string,
     requestFingerprint: string,
     error: SessionTranscriptServiceError,
   ): SessionTranscriptServiceError {
     const completedAt = this.now();
     return normalizeStoredError(this.deps.storage.rejectExport({
+      proof,
       idempotencyKey,
       requestFingerprint,
       error: {

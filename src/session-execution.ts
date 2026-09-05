@@ -25,6 +25,7 @@ export type SessionExecutionState =
 
 export type SessionExecution = {
   id: string;
+  revision: number;
   sessionId: string;
   operation: SessionExecutionOperation;
   state: SessionExecutionState;

@@ -8,7 +8,7 @@
 
 この文書は、Session CLI、Session MCP、Electron Main Process、操作対象Sessionの関係を示す。特に、MCPを呼び出すagentのSessionと操作対象のWithMate Sessionを区別する。
 
-runtime bindingのauthority境界はADR 021、通常SessionのRole bindingはADR 026を正本とする。exact request、response、error、状態遷移、limitは、実装時に追加するtype、JSON schema、shared validation、executable contractを正本とする。この文書はそれらのfieldを網羅しない。
+runtime bindingのauthority境界はADR 021、通常SessionのRole bindingはADR 026、grantとresource historyへの切り替えはADR 029を正本とする。exact request、response、error、状態遷移、limitは、実装時に追加するtype、JSON schema、shared validation、executable contractを正本とする。この文書はそれらのfieldを網羅しない。
 
 ADR 021で確定した非局所的な境界を本文に置き、未確定事項は末尾へ分離する。
 
@@ -95,7 +95,7 @@ GUI、CLI、MCPは兄弟入口である。GUIの既存IPCをCLIまたはMCPが�
 
 ## Session作成と選択
 
-CLIとMCPの`session.create`は、binding actorのchildとなる通常Sessionを作成する。titleと`sessionRole`は必須で、Roleは`task-coordinator`または`executor`だけを受理する。parent、root、depth、actor、Character identityはrequestへ含めず、保存済みactor bindingと既存のCharacter選択ownerから導出する。Role規則またはdepthに違反するrequestはSession ID発行とSessionFolder作成より前に拒否する。
+CLIとMCPの`session.create`は、binding actorのchildとなる通常Sessionを作成する。titleと`sessionRole`は必須で、Roleは`task-coordinator`または`executor`だけを受理する。parent、root、depth、actor、Character identityはrequestへ含めず、保存済みactor bindingと既存のCharacter選択ownerから導出する。active grantのchild scopeまたはdepthに違反するrequestはSession ID発行とSessionFolder作成より前に拒否する。
 
 GUIは通常Sessionのrootだけを作成する。用途は左から`standalone`、`overall-coordinator`の順で表示し、既定を`standalone`とする。GUI、CLI、MCPはRoleごとに別の作成経路を持たず、同じSession作成ownerでRole bindingをSession rowと同じtransactionへ保存する。
 
@@ -150,16 +150,16 @@ Sessionごとのqueueは、待機中のqueued executionを最大10件まで保�
 
 ### Session間Turn authorityと送信元projection
 
-Agent起点の`turn.run`と`turn.enqueue`は、runtime bindingで確定したactor Sessionと、保存済みRole bindingから解決したtarget Sessionの関係をshared application serviceで検証する。authority入力はSQLiteからSession ID、title、canonical Role tupleだけを取得する専用queryで解決し、公開用Session CRUDやworkspaceのGit branch取得を経由しない。request bodyからRole、root、parent、depthを受け取らず、CLI、MCP、raw HTTPで別の判定を持たない。許可する関係は次のとおりとする。
+Agent起点の`turn.run`と`turn.enqueue`は、runtime bindingで確定したactor Sessionと、保存済みRole bindingから解決したtarget Sessionの関係をshared application serviceで検証する。authority入力はSQLiteからSession ID、title、canonical hierarchyとactive grantを取得する専用queryで解決し、公開用Session CRUDやworkspaceのGit branch取得を経由しない。request bodyからRole、root、parent、depthを受け取らず、CLI、MCP、raw HTTPで別の判定を持たない。baseline grantのTurn関係は次のとおりである。Role自体をlive authorityの上限にはしない。
 
-| actor Role | 許可するtarget |
+| baseline Role template | 初期grantのtarget |
 | --- | --- |
 | `standalone` | actor自身 |
 | `overall-coordinator` | actor自身、直属の`task-coordinator`、直属の`executor` |
 | `task-coordinator` | actor自身、直属の`executor`、rootの`overall-coordinator`、同じrootかつ同じ親の兄弟`task-coordinator` |
 | `executor` | actor自身、直属の`overall-coordinator`または`task-coordinator` |
 
-異なるroot、孫executor、executorの兄弟または別branch、存在しないtargetはexecution、queue、Coordination Eventを作る前に拒否する。canonical replayはcurrent Role bindingとtargetの再検証より先に解決し、既存executionの再送結果をcurrent authorityの変化で置き換えない。GUI送信はtrusted user invocationとして同じexecution ownerを使うが、このAgent間authorityの対象にはしない。
+異なるroot、孫executor、executorの兄弟または別branch、存在しないtargetはexecution、queue、Coordination Eventを作る前に拒否する。API要求はreplayを含め現在のbindingとactive grantを評価する。許可された同一principalの再送には保存済みcanonical resultを返し、新しいexecutionを作らない。GUI送信はtrusted user invocationとして同じexecution ownerを使うが、このAgent間authorityの対象にはしない。
 
 cross-Session Turnのacceptanceでは、target側executionを正本としたまま`session_execution_origins_v6`へsource Session ID、canonical target Session ID、operation、target titleとRoleのsnapshot、送信本文、source Session message sequence anchor、canonical execution sequence、acceptance時刻を同じtransactionで保存する。source queryは`(source_session_id, execution_sequence)` indexを使い、`request_json`を走査しない。既存executionの補完はschema遷移後の一回だけ実行し、Session initiatorを持つAgent-origin executionに限定して、terminal failure notification executionを除外する。
 
@@ -171,7 +171,7 @@ GUI scheduleはtrusted user invocationの同一Session enqueueであり、Agent 
 
 ### Terminal failure notification
 
-`turn.run`と`turn.enqueue`はoptionalな`terminalFailureNotification: { targetSessionId }`を受け付ける。対象は明示した一つの通常Sessionに限り、actor、caller、parent、source Sessionから補完しない。通知Turnのactorは失敗した主target Sessionであり、そのSessionから通知先への関係もAgent間Turnと同じcanonical Role / hierarchy authorityで検証する。sourceとtargetが同一、targetが不存在または非対応kind、authority違反、source SessionのCharacter snapshotを解決できない場合は、source executionとidempotency effectを作る前に拒否する。通知先はTurn fingerprintへ含め、canonical replayはcurrent target設定とCharacterの再解決より先に判定する。
+`turn.run`と`turn.enqueue`はoptionalな`terminalFailureNotification: { targetSessionId }`を受け付ける。対象は明示した一つの通常Sessionに限り、actor、caller、parent、source Sessionから補完しない。通知Turnのactorは失敗した主target Sessionであり、そのSessionから通知先への関係もAgent間Turnと同じcanonical hierarchyとactive grantで検証する。sourceとtargetが同一、targetが不存在または非対応kind、authority違反、source SessionのCharacter snapshotを解決できない場合は、source executionとidempotency effectを作る前に拒否する。通知先はTurn fingerprintへ含め、canonical replayはcurrent target設定とCharacterの再解決より先に判定する。
 
 新規source executionには、通知先とsource SessionのCharacter ID、表示名、icon参照のcanonical snapshotを保存する。GUI由来Turn、設定のないexecution、legacy executionへ通知設定を推測しない。sourceが`failed`または`interrupted`へterminal commitした後だけdeliveryを起動し、`completed`と`canceled`は`not_triggered`として投影する。notification executionは保存済みsource snapshotをSession initiatorとして使い、通知設定を持たない。
 

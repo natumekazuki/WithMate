@@ -7,6 +7,7 @@ import { APP_DATABASE_V4_FILENAME, isValidV4Database } from "../src-electron/dat
 import {
   APP_DATABASE_V6_FILENAME,
   CREATE_V6_SCHEMA_SQL,
+  ensureV6Schema,
   isValidV6Database,
 } from "../src-electron/database-schema-v6.js";
 
@@ -384,6 +385,7 @@ function copyReleaseDataInTransaction(sourceDb: DatabaseSync, targetDb: Database
   targetDb.exec("BEGIN IMMEDIATE TRANSACTION");
   try {
     const copied = copyReleaseData(sourceDb, targetDb);
+    ensureV6Schema(targetDb);
     writeV4ToV6MigrationMarker(targetDb);
     targetDb.exec("COMMIT");
     return zeroSkippedCounts({

@@ -1,8 +1,8 @@
 import type { LiveApprovalDecision, LiveElicitationResponse } from "../src/runtime-state.js";
-import type { SessionInteractionService } from "./session-interaction-service.js";
+import type { TrustedSessionInteractionResponder } from "./session-interaction-service.js";
 
 type SessionInteractionGuiBridgeDeps = {
-  interactionService: Pick<SessionInteractionService, "getPendingForExecution" | "respond">;
+  trustedResponder: TrustedSessionInteractionResponder;
   currentTimestamp: () => string;
   resolveIdempotencyExpiresAt: (respondedAt: string) => string;
 };
@@ -20,13 +20,14 @@ export function tryRespondToExternalApprovalInteraction(
   deps: SessionInteractionGuiBridgeDeps,
 ): boolean {
   if (!context.executionId || context.liveRequestId !== context.requestId) return false;
-  const pending = deps.interactionService.getPendingForExecution(context.executionId);
+  const pending = deps.trustedResponder.getPendingForExecution(context.executionId);
   if (pending?.kind !== "approval") return false;
   const respondedAt = deps.currentTimestamp();
-  deps.interactionService.respond({
+  deps.trustedResponder.respond({
     sessionId: context.sessionId,
     executionId: context.executionId,
     interactionId: pending.id,
+    expectedRevision: pending.revision,
     response: { kind: "approval", decision },
     idempotencyKey: `gui:${pending.id}`,
     respondedAt,
@@ -41,13 +42,14 @@ export function tryRespondToExternalElicitationInteraction(
   deps: SessionInteractionGuiBridgeDeps,
 ): boolean {
   if (!context.executionId || context.liveRequestId !== context.requestId) return false;
-  const pending = deps.interactionService.getPendingForExecution(context.executionId);
+  const pending = deps.trustedResponder.getPendingForExecution(context.executionId);
   if (pending?.kind !== "elicitation") return false;
   const respondedAt = deps.currentTimestamp();
-  deps.interactionService.respond({
+  deps.trustedResponder.respond({
     sessionId: context.sessionId,
     executionId: context.executionId,
     interactionId: pending.id,
+    expectedRevision: pending.revision,
     response: response.action === "accept"
       ? { kind: "elicitation", action: "accept", content: response.content ?? {} }
       : { kind: "elicitation", action: response.action },

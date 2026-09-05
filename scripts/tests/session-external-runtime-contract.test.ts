@@ -106,11 +106,20 @@ test("EXT-TRANSCRIPT-13: transcript.export normalizes inline and SessionFolder d
   assert.equal(folderDefault.input.maxBytes, SESSION_TRANSCRIPT_FOLDER_DEFAULT_MAX_BYTES);
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "session createとrenameはcurrent revisionを明示するstrict inputへ正規化される"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "revision未指定のmutationがlost update検出を迂回する、または未知fieldがstorageへ到達する"
+// scope = "Session Runtime session mutation parser"
+// lifecycle = "permanent"
+// @end-test-value
 test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () => {
   const create = parseSessionRuntimeRequestEnvelope({
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
     operation: "session.create",
     input: {
+      expectedContainerRevision: 3,
       title: "Review session",
       sessionRole: "task-coordinator",
       provider: "codex",
@@ -120,12 +129,29 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
     },
   });
   assert.deepEqual(create.input, {
+    expectedContainerRevision: 3,
     title: "Review session",
     sessionRole: "task-coordinator",
     provider: "codex",
     catalogRevision: 4,
     workspace: { kind: "session_folder" },
     idempotencyKey: "create-key-1",
+  });
+  const rename = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "session.rename",
+    input: {
+      expectedRevision: 7,
+      sessionId: "session-1",
+      title: "Renamed",
+      idempotencyKey: "rename-key-1",
+    },
+  });
+  assert.deepEqual(rename.input, {
+    expectedRevision: 7,
+    sessionId: "session-1",
+    title: "Renamed",
+    idempotencyKey: "rename-key-1",
   });
 
   const list = parseSessionRuntimeRequestEnvelope({
@@ -140,6 +166,7 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
       schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
       operation: "session.create",
       input: {
+        expectedContainerRevision: 3,
         title: "Review session",
         sessionRole: "task-coordinator",
         provider: "codex",
@@ -183,6 +210,39 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
     }),
     (error) => error instanceof SessionRuntimeValidationError && error.details.field === "input.provider",
   );
+});
+
+// @test-value v1
+// kind = "contract"
+// claim = "work.createはtarget Sessionのcurrent revisionをexpectedContainerRevisionとして要求し保持する"
+// oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+// failure_mode = "revisionなしのWork Item createがstale target Sessionへ書き込む"
+// scope = "Session Runtime work.create input parser"
+// lifecycle = "permanent"
+// @end-test-value
+test("WORK-CREATE-REVISION: work.create uses the target Session revision", () => {
+  const input = {
+    expectedContainerRevision: 4,
+    targetSessionId: "session-target",
+    goal: "Implement the change",
+    scope: "target module",
+    completionCriteria: "tests pass",
+    authority: "workspace edits",
+    sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
+    idempotencyKey: "work-create-revision",
+  };
+  const parsed = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "work.create",
+    input,
+  });
+  assert.deepEqual(parsed.input, input);
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "work.create",
+    input: { ...input, expectedContainerRevision: undefined },
+  }), (error) => error instanceof SessionRuntimeValidationError
+    && error.details.field === "expectedContainerRevision");
 });
 
 test("SF-ADAPTER-01: Session file operations normalize shared public inputs", () => {
@@ -277,11 +337,20 @@ test("TURN-OPTIONS-SCHEMA-01: turn.options accepts only an explicit Session iden
   );
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "turn.runはtarget Sessionのcurrent revisionをexpectedContainerRevisionとして要求し保持する"
+// oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+// failure_mode = "revisionなしのexecution createがstale target Sessionへ書き込む"
+// scope = "Session Runtime turn.run input parser"
+// lifecycle = "permanent"
+// @end-test-value
 test("Session runtime validator accepts an explicit deferred turn.run contract", () => {
   const parsed = parseSessionRuntimeRequestEnvelope({
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
     operation: "turn.run",
     input: {
+      expectedContainerRevision: 3,
       sessionId: "session-1",
       catalogRevision: 4,
       idempotencyKey: "key-1",
@@ -290,6 +359,7 @@ test("Session runtime validator accepts an explicit deferred turn.run contract",
     },
   });
   assert.deepEqual(parsed.input, {
+    expectedContainerRevision: 3,
     sessionId: "session-1",
     catalogRevision: 4,
     idempotencyKey: "key-1",
@@ -298,6 +368,14 @@ test("Session runtime validator accepts an explicit deferred turn.run contract",
   });
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "turn.enqueueはtarget Session revisionを保持したままprovider固有fieldをexact unionとして検証する"
+// oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+// failure_mode = "container revisionの追加でprovider discriminator検証が迂回される"
+// scope = "Session Runtime provider-specific enqueue parser"
+// lifecycle = "permanent"
+// @end-test-value
 test("EXT-PROVIDER-02: provider固有Turn fieldをexact unionとして検証する", () => {
   const copilotTurn = {
     provider: "copilot",
@@ -311,7 +389,7 @@ test("EXT-PROVIDER-02: provider固有Turn fieldをexact unionとして検証す�
   const parsed = parseSessionRuntimeRequestEnvelope({
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
     operation: "turn.enqueue",
-    input: { sessionId: "session-1", catalogRevision: 4, idempotencyKey: "key-2", turn: copilotTurn },
+    input: { expectedContainerRevision: 3, sessionId: "session-1", catalogRevision: 4, idempotencyKey: "key-2", turn: copilotTurn },
   });
   assert.deepEqual((parsed.input as { turn: unknown }).turn, copilotTurn);
 
@@ -324,18 +402,27 @@ test("EXT-PROVIDER-02: provider固有Turn fieldをexact unionとして検証す�
       () => parseSessionRuntimeRequestEnvelope({
         schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
         operation: "turn.enqueue",
-        input: { sessionId: "session-1", catalogRevision: 4, idempotencyKey: "key-3", turn: invalidTurn },
+        input: { expectedContainerRevision: 3, sessionId: "session-1", catalogRevision: 4, idempotencyKey: "key-3", turn: invalidTurn },
       }),
       SessionRuntimeValidationError,
     );
   }
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "revision付きturn.enqueueでもattachment path、上限、identity unionをcanonical validatorで拒否する"
+// oracle = { type = "contract", ref = "EXT-ATTACH-10/AUTONOMY-MUTATION-05" }
+// failure_mode = "container revision追加後にattachment validationが欠落fieldで短絡し不正pathを検証しない"
+// scope = "Session Runtime enqueue attachment parser"
+// lifecycle = "permanent"
+// @end-test-value
 test("EXT-ATTACH-10: Turn attachmentsは必須array・最大32・portable relative path・一意kindを要求する", () => {
   const parse = (attachments: unknown) => parseSessionRuntimeRequestEnvelope({
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
     operation: "turn.enqueue",
     input: {
+      expectedContainerRevision: 3,
       sessionId: "session-1",
       catalogRevision: 4,
       idempotencyKey: "attachment-key",
@@ -359,12 +446,21 @@ test("EXT-ATTACH-10: Turn attachmentsは必須array・最大32・portable relati
   }
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "revision付きTurn parserは未知のauthority fieldとenqueue固有でないresponse modeを副作用前に拒否する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "revision追加によりexact input検証が緩みcaller指定authorityまたはrun専用fieldをenqueueへ通す"
+// scope = "Session Runtime strict Turn input parser"
+// lifecycle = "permanent"
+// @end-test-value
 test("Session runtime validator rejects unknown fields and enqueue response mode", () => {
   assert.throws(
     () => parseSessionRuntimeRequestEnvelope({
       schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
       operation: "turn.run",
       input: {
+        expectedContainerRevision: 3,
         sessionId: "session-1",
         catalogRevision: 4,
         idempotencyKey: "key-1",
@@ -380,6 +476,7 @@ test("Session runtime validator rejects unknown fields and enqueue response mode
       schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
       operation: "turn.enqueue",
       input: {
+        expectedContainerRevision: 3,
         sessionId: "session-1",
         catalogRevision: 4,
         idempotencyKey: "key-1",
@@ -400,6 +497,7 @@ test("Session runtime validator rejects unknown fields and enqueue response mode
         schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
         operation: "turn.run",
         input: {
+          expectedContainerRevision: 3,
           sessionId: "session-1",
           catalogRevision: 4,
           idempotencyKey: `spoof-${field}`,
@@ -413,9 +511,18 @@ test("Session runtime validator rejects unknown fields and enqueue response mode
   }
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "run/enqueueはtarget revisionを含む同じstrict通知inputとrevision付きpublic execution projectionを使う"
+// oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05/TN-PROJ-06" }
+// failure_mode = "operation間でcontainer revisionかexecution revisionが欠落し通知付きTurnの公開契約が分岐する"
+// scope = "Session Runtime Turn input and execution projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("TN-AUTH-01/TN-PROJ-06: run/enqueueは同じstrict通知inputとpublic state projectionを使う", () => {
   for (const operation of ["turn.run", "turn.enqueue"] as const) {
     const input = {
+      expectedContainerRevision: 3,
       sessionId: "source-session",
       catalogRevision: 4,
       idempotencyKey: `${operation}-key`,
@@ -438,6 +545,7 @@ test("TN-AUTH-01/TN-PROJ-06: run/enqueueは同じstrict通知inputとpublic stat
 
   const execution = {
     id: "execution-1",
+    revision: 2,
     sessionId: "source-session",
     operation: "turn.run" as const,
     state: "failed" as const,
@@ -494,12 +602,29 @@ test("AGG-QUERY-05: aggregation list limit超過はLIMIT_EXCEEDEDで拒否する
   );
 });
 
-test("ID-02: turn.cancel requires an idempotency key", () => {
+// @test-value v1
+// kind = "contract"
+// claim = "turn.cancelはtarget executionのcurrent revisionとcaller-owned idempotency keyを要求し保持する"
+// oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+// failure_mode = "revisionなしのcancelがstale executionを変更するか、retry identityを失う"
+// scope = "Session Runtime turn.cancel input parser"
+// lifecycle = "permanent"
+// @end-test-value
+test("ID-02: turn.cancel requires revision and an idempotency key", () => {
   assert.throws(
     () => parseSessionRuntimeRequestEnvelope({
       schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
       operation: "turn.cancel",
-      input: { sessionId: "session-1", executionId: "execution-1" },
+      input: { sessionId: "session-1", executionId: "execution-1", idempotencyKey: "cancel-key-missing-revision" },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError
+      && error.details.field === "expectedRevision",
+  );
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "turn.cancel",
+      input: { sessionId: "session-1", executionId: "execution-1", expectedRevision: 2 },
     }),
     (error) => error instanceof SessionRuntimeValidationError
       && error.details.field === "idempotencyKey",
@@ -510,16 +635,26 @@ test("ID-02: turn.cancel requires an idempotency key", () => {
     input: {
       sessionId: "session-1",
       executionId: "execution-1",
+      expectedRevision: 2,
       idempotencyKey: "cancel-key-1",
     },
   });
   assert.deepEqual(parsed.input, {
     sessionId: "session-1",
     executionId: "execution-1",
+    expectedRevision: 2,
     idempotencyKey: "cancel-key-1",
   });
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "interaction responseはexpected revisionとresponse kind別exact unionを必須にする"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-agent-visible-interactions.md" }
+// failure_mode = "stale interaction responseがlost updateを起こす、またはkind外fieldをprovider responseへ渡す"
+// scope = "Session Runtime interaction parser"
+// lifecycle = "permanent"
+// @end-test-value
 test("EXT-INTERACTION-11: interaction operationsはfilter bindingとexact response unionを検証する", () => {
   const listed = parseSessionRuntimeRequestEnvelope({
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
@@ -533,12 +668,25 @@ test("EXT-INTERACTION-11: interaction operationsはfilter bindingとexact respon
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
     operation: "interaction.respond",
     input: {
+      expectedRevision: 2,
       sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
       response: { kind: "elicitation", action: "accept", content: { count: 2, tags: ["a"] } },
       idempotencyKey: "respond-1", responseMode: "wait", waitTimeoutMs: 500,
     },
   });
+  assert.equal((accepted.input as any).expectedRevision, 2);
   assert.equal((accepted.input as any).response.action, "accept");
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "interaction.respond",
+      input: {
+        sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+        response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1", responseMode: "deferred",
+      },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError && error.details.field === "expectedRevision",
+  );
   for (const response of [
     { kind: "elicitation", action: "accept" },
     { kind: "elicitation", action: "decline", content: {} },
@@ -548,6 +696,7 @@ test("EXT-INTERACTION-11: interaction operationsはfilter bindingとexact respon
       schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
       operation: "interaction.respond",
       input: {
+        expectedRevision: 2,
         sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
         response, idempotencyKey: "respond-1", responseMode: "deferred",
       },
@@ -555,11 +704,20 @@ test("EXT-INTERACTION-11: interaction operationsはfilter bindingとexact respon
   }
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "revision付きpublic execution projectionは8 MiBを超えるassistant textをstable resource identity付きで拒否する"
+// oracle = { type = "contract", ref = "docs/design/session-external-runtime.md" }
+// failure_mode = "execution revision追加後にresponse byte上限を迂回するか、limit errorからsession/execution identityを失う"
+// scope = "Session Runtime public execution projection limit"
+// lifecycle = "permanent"
+// @end-test-value
 test("RL-01: public execution projection rejects inline assistant text over 8 MiB", () => {
   assert.throws(
     () => projectSessionExecution({
       id: "execution-1",
       sessionId: "session-1",
+      revision: 2,
       operation: "turn.run",
       state: "completed",
       result: { assistantText: "a".repeat(SESSION_RUNTIME_MAX_INLINE_TEXT_BYTES + 1) },
@@ -577,6 +735,14 @@ test("RL-01: public execution projection rejects inline assistant text over 8 Mi
   );
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "revision付きenqueueでもprivate attachment identityをwire inputとpublic execution projectionの双方から除外する"
+// oracle = { type = "contract", ref = "docs/design/session-external-runtime.md" }
+// failure_mode = "container revision追加時にprivate filesystem identityを受理または公開してSession境界を漏らす"
+// scope = "Session Runtime attachment ingress and public projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("EXT-ATTACH-10: admitted attachment identityは公開投影から除外しwire ingressはstrictのまま維持する", () => {
   const attachmentWithIdentity = {
     kind: "file",
@@ -593,6 +759,7 @@ test("EXT-ATTACH-10: admitted attachment identityは公開投影から除外しw
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
     operation: "turn.enqueue",
     input: {
+      expectedContainerRevision: 3,
       sessionId: "session-1",
       catalogRevision: 4,
       idempotencyKey: "attachment-identity",
@@ -604,6 +771,7 @@ test("EXT-ATTACH-10: admitted attachment identityは公開投影から除外しw
   const projected = projectSessionExecution({
     id: "execution-attachment",
     sessionId: "session-1",
+    revision: 2,
     operation: "turn.enqueue",
     state: "running",
     result: null,
@@ -616,13 +784,23 @@ test("EXT-ATTACH-10: admitted attachment identityは公開投影から除外しw
   }, { request: request.input });
 
   assert.deepEqual(projected.attachments, [{ kind: "file", relativePath: "brief.md" }]);
+  assert.equal(projected.revision, 2);
   assert.equal(projected.effectiveTurn?.provider, "codex");
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "GUI enqueueのpublic execution projectionもstorage由来revisionとeffective turnを保持する"
+// oracle = { type = "contract", ref = "docs/design/session-external-runtime.md" }
+// failure_mode = "外部mutationだけrevisionを公開しGUI enqueueのexecution projectionが競合制御に使えない"
+// scope = "Session Runtime GUI execution projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("GUI-QUEUE-01: GUI enqueueも外部execution投影でeffective turnを維持する", () => {
   const projected = projectSessionExecution({
     id: "execution-gui",
     sessionId: "session-1",
+    revision: 1,
     operation: "turn.enqueue",
     state: "queued",
     result: null,
@@ -647,6 +825,7 @@ test("GUI-QUEUE-01: GUI enqueueも外部execution投影でeffective turnを維�
   });
 
   assert.equal(projected.effectiveTurn?.provider, "codex");
+  assert.equal(projected.revision, 1);
   assert.equal(projected.effectiveTurn?.sandboxMode, "workspace-write");
   assert.deepEqual(projected.attachments, []);
 });

@@ -5,6 +5,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
+import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  type MutationAuthorityProof,
+} from "../../src/session-authority.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import {
@@ -17,6 +21,30 @@ import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-
 
 const CREATED_AT = "2026-08-10T00:00:00.000Z";
 const EXPIRES_AT = "2026-08-11T00:00:00.000Z";
+
+function trustedExecutionProof(
+  operation: "turn.run" | "turn.enqueue" | "turn.cancel",
+  sessionId = "session-1",
+): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-execution-storage-test" },
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: operation,
+    resolvedScope: {
+      resourceKind: "execution",
+      resourceId: null,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: CREATED_AT,
+  };
+}
 
 async function createFixture(): Promise<{
   directory: string;
@@ -52,15 +80,37 @@ async function createFixture(): Promise<{
   } finally {
     db.close();
   }
+  const storage = new SessionExecutionStorageV6(dbPath);
+  const enqueue = storage.enqueue.bind(storage);
+  storage.enqueue = (input) => enqueue({
+    ...input,
+    expectedContainerRevision: input.expectedContainerRevision ?? storage.getSessionContainerRevision(input.sessionId),
+  });
+  const startImmediate = storage.startImmediate.bind(storage);
+  storage.startImmediate = (input) => startImmediate({
+    ...input,
+    expectedContainerRevision: input.expectedContainerRevision ?? storage.getSessionContainerRevision(input.sessionId),
+  });
+  const cancelQueued = storage.cancelQueuedIdempotent.bind(storage);
+  storage.cancelQueuedIdempotent = (input) => cancelQueued({
+    ...input,
+    expectedRevision: input.expectedRevision ?? storage.get(input.executionId)?.revision ?? 1,
+  });
+  const recordIdempotency = storage.recordIdempotency.bind(storage);
+  storage.recordIdempotency = (input) => recordIdempotency({
+    ...input,
+    expectedRevision: input.expectedRevision ?? storage.get(input.executionId)?.revision ?? 1,
+  });
   return {
     directory,
     dbPath,
-    storage: new SessionExecutionStorageV6(dbPath),
+    storage,
   };
 }
 
 function enqueueInput(index: number) {
   return {
+    proof: trustedExecutionProof("turn.enqueue"),
     id: "execution-" + index,
     sessionId: "session-1",
     request: { userMessage: "message-" + index },
@@ -511,6 +561,14 @@ describe("SessionExecutionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "shutdown時のrunning executionは専用reasonを持つinterrupted状態へ収束する"
+  // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md" }
+  // failure_mode = "shutdownでrunning executionが未確定のまま残るか通常失敗として誤って記録される"
+  // scope = "SessionExecutionStorageV6 shutdown reconciliation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("EXT-SHUTDOWN-07: shutdown時のrunningを専用reasonでinterruptedへ収束する", async () => {
     const fixture = await createFixture();
     try {
@@ -531,6 +589,15 @@ describe("SessionExecutionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "terminal executionのidempotencyは24時間保持され、cleanupは期限切れterminalだけを削除する"
+  // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md#Idempotency" }
+  // failure_mode = "完了直後のretryがcanonical executionを失うか、非terminal executionのledgerが期限だけで削除される"
+  // scope = "SessionExecutionStorageV6 terminal idempotency retention"
+  // lifecycle = "permanent"
+  // distinction = "terminalとqueuedを同時に保持し、同じcleanup時刻でterminal側だけが削除対象になることを観測する"
+  // @end-test-value
   it("I-01: terminalから24時間のexpiryへ更新し、cleanupはexpired terminalだけを削除する", async () => {
     const fixture = await createFixture();
     try {
@@ -553,12 +620,12 @@ describe("SessionExecutionStorageV6", () => {
       });
 
       assert.equal(fixture.storage.cleanupExpiredIdempotency("2026-08-10T02:00:00.000Z"), 0);
-      assert.equal(fixture.storage.resolveIdempotency("turn.run", "key-1", "fingerprint-1")?.id, "execution-1");
-      assert.equal(fixture.storage.resolveIdempotency("turn.enqueue", "key-2", "fingerprint-2")?.id, "execution-2");
+      assert.equal(fixture.storage.resolveIdempotency("turn.run", trustedExecutionProof("turn.run"), "key-1", "fingerprint-1")?.id, "execution-1");
+      assert.equal(fixture.storage.resolveIdempotency("turn.enqueue", trustedExecutionProof("turn.enqueue"), "key-2", "fingerprint-2")?.id, "execution-2");
 
       assert.equal(fixture.storage.cleanupExpiredIdempotency("2026-08-11T01:00:00.000Z"), 1);
-      assert.equal(fixture.storage.resolveIdempotency("turn.run", "key-1", "fingerprint-1"), null);
-      assert.equal(fixture.storage.resolveIdempotency("turn.enqueue", "key-2", "fingerprint-2")?.id, "execution-2");
+      assert.equal(fixture.storage.resolveIdempotency("turn.run", trustedExecutionProof("turn.run"), "key-1", "fingerprint-1"), null);
+      assert.equal(fixture.storage.resolveIdempotency("turn.enqueue", trustedExecutionProof("turn.enqueue"), "key-2", "fingerprint-2")?.id, "execution-2");
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
@@ -601,6 +668,15 @@ describe("SessionExecutionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "旧execution idempotency tableをprincipal付きschemaへ移行して既存enqueue recordを保持しcancel operationを受理する"
+  // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md#Idempotency" }
+  // failure_mode = "schema切替で既存retry ledgerを消失するか、移行後もcancelのprincipal-scoped recordを保存できない"
+  // scope = "session execution idempotency schema migration"
+  // lifecycle = "permanent"
+  // distinction = "空tableの再作成ではなく旧schemaへ既存recordを投入してから移行後の保持と新operation insertを観測する"
+  // @end-test-value
   it("ID-02: populatedな旧idempotency tableをcancel対応schemaへ移行して既存recordを保つ", async () => {
     const fixture = await createFixture();
     try {
@@ -642,9 +718,17 @@ describe("SessionExecutionStorageV6", () => {
         assert.equal(preserved.execution_id, "execution-1");
         db.prepare(`
           INSERT INTO session_execution_idempotency_v6 (
-            operation, idempotency_key, request_fingerprint, execution_id, created_at, expires_at
-          ) VALUES ('turn.cancel', ?, ?, ?, ?, ?)
-        `).run("cancel-key", "cancel-fingerprint", "execution-1", CREATED_AT, EXPIRES_AT);
+            operation, principal_kind, principal_id, idempotency_key,
+            request_fingerprint, execution_id, created_at, expires_at
+          ) VALUES ('turn.cancel', 'system', ?, ?, ?, ?, ?, ?)
+        `).run(
+          "session-execution-storage-test",
+          "cancel-key",
+          "cancel-fingerprint",
+          "execution-1",
+          CREATED_AT,
+          EXPIRES_AT,
+        );
       } finally {
         db.close();
       }

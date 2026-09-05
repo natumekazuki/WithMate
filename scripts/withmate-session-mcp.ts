@@ -28,6 +28,12 @@ import {
   WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
 } from "../src/work-item.js";
 import {
+  SESSION_AUTHORITY_DECISION_CLASSES,
+  SESSION_AUTHORITY_EFFECT_CLASSES,
+  SESSION_AUTHORITY_RESOURCE_KINDS,
+} from "../src/session-authority.js";
+import {
+  SESSION_RUNTIME_OPERATIONS,
   SESSION_RUNTIME_DEFAULT_LIST_LIMIT,
   SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES,
   SESSION_RUNTIME_MAX_FILE_TEXT_BYTES,
@@ -87,6 +93,7 @@ const turnSchema = z.discriminatedUnion("provider", [
   }).strict(),
 ]);
 const mutationBaseShape = {
+  expectedContainerRevision: z.number().int().min(1),
   sessionId: nonEmptyStringSchema,
   catalogRevision: z.number().int().min(1),
   idempotencyKey: nonEmptyStringSchema,
@@ -113,6 +120,7 @@ const executionInputSchema = z.object({
 const cancelInputSchema = z.object({
   sessionId: nonEmptyStringSchema,
   executionId: nonEmptyStringSchema,
+  expectedRevision: z.number().int().min(1),
   idempotencyKey: nonEmptyStringSchema,
 }).strict();
 const listInputSchema = z.object({
@@ -132,6 +140,7 @@ const elicitationValueSchema = z.union([
   z.string(), z.number(), z.boolean(), z.array(z.string()),
 ]);
 const interactionRespondInputSchema = z.object({
+  expectedRevision: z.number().int().min(1),
   sessionId: nonEmptyStringSchema,
   executionId: nonEmptyStringSchema,
   interactionId: nonEmptyStringSchema,
@@ -153,6 +162,7 @@ const interactionRespondInputSchema = z.object({
   }
 });
 const sessionCreateInputSchema = z.object({
+  expectedContainerRevision: z.number().int().min(1),
   sessionRole: z.enum(["task-coordinator", "executor"]),
   title: nonEmptyStringSchema,
   provider: z.enum(["codex", "copilot"]),
@@ -169,6 +179,7 @@ const sessionListInputSchema = z.object({
 }).strict();
 const sessionGetInputSchema = z.object({ sessionId: nonEmptyStringSchema }).strict();
 const sessionRenameInputSchema = z.object({
+  expectedRevision: z.number().int().min(1),
   sessionId: nonEmptyStringSchema,
   title: nonEmptyStringSchema,
   idempotencyKey: nonEmptyStringSchema,
@@ -210,6 +221,7 @@ const workItemSourceIdentitySchema = z.object({
   head: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH).nullable(),
 }).strict();
 const workItemCreateInputSchema = z.object({
+  expectedContainerRevision: z.number().int().min(1),
   targetSessionId: nonEmptyStringSchema,
   parentWorkItemId: nonEmptyStringSchema.optional(),
   goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
@@ -317,6 +329,7 @@ const coordinationOptionSchema = z.object({
   description: z.string().trim().min(1).max(500).optional(),
 }).strict();
 const coordinationCreateInputSchema = z.object({
+  expectedContainerRevision: z.number().int().positive(),
   kind: z.enum(COORDINATION_EVENT_KINDS).exclude(["correction"]),
   payload: coordinationPayloadSchema,
   executionId: nonEmptyStringSchema.optional(),
@@ -350,6 +363,7 @@ const coordinationGetInputSchema = z.object({
   }
 });
 const coordinationResolveInputSchema = z.object({
+  expectedRevision: z.number().int().min(0),
   eventId: nonEmptyStringSchema,
   note: z.string().trim().min(1).max(1_000).optional(),
   idempotencyKey: nonEmptyStringSchema,
@@ -360,11 +374,13 @@ const coordinationConsumeInputSchema = z.object({
   idempotencyKey: nonEmptyStringSchema,
 }).strict();
 const coordinationCancelInputSchema = z.object({
+  expectedRevision: z.number().int().min(0),
   eventId: nonEmptyStringSchema,
   note: z.string().trim().min(1).max(1_000).optional(),
   idempotencyKey: nonEmptyStringSchema,
 }).strict();
 const coordinationCorrectInputSchema = z.object({
+  expectedRevision: z.number().int().min(0),
   eventId: nonEmptyStringSchema,
   payload: coordinationPayloadSchema,
   executionId: nonEmptyStringSchema.optional(),
@@ -414,6 +430,7 @@ const sessionRoleBindingShape = {
   delegationDepth: z.number().int().min(0).max(2),
 };
 const sessionSummarySchema = z.object({
+  revision: z.number().int().min(1),
   ...sessionRoleBindingShape,
   sessionId: z.string(),
   title: z.string(),
@@ -456,6 +473,7 @@ const effectiveTurnSchema = z.discriminatedUnion("provider", [
 function createExecutionSchema(operation: z.ZodType<"turn.run" | "turn.enqueue">) {
   return z.object({
     id: z.string(),
+    revision: z.number().int().positive(),
     sessionId: z.string(),
     operation,
     state: z.enum(["queued", "running", "completed", "failed", "canceled", "interrupted"]),
@@ -517,6 +535,8 @@ const elicitationRequestSchema = z.object({
   mode: z.enum(["form", "url"]), message: z.string(), fields: z.array(elicitationFieldSchema), url: z.string().optional(),
 }).strict();
 const interactionIdentityShape = {
+  revision: z.number().int().positive(),
+  decisionClass: z.enum(["user_only", "agent_delegable", "deny_or_cancel"]),
   sequence: z.number().int().positive(), interactionId: z.string(), sessionId: z.string(), executionId: z.string(),
   createdAt: z.string(), updatedAt: z.string(),
 };
@@ -589,9 +609,11 @@ const turnOptionsSchema = z.union([
 const coordinationSummarySchema = z.object({
   sequence: z.number().int().positive(),
   eventId: z.string(),
+  revision: z.number().int().nonnegative(),
   actorSessionId: z.string(),
   sessionRole: sessionRoleSchema,
   kind: z.enum(COORDINATION_EVENT_KINDS),
+  decisionClass: z.enum(SESSION_AUTHORITY_DECISION_CLASSES),
   state: z.enum(COORDINATION_EVENT_STATES),
   summary: z.string(),
   createdAt: z.string(),
@@ -600,6 +622,7 @@ const coordinationActionSchema = z.object({
   sequence: z.number().int().positive(),
   type: z.enum(["responded", "resolved", "cancelled", "superseded", "consumed"]),
   actorType: z.enum(["session", "trusted_gui"]),
+  principalKind: z.enum(["agent", "user", "system"]),
   actorSessionId: z.string().nullable(),
   optionId: z.string().nullable(),
   note: z.string().nullable(),
@@ -696,10 +719,25 @@ const workItemAggregationItemSchema = z.object({
 const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "runtime.catalog": z.object({
     revision: z.number().int(),
+    authority: z.object({
+      mappingRevision: z.number().int().positive(),
+      operations: z.array(z.object({
+        action: z.enum(SESSION_RUNTIME_OPERATIONS),
+        resourceKind: z.enum(SESSION_AUTHORITY_RESOURCE_KINDS),
+        scopeSource: z.enum([
+          "actor", "session", "target_session", "work_item", "parent_work_item",
+          "execution", "interaction", "coordination_event", "coordination_list",
+        ]),
+        effectClass: z.enum(SESSION_AUTHORITY_EFFECT_CLASSES),
+        decisionClass: z.enum(SESSION_AUTHORITY_DECISION_CLASSES),
+      }).strict()),
+      budget: z.literal("not_implemented_slice_2"),
+      validationGaps: z.array(z.string()),
+    }).strict(),
     sessionRoleContractRevision: z.literal(1),
     sessionTurnCommunicationContractRevision: z.literal(1),
     supportedSessionRoles: z.array(sessionRoleSchema),
-    allowedChildSessionRoles: z.object({
+    baselineChildSessionRoleTemplates: z.object({
       standalone: z.array(z.enum(["task-coordinator", "executor"])),
       "overall-coordinator": z.array(z.enum(["task-coordinator", "executor"])),
       "task-coordinator": z.array(z.enum(["task-coordinator", "executor"])),
@@ -760,7 +798,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       models: z.array(modelSchema),
     }).strict()),
   }).strict(),
-  "session.self": z.object({ sessionId: z.string(), ...sessionRoleBindingShape }).strict(),
+  "session.self": z.object({ revision: z.number().int().positive(), sessionId: z.string(), ...sessionRoleBindingShape }).strict(),
   "session.create": sessionDetailSchema,
   "session.list": z.object({ items: z.array(sessionSummarySchema), nextCursor: z.string().optional() }).strict(),
   "session.get": sessionGetSchema,
@@ -829,6 +867,9 @@ function createOutputSchema(operation: SessionRuntimeOperation) {
 export const SESSION_MCP_SERVER_INSTRUCTIONS = [
   "Use session.self only to resolve the bound actor Session; keep every target of other Session operations explicit.",
   "Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
+  "Use the target Session revision for work.create and turn.run/enqueue expectedContainerRevision, and the execution revision for turn.cancel expectedRevision; refresh after each mutation.",
+  "Treat runtime.catalog authority operations as classifications, not current grants; baselineChildSessionRoleTemplates are grant issuance templates.",
+  "Never answer a user_only interaction or create a user-principal receipt; provider approvals and elicitations require the trusted GUI.",
   "A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
   "Use a delegated Work Item to track one assignment across multiple executions; do not treat an execution as the Work Item identity.",
   "A delegated target reports its state and result while its creator alone can cancel it; a root owner keeps its self-owned Root Work Item current with work.revise and work.history.append.",
@@ -843,14 +884,14 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
 export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "runtime.catalog", title: "Get runtime catalog", description: "Read the current public Provider and model catalog.", readOnly: true, destructive: false },
   { name: "session.self", title: "Resolve actor Session", description: "Resolve the current provider actor Session from its runtime binding.", readOnly: true, destructive: false },
-  { name: "session.create", title: "Create child Session", description: "Create an authorized child Session for the bound actor with an explicit workspace.", readOnly: false, destructive: false },
+  { name: "session.create", title: "Create child Session", description: "Create an authorized child Session from the actor's current expectedContainerRevision and an explicit workspace.", readOnly: false, destructive: false },
   { name: "session.list", title: "List Sessions", description: "List normal Sessions with keyset pagination.", readOnly: true, destructive: false },
   { name: "session.get", title: "Get Session", description: "Read one normal Session.", readOnly: true, destructive: false },
   { name: "session.rename", title: "Rename Session", description: "Rename one normal Session.", readOnly: false, destructive: false },
   { name: "session.files.list", title: "List Session files", description: "List UTF-8-capable files in one SessionFolder.", readOnly: true, destructive: false },
   { name: "session.files.read_text", title: "Read Session text file", description: "Read one bounded UTF-8 text file from a SessionFolder.", readOnly: true, destructive: false },
   { name: "session.files.write_text", title: "Write Session text file", description: "Atomically write one bounded UTF-8 text file to a SessionFolder.", readOnly: false, destructive: true },
-  { name: "work.create", title: "Create Work Item", description: "Create one stable delegated assignment for an authorized target Session.", readOnly: false, destructive: false },
+  { name: "work.create", title: "Create Work Item", description: "Create one stable delegated assignment at the target Session's current expectedContainerRevision.", readOnly: false, destructive: false },
   { name: "work.list", title: "List Work Items", description: "List visible Work Items with bounded keyset pagination.", readOnly: true, destructive: false },
   { name: "work.get", title: "Get Work Item", description: "Read one visible Work Item.", readOnly: true, destructive: false },
   { name: "work.revise", title: "Revise Root Work Item", description: "Revise the bound root Work Item contract.", readOnly: false, destructive: false },
@@ -864,14 +905,14 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "work.aggregation.decide", title: "Decide Work Item result", description: "Accept or exclude one terminal direct child result.", readOnly: false, destructive: false },
   { name: "work.aggregation.retry", title: "Retry Work Item result", description: "Atomically record a retry decision and create its replacement Work Item.", readOnly: false, destructive: false },
   { name: "turn.options", title: "Get Session turn options", description: "Read valid turn options for one normal Session.", readOnly: true, destructive: false },
-  { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately in the specified Session.", readOnly: false, destructive: true },
-  { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn to the specified Session FIFO queue.", readOnly: false, destructive: true },
+  { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately at the target Session's current expectedContainerRevision.", readOnly: false, destructive: true },
+  { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn at the target Session's current expectedContainerRevision.", readOnly: false, destructive: true },
   { name: "turn.list", title: "List Session executions", description: "List execution records for the specified Session.", readOnly: true, destructive: false },
   { name: "turn.get", title: "Get Session execution", description: "Read one execution from the specified Session.", readOnly: true, destructive: false },
-  { name: "turn.cancel", title: "Cancel Session execution", description: "Cancel one queued or running execution in the specified Session.", readOnly: false, destructive: true },
+  { name: "turn.cancel", title: "Cancel Session execution", description: "Cancel one queued or running execution at its current expectedRevision.", readOnly: false, destructive: true },
   { name: "interaction.list", title: "List Session interactions", description: "List public interactions for the specified Session.", readOnly: true, destructive: false },
-  { name: "interaction.respond", title: "Respond to Session interaction", description: "Resolve one pending interaction in the specified execution.", readOnly: false, destructive: true },
-  { name: "coordination.event.create", title: "Create coordination event", description: "Record a public coordination event for the bound Session and return its stable eventId.", readOnly: false, destructive: false },
+  { name: "interaction.respond", title: "Respond to Session interaction", description: "Respond at the current expectedRevision only when the stored decisionClass permits the Agent principal; provider approvals and elicitations are user_only.", readOnly: false, destructive: true },
+  { name: "coordination.event.create", title: "Create coordination event", description: "Record a public coordination event at the actor's current expectedContainerRevision and return its stable eventId.", readOnly: false, destructive: false },
   { name: "coordination.event.list", title: "List coordination events", description: "List visible coordination event summaries, including each stable eventId.", readOnly: true, destructive: false },
   { name: "coordination.event.get", title: "Get coordination event", description: "Read one visible coordination event by eventId, or recover it and its stable eventId by the create idempotencyKey.", readOnly: true, destructive: false },
   { name: "coordination.event.resolve", title: "Resolve coordination event", description: "Resolve an authorized escalation or blocker using the exact eventId returned by create, list, or get.", readOnly: false, destructive: false },

@@ -13,6 +13,10 @@
 
 Role は grant 作成時の template だけを提供し、認可時は保存済み active grant を評価する。Role の変更だけで既存 grant を暗黙に増減させない。
 
+## Slice 1 と budget の段階導入
+
+2026-09-05 のユーザー承認により、以下の budget allocation と admission の記述は Slice 2 接続後の契約とする。Slice 1 では既存の操作別上限を維持し、runtime catalog に root budget 未実装を明示する。budget の評価成功を返す代用品、無制限値、架空の allocation reference は追加しない。grant の action、scope、有効期間、effect class の縮小と既存操作の authority cutover は Slice 1 で完了する。
+
 ## Principal と authority
 
 principal は少なくとも次を区別する。
@@ -61,7 +65,7 @@ effect-bearing operationは一つの形へ押し込まず、次の三つへ分�
 
 1. runtime binding と principal を解決する。
 2. canonical container、target resource、またはoperation identityとcurrent revisionを取得する。
-3. active grant と budget を評価する。
+3. active grant を評価する。Slice 2 接続後は budget reserve も成功してから進む。Slice 1 では前節の段階導入契約に従う。
 4. operation 固有不変条件を検証する。
 5. create／existing mutationはtransaction内でprojection、event、idempotency resultを保存する。sagaはoperation revision、完了step、committed manifest、次のrecovery stateを各stepのtransactionで保存する。
 6. commit 後に publication を行う。

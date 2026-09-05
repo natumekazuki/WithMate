@@ -15,6 +15,7 @@ import { CREATE_V4_SCHEMA_SQL } from "../../src-electron/database-schema-v4.js";
 import {
   APP_DATABASE_V6_FILENAME,
   CREATE_V6_SCHEMA_SQL,
+  ensureV6Schema,
   isValidV6Database,
 } from "../../src-electron/database-schema-v6.js";
 
@@ -175,6 +176,14 @@ describe("migrate-database-v4-to-v6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "V4の移行対象データだけを現行V6へ保存し移行済みmarkerを残す"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // failure_mode = "設定やCharacterを失うか移行対象外Sessionを持ち込む"
+  // scope = "V4 to V6 release migration"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("write で settings/catalog/characters だけを V6 DB へ移行する", async () => {
     const fixture = createFixture();
     try {
@@ -189,7 +198,7 @@ describe("migrate-database-v4-to-v6", () => {
       assert.equal(report.migratedV6Counts.modelCatalogRevisions, 1);
       assert.equal(report.migratedV6Counts.characters, 1);
       assert.equal(isValidV6Database(fixture.v6Path), true);
-      assert.equal(readCount(fixture.v6Path, "app_settings"), 5);
+      assert.equal(readCount(fixture.v6Path, "app_settings"), 6);
       assert.equal(readAppSetting(fixture.v6Path, "launch_at_login_enabled"), "true");
       assert.equal(readAppSetting(fixture.v6Path, "session_right_pane_visible"), "true");
       assert.equal(hasV4ToV6ReleaseDataMigrationMarker(fixture.v6Path), true);
@@ -204,6 +213,14 @@ describe("migrate-database-v4-to-v6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "空の現行V6へ既存V4の設定とCharacterを投入できる"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // failure_mode = "既存bootstrapを誤って拒否するか移行対象データを失う"
+  // scope = "V4 to V6 release migration"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("既存の empty V6 bootstrap DB にも release data を投入できる", async () => {
     const fixture = createFixture();
     try {
@@ -213,6 +230,7 @@ describe("migrate-database-v4-to-v6", () => {
         for (const statement of CREATE_V6_SCHEMA_SQL) {
           db.exec(statement);
         }
+        ensureV6Schema(db);
       } finally {
         db.close();
       }
@@ -223,7 +241,7 @@ describe("migrate-database-v4-to-v6", () => {
         targetDatabaseFile: fixture.v6Path,
       });
 
-      assert.equal(readCount(fixture.v6Path, "app_settings"), 5);
+      assert.equal(readCount(fixture.v6Path, "app_settings"), 6);
       assert.equal(readAppSetting(fixture.v6Path, "session_right_pane_visible"), "true");
       assert.equal(readCount(fixture.v6Path, "characters"), 1);
     } finally {

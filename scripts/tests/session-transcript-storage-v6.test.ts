@@ -5,6 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
+import { SESSION_AUTHORITY_MAPPING_REVISION, type MutationAuthorityProof } from "../../src/session-authority.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import {
   CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL,
@@ -18,6 +19,56 @@ import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-
 
 const NOW = "2026-08-13T00:00:00.000Z";
 const EXPIRES = "2026-08-14T00:00:00.000Z";
+
+function trustedTranscriptProof(sessionId: string): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-transcript-storage-test" },
+    operation: "transcript.export",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "transcript.export",
+    resolvedScope: {
+      resourceKind: "transcript",
+      resourceId: sessionId,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: NOW,
+  };
+}
+
+const prepareExportWithAuthority = SessionTranscriptStorageV6.prototype.prepareExport;
+SessionTranscriptStorageV6.prototype.prepareExport = function (input) {
+  return prepareExportWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedTranscriptProof(input.sessionId),
+  });
+};
+const recordPreparedExportWithAuthority = SessionTranscriptStorageV6.prototype.recordPreparedOutput;
+SessionTranscriptStorageV6.prototype.recordPreparedOutput = function (input) {
+  return recordPreparedExportWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedTranscriptProof("session-1"),
+  });
+};
+const completeExportWithAuthority = SessionTranscriptStorageV6.prototype.completeExport;
+SessionTranscriptStorageV6.prototype.completeExport = function (input) {
+  return completeExportWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedTranscriptProof("session-1"),
+  });
+};
+const rejectExportWithAuthority = SessionTranscriptStorageV6.prototype.rejectExport;
+SessionTranscriptStorageV6.prototype.rejectExport = function (input) {
+  return rejectExportWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedTranscriptProof("session-1"),
+  });
+};
 
 async function fixture() {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-transcript-storage-"));
@@ -270,9 +321,9 @@ describe("SessionTranscriptStorageV6", () => {
         assert.equal(CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL.includes("output_sha256"), true);
         db.prepare(`
           INSERT INTO session_transcript_export_idempotency_v6 (
-            operation, idempotency_key, request_fingerprint, session_id,
+            operation, principal_kind, principal_id, idempotency_key, request_fingerprint, session_id,
             relative_path, temp_name, state, created_at, expires_at
-          ) VALUES ('transcript.export', 'pending', 'fp', 'session-1', 'a.json', '.a.tmp', 'pending', ?, ?)
+          ) VALUES ('transcript.export', 'system', 'migration-test', 'pending', 'fp', 'session-1', 'a.json', '.a.tmp', 'pending', ?, ?)
         `).run(NOW, EXPIRES);
         db.prepare(`
           UPDATE work_items_v6

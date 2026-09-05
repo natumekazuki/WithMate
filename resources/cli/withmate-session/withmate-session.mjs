@@ -358,6 +358,7 @@ function parseSessionRuntimeOperationInput(operation, value) {
 function parseCoordinationEventCreateInput(value) {
 	const record = requireObject$1(value, "input");
 	assertKeys$1(record, [
+		"expectedContainerRevision",
 		"kind",
 		"payload",
 		"executionId",
@@ -371,6 +372,7 @@ function parseCoordinationEventCreateInput(value) {
 	if (kind === "escalation" !== (targetSessionId !== void 0)) throw invalid("targetSessionId", "targetSessionId is required only for escalation events.");
 	if (kind === "user_decision_required" !== (options !== void 0)) throw invalid("options", "options are required only for user_decision_required events.");
 	return {
+		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
 		kind,
 		payload: validateCoordinationEventPayload(record.payload),
 		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
@@ -406,11 +408,13 @@ function parseCoordinationEventGetInput(value) {
 function parseCoordinationEventResolveInput(value) {
 	const record = requireObject$1(value, "input");
 	assertKeys$1(record, [
+		"expectedRevision",
 		"eventId",
 		"note",
 		"idempotencyKey"
 	], "input");
 	return {
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
 		eventId: requireNonEmptyString(record.eventId, "eventId"),
 		...record.note === void 0 ? {} : { note: validateCoordinationEventNote(record.note) },
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
@@ -432,11 +436,13 @@ function parseCoordinationEventConsumeInput(value) {
 function parseCoordinationEventCancelInput(value) {
 	const record = requireObject$1(value, "input");
 	assertKeys$1(record, [
+		"expectedRevision",
 		"eventId",
 		"note",
 		"idempotencyKey"
 	], "input");
 	return {
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
 		eventId: requireNonEmptyString(record.eventId, "eventId"),
 		...record.note === void 0 ? {} : { note: validateCoordinationEventNote(record.note) },
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
@@ -445,12 +451,14 @@ function parseCoordinationEventCancelInput(value) {
 function parseCoordinationEventCorrectInput(value) {
 	const record = requireObject$1(value, "input");
 	assertKeys$1(record, [
+		"expectedRevision",
 		"eventId",
 		"payload",
 		"executionId",
 		"idempotencyKey"
 	], "input");
 	return {
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
 		eventId: requireNonEmptyString(record.eventId, "eventId"),
 		payload: validateCoordinationEventPayload(record.payload),
 		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
@@ -465,6 +473,7 @@ function requireBoundedString(value, field, maxLength) {
 function parseSessionCreateInput(value) {
 	const record = requireObject(value, "input");
 	assertKeys(record, [
+		"expectedContainerRevision",
 		"sessionRole",
 		"title",
 		"provider",
@@ -473,6 +482,7 @@ function parseSessionCreateInput(value) {
 		"idempotencyKey"
 	], "input");
 	return {
+		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
 		sessionRole: requireEnum(record.sessionRole, ["task-coordinator", "executor"], "sessionRole"),
 		title: requireNonEmptyString(record.title, "title"),
 		provider: requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "provider"),
@@ -510,11 +520,13 @@ function parseSessionInput(value) {
 function parseSessionRenameInput(value) {
 	const record = requireObject(value, "input");
 	assertKeys(record, [
+		"expectedRevision",
 		"sessionId",
 		"title",
 		"idempotencyKey"
 	], "input");
 	return {
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
 		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
 		title: requireNonEmptyString(record.title, "title"),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
@@ -576,6 +588,7 @@ function parseSessionFileWriteTextInput(value) {
 function parseWorkItemCreateInput(value) {
 	const record = requireObject(value, "input");
 	assertKeys(record, [
+		"expectedContainerRevision",
 		"targetSessionId",
 		"parentWorkItemId",
 		"goal",
@@ -594,6 +607,7 @@ function parseWorkItemCreateInput(value) {
 		"head"
 	], "sourceIdentity");
 	return {
+		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
 		targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId"),
 		...record.parentWorkItemId === void 0 ? {} : { parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId") },
 		goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
@@ -915,6 +929,7 @@ function createSessionRuntimeError(input) {
 function parseTurnRunInput(value) {
 	const record = requireObject(value, "input");
 	assertKeys(record, [
+		"expectedContainerRevision",
 		"sessionId",
 		"catalogRevision",
 		"idempotencyKey",
@@ -935,6 +950,7 @@ function parseTurnRunInput(value) {
 function parseTurnEnqueueInput(value) {
 	const record = requireObject(value, "input");
 	assertKeys(record, [
+		"expectedContainerRevision",
 		"sessionId",
 		"catalogRevision",
 		"idempotencyKey",
@@ -946,6 +962,7 @@ function parseTurnEnqueueInput(value) {
 }
 function parseTurnMutationBase(record) {
 	return {
+		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
 		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
 		catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
@@ -1037,11 +1054,13 @@ function parseCancelInput(value) {
 	assertKeys(record, [
 		"sessionId",
 		"executionId",
+		"expectedRevision",
 		"idempotencyKey"
 	], "input");
 	return {
 		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
 		executionId: requireNonEmptyString(record.executionId, "executionId"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
 }
@@ -1087,6 +1106,7 @@ function parseInteractionRespondInput(value) {
 		"sessionId",
 		"executionId",
 		"interactionId",
+		"expectedRevision",
 		"response",
 		"idempotencyKey",
 		"responseMode",
@@ -1095,6 +1115,7 @@ function parseInteractionRespondInput(value) {
 	const responseMode = requireEnum(record.responseMode, ["wait", "deferred"], "responseMode");
 	if (responseMode === "deferred" && record.waitTimeoutMs !== void 0) throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
 	return {
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
 		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
 		executionId: requireNonEmptyString(record.executionId, "executionId"),
 		interactionId: requireNonEmptyString(record.interactionId, "interactionId"),
@@ -24718,6 +24739,29 @@ var StdioServerTransport = class {
 	}
 };
 //#endregion
+//#region src/session-authority.ts
+var SESSION_AUTHORITY_EFFECT_CLASSES = [
+	"read",
+	"local_mutation",
+	"external_side_effect"
+];
+var SESSION_AUTHORITY_DECISION_CLASSES = [
+	"agent_delegable",
+	"user_only",
+	"deny_or_cancel"
+];
+var SESSION_AUTHORITY_RESOURCE_KINDS = [
+	"runtime",
+	"session",
+	"session_namespace",
+	"session_files",
+	"work_item",
+	"execution",
+	"interaction",
+	"coordination_event",
+	"transcript"
+];
+//#endregion
 //#region scripts/withmate-session-mcp.ts
 var reasoningEffortSchema = _enum([
 	"minimal",
@@ -24754,6 +24798,7 @@ var turnSchema = discriminatedUnion("provider", [object({
 	customAgentName: string()
 }).strict()]);
 var mutationBaseShape = {
+	expectedContainerRevision: number().int().min(1),
 	sessionId: nonEmptyStringSchema,
 	catalogRevision: number().int().min(1),
 	idempotencyKey: nonEmptyStringSchema,
@@ -24780,6 +24825,7 @@ var executionInputSchema = object({
 var cancelInputSchema = object({
 	sessionId: nonEmptyStringSchema,
 	executionId: nonEmptyStringSchema,
+	expectedRevision: number().int().min(1),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var listInputSchema = object({
@@ -24806,6 +24852,7 @@ var elicitationValueSchema = union([
 	array(string())
 ]);
 var interactionRespondInputSchema = object({
+	expectedRevision: number().int().min(1),
 	sessionId: nonEmptyStringSchema,
 	executionId: nonEmptyStringSchema,
 	interactionId: nonEmptyStringSchema,
@@ -24835,6 +24882,7 @@ var interactionRespondInputSchema = object({
 	});
 });
 var sessionCreateInputSchema = object({
+	expectedContainerRevision: number().int().min(1),
 	sessionRole: _enum(["task-coordinator", "executor"]),
 	title: nonEmptyStringSchema,
 	provider: _enum(["codex", "copilot"]),
@@ -24851,6 +24899,7 @@ var sessionListInputSchema = object({
 }).strict();
 var sessionGetInputSchema = object({ sessionId: nonEmptyStringSchema }).strict();
 var sessionRenameInputSchema = object({
+	expectedRevision: number().int().min(1),
 	sessionId: nonEmptyStringSchema,
 	title: nonEmptyStringSchema,
 	idempotencyKey: nonEmptyStringSchema
@@ -24888,6 +24937,7 @@ var workItemSourceIdentitySchema = object({
 	head: string().max(WORK_ITEM_MAX_TEXT_LENGTH).nullable()
 }).strict();
 var workItemCreateInputSchema = object({
+	expectedContainerRevision: number().int().min(1),
 	targetSessionId: nonEmptyStringSchema,
 	parentWorkItemId: nonEmptyStringSchema.optional(),
 	goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
@@ -25125,6 +25175,7 @@ var coordinationOptionSchema = object({
 	description: string().trim().min(1).max(500).optional()
 }).strict();
 var coordinationCreateInputSchema = object({
+	expectedContainerRevision: number().int().positive(),
 	kind: _enum(COORDINATION_EVENT_KINDS).exclude(["correction"]),
 	payload: coordinationPayloadSchema,
 	executionId: nonEmptyStringSchema.optional(),
@@ -25166,6 +25217,7 @@ var coordinationGetInputSchema = object({
 	});
 });
 var coordinationResolveInputSchema = object({
+	expectedRevision: number().int().min(0),
 	eventId: nonEmptyStringSchema,
 	note: string().trim().min(1).max(1e3).optional(),
 	idempotencyKey: nonEmptyStringSchema
@@ -25176,11 +25228,13 @@ var coordinationConsumeInputSchema = object({
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var coordinationCancelInputSchema = object({
+	expectedRevision: number().int().min(0),
 	eventId: nonEmptyStringSchema,
 	note: string().trim().min(1).max(1e3).optional(),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var coordinationCorrectInputSchema = object({
+	expectedRevision: number().int().min(0),
 	eventId: nonEmptyStringSchema,
 	payload: coordinationPayloadSchema,
 	executionId: nonEmptyStringSchema.optional(),
@@ -25251,6 +25305,7 @@ var sessionRoleBindingShape = {
 	delegationDepth: number().int().min(0).max(2)
 };
 var sessionSummarySchema = object({
+	revision: number().int().min(1),
 	...sessionRoleBindingShape,
 	sessionId: string(),
 	title: string(),
@@ -25292,6 +25347,7 @@ var effectiveTurnSchema = discriminatedUnion("provider", [object({
 function createExecutionSchema(operation) {
 	return object({
 		id: string(),
+		revision: number().int().positive(),
 		sessionId: string(),
 		operation,
 		state: _enum([
@@ -25407,6 +25463,12 @@ var elicitationRequestSchema = object({
 	url: string().optional()
 }).strict();
 var interactionIdentityShape = {
+	revision: number().int().positive(),
+	decisionClass: _enum([
+		"user_only",
+		"agent_delegable",
+		"deny_or_cancel"
+	]),
 	sequence: number().int().positive(),
 	interactionId: string(),
 	sessionId: string(),
@@ -25514,9 +25576,11 @@ var turnOptionsSchema = union([object({
 var coordinationSummarySchema = object({
 	sequence: number().int().positive(),
 	eventId: string(),
+	revision: number().int().nonnegative(),
 	actorSessionId: string(),
 	sessionRole: sessionRoleSchema,
 	kind: _enum(COORDINATION_EVENT_KINDS),
+	decisionClass: _enum(SESSION_AUTHORITY_DECISION_CLASSES),
 	state: _enum(COORDINATION_EVENT_STATES),
 	summary: string(),
 	createdAt: string()
@@ -25531,6 +25595,11 @@ var coordinationActionSchema = object({
 		"consumed"
 	]),
 	actorType: _enum(["session", "trusted_gui"]),
+	principalKind: _enum([
+		"agent",
+		"user",
+		"system"
+	]),
 	actorSessionId: string().nullable(),
 	optionId: string().nullable(),
 	note: string().nullable(),
@@ -25677,10 +25746,32 @@ var workItemAggregationItemSchema = object({
 var resultSchemas = {
 	"runtime.catalog": object({
 		revision: number().int(),
+		authority: object({
+			mappingRevision: number().int().positive(),
+			operations: array(object({
+				action: _enum(SESSION_RUNTIME_OPERATIONS),
+				resourceKind: _enum(SESSION_AUTHORITY_RESOURCE_KINDS),
+				scopeSource: _enum([
+					"actor",
+					"session",
+					"target_session",
+					"work_item",
+					"parent_work_item",
+					"execution",
+					"interaction",
+					"coordination_event",
+					"coordination_list"
+				]),
+				effectClass: _enum(SESSION_AUTHORITY_EFFECT_CLASSES),
+				decisionClass: _enum(SESSION_AUTHORITY_DECISION_CLASSES)
+			}).strict()),
+			budget: literal("not_implemented_slice_2"),
+			validationGaps: array(string())
+		}).strict(),
 		sessionRoleContractRevision: literal(1),
 		sessionTurnCommunicationContractRevision: literal(1),
 		supportedSessionRoles: array(sessionRoleSchema),
-		allowedChildSessionRoles: object({
+		baselineChildSessionRoleTemplates: object({
 			standalone: array(_enum(["task-coordinator", "executor"])),
 			"overall-coordinator": array(_enum(["task-coordinator", "executor"])),
 			"task-coordinator": array(_enum(["task-coordinator", "executor"])),
@@ -25751,6 +25842,7 @@ var resultSchemas = {
 		}).strict())
 	}).strict(),
 	"session.self": object({
+		revision: number().int().positive(),
 		sessionId: string(),
 		...sessionRoleBindingShape
 	}).strict(),
@@ -25865,6 +25957,9 @@ function createOutputSchema(operation) {
 var SESSION_MCP_SERVER_INSTRUCTIONS = [
 	"Use session.self only to resolve the bound actor Session; keep every target of other Session operations explicit.",
 	"Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
+	"Use the target Session revision for work.create and turn.run/enqueue expectedContainerRevision, and the execution revision for turn.cancel expectedRevision; refresh after each mutation.",
+	"Treat runtime.catalog authority operations as classifications, not current grants; baselineChildSessionRoleTemplates are grant issuance templates.",
+	"Never answer a user_only interaction or create a user-principal receipt; provider approvals and elicitations require the trusted GUI.",
 	"A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
 	"Use a delegated Work Item to track one assignment across multiple executions; do not treat an execution as the Work Item identity.",
 	"A delegated target reports its state and result while its creator alone can cancel it; a root owner keeps its self-owned Root Work Item current with work.revise and work.history.append.",
@@ -25893,7 +25988,7 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "session.create",
 		title: "Create child Session",
-		description: "Create an authorized child Session for the bound actor with an explicit workspace.",
+		description: "Create an authorized child Session from the actor's current expectedContainerRevision and an explicit workspace.",
 		readOnly: false,
 		destructive: false
 	},
@@ -25942,7 +26037,7 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "work.create",
 		title: "Create Work Item",
-		description: "Create one stable delegated assignment for an authorized target Session.",
+		description: "Create one stable delegated assignment at the target Session's current expectedContainerRevision.",
 		readOnly: false,
 		destructive: false
 	},
@@ -26040,14 +26135,14 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "turn.run",
 		title: "Run Session turn",
-		description: "Start one turn immediately in the specified Session.",
+		description: "Start one turn immediately at the target Session's current expectedContainerRevision.",
 		readOnly: false,
 		destructive: true
 	},
 	{
 		name: "turn.enqueue",
 		title: "Enqueue Session turn",
-		description: "Append one turn to the specified Session FIFO queue.",
+		description: "Append one turn at the target Session's current expectedContainerRevision.",
 		readOnly: false,
 		destructive: true
 	},
@@ -26068,7 +26163,7 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "turn.cancel",
 		title: "Cancel Session execution",
-		description: "Cancel one queued or running execution in the specified Session.",
+		description: "Cancel one queued or running execution at its current expectedRevision.",
 		readOnly: false,
 		destructive: true
 	},
@@ -26082,14 +26177,14 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "interaction.respond",
 		title: "Respond to Session interaction",
-		description: "Resolve one pending interaction in the specified execution.",
+		description: "Respond at the current expectedRevision only when the stored decisionClass permits the Agent principal; provider approvals and elicitations are user_only.",
 		readOnly: false,
 		destructive: true
 	},
 	{
 		name: "coordination.event.create",
 		title: "Create coordination event",
-		description: "Record a public coordination event for the bound Session and return its stable eventId.",
+		description: "Record a public coordination event at the actor's current expectedContainerRevision and return its stable eventId.",
 		readOnly: false,
 		destructive: false
 	},

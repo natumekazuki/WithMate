@@ -1,29 +1,38 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
   SESSION_INTERACTION_PAGE_MAX,
   SESSION_INTERACTION_PUBLIC_MAX_BYTES,
   type SessionInteraction,
+  type SessionInteractionDecisionClass,
   type SessionInteractionExpiryReason,
   type SessionInteractionKind,
   type SessionInteractionPublicPayload,
+  type SessionInteractionResponsePrincipal,
   type SessionInteractionResponseAction,
 } from "../src/session-interaction.js";
+import type { ResourceEventHeader } from "../src/session-authority.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
+import { appendResourceEventHeader } from "./session-authority-storage.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type SessionInteractionRow = {
   sequence: number;
+  revision: number;
   id: string;
   session_id: string;
   execution_id: string;
   kind: SessionInteractionKind;
+  decision_class: SessionInteractionDecisionClass;
   state: "pending" | "answered" | "expired";
   public_payload_json: string;
   response_action: SessionInteractionResponseAction | null;
   response_submitted_fields_json: string | null;
   response_fingerprint: string | null;
+  response_principal_kind: SessionInteractionResponsePrincipal["kind"] | null;
+  response_actor_session_id: string | null;
   expiry_reason: SessionInteractionExpiryReason | null;
   created_at: string;
   resolved_at: string | null;
@@ -31,8 +40,10 @@ type SessionInteractionRow = {
 };
 
 type SessionInteractionIdempotencyRow = {
+  principal_kind: "user" | "agent" | "legacy_unknown";
   request_fingerprint: string;
   interaction_id: string;
+  result_revision: number;
 };
 
 export type SessionInteractionStorageRecord = SessionInteraction & {
@@ -52,6 +63,8 @@ export type RespondToSessionInteractionInput = {
   sessionId: string;
   executionId: string;
   interactionId: string;
+  expectedRevision: number;
+  principal: Exclude<SessionInteractionResponsePrincipal, { kind: "system" }>;
   action: SessionInteractionResponseAction;
   submittedFields: readonly string[];
   idempotencyKey: string;
@@ -125,6 +138,24 @@ export class SessionInteractionIdempotencyConflictError extends Error {
   }
 }
 
+export class SessionInteractionRevisionConflictError extends Error {
+  readonly code = "INTERACTION_REVISION_CONFLICT";
+
+  constructor(readonly interactionId: string, readonly currentRevision: number) {
+    super(`Session interaction revision conflict: ${interactionId} (current ${currentRevision})`);
+    this.name = "SessionInteractionRevisionConflictError";
+  }
+}
+
+export class SessionInteractionAuthorityError extends Error {
+  readonly code = "INTERACTION_RESPONSE_FORBIDDEN";
+
+  constructor(readonly interactionId: string) {
+    super(`Session interaction cannot be resolved by this principal: ${interactionId}`);
+    this.name = "SessionInteractionAuthorityError";
+  }
+}
+
 export class SessionInteractionPayloadTooLargeError extends Error {
   readonly code = "RESULT_TOO_LARGE";
 
@@ -171,20 +202,30 @@ export class SessionInteractionStorageV6 {
           id,
           execution_id,
           kind,
+          decision_class,
           state,
           public_payload_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, 'pending', ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
       `).run(
         input.id,
         input.executionId,
         input.kind,
+        "user_only",
         publicPayloadJson,
         input.createdAt,
         input.createdAt,
       );
-      return this.getRequired(input.id);
+      const interaction = this.getRequired(input.id);
+      this.appendEvent(
+        interaction,
+        "created",
+        { kind: "system" },
+        `interaction.create:${interaction.id}`,
+        null,
+      );
+      return interaction;
     });
   }
 
@@ -247,13 +288,16 @@ export class SessionInteractionStorageV6 {
   respond(input: RespondToSessionInteractionInput): RespondToSessionInteractionResult {
     const submittedFieldsJson = JSON.stringify(normalizeSubmittedFields(input.submittedFields));
     return this.transaction(() => {
-      const replay = this.findIdempotency(input.idempotencyKey);
+      const replay = this.findIdempotency(input.principal, input.idempotencyKey);
       if (replay) {
         if (replay.request_fingerprint !== input.requestFingerprint) {
           throw new SessionInteractionIdempotencyConflictError(input.idempotencyKey);
         }
         const interaction = this.getRequired(replay.interaction_id);
         this.assertTarget(interaction, input);
+        if (interaction.revision !== replay.result_revision) {
+          throw new Error(`Session interaction replay revision is inconsistent: ${interaction.id}`);
+        }
         return { interaction, replayed: true };
       }
 
@@ -261,6 +305,12 @@ export class SessionInteractionStorageV6 {
       this.assertTarget(interaction, input);
       if (interaction.state !== "pending") {
         throw new SessionInteractionAlreadyResolvedError(interaction.id, interaction.state);
+      }
+      if (input.principal.kind === "agent") {
+        throw new SessionInteractionAuthorityError(interaction.id);
+      }
+      if (interaction.revision !== input.expectedRevision) {
+        throw new SessionInteractionRevisionConflictError(interaction.id, interaction.revision);
       }
       const execution = this.db.prepare(`
         SELECT state
@@ -277,16 +327,22 @@ export class SessionInteractionStorageV6 {
             response_action = ?,
             response_submitted_fields_json = ?,
             response_fingerprint = ?,
+            response_principal_kind = ?,
+            response_actor_session_id = ?,
+            revision = revision + 1,
             resolved_at = ?,
             updated_at = ?
-        WHERE id = ? AND state = 'pending'
+        WHERE id = ? AND state = 'pending' AND revision = ?
       `).run(
         input.action,
         submittedFieldsJson,
         input.requestFingerprint,
+        "user",
+        null,
         input.respondedAt,
         input.respondedAt,
         input.interactionId,
+        input.expectedRevision,
       );
       if (updated.changes !== 1) {
         const current = this.getRequired(input.interactionId);
@@ -299,20 +355,34 @@ export class SessionInteractionStorageV6 {
       this.db.prepare(`
         INSERT INTO session_interaction_idempotency_v6 (
           operation,
+          principal_kind,
+          principal_id,
           idempotency_key,
           request_fingerprint,
           interaction_id,
+          result_revision,
           created_at,
           expires_at
-        ) VALUES ('interaction.respond', ?, ?, ?, ?, ?)
+        ) VALUES ('interaction.respond', ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
+        "user",
+        "user",
         input.idempotencyKey,
         input.requestFingerprint,
         input.interactionId,
+        input.expectedRevision + 1,
         input.respondedAt,
         input.expiresAt,
       );
-      return { interaction: this.getRequired(input.interactionId), replayed: false };
+      const answered = this.getRequired(input.interactionId);
+      this.appendEvent(
+        answered,
+        "answered",
+        input.principal,
+        `interaction.respond:${input.requestFingerprint}`,
+        input.idempotencyKey,
+      );
+      return { interaction: answered, replayed: false };
     });
   }
 
@@ -359,15 +429,34 @@ export class SessionInteractionStorageV6 {
       if (rows.length === 0) {
         return [];
       }
-      this.db.prepare(`
-        UPDATE session_interactions_v6
-        SET state = 'expired',
-            expiry_reason = ?,
-            resolved_at = ?,
-            updated_at = ?
-        WHERE state = 'pending'${executionId === undefined ? "" : " AND execution_id = ?"}
-      `).run(reason, expiredAt, expiredAt, ...(executionId === undefined ? [] : [executionId]));
-      return rows.map(({ id }) => this.getRequired(id));
+      const expired: SessionInteractionStorageRecord[] = [];
+      for (const { id } of rows) {
+        const current = this.getRequired(id);
+        const updated = this.db.prepare(`
+          UPDATE session_interactions_v6
+          SET state = 'expired',
+              expiry_reason = ?,
+              response_principal_kind = 'system',
+              response_actor_session_id = NULL,
+              revision = revision + 1,
+              resolved_at = ?,
+              updated_at = ?
+          WHERE id = ? AND state = 'pending' AND revision = ?
+        `).run(reason, expiredAt, expiredAt, id, current.revision);
+        if (updated.changes !== 1) {
+          throw new SessionInteractionRevisionConflictError(id, this.getRequired(id).revision);
+        }
+        const interaction = this.getRequired(id);
+        this.appendEvent(
+          interaction,
+          "expired",
+          { kind: "system" },
+          `interaction.expire:${reason}:${interaction.id}:${interaction.revision}`,
+          null,
+        );
+        expired.push(interaction);
+      }
+      return expired;
     });
   }
 
@@ -392,13 +481,90 @@ export class SessionInteractionStorageV6 {
     return interaction;
   }
 
-  private findIdempotency(idempotencyKey: string): SessionInteractionIdempotencyRow | null {
+  private findIdempotency(
+    principal: Exclude<SessionInteractionResponsePrincipal, { kind: "system" }>,
+    idempotencyKey: string,
+  ): SessionInteractionIdempotencyRow | null {
+    const principalId = principal.kind === "agent" ? principal.sessionId : "user";
     const row = this.db.prepare(`
-      SELECT request_fingerprint, interaction_id
+      SELECT principal_kind, request_fingerprint, interaction_id, result_revision
       FROM session_interaction_idempotency_v6
-      WHERE operation = 'interaction.respond' AND idempotency_key = ?
-    `).get(idempotencyKey) as SessionInteractionIdempotencyRow | undefined;
+      WHERE operation = 'interaction.respond'
+        AND principal_kind = ?
+        AND principal_id = ?
+        AND idempotency_key = ?
+    `).get(principal.kind, principalId, idempotencyKey) as SessionInteractionIdempotencyRow | undefined;
     return row ?? null;
+  }
+
+  private appendEvent(
+    interaction: SessionInteractionStorageRecord,
+    eventKind: "created" | "answered" | "expired",
+    principal: Exclude<SessionInteractionResponsePrincipal, { kind: "agent" }>,
+    operationId: string,
+    idempotencyKey: string | null,
+  ): void {
+    const eventId = `interaction:${interaction.id}:revision:${interaction.revision}`;
+    const idempotencyKeyFingerprint = idempotencyKey === null
+      ? null
+      : createHash("sha256").update(idempotencyKey).digest("hex");
+    this.db.prepare(`
+      INSERT INTO session_interaction_events_v6 (
+        id, interaction_id, session_id, execution_id, interaction_revision, event_kind,
+        decision_class, principal_kind, actor_session_id, idempotency_key_fingerprint,
+        projection_json, response_action, response_submitted_fields_json, expiry_reason, occurred_at, committed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      eventId,
+      interaction.id,
+      interaction.sessionId,
+      interaction.executionId,
+      interaction.revision,
+      eventKind,
+      interaction.decisionClass,
+      principal.kind,
+      null,
+      idempotencyKeyFingerprint,
+      serializeEventProjection(interaction),
+      interaction.response?.action ?? null,
+      interaction.response === null ? null : JSON.stringify(interaction.response.submittedFields),
+      interaction.expiryReason,
+      interaction.resolvedAt ?? interaction.createdAt,
+      interaction.updatedAt,
+    );
+    const identity = this.db.prepare(`
+      SELECT COALESCE(binding.root_session_id, session.id) AS root_session_id
+      FROM sessions_v6 AS session
+      LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = session.id
+      WHERE session.id = ?
+    `).get(interaction.sessionId) as { root_session_id: string } | undefined;
+    if (!identity) {
+      throw new Error(`Session interaction owner was not found: ${interaction.sessionId}`);
+    }
+    const header: ResourceEventHeader = {
+      eventId,
+      resourceKind: "interaction",
+      resourceId: interaction.id,
+      rootId: identity.root_session_id,
+      ownerKind: "session",
+      ownerId: interaction.sessionId,
+      eventKind,
+      resourceRevision: interaction.revision,
+      principalKind: principal.kind,
+      actorSessionId: null,
+      grantId: null,
+      grantRevision: null,
+      operationId,
+      idempotencyKeyFingerprint,
+      occurredAt: interaction.resolvedAt ?? interaction.createdAt,
+      committedAt: interaction.updatedAt,
+      supersedesEventId: interaction.revision === 1
+        ? null
+        : `interaction:${interaction.id}:revision:${interaction.revision - 1}`,
+      payloadSchemaRevision: 1,
+      effect: "committed",
+    };
+    appendResourceEventHeader(this.db, header);
   }
 
   private selectInteraction(suffix: string) {
@@ -429,10 +595,12 @@ export class SessionInteractionStorageV6 {
 function parseInteraction(row: SessionInteractionRow): SessionInteractionStorageRecord {
   const base = {
     sequence: row.sequence,
+    revision: row.revision,
     id: row.id,
     sessionId: row.session_id,
     executionId: row.execution_id,
     kind: row.kind,
+    decisionClass: row.decision_class,
     publicPayload: JSON.parse(row.public_payload_json) as SessionInteractionPublicPayload,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -445,6 +613,7 @@ function parseInteraction(row: SessionInteractionRow): SessionInteractionStorage
       response: null,
       expiryReason: null,
       resolvedAt: null,
+      resolvedBy: null,
     };
   }
   if (row.state === "expired") {
@@ -457,6 +626,7 @@ function parseInteraction(row: SessionInteractionRow): SessionInteractionStorage
       response: null,
       expiryReason: row.expiry_reason,
       resolvedAt: row.resolved_at,
+      resolvedBy: { kind: "system" as const },
     };
   }
   if (!row.response_action || !row.response_submitted_fields_json || !row.resolved_at) {
@@ -465,6 +635,9 @@ function parseInteraction(row: SessionInteractionRow): SessionInteractionStorage
   const submittedFields = JSON.parse(row.response_submitted_fields_json) as unknown;
   if (!Array.isArray(submittedFields) || submittedFields.some((field) => typeof field !== "string")) {
     throw new Error(`Invalid submitted fields for session interaction: ${row.id}`);
+  }
+  if (row.response_principal_kind === "agent" && !row.response_actor_session_id) {
+    throw new Error(`Invalid agent response principal for session interaction: ${row.id}`);
   }
   return {
     ...base,
@@ -475,7 +648,15 @@ function parseInteraction(row: SessionInteractionRow): SessionInteractionStorage
     },
     expiryReason: null,
     resolvedAt: row.resolved_at,
+    resolvedBy: row.response_principal_kind === "agent"
+      ? { kind: "agent", sessionId: row.response_actor_session_id as string }
+      : row.response_principal_kind === null ? null : { kind: row.response_principal_kind },
   };
+}
+
+function serializeEventProjection(interaction: SessionInteractionStorageRecord): string {
+  const { responseFingerprint: _responseFingerprint, ...projection } = interaction;
+  return JSON.stringify(projection);
 }
 
 function serializePublicPayload(value: unknown): string {

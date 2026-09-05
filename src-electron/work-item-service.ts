@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
 
 import { requireSessionRoleBinding } from "../src/session-role-binding.js";
-import {
-  canSendSessionTurn,
-  type SessionTurnAuthoritySession,
-} from "../src/session-turn-communication-authority.js";
+import { isAgentMutationProof, type MutationAdmissionProof, type MutationAuthorityProof } from "../src/session-authority.js";
+import type { SessionTurnAuthoritySession } from "../src/session-turn-communication-authority.js";
 import {
   WORK_ITEM_IDEMPOTENCY_RETENTION_MS,
   isWorkItemActive,
@@ -28,6 +26,7 @@ import {
 } from "./work-item-storage-v6.js";
 
 export type WorkItemCreateInput = {
+  expectedContainerRevision: number;
   targetSessionId: string;
   parentWorkItemId?: string;
   goal: string;
@@ -135,7 +134,7 @@ export type WorkItemListInput = {
 export type WorkItemListScope = Readonly<{
   rootSessionId: string;
   actorSessionId: string;
-  visibility: "root" | "actor";
+  visibility: "root" | "actor" | "creator" | "target";
 }>;
 
 export class WorkItemAuthorityError extends Error {
@@ -176,12 +175,12 @@ export class WorkItemService {
     currentTimestamp(): string;
   }) {}
 
-  create(input: WorkItemCreateInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
+  create(input: WorkItemCreateInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
     const createdAt = this.deps.currentTimestamp();
     const fingerprint = fingerprintMutation(input, binding.actorSessionId);
     const replay = this.deps.storage.resolveIdempotency(
       "work.create",
-      binding.actorSessionId,
+      proof,
       input.idempotencyKey,
       fingerprint,
       createdAt,
@@ -190,11 +189,6 @@ export class WorkItemService {
 
     const actor = this.requireSession(binding.actorSessionId);
     const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
-    if (actorBinding.sessionRole !== "overall-coordinator" && actorBinding.sessionRole !== "task-coordinator") {
-      throw new WorkItemAuthorityError("Only coordinator Sessions can create Work Items.", {
-        actorSessionId: actor.sessionId,
-      });
-    }
     if (actor.sessionId === input.targetSessionId) {
       throw new WorkItemAuthorityError("A Work Item target must differ from its creator.", {
         actorSessionId: actor.sessionId,
@@ -203,13 +197,7 @@ export class WorkItemService {
     }
     const target = this.requireSession(input.targetSessionId);
     const targetBinding = requireSessionRoleBinding(target.sessionId, target);
-    if (
-      targetBinding.parentSessionId !== actor.sessionId
-      || !canSendSessionTurn(
-        { sessionId: actor.sessionId, ...actorBinding },
-        { sessionId: target.sessionId, ...targetBinding },
-      )
-    ) {
+    if (targetBinding.parentSessionId !== actor.sessionId || targetBinding.rootSessionId !== actorBinding.rootSessionId) {
       throw new WorkItemAuthorityError("The actor Session cannot delegate to the target Session.", {
         actorSessionId: actor.sessionId,
         targetSessionId: target.sessionId,
@@ -245,21 +233,23 @@ export class WorkItemService {
       principalSessionId: actor.sessionId,
       idempotencyKey: input.idempotencyKey,
       requestFingerprint: fingerprint,
+      expectedContainerRevision: input.expectedContainerRevision,
       createdAt,
       expiresAt: resolveIdempotencyExpiresAt(createdAt),
+      proof,
     });
   }
 
-  transition(input: WorkItemTransitionInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
-    return this.targetMutation("work.transition", input, binding, input.state, null);
+  transition(input: WorkItemTransitionInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
+    return this.targetMutation("work.transition", input, binding, proof, input.state, null);
   }
 
-  revise(input: WorkItemReviseInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
+  revise(input: WorkItemReviseInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
     const updatedAt = this.deps.currentTimestamp();
     const fingerprint = fingerprintMutation(input, binding.actorSessionId);
     const replay = this.deps.storage.resolveIdempotency(
       "work.revise",
-      binding.actorSessionId,
+      proof,
       input.idempotencyKey,
       fingerprint,
       updatedAt,
@@ -272,15 +262,16 @@ export class WorkItemService {
       requestFingerprint: fingerprint,
       updatedAt,
       expiresAt: resolveIdempotencyExpiresAt(updatedAt),
+      proof,
     });
   }
 
-  appendHistory(input: WorkItemHistoryAppendInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
+  appendHistory(input: WorkItemHistoryAppendInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
     const createdAt = this.deps.currentTimestamp();
     const fingerprint = fingerprintMutation(input, binding.actorSessionId);
     const replay = this.deps.storage.resolveIdempotency(
       "work.history.append",
-      binding.actorSessionId,
+      proof,
       input.idempotencyKey,
       fingerprint,
       createdAt,
@@ -299,36 +290,39 @@ export class WorkItemService {
       nextAction: input.nextAction,
       createdAt,
       expiresAt: resolveIdempotencyExpiresAt(createdAt),
+      proof,
     });
   }
 
-  listHistory(input: WorkItemHistoryListInput, binding: ResolvedAgentRuntimeBinding): WorkItemEvent[] {
-    this.requireRootOwner(input.workItemId, binding);
+  listHistory(input: WorkItemHistoryListInput, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItemEvent[] {
+    this.requireRootOwner(input.workItemId, binding, proof, "work.history.list");
     return this.deps.storage.listHistory(input);
   }
 
-  iterateHistory(input: WorkItemHistoryListInput, binding: ResolvedAgentRuntimeBinding): Iterable<WorkItemEvent> {
-    this.requireRootOwner(input.workItemId, binding);
+  iterateHistory(input: WorkItemHistoryListInput, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): Iterable<WorkItemEvent> {
+    this.requireRootOwner(input.workItemId, binding, proof, "work.history.list");
     return this.deps.storage.iterateHistory(input);
   }
 
   listRecentHistory(
     input: Pick<WorkItemHistoryListInput, "workItemId" | "limit">,
     binding: ResolvedAgentRuntimeBinding,
+    proof?: MutationAuthorityProof,
   ): WorkItemEvent[] {
-    this.requireRootOwner(input.workItemId, binding);
+    this.requireRootOwner(input.workItemId, binding, proof, "work.history.list");
     return this.deps.storage.listRecentHistory(input);
   }
 
   iterateRecentHistory(
     input: Pick<WorkItemHistoryListInput, "workItemId" | "limit">,
     binding: ResolvedAgentRuntimeBinding,
+    proof?: MutationAuthorityProof,
   ): Iterable<WorkItemEvent> {
-    this.requireRootOwner(input.workItemId, binding);
+    this.requireRootOwner(input.workItemId, binding, proof, "work.history.list");
     return this.deps.storage.iterateRecentHistory(input);
   }
 
-  reportResult(input: WorkItemResultInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
+  reportResult(input: WorkItemResultInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
     const reportedAt = this.deps.currentTimestamp();
     const result: WorkItemResult = {
       outcome: input.state,
@@ -341,15 +335,15 @@ export class WorkItemService {
       reportingSessionId: binding.actorSessionId,
       reportedAt,
     };
-    return this.targetMutation("work.result", input, binding, input.state, result, reportedAt);
+    return this.targetMutation("work.result", input, binding, proof, input.state, result, reportedAt);
   }
 
-  cancel(input: WorkItemCancelInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
+  cancel(input: WorkItemCancelInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
     const updatedAt = this.deps.currentTimestamp();
     const fingerprint = fingerprintMutation(input, binding.actorSessionId);
     const replay = this.deps.storage.resolveIdempotency(
       "work.cancel",
-      binding.actorSessionId,
+      proof,
       input.idempotencyKey,
       fingerprint,
       updatedAt,
@@ -378,34 +372,68 @@ export class WorkItemService {
       result: null,
       updatedAt,
       expiresAt: resolveIdempotencyExpiresAt(updatedAt),
+      proof,
     });
   }
 
-  get(workItemId: string, binding: ResolvedAgentRuntimeBinding): WorkItem {
-    return this.requireVisibleItem(workItemId, binding, true);
+  get(workItemId: string, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItem {
+    return this.requireVisibleItem(workItemId, binding, true, proof, "work.get");
   }
 
-  list(input: WorkItemListInput, binding: ResolvedAgentRuntimeBinding): WorkItem[] {
-    return Array.from(this.iterateList(input, this.resolveListScope(binding)));
+  list(input: WorkItemListInput, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItem[] {
+    return Array.from(this.iterateList(input, this.resolveListScope(binding, proof), proof));
   }
 
-  resolveListScope(binding: ResolvedAgentRuntimeBinding): WorkItemListScope {
+  resolveListScope(binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItemListScope {
     const actor = this.requireSession(binding.actorSessionId);
+    if (proof && isAgentMutationProof(proof)) {
+      this.requireAgentProof(proof, binding);
+      if (proof.resolvedScope.rootSessionId !== actor.rootSessionId) {
+        throw new WorkItemAuthorityError("The Work Item authority proof belongs to another root.", {
+          actorSessionId: actor.sessionId,
+        });
+      }
+      const visibility = proof.resolvedScope.relation === "root_member"
+        ? "root"
+        : proof.resolvedScope.relation === "assigned"
+          ? "target"
+          : proof.resolvedScope.relation === "created"
+            ? "creator"
+            : "actor";
+      return {
+        rootSessionId: proof.resolvedScope.rootSessionId,
+        actorSessionId: actor.sessionId,
+        visibility,
+      };
+    }
     const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
     return {
       rootSessionId: actorBinding.rootSessionId,
       actorSessionId: actor.sessionId,
-      visibility: actorBinding.sessionRole === "overall-coordinator" ? "root" : "actor",
+      visibility: actorBinding.rootSessionId === actor.sessionId
+        && actorBinding.parentSessionId === null
+        && actorBinding.delegationDepth === 0
+        ? "root"
+        : "actor",
     };
   }
 
-  iterateList(input: WorkItemListInput, scope: WorkItemListScope): Iterable<WorkItem> {
+  iterateList(
+    input: WorkItemListInput,
+    scope: WorkItemListScope,
+    proof?: MutationAuthorityProof,
+  ): Iterable<WorkItem> {
+    if (proof && isAgentMutationProof(proof)) this.requireListProof(proof, scope);
     return this.deps.storage.iteratePage({
       rootSessionId: scope.rootSessionId,
       visibleSessionId: scope.actorSessionId,
       canSeeRoot: scope.visibility === "root",
-      ...(input.creatorSessionId === undefined ? {} : { creatorSessionId: input.creatorSessionId }),
-      ...(input.targetSessionId === undefined ? {} : { targetSessionId: input.targetSessionId }),
+      ...(scope.visibility === "creator"
+        ? { creatorSessionId: scope.actorSessionId }
+        : input.creatorSessionId === undefined ? {} : { creatorSessionId: input.creatorSessionId }),
+      ...(scope.visibility === "target"
+        ? { targetSessionId: scope.actorSessionId }
+        : input.targetSessionId === undefined ? {} : { targetSessionId: input.targetSessionId }),
       ...(input.state === undefined ? {} : { state: input.state }),
       afterSequence: input.afterSequence,
       limit: input.limit,
@@ -429,10 +457,9 @@ export class WorkItemService {
         && target.sessionId === actor.sessionId
       : item.targetSessionId === target.sessionId
         && (item.creatorSessionId === actor.sessionId || item.targetSessionId === actor.sessionId)
-        && canSendSessionTurn(
-          { sessionId: actor.sessionId, ...actorBinding },
-          { sessionId: target.sessionId, ...targetBinding },
-        );
+        && (actor.sessionId === target.sessionId
+          || targetBinding.parentSessionId === actor.sessionId
+          || actorBinding.parentSessionId === target.sessionId);
     if (
       item.rootSessionId !== actorBinding.rootSessionId
       || item.rootSessionId !== targetBinding.rootSessionId
@@ -451,22 +478,22 @@ export class WorkItemService {
     return this.deps.storage.cleanupExpiredIdempotency(this.deps.currentTimestamp());
   }
 
-  getAggregation(input: WorkItemAggregationGetInput, binding: ResolvedAgentRuntimeBinding): WorkItemAggregationSummary {
-    this.requireAggregationParent(input.parentWorkItemId, binding, true);
+  getAggregation(input: WorkItemAggregationGetInput, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItemAggregationSummary {
+    this.requireAggregationParent(input.parentWorkItemId, binding, true, proof, "work.aggregation.get");
     return this.deps.storage.getAggregationSummary(input.parentWorkItemId);
   }
 
-  listAggregation(input: WorkItemAggregationListInput, binding: ResolvedAgentRuntimeBinding): WorkItemAggregationListItem[] {
-    this.requireAggregationParent(input.parentWorkItemId, binding, true);
+  listAggregation(input: WorkItemAggregationListInput, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItemAggregationListItem[] {
+    this.requireAggregationParent(input.parentWorkItemId, binding, true, proof, "work.aggregation.list");
     return this.deps.storage.listAggregationItems(input);
   }
 
-  decideAggregation(input: WorkItemAggregationDecisionInput, binding: ResolvedAgentRuntimeBinding): WorkItemAggregationDecision {
+  decideAggregation(input: WorkItemAggregationDecisionInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItemAggregationDecision {
     const decidedAt = this.deps.currentTimestamp();
     const requestFingerprint = fingerprintMutation(input, binding.actorSessionId);
     const replay = this.deps.storage.resolveAggregationIdempotency(
       "work.aggregation.decide",
-      binding.actorSessionId,
+      proof,
       input.idempotencyKey,
       requestFingerprint,
       decidedAt,
@@ -480,15 +507,16 @@ export class WorkItemService {
       requestFingerprint,
       decidedAt,
       expiresAt: resolveIdempotencyExpiresAt(decidedAt),
+      proof,
     });
   }
 
-  retryAggregation(input: WorkItemAggregationRetryInput, binding: ResolvedAgentRuntimeBinding): { decision: WorkItemAggregationDecision; replacement: WorkItem } {
+  retryAggregation(input: WorkItemAggregationRetryInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): { decision: WorkItemAggregationDecision; replacement: WorkItem } {
     const decidedAt = this.deps.currentTimestamp();
     const requestFingerprint = fingerprintMutation(input, binding.actorSessionId);
     const replay = this.deps.storage.resolveAggregationIdempotency(
       "work.aggregation.retry",
-      binding.actorSessionId,
+      proof,
       input.idempotencyKey,
       requestFingerprint,
       decidedAt,
@@ -505,10 +533,7 @@ export class WorkItemService {
     const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
     const target = this.requireSession(input.targetSessionId);
     const targetBinding = requireSessionRoleBinding(target.sessionId, target);
-    if (targetBinding.parentSessionId !== actor.sessionId || !canSendSessionTurn(
-      { sessionId: actor.sessionId, ...actorBinding },
-      { sessionId: target.sessionId, ...targetBinding },
-    )) {
+    if (targetBinding.parentSessionId !== actor.sessionId || targetBinding.rootSessionId !== actorBinding.rootSessionId) {
       throw new WorkItemAuthorityError("The actor Session cannot delegate the replacement to the target Session.", {
         actorSessionId: actor.sessionId,
         targetSessionId: target.sessionId,
@@ -537,6 +562,7 @@ export class WorkItemService {
       reason: input.reason ?? null,
       decidedAt,
       expiresAt: resolveIdempotencyExpiresAt(decidedAt),
+      proof,
     });
   }
 
@@ -544,6 +570,7 @@ export class WorkItemService {
     operation: "work.transition" | "work.result",
     input: WorkItemTransitionInput | WorkItemResultInput,
     binding: ResolvedAgentRuntimeBinding,
+    proof: MutationAuthorityProof,
     state: WorkItemState,
     result: WorkItemResult | null,
     updatedAt = this.deps.currentTimestamp(),
@@ -551,7 +578,7 @@ export class WorkItemService {
     const fingerprint = fingerprintMutation(input, binding.actorSessionId);
     const replay = this.deps.storage.resolveIdempotency(
       operation,
-      binding.actorSessionId,
+      proof,
       input.idempotencyKey,
       fingerprint,
       updatedAt,
@@ -578,6 +605,7 @@ export class WorkItemService {
       ...(operation === "work.result" && "expectedAggregateRevision" in input && input.expectedAggregateRevision !== undefined
         ? { expectedAggregateRevision: input.expectedAggregateRevision }
         : {}),
+      proof,
     });
   }
 
@@ -589,11 +617,6 @@ export class WorkItemService {
         actorSessionId: binding.actorSessionId,
       });
     }
-    const actor = this.requireSession(binding.actorSessionId);
-    const role = requireSessionRoleBinding(actor.sessionId, actor).sessionRole;
-    if (role !== "overall-coordinator" && role !== "task-coordinator") {
-      throw new WorkItemAuthorityError("Only coordinator Sessions can mutate Work Item aggregation.");
-    }
     return parent;
   }
 
@@ -601,8 +624,10 @@ export class WorkItemService {
     parentWorkItemId: string,
     binding: ResolvedAgentRuntimeBinding,
     allowRootVisibility: boolean,
+    proof?: MutationAuthorityProof,
+    operation?: "work.aggregation.get" | "work.aggregation.list",
   ): WorkItem {
-    const parent = this.requireVisibleItem(parentWorkItemId, binding, allowRootVisibility);
+    const parent = this.requireVisibleItem(parentWorkItemId, binding, allowRootVisibility, proof, operation);
     if (parent.kind !== "delegated") {
       throw new WorkItemAggregationConflictError(
         "WORK_ITEM_AGGREGATION_PARENT_INVALID",
@@ -613,8 +638,13 @@ export class WorkItemService {
     return parent;
   }
 
-  private requireRootOwner(workItemId: string, binding: ResolvedAgentRuntimeBinding): WorkItem {
-    const item = this.requireVisibleItem(workItemId, binding, false);
+  private requireRootOwner(
+    workItemId: string,
+    binding: ResolvedAgentRuntimeBinding,
+    proof?: MutationAuthorityProof,
+    operation?: "work.history.list",
+  ): WorkItem {
+    const item = this.requireVisibleItem(workItemId, binding, false, proof, operation);
     if (
       item.kind !== "root"
       || item.rootSessionId !== binding.actorSessionId
@@ -633,15 +663,52 @@ export class WorkItemService {
     workItemId: string,
     binding: ResolvedAgentRuntimeBinding,
     allowRootCoordinator: boolean,
+    proof?: MutationAuthorityProof,
+    operation?: "work.get" | "work.history.list" | "work.aggregation.get" | "work.aggregation.list",
   ): WorkItem {
     const item = this.deps.storage.get(workItemId);
     if (!item) throw new WorkItemNotFoundError(workItemId);
     const actor = this.requireSession(binding.actorSessionId);
+    if (proof && isAgentMutationProof(proof)) {
+      this.requireAgentProof(proof, binding, operation);
+      const relations = new Set<string>();
+      if (item.targetSessionId === actor.sessionId) relations.add("assigned");
+      if (item.creatorSessionId === actor.sessionId) relations.add("created");
+      if (
+        item.kind === "root"
+        && item.rootSessionId === actor.sessionId
+        && item.creatorSessionId === actor.sessionId
+        && item.targetSessionId === actor.sessionId
+      ) relations.add("owned_root");
+      if (
+        item.rootSessionId === actor.rootSessionId
+        && actor.rootSessionId === actor.sessionId
+        && actor.parentSessionId === null
+        && actor.delegationDepth === 0
+      ) relations.add("root_member");
+      const scope = proof.resolvedScope;
+      if (
+        scope.resourceKind !== "work_item"
+        || scope.resourceId !== item.id
+        || scope.rootSessionId !== item.rootSessionId
+        || scope.ownerId !== item.targetSessionId
+        || !relations.has(scope.relation)
+      ) {
+        throw new WorkItemAuthorityError("The Work Item authority proof does not match the canonical resource scope.", {
+          workItemId,
+          actorSessionId: actor.sessionId,
+        });
+      }
+      return item;
+    }
     const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
     const visible = item.rootSessionId === actorBinding.rootSessionId && (
       item.creatorSessionId === actor.sessionId
       || item.targetSessionId === actor.sessionId
-      || (allowRootCoordinator && actorBinding.sessionRole === "overall-coordinator")
+      || (allowRootCoordinator
+        && actorBinding.rootSessionId === actor.sessionId
+        && actorBinding.parentSessionId === null
+        && actorBinding.delegationDepth === 0)
     );
     if (!visible) {
       throw new WorkItemAuthorityError("The actor Session cannot access this Work Item.", {
@@ -650,6 +717,44 @@ export class WorkItemService {
       });
     }
     return item;
+  }
+
+  private requireAgentProof(
+    proof: MutationAdmissionProof,
+    binding: ResolvedAgentRuntimeBinding,
+    operation?: "work.get" | "work.history.list" | "work.aggregation.get" | "work.aggregation.list",
+  ): void {
+    if (
+      proof.principal.actorSessionId !== binding.actorSessionId
+      || (operation !== undefined && (proof.operation !== operation || proof.action !== operation))
+    ) {
+      throw new WorkItemAuthorityError("The Work Item authority proof does not match the actor or operation.", {
+        actorSessionId: binding.actorSessionId,
+      });
+    }
+  }
+
+  private requireListProof(
+    proof: MutationAdmissionProof,
+    scope: WorkItemListScope,
+  ): void {
+    const resolvedScope = proof.resolvedScope;
+    const expectedVisibility = resolvedScope.relation === "root_member" ? "root" : "target";
+    if (
+      proof.operation !== "work.list"
+      || proof.action !== "work.list"
+      || proof.principal.actorSessionId !== scope.actorSessionId
+      || resolvedScope.resourceKind !== "work_item"
+      || resolvedScope.resourceId !== null
+      || resolvedScope.rootSessionId !== scope.rootSessionId
+      || resolvedScope.ownerId !== scope.actorSessionId
+      || (resolvedScope.relation !== "root_member" && resolvedScope.relation !== "assigned")
+      || scope.visibility !== expectedVisibility
+    ) {
+      throw new WorkItemAuthorityError("The Work Item list authority proof does not match the requested scope.", {
+        actorSessionId: scope.actorSessionId,
+      });
+    }
   }
 
   private requireSession(sessionId: string): SessionTurnAuthoritySession {

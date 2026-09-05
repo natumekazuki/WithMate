@@ -1,3 +1,5 @@
+import { createTrustedSessionInteractionResponder } from "./session-interaction-service.js";
+import { SESSION_AUTHORITY_MAPPING_REVISION, type TrustedMutationProof } from "../src/session-authority.js";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -163,6 +165,7 @@ import {
   validateSessionExecutionTurnRequest,
 } from "./session-execution-turn-request.js";
 import { cancelSessionRun } from "./session-run-cancellation.js";
+import { SessionAuthorityService } from "./session-authority-service.js";
 import { SessionExternalApplicationService } from "./session-external-application-service.js";
 import { WorkItemStorageV6 } from "./work-item-storage-v6.js";
 import { WorkItemService } from "./work-item-service.js";
@@ -546,6 +549,7 @@ let sessionTranscriptStorage: SessionTranscriptStorageV6 | null = null;
 let sessionTranscriptService: SessionTranscriptService | null = null;
 let sessionCrudService: SessionCrudService | null = null;
 let sessionFileService: SessionFileService | null = null;
+let sessionAuthorityService: SessionAuthorityService | null = null;
 let sessionExternalApplicationService: SessionExternalApplicationService | null = null;
 let workItemStorage: WorkItemStorageV6 | null = null;
 let workItemService: WorkItemService | null = null;
@@ -3054,7 +3058,6 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         if (session.sessionKind !== "default" || !session.roleBinding) return [];
         return requireCoordinationEventService().listPendingResponsesForSession(
           session.id,
-          session.roleBinding,
         );
       },
       queueCompletedTurnAppraisal: async ({
@@ -3195,6 +3198,7 @@ async function startSessionExternalRuntimeBestEffort(): Promise<void> {
     return;
   }
   try {
+    requireSessionAuthorityService();
     sessionExternalRuntime = await startSessionExternalRuntime({
       applicationInstanceId,
       buildChannel: runtimeBuildChannel,
@@ -3494,9 +3498,21 @@ function requireSessionExecutionService(): SessionExecutionService {
   return sessionExecutionService;
 }
 
+function requireSessionAuthorityService(): SessionAuthorityService {
+  if (!sessionAuthorityService) {
+    if (!dbPath) throw new Error("Session authority requires the initialized database.");
+    sessionAuthorityService = new SessionAuthorityService({
+      databasePath: dbPath,
+      getExecutionGeneration: (sessionId, providerId) => agentRuntimeBindingRegistry.getExecutionGeneration(sessionId, providerId),
+    });
+  }
+  return sessionAuthorityService;
+}
+
 function requireSessionExternalApplicationService(): SessionExternalApplicationService {
   if (!sessionExternalApplicationService) {
     sessionExternalApplicationService = new SessionExternalApplicationService({
+      authorityService: requireSessionAuthorityService(),
       executionService: requireSessionExecutionService(),
       crudService: requireSessionCrudService(),
       getTurnAuthoritySession: (sessionId) => requireSessionStorageV6().getSessionTurnAuthority(sessionId),
@@ -3634,6 +3650,15 @@ function listRootWorkItemHistory(sessionId: string, limit: number): readonly Wor
   return collectRecentWorkItemHistory(events, SESSION_RUNTIME_MAX_RESPONSE_BYTES);
 }
 
+function createTrustedRootWorkItemProof(item: RootWorkItem, operation: "work.revise" | "work.history.append"): TrustedMutationProof {
+  return {
+    principal: { kind: "user", receiptId: crypto.randomUUID() },
+    operation, action: operation, mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    resolvedScope: { resourceKind: "work_item", resourceId: item.id, rootSessionId: item.rootSessionId, ownerKind: "session", ownerId: item.targetSessionId, relation: "owned_root" },
+    effectClass: "local_mutation", grantId: null, grantRevision: null, evaluatedAt: new Date().toISOString(),
+  };
+}
+
 function reviseRootWorkItem(
   sessionId: string,
   request: RootWorkItemRevisionRequest,
@@ -3644,7 +3669,7 @@ function reviseRootWorkItem(
     ...request,
     workItemId: item.id,
   });
-  const revised = requireWorkItemService().revise(input, binding);
+  const revised = requireWorkItemService().revise(input, binding, createTrustedRootWorkItemProof(item, "work.revise"));
   if (!isRootWorkItem(revised)) throw new Error("Root WorkItem revision returned an invalid item kind.");
   return revised;
 }
@@ -3659,7 +3684,7 @@ function appendRootWorkItemHistory(
     ...request,
     workItemId: item.id,
   });
-  const revised = requireWorkItemService().appendHistory(input, binding);
+  const revised = requireWorkItemService().appendHistory(input, binding, createTrustedRootWorkItemProof(item, "work.history.append"));
   if (!isRootWorkItem(revised)) throw new Error("Root WorkItem history append returned an invalid item kind.");
   return revised;
 }
@@ -4482,6 +4507,8 @@ function closeSessionExecutionRuntime(): void {
   sessionCrudService = null;
   sessionFileService = null;
   sessionExternalApplicationService = null;
+  sessionAuthorityService?.close();
+  sessionAuthorityService = null;
   activeSessionExecutionIds.clear();
   canceledSessionExecutionIds.clear();
 }
@@ -4503,7 +4530,6 @@ function requireCoordinationEventService(): CoordinationEventService {
     coordinationEventService = new CoordinationEventService({
       storage: coordinationEventStorage,
       publishCommitted: broadcastCoordinationEventsChanged,
-      getSessionRoleBinding: (sessionId) => requireSessionStorageV6().getSessionRoleBinding(sessionId),
     });
   }
   return coordinationEventService;
@@ -5162,7 +5188,7 @@ function resolveLiveApproval(sessionId: string, requestId: string, decision: Liv
   const executionId = activeSessionExecutionIds.get(sessionId);
   const liveRequestId = getLiveSessionRun(sessionId)?.approvalRequest?.requestId;
   if (tryRespondToExternalApprovalInteraction({ sessionId, executionId, requestId, liveRequestId }, decision, {
-    interactionService: requireSessionInteractionService(),
+    trustedResponder: createTrustedSessionInteractionResponder(requireSessionInteractionService()),
     currentTimestamp: () => new Date().toISOString(),
     resolveIdempotencyExpiresAt: (respondedAt) =>
       new Date(new Date(respondedAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
@@ -5188,7 +5214,7 @@ function resolveLiveElicitation(
   const executionId = activeSessionExecutionIds.get(sessionId);
   const liveRequestId = getLiveSessionRun(sessionId)?.elicitationRequest?.requestId;
   if (tryRespondToExternalElicitationInteraction({ sessionId, executionId, requestId, liveRequestId }, response, {
-    interactionService: requireSessionInteractionService(),
+    trustedResponder: createTrustedSessionInteractionResponder(requireSessionInteractionService()),
     currentTimestamp: () => new Date().toISOString(),
     resolveIdempotencyExpiresAt: (respondedAt) =>
       new Date(new Date(respondedAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),

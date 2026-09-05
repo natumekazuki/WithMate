@@ -1,5 +1,9 @@
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { backfillBaselineSessionAuthority } from "./session-authority-storage.js";
+import { ensureResourceHistorySchema } from "./resource-history-schema.js";
+import { ensureSessionInteractionAuthoritySchema } from "./session-interaction-authority-schema.js";
+import { ensureCoordinationEventAuthoritySchema } from "./coordination-event-authority-schema.js";
 
 import {
   WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
@@ -124,6 +128,18 @@ const REQUIRED_V6_INDEXES = [
 ] as const;
 
 const REQUIRED_V6_TABLE_COLUMNS = {
+  session_authority_operation_registry_v6: ["operation", "mapping_revision", "action", "resource_kind", "scope_source", "effect_class", "decision_class"],
+  session_authority_grants_v6: ["grant_id", "root_session_id", "issuer_kind", "issuer_id", "issuer_grant_id", "issuer_grant_revision", "grantee_session_id", "actions_json", "resource_kind", "relation_selector", "target_session_roles_json", "effect_class", "delegable", "child_ceiling_json", "issued_at", "effective_at", "expires_at", "revoked_at", "revision", "mapping_revision", "provenance_json"],
+  session_authority_grant_events_v6: ["event_id", "grant_id", "event_kind", "grant_revision", "principal_kind", "actor_session_id", "payload_json", "occurred_at"],
+  resource_event_headers_v6: ["event_id", "resource_kind", "resource_id", "root_id", "owner_kind", "owner_id", "event_kind", "resource_revision", "principal_kind", "actor_session_id", "grant_id", "grant_revision", "operation_id", "idempotency_key_fingerprint", "occurred_at", "committed_at", "supersedes_event_id", "payload_schema_revision", "effect"],
+  session_resource_events_v6: ["event_id", "session_id", "revision", "event_kind", "payload_json"],
+  session_execution_events_v6: ["event_id", "execution_id", "session_id", "revision", "event_kind", "payload_json"],
+  session_file_write_events_v6: ["event_id", "operation_id", "session_id", "revision", "event_kind", "payload_json"],
+  session_transcript_export_events_v6: ["event_id", "operation_id", "session_id", "revision", "event_kind", "payload_json"],
+  work_item_aggregation_events_v6: ["event_id", "parent_work_item_id", "child_work_item_id", "aggregate_revision", "event_kind", "payload_json"],
+  session_interaction_events_v6: ["id", "interaction_id", "session_id", "execution_id", "interaction_revision", "event_kind", "decision_class", "principal_kind", "actor_session_id", "projection_json", "occurred_at", "committed_at"],
+  coordination_event_decision_class_registry_v6: ["kind", "decision_class", "mapping_revision"],
+  coordination_event_user_receipts_v6: ["receipt_id", "user_id", "event_id", "event_revision", "response_kind", "option_id", "note", "created_at"],
   app_settings: ["setting_key", "setting_value", "updated_at"],
   prompt_templates: ["id", "name", "prompt", "created_at", "updated_at"],
   model_catalog_revisions: ["revision", "source", "imported_at", "is_active"],
@@ -270,6 +286,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "updated_at",
   ],
   session_interactions_v6: [
+    "decision_class", "revision", "response_principal_kind", "response_actor_session_id",
     "sequence",
     "id",
     "execution_id",
@@ -285,6 +302,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "updated_at",
   ],
   session_interaction_idempotency_v6: [
+    "principal_kind", "principal_id", "result_revision",
     "operation",
     "idempotency_key",
     "request_fingerprint",
@@ -293,21 +311,25 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "expires_at",
   ],
   coordination_events_v6: [
+    "decision_class",
     "sequence", "id", "actor_session_id", "session_role", "role_contract_revision",
     "root_session_id", "parent_session_id", "delegation_depth", "kind", "summary",
     "payload_json", "execution_id", "target_session_id", "corrected_event_id", "options_json",
     "created_at",
   ],
   coordination_event_actions_v6: [
+    "principal_kind", "receipt_id",
     "sequence", "id", "event_id", "action_type", "actor_type", "actor_session_id",
     "option_id", "note", "related_event_id", "created_at",
   ],
   coordination_event_idempotency_v6: [
-    "operation", "principal_session_id", "idempotency_key", "request_fingerprint",
-    "result_event_id", "target_event_id", "created_at",
+    "operation", "principal_kind", "principal_id", "idempotency_key", "request_fingerprint",
+    "result_event_id", "target_event_id", "result_revision", "operation_id", "created_at",
   ],
   session_transcript_export_idempotency_v6: [
     "operation",
+    "principal_kind",
+    "principal_id",
     "idempotency_key",
     "request_fingerprint",
     "session_id",
@@ -318,6 +340,8 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "byte_length",
     "output_device",
     "output_inode",
+    "authority_proof_json",
+    "operation_id",
     "result_json",
     "created_at",
     "expires_at",
@@ -477,7 +501,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "reason",
     "created_at",
   ],
-} as const satisfies Record<(typeof REQUIRED_V6_TABLES)[number], readonly string[]>;
+} as const satisfies Record<(typeof REQUIRED_V6_TABLES)[number], readonly string[]> & Record<string, readonly string[]>;
 
 export function resolveV6FreshDatabasePath(userDataPath: string): string {
   return join(userDataPath, APP_DATABASE_V6_FILENAME);
@@ -619,9 +643,13 @@ function hasValidCoordinationEventSchemaIfPresent(db: DatabaseSync): boolean {
   const present = tables.filter((tableName) => tableExists(db, tableName));
   if (present.length === 0) return true;
   if (present.length !== tables.length) return false;
+  const authorityMigrated = tableColumnNames(db, "coordination_event_idempotency_v6").has("principal_kind");
   for (const tableName of tables) {
-    const expected = REQUIRED_V6_TABLE_COLUMNS[tableName];
     const actual = tableColumnNames(db, tableName);
+    const expected = tableName === "coordination_event_idempotency_v6" && !actual.has("principal_kind")
+      ? ["operation", "principal_session_id", "idempotency_key", "request_fingerprint", "result_event_id", "target_event_id", "created_at"]
+      : REQUIRED_V6_TABLE_COLUMNS[tableName].filter((column) => authorityMigrated
+        || !["decision_class", "principal_kind", "receipt_id"].includes(column));
     if (!expected.every((column) => actual.has(column))) return false;
   }
   const eventSql = tableSql(db, "coordination_events_v6");
@@ -648,7 +676,9 @@ function hasValidCoordinationEventSchemaIfPresent(db: DatabaseSync): boolean {
     && actionSql.includes("(action_type = 'superseded') = (related_event_id IS NOT NULL)")
     && normalizedActionSql.includes("action_type <> 'consumed' OR ( actor_type = 'session' AND actor_session_id IS NOT NULL AND option_id IS NULL AND note IS NULL AND related_event_id IS NULL )")
     && idempotencySql.includes("operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.consume', 'coordination.event.cancel', 'coordination.event.correct')")
-    && idempotencySql.includes("PRIMARY KEY (principal_session_id, idempotency_key)")
+    && (tableColumnNames(db, "coordination_event_idempotency_v6").has("principal_kind")
+      ? idempotencySql.includes("PRIMARY KEY (principal_kind, principal_id, idempotency_key)")
+      : idempotencySql.includes("PRIMARY KEY (principal_session_id, idempotency_key)"))
     && hasForeignKey(db, "coordination_events_v6", "actor_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_event_actions_v6", "event_id", "coordination_events_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_event_idempotency_v6", "result_event_id", "coordination_events_v6", "id", "CASCADE");
@@ -1451,6 +1481,8 @@ export const CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL = `
 export const CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_file_write_idempotency_v6 (
     operation TEXT NOT NULL CHECK (operation = 'session.files.write_text'),
+    principal_kind TEXT NOT NULL CHECK (principal_kind IN ('agent', 'user', 'system', 'legacy_unknown')),
+    principal_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     request_fingerprint TEXT NOT NULL,
     session_id TEXT NOT NULL,
@@ -1463,6 +1495,8 @@ export const CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL = `
     file_inode TEXT,
     target_precondition_json TEXT CHECK (target_precondition_json IS NULL OR json_valid(target_precondition_json)),
     result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+    authority_proof_json TEXT CHECK (authority_proof_json IS NULL OR json_valid(authority_proof_json)),
+    operation_id TEXT,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     CHECK (
@@ -1475,7 +1509,7 @@ export const CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL = `
         AND (state <> 'pending' OR target_precondition_json IS NOT NULL)
       )
     ),
-    PRIMARY KEY (operation, idempotency_key),
+    PRIMARY KEY (operation, principal_kind, principal_id, idempotency_key),
     FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
   );
 
@@ -1824,12 +1858,14 @@ export const CREATE_V6_SESSION_EXECUTION_ORIGINS_TABLE_SQL = `
 export const CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_execution_idempotency_v6 (
     operation TEXT NOT NULL CHECK (operation IN ('turn.run', 'turn.enqueue', 'turn.cancel')),
+    principal_kind TEXT NOT NULL CHECK (principal_kind IN ('agent', 'user', 'system', 'legacy_unknown')),
+    principal_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     request_fingerprint TEXT NOT NULL,
     execution_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    PRIMARY KEY (operation, idempotency_key),
+    PRIMARY KEY (operation, principal_kind, principal_id, idempotency_key),
     FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE CASCADE
   );
 
@@ -2048,6 +2084,8 @@ export const CREATE_V6_COORDINATION_EVENT_TABLES_SQL = `
 export const CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_transcript_export_idempotency_v6 (
     operation TEXT NOT NULL CHECK (operation = 'transcript.export'),
+    principal_kind TEXT NOT NULL CHECK (principal_kind IN ('agent', 'user', 'system', 'legacy_unknown')),
+    principal_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     request_fingerprint TEXT NOT NULL,
     session_id TEXT NOT NULL,
@@ -2060,9 +2098,11 @@ export const CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL = `
     output_inode TEXT,
     target_precondition_json TEXT CHECK (target_precondition_json IS NULL OR json_valid(target_precondition_json)),
     result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+    authority_proof_json TEXT CHECK (authority_proof_json IS NULL OR json_valid(authority_proof_json)),
+    operation_id TEXT,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    PRIMARY KEY (operation, idempotency_key),
+    PRIMARY KEY (operation, principal_kind, principal_id, idempotency_key),
     FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
     CHECK ((output_sha256 IS NULL) = (byte_length IS NULL)),
     CHECK ((output_device IS NULL) = (output_inode IS NULL)),
@@ -2081,7 +2121,14 @@ export const CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL = `
 `;
 
 function ensureSessionExecutionIdempotencyOperations(db: DatabaseSync): void {
-  if (tableSql(db, "session_execution_idempotency_v6").includes("'turn.cancel'")) {
+  const columns = tableColumnNames(db, "session_execution_idempotency_v6");
+  const sql = tableSql(db, "session_execution_idempotency_v6");
+  if (
+    sql.includes("'turn.cancel'")
+    && columns.has("principal_kind")
+    && columns.has("principal_id")
+    && sql.includes("PRIMARY KEY (operation, principal_kind, principal_id, idempotency_key)")
+  ) {
     return;
   }
   db.exec(`
@@ -2092,6 +2139,8 @@ function ensureSessionExecutionIdempotencyOperations(db: DatabaseSync): void {
   db.exec(`
     INSERT INTO session_execution_idempotency_v6 (
       operation,
+      principal_kind,
+      principal_id,
       idempotency_key,
       request_fingerprint,
       execution_id,
@@ -2100,6 +2149,8 @@ function ensureSessionExecutionIdempotencyOperations(db: DatabaseSync): void {
     )
     SELECT
       operation,
+      ${columns.has("principal_kind") ? "principal_kind" : "'legacy_unknown'"},
+      ${columns.has("principal_id") ? "principal_id" : "'migration-unknown'"},
       idempotency_key,
       request_fingerprint,
       execution_id,
@@ -2911,6 +2962,9 @@ function ensureSessionFileWriteIdempotencyStates(db: DatabaseSync): void {
   if (
     tableSql(db, "session_file_write_idempotency_v6").includes("'rejected'")
     && ["output_sha256", "byte_length", "file_device", "file_inode", "target_precondition_json"].every((column) => columns.has(column))
+    && columns.has("principal_kind")
+    && columns.has("principal_id")
+    && tableSql(db, "session_file_write_idempotency_v6").includes("PRIMARY KEY (operation, principal_kind, principal_id, idempotency_key)")
   ) {
     return;
   }
@@ -2925,12 +2979,15 @@ function ensureSessionFileWriteIdempotencyStates(db: DatabaseSync): void {
     : "0";
   db.exec(`
     INSERT INTO session_file_write_idempotency_v6 (
-      operation, idempotency_key, request_fingerprint, session_id, relative_path,
+      operation, principal_kind, principal_id, idempotency_key, request_fingerprint, session_id, relative_path,
       temp_name, state, output_sha256, byte_length, file_device, file_inode, target_precondition_json,
-      result_json, created_at, expires_at
+      result_json, authority_proof_json, operation_id, created_at, expires_at
     )
     SELECT
-      operation, idempotency_key, request_fingerprint, session_id, relative_path,
+      operation,
+      ${columns.has("principal_kind") ? "principal_kind" : "'legacy_unknown'"},
+      ${columns.has("principal_id") ? "principal_id" : "'migration-unknown'"},
+      idempotency_key, request_fingerprint, session_id, relative_path,
       temp_name, CASE WHEN ${legacyPendingHasProof} THEN 'rejected' ELSE state END,
       ${columns.has("output_sha256")
         ? (columns.has("target_precondition_json") ? "output_sha256" : "CASE WHEN state = 'pending' THEN NULL ELSE output_sha256 END")
@@ -2952,6 +3009,8 @@ function ensureSessionFileWriteIdempotencyStates(db: DatabaseSync): void {
         'details', json_object('reason', 'legacy_publish_proof_missing_target_precondition'),
         'effect', 'indeterminate'
       ) ELSE result_json END,
+      ${columns.has("authority_proof_json") ? "authority_proof_json" : "NULL"},
+      ${columns.has("operation_id") ? "operation_id" : "NULL"},
       created_at, expires_at
     FROM session_file_write_idempotency_v6_legacy;
     DROP TABLE session_file_write_idempotency_v6_legacy;
@@ -3000,6 +3059,45 @@ function ensureSessionTranscriptExportProofColumns(db: DatabaseSync): void {
     WHERE state = 'pending'
       AND (output_device IS NULL OR output_inode IS NULL OR target_precondition_json IS NULL)
   `);
+  ensureSessionTranscriptExportPrincipalScope(db);
+}
+
+function ensureSessionTranscriptExportPrincipalScope(db: DatabaseSync): void {
+  const columns = tableColumnNames(db, "session_transcript_export_idempotency_v6");
+  const sql = tableSql(db, "session_transcript_export_idempotency_v6");
+  if (
+    columns.has("principal_kind")
+    && columns.has("principal_id")
+    && sql.includes("PRIMARY KEY (operation, principal_kind, principal_id, idempotency_key)")
+  ) {
+    return;
+  }
+  db.exec(`
+    ALTER TABLE session_transcript_export_idempotency_v6
+      RENAME TO session_transcript_export_idempotency_v6_legacy;
+    DROP INDEX IF EXISTS idx_v6_session_transcript_export_idempotency_expires;
+  `);
+  db.exec(CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL);
+  db.exec(`
+    INSERT INTO session_transcript_export_idempotency_v6 (
+      operation, principal_kind, principal_id, idempotency_key, request_fingerprint,
+      session_id, relative_path, temp_name, state, output_sha256, byte_length,
+      output_device, output_inode, target_precondition_json, result_json,
+      authority_proof_json, operation_id, created_at, expires_at
+    )
+    SELECT
+      operation,
+      ${columns.has("principal_kind") ? "principal_kind" : "'legacy_unknown'"},
+      ${columns.has("principal_id") ? "principal_id" : "'migration-unknown'"},
+      idempotency_key, request_fingerprint, session_id, relative_path, temp_name, state,
+      output_sha256, byte_length, output_device, output_inode, target_precondition_json, result_json,
+      ${columns.has("authority_proof_json") ? "authority_proof_json" : "NULL"},
+      ${columns.has("operation_id") ? "operation_id" : "NULL"},
+      created_at, expires_at
+    FROM session_transcript_export_idempotency_v6_legacy;
+    DROP TABLE session_transcript_export_idempotency_v6_legacy;
+  `);
+  db.exec(CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL);
 }
 
 function runWithSavepoint(db: DatabaseSync, savepointName: string, run: () => void): void {
@@ -3028,6 +3126,7 @@ function ensureSessionCrudIdempotencyPrincipalScope(db: DatabaseSync): void {
     columns.has("principal_session_id")
     && sql.includes("PRIMARY KEY (operation, principal_session_id, idempotency_key)")
   ) {
+    namespaceLegacyPrincipalKeys(db, "session_crud_idempotency_v6");
     return;
   }
   db.exec(`
@@ -3038,7 +3137,7 @@ function ensureSessionCrudIdempotencyPrincipalScope(db: DatabaseSync): void {
       operation, principal_session_id, idempotency_key, request_fingerprint,
       session_id, result_json, created_at, expires_at
     )
-    SELECT operation, '', idempotency_key, request_fingerprint,
+    SELECT operation, 'legacy_unknown:migration-unknown', idempotency_key, request_fingerprint,
       session_id, result_json, created_at, expires_at
     FROM session_crud_idempotency_v6_legacy;
     DROP TABLE session_crud_idempotency_v6_legacy;
@@ -3057,6 +3156,18 @@ function ensureWorkItemIdempotencyExpiry(db: DatabaseSync): void {
       WHERE strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+24 hours') IS NOT NULL;
     `);
   }
+}
+
+function namespaceLegacyPrincipalKeys(db: DatabaseSync, tableName: string): void {
+  if (!tableExists(db, tableName) || !tableColumnNames(db, tableName).has("principal_session_id")) return;
+  db.exec(`
+    UPDATE ${tableName}
+    SET principal_session_id = 'legacy_unknown:' || principal_session_id
+    WHERE principal_session_id NOT LIKE 'agent:%'
+      AND principal_session_id NOT LIKE 'user:%'
+      AND principal_session_id NOT LIKE 'system:%'
+      AND principal_session_id NOT LIKE 'legacy_unknown:%'
+  `);
 }
 
 function rebuildWorkItemContractV1ToV2(db: DatabaseSync): void {
@@ -3368,6 +3479,8 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   ensureSessionCrudIdempotencyPrincipalScope(db);
   ensureWorkItemIdempotencyExpiry(db);
   upgradeWorkItemContractV2(db);
+  namespaceLegacyPrincipalKeys(db, "work_item_idempotency_v6");
+  namespaceLegacyPrincipalKeys(db, "work_item_aggregation_idempotency_v6");
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
@@ -3684,7 +3797,9 @@ function upgradeLegacyCoordinationEventActionSchema(db: DatabaseSync): void {
   const hasSupportedLegacyIdempotency = (
     idempotencySql.includes("operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.cancel', 'coordination.event.correct')")
       || idempotencySql.includes("operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.consume', 'coordination.event.cancel', 'coordination.event.correct')")
-  ) && idempotencySql.includes("PRIMARY KEY (principal_session_id, idempotency_key)");
+  ) && (tableColumnNames(db, "coordination_event_idempotency_v6").has("principal_kind")
+      ? idempotencySql.includes("PRIMARY KEY (principal_kind, principal_id, idempotency_key)")
+      : idempotencySql.includes("PRIMARY KEY (principal_session_id, idempotency_key)"));
   if (!hasSupportedLegacyActions || !hasSupportedLegacyIdempotency) return;
 
   db.exec(`
@@ -3728,5 +3843,11 @@ export function ensureV6Schema(db: DatabaseSync): void {
       new Error("Session Role binding schema or data failed pre-migration validation."),
     );
   }
-  runWithSavepoint(db, "ensure_v6_schema", () => ensureV6SchemaUnsafe(db));
+  runWithSavepoint(db, "ensure_v6_schema", () => {
+    ensureV6SchemaUnsafe(db);
+    backfillBaselineSessionAuthority(db, new Date().toISOString());
+    ensureResourceHistorySchema(db);
+    ensureSessionInteractionAuthoritySchema(db);
+    ensureCoordinationEventAuthoritySchema(db);
+  });
 }

@@ -383,6 +383,7 @@ export default function CoordinationApp() {
     try {
       const event = await api.resolveCoordinationEvent({
         eventId,
+        expectedRevision: selectedEvent.revision,
         ...(optionId ? { optionId } : { note }),
         idempotencyKey,
       });
@@ -420,6 +421,7 @@ export default function CoordinationApp() {
     try {
       const event = await api.cancelCoordinationEvent({
         eventId,
+        expectedRevision: selectedEvent.revision,
         idempotencyKey,
       });
       if (detailGenerationAtStart !== detailGeneration.current

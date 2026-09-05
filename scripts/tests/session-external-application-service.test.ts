@@ -6,14 +6,24 @@ import type { SessionExecution } from "../../src/session-execution.js";
 import type { SessionInteraction } from "../../src/session-interaction.js";
 import type { WorkItem } from "../../src/work-item.js";
 import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  SESSION_AUTHORITY_OPERATION_DEFINITIONS,
+  SessionAuthorityError,
+  type MutationAdmissionProof,
+} from "../../src/session-authority.js";
+import {
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SessionRuntimeProjectionLimitError,
   createSessionRuntimeResult,
 } from "../../src/session-external-runtime-contract.js";
-import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
+import {
+  SessionExternalApplicationService as RuntimeSessionExternalApplicationService,
+  type SessionExternalApplicationServiceDeps,
+} from "../../src-electron/session-external-application-service.js";
 import { AgentRuntimeBindingRegistry, type ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { SessionCrudError } from "../../src-electron/session-crud-service.js";
 import { SessionFileServiceError } from "../../src-electron/session-file-service.js";
+import { SessionInteractionContinuationSettlementError } from "../../src-electron/session-interaction-service.js";
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
 import { CoordinationEventPublicationError } from "../../src-electron/coordination-event-service.js";
 import { SessionExecutionIdempotencyConflictError } from "../../src-electron/session-execution-storage-v6.js";
@@ -33,6 +43,7 @@ const execution: SessionExecution = {
 };
 
 const mutationInput = {
+  expectedContainerRevision: 1,
   sessionId: "session-1",
   catalogRevision: 4,
   idempotencyKey: "key-1",
@@ -59,6 +70,58 @@ const actorBinding: ResolvedAgentRuntimeBinding = {
   createdAt: "2026-08-11T00:00:00.000Z",
   expiresAt: null,
 };
+
+function admittedProof(
+  binding: ResolvedAgentRuntimeBinding,
+  operation: keyof typeof SESSION_AUTHORITY_OPERATION_DEFINITIONS,
+): MutationAdmissionProof {
+  const definition = SESSION_AUTHORITY_OPERATION_DEFINITIONS[operation];
+  return {
+    principal: {
+      kind: "agent",
+      agent: "session-runtime",
+      actorSessionId: binding.actorSessionId,
+      runtimeGeneration: binding.executionGeneration,
+    },
+    providerId: binding.providerId,
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: definition.action,
+    resolvedScope: {
+      resourceKind: definition.resourceKind,
+      resourceId: binding.actorSessionId,
+      rootSessionId: binding.actorSessionId,
+      ownerKind: "session",
+      ownerId: binding.actorSessionId,
+      relation: "self",
+    },
+    effectClass: definition.effectClass,
+    grantId: `grant-${binding.actorSessionId}-${operation}`,
+    grantRevision: 1,
+    evaluatedAt: "2026-08-11T00:00:00.000Z",
+  };
+}
+
+const defaultAuthorityService: SessionExternalApplicationServiceDeps["authorityService"] = {
+  authorize(binding, operation, input) {
+    return { input, proof: admittedProof(binding, operation) };
+  },
+  canSessionAct() {
+    return true;
+  },
+};
+
+class SessionExternalApplicationService extends RuntimeSessionExternalApplicationService {
+  constructor(
+    deps: Omit<SessionExternalApplicationServiceDeps, "authorityService"> &
+      Partial<Pick<SessionExternalApplicationServiceDeps, "authorityService">>,
+  ) {
+    super({
+      ...deps,
+      authorityService: deps.authorityService ?? defaultAuthorityService,
+    });
+  }
+}
 
 const resolveTurnInitiator = async (actorSessionId: string) => ({
   kind: "session" as const,
@@ -114,6 +177,14 @@ function executeBound(
   return service.execute(operation, input, binding);
 }
 
+// @test-value v1
+// kind = "contract"
+// claim = "session.selfはauthority admission後にcanonical actor Sessionのcurrent revisionをpublic resultへ返す"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "caller指定identityを返す、またはoptimistic concurrencyに必要なSession revisionを公開しない"
+// scope = "SessionExternalApplicationService session.self projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("SESSION-SELF-01: application serviceはruntime bindingのactor Sessionだけを公開する", async () => {
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator,
@@ -123,6 +194,7 @@ test("SESSION-SELF-01: application serviceはruntime bindingのactor Sessionだ�
       async get(sessionId) {
         return {
           sessionId,
+          revision: 1,
           sessionRole: "overall-coordinator",
           roleContractRevision: 1,
           rootSessionId: sessionId,
@@ -156,6 +228,7 @@ test("SESSION-SELF-01: application serviceはruntime bindingのactor Sessionだ�
   assert.deepEqual(await executeBound(service, "session.self", {}, resolved.binding),
     createSessionRuntimeResult("session.self", {
       sessionId: "session-actor",
+      revision: 1,
       sessionRole: "overall-coordinator",
       roleContractRevision: 1,
       rootSessionId: "session-actor",
@@ -164,6 +237,48 @@ test("SESSION-SELF-01: application serviceはruntime bindingのactor Sessionだ�
     }));
   const missing = await executeBound(service, "session.self", {}, null);
   assert.equal("error" in missing && missing.error.code, "SESSION_BINDING_REQUIRED");
+});
+
+// @test-value v1
+// kind = "security"
+// claim = "authorityが拒否したrequestはdomain serviceへdispatchされずstableなnot_applied errorになる"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "拒否済みoperationがmutation serviceへ到達する、またはauthority failureがgeneric errorへ潰れる"
+// scope = "SessionExternalApplicationService authority admission"
+// lifecycle = "permanent"
+// @end-test-value
+test("AUTHORITY-ADMISSION-01: authority拒否はdispatch前にstable errorへ収束する", async () => {
+  let mutationInvoked = false;
+  const service = new SessionExternalApplicationService({
+    authorityService: {
+      authorize(_binding, operation) {
+        throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "denied", { operation });
+      },
+      canSessionAct() {
+        return false;
+      },
+    },
+    resolveTurnInitiator,
+    executionService: {} as never,
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("unused"); },
+      async get() { throw new Error("unused"); },
+      async rename() { mutationInvoked = true; throw new Error("must not run"); },
+    },
+  });
+
+  const response = await executeBound(service, "session.rename", {
+    expectedRevision: 1,
+    sessionId: "session-1",
+    title: "Renamed",
+    idempotencyKey: "rename-1",
+  });
+
+  assert.equal(mutationInvoked, false);
+  assert.equal("error" in response && response.error.code, "AUTHORITY_FORBIDDEN");
+  assert.equal("error" in response && response.error.effect, "not_applied");
+  assert.equal("error" in response && response.error.details.operation, "session.rename");
 });
 
 test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable errorを保つ", async () => {
@@ -199,12 +314,20 @@ test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable e
   assert.equal("error" in getResponse && getResponse.error.effect, "not_applied");
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "Coordination createはexpected container revisionを保持してauthority admission後のserviceへ渡す"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "root collectionのstale write検出に必要なrevisionがadapterで欠落する"
+// scope = "SessionExternalApplicationService coordination create dispatch"
+// lifecycle = "permanent"
+// @end-test-value
 test("COORD-ADAPTER-01: Coordination operationを同じapplication serviceへdispatchする", async () => {
   const calls: Array<{ operation: string; input: unknown }> = [];
   const event = {
-    sequence: 1, eventId: "event-1", actorSessionId: "session-actor", sessionRole: "executor" as const,
+    sequence: 1, eventId: "event-1", revision: 1, actorSessionId: "session-actor", sessionRole: "executor" as const,
     roleContractRevision: 1 as const, rootSessionId: "root-1", parentSessionId: "task-1", delegationDepth: 2,
-    kind: "progress" as const, state: "recorded" as const, summary: "started", payload: { summary: "started" },
+    kind: "progress" as const, decisionClass: "deny_or_cancel" as const, state: "recorded" as const, summary: "started", payload: { summary: "started" },
     executionId: null, targetSessionId: null, correctedEventId: null, options: [], actions: [],
     createdAt: "2026-08-21T00:00:00.000Z",
   };
@@ -221,12 +344,20 @@ test("COORD-ADAPTER-01: Coordination operationを同じapplication serviceへdis
       correct(input) { calls.push({ operation: "correct", input }); return { correction: event, superseded: event }; },
     },
   });
-  const input = { kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" };
+  const input = { expectedContainerRevision: 1, kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" };
   const response = await executeBound(service, "coordination.event.create", input);
   assert.equal("result" in response && response.result.eventId, "event-1");
   assert.deepEqual(calls, [{ operation: "create", input }]);
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "revision付きCoordination createがcommit後publication failureになった場合もappliedとevent IDを返す"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "commit済みmutationをretry可能なnot_appliedとして返し重複作成を誘発する"
+// scope = "SessionExternalApplicationService coordination create error mapping"
+// lifecycle = "permanent"
+// @end-test-value
 test("COORD-IDEM-01: commit後publication failureはappliedとevent IDを返す", async () => {
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator,
@@ -237,7 +368,7 @@ test("COORD-IDEM-01: commit後publication failureはappliedとevent IDを返す"
     } as never,
   });
   const response = await executeBound(service, "coordination.event.create", {
-    kind: "progress", payload: { summary: "committed" }, idempotencyKey: "key-1",
+    expectedContainerRevision: 1, kind: "progress", payload: { summary: "committed" }, idempotencyKey: "key-1",
   });
   assert.equal("error" in response && response.error.effect, "applied");
   assert.equal("error" in response && response.error.details.eventId, "event-committed");
@@ -412,6 +543,14 @@ test("SF-EFFECT-01: publish後のtyped file errorをindeterminateとsafe identif
   assert.equal("error" in response && response.error.details.relativePath, "brief.md");
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "revision条件を満たしてcommitしたSession mutationはprojection超過でもappliedとresource IDを返す"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "commit済みcreateまたはrenameをnot_appliedとして返し安全でないretryを誘発する"
+// scope = "SessionExternalApplicationService session mutation projection failure"
+// lifecycle = "permanent"
+// @end-test-value
 test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過をappliedとして返す", async () => {
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator,
@@ -435,6 +574,7 @@ test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過を
   });
 
   const createResponse = await executeBound(service, "session.create", {
+    expectedContainerRevision: 1,
     title: "New Session",
     sessionRole: "executor",
     provider: "codex",
@@ -443,6 +583,7 @@ test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過を
     idempotencyKey: "create-key",
   });
   const renameResponse = await executeBound(service, "session.rename", {
+    expectedRevision: 1,
     sessionId: "session-1",
     title: "Renamed Session",
     idempotencyKey: "rename-key",
@@ -456,6 +597,14 @@ test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過を
   assert.equal("error" in renameResponse && renameResponse.error.details.sessionId, "session-1");
 });
 
+// @test-value v1
+// kind = "regression"
+// claim = "revision付きSession mutationとTurn mutationはfinal envelope超過後もapplied effectとsafe resource IDを保つ"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "commit済みmutationの識別子を失いconsumerが重複mutationをretryする"
+// scope = "SessionExternalApplicationService applied projection limit"
+// lifecycle = "permanent"
+// @end-test-value
 test("APPLIED-ID-01: final response envelope超過でもmutationのeffectとresource IDを保つ", async () => {
   const createResult = createBoundarySessionResult("session-created");
   const renameResult = createBoundarySessionResult("session-1");
@@ -506,6 +655,7 @@ test("APPLIED-ID-01: final response envelope超過でもmutationのeffectとreso
   });
 
   const createResponse = await executeBound(service, "session.create", {
+    expectedContainerRevision: 1,
     title: "New Session",
     sessionRole: "executor",
     provider: "codex",
@@ -514,6 +664,7 @@ test("APPLIED-ID-01: final response envelope超過でもmutationのeffectとreso
     idempotencyKey: "create-key",
   });
   const renameResponse = await executeBound(service, "session.rename", {
+    expectedRevision: 1,
     sessionId: "session-1",
     title: "Renamed Session",
     idempotencyKey: "rename-key",
@@ -569,12 +720,12 @@ test("READ-EFFECT-01: read-only operationの予期しない例外はnot_applied�
 
 // @test-value v1
 // kind = "contract"
-// claim = "runtime catalogはWorkItem revision 2とroot改訂・履歴能力をpublic projectionへ返しexecution副作用を起こさない"
-// oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-// failure_mode = "public consumerがrevision 1 catalogを受け取りRoot WorkItem操作をdiscoverできない、またはreadでexecutionを起動する"
+// claim = "runtime catalogはauthority mapping、Slice 2 budget未実装、既存limit維持のvalidation gapを含むcurrent capabilityを返しexecution副作用を起こさない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "public consumerがauthority分類やbudget未実装をdiscoverできない、無制限stubを成功扱いする、またはreadでexecutionを起動する"
 // scope = "SessionExternalApplicationService runtime.catalog projection"
 // lifecycle = "permanent"
-// distinction = "operation追加だけでなくevent種別、履歴limit、mutation集合を一つのcatalog snapshotで固定する"
+// distinction = "authority operation集合とbudget実装状態を既存のresource limitを含む一つのcatalog snapshotで固定する"
 // @end-test-value
 test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecutionへ触れない", async () => {
   let executionInvoked = false;
@@ -644,9 +795,18 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
     operation: "runtime.catalog",
     result: {
       revision: 7,
+      authority: {
+        mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+        operations: Object.values(SESSION_AUTHORITY_OPERATION_DEFINITIONS),
+        budget: "not_implemented_slice_2",
+        validationGaps: [
+          "Root budget ledger, reservation and admission are not implemented until Slice 2; existing operation limits remain in force.",
+          "Provider-native shell, Git and external tools can bypass the Session Runtime API; grants do not enforce those paths. Provider approval and sandbox policies remain separate boundaries.",
+        ],
+      },
       sessionRoleContractRevision: 1,
       supportedSessionRoles: ["standalone", "overall-coordinator", "task-coordinator", "executor"],
-      allowedChildSessionRoles: {
+      baselineChildSessionRoleTemplates: {
         standalone: [],
         "overall-coordinator": ["task-coordinator", "executor"],
         "task-coordinator": ["executor"],
@@ -991,11 +1151,25 @@ test("EXT-PROVIDER-01: Copilot turn.optionsはpublic custom agentだけを投影
   assert.equal("result" in response && "codexSandboxModes" in response.result, false);
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "admitted Turn mutationはauthority proofとstable actor identityをexecution serviceへ渡しpublic responseからprivate fieldを除く"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// failure_mode = "proofなしでstorage mutationへ進む、actor identityがtargetへ置換される、またはprivate provider fieldを公開する"
+// scope = "SessionExternalApplicationService turn.run dispatch"
+// lifecycle = "permanent"
+// @end-test-value
 test("Session application service persists catalog revision with the turn and returns an allowlisted projection", async () => {
   const runInputs: unknown[] = [];
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    authorityService: {
+      ...defaultAuthorityService,
+      canSessionAct(_actorSessionId, operation) {
+        return operation === "turn.run";
+      },
+    },
     crudService: defaultCommunicationCrudService,
     getTurnAuthoritySession: getDefaultTurnAuthoritySession,
     executionService: {
@@ -1022,6 +1196,8 @@ test("Session application service persists catalog revision with the turn and re
   assert.deepEqual(
     { ...(runInputs[0] as Record<string, unknown>), requestFingerprint: "<fingerprint>" },
     {
+      proof: admittedProof(actorBinding, "turn.run"),
+      expectedContainerRevision: 1,
       sessionId: "session-1",
       request: {
         initiator: await resolveTurnInitiator("session-actor"),
@@ -1598,6 +1774,14 @@ test("ER-01: 副作用前のSession domain errorをstable codeとnot_appliedへ�
   assert.equal("error" in response && response.error.effect, "not_applied");
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "revision付きinteraction responseはanswered interactionと同じexecutionのpublic observationを返し、commit後のprovider continuation不明をapplied effectとresource revision付きで公開する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-agent-visible-interactions.md" }
+// failure_mode = "revision条件をadapterで落とす、response後のinteractionとexecutionを別snapshotから返す、またはcommit済み回答を未適用として再送させる"
+// scope = "SessionExternalApplicationService interaction.respond deferred"
+// lifecycle = "permanent"
+// @end-test-value
 test("EXT-INTERACTION-11/EXT-OBSERVATION-12: respondはanswered interactionとpublic executionを返す", async () => {
   const answered = {
     sequence: 1,
@@ -1627,7 +1811,15 @@ test("EXT-INTERACTION-11/EXT-OBSERVATION-12: respondはanswered interactionとpu
     },
     interactionService: {
       getPendingForExecution() { return null; }, listSessionInteractionsPage() { return []; },
-      respond() { return { interaction: answered, replayed: false }; }, subscribeExecution() { return () => undefined; },
+      respond(input: { idempotencyKey: string }) {
+        if (input.idempotencyKey === "settlement-unknown") {
+          throw new SessionInteractionContinuationSettlementError("interaction-1", 2, {
+            cause: new Error("provider callback outcome unavailable"),
+          });
+        }
+        return { interaction: answered, replayed: false };
+      },
+      subscribeExecution() { return () => undefined; },
     } as never,
     progressStorage: {
       get() { return { executionId: "execution-1", assistantText: "partial", truncated: false, updatedAt: "now" }; },
@@ -1638,6 +1830,7 @@ test("EXT-INTERACTION-11/EXT-OBSERVATION-12: respondはanswered interactionとpu
     },
   });
   const response = await executeBound(service, "interaction.respond", {
+    expectedRevision: 1,
     sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
     response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1", responseMode: "deferred",
   });
@@ -1648,6 +1841,21 @@ test("EXT-INTERACTION-11/EXT-OBSERVATION-12: respondはanswered interactionとpu
   assert.deepEqual(response.result.execution.attachments, []);
   assert.equal(response.result.execution.partialOutput?.assistantText, "partial");
   assert.equal("provider" in response.result.interaction.request, false);
+
+  const settlement = await executeBound(service, "interaction.respond", {
+    expectedRevision: 1,
+    sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+    response: { kind: "approval", decision: "approve" }, idempotencyKey: "settlement-unknown", responseMode: "deferred",
+  });
+  assert.ok("error" in settlement);
+  if (!("error" in settlement)) return;
+  assert.equal(settlement.error.code, "INTERACTION_CONTINUATION_SETTLEMENT_UNKNOWN");
+  assert.equal(settlement.error.effect, "applied");
+  assert.deepEqual(settlement.error.details, {
+    interactionId: "interaction-1",
+    revision: 2,
+    continuationEffect: "unknown",
+  });
 });
 
 test("EXT-INTERACTION-11/EXT-OBSERVATION-12: turn.run waitはCopilotでも最初のpending interactionを返す", async () => {
@@ -1705,6 +1913,14 @@ test("EXT-INTERACTION-11/EXT-OBSERVATION-12: turn.run waitはCopilotでも最初
   assert.equal(response.result.pendingInteraction?.interactionId, "interaction-1");
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "revision付きinteraction responseのwait modeは回答後に現れた次のpending interactionまで観測する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-agent-visible-interactions.md" }
+// failure_mode = "response revisionを欠落させる、または回答直後の古いexecution snapshotをterminal結果として返す"
+// scope = "SessionExternalApplicationService interaction.respond wait"
+// lifecycle = "permanent"
+// @end-test-value
 test("EXT-INTERACTION-11: interaction.respond waitは回答後の次のpending interactionまで待つ", async () => {
   let pending: SessionInteraction | null = null;
   let observer: (() => void) | null = null;
@@ -1742,6 +1958,7 @@ test("EXT-INTERACTION-11: interaction.respond waitは回答後の次のpending i
   });
 
   const response = await executeBound(service, "interaction.respond", {
+    expectedRevision: 1,
     sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
     response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1",
     responseMode: "wait", waitTimeoutMs: 500,
@@ -1753,6 +1970,14 @@ test("EXT-INTERACTION-11: interaction.respond waitは回答後の次のpending i
   assert.equal(response.result.execution.pendingInteraction?.interactionId, "interaction-2");
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "revision付きrun/enqueueで保存したWork Item associationはget/listを含む全execution projectionへ同じ値を返す"
+// oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#実行関連付けと再開" }
+// failure_mode = "container revision追加時にenqueueだけassociationを落とすか、read projectionが保存済みassociationと分岐する"
+// scope = "SessionExternalApplicationService execution Work Item projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("WORK-EXEC-05: run/enqueue/get/listは同じWork Item associationを投影する", async () => {
   const accepted: string[] = [];
   const record = {
@@ -1802,6 +2027,7 @@ test("WORK-EXEC-05: run/enqueue/get/listは同じWork Item associationを投影�
   };
   const run = await executeBound(service, "turn.run", base);
   const enqueue = await executeBound(service, "turn.enqueue", {
+    expectedContainerRevision: base.expectedContainerRevision,
     sessionId: base.sessionId,
     catalogRevision: base.catalogRevision,
     idempotencyKey: "enqueue-work",

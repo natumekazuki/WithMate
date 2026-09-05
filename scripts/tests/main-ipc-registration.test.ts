@@ -552,15 +552,15 @@ test("Coordination Window IPCは専用Windowだけに全Session queryとmutation
   await handlers.get(WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL)?.({}, { limit: 50 });
   await handlers.get(WITHMATE_GET_COORDINATION_EVENT_CHANNEL)?.({}, "event-1");
   await handlers.get(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL)?.({}, {
-    eventId: "event-1", note: "別案", idempotencyKey: "resolve-global-1",
+    eventId: "event-1", expectedRevision: 0, note: "別案", idempotencyKey: "resolve-global-1",
   });
   await handlers.get(WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL)?.({}, {
-    eventId: "event-2", idempotencyKey: "cancel-global-1",
+    eventId: "event-2", expectedRevision: 0, idempotencyKey: "cancel-global-1",
   });
   assert.deepEqual(calls.map((call) => (call as unknown[])[0]), ["list", "get", "resolve", "cancel"]);
   await assert.rejects(
     () => handlers.get(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL)?.({}, {
-      eventId: "event-1", optionId: "a", note: "both", idempotencyKey: "resolve-global-2",
+      eventId: "event-1", expectedRevision: 0, optionId: "a", note: "both", idempotencyKey: "resolve-global-2",
     }) as Promise<unknown>,
     /Exactly one/,
   );

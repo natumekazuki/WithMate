@@ -17,9 +17,43 @@ import {
 import { SessionTerminalFailureNotificationStorageV6 } from "../../src-electron/session-terminal-failure-notification-storage-v6.js";
 import { projectTerminalFailureNotification } from "../../src/session-terminal-failure-notification.js";
 import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
+import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  type MutationAuthorityProof,
+} from "../../src/session-authority.js";
 
 const SOURCE_CREATED_AT = "2026-08-18T00:00:00.000Z";
 const SOURCE_FAILED_AT = "2026-08-18T00:01:00.000Z";
+
+function trustedExecutionProof(sessionId: string): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "terminal-failure-notification-test" },
+    operation: "turn.run",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "turn.run",
+    resolvedScope: {
+      resourceKind: "execution",
+      resourceId: null,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: SOURCE_CREATED_AT,
+  };
+}
+
+const startImmediateWithAuthority = SessionExecutionStorageV6.prototype.startImmediate;
+SessionExecutionStorageV6.prototype.startImmediate = function (input) {
+  return startImmediateWithAuthority.call(this, {
+    ...input,
+    expectedContainerRevision: input.expectedContainerRevision ?? this.getSessionContainerRevision(input.sessionId),
+    proof: input.proof ?? trustedExecutionProof(input.sessionId),
+  });
+};
 
 async function createFixture() {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-terminal-notification-"));
