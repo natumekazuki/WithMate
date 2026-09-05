@@ -463,7 +463,7 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
     FROM work_items_v6
   `).all() as Array<Record<string, string | number | null>>;
   const readEvents = db.prepare(`
-    SELECT revision, event_type, payload_json, created_at
+    SELECT revision, event_type, principal_kind, actor_session_id, payload_json, created_at
     FROM work_item_events_v6
     WHERE work_item_id = ?
     ORDER BY revision
@@ -472,11 +472,21 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
     const events = readEvents.all(item.id) as Array<{
       revision: number;
       event_type: string;
+      principal_kind: string;
+      actor_session_id: string | null;
       payload_json: string;
       created_at: string;
     }>;
     const first = events[0];
     if (!first) throw new Error(`Work Item event replay is empty: ${item.id}`);
+    for (const event of events) {
+      if (event.principal_kind === "system"
+        && event.event_type === "created"
+        && item.kind === "root"
+        && event.actor_session_id !== item.target_session_id) {
+        throw new Error(`Work Item system actor does not match its canonical owner: ${item.id}`);
+      }
+    }
     const initial = JSON.parse(first.payload_json) as Record<string, unknown>;
     const replay = {
       kind: initial.kind,

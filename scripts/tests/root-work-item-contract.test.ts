@@ -557,6 +557,45 @@ describe("Root WorkItem contract", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "security"
+  // claim = "systemが作成したRoot Work Itemのtyped history actorは、そのRootを所有するSessionに固定される"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // fault = "Root created eventのactor_session_idを別Sessionへ改変してもstartup verifierが受理する"
+  // observable = "verifyResourceHistoryProjectionsが返す例外"
+  // observation_boundary = "component-behavior"
+  // impact = "public Work Item historyへ誤actorを公開する"
+  // risk_tags = ["authorization"]
+  // scope = "Work Item typed event replay verifier"
+  // lifecycle = "permanent"
+  // distinction = "headerのsystem actorはnullのまま、typed created eventだけを実在する別Session IDへ改変してcanonical ownerとの不一致を観測する"
+  // @end-test-value
+  it("AUTONOMY-HISTORY-04: Root created eventのsystem actor改変を拒否する", async () => {
+    const harness = await createHarness();
+    try {
+      insertRootSession(harness, "root", "standalone");
+      insertRootSession(harness, "other-root", "standalone");
+      const rootItem = getRootWorkItem(harness, "root");
+      const tampered = new DatabaseSync(harness.dbPath);
+      try {
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(tampered));
+        tampered.prepare(`
+          UPDATE work_item_events_v6
+          SET actor_session_id = 'other-root'
+          WHERE work_item_id = ? AND revision = 1
+        `).run(rootItem.id);
+        assert.throws(
+          () => verifyResourceHistoryProjections(tampered),
+          /Work Item system actor does not match its canonical owner/,
+        );
+      } finally {
+        tampered.close();
+      }
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
   // @test-value v1
   // kind = "regression"
   // claim = "public validatorが512 KiB境界内で受理したhistory mutationは、canonical Work Item全体のidempotency responseも同じtransactionで保存して同一keyをreplayできる"
