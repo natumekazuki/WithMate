@@ -183,6 +183,10 @@ export type CodexAdapterOptions = {
   streamCloseGraceMs?: number;
   snapshotDeadlineMs?: number;
   createClient?: (options: CodexOptions) => Codex;
+  resolveManagedMcpConfig?: (input: {
+    codexPath: string | null;
+    workspacePath: string;
+  }) => Promise<string[]>;
 };
 
 type CodexClientScope = "foreground" | "background";
@@ -1640,6 +1644,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     scope: CodexClientScope = "foreground",
     serviceTier: CodexServiceTier = mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
     approvalsReviewer: CodexApprovalsReviewer = mapCodexReviewerToApprovalsReviewer(DEFAULT_CODEX_REVIEWER),
+    configOverrides: string[] = [],
   ): { client: Codex; clientKey: string } {
     const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
     const codexPathOverride = resolvePackagedProviderBinaryPath("codex");
@@ -1653,6 +1658,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       scope,
       serviceTier,
       approvalsReviewer,
+      configOverrides,
     ]);
     const cached = this.clients.get(clientKey);
     if (cached) {
@@ -1667,6 +1673,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         service_tier: serviceTier,
         approvals_reviewer: approvalsReviewer,
       },
+      ...(configOverrides.length > 0 ? { configOverrides } : {}),
       env: mergeDefinedProviderEnv(
         process.env,
         buildProviderAgentRuntimeBindingEnv(agentRuntimeBinding),
@@ -1677,7 +1684,13 @@ export class CodexAdapter implements ProviderTurnAdapter {
     return { client, clientKey };
   }
 
-  private getThread(input: RunSessionTurnInput): { thread: Thread; selection: ResolvedModelSelection } {
+  private async getThread(input: RunSessionTurnInput): Promise<{ thread: Thread; selection: ResolvedModelSelection }> {
+    const configOverrides = input.agentRuntimeBinding?.transport === "env"
+      ? await this.options.resolveManagedMcpConfig?.({
+        codexPath: resolvePackagedProviderBinaryPath("codex"),
+        workspacePath: resolveRunWorkspacePath(input),
+      }) ?? []
+      : [];
     const { client, clientKey } = this.getClient(
       input.providerCatalog.id,
       input.appSettings,
@@ -1685,6 +1698,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       "foreground",
       mapCodexSpeedToServiceTier(input.session.codexSpeed),
       mapCodexReviewerToApprovalsReviewer(input.session.codexReviewer),
+      configOverrides,
     );
     const previousClientKey = this.clientKeysBySession.get(input.session.id);
     if (previousClientKey && previousClientKey !== clientKey) {
@@ -1896,7 +1910,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
   }
 
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
-    const { thread, selection } = this.getThread(input);
+    const { thread, selection } = await this.getThread(input);
     const prompt = this.composePrompt(input);
     const { beforeSnapshot, beforeSnapshotStats } = await this.prepareBeforeWorkspaceSnapshot(input);
     const turnInput =

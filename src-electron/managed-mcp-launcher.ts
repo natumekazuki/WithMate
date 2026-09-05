@@ -1,27 +1,36 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-export type ManagedMcpLauncherName = "withmate-session" | "withmate-glossary";
+export type ManagedMcpLauncherName = "withmate-session" | "withmate-memory" | "withmate-glossary";
 
-export type ManagedMcpLauncherSpec = {
-  name: ManagedMcpLauncherName;
-  launcherFileName: `${ManagedMcpLauncherName}.cmd`;
+export type ManagedMcpLauncherSpec<
+  TName extends ManagedMcpLauncherName = ManagedMcpLauncherName,
+> = {
+  name: TName;
+  launcherFileName: `${TName}.cmd`;
   args: readonly ["mcp-server"];
   packagedCliRelativePath: string;
 };
 
-export const WITHMATE_SESSION_MCP_LAUNCHER_SPEC: ManagedMcpLauncherSpec = {
+export const WITHMATE_SESSION_MCP_LAUNCHER_SPEC: ManagedMcpLauncherSpec<"withmate-session"> = {
   name: "withmate-session",
   launcherFileName: "withmate-session.cmd",
   args: ["mcp-server"],
   packagedCliRelativePath: "resources/cli/withmate-session/withmate-session.mjs",
 };
 
-export const WITHMATE_GLOSSARY_MCP_LAUNCHER_SPEC: ManagedMcpLauncherSpec = {
+export const WITHMATE_GLOSSARY_MCP_LAUNCHER_SPEC: ManagedMcpLauncherSpec<"withmate-glossary"> = {
   name: "withmate-glossary",
   launcherFileName: "withmate-glossary.cmd",
   args: ["mcp-server"],
   packagedCliRelativePath: "resources/skills/withmate-glossary/bin/withmate-glossary.mjs",
+};
+
+export const WITHMATE_MEMORY_MCP_LAUNCHER_SPEC: ManagedMcpLauncherSpec<"withmate-memory"> = {
+  name: "withmate-memory",
+  launcherFileName: "withmate-memory.cmd",
+  args: ["mcp-server"],
+  packagedCliRelativePath: "resources/cli/withmate-memory.mjs",
 };
 
 export type ManagedMcpLauncherPaths = {

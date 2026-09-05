@@ -4,13 +4,17 @@ import { access, readFile } from "node:fs/promises";
 import type { ManagedSessionSkillSyncResult } from "./managed-session-skill-service.js";
 import type { ManagedSkillSyncResult } from "./managed-skill-distribution-service.js";
 import {
+  isExactCodexManagedMcpRecord,
+  type CodexManagedMcpRecord,
+} from "./codex-managed-mcp-config.js";
+import {
   isExpectedManagedMcpLauncherContent,
   resolveManagedMcpLauncherPaths,
-  sameWindowsPath,
   WITHMATE_GLOSSARY_MCP_LAUNCHER_SPEC,
   WITHMATE_SESSION_MCP_LAUNCHER_SPEC,
   type ManagedMcpLauncherSpec,
 } from "./managed-mcp-launcher.js";
+import { WITHMATE_CODEX_MCP_BINDING_ENV_VARS } from "./provider-agent-runtime-binding.js";
 import type {
   CodexManagedMcpRegistrationDiagnostics,
   ManagedMcpLauncherDiagnostics,
@@ -20,26 +24,11 @@ import type {
 
 type CommandResult = { exitCode: number; stdout: string; stderr: string };
 
-type CodexMcpRecord = {
-  name?: unknown;
-  enabled?: unknown;
-  disabled_reason?: unknown;
-  startup_timeout_sec?: unknown;
-  tool_timeout_sec?: unknown;
-  enabled_tools?: unknown;
-  disabled_tools?: unknown;
-  transport?: {
-    type?: unknown;
-    command?: unknown;
-    args?: unknown;
-    env?: unknown;
-    env_vars?: unknown;
-    cwd?: unknown;
-  };
-};
-
 type SkillSyncResult = ManagedSessionSkillSyncResult | ManagedSkillSyncResult;
 type EligibilityStatus = "skipped-unpackaged" | "skipped-unsupported-platform";
+type SessionIntegrationMcpSpec =
+  | typeof WITHMATE_SESSION_MCP_LAUNCHER_SPEC
+  | typeof WITHMATE_GLOSSARY_MCP_LAUNCHER_SPEC;
 
 export type CodexSessionMcpRegistrationServiceDeps = {
   getSkillSyncResult(): ManagedSessionSkillSyncResult | null;
@@ -90,14 +79,14 @@ export class CodexSessionMcpRegistrationService {
     return this.buildDiagnostics(session, glossary);
   }
 
-  private async inspectPart(spec: ManagedMcpLauncherSpec): Promise<IntegrationPart> {
+  private async inspectPart(spec: SessionIntegrationMcpSpec): Promise<IntegrationPart> {
     return {
       launcher: await this.inspectLauncher(spec),
       mcp: await this.inspectMcpRegistration(spec),
     };
   }
 
-  private async registerPart(spec: ManagedMcpLauncherSpec): Promise<IntegrationPart> {
+  private async registerPart(spec: SessionIntegrationMcpSpec): Promise<IntegrationPart> {
     const launcher = await this.inspectLauncher(spec);
     if (launcher.status !== "installed") {
       return {
@@ -156,7 +145,7 @@ export class CodexSessionMcpRegistrationService {
     };
   }
 
-  private async inspectLauncher(spec: ManagedMcpLauncherSpec): Promise<ManagedMcpLauncherDiagnostics> {
+  private async inspectLauncher(spec: SessionIntegrationMcpSpec): Promise<ManagedMcpLauncherDiagnostics> {
     const paths = this.resolvePaths(spec);
     if (!paths) {
       return {
@@ -195,7 +184,7 @@ export class CodexSessionMcpRegistrationService {
     }
   }
 
-  private async inspectMcpRegistration(spec: ManagedMcpLauncherSpec): Promise<CodexManagedMcpRegistrationDiagnostics> {
+  private async inspectMcpRegistration(spec: SessionIntegrationMcpSpec): Promise<CodexManagedMcpRegistrationDiagnostics> {
     const listResult = await this.run("codex", ["mcp", "list", "--json"]);
     if (listResult.exitCode !== 0) {
       return {
@@ -205,11 +194,11 @@ export class CodexSessionMcpRegistrationService {
       };
     }
 
-    let records: CodexMcpRecord[];
+    let records: CodexManagedMcpRecord[];
     try {
       const parsed = JSON.parse(listResult.stdout) as unknown;
       if (!Array.isArray(parsed)) throw new Error("Expected an array.");
-      records = parsed as CodexMcpRecord[];
+      records = parsed as CodexManagedMcpRecord[];
     } catch (error) {
       return {
         ...this.baseMcp(spec),
@@ -232,8 +221,8 @@ export class CodexSessionMcpRegistrationService {
     };
   }
 
-  private async getMcpRecord(spec: ManagedMcpLauncherSpec): Promise<
-    | { kind: "record"; record: CodexMcpRecord }
+  private async getMcpRecord(spec: SessionIntegrationMcpSpec): Promise<
+    | { kind: "record"; record: CodexManagedMcpRecord }
     | { kind: "not-found" }
     | { kind: "failed"; errorMessage: string }
   > {
@@ -250,7 +239,7 @@ export class CodexSessionMcpRegistrationService {
     try {
       const parsed = JSON.parse(result.stdout) as unknown;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Expected an object.");
-      return { kind: "record", record: parsed as CodexMcpRecord };
+      return { kind: "record", record: parsed as CodexManagedMcpRecord };
     } catch (error) {
       return {
         kind: "failed",
@@ -260,30 +249,19 @@ export class CodexSessionMcpRegistrationService {
   }
 
   private classifyMcpRecord(
-    spec: ManagedMcpLauncherSpec,
-    record: CodexMcpRecord,
+    spec: SessionIntegrationMcpSpec,
+    record: CodexManagedMcpRecord,
   ): CodexManagedMcpRegistrationDiagnostics {
     const expectedCommand = this.resolvePaths(spec)?.launcherPath ?? null;
-    const exact = record.name === spec.name
-      && record.enabled === true
-      && (record.disabled_reason === undefined || record.disabled_reason === null)
-      && record.transport?.type === "stdio"
-      && typeof record.transport.command === "string"
-      && expectedCommand !== null
-      && sameWindowsPath(record.transport.command, expectedCommand)
-      && Array.isArray(record.transport.args)
-      && record.transport.args.length === spec.args.length
-      && record.transport.args.every((arg, index) => arg === spec.args[index])
-      && (record.transport.env === undefined || record.transport.env === null)
-      && (record.transport.env_vars === undefined
-        || (Array.isArray(record.transport.env_vars) && record.transport.env_vars.length === 0))
-      && (record.transport.cwd === undefined || record.transport.cwd === null)
-      && (record.startup_timeout_sec === undefined || record.startup_timeout_sec === null)
-      && (record.tool_timeout_sec === undefined || record.tool_timeout_sec === null)
-      && (record.enabled_tools === undefined || record.enabled_tools === null)
-      && (record.disabled_tools === undefined
-        || record.disabled_tools === null
-        || (Array.isArray(record.disabled_tools) && record.disabled_tools.length === 0));
+    const exact = expectedCommand !== null && isExactCodexManagedMcpRecord({
+      record,
+      mcpName: spec.name,
+      command: expectedCommand,
+      args: spec.args,
+      ...(spec === WITHMATE_GLOSSARY_MCP_LAUNCHER_SPEC
+        ? { acceptedEnvVars: WITHMATE_CODEX_MCP_BINDING_ENV_VARS }
+        : {}),
+    });
     return exact
       ? { ...this.baseMcp(spec), status: "unchanged" }
       : {
@@ -311,7 +289,7 @@ export class CodexSessionMcpRegistrationService {
     return null;
   }
 
-  private skippedPart(spec: ManagedMcpLauncherSpec, status: EligibilityStatus): IntegrationPart {
+  private skippedPart(spec: SessionIntegrationMcpSpec, status: EligibilityStatus): IntegrationPart {
     return {
       launcher: { ...this.baseLauncher(spec, this.resolvePaths(spec)?.launcherPath ?? null), status },
       mcp: { ...this.baseMcp(spec), status },
@@ -319,13 +297,13 @@ export class CodexSessionMcpRegistrationService {
   }
 
   private baseLauncher(
-    spec: ManagedMcpLauncherSpec,
+    spec: SessionIntegrationMcpSpec,
     expectedPath: string | null,
   ): Omit<ManagedMcpLauncherDiagnostics, "status"> {
     return { command: spec.name, resolvedPath: null, expectedPath };
   }
 
-  private baseMcp(spec: ManagedMcpLauncherSpec): Omit<CodexManagedMcpRegistrationDiagnostics, "status"> {
+  private baseMcp(spec: SessionIntegrationMcpSpec): Omit<CodexManagedMcpRegistrationDiagnostics, "status"> {
     return {
       name: spec.name,
       command: this.resolvePaths(spec)?.launcherPath ?? spec.name,

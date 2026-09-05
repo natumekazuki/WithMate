@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
+import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -16,6 +19,12 @@ import {
 } from "../../src/memory-v6/memory-runtime-exchange.js";
 import { publishRuntimeDiscoveryEntry } from "../../src/runtime-discovery/runtime-discovery-registry.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
+import { CodexManagedMcpConfigService } from "../../src-electron/codex-managed-mcp-config.js";
+import {
+  GlossaryApplicationService,
+  projectGlossaryCheckoutAuthority,
+} from "../../src-electron/glossary-application-service.js";
+import { GlossaryRuntimeService } from "../../src-electron/glossary-runtime-service.js";
 import { createMemoryV6HttpServer } from "../../src-electron/memory-v6-http-server.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/provider-agent-runtime-turn-coordinator.js";
@@ -23,8 +32,16 @@ import { getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory-v6-
 import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 import { mergeDefinedProviderEnv } from "../../src-electron/provider-agent-runtime-binding.js";
+import {
+  resolveManagedMcpLauncherPaths,
+  WITHMATE_GLOSSARY_MCP_LAUNCHER_SPEC,
+  WITHMATE_MEMORY_MCP_LAUNCHER_SPEC,
+} from "../../src-electron/managed-mcp-launcher.js";
+import { resolveDevelopmentProviderBinaryPath } from "../../src-electron/provider-binary-paths.js";
+import { getGlossaryAgentRuntimeOperations } from "../../src/glossary-operation-schema.js";
 import { runWithMateMemoryCli } from "../withmate-memory.js";
 import { buildWithMateMemoryCli } from "../build-withmate-memory-cli.js";
+import { createWithMateGlossaryMcpServer } from "../withmate-glossary-mcp.js";
 import { createWithMateMemoryMcpServer } from "../withmate-memory-mcp.js";
 import {
   callWithMateMemoryRuntime,
@@ -33,6 +50,9 @@ import {
   type WithMateMemoryRuntimeOperation,
   type WithMateMemoryRuntimeResponse,
 } from "../withmate-memory-runtime-client.js";
+
+const execFileAsync = promisify(execFile);
+const moduleRequire = createRequire(import.meta.url);
 
 const API_SECRET = "general-memory-api-secret";
 const OPERATOR_SECRET = "general-memory-operator-secret";
@@ -46,7 +66,11 @@ const PROJECT_ID = "project-general-memory";
 type RuntimeFixture = {
   baseUrl: string;
   env: NodeJS.ProcessEnv;
+  runtimeConnectionEnv: NodeJS.ProcessEnv;
+  bindingEnv: Record<string, string>;
   operatorEnv: NodeJS.ProcessEnv;
+  registryRootDirectoryPath: string;
+  workspacePath: string;
   client: Client;
   close(): Promise<void>;
 };
@@ -59,6 +83,7 @@ async function createRuntimeFixture(options: {
   ) => Promise<WithMateMemoryRuntimeResponse>;
 } = {}): Promise<RuntimeFixture> {
   const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-general-memory-mcp-"));
+  await execFileAsync("git", ["init", "--quiet", "--initial-branch=main", tempDirectory], { windowsHide: true });
   const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
   const db = new DatabaseSync(dbPath);
   db.exec("PRAGMA foreign_keys = ON;");
@@ -91,6 +116,8 @@ async function createRuntimeFixture(options: {
   });
   const bindings = new AgentRuntimeBindingRegistry();
   const turns = new ProviderAgentRuntimeTurnCoordinator();
+  const glossaryApplicationService = new GlossaryApplicationService();
+  const glossaryTarget = await glossaryApplicationService.resolvePrimaryCheckout(tempDirectory);
   const binding = bindings.issueOrReuse({
     actorSessionId: "session-a",
     providerId: "codex",
@@ -98,10 +125,28 @@ async function createRuntimeFixture(options: {
       userId: "local-user",
       characterId: "character-a",
       allowedProjectIds: [PROJECT_ID],
+      glossaryPrimaryCheckout: projectGlossaryCheckoutAuthority(glossaryTarget),
     },
-    operationGrants: getMemoryV6AgentRuntimeOperations(),
+    operationGrants: [
+      ...getMemoryV6AgentRuntimeOperations(),
+      ...getGlossaryAgentRuntimeOperations(),
+    ],
   });
   const turn = turns.begin({ actorSessionId: "session-a", providerId: "codex" });
+  const glossaryRuntime = new GlossaryRuntimeService({
+    applicationService: glossaryApplicationService,
+    bindingRegistry: bindings,
+    resolveActorSession: (sessionId) => sessionId === "session-a"
+      ? {
+        id: "session-a",
+        providerId: "codex",
+        characterId: "character-a",
+        workspacePath: tempDirectory,
+      }
+      : null,
+    getProactiveCreateLimit: () => null,
+    providerAgentRuntimeTurns: turns,
+  });
   const runtime = createMemoryV6HttpServer({
     service,
     apiSecret: API_SECRET,
@@ -119,6 +164,7 @@ async function createRuntimeFixture(options: {
     resolveKnownProjectByPath: (projectPath) => projectPath === PROJECT_PATH
       ? { id: PROJECT_ID, displayName: "General Memory" }
       : null,
+    routeAgentRuntimeExtension: (request) => glossaryRuntime.route(request),
   });
   await runtime.start();
   const address = runtime.address();
@@ -151,18 +197,20 @@ async function createRuntimeFixture(options: {
     }],
     challenge: async () => true,
   });
-  const env = {
+  const runtimeConnectionEnv = {
     WITHMATE_MEMORY_API_URL: baseUrl,
     WITHMATE_MEMORY_API_SECRET: API_SECRET,
     WITHMATE_MEMORY_OPERATOR_API_SECRET: OPERATOR_SECRET,
     WITHMATE_MEMORY_MCP_API_SECRET: MCP_SECRET,
-    WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: RUNTIME_ID,
+  };
+  const bindingEnv = {
     WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: APPLICATION_INSTANCE_ID,
     WITHMATE_MEMORY_RUNTIME_GENERATION_ID: RUNTIME_ID,
     WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
     WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
     WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability,
   };
+  const env = { ...runtimeConnectionEnv, ...bindingEnv };
   const operatorEnv = {
     WITHMATE_MEMORY_API_URL: baseUrl,
     WITHMATE_MEMORY_API_SECRET: API_SECRET,
@@ -182,7 +230,11 @@ async function createRuntimeFixture(options: {
   return {
     baseUrl,
     env,
+    runtimeConnectionEnv,
+    bindingEnv,
     operatorEnv,
+    registryRootDirectoryPath,
+    workspacePath: tempDirectory,
     client,
     async close() {
       await client.close();
@@ -244,7 +296,188 @@ function actorProjectTarget(ref: { type: "id"; id: string } | { type: "path"; pa
   return { kind: "project" as const, project: ref };
 }
 
+const CODEX_MCP_BINDING_ENV_VARS = [
+  "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE",
+  "WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED",
+  "WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY",
+  "WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID",
+  "WITHMATE_MEMORY_RUNTIME_GENERATION_ID",
+];
+
+type ManagedMcpName = "withmate-character-context" | "withmate-glossary";
+
+async function resolveManagedMcpEnvVars(
+  fixture: RuntimeFixture,
+): Promise<Record<ManagedMcpName, string[]>> {
+  const codexPath = resolveDevelopmentProviderBinaryPath(
+    "codex",
+    (specifier) => moduleRequire.resolve(specifier),
+  );
+  assert.ok(codexPath, "Installed Codex SDK must provide its matching native CLI.");
+
+  const codexHome = join(fixture.workspacePath, "codex-home");
+  await mkdir(codexHome);
+  const configPath = join(codexHome, "config.toml");
+  const userConfig = '[mcp_servers.unrelated]\ncommand = "unrelated-command"\nenabled = false\n';
+  await writeFile(configPath, userConfig, "utf8");
+  const cliEnv = mergeDefinedProviderEnv(process.env, { CODEX_HOME: codexHome });
+
+  const installRoot = join(fixture.workspacePath, "packaged");
+  const executablePath = join(installRoot, "WithMate.exe");
+  const resourcesPath = join(installRoot, "resources");
+  const launcherArtifacts = new Map([
+    WITHMATE_MEMORY_MCP_LAUNCHER_SPEC,
+    WITHMATE_GLOSSARY_MCP_LAUNCHER_SPEC,
+  ].map((spec) => {
+    const paths = resolveManagedMcpLauncherPaths({ spec, executablePath, resourcesPath });
+    assert.ok(paths);
+    return [paths.launcherPath, paths.packagedCliPath] as const;
+  }));
+  const service = new CodexManagedMcpConfigService({
+    isPackagedApp: () => true,
+    platform: "win32",
+    executablePath,
+    resourcesPath,
+    processEnv: cliEnv,
+    fileExists: (filePath) => launcherArtifacts.has(filePath)
+      || [...launcherArtifacts.values()].includes(filePath),
+    readTextFile: (filePath) => {
+      const packagedCliPath = launcherArtifacts.get(filePath);
+      assert.ok(packagedCliPath);
+      return [
+        "@echo off",
+        "setlocal",
+        "set ELECTRON_RUN_AS_NODE=1",
+        `"${executablePath}" "${packagedCliPath}" %*`,
+        "exit /b %ERRORLEVEL%",
+        "",
+      ].join("\r\n");
+    },
+  });
+  const overrides = await service.resolve({
+    codexPath,
+    workspacePath: fixture.workspacePath,
+  });
+
+  const readRecord = async (name: string) => {
+    const { stdout } = await execFileAsync(codexPath, [
+      "-C",
+      fixture.workspacePath,
+      ...overrides.flatMap((override) => ["-c", override]),
+      "mcp",
+      "get",
+      name,
+      "--json",
+    ], {
+      cwd: fixture.workspacePath,
+      env: cliEnv,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 15_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return JSON.parse(String(stdout));
+  };
+  const readEnvVars = async (name: ManagedMcpName): Promise<string[]> => {
+    const record = await readRecord(name);
+    assert.equal(record.enabled, true);
+    assert.equal(record.transport?.command, join(installRoot,
+      name === "withmate-character-context" ? "withmate-memory.cmd" : "withmate-glossary.cmd"));
+    assert.deepEqual(record.transport?.args, ["mcp-server"]);
+    const envVars: unknown = record.transport?.env_vars;
+    assert.ok(Array.isArray(envVars) && envVars.every((value) => typeof value === "string"));
+    return envVars;
+  };
+
+  const result = {
+    "withmate-character-context": await readEnvVars("withmate-character-context"),
+    "withmate-glossary": await readEnvVars("withmate-glossary"),
+  };
+  const unrelated = await readRecord("unrelated");
+  assert.equal(unrelated.enabled, false);
+  assert.equal(unrelated.transport.command, "unrelated-command");
+  assert.equal(await readFile(configPath, "utf8"), userConfig);
+  return result;
+}
+
+function forwardBindingEnv(
+  bindingEnv: Record<string, string>,
+  envVars: readonly string[],
+): Record<string, string> {
+  return Object.fromEntries(envVars.map((name) => [name, bindingEnv[name]]).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
+  ));
+}
+
 describe("general Memory MCP runtime integration", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "Codex Session overrideのenv_varsから転送した同一binding authorityでMemoryとGlossaryのlist_targets operationが成功する"
+  // oracle = { type = "issue", ref = "Issue #453 managed MCP operation reachability" }
+  // failure_mode = "片方のMCPまたは必要なbinding変数がallowlistから欠落し、MCP initialize後のoperationがbinding requiredで失敗する"
+  // scope = "codex-managed-mcp-binding-operation-integration"
+  // lifecycle = "permanent"
+  // distinction = "raw overrideの文字列一致ではなくCodex CLIのconfig解釈結果を実MCPと共有runtimeへ渡してoperation結果を観測する"
+  // @end-test-value
+  it("Codex env_varsを転送した両MCPから同じSessionのlist_targetsへ到達する", async () => {
+    const fixture = await createRuntimeFixture();
+    const memoryClient = new Client({ name: "codex-memory-binding-integration", version: "1.0.0" });
+    const glossaryClient = new Client({ name: "codex-glossary-binding-integration", version: "1.0.0" });
+    const [memoryClientTransport, memoryServerTransport] = InMemoryTransport.createLinkedPair();
+    const [glossaryClientTransport, glossaryServerTransport] = InMemoryTransport.createLinkedPair();
+    let memoryServer: ReturnType<typeof createWithMateMemoryMcpServer> | undefined;
+    let glossaryServer: ReturnType<typeof createWithMateGlossaryMcpServer> | undefined;
+    try {
+      const envVars = await resolveManagedMcpEnvVars(fixture);
+      assert.deepEqual(envVars["withmate-character-context"], CODEX_MCP_BINDING_ENV_VARS);
+      assert.deepEqual(envVars["withmate-glossary"], CODEX_MCP_BINDING_ENV_VARS);
+
+      memoryServer = createWithMateMemoryMcpServer({
+        env: {
+          ...fixture.runtimeConnectionEnv,
+          ...forwardBindingEnv(fixture.bindingEnv, envVars["withmate-character-context"]),
+        },
+        registryRootDirectoryPath: fixture.registryRootDirectoryPath,
+      });
+      glossaryServer = createWithMateGlossaryMcpServer({
+        env: {
+          ...fixture.runtimeConnectionEnv,
+          ...forwardBindingEnv(fixture.bindingEnv, envVars["withmate-glossary"]),
+        },
+        registryRootDirectoryPath: fixture.registryRootDirectoryPath,
+      });
+      await memoryServer.connect(memoryServerTransport);
+      await glossaryServer.connect(glossaryServerTransport);
+      await memoryClient.connect(memoryClientTransport);
+      await glossaryClient.connect(glossaryClientTransport);
+
+      const memoryTargets = await memoryClient.callTool({
+        name: "memory.list_targets",
+        arguments: { includeEmpty: true },
+      });
+      assert.equal(memoryTargets.isError, undefined, JSON.stringify(memoryTargets));
+      assert.ok(Array.isArray((memoryTargets.structuredContent as any).items));
+
+      const glossaryTargets = await glossaryClient.callTool({
+        name: "glossary.list_targets",
+        arguments: {},
+      });
+      assert.equal(glossaryTargets.isError, undefined, JSON.stringify(glossaryTargets));
+      assert.equal((glossaryTargets.structuredContent as any).targets.length, 1);
+      assert.equal((glossaryTargets.structuredContent as any).targets[0].isPrimary, true);
+      assert.deepEqual((glossaryTargets.structuredContent as any).targets[0].selector, {
+        kind: "checkout",
+        checkoutId: (glossaryTargets.structuredContent as any).targets[0].checkoutId,
+      });
+    } finally {
+      await memoryClient.close().catch(() => undefined);
+      await glossaryClient.close().catch(() => undefined);
+      await memoryServer?.close().catch(() => undefined);
+      await glossaryServer?.close().catch(() => undefined);
+      await fixture.close();
+    }
+  });
+
   // @test-value v1
   // kind = "security"
   // claim = "tools/list後のtransport failureはMCPへ渡した公開tool引数を変更しない同一binding・turnのCLI fallbackだけを許可する"

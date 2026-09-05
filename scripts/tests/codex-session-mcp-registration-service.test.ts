@@ -6,6 +6,7 @@ import {
   CodexSessionMcpRegistrationService,
   type CodexSessionMcpRegistrationServiceDeps,
 } from "../../src-electron/codex-session-mcp-registration-service.js";
+import { WITHMATE_CODEX_MCP_BINDING_ENV_VARS } from "../../src-electron/provider-agent-runtime-binding.js";
 
 type ScriptedCommand = {
   command: string;
@@ -210,12 +211,12 @@ describe("CodexSessionMcpRegistrationService", () => {
 
   // @test-value v1
   // kind = "regression"
-  // claim = "Session側の同名collisionがあってもGlossary MCPは独立してexact launcherへ登録されread-backされる"
+  // claim = "Session側の同名collisionがあってもGlossary MCPは正確な5変数allowlistを持つexact launcherとして独立に受理される"
   // oracle = { type = "adr", ref = "docs/adr/022-repository-glossary-boundary.md#glossary-mcp-provider-registration" }
-  // failure_mode = "Session MCPのcollisionがGlossary登録を中止し、Codex SessionからGlossary toolを利用できない"
+  // failure_mode = "Session MCPのcollisionまたはGlossaryの正当なallowlistを理由にGlossary toolを利用できない"
   // scope = "codex-managed-mcp-registration"
   // lifecycle = "permanent"
-  // distinction = "二つのdescriptorの片方だけがcollisionになるpartial successを観測する"
+  // distinction = "二つのdescriptorの片方だけがcollisionになり、もう片方はbinding allowlist付きで受理されるpartial successを観測する"
   // @end-test-value
   it("Session collisionと独立にGlossary MCPを登録してread-backする", async () => {
     const calls: Array<{ command: string; args: string[] }> = [];
@@ -227,7 +228,11 @@ describe("CodexSessionMcpRegistrationService", () => {
     const glossaryRecord = {
       ...exactRecord(),
       name: "withmate-glossary",
-      transport: { ...exactRecord().transport, command: glossaryLauncherPath },
+      transport: {
+        ...exactRecord().transport,
+        command: glossaryLauncherPath,
+        env_vars: [...WITHMATE_CODEX_MCP_BINDING_ENV_VARS],
+      },
     };
     const service = new CodexSessionMcpRegistrationService({
       getSkillSyncResult: () => null,

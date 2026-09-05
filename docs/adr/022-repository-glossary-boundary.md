@@ -56,6 +56,7 @@ Accepted
 
 - Windows配布版は`withmate-glossary.cmd mcp-server`をGlossary MCPのcanonical stdio起動経路とする。launcherはinstall rootのWithMate executableと同梱Glossary artifactを指す5行のWithMate管理内容に完全一致し、artifactも存在する場合だけ利用できる。
 - Codexへの登録はSettingsの明示操作だけで行い、`withmate-session`と`withmate-glossary`を独立したMCP名として検査、登録、read-backする。同名設定が別transport、引数、環境、cwd、timeout、tool filterを持つ場合は上書きせずcollisionとする。一方のcollisionまたは失敗で他方の安全な登録を中止しない。
+- Issue 453により、Windows配布版のbound foreground Codex実行では、未登録または管理定義に一致するMemory/Glossary MCPへSession限定の定義とbinding転送allowlistを渡す。global登録は行わず、disabledと同名collisionは開始前に拒否する。Glossaryの`env_vars`に指定するbinding関連5変数名の完全な集合は管理定義との一致として扱う。値の固定や任意の追加環境変数は許可しない。具体的な転送名と再起動手順は`docs/runbooks/memory-affect-mcp.md`に置く。
 - GitHub CopilotはWindows配布版のforeground provider Sessionにだけ、検証済みGlossary launcherを`SessionConfig.mcpServers.withmate-glossary`へ渡す。background処理、開発版、非Windows、launcherまたはartifactの検証失敗時には追加しない。MCP設定へsecretやruntime selectorを保存せず、foreground Sessionのcache identityには検証済みlauncher pathだけを含める。
 
 ## Consequences
