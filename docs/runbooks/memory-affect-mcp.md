@@ -70,7 +70,7 @@ env_vars = [
 
 修正の導入や手動設定の変更後は、新しいWithMate Codex Sessionを開始してMCP processを起動し直す。すでに起動したMCPには環境変更が届かない。`initialize`や`tools/list`の成功だけでは確認できないため、同じSessionで`memory.list_targets`と`glossary.list_targets`を呼び、後者がprimary checkoutを返すことを確認する。前者の`MEMORY_PRINCIPAL_REQUIRED`、後者の`GLOSSARY_SESSION_BINDING_REQUIRED`は転送不足の手掛かりになる。認可拒否をCLI fallbackで回避しない。
 
-各turnで設定を再検査し、bindingやturn capability、MCP定義が変わればCodex clientを更新する。unbound Sessionとbackground処理にはこのoverrideを適用しない。設定の検査直後に外部からdisabledなどを変更する競合は、現在のCodex APIではatomicに検出できない。検査済みの転送先定義を実行中固定し、次turnの検査で変更を検出する。
+各turnで設定を再検査し、bindingやturn capability、MCP定義が変わればCodex clientを更新する。unbound Sessionとbackground処理にはこのoverrideを適用しない。Codex 0.153.1はfile設定とoverrideをmergeするため、固定するのは`enabled`、`command`、`args`、`env_vars`である。検査直後に外部から追加された`env`やcwdなどの未指定fieldは残り得る。設定変更と起動のatomicな照合は行えないため、MCP設定を編集するときは実行中のSessionを止め、編集後に新しいSessionで再検査する。
 
 ## CLI commandとMCP公開範囲
 

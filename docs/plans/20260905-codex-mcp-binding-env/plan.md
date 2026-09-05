@@ -35,7 +35,7 @@
 
 ## 実装と直接検証の結果
 
-- `CodexManagedMcpConfigService`が検証済みlauncherと既存設定を照合し、2 serverの定義を実行限定で固定する。Settings登録も同じ設定判定を使う。binding値は既存の環境投影だけから渡す。
+- `CodexManagedMcpConfigService`が検証済みlauncherと既存設定を照合し、2 serverの`enabled`、`command`、`args`、`env_vars`を実行限定で固定する。Settings登録も同じ設定判定を使う。binding値は既存の環境投影だけから渡す。
 - adapterの新規2回帰testは基点sourceで失敗し、修正sourceで成功した。
 - 関連12 test fileの186件、`npm run typecheck`、`npm run build`が成功した。buildの既存chunk size warningは残る。生成済みCLI artifactに内容差分はない。
 - Git modeのtest-value抽出はexit 0。新規または意味変更の10 recordを審査し、いずれもACCEPT。これはrecord内のclaimとobservableの整合判定であり、参照原文や実環境動作を単独で証明するものではない。
@@ -46,5 +46,5 @@
 ## 検証の限界と残リスク
 
 - 実WithMate UIから新規Codex Sessionを開始し、Codexが起動したSTDIO MCP child processで両operationを呼ぶ確認は未実施。機械的checkはCLI設定解釈、MCP SDK、HTTP runtimeを組み合わせた確認である。
-- 検査直後に利用者が外部からdisabledなどを変更する競合はatomicに検出できない。転送先は検証済み定義へ固定し、次turnで再検査する。
+- 同梱Codex 0.153.1はfile設定とinline-table overrideをmergeし、未指定fieldを残すことを追加のsynthetic設定で確認した。検査時に既存の`env`、cwd、timeout、tool filterは拒否するが、検査直後の外部変更はatomicに検出できない。`command`と`args`は固定される一方、その間に追加された`env`やcwdなどは起動に影響し得る。MCP設定の編集はSessionを止めて行う。
 - 開発版と非Windowsは自動overrideの対象外。runbookの手動allowlist設定と新規Session開始が必要となる。
