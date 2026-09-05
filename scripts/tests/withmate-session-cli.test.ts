@@ -63,6 +63,29 @@ function capture() {
   };
 }
 
+function publicExecutionResult() {
+  return {
+    id: "execution-1",
+    revision: 1,
+    sessionId: "session-1",
+    operation: "turn.run" as const,
+    state: "completed" as const,
+    result: { assistantText: "accepted" },
+    errorCode: "",
+    reason: "",
+    createdAt: "2026-08-11T00:00:00.000Z",
+    admittedAt: "2026-08-11T00:00:00.000Z",
+    completedAt: "2026-08-11T00:00:01.000Z",
+    updatedAt: "2026-08-11T00:00:01.000Z",
+    effectiveTurn: null,
+    attachments: [],
+    pendingInteraction: null,
+    partialOutput: null,
+    terminalFailureNotification: null,
+    workItemId: null,
+  };
+}
+
 describe("withmate-session CLI", () => {
   // @test-value v1
   // kind = "security"
@@ -261,6 +284,55 @@ describe("withmate-session CLI", () => {
   });
 
   // @test-value v1
+  // kind = "security"
+  // claim = "raw Session Runtime clientはidentity検証後もstrict public schemaにないfieldを含むresponseを受理しない"
+  // oracle = { type = "contract", ref = "AUTONOMY-PARITY-08" }
+  // failure_mode = "認証済みpeerの私有field混入responseをCLIが成功として公開する"
+  // scope = "withmate-session-runtime-client public response admission"
+  // lifecycle = "permanent"
+  // distinction = "byte上限やidentity mismatchではなく、dispatch後に届く上限内JSONのpublic schema違反を観測する"
+  // @end-test-value
+  test("AUTONOMY-PARITY-08: raw clientは私有fieldを含むpublic responseを拒否する", async () => {
+    const server = createServer((request, response) => {
+      const nonce = request.headers[SESSION_RUNTIME_NONCE_HEADER];
+      response.writeEarlyHints({
+        link: "</v1/operation>; rel=preconnect",
+        [SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER]: connection.applicationInstanceId,
+        [SESSION_RUNTIME_GENERATION_HEADER]: connection.runtimeGenerationId,
+        [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(
+          connection.apiSecret,
+          connection.applicationInstanceId,
+          connection.runtimeGenerationId,
+          typeof nonce === "string" ? nonce : "",
+        ),
+      });
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({
+          ...createSessionRuntimeResult("turn.get", publicExecutionResult()),
+          privateMarker: "must-not-leak",
+        }));
+      });
+    });
+    const port = await listenServer(server);
+    try {
+      await assert.rejects(
+        () => callSessionRuntime(
+          { ...connection, baseUrl: `http://127.0.0.1:${port}` },
+          { schemaVersion: "withmate-session-request-v2", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
+          AbortSignal.timeout(2_000),
+        ),
+        (error) => error instanceof SessionRuntimeClientError
+          && error.dispatched
+          && /invalid public response/.test(error.message),
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  // @test-value v1
   // kind = "contract"
   // claim = "application instanceとgenerationを検証したCLI connectionはversioned operationをSession runtimeへ送る"
   // oracle = { type = "adr", ref = "ADR-023 Selection and binding" }
@@ -288,7 +360,7 @@ describe("withmate-session CLI", () => {
         return {
           schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
           operation,
-          result: { accepted: true },
+          result: publicExecutionResult(),
         };
       },
     });

@@ -627,6 +627,27 @@ export type SessionRuntimeError = {
   };
 };
 
+export function sessionRuntimeOperationMayHaveEffect(
+  operation: SessionRuntimeOperation,
+  input?: unknown,
+): boolean {
+  if (operation === "transcript.export") {
+    return input === undefined
+      || (input as { destination?: { kind?: string } }).destination?.kind !== "inline";
+  }
+  return operation === "session.create" || operation === "session.rename"
+    || operation === "session.files.write_text"
+    || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
+    || operation === "work.create" || operation === "work.transition"
+    || operation === "work.revise" || operation === "work.history.append"
+    || operation === "work.result" || operation === "work.cancel"
+    || operation === "work.aggregation.decide" || operation === "work.aggregation.retry"
+    || operation === "interaction.respond"
+    || operation === "coordination.event.create" || operation === "coordination.event.resolve"
+    || operation === "coordination.event.consume"
+    || operation === "coordination.event.cancel" || operation === "coordination.event.correct";
+}
+
 export class SessionRuntimeValidationError extends Error {
   readonly code: string;
   readonly details: Record<string, string | number | boolean>;

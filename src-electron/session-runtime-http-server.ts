@@ -8,11 +8,13 @@ import {
   SessionRuntimeValidationError,
   createSessionRuntimeError,
   parseSessionRuntimeRequestEnvelope,
+  sessionRuntimeOperationMayHaveEffect,
   type SessionRuntimeAdapterKind,
   type SessionRuntimeError,
   type SessionRuntimeOperation,
   type SessionRuntimeResultEnvelope,
 } from "../src/session-external-runtime-contract.js";
+import { parseSessionRuntimeResponseEnvelope } from "../src/session-external-runtime-schema.js";
 import {
   SESSION_RUNTIME_CHALLENGE_HEADER,
   SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
@@ -256,7 +258,20 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
           handlerDrainWaiters.clear();
         }
       }
-      writeJson(response, statusForResponse(result), result);
+      let publicResult: SessionRuntimeResultEnvelope | SessionRuntimeError;
+      try {
+        publicResult = parseSessionRuntimeResponseEnvelope(envelope.operation, result);
+      } catch {
+        publicResult = createSessionRuntimeError({
+          code: "RUNTIME_UNAVAILABLE",
+          message: "Session runtime returned an invalid public response.",
+          retryable: true,
+          effect: sessionRuntimeOperationMayHaveEffect(envelope.operation, envelope.input)
+            ? "indeterminate"
+            : "not_applied",
+        });
+      }
+      writeJson(response, statusForResponse(publicResult), publicResult);
     } catch (error) {
       if (error instanceof SessionRuntimeValidationError) {
         writeJson(response, error.code === "LIMIT_EXCEEDED" ? 413 : 400, createSessionRuntimeError({

@@ -46,6 +46,29 @@ const boundServerOptions = {
   agentRuntimeBindingRegistry: defaultBindingRegistry,
 };
 
+function publicExecution(operation: "turn.run" | "turn.enqueue" = "turn.run", assistantText = "ok") {
+  return {
+    id: "execution-1",
+    revision: 1,
+    sessionId: "session-1",
+    operation,
+    state: "completed" as const,
+    result: { assistantText },
+    errorCode: "",
+    reason: "",
+    createdAt: "2026-08-11T00:00:00.000Z",
+    admittedAt: "2026-08-11T00:00:00.000Z",
+    completedAt: "2026-08-11T00:00:01.000Z",
+    updatedAt: "2026-08-11T00:00:01.000Z",
+    effectiveTurn: null,
+    attachments: [],
+    pendingInteraction: null,
+    partialOutput: null,
+    terminalFailureNotification: null,
+    workItemId: null,
+  };
+}
+
 const turnInput = {
   provider: "codex",
   userMessage: "hello",
@@ -142,6 +165,15 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   },
 };
 
+// @test-value v1
+// kind = "security"
+// claim = "全application operationは有効なruntime bindingから解決したactor Sessionだけをhandler contextへ渡す"
+// oracle = { type = "contract", ref = "ADR-023 Selection and binding" }
+// failure_mode = "application operationが未検証または別bindingのactor identityでhandlerへ到達する"
+// scope = "Session Runtime HTTP actor binding admission"
+// lifecycle = "permanent"
+// distinction = "単一operationの入力schemaではなく公開application operation集合を同じidentity boundaryで検証する"
+// @end-test-value
 test("ID-01: 全application operationはvalid bindingのtrusted actor contextだけをhandlerへ渡す", async () => {
   const calls: Array<{ operation: string; actorSessionId: string | null }> = [];
   const server = createSessionRuntimeHttpServer({
@@ -151,7 +183,7 @@ test("ID-01: 全application operationはvalid bindingのtrusted actor contextだ
         operation,
         actorSessionId: context.agentRuntimeBinding?.actorSessionId ?? null,
       });
-      return createSessionRuntimeResult(operation, {});
+      return createSessionRuntimeError({ code: "TEST_RESULT", message: "context observed" });
     },
   });
   await server.start();
@@ -164,7 +196,7 @@ test("ID-01: 全application operationはvalid bindingのtrusted actor contextだ
         operation,
         input: applicationOperationInputs[operation],
       });
-      assert.equal((await post(address.port, exchangePayload("mcp", body))).status, 200, operation);
+      assert.equal((await post(address.port, exchangePayload("mcp", body))).status, 400, operation);
     }
     assert.deepEqual(calls, SESSION_RUNTIME_OPERATIONS.map((operation) => ({
       operation,
@@ -206,13 +238,22 @@ test("ID-01: binding missingは全application operationをhandler前に拒否す
   }
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "Session Runtime HTTPはapplication instance、generation、adapter secretの一致後にだけhandlerを呼ぶ"
+// oracle = { type = "adr", ref = "ADR-023 Diagnostics and security" }
+// failure_mode = "identity tupleまたはadapter credentialが不正なrequestをhandlerへdispatchする"
+// scope = "Session Runtime HTTP identity and adapter authentication"
+// lifecycle = "permanent"
+// distinction = "Agent bindingの権限ではなくHTTP peer identityとadapter credentialの認証順序を観測する"
+// @end-test-value
 test("Session runtime authenticates identity and adapter before invoking handler", async () => {
   const calls: string[] = [];
   const server = createSessionRuntimeHttpServer({
     ...boundServerOptions,
     handle: async (operation, _input, adapter) => {
       calls.push(`${adapter}:${operation}`);
-      return createSessionRuntimeResult(operation, { ok: true });
+      return createSessionRuntimeResult(operation, publicExecution("turn.run"));
     },
   });
   await server.start();
@@ -353,6 +394,15 @@ test("ORCH-AUTH-02: CLIとMCPのHTTP transportはshared application authorityへ
   }
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "session.selfは有効なruntime bindingのactor Sessionだけを返し、欠落・不明・失効済みbindingを拒否する"
+// oracle = { type = "contract", ref = "SESSION-SELF-01" }
+// failure_mode = "session.selfがbindingなし、未知binding、または失効済みbindingからSession identityを公開する"
+// scope = "Session Runtime session.self binding resolution"
+// lifecycle = "permanent"
+// distinction = "一般的なHTTP credential認証ではなくactor Sessionへのbinding解決と失効を観測する"
+// @end-test-value
 test("SESSION-SELF-01: session.selfは有効なruntime bindingからactor Sessionだけを解決する", async () => {
   const registry = new AgentRuntimeBindingRegistry();
   const allowed = registry.issueOrReuse({
@@ -378,7 +428,13 @@ test("SESSION-SELF-01: session.selfは有効なruntime bindingからactor Sessio
     handle: async (operation, _input, _adapter, context) => {
       calls.push(context.agentRuntimeBinding?.actorSessionId ?? "missing");
       return createSessionRuntimeResult(operation, {
+        revision: 1,
         sessionId: context.agentRuntimeBinding?.actorSessionId,
+        sessionRole: "overall-coordinator",
+        roleContractRevision: 1,
+        rootSessionId: context.agentRuntimeBinding?.actorSessionId,
+        parentSessionId: null,
+        delegationDepth: 0,
       });
     },
   });
@@ -568,12 +624,22 @@ test("Session runtime status proves the discovered runtime identity", async () =
   }
 });
 
+// @test-value v1
+// kind = "invariant"
+// claim = "Session Runtime HTTPは上限を超えるread success envelopeを上限内のCONTENT_TOO_LARGE/not_applied errorへ置換する"
+// oracle = { type = "contract", ref = "SESSION_RUNTIME_MAX_RESPONSE_BYTES" }
+// failure_mode = "上限超過responseを送信するか、read失敗を適用済みまたは適用不明と誤報する"
+// scope = "Session Runtime HTTP response byte limit"
+// lifecycle = "permanent"
+// distinction = "schema不正ではなく正しいturn.get resultのserialized byte上限を観測する"
+// @end-test-value
 test("RL-01: Session runtime replaces an oversized success response with a stable error", async () => {
   const server = createSessionRuntimeHttpServer({
     ...boundServerOptions,
-    handle: async (operation) => createSessionRuntimeResult(operation, {
-      assistantText: "a".repeat(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
-    }),
+    handle: async (operation) => createSessionRuntimeResult(
+      operation,
+      publicExecution("turn.run", "a".repeat(SESSION_RUNTIME_MAX_RESPONSE_BYTES)),
+    ),
   });
   await server.start();
   try {
@@ -592,6 +658,47 @@ test("RL-01: Session runtime replaces an oversized success response with a stabl
     assert.ok(Buffer.byteLength(response.body) <= SESSION_RUNTIME_MAX_RESPONSE_BYTES);
   } finally {
     await server.stop();
+  }
+});
+
+// @test-value v1
+// kind = "security"
+// claim = "Session Runtime HTTP境界はhandlerの不正なpublic responseを外部へ返さず、operationの副作用可能性に対応するeffectで失敗させる"
+// oracle = { type = "contract", ref = "AUTONOMY-PARITY-08" }
+// failure_mode = "私有fieldまたは別operationのresultがHTTP consumerへ成功として漏れるか、mutationの適用状態をnot_appliedと誤報する"
+// scope = "Session Runtime HTTP public response validation"
+// lifecycle = "permanent"
+// distinction = "response size制限ではなく、handler返却値のstrict schemaとrequested operationへの一致をserialization直前で観測する"
+// @end-test-value
+test("AUTONOMY-PARITY-08: HTTPは不正なhandler responseをoperation別のstable errorへ置換する", async () => {
+  for (const [operation, input, expectedEffect] of [
+    ["turn.get", { sessionId: "session-1", executionId: "execution-1" }, "not_applied"],
+    ["turn.run", applicationOperationInputs["turn.run"], "indeterminate"],
+  ] as const) {
+    const server = createSessionRuntimeHttpServer({
+      ...boundServerOptions,
+      handle: async () => ({
+        ...createSessionRuntimeResult("turn.enqueue", publicExecution("turn.enqueue")),
+        privateMarker: "must-not-leak",
+      } as never),
+    });
+    await server.start();
+    try {
+      const address = server.address();
+      assert.ok(address);
+      const response = await post(address.port, exchangePayload("cli", JSON.stringify({
+        schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+        operation,
+        input,
+      })));
+      const body = JSON.parse(response.body);
+      assert.equal(response.status, 503);
+      assert.equal(body.error.code, "RUNTIME_UNAVAILABLE");
+      assert.equal(body.error.effect, expectedEffect);
+      assert.equal(response.body.includes("must-not-leak"), false);
+    } finally {
+      await server.stop();
+    }
   }
 });
 
@@ -816,12 +923,21 @@ test("HTTP-PREAUTH-01: unfinished pre-auth requestはdeadlineで破棄される"
   }
 });
 
+// @test-value v1
+// kind = "invariant"
+// claim = "Session Runtime stopはheader/body未完了のpre-auth socketを待たずに有限時間で破棄する"
+// oracle = { type = "contract", ref = "HTTP-PREAUTH-01" }
+// failure_mode = "未認証socketがshutdownを無期限に阻害する"
+// scope = "Session Runtime HTTP pre-auth shutdown"
+// lifecycle = "permanent"
+// distinction = "通常のpre-auth timeout経過ではなくstop要求による即時の接続破棄を観測する"
+// @end-test-value
 test("HTTP-PREAUTH-01: stopはunfinished pre-auth socketを待たずに破棄する", async () => {
   const server = createSessionRuntimeHttpServer({
     ...boundServerOptions,
     preAuthTimeoutMs: 30_000,
     shutdownGraceMs: 50,
-    handle: async (operation) => createSessionRuntimeResult(operation, {}),
+    handle: async (operation) => createSessionRuntimeResult(operation, publicExecution("turn.run")),
   });
   await server.start();
   const address = server.address();
@@ -864,11 +980,20 @@ test("HTTP-PREAUTH-01: aggregate pre-auth byte budget超過はhandler前にstabl
   }
 });
 
+// @test-value v1
+// kind = "security"
+// claim = "複数pre-auth requestはaggregate byte budgetを共有し、接続終了後は使用量を解放して新規requestを受け付ける"
+// oracle = { type = "contract", ref = "HTTP-PREAUTH-01" }
+// failure_mode = "接続ごとの制限だけでaggregate上限を迂回するか、終了済み接続の使用量が残って正常requestを恒久拒否する"
+// scope = "Session Runtime HTTP aggregate pre-auth byte budget"
+// lifecycle = "permanent"
+// distinction = "単一requestのbody上限ではなく同時接続間の共有budgetと解放後の再受付を観測する"
+// @end-test-value
 test("HTTP-PREAUTH-01: 複数requestのaggregate byte budgetを共有し解放後に再受付する", async () => {
   const server = createSessionRuntimeHttpServer({
     ...boundServerOptions,
     maxPreAuthAggregateBytes: 1_024,
-    handle: async (operation) => createSessionRuntimeResult(operation, {}),
+    handle: async (operation) => createSessionRuntimeResult(operation, publicExecution("turn.run")),
   });
   await server.start();
   try {

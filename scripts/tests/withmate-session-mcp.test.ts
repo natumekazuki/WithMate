@@ -1069,7 +1069,16 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
-  it("空白のみの識別子をprotocol validationで拒否してruntimeを呼ばない", async () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "MCP inputのidentifier違反とunknown fieldはruntime dispatch前に共通のversioned INVALID_INPUT errorへ収束する"
+  // oracle = { type = "contract", ref = "AUTONOMY-PARITY-08" }
+  // failure_mode = "MCP frameworkの事前validationがoperation handlerを迂回し、code・effect・retryableのないprotocol errorを返す"
+  // scope = "withmate-session-mcp input validation error envelope"
+  // lifecycle = "permanent"
+  // distinction = "application errorやruntime transport errorではなく、MCP tool argumentのstrict validation失敗をruntime未呼出しで観測する"
+  // @end-test-value
+  it("AUTONOMY-PARITY-08: 不正なMCP inputをversioned INVALID_INPUTへ写像してruntimeを呼ばない", async () => {
     let runtimeCalls = 0;
     await withClient(createWithMateSessionMcpServer({
       discover: async () => {
@@ -1077,12 +1086,22 @@ describe("WithMate Session MCP contract", () => {
         return connection;
       },
     }), async (client) => {
-      const result = await client.callTool({
+      const blankIdentifier = await client.callTool({
         name: "turn.get",
         arguments: { sessionId: "   ", executionId: "execution-1" },
       });
-      assert.equal(result.isError, true);
-      assert.equal(result.structuredContent, undefined);
+      const unknownField = await client.callTool({
+        name: "turn.get",
+        arguments: { sessionId: "session-1", executionId: "execution-1", privateMarker: "must-not-pass" },
+      });
+      for (const result of [blankIdentifier, unknownField]) {
+        assert.equal(result.isError, true);
+        assert.equal(result.structuredContent, undefined);
+        const error = parseToolError(result as any).error;
+        assert.equal(error.code, "INVALID_INPUT");
+        assert.equal(error.effect, "not_applied");
+        assert.equal(error.retryable, false);
+      }
       assert.equal(runtimeCalls, 0);
     });
   });

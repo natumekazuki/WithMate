@@ -384,15 +384,15 @@ async function readFileWithinLimit(filePath: string): Promise<string> {
 }
 
 function projectRuntimeResponse(command: string, response: SessionRuntimeClientResponse): CliOutput {
-  if (response.value && typeof response.value === "object" && "error" in response.value) {
+  if (!response.ok) {
     return {
       schemaVersion: WITHMATE_SESSION_CLI_SCHEMA_VERSION,
       command,
       ok: false,
-      error: (response.value as SessionRuntimeError).error,
+      error: response.value.error,
     };
   }
-  return { schemaVersion: WITHMATE_SESSION_CLI_SCHEMA_VERSION, command, ok: response.ok, result: response.value };
+  return { schemaVersion: WITHMATE_SESSION_CLI_SCHEMA_VERSION, command, ok: true, result: response.value };
 }
 
 function localError(
