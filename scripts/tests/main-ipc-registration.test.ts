@@ -526,12 +526,12 @@ test("GUI queue IPC は対象 Session window だけにenqueue/list/cancelを許�
 
 // @test-value v1
 // kind = "contract"
-// claim = "Coordination Window IPCは専用Windowだけに全Session queryとmutationを許可するが検証対象の公開契約を成立させる"
-// oracle = { type = "contract", ref = "scripts/tests/main-ipc-registration.test.ts:482 public contract" }
-// failure_mode = "Coordination Window IPCは専用Windowだけに全Session queryとmutationを許可するの条件で、consumerから観測できる公開結果が欠落・誤配信・不正許可になる"
-// scope = "main-ipc-registration"
+// claim = "Coordination Eventのlist、get、resolve、cancel IPCはisCoordinationWindowで認証されたsenderだけをserviceへ到達させる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#Coordination Window" }
+// failure_mode = "Home等のrendererが全SessionのCoordination Eventを列挙・取得・解決・取消できるか、拒否後にもservice callが発生する"
+// scope = "Coordination Window sender authorization for list/get/resolve/cancel IPC"
 // lifecycle = "permanent"
-// distinction = "対象テスト「Coordination Window IPCは専用Windowだけに全Session queryとmutationを許可する」固有の入力、境界、またはwindow scopeを確認する"
+// distinction = "同じ4操作を専用Windowと通常Windowから送り、前者だけがserviceへ到達し、後者は副作用前にすべて拒否されることを対比する"
 // @end-test-value
 test("Coordination Window IPCは専用Windowだけに全Session queryとmutationを許可する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
@@ -566,10 +566,20 @@ test("Coordination Window IPCは専用Windowだけに全Session queryとmutation
   );
 
   eventWindow = otherWindow;
-  await assert.rejects(
+  const rejectedCalls = [
     () => handlers.get(WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL)?.({}, { limit: 50 }) as Promise<unknown>,
-    /only available from the Coordination window/,
-  );
+    () => handlers.get(WITHMATE_GET_COORDINATION_EVENT_CHANNEL)?.({}, "event-1") as Promise<unknown>,
+    () => handlers.get(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL)?.({}, {
+      eventId: "event-1", expectedRevision: 0, note: "別案", idempotencyKey: "resolve-global-3",
+    }) as Promise<unknown>,
+    () => handlers.get(WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL)?.({}, {
+      eventId: "event-2", expectedRevision: 0, idempotencyKey: "cancel-global-2",
+    }) as Promise<unknown>,
+  ];
+  for (const call of rejectedCalls) {
+    await assert.rejects(call, /only available from the Coordination window/);
+  }
+  assert.deepEqual(calls.map((call) => (call as unknown[])[0]), ["list", "get", "resolve", "cancel"]);
 });
 
 // @test-value v1
