@@ -1,2 +1,2 @@
-resources/skills/withmate-memory/bin/withmate-memory.mjs text eol=lf
+resources/cli/withmate-memory.mjs text eol=lf
 resources/skills/withmate-glossary/bin/withmate-glossary.mjs text eol=lf

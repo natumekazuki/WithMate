@@ -2446,6 +2446,7 @@ async function resetAppSettings(): Promise<AppSettings> {
   const settings = requireAppSettingsStorage().resetSettings();
   applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled, app.isPackaged);
   void syncManagedSessionSkillBestEffort();
+  await syncManagedGlossarySkillBestEffort();
   return settings;
 }
 

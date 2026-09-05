@@ -117,7 +117,7 @@ Viteが`http://localhost:4173`で起動したら、別のターミナルでElect
 npm run electron:dev
 ```
 
-`electron:dev`はElectron mainとMemory CLIをbuildしてから、開発用Electronを起動します。
+`electron:dev`はElectron main、Memory CLI、Session CLIをbuildしてから、開発用Electronを起動します。
 
 ## 開発と検証
 
@@ -141,7 +141,7 @@ npm test
 npm run build
 ```
 
-renderer、Electron main、Memory CLIをbuildします。本番向けbuildとローカル起動をまとめて行う場合は、次を実行します。
+renderer、Electron main、Memory CLI、Session CLIをbuildします。本番向けbuildとローカル起動をまとめて行う場合は、次を実行します。
 
 ```bash
 npm run electron:start
