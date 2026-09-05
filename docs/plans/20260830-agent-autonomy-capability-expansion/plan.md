@@ -304,7 +304,9 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 修正コミット `35b91295fa78bbc5c4c084360c7010b3f96237be` のtargeted reviewではWork Item可視性をclosedと判定した。履歴については、source Session削除時にsource-owned origin rowがcascadeし、target-owned execution projectionとevent snapshotが不一致になる兄弟lifecycleを追加のblockingと分類した。originはexecutionのcanonical replay対象から外し、target executionを保持したsource Session削除後のreplayを直接検証した。追加修正コミット `5671a9cf999d87d6ff58674484bcc7c6219e5d17` のresulting delta reviewはapproveで、対象finding familyに未解決blocking、validation gap、残リスクはない。
 
-修正後の直接検証は `npm run typecheck`、`npm test`（3452 tests、3451 pass、1 skip、0 fail）、`npm run build`、`git diff --check` を通過した。追加修正のtargeted testは25件すべて通過した。`review-test-value` の Git mode は開始コミットからの TypeScript test 114 件を診断 0 で抽出し、record 内の claim、failure mode、observable の審査結果は全件 `ACCEPT` である。
+続くreviewでは、通知先grantの失効競合、Session通常削除によるretention履歴とidempotencyの消失、baseline grantの過剰許可とrevoke後の起動失敗、全resourceのstartup replay検証不足、raw client／CLIの公開応答未検証、MCPだけ異なるunknown field errorをblockingと分類した。修正コミット `04a5f6c1` は通知先proofをexecution admission transactionへ渡し、baseline grantをRole templateの完全一致として検証してmigration完了とactive authorityを分離した。`ce4c4ede` はapplication dispatch前とraw client受信後にcanonical response validatorを適用し、CLIとMCPのversioned error semanticsを統一した。`45ad0622` はSession通常削除をtombstone化し、retention対象の履歴とretry identityを保持した。`0af8fdcf` は全typed eventと共通headerを照合し、Work Item、aggregation、Session、execution、interaction、Coordination、file write、transcript exportのprojectionまたはledgerをstartupで再生検証する。
+
+最初のreview修正後の直接検証は `npm run typecheck`、`npm test`（3452 tests、3451 pass、1 skip、0 fail）、`npm run build`、`git diff --check` を通過した。今回のblocking修正に対する最終の全test、build、commit-bound review結果は、このplanの完了前に追記する。`review-test-value` の Git mode は開始コミットからの TypeScript test 135 件を診断 0 で抽出した。今回追加または意味変更したrecordは、claim、failure mode、observableの対応を確認して全件`ACCEPT`とした。
 
 基本 check は次の順で実行する。
 

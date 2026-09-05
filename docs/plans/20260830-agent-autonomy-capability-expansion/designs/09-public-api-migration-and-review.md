@@ -21,6 +21,8 @@ operationのcanonical listは`src/session-external-runtime-contract.ts`に置く
 
 CLI、MCP、HTTPが個別のauthority判定またはdomain validationを持たない。adapterはtransport変換に限定し、shared application serviceへ渡す。
 
+application dispatchへ渡す直前とraw runtime clientが受信した直後に、canonical strict input／output／error validatorを適用する。成功応答はoperation discriminatorと公開field集合を照合し、欠落field、別operationのpayload、private fieldを拒否する。CLIはJSONに`error`がないことだけを成功条件にせず、検証済みの成功またはversioned error envelopeだけを出力する。MCPのschema rejectionも`INVALID_INPUT`のcode、effect、retryableを持つ同じversioned errorへ変換する。
+
 shell、Git、provider固有toolなどSession Runtime外の実行経路は、公開operationを揃えるだけでは制御できない。provider capability envelopeまたは共通tool brokerで同じgrant、budget、effect recordを強制できるまではvalidation gapとして明示し、WithMate APIだけで完全なauthority enforcementを達成したとは扱わない。
 
 ## Operation consolidation
@@ -104,7 +106,7 @@ testはprivate method call順やmarkup snapshotではなく、state、result、e
 ## Direct validation
 
 - canonical operation集合とraw HTTP、CLI、MCP、runtime catalogの公開集合が一致する。
-- 全adapterがunknown field、spoof principal、stale generationを同じdomain errorへ正規化する。
+- 全adapterがunknown field、spoof principal、stale generationを同じdomain errorへ正規化し、成功outputとerror envelopeをcanonical validatorで検証する。
 - effect-bearing operationのresponse loss後にoperation IDでread-backできる。
 - populated databaseとfresh databaseが同じcurrent schemaとprojectionへ収束する。
 - migration failure、再実行、repairが既存owner、result、grant、artifact visibilityを失わない。

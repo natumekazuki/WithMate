@@ -157,11 +157,12 @@ Root WorkItem の自動作成後は、現行の Session delete protection をそ
 契約は次とする。
 
 - active な Root WorkItem を持つ root Session の削除は拒否する。
-- terminal な Root WorkItem を持つ root Session の明示削除は、Session と自己所有 Root WorkItem の履歴を同じ transaction で削除する。
-- active delegated WorkItem、未回収結果、child Session が残る場合は削除を拒否する。parent-null delegated resultは報告だけでは回収済みとせず、同じrootのRoot WorkItemがterminalになるまで保護する。terminalかつ回収済みのdelegated WorkItemは、参照Sessionの物理削除時に履歴、idempotency、execution association、aggregation ledgerと同じtransactionで削除する。
-- UI 上の非表示や archive と物理削除を混同しない。
+- terminal な Root WorkItem を持つ root Session の通常削除は、Session projectionを同じtransactionでtombstone化する。
+- active delegated WorkItem、未回収結果、child Session が残る場合は削除を拒否する。parent-null delegated resultは報告だけでは回収済みとせず、同じrootのRoot WorkItemがterminalになるまで保護する。
+- Work Item、execution、Coordination、transcript、aggregationの履歴、execution origin、idempotency ledger、共通event headerはretention中に保持する。ownerのactive projectionが必要な認可と通常一覧はtombstoneを除外する。
+- retention終了後の物理削除は通常削除と分け、保持対象を同時に消せる専用cleanup契約が導入されるまで実行しない。
 
-Root WorkItem の履歴は Session の所有データであり、Session の明示的な物理削除後まで独立保存しない。
+Root WorkItemの履歴はSession tombstone後もretention中の監査証拠として保持する。共通headerだけ、またはresource固有eventだけが残る部分削除を許可しない。
 
 ## 公開操作
 
@@ -285,7 +286,7 @@ public API、永続化、owner scope、複合不変条件を横断するため�
 ## 確定した判断
 
 1. Root WorkItem の terminal は Session の目的終了を表す。別の目的を続ける場合は新しい root Session を作り、初回実装では successor relation を追加しない。
-2. active な Root WorkItem、active descendant、未回収結果がある root Session は削除できない。条件を満たす terminal root Session の明示削除では、自己所有 Root WorkItem と履歴を同じ transaction で物理削除する。
+2. active な Root WorkItem、active descendant、未回収結果がある root Session は削除できない。条件を満たす terminal root Session の通常削除ではSession projectionをtombstone化し、Work Item、execution、Coordination、transcript、aggregationの履歴とidempotencyをretention中保持する。
 3. authority は改訂可能な説明として保持するが、認可には使わない。実効権限は既存の Session role、communication policy、runtime capability だけから判定し、新しい capability model は導入しない。
 4. 新規 Root WorkItem の goal は Session の task title から初期化する。scope、completionCriteria、authority は root 専用で空を許容し、owner が最初の契約改訂で具体化できるようにする。
 5. Root WorkItem の terminal result は、全 descendant WorkItem が terminal で、nested aggregation decision が確定している場合だけ許可する。parent-null top-level / legacy delegated WorkItem には新しい decision を捏造せず、result を持つ terminal または再開不能な `canceled` への収束を確認する。
