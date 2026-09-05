@@ -16,8 +16,10 @@ import type { SessionRuntimeOperation } from "../../src/session-external-runtime
 import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
+import { verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
+import { SessionTranscriptStorageV6 } from "../../src-electron/session-transcript-storage-v6.js";
 import {
   WorkItemAuthorityError,
   WorkItemExecutionAssociationError,
@@ -1111,14 +1113,14 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "active root Sessionの削除は拒否し、削除可能なterminal rootはSession、WorkItem、event、execution、associationを同じtransactionで削除して失敗時は全rowをrollbackする"
-  // oracle = { type = "contract", ref = "docs/adr/028-session-root-work-item.md#Decision" }
-  // failure_mode = "通常turnのexecution associationがterminal Sessionを削除不能にする、または途中失敗でassociationだけ消えてRoot WorkItemとexecutionが分岐する"
-  // scope = "SQLite delete trigger and SessionStorageV6 delete transaction"
+  // claim = "active root Sessionの削除は拒否し、terminal rootの削除はSessionを非表示・認可不能にしながらWorkItem、event、execution、association、idempotencyをretention中保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "Session削除のcascadeで履歴または再送ledgerを失うか、tombstone後のSessionを通常projectionへ返す"
+  // scope = "SessionStorageV6 tombstone and retained Work Item/execution history"
   // lifecycle = "permanent"
-  // distinction = "同じSessionをactive時に拒否した後terminalへ進め、Root WorkItem deleteの失敗注入前後で五表のrollbackと最終削除を直接観測する"
+  // distinction = "同じSessionをactive時に拒否した後terminalへ進め、public readの非表示と関連projection・履歴・複数idempotency ledgerの残存を直接観測する"
   // @end-test-value
-  it("RW-6: active rootの削除を拒否しterminal rootとexecution associationをatomic deleteする", async () => {
+  it("RW-6: active rootを保護しterminal rootを履歴・idempotency保持付きでtombstone化する", async () => {
     const harness = await createHarness();
     try {
       insertRootSession(harness, "root", "standalone");
@@ -1155,41 +1157,47 @@ describe("Root WorkItem contract", () => {
       reportResult(harness, rootItem.id, "root", "completed", active.revision, "root-result");
       assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 3);
 
-      const db = new DatabaseSync(harness.dbPath);
+      const transcriptStorage = new SessionTranscriptStorageV6(harness.dbPath);
       try {
-        db.exec(`
-          CREATE TRIGGER fail_terminal_root_work_item_delete
-          BEFORE DELETE ON work_items_v6
-          WHEN OLD.kind = 'root'
-          BEGIN
-            SELECT RAISE(ABORT, 'injected terminal root delete failure');
-          END;
-        `);
+        transcriptStorage.prepareExport({
+          idempotencyKey: "transcript-key",
+          requestFingerprint: "transcript-fingerprint",
+          sessionId: "root",
+          relativePath: "transcript.json",
+          tempName: "transcript.tmp",
+          createdAt: NOW,
+          expiresAt: EXPIRES,
+          proof: trustedProof("transcript.export"),
+        });
+        transcriptStorage.rejectExport({
+          proof: trustedProof("transcript.export"),
+          idempotencyKey: "transcript-key",
+          requestFingerprint: "transcript-fingerprint",
+          error: { code: "TEST_REJECTION" },
+          completedAt: NOW,
+          expiresAt: EXPIRES,
+        });
       } finally {
-        db.close();
-      }
-      assert.throws(
-        () => harness.sessionStorage.deleteSession("root"),
-        /injected terminal root delete failure/,
-      );
-      assert.ok(harness.sessionStorage.getSession("root"));
-      assert.equal(tableCount(harness.dbPath, "work_items_v6", "id = ?", rootItem.id), 1);
-      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 3);
-      assert.equal(tableCount(harness.dbPath, "session_executions_v6", "id = 'execution-before-terminal'"), 1);
-      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6", "execution_id = 'execution-before-terminal'"), 1);
-      const cleanup = new DatabaseSync(harness.dbPath);
-      try {
-        cleanup.exec("DROP TRIGGER fail_terminal_root_work_item_delete;");
-      } finally {
-        cleanup.close();
+        transcriptStorage.close();
       }
 
       harness.sessionStorage.deleteSession("root");
       assert.equal(harness.sessionStorage.getSession("root"), null);
-      assert.equal(tableCount(harness.dbPath, "work_items_v6", "id = ?", rootItem.id), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 0);
-      assert.equal(tableCount(harness.dbPath, "session_executions_v6", "id = 'execution-before-terminal'"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6", "execution_id = 'execution-before-terminal'"), 0);
+      assert.equal(tableCount(harness.dbPath, "sessions_v6", "id = 'root' AND deleted_at IS NOT NULL"), 1);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "id = ?", rootItem.id), 1);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 3);
+      assert.equal(tableCount(harness.dbPath, "work_item_idempotency_v6", "work_item_id = ?", rootItem.id) > 0, true);
+      assert.equal(tableCount(harness.dbPath, "session_executions_v6", "id = 'execution-before-terminal'"), 1);
+      assert.equal(tableCount(harness.dbPath, "session_execution_idempotency_v6", "execution_id = 'execution-before-terminal'"), 1);
+      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6", "execution_id = 'execution-before-terminal'"), 1);
+      assert.equal(tableCount(harness.dbPath, "session_transcript_export_idempotency_v6", "session_id = 'root'"), 1);
+      const retainedHistory = new DatabaseSync(harness.dbPath);
+      try {
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(retainedHistory));
+        assert.doesNotThrow(() => ensureV6Schema(retainedHistory));
+      } finally {
+        retainedHistory.close();
+      }
 
       insertRootSession(harness, "canceled-root", "standalone");
       const cancelable = getRootWorkItem(harness, "canceled-root");
@@ -1209,7 +1217,7 @@ describe("Root WorkItem contract", () => {
       );
       harness.sessionStorage.deleteSession("canceled-root");
       assert.equal(harness.sessionStorage.getSession("canceled-root"), null);
-      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", cancelable.id), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", cancelable.id), 2);
     } finally {
       await closeHarness(harness);
     }
@@ -1217,14 +1225,14 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "regression"
-  // claim = "Session tree削除は未確定nested delegated WorkItemを拒否し、aggregation decisionとroot finalization後にterminal delegated WorkItem、event、idempotency、execution association、aggregation ledgerを同じtransactionで物理削除する"
-  // oracle = { type = "contract", ref = "docs/adr/028-session-root-work-item.md#Decision" }
-  // failure_mode = "未確定nested resultを削除する、decision済みtreeを永久に削除不能にする、または関連ledgerだけを孤児として残す"
-  // scope = "SessionStorageV6 WorkItem-aware tree deletion"
+  // claim = "Session tree削除は未確定nested delegated WorkItemを拒否し、root finalization後はtreeをtombstone化してaggregation履歴と再送ledgerを保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "未確定nested resultを削除するか、確定後のtree tombstoneがWorkItem・aggregation・executionの履歴とidempotencyをcascade消去する"
+  // scope = "SessionStorageV6 Work Item-aware tree tombstone retention"
   // lifecycle = "permanent"
-  // distinction = "nested delegatedをterminal化した直後の拒否、aggregation decision後のroot finalization、三階層bulk delete後の全関連表を同じfixtureで観測する"
+  // distinction = "nested delegatedをterminal化した直後の拒否、aggregation decision後のroot finalization、三階層bulk tombstone後の全関連表を同じfixtureで観測する"
   // @end-test-value
-  it("RW-6B: decision済みnested delegatedをledgerごと削除する", async () => {
+  it("RW-6B: decision済みnested delegatedを履歴・ledger保持付きでtombstone化する", async () => {
     const harness = await createHarness();
     try {
       const root = insertRootSession(harness, "root", "overall-coordinator");
@@ -1305,14 +1313,15 @@ describe("Root WorkItem contract", () => {
       reportResult(harness, rootItem.id, "root", "completed", activeRoot.revision, "delete-tree-root-result");
 
       harness.sessionStorage.deleteSessions(["root", "task", "executor"]);
-      assert.equal(tableCount(harness.dbPath, "sessions_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_items_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_events_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_idempotency_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_aggregations_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_decisions_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_idempotency_v6"), 0);
+      assert.deepEqual(harness.sessionStorage.listSessions(), []);
+      assert.equal(tableCount(harness.dbPath, "sessions_v6", "deleted_at IS NOT NULL"), 3);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6"), 3);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6") > 0, true);
+      assert.equal(tableCount(harness.dbPath, "work_item_idempotency_v6") > 0, true);
+      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6"), 1);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregations_v6") > 0, true);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_decisions_v6") > 0, true);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_idempotency_v6") > 0, true);
     } finally {
       await closeHarness(harness);
     }

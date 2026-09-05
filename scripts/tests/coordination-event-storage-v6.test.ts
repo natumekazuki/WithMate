@@ -273,14 +273,14 @@ function authorize(
 describe("CoordinationEventStorageV6", () => {
   // @test-value v1
   // kind = "regression"
-  // claim = "terminal root Sessionとtree leafのbulk削除はCoordination historyも同じtransactionで削除する"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
-  // failure_mode = "Root WorkItem削除保護への対応後にCoordination historyだけが残留する、またはactive rootを迂回して削除する"
-  // scope = "SessionStorageV6 bulk deletion with CoordinationEventStorageV6"
+  // claim = "terminal root Sessionとtree leafのbulk削除は通常projectionからSessionを除外しながらCoordination historyとidempotencyをretention中保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "Session tombstone時のcascadeでCoordination event、action、または再送ledgerを失う"
+  // scope = "SessionStorageV6 bulk tombstone with CoordinationEventStorageV6"
   // lifecycle = "permanent"
-  // distinction = "rootを正規のowner mutationでterminal化した後、rootとtree leafのCoordination履歴を一回のbulk削除で観測する"
+  // distinction = "rootを正規のowner mutationでterminal化した後、rootとtree leafを一回でtombstone化しCoordinationの三表を直接観測する"
   // @end-test-value
-  it("COORD-EVENT-01: terminal rootとtree leafのbulk削除はCoordination historyも同じtransactionで削除する", async () => {
+  it("AUTONOMY-HISTORY-04: Session bulk tombstone後もCoordination historyとidempotencyを保持する", async () => {
     const fixture = await createFixture();
     let storageClosed = false;
     try {
@@ -356,7 +356,10 @@ describe("CoordinationEventStorageV6", () => {
       }
       const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
       try {
-        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM coordination_events_v6 WHERE actor_session_id IN (?, ?)").get("root-b", "executor-a") as { count: number }).count, 0);
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM coordination_events_v6 WHERE actor_session_id IN (?, ?)").get("root-b", "executor-a") as { count: number }).count, 3);
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM coordination_event_actions_v6").get() as { count: number }).count, 1);
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM coordination_event_idempotency_v6").get() as { count: number }).count, 3);
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sessions_v6 WHERE id IN (?, ?) AND deleted_at IS NOT NULL").get("root-b", "executor-a") as { count: number }).count, 2);
       } finally {
         db.close();
       }

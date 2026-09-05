@@ -246,8 +246,10 @@ export function backfillBaselineSessionAuthority(db: DatabaseSync, issuedAt: str
   ensureSessionAuthoritySchema(db);
   syncSessionAuthorityOperationRegistry(db);
   const rows = db.prepare(`
-    SELECT session_id
-    FROM session_role_bindings_v6
+    SELECT binding.session_id
+    FROM session_role_bindings_v6 AS binding
+    INNER JOIN sessions_v6 AS session ON session.id = binding.session_id
+    WHERE session.deleted_at IS NULL
     ORDER BY delegation_depth, session_id
   `).all() as Array<{ session_id: string }>;
   for (const row of rows) ensureBaselineSessionAuthority(db, row.session_id, issuedAt);
@@ -331,6 +333,10 @@ export function assertGrantProofCurrent(
   targetSessionRole?: SessionRole,
 ): void {
   if (proof.principal.kind !== "agent") return;
+  requireRoleBinding(db, proof.principal.actorSessionId);
+  if (proof.resolvedScope.ownerKind === "session") {
+    requireRoleBinding(db, proof.resolvedScope.ownerId);
+  }
   if (proof.grantId === null || proof.grantRevision === null) {
     throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Agent authority proof is missing its grant identity.");
   }
@@ -353,6 +359,7 @@ export function assertGrantProofCurrent(
     }
     visited.add(current.grantId);
     const parent = requireGrant(db, current.issuerGrantId);
+    requireRoleBinding(db, parent.granteeSessionId);
     assertGrantActive(parent, parent.granteeSessionId, current.issuerGrantRevision ?? -1, now);
     current = parent;
   }
@@ -411,8 +418,10 @@ export function verifySessionAuthorityMigration(db: DatabaseSync): void {
     throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "Session authority operation mapping revision is inconsistent.");
   }
   const bindings = db.prepare(`
-    SELECT session_id, session_role, root_session_id
-    FROM session_role_bindings_v6
+    SELECT binding.session_id, binding.session_role, binding.root_session_id
+    FROM session_role_bindings_v6 AS binding
+    INNER JOIN sessions_v6 AS session ON session.id = binding.session_id
+    WHERE session.deleted_at IS NULL
     ORDER BY session_id
   `).all() as Array<{ session_id: string; session_role: SessionRole; root_session_id: string }>;
   const readGrants = db.prepare(`
@@ -521,9 +530,10 @@ function parseGrantProvenance(row: GrantRow): Record<string, unknown> {
 
 function requireRoleBinding(db: DatabaseSync, sessionId: string): RoleBindingRow {
   const row = db.prepare(`
-    SELECT session_role, root_session_id, parent_session_id
-    FROM session_role_bindings_v6
-    WHERE session_id = ?
+    SELECT binding.session_role, binding.root_session_id, binding.parent_session_id
+    FROM session_role_bindings_v6 AS binding
+    INNER JOIN sessions_v6 AS session ON session.id = binding.session_id
+    WHERE binding.session_id = ? AND session.deleted_at IS NULL
   `).get(sessionId) as RoleBindingRow | undefined;
   if (!row || !SESSION_ROLE_VALUES.includes(row.session_role)) {
     throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "The canonical Session Role binding is unavailable.", { sessionId });

@@ -300,7 +300,7 @@ function verifySagaProjection(db: DatabaseSync, input: {
 }
 
 export function getSessionResourceRevision(db: DatabaseSync, sessionId: string): number | null {
-  const row = db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?").get(sessionId) as
+  const row = db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ? AND deleted_at IS NULL").get(sessionId) as
     | { resource_revision: number }
     | undefined;
   return row?.resource_revision ?? null;
@@ -645,7 +645,7 @@ function readSessionProjection(db: DatabaseSync, sessionId: string): Readonly<Re
       reasoning_effort, custom_agent_name, approval_mode, codex_sandbox_mode,
       allowed_additional_directories_json, runtime_policy_json, thread_id,
       character_id, character_snapshot_json, project_scope_id, workspace_path,
-      is_pinned, created_at, updated_at, last_active_at
+      is_pinned, created_at, updated_at, last_active_at, deleted_at
     FROM sessions_v6
     WHERE id = ?
   `).get(sessionId) as {
@@ -670,6 +670,7 @@ function readSessionProjection(db: DatabaseSync, sessionId: string): Readonly<Re
     created_at: string;
     updated_at: string;
     last_active_at: string;
+    deleted_at: string | null;
   } | undefined;
   if (!row) throw new Error(`Session was not found: ${sessionId}`);
   return {
@@ -694,6 +695,7 @@ function readSessionProjection(db: DatabaseSync, sessionId: string): Readonly<Re
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastActiveAt: row.last_active_at,
+    ...(row.deleted_at === null ? {} : { deletedAt: row.deleted_at }),
   };
 }
 

@@ -1317,14 +1317,14 @@ describe("SessionStorageV6", () => {
 
   // @test-value v1
   // kind = "regression"
-  // claim = "terminal root Sessionのdelete、replace、clear経路は削除対象を親に持つauxiliary_sessionsだけをcleanupする"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
-  // failure_mode = "terminal root Sessionの物理削除後にauxiliary Sessionが孤児化する、または保持対象のrootかactive/recovery companionに属するauxiliary Sessionまで失う"
-  // scope = "SessionStorageV6 Session and auxiliary cleanup transaction"
+  // claim = "terminal root Sessionのdelete、replace、clear経路は通常Session projectionだけをtombstone化しauxiliary_sessionsをretention中保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "Session tombstoneと同時にauxiliary Sessionを消し、保持期間中のturn owner関係を復元不能にする"
+  // scope = "SessionStorageV6 Session tombstone and auxiliary retention"
   // lifecycle = "permanent"
-  // distinction = "delete、replace、clearの三入口とcompanion status別の保持境界を同じreal SQLiteで観測する"
+  // distinction = "delete、replace、clearの三入口を通し、通常Sessionとcompanionを親に持つauxiliary rowの継続保持を同じreal SQLiteで観測する"
   // @end-test-value
-  it("親 Session の削除経路で auxiliary_sessions を cleanup する", async () => {
+  it("Session tombstone経路で auxiliary_sessions を保持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
     let storage: SessionStorageV6 | null = null;
@@ -1359,7 +1359,7 @@ describe("SessionStorageV6", () => {
 
       completeRootWorkItemsForDeletion(dbPath, storage, [deletedParent.id]);
       storage.deleteSession(deletedParent.id);
-      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [replacedParent.id, retainedParent.id]);
+      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [deletedParent.id, replacedParent.id, retainedParent.id]);
 
       insertCompanionSessionRows(dbPath, [
         { id: "companion-active-parent", status: "active" },
@@ -1378,13 +1378,25 @@ describe("SessionStorageV6", () => {
       storage.replaceSessions([{ ...retainedParent, taskTitle: "retained after replace" }]);
       assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [
         "companion-active-parent",
+        "companion-discarded-parent",
+        "companion-merged-parent",
         "companion-recovery-parent",
+        deletedParent.id,
+        replacedParent.id,
         retainedParent.id,
       ]);
 
       completeRootWorkItemsForDeletion(dbPath, storage, [retainedParent.id]);
       storage.clearSessions();
-      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), []);
+      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [
+        "companion-active-parent",
+        "companion-discarded-parent",
+        "companion-merged-parent",
+        "companion-recovery-parent",
+        deletedParent.id,
+        replacedParent.id,
+        retainedParent.id,
+      ]);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);
@@ -1393,14 +1405,14 @@ describe("SessionStorageV6", () => {
 
   // @test-value v1
   // kind = "regression"
-  // claim = "terminal root Sessionのdelete、replace、clear経路は削除対象SessionとAuxiliary Sessionのturn payloadだけをcleanupする"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
-  // failure_mode = "物理削除したSessionのturn payloadが残留する、または保持対象Sessionかactive companion配下の監査payloadまで失う"
-  // scope = "SessionStorageV6 Session turn payload cleanup transaction"
+  // claim = "terminal root Sessionのdelete、replace、clear経路はSessionとAuxiliary Sessionのturn payloadをretention中保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "Session tombstoneが監査対象turn payloadを消し、保持期間中の実行証拠を復元不能にする"
+  // scope = "SessionStorageV6 Session turn payload retention"
   // lifecycle = "permanent"
-  // distinction = "Session直結とauxiliary直結のpayloadをdelete、replace、clearの各入口で区別して観測する"
+  // distinction = "Session直結とauxiliary直結のpayloadをdelete、replace、clearの各入口後に同じreal SQLiteで観測する"
   // @end-test-value
-  it("Session / Auxiliary 削除経路で session_turns_v6 payload を cleanup する", async () => {
+  it("Session tombstone経路で session_turns_v6 payload を保持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
     let storage: SessionStorageV6 | null = null;
@@ -1443,6 +1455,8 @@ describe("SessionStorageV6", () => {
       completeRootWorkItemsForDeletion(dbPath, storage, [deletedParent.id]);
       storage.deleteSession(deletedParent.id);
       assert.deepEqual(listSessionTurnSummaries(dbPath), [
+        "audit-deleted-auxiliary",
+        "audit-deleted-session",
         "audit-replaced-auxiliary",
         "audit-replaced-session",
         "audit-retained-auxiliary",
@@ -1466,13 +1480,27 @@ describe("SessionStorageV6", () => {
       storage.replaceSessions([{ ...retainedParent, taskTitle: "retained audit after replace" }]);
       assert.deepEqual(listSessionTurnSummaries(dbPath), [
         "audit-companion-active-auxiliary",
+        "audit-companion-merged-auxiliary",
+        "audit-deleted-auxiliary",
+        "audit-deleted-session",
+        "audit-replaced-auxiliary",
+        "audit-replaced-session",
         "audit-retained-auxiliary",
         "audit-retained-session",
       ]);
 
       completeRootWorkItemsForDeletion(dbPath, storage, [retainedParent.id]);
       storage.clearSessions();
-      assert.deepEqual(listSessionTurnSummaries(dbPath), []);
+      assert.deepEqual(listSessionTurnSummaries(dbPath), [
+        "audit-companion-active-auxiliary",
+        "audit-companion-merged-auxiliary",
+        "audit-deleted-auxiliary",
+        "audit-deleted-session",
+        "audit-replaced-auxiliary",
+        "audit-replaced-session",
+        "audit-retained-auxiliary",
+        "audit-retained-session",
+      ]);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

@@ -84,6 +84,45 @@ function binding(sessionId: string, generation = "generation-1"): ResolvedAgentR
 
 describe("Session authority", () => {
   // @test-value v1
+  // kind = "security"
+  // claim = "Session tombstone後は削除前に発行したagent proofと新しいruntime認可の両方を拒否する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "retentionのためrole bindingとgrantを残したtombstone Sessionが、削除前proofまたは新しいauthorize経路で操作を継続できる"
+  // scope = "Session authority tombstone invalidation"
+  // lifecycle = "permanent"
+  // distinction = "有効なrename proofを先に取得し、同じSessionのtombstone後に保存境界のproof再検証とservice認可を個別に観測する"
+  // @end-test-value
+  it("Session tombstone後は既発行proofと新規認可を拒否する", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-authority-tombstone-"));
+    const dbPath = path.join(directory, "db.sqlite");
+    const storage = new SessionStorageV6(dbPath);
+    storage.insertSession(makeRoot("root-a"));
+    const service = new SessionAuthorityService({
+      databasePath: dbPath,
+      getExecutionGeneration: () => "generation-1",
+      now: () => new Date(NOW),
+    });
+    const db = new DatabaseSync(dbPath);
+    try {
+      const proof = service.authorize(binding("root-a"), "session.rename", { sessionId: "root-a" }).proof;
+      db.prepare("UPDATE sessions_v6 SET deleted_at = ? WHERE id = 'root-a'").run(NOW);
+      assert.throws(
+        () => assertGrantProofCurrent(db, proof, new Date(NOW)),
+        (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_MIGRATION_REQUIRED",
+      );
+      assert.throws(
+        () => service.authorize(binding("root-a"), "session.rename", { sessionId: "root-a" }),
+        (error) => error instanceof SessionAuthorityError,
+      );
+    } finally {
+      db.close();
+      service.close();
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
   // kind = "contract"
   // claim = "canonical Session Runtime operation集合の全要素がauthority mappingへ一度ずつ分類される"
   // oracle = { type = "contract", ref = "AUTONOMY-AUTHORITY-OPERATION-MAPPING" }

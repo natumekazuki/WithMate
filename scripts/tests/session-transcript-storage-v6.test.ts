@@ -295,15 +295,15 @@ describe("SessionTranscriptStorageV6", () => {
   });
 
   // @test-value v1
-  // kind = "compatibility"
-  // claim = "削除可能なterminal root Sessionの物理削除はtranscript export idempotency recordをcascade削除する"
+  // kind = "invariant"
+  // claim = "削除可能なterminal root Sessionをtombstone化してもtranscript export idempotency recordをretention中保持する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
-  // failure_mode = "Root WorkItem削除保護の追加後にtranscript export ledgerだけが残り削除済みSessionを参照する"
-  // scope = "SessionTranscriptStorageV6 Session deletion cascade"
+  // failure_mode = "Session削除のcascadeでtranscript export ledgerが失われ、同じidempotency keyの再送判定ができなくなる"
+  // scope = "SessionTranscriptStorageV6 Session tombstone retention"
   // lifecycle = "permanent"
-  // distinction = "populated schema repair後のterminal root削除とexport ledger cascadeを同じreal SQLiteで観測する"
+  // distinction = "populated schema repair後に正式なexport保存経路でledgerを作り、Session projectionのtombstone後も同じrowが残ることをFK境界で観測する"
   // @end-test-value
-  it("EXT-EXPORT-14: populated V6へadditive再適用しSession削除でexport recordをcascadeする", async () => {
+  it("EXT-EXPORT-14: populated V6へadditive再適用しSession tombstone後もexport recordを保持する", async () => {
     const f = await fixture();
     f.storage.close();
     try {
@@ -319,25 +319,43 @@ describe("SessionTranscriptStorageV6", () => {
         `).get() as { sql: string };
         assert.equal(schema.sql.includes("state IN ('pending', 'applied', 'rejected')"), true);
         assert.equal(CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL.includes("output_sha256"), true);
-        db.prepare(`
-          INSERT INTO session_transcript_export_idempotency_v6 (
-            operation, principal_kind, principal_id, idempotency_key, request_fingerprint, session_id,
-            relative_path, temp_name, state, created_at, expires_at
-          ) VALUES ('transcript.export', 'system', 'migration-test', 'pending', 'fp', 'session-1', 'a.json', '.a.tmp', 'pending', ?, ?)
-        `).run(NOW, EXPIRES);
-        db.prepare(`
-          UPDATE work_items_v6
-          SET state = 'completed', revision = revision + 1, result_json = ?, updated_at = ?
-          WHERE kind = 'root' AND root_session_id = 'session-1'
-        `).run(JSON.stringify({ outcome: "completed" }), NOW);
-        db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = 'session-1'").run();
-        db.prepare("DELETE FROM sessions_v6 WHERE id = 'session-1'").run();
-        const count = db.prepare(`
-          SELECT COUNT(*) AS count FROM session_transcript_export_idempotency_v6
-        `).get() as { count: number };
-        assert.equal(count.count, 0);
       } finally {
         db.close();
+      }
+      const transcriptStorage = new SessionTranscriptStorageV6(f.dbPath);
+      try {
+        transcriptStorage.prepareExport({
+          idempotencyKey: "pending",
+          requestFingerprint: "fp",
+          sessionId: "session-1",
+          relativePath: "a.json",
+          tempName: ".a.tmp",
+          createdAt: NOW,
+          expiresAt: EXPIRES,
+          proof: trustedTranscriptProof("session-1"),
+        });
+      } finally {
+        transcriptStorage.close();
+      }
+      const tombstoneDb = new DatabaseSync(f.dbPath);
+      try {
+        tombstoneDb.prepare("UPDATE sessions_v6 SET deleted_at = ? WHERE id = 'session-1'").run(NOW);
+      } finally {
+        tombstoneDb.close();
+      }
+      const resultDb = new DatabaseSync(f.dbPath);
+      try {
+        const count = resultDb.prepare(`
+          SELECT COUNT(*) AS count FROM session_transcript_export_idempotency_v6
+        `).get() as { count: number };
+        assert.equal(count.count, 1);
+        assert.equal(
+          (resultDb.prepare("SELECT COUNT(*) AS count FROM sessions_v6 WHERE id = 'session-1' AND deleted_at IS NOT NULL")
+            .get() as { count: number }).count,
+          1,
+        );
+      } finally {
+        resultDb.close();
       }
     } finally {
       await rm(f.directory, { recursive: true, force: true });

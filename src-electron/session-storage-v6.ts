@@ -50,7 +50,6 @@ import {
   registerSessionProviderIdNormalizer,
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
 } from "./session-provider-id-sql.js";
-import { deleteAuditEventsForSessionTargets } from "./audit-log-storage-v6.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import {
@@ -401,8 +400,6 @@ type DecodedSessionV6RuntimeState = {
   threadId: string;
 };
 
-const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
-const COMPANION_SESSIONS_TABLE_NAME = "companion_sessions";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -570,6 +567,7 @@ export class SessionStorageV6 {
         b.delegation_depth AS role_delegation_depth
       FROM sessions_v6
       LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
+      WHERE sessions_v6.deleted_at IS NULL
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6Row[];
     return cloneSessions(rows.map((row) => this.rowToSession(row)));
@@ -579,6 +577,7 @@ export class SessionStorageV6 {
     const rows = this.db.prepare(`
       SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
+      WHERE deleted_at IS NULL
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6SummaryRow[];
     return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummaryProjection(row)));
@@ -590,7 +589,7 @@ export class SessionStorageV6 {
     const rows = this.db.prepare(`
       SELECT s.id AS session_id, s.title AS task_title
       FROM json_each(?) AS requested
-      INNER JOIN sessions_v6 AS s ON s.id = requested.value
+      INNER JOIN sessions_v6 AS s ON s.id = requested.value AND s.deleted_at IS NULL
       ORDER BY requested.key ASC
     `).all(JSON.stringify(normalizedIds)) as RelatedSessionSummaryRow[];
     return rows.map((row) => ({ sessionId: row.session_id, taskTitle: row.task_title }));
@@ -603,7 +602,7 @@ export class SessionStorageV6 {
              b.parent_session_id, b.delegation_depth
       FROM sessions_v6 AS s
       INNER JOIN session_role_bindings_v6 AS b ON b.session_id = s.id
-      WHERE s.id = ?
+      WHERE s.id = ? AND s.deleted_at IS NULL
     `).get(sessionId.trim()) as SessionTurnAuthorityRow | undefined;
     if (!row) return null;
     return {
@@ -631,7 +630,7 @@ export class SessionStorageV6 {
       : decodeSessionSummaryCursor(parsed.cursor, parsed.scope, parsed.searchText);
     const search = buildSessionSummarySearchClause("s", parsed.searchText);
     const keyset = buildSessionSummaryKeysetClause("s", cursor);
-    const where: string[] = [];
+    const where: string[] = ["s.deleted_at IS NULL"];
     const params: string[] = [];
 
     if (parsed.scope === "pinned") {
@@ -691,11 +690,13 @@ export class SessionStorageV6 {
       SELECT ${characterIdExpression} AS character_id
       FROM sessions_v6 AS s
       WHERE s.session_kind = 'default'
+        AND s.deleted_at IS NULL
         AND ${characterIdExpression} IS NOT NULL
         AND NOT EXISTS (
           SELECT 1
           FROM sessions_v6 AS newer
           WHERE newer.session_kind = 'default'
+            AND newer.deleted_at IS NULL
             AND ${newerCharacterIdExpression} = ${characterIdExpression}
             AND (
               newer.last_active_at > s.last_active_at
@@ -719,7 +720,8 @@ export class SessionStorageV6 {
     const row = this.db.prepare(`
       SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
-      WHERE ${SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION}(provider_id) = ?
+      WHERE deleted_at IS NULL
+        AND ${SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION}(provider_id) = ?
       ORDER BY last_active_at DESC, id DESC
       LIMIT 1
     `).get(normalizeProviderId(normalizedProviderId)) as SessionV6SummaryRow | undefined;
@@ -736,7 +738,7 @@ export class SessionStorageV6 {
         b.delegation_depth AS role_delegation_depth
       FROM sessions_v6
       LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
-      WHERE sessions_v6.id = ?
+      WHERE sessions_v6.id = ? AND sessions_v6.deleted_at IS NULL
     `).get(sessionId) as SessionV6Row | undefined;
     return row ? this.rowToSession(row) : null;
   }
@@ -745,7 +747,7 @@ export class SessionStorageV6 {
     const row = this.db.prepare(`
       SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
-      WHERE id = ?
+      WHERE id = ? AND deleted_at IS NULL
     `).get(sessionId) as SessionV6SummaryRow | undefined;
     return row ? this.rowToSessionSummaryProjection(row) : null;
   }
@@ -776,6 +778,7 @@ export class SessionStorageV6 {
           SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
           FROM sessions_v6
           WHERE session_kind = 'default'
+            AND deleted_at IS NULL
             AND (? IS NULL OR EXISTS (
               SELECT 1 FROM session_role_bindings_v6 AS root_scope
               WHERE root_scope.session_id = sessions_v6.id AND root_scope.root_session_id = ?
@@ -798,6 +801,7 @@ export class SessionStorageV6 {
           SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
           FROM sessions_v6
           WHERE session_kind = 'default'
+            AND deleted_at IS NULL
             AND (? IS NULL OR EXISTS (
               SELECT 1 FROM session_role_bindings_v6 AS root_scope
               WHERE root_scope.session_id = sessions_v6.id AND root_scope.root_session_id = ?
@@ -829,7 +833,13 @@ export class SessionStorageV6 {
   }
 
   getSessionRoleBinding(sessionId: string): SessionRoleBinding | null {
-    const row = this.findSessionRoleBindingRow(sessionId);
+    const row = this.db.prepare(`
+      SELECT binding.session_role, binding.role_contract_revision, binding.root_session_id,
+             binding.parent_session_id, binding.delegation_depth
+      FROM session_role_bindings_v6 AS binding
+      INNER JOIN sessions_v6 AS session ON session.id = binding.session_id
+      WHERE binding.session_id = ? AND session.deleted_at IS NULL
+    `).get(sessionId) as SessionRoleBindingRow | undefined;
     return row ? decodeSessionRoleBinding(sessionId, row) : null;
   }
 
@@ -838,9 +848,11 @@ export class SessionStorageV6 {
     if (uniqueSessionIds.length === 0) return new Set();
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
     const rows = this.db.prepare(`
-      SELECT DISTINCT parent_session_id AS id
-      FROM session_role_bindings_v6
-      WHERE parent_session_id IN (${placeholders})
+      SELECT DISTINCT binding.parent_session_id AS id
+      FROM session_role_bindings_v6 AS binding
+      INNER JOIN sessions_v6 AS child ON child.id = binding.session_id
+      WHERE binding.parent_session_id IN (${placeholders})
+        AND child.deleted_at IS NULL
     `).all(...uniqueSessionIds) as SessionIdRow[];
     return new Set(rows.map((row) => row.id));
   }
@@ -981,7 +993,7 @@ export class SessionStorageV6 {
       const changed = this.db.prepare(`
         UPDATE sessions_v6
         SET title = ?, updated_at = ?, resource_revision = resource_revision + 1
-        WHERE id = ? AND session_kind = 'default' AND resource_revision = ?
+        WHERE id = ? AND deleted_at IS NULL AND session_kind = 'default' AND resource_revision = ?
       `).run(input.title, input.createdAt, input.sessionId, input.expectedRevision);
       const actualRevision = readSessionResourceRevision(this.db, input.sessionId);
       if (changed.changes !== 1 || actualRevision !== input.expectedRevision + 1) {
@@ -1266,7 +1278,7 @@ export class SessionStorageV6 {
       const changed = this.db.prepare(`
         UPDATE sessions_v6
         SET is_pinned = ?, resource_revision = resource_revision + 1
-        WHERE id = ?
+        WHERE id = ? AND deleted_at IS NULL
       `).run(isPinned ? 1 : 0, sessionId);
       if (Number(changed.changes) !== 1) throw new Error("対象セッションが見つからないよ。");
       appendStoredSessionSnapshotEvent(this.db, sessionId, "pin_changed");
@@ -1293,7 +1305,7 @@ export class SessionStorageV6 {
     const rows = this.db.prepare(`
       SELECT id
       FROM sessions_v6
-      WHERE last_active_at < ?
+      WHERE deleted_at IS NULL AND last_active_at < ?
       ORDER BY last_active_at ASC, id ASC
     `).all(cutoff.cutoffIso) as SessionIdRow[];
     return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
@@ -1326,7 +1338,7 @@ export class SessionStorageV6 {
           b.delegation_depth AS role_delegation_depth
         FROM sessions_v6
         LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
-        WHERE sessions_v6.id = ?
+        WHERE sessions_v6.id = ? AND sessions_v6.deleted_at IS NULL
       `).get(sessionId) as SessionV6Row | undefined;
       if (!currentRow) {
         throw new Error("対象セッションが見つからないよ。");
@@ -1341,7 +1353,7 @@ export class SessionStorageV6 {
             character_id = NULL,
             thread_id = '',
             resource_revision = resource_revision + 1
-        WHERE id = ?
+        WHERE id = ? AND deleted_at IS NULL
       `).run(sessionId);
       if (Number(updateResult.changes) !== 1) {
         throw new Error("Character authoring runtime stateをclearできなかったよ。");
@@ -1390,7 +1402,7 @@ export class SessionStorageV6 {
           b.delegation_depth AS role_delegation_depth
         FROM sessions_v6
         LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
-        WHERE sessions_v6.id = ?
+        WHERE sessions_v6.id = ? AND sessions_v6.deleted_at IS NULL
       `).get(sessionId) as SessionV6Row | undefined;
       if (!currentRow) {
         throw new Error("対象セッションが見つからないよ。");
@@ -1453,7 +1465,7 @@ export class SessionStorageV6 {
             updated_at = ?,
             last_active_at = ?,
             resource_revision = resource_revision + 1
-        WHERE id = ?
+        WHERE id = ? AND deleted_at IS NULL
       `).run(
         runtimePolicyJson,
         updatesCharacterSnapshot ? 1 : 0,
@@ -1573,18 +1585,11 @@ export class SessionStorageV6 {
     try {
       const retainedSessionIds = normalizedSessions.map((session) => session.id);
       const removedSessionIds = this.listStoredSessionIdsExcept(retainedSessionIds);
-      const removedAuxiliarySessionIds = this.listAuxiliarySessionIdsWithoutValidParents(retainedSessionIds);
-      deleteAuditEventsForSessionTargets(this.db, {
-        sessionIds: removedSessionIds,
-        auxiliarySessionIds: removedAuxiliarySessionIds,
-      });
-      this.db.exec("DELETE FROM session_messages_v6;");
-      this.deleteStoredSessionsByIds(removedSessionIds);
+      this.tombstoneStoredSessionsByIds(removedSessionIds);
       for (const session of normalizedSessions) {
         this.writeSession(session);
         appendStoredSessionSnapshotEvent(this.db, session.id, "stored", session.updatedAt);
       }
-      this.deleteAuxiliarySessionsByIdsIfTableExists(removedAuxiliarySessionIds);
       this.db.exec("COMMIT");
       return this.listSessions();
     } catch (error) {
@@ -1603,23 +1608,9 @@ export class SessionStorageV6 {
       return;
     }
 
-    const placeholders = uniqueSessionIds.map(() => "?").join(", ");
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.deleteTerminalRootWorkItemsForSessions(uniqueSessionIds);
-      const auxiliarySessionIds = this.listAuxiliarySessionIdsForParentsIfTableExists(uniqueSessionIds);
-      deleteAuditEventsForSessionTargets(this.db, {
-        sessionIds: uniqueSessionIds,
-        auxiliarySessionIds,
-      });
-      for (const delegationDepth of [2, 1, 0]) {
-        this.db.prepare(`
-          DELETE FROM session_role_bindings_v6
-          WHERE session_id IN (${placeholders}) AND delegation_depth = ?
-        `).run(...uniqueSessionIds, delegationDepth);
-      }
-      this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
-      this.deleteAuxiliarySessionsForParentsIfTableExists(uniqueSessionIds);
+      this.tombstoneStoredSessionsByIds(uniqueSessionIds);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -1630,16 +1621,9 @@ export class SessionStorageV6 {
   clearSessions(): void {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      const sessionIds = (this.db.prepare("SELECT id FROM sessions_v6").all() as SessionIdRow[])
+      const sessionIds = (this.db.prepare("SELECT id FROM sessions_v6 WHERE deleted_at IS NULL").all() as SessionIdRow[])
         .map((row) => row.id);
-      this.deleteTerminalRootWorkItemsForSessions(sessionIds);
-      deleteAuditEventsForSessionTargets(this.db, { allSessionTargets: true });
-      this.db.exec("DELETE FROM session_messages_v6;");
-      this.db.exec("DELETE FROM session_role_bindings_v6 WHERE delegation_depth = 2;");
-      this.db.exec("DELETE FROM session_role_bindings_v6 WHERE delegation_depth = 1;");
-      this.db.exec("DELETE FROM session_role_bindings_v6 WHERE delegation_depth = 0;");
-      this.db.exec("DELETE FROM sessions_v6;");
-      this.deleteAllAuxiliarySessionsIfTableExists();
+      this.tombstoneStoredSessionsByIds(sessionIds);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -1814,6 +1798,7 @@ export class SessionStorageV6 {
           updated_at = excluded.updated_at,
           last_active_at = excluded.last_active_at,
           resource_revision = sessions_v6.resource_revision + 1
+        WHERE sessions_v6.deleted_at IS NULL
       `;
     const result = this.db.prepare(`
       INSERT INTO sessions_v6 (
@@ -1864,7 +1849,7 @@ export class SessionStorageV6 {
       session.updatedAt,
       session.updatedAt,
     );
-    if (operation === "create" && Number(result.changes) === 0) {
+    if (Number(result.changes) === 0) {
       throw new SessionIdCollisionError(session.id);
     }
 
@@ -2165,40 +2150,37 @@ export class SessionStorageV6 {
     return session;
   }
 
-  private auxiliarySessionsTableExists(): boolean {
-    return Boolean(this.db.prepare(`
-      SELECT 1
-      FROM sqlite_master
-      WHERE type = 'table'
-        AND name = ?
-    `).get(AUXILIARY_SESSIONS_TABLE_NAME));
-  }
-
   private listStoredSessionIdsExcept(retainedSessionIds: Iterable<string>): string[] {
     const retained = new Set(Array.from(retainedSessionIds).map((sessionId) => sessionId.trim()).filter(Boolean));
-    const rows = this.db.prepare("SELECT id FROM sessions_v6").all() as SessionIdRow[];
+    const rows = this.db.prepare("SELECT id FROM sessions_v6 WHERE deleted_at IS NULL").all() as SessionIdRow[];
     return rows.map((row) => row.id).filter((id) => !retained.has(id));
   }
 
-  private deleteStoredSessionsByIds(sessionIds: readonly string[]): void {
+  private tombstoneStoredSessionsByIds(sessionIds: readonly string[]): void {
     const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
     if (uniqueSessionIds.length === 0) {
       return;
     }
 
-    this.deleteTerminalRootWorkItemsForSessions(uniqueSessionIds);
-
+    this.assertSessionsDeletable(uniqueSessionIds);
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
-    for (const delegationDepth of [2, 1, 0]) {
+    const activeRows = this.db.prepare(`
+      SELECT id FROM sessions_v6
+      WHERE id IN (${placeholders}) AND deleted_at IS NULL
+      ORDER BY id
+    `).all(...uniqueSessionIds) as SessionIdRow[];
+    const deletedAt = new Date().toISOString();
+    for (const row of activeRows) {
       this.db.prepare(`
-        DELETE FROM session_role_bindings_v6
-        WHERE session_id IN (${placeholders}) AND delegation_depth = ?
-      `).run(...uniqueSessionIds, delegationDepth);
+        UPDATE sessions_v6
+        SET deleted_at = ?, updated_at = ?, resource_revision = resource_revision + 1
+        WHERE id = ? AND deleted_at IS NULL
+      `).run(deletedAt, deletedAt, row.id);
+      appendStoredSessionSnapshotEvent(this.db, row.id, "deleted", deletedAt);
     }
-    this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
   }
 
-  private deleteTerminalRootWorkItemsForSessions(sessionIds: readonly string[]): void {
+  private assertSessionsDeletable(sessionIds: readonly string[]): void {
     const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
     if (uniqueSessionIds.length === 0) return;
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
@@ -2245,160 +2227,8 @@ export class SessionStorageV6 {
       throw new Error(`WORK_ITEM_SESSION_PROTECTED: ${protectedItem.id}`);
     }
 
-    const cleanupRows = this.db.prepare(`
-      SELECT item.id
-      FROM work_items_v6 AS item
-      WHERE (
-        item.root_session_id IN (${placeholders})
-        OR item.creator_session_id IN (${placeholders})
-        OR item.target_session_id IN (${placeholders})
-      )
-        AND item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
-        AND (
-          item.kind = 'root'
-          OR (
-            item.parent_work_item_id IS NULL
-            AND (
-              item.state = 'canceled'
-              OR (
-                item.result_json IS NOT NULL
-                AND EXISTS (
-                  SELECT 1
-                  FROM work_items_v6 AS root_item
-                  WHERE root_item.kind = 'root'
-                    AND root_item.root_session_id = item.root_session_id
-                    AND root_item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
-                )
-              )
-            )
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM work_item_aggregation_decisions_v6 AS decision
-            WHERE decision.child_work_item_id = item.id
-              AND decision.child_revision = item.revision
-          )
-        )
-    `).all(...uniqueSessionIds, ...uniqueSessionIds, ...uniqueSessionIds) as Array<{ id: string }>;
-    const cleanupWorkItemIds = cleanupRows.map((row) => row.id);
-    if (cleanupWorkItemIds.length === 0) return;
-    const itemPlaceholders = cleanupWorkItemIds.map(() => "?").join(", ");
-
-    this.db.prepare(`DELETE FROM work_item_execution_associations_v6 WHERE work_item_id IN (${itemPlaceholders})`)
-      .run(...cleanupWorkItemIds);
-    this.db.prepare(`
-      DELETE FROM work_item_aggregation_idempotency_v6
-      WHERE child_work_item_id IN (${itemPlaceholders})
-        OR replacement_work_item_id IN (${itemPlaceholders})
-    `).run(...cleanupWorkItemIds, ...cleanupWorkItemIds);
-    this.db.prepare(`
-      DELETE FROM work_item_aggregation_decisions_v6
-      WHERE parent_work_item_id IN (${itemPlaceholders})
-        OR child_work_item_id IN (${itemPlaceholders})
-        OR replacement_work_item_id IN (${itemPlaceholders})
-    `).run(...cleanupWorkItemIds, ...cleanupWorkItemIds, ...cleanupWorkItemIds);
-    this.db.prepare(`DELETE FROM work_item_aggregations_v6 WHERE parent_work_item_id IN (${itemPlaceholders})`)
-      .run(...cleanupWorkItemIds);
-    this.db.prepare(`DELETE FROM work_items_v6 WHERE id IN (${itemPlaceholders})`).run(...cleanupWorkItemIds);
   }
 
-  private listAuxiliarySessionIdsForParentsIfTableExists(parentSessionIds: readonly string[]): string[] {
-    if (!this.auxiliarySessionsTableExists()) {
-      return [];
-    }
-
-    const uniqueParentIds = Array.from(new Set(parentSessionIds.map((parentSessionId) => parentSessionId.trim()).filter(Boolean)));
-    if (uniqueParentIds.length === 0) {
-      return [];
-    }
-
-    const placeholders = uniqueParentIds.map(() => "?").join(", ");
-    const rows = this.db.prepare(`
-      SELECT id
-      FROM auxiliary_sessions
-      WHERE parent_session_id IN (${placeholders})
-    `).all(...uniqueParentIds) as SessionIdRow[];
-    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
-  }
-
-  private deleteAuxiliarySessionsForParentsIfTableExists(parentSessionIds: readonly string[]): void {
-    if (!this.auxiliarySessionsTableExists()) {
-      return;
-    }
-
-    const uniqueParentIds = Array.from(new Set(parentSessionIds.map((parentSessionId) => parentSessionId.trim()).filter(Boolean)));
-    if (uniqueParentIds.length === 0) {
-      return;
-    }
-
-    const placeholders = uniqueParentIds.map(() => "?").join(", ");
-    this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id IN (${placeholders})`).run(...uniqueParentIds);
-  }
-
-  private deleteAuxiliarySessionsByIdsIfTableExists(auxiliarySessionIds: readonly string[]): void {
-    if (!this.auxiliarySessionsTableExists()) {
-      return;
-    }
-
-    const uniqueAuxiliarySessionIds = Array.from(new Set(auxiliarySessionIds.map((auxiliarySessionId) => auxiliarySessionId.trim()).filter(Boolean)));
-    if (uniqueAuxiliarySessionIds.length === 0) {
-      return;
-    }
-
-    const placeholders = uniqueAuxiliarySessionIds.map(() => "?").join(", ");
-    this.db.prepare(`DELETE FROM auxiliary_sessions WHERE id IN (${placeholders})`).run(...uniqueAuxiliarySessionIds);
-  }
-
-  private deleteAllAuxiliarySessionsIfTableExists(): void {
-    if (!this.auxiliarySessionsTableExists()) {
-      return;
-    }
-
-    this.db.prepare("DELETE FROM auxiliary_sessions").run();
-  }
-
-  private companionSessionsTableExists(): boolean {
-    return Boolean(this.db.prepare(`
-      SELECT 1
-      FROM sqlite_master
-      WHERE type = 'table'
-        AND name = ?
-    `).get(COMPANION_SESSIONS_TABLE_NAME));
-  }
-
-  private listRetainedCompanionSessionIds(): string[] {
-    if (!this.companionSessionsTableExists()) {
-      return [];
-    }
-
-    const rows = this.db
-      .prepare("SELECT id FROM companion_sessions WHERE status NOT IN ('merged', 'discarded')")
-      .all() as SessionIdRow[];
-    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
-  }
-
-  private listAuxiliarySessionIdsWithoutValidParents(retainedParentSessionIds: Iterable<string>): string[] {
-    if (!this.auxiliarySessionsTableExists()) {
-      return [];
-    }
-
-    const validParentSessionIds = Array.from(new Set([
-      ...retainedParentSessionIds,
-      ...this.listRetainedCompanionSessionIds(),
-    ]));
-    if (validParentSessionIds.length === 0) {
-      const rows = this.db.prepare("SELECT id FROM auxiliary_sessions").all() as SessionIdRow[];
-      return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
-    }
-
-    const placeholders = validParentSessionIds.map(() => "?").join(", ");
-    const rows = this.db.prepare(`
-      SELECT id
-      FROM auxiliary_sessions
-      WHERE parent_session_id NOT IN (${placeholders})
-    `).all(...validParentSessionIds) as SessionIdRow[];
-    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
-  }
 }
 
 function sessionOperationId(operation: SessionCrudOperation, proof: MutationAuthorityProof, requestFingerprint: string): string {

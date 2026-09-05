@@ -1279,6 +1279,7 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_active_at TEXT NOT NULL,
+    deleted_at TEXT,
     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE SET NULL,
     FOREIGN KEY (project_scope_id) REFERENCES project_scopes_v6(id) ON DELETE SET NULL,
     CHECK (
@@ -3376,6 +3377,7 @@ function backfillRootWorkItemsAndBaselines(db: DatabaseSync): void {
     FROM sessions_v6 AS session
     INNER JOIN session_role_bindings_v6 AS binding ON binding.session_id = session.id
     WHERE session.session_kind <> 'character-authoring'
+      AND session.deleted_at IS NULL
       AND binding.session_role IN ('standalone', 'overall-coordinator')
       AND binding.root_session_id = session.id
       AND binding.parent_session_id IS NULL
@@ -3493,6 +3495,10 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     }
     db.exec(statement);
   }
+  const sessionColumns = tableColumnNames(db, "sessions_v6");
+  if (!sessionColumns.has("deleted_at")) {
+    db.exec("ALTER TABLE sessions_v6 ADD COLUMN deleted_at TEXT");
+  }
   if (!sessionRoleBindingsExisted) {
     db.exec(`
       INSERT INTO session_role_bindings_v6 (
@@ -3500,7 +3506,8 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       )
       SELECT id, 'standalone', 1, id, NULL, 0
       FROM sessions_v6
-      WHERE session_kind <> 'character-authoring' OR session_kind IS NULL
+      WHERE deleted_at IS NULL
+        AND (session_kind <> 'character-authoring' OR session_kind IS NULL)
     `);
     db.exec(`
       UPDATE sessions_v6
@@ -3520,7 +3527,6 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     throw new Error("Coordination event schema is invalid.");
   }
 
-  const sessionColumns = tableColumnNames(db, "sessions_v6");
   if (!sessionColumns.has("is_pinned")) {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1));");
   }
