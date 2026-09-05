@@ -31,6 +31,7 @@ import { parseSessionRuntimeOperationInput } from "../../src/session-external-ru
 import {
   SESSION_AUTHORITY_MAPPING_REVISION,
   SESSION_AUTHORITY_OPERATION_DEFINITIONS,
+  SessionAuthorityError,
   type MutationAuthorityProof,
 } from "../../src/session-authority.js";
 import type { SessionRuntimeOperation } from "../../src/session-external-runtime-contract.js";
@@ -160,7 +161,7 @@ describe("Work Item contract", () => {
           created_at, updated_at, last_active_at
         ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
       `);
-      for (const id of ["root", "task", "task-sibling", "executor", "sibling", "standalone", "other-root"]) {
+      for (const id of ["root", "task", "task-sibling", "executor", "retry-executor", "sibling", "standalone", "other-root"]) {
         insertSession.run(id, id, NOW, NOW, NOW);
       }
       const insertRole = db.prepare(`
@@ -172,6 +173,7 @@ describe("Work Item contract", () => {
       insertRole.run("task", "task-coordinator", "root", "root", 1);
       insertRole.run("task-sibling", "task-coordinator", "root", "root", 1);
       insertRole.run("executor", "executor", "root", "task", 2);
+      insertRole.run("retry-executor", "executor", "root", "task", 2);
       insertRole.run("sibling", "executor", "root", "root", 1);
       insertRole.run("standalone", "standalone", "standalone", null, 0);
       insertRole.run("other-root", "overall-coordinator", "other-root", null, 0);
@@ -295,18 +297,8 @@ describe("Work Item contract", () => {
     const parent = createRootWork("retry-parent");
     const child = createChild(parent.id, "retry-child");
     service.cancel({ workItemId: child.id, expectedRevision: 1, idempotencyKey: "cancel-child" }, binding("task"));
-    const db = new DatabaseSync(dbPath);
-    try {
-      db.prepare(`
-        UPDATE session_role_bindings_v6
-        SET session_role = 'executor', root_session_id = 'root', parent_session_id = 'task', delegation_depth = 2
-        WHERE session_id = 'task-sibling'
-      `).run();
-    } finally {
-      db.close();
-    }
     const request = {
-      parentWorkItemId: parent.id, childWorkItemId: child.id, targetSessionId: "task-sibling",
+      parentWorkItemId: parent.id, childWorkItemId: child.id, targetSessionId: "retry-executor",
       goal: "retry", scope: "retry scope", completionCriteria: "done", authority: "local", sourceIdentity,
       expectedAggregateRevision: 1, idempotencyKey: "retry-request",
     } as const;
@@ -616,12 +608,12 @@ describe("Work Item contract", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "bounded listはactive grantのrelationへ可視範囲を絞り、root_member grant失効後に残るassigned grantでroot全体を公開しない"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#直接検証" }
-  // failure_mode = "assigned grantをroot構造だけでroot-wideへ拡張し、失効済みroot_member権限を迂回して同じrootの他target Work Itemを公開する"
+  // claim = "非root actorはcreatorまたはtargetのWork Itemを列挙・取得でき、同rootの無関係な項目は参照できない"
+  // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md#Work Item operation" }
+  // failure_mode = "creatorが直属executorへ委譲したWork Itemを再取得できない、またはactorとの関係がない同root Work Itemまで公開する"
   // scope = "WorkItemService bounded list visibility and keyset pagination"
   // lifecycle = "permanent"
-  // distinction = "root_member proofでのkeyset paginationと、そのgrantだけを失効した後のassigned proofによるtarget限定一覧を同じfixtureで対比する"
+  // distinction = "task coordinatorがtargetの項目とcreatorの項目を和集合で参照し、sibling項目を除外することをroot visibilityと対比する"
   // @end-test-value
   it("WORK-AUTH-02: bounded listはrootとactor visibilityをstorage queryで固定する", () => {
     const assigned = createWithActiveGrant({
@@ -643,6 +635,16 @@ describe("Work Item contract", () => {
       idempotencyKey: "list-sibling",
     };
     const sibling = createWithActiveGrant(siblingInput, binding("root"));
+    const delegated = createWithActiveGrant({
+      targetSessionId: "executor",
+      parentWorkItemId: assigned.id,
+      goal: "executor child",
+      scope: "scope",
+      completionCriteria: "done",
+      authority: "local",
+      sourceIdentity,
+      idempotencyKey: "list-executor-child",
+    }, binding("task"));
     const rootBinding = binding("root");
     const rootListInput = { limit: 10, afterSequence: null };
     const rootListProof = authorityService.authorize(rootBinding, "work.list", rootListInput).proof;
@@ -657,9 +659,20 @@ describe("Work Item contract", () => {
     assert.deepEqual(service.resolveListScope(taskBinding, taskListProof), {
       rootSessionId: "root",
       actorSessionId: "task",
-      visibility: "target",
+      visibility: "actor",
     });
-    assert.deepEqual(service.list(rootListInput, taskBinding, taskListProof).map((item) => item.id), [assigned.id]);
+    assert.deepEqual(
+      service.list(rootListInput, taskBinding, taskListProof).map((item) => item.id),
+      [assigned.id, delegated.id],
+    );
+    const createdGetProof = authorityService.authorize(taskBinding, "work.get", {
+      workItemId: delegated.id,
+    }).proof;
+    assert.equal(createdGetProof.resolvedScope.relation, "created");
+    assert.equal(service.get(delegated.id, taskBinding, createdGetProof).id, delegated.id);
+    assert.throws(() => authorityService.authorize(taskBinding, "work.get", {
+      workItemId: sibling.id,
+    }), SessionAuthorityError);
     const rootItem = storage.get("root-work-item:root");
     assert.ok(rootItem);
     const firstPage = service.list({ limit: 1, afterSequence: null }, rootBinding, rootListProof);
@@ -688,14 +701,17 @@ describe("Work Item contract", () => {
     } finally {
       db.close();
     }
-    const assignedProof = authorityService.authorize(rootBinding, "work.list", rootListInput).proof;
-    assert.equal(assignedProof.resolvedScope.relation, "assigned");
-    assert.deepEqual(service.resolveListScope(rootBinding, assignedProof), {
+    const creatorOrTargetProof = authorityService.authorize(rootBinding, "work.list", rootListInput).proof;
+    assert.equal(creatorOrTargetProof.resolvedScope.relation, "creator_or_target");
+    assert.deepEqual(service.resolveListScope(rootBinding, creatorOrTargetProof), {
       rootSessionId: "root",
       actorSessionId: "root",
-      visibility: "target",
+      visibility: "actor",
     });
-    assert.deepEqual(service.list(rootListInput, rootBinding, assignedProof).map((item) => item.id), [rootItem.id]);
+    assert.deepEqual(
+      service.list(rootListInput, rootBinding, creatorOrTargetProof).map((item) => item.id),
+      [rootItem.id, assigned.id, sibling.id],
+    );
   });
 
   // @test-value v1
@@ -1017,7 +1033,7 @@ describe("Work Item contract", () => {
       `);
       ensureV6Schema(db);
       ensureV6Schema(db);
-      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number }).count, 7);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number }).count, 8);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6 WHERE id = 'execution-existing'").get() as { count: number }).count, 1);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM work_items_v6 WHERE id = ?").get(item.id) as { count: number }).count, 1);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name LIKE 'work_item_aggregation%'").get() as { count: number }).count, 4);

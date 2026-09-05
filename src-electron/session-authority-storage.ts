@@ -91,8 +91,9 @@ function ownBaselinePermissions(role: SessionRole): SessionAuthorityPermission[]
     permission("coordination.event.cancel", "created"),
     permission("coordination.event.correct", "created"),
     permission("transcript.export", "self"),
-    permission("work.list", "assigned"),
+    permission("work.list", "creator_or_target"),
     permission("work.get", "assigned"),
+    permission("work.get", "created"),
     permission("work.transition", "assigned"),
     permission("work.result", "assigned"),
     permission("work.cancel", "created"),
@@ -310,11 +311,12 @@ export function listActiveSessionAuthorityGrants(
   return (db.prepare(`
     SELECT * FROM session_authority_grants_v6
     WHERE grantee_session_id = ?
+      AND mapping_revision = ?
       AND effective_at <= ?
       AND (expires_at IS NULL OR expires_at > ?)
       AND revoked_at IS NULL
     ORDER BY grant_id
-  `).all(sessionId, timestamp, timestamp) as GrantRow[]).map(decodeGrant);
+  `).all(sessionId, SESSION_AUTHORITY_MAPPING_REVISION, timestamp, timestamp) as GrantRow[]).map(decodeGrant);
 }
 
 export function assertGrantProofCurrent(db: DatabaseSync, proof: MutationAuthorityProof, now = new Date()): void {
@@ -326,6 +328,9 @@ export function assertGrantProofCurrent(db: DatabaseSync, proof: MutationAuthori
     throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "The authority operation mapping revision is stale.");
   }
   const grant = requireGrant(db, proof.grantId);
+  if (grant.mappingRevision !== SESSION_AUTHORITY_MAPPING_REVISION) {
+    throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "The authority grant mapping revision is stale.");
+  }
   assertGrantActive(grant, proof.principal.actorSessionId, proof.grantRevision, now);
   if (grant.rootSessionId !== proof.resolvedScope.rootSessionId || !grantAllows(grant, proof)) {
     throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The authority proof no longer matches the canonical resource scope.");
@@ -395,19 +400,30 @@ export function verifySessionAuthorityMigration(db: DatabaseSync): void {
   if (registered.some((row) => row.mapping_revision !== SESSION_AUTHORITY_MAPPING_REVISION)) {
     throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "Session authority operation mapping revision is inconsistent.");
   }
-  const missing = db.prepare(`
-    SELECT binding.session_id
-    FROM session_role_bindings_v6 AS binding
-    LEFT JOIN session_authority_grants_v6 AS grant_record
-      ON grant_record.grantee_session_id = binding.session_id
-      AND grant_record.mapping_revision = ?
-    WHERE grant_record.grant_id IS NULL
-    LIMIT 1
-  `).get(SESSION_AUTHORITY_MAPPING_REVISION) as { session_id: string } | undefined;
-  if (missing) {
-    throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "A Session is missing its baseline authority grants.", {
-      sessionId: missing.session_id,
-    });
+  const bindings = db.prepare(`
+    SELECT session_id, session_role
+    FROM session_role_bindings_v6
+    ORDER BY session_id
+  `).all() as Array<{ session_id: string; session_role: SessionRole }>;
+  const readGrants = db.prepare(`
+    SELECT *
+    FROM session_authority_grants_v6
+    WHERE grantee_session_id = ?
+      AND mapping_revision = ?
+      AND revoked_at IS NULL
+    ORDER BY grant_id
+  `);
+  for (const binding of bindings) {
+    const grants = (readGrants.all(binding.session_id, SESSION_AUTHORITY_MAPPING_REVISION) as GrantRow[]).map(decodeGrant);
+    const missing = baselineSessionAuthorityPermissions(binding.session_role)
+      .find((expected) => !grants.some((grant) => grantMatchesPermission(grant, expected)));
+    if (missing) {
+      throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "A Session is missing a required baseline authority grant.", {
+        sessionId: binding.session_id,
+        action: missing.action,
+        relationSelector: missing.relationSelector,
+      });
+    }
   }
 }
 
@@ -541,4 +557,13 @@ function samePermission(left: SessionAuthorityPermission, right: SessionAuthorit
     && left.relationSelector === right.relationSelector
     && left.effectClass === right.effectClass
     && right.targetSessionRoles.every((role) => left.targetSessionRoles.includes(role));
+}
+
+function grantMatchesPermission(grant: SessionAuthorityGrant, expected: SessionAuthorityPermission): boolean {
+  return grant.actions.includes(expected.action)
+    && grant.resourceKind === expected.resourceKind
+    && grant.relationSelector === expected.relationSelector
+    && grant.effectClass === expected.effectClass
+    && (expected.mode !== "delegate" || grant.delegable)
+    && expected.targetSessionRoles.every((role) => grant.targetSessionRoles.includes(role));
 }

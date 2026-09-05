@@ -300,7 +300,9 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 2026-09-06 時点で、開始コミットからの principal、grant evaluator、user decision policy、共通 mutation envelope、resource history、baseline migration、38 操作の authority mapping、application／HTTP／CLI／MCP／runtime catalog／managed Skill の切り替えを実装した。Root budget の ledger と admission は承認済みの段階導入に従い Slice 2 に残し、runtime catalog では未実装として公開する。
 
-直接検証は `npm run typecheck`、`npm test`（3450 tests、3449 pass、1 skip、0 fail）、`npm run build`、`git diff --check` を通過した。`review-test-value` の Git mode は開始コミットからの TypeScript test 107 件を診断 0 で抽出し、record 内の claim、failure mode、observable の審査結果は全件 `ACCEPT` である。commit-bound complete-diff review は実装コミットを固定した後に実施する。
+実装コミット `e88abf85cd111c3360e2bc78d35cc68cb940da41` を固定した complete-diff review では、非 root Session が自身の作成した Work Item を参照できない可視性欠落と、Session／execution event payload から current projection を再構成できない履歴欠落の二件を blocking と分類した。修正では Work Item の creator-or-target list と created get を mapping revision 2 のgrantへ追加し、Session／execution の各eventへ schema revision 2 の完全な projection snapshot を保存してstartup replay verifierでcurrent rowと照合する。baseline verifierもRole templateの必須permission全体を検証する。resulting deltaのtargeted closureは修正commit固定後に行う。
+
+修正後の直接検証は `npm run typecheck`、`npm test`（3451 tests、3450 pass、1 skip、0 fail）、`npm run build`、`git diff --check` を通過した。`review-test-value` の Git mode は開始コミットからの TypeScript test 113 件を診断 0 で抽出し、record 内の claim、failure mode、observable の審査結果は全件 `ACCEPT` である。
 
 基本 check は次の順で実行する。
 

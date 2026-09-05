@@ -1,10 +1,21 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
-import type { MutationAuthorityProof, ResourceEventHeader } from "../src/session-authority.js";
+import {
+  type MutationAuthorityProof,
+  type ResourceEventHeader,
+} from "../src/session-authority.js";
+import {
+  SESSION_RUNTIME_MAX_BODY_BYTES,
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
+} from "../src/session-external-runtime-contract.js";
 import { appendResourceEventHeader } from "./session-authority-storage.js";
 
 const RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES = 64 * 1024;
+const RESOURCE_HISTORY_ENVELOPE_BYTES = 1024 * 1024;
+const SESSION_RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES = SESSION_RUNTIME_MAX_BODY_BYTES + RESOURCE_HISTORY_ENVELOPE_BYTES;
+const SESSION_EXECUTION_HISTORY_PAYLOAD_LIMIT_BYTES =
+  SESSION_RUNTIME_MAX_BODY_BYTES + SESSION_RUNTIME_MAX_RESPONSE_BYTES + RESOURCE_HISTORY_ENVELOPE_BYTES;
 
 export function ensureResourceHistorySchema(db: DatabaseSync): void {
   const sessionColumns = tableColumnNames(db, "sessions_v6");
@@ -32,7 +43,7 @@ export function ensureResourceHistorySchema(db: DatabaseSync): void {
       payload_json TEXT NOT NULL,
       CHECK (revision >= 1),
       CHECK (json_valid(payload_json) AND json_type(payload_json) = 'object'),
-      CHECK (length(CAST(payload_json AS BLOB)) <= ${RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES}),
+      CHECK (length(CAST(payload_json AS BLOB)) <= ${SESSION_RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES}),
       UNIQUE (session_id, revision)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS session_resource_events_session_v6
@@ -47,7 +58,7 @@ export function ensureResourceHistorySchema(db: DatabaseSync): void {
       payload_json TEXT NOT NULL,
       CHECK (revision >= 1),
       CHECK (json_valid(payload_json) AND json_type(payload_json) = 'object'),
-      CHECK (length(CAST(payload_json AS BLOB)) <= ${RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES}),
+      CHECK (length(CAST(payload_json AS BLOB)) <= ${SESSION_EXECUTION_HISTORY_PAYLOAD_LIMIT_BYTES}),
       UNIQUE (execution_id, revision)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS session_execution_events_execution_v6
@@ -161,6 +172,15 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
   if (missingSession) {
     throw new Error(`Session projection has no matching resource event: ${missingSession.id}`);
   }
+  verifySnapshotProjection(db, {
+    resourceTable: "sessions_v6",
+    eventTable: "session_resource_events_v6",
+    resourceIdColumn: "id",
+    eventResourceIdColumn: "session_id",
+    label: "Session",
+    payloadSchemaRevision: 2,
+    readProjection: readSessionProjection,
+  });
 
   const missingExecution = db.prepare(`
     SELECT execution.id
@@ -183,6 +203,15 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
   if (missingExecution) {
     throw new Error(`Session execution projection has no matching resource event: ${missingExecution.id}`);
   }
+  verifySnapshotProjection(db, {
+    resourceTable: "session_executions_v6",
+    eventTable: "session_execution_events_v6",
+    resourceIdColumn: "id",
+    eventResourceIdColumn: "execution_id",
+    label: "Session execution",
+    payloadSchemaRevision: 2,
+    readProjection: readSessionExecutionProjection,
+  });
 
   const missingWorkItem = db.prepare(`
     SELECT item.id
@@ -317,7 +346,10 @@ export function appendSessionResourceEvent(db: DatabaseSync, input: {
   insertPayload(db, "session_resource_events_v6", {
     eventId,
     columns: ["session_id", "revision", "event_kind", "payload_json"],
-    values: [input.sessionId, input.revision, input.eventKind, serializePayload(input.payload)],
+    values: [input.sessionId, input.revision, input.eventKind, serializePayload({
+      ...input.payload,
+      projection: readSessionProjection(db, input.sessionId),
+    }, SESSION_RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES)],
   });
   appendResourceEventHeader(db, createHeader({
     eventId,
@@ -355,7 +387,10 @@ export function appendSessionExecutionEvent(db: DatabaseSync, input: {
   insertPayload(db, "session_execution_events_v6", {
     eventId,
     columns: ["execution_id", "session_id", "revision", "event_kind", "payload_json"],
-    values: [input.executionId, row.session_id, input.revision, input.eventKind, serializePayload(input.payload)],
+    values: [input.executionId, row.session_id, input.revision, input.eventKind, serializePayload({
+      ...input.payload,
+      projection: readSessionExecutionProjection(db, input.executionId),
+    }, SESSION_EXECUTION_HISTORY_PAYLOAD_LIMIT_BYTES)],
   });
   appendResourceEventHeader(db, createHeader({
     eventId,
@@ -531,7 +566,7 @@ function createHeader(input: {
     occurredAt: input.occurredAt,
     committedAt: input.occurredAt,
     supersedesEventId: null,
-    payloadSchemaRevision: 1,
+    payloadSchemaRevision: input.resourceKind === "session" || input.resourceKind === "execution" ? 2 : 1,
     effect: "committed",
   };
 }
@@ -557,54 +592,220 @@ function insertPayload(db: DatabaseSync, table: string, input: {
     .run(input.eventId, ...input.values);
 }
 
-function serializePayload(payload: Readonly<Record<string, unknown>>): string {
+function serializePayload(
+  payload: Readonly<Record<string, unknown>>,
+  maxBytes = RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES,
+): string {
   const result = JSON.stringify(payload);
-  if (Buffer.byteLength(result, "utf8") > RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES) {
+  if (Buffer.byteLength(result, "utf8") > maxBytes) {
     throw new TypeError("Resource history event payload exceeds the byte limit.");
   }
   return result;
 }
 
+function verifySnapshotProjection(db: DatabaseSync, input: {
+  resourceTable: string;
+  eventTable: string;
+  resourceIdColumn: string;
+  eventResourceIdColumn: string;
+  label: string;
+  payloadSchemaRevision: number;
+  readProjection: (db: DatabaseSync, resourceId: string) => Readonly<Record<string, unknown>>;
+}): void {
+  const resources = db.prepare(`SELECT ${input.resourceIdColumn} AS id FROM ${input.resourceTable}`)
+    .all() as Array<{ id: string }>;
+  const readEvents = db.prepare(`
+    SELECT event.payload_json, header.payload_schema_revision
+    FROM ${input.eventTable} AS event
+    INNER JOIN resource_event_headers_v6 AS header ON header.event_id = event.event_id
+    WHERE event.${input.eventResourceIdColumn} = ?
+    ORDER BY event.revision ASC
+  `);
+  for (const resource of resources) {
+    let replayed: unknown;
+    for (const row of readEvents.all(resource.id) as Array<{ payload_json: string; payload_schema_revision: number }>) {
+      if (row.payload_schema_revision !== input.payloadSchemaRevision) {
+        throw new Error(`${input.label} event payload schema revision is unsupported: ${resource.id}`);
+      }
+      const payload = JSON.parse(row.payload_json) as { projection?: unknown };
+      if (payload.projection === undefined) {
+        throw new Error(`${input.label} event payload cannot reconstruct the projection: ${resource.id}`);
+      }
+      replayed = payload.projection;
+    }
+    if (replayed === undefined || stableJson(replayed) !== stableJson(input.readProjection(db, resource.id))) {
+      throw new Error(`${input.label} event replay does not match the current projection: ${resource.id}`);
+    }
+  }
+}
+
+function readSessionProjection(db: DatabaseSync, sessionId: string): Readonly<Record<string, unknown>> {
+  const row = db.prepare(`
+    SELECT title, state, session_kind, provider_id, catalog_revision, model_id,
+      reasoning_effort, custom_agent_name, approval_mode, codex_sandbox_mode,
+      allowed_additional_directories_json, runtime_policy_json, thread_id,
+      character_id, character_snapshot_json, project_scope_id, workspace_path,
+      is_pinned, created_at, updated_at, last_active_at
+    FROM sessions_v6
+    WHERE id = ?
+  `).get(sessionId) as {
+    title: string;
+    state: string;
+    session_kind: string;
+    provider_id: string;
+    catalog_revision: number;
+    model_id: string;
+    reasoning_effort: string;
+    custom_agent_name: string;
+    approval_mode: string;
+    codex_sandbox_mode: string;
+    allowed_additional_directories_json: string;
+    runtime_policy_json: string;
+    thread_id: string;
+    character_id: string | null;
+    character_snapshot_json: string | null;
+    project_scope_id: string | null;
+    workspace_path: string;
+    is_pinned: number;
+    created_at: string;
+    updated_at: string;
+    last_active_at: string;
+  } | undefined;
+  if (!row) throw new Error(`Session was not found: ${sessionId}`);
+  return {
+    title: row.title,
+    state: row.state,
+    sessionKind: row.session_kind,
+    providerId: row.provider_id,
+    catalogRevision: row.catalog_revision,
+    modelId: row.model_id,
+    reasoningEffort: row.reasoning_effort,
+    customAgentName: row.custom_agent_name,
+    approvalMode: row.approval_mode,
+    codexSandboxMode: row.codex_sandbox_mode,
+    allowedAdditionalDirectories: JSON.parse(row.allowed_additional_directories_json) as unknown,
+    runtimePolicy: JSON.parse(row.runtime_policy_json) as unknown,
+    threadId: row.thread_id,
+    characterId: row.character_id,
+    characterSnapshot: row.character_snapshot_json === null ? null : JSON.parse(row.character_snapshot_json) as unknown,
+    projectScopeId: row.project_scope_id,
+    workspacePath: row.workspace_path,
+    isPinned: row.is_pinned === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastActiveAt: row.last_active_at,
+  };
+}
+
+function readSessionExecutionProjection(db: DatabaseSync, executionId: string): Readonly<Record<string, unknown>> {
+  const row = db.prepare(`
+    SELECT execution.sequence, execution.operation, execution.state, execution.request_json,
+      execution.result_json, execution.error_code, execution.reason, execution.created_at,
+      execution.admitted_at, execution.completed_at, execution.updated_at,
+      execution.authority_proof_json, association.work_item_id,
+      origin.source_session_id, origin.target_session_title_snapshot, origin.target_session_role_snapshot,
+      origin.source_message_seq_anchor, origin.user_message, origin.accepted_at
+    FROM session_executions_v6 AS execution
+    LEFT JOIN work_item_execution_associations_v6 AS association ON association.execution_id = execution.id
+    LEFT JOIN session_execution_origins_v6 AS origin ON origin.execution_id = execution.id
+    WHERE execution.id = ?
+  `).get(executionId) as {
+    sequence: number;
+    operation: string;
+    state: string;
+    request_json: string;
+    result_json: string | null;
+    error_code: string;
+    reason: string;
+    created_at: string;
+    admitted_at: string | null;
+    completed_at: string | null;
+    updated_at: string;
+    authority_proof_json: string | null;
+    work_item_id: string | null;
+    source_session_id: string | null;
+    target_session_title_snapshot: string | null;
+    target_session_role_snapshot: string | null;
+    source_message_seq_anchor: number | null;
+    user_message: string | null;
+    accepted_at: string | null;
+  } | undefined;
+  if (!row) throw new Error(`Session execution was not found: ${executionId}`);
+  return {
+    sequence: row.sequence,
+    operation: row.operation,
+    state: row.state,
+    request: JSON.parse(row.request_json) as unknown,
+    result: row.result_json === null ? null : JSON.parse(row.result_json) as unknown,
+    errorCode: row.error_code,
+    reason: row.reason,
+    createdAt: row.created_at,
+    admittedAt: row.admitted_at,
+    completedAt: row.completed_at,
+    updatedAt: row.updated_at,
+    authorityProof: row.authority_proof_json === null ? null : JSON.parse(row.authority_proof_json) as unknown,
+    workItemId: row.work_item_id,
+    origin: row.source_session_id === null ? null : {
+      sourceSessionId: row.source_session_id,
+      targetSessionTitle: row.target_session_title_snapshot,
+      targetSessionRole: row.target_session_role_snapshot,
+      sourceMessageSequence: row.source_message_seq_anchor,
+      userMessage: row.user_message,
+      acceptedAt: row.accepted_at,
+    },
+  };
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function backfillResourceHistory(db: DatabaseSync): void {
-  db.exec(`
-    INSERT OR IGNORE INTO session_resource_events_v6 (event_id, session_id, revision, event_kind, payload_json)
-    SELECT
-      'session:' || session.id || ':revision:' || session.resource_revision,
+  const insertSessionEvent = db.prepare(`
+    INSERT OR IGNORE INTO session_resource_events_v6 (
+      event_id, session_id, revision, event_kind, payload_json
+    ) VALUES (?, ?, ?, 'migration_baseline', ?)
+  `);
+  const sessions = db.prepare("SELECT id, resource_revision FROM sessions_v6")
+    .all() as Array<{ id: string; resource_revision: number }>;
+  for (const session of sessions) {
+    insertSessionEvent.run(
+      `session:${session.id}:revision:${session.resource_revision}`,
       session.id,
       session.resource_revision,
-      'migration_baseline',
-      json_object(
-        'title', session.title,
-        'state', session.state,
-        'sessionKind', session.session_kind,
-        'providerId', session.provider_id,
-        'modelId', session.model_id,
-        'workspacePath', session.workspace_path,
-        'updatedAt', session.updated_at
-      )
-    FROM sessions_v6 AS session;
+      serializePayload({ projection: readSessionProjection(db, session.id) }, SESSION_RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES),
+    );
+  }
 
+  const insertExecutionEvent = db.prepare(`
     INSERT OR IGNORE INTO session_execution_events_v6 (
       event_id, execution_id, session_id, revision, event_kind, payload_json
     )
-    SELECT
-      'execution:' || execution.id || ':revision:' || execution.revision,
+    SELECT ?, execution.id, execution.session_id, execution.revision, 'migration_baseline', ?
+    FROM session_executions_v6 AS execution
+    WHERE execution.id = ?
+  `);
+  const executions = db.prepare("SELECT id, revision FROM session_executions_v6")
+    .all() as Array<{ id: string; revision: number }>;
+  for (const execution of executions) {
+    insertExecutionEvent.run(
+      `execution:${execution.id}:revision:${execution.revision}`,
+      serializePayload(
+        { projection: readSessionExecutionProjection(db, execution.id) },
+        SESSION_EXECUTION_HISTORY_PAYLOAD_LIMIT_BYTES,
+      ),
       execution.id,
-      execution.session_id,
-      execution.revision,
-      'migration_baseline',
-      json_object(
-        'operation', execution.operation,
-        'state', execution.state,
-        'errorCode', execution.error_code,
-        'reason', execution.reason,
-        'createdAt', execution.created_at,
-        'admittedAt', execution.admitted_at,
-        'completedAt', execution.completed_at,
-        'updatedAt', execution.updated_at
-      )
-    FROM session_executions_v6 AS execution;
+    );
+  }
 
+  db.exec(`
     INSERT OR IGNORE INTO session_file_write_events_v6 (
       event_id, operation_id, session_id, revision, event_kind, payload_json
     )
@@ -750,8 +951,8 @@ function backfillResourceHistory(db: DatabaseSync): void {
       COALESCE(binding.root_session_id, event.session_id), 'session', event.session_id,
       event.event_kind, event.revision, 'system', NULL, NULL, NULL,
       'migration:session-history', NULL,
-      COALESCE(json_extract(event.payload_json, '$.updatedAt'), ''),
-      COALESCE(json_extract(event.payload_json, '$.updatedAt'), ''), NULL, 1, 'committed'
+      COALESCE(json_extract(event.payload_json, '$.projection.updatedAt'), ''),
+      COALESCE(json_extract(event.payload_json, '$.projection.updatedAt'), ''), NULL, 2, 'committed'
     FROM session_resource_events_v6 AS event
     LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id;
 
@@ -766,8 +967,8 @@ function backfillResourceHistory(db: DatabaseSync): void {
       COALESCE(binding.root_session_id, event.session_id), 'session', event.session_id,
       event.event_kind, event.revision, 'system', NULL, NULL, NULL,
       'migration:execution-history', NULL,
-      COALESCE(json_extract(event.payload_json, '$.updatedAt'), ''),
-      COALESCE(json_extract(event.payload_json, '$.updatedAt'), ''), NULL, 1, 'committed'
+      COALESCE(json_extract(event.payload_json, '$.projection.updatedAt'), ''),
+      COALESCE(json_extract(event.payload_json, '$.projection.updatedAt'), ''), NULL, 2, 'committed'
     FROM session_execution_events_v6 AS event
     LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id;
 

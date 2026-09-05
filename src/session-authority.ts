@@ -1,7 +1,7 @@
 import type { SessionRuntimeOperation } from "./session-external-runtime-contract.js";
 import type { SessionRole } from "./session-role-binding.js";
 
-export const SESSION_AUTHORITY_MAPPING_REVISION = 1 as const;
+export const SESSION_AUTHORITY_MAPPING_REVISION = 2 as const;
 
 export const SESSION_AUTHORITY_EFFECT_CLASSES = [
   "read",
@@ -40,6 +40,7 @@ export const SESSION_AUTHORITY_RELATION_SELECTORS = [
   "owned_root",
   "assigned",
   "created",
+  "creator_or_target",
   "visible_root",
 ] as const;
 export type SessionAuthorityRelationSelector = (typeof SESSION_AUTHORITY_RELATION_SELECTORS)[number];

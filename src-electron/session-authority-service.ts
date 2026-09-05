@@ -179,7 +179,10 @@ function resolveScopes(
       return [scope(actor, "session", null, actor.sessionId, "root_member"), scope(actor, "session", null, actor.sessionId, "self")];
     }
     if (operation === "work.list") {
-      return [scope(actor, "work_item", null, actor.sessionId, "root_member"), scope(actor, "work_item", null, actor.sessionId, "assigned")];
+      return [
+        scope(actor, "work_item", null, actor.sessionId, "root_member"),
+        scope(actor, "work_item", null, actor.sessionId, "creator_or_target"),
+      ];
     }
     if (operation === "coordination.event.create") {
       return [scope(actor, "coordination_event", null, actor.sessionId, "self")];

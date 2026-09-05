@@ -18,6 +18,7 @@ SQLite接続はresource storageごとに独立している。application service
 - 既存operation registryの全操作をaction、scope、effect class、decision classへ対応付ける。Roleはbaseline grantのtemplateとして保存し、通常の認可はactive grantとその委譲元の状態を評価する。baseline migrationは既存のroot内関係と実効権限を超えない。
 - application serviceは解決済みのmutation proofを明示引数でstorageへ渡す。storageは同じ書き込みtransaction内でgrant revisionとscopeを再検証し、resourceのprojection、固有event、共通event header、idempotencyを保存する。暗黙の実行コンテキストやRole fallbackは使わない。
 - 共通event headerはresource identity、owner、principal kind、grant revision、operation、effect certaintyを所有する。resource固有payloadは各resourceのevent tableに置く。共通tableへ任意payloadを集約しない。
+- Session と execution のresource固有payloadはschema revision 2でrevision適用後のcanonical projection snapshotを保存する。startup verifierはheaderのschema revisionを確認し、event replay結果をcurrent rowと照合する。既存projectionのmigration baselineも同じ完全なsnapshotとし、暫定的な空payloadを後から補う経路は持たない。
 - ユーザー専用判断は保存済みdecision classで区別する。providerのapprovalとelicitationはユーザー専用とし、Agentからの応答を拒否する。GUIのtrusted responderはAgent向けapplication serviceへ公開しない。
 - filesystem publishとprovider実行は、admissionと結果確定を分けて記録する。既にadmitした処理の回復では、保存したoperation identityとeffectの証拠を使い、結果が不明な状態を成功へ変換しない。
 - migrationは既存projectionのbaselineを記録する。過去の判断主体や応答を証明できないledgerから、ユーザーreceiptやcanonical responseを捏造しない。
@@ -25,6 +26,8 @@ SQLite接続はresource storageごとに独立している。application service
 ## Consequences
 
 公開操作の入力revisionとcatalogの意味はTypeScript、HTTP、CLI、MCP、managed Skillで同時に変更する。旧入力の救済経路は追加しない。子Role一覧はbaseline templateとして公開し、現在の許可一覧とは扱わない。
+
+Work Item の非 root 可視性はcreatorまたはtargetへ限定する。listは両関係の和集合を一つのgrant relationとして評価し、getはassignedとcreatedを別grantとして評価する。root member可視性はoverall coordinatorの明示grantでのみ追加する。
 
 Slice 1ではgrant、decision、revision、historyの切り替えを行う。root budget ledger、reserve、reconcile、admissionはユーザー承認済みの段階導入に従いSlice 2へ残す。無制限allocationや成功するbudget stubは置かず、既存のoperation limitを維持する。
 

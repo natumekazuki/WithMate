@@ -129,6 +129,22 @@ function insertCharacterRows(dbPath: string, characterIds: readonly string[]): v
   }
 }
 
+function removeSessionHistoryForLegacyFixture(db: DatabaseSync, sessionIds: readonly string[]): void {
+  db.exec(`
+    DROP TRIGGER IF EXISTS resource_event_headers_no_delete_v6;
+    DROP TRIGGER IF EXISTS session_resource_events_no_delete_v6;
+  `);
+  const deleteHeader = db.prepare(`
+    DELETE FROM resource_event_headers_v6
+    WHERE resource_kind = 'session' AND resource_id = ?
+  `);
+  const deleteEvents = db.prepare("DELETE FROM session_resource_events_v6 WHERE session_id = ?");
+  for (const sessionId of sessionIds) {
+    deleteHeader.run(sessionId);
+    deleteEvents.run(sessionId);
+  }
+}
+
 function insertAuxiliarySessionRows(dbPath: string, rows: Array<{ id: string; parentSessionId: string }>): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -517,6 +533,7 @@ describe("SessionStorageV6", () => {
       storage = null;
 
       const db = new DatabaseSync(dbPath);
+      removeSessionHistoryForLegacyFixture(db, [legacySession.id]);
       db.prepare("UPDATE sessions_v6 SET runtime_policy_json = json_set(runtime_policy_json, '$.codexReviewer', 'unexpected') WHERE id = ?").run(legacySession.id);
       db.close();
 
@@ -767,6 +784,15 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "履歴導入前のSession rowは保存済みruntime ownerだけを正規化し、表示名やsnapshotからowner identityを推測しない"
+  // oracle = { type = "contract", ref = "docs/runbooks/withmate-character-context.md" }
+  // failure_mode = "legacy migrationが表示名またはsnapshotをcanonical ownerとして採用し、別Characterのidentityへ誤接続する"
+  // scope = "SessionStorageV6 legacy Character owner repair and history baseline"
+  // lifecycle = "permanent"
+  // distinction = "空白付きowner、owner欠損、snapshotのみの三入力を同じstartup repairへ通し、保存済みidentityだけが採用される差を観測する"
+  // @end-test-value
   it("legacy row の owner を trim し、欠損時は表示名や snapshot から推測しない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -827,6 +853,7 @@ describe("SessionStorageV6", () => {
       storage = null;
 
       const db = new DatabaseSync(dbPath);
+      removeSessionHistoryForLegacyFixture(db, sessions.map((session) => session.id));
       const updateOwner = db.prepare(`
         UPDATE sessions_v6
         SET character_id = NULL,
@@ -864,6 +891,15 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "Character authoring Sessionのlegacy repairは廃止済みfieldやsnapshotをowner identityのfallbackにしない"
+  // oracle = { type = "contract", ref = "docs/runbooks/withmate-character-context.md" }
+  // failure_mode = "owner欠損時に廃止済みfieldまたはsnapshotからidentityを復元し、canonical ownerとの不一致を隠す"
+  // scope = "SessionStorageV6 legacy Character authoring owner repair and history baseline"
+  // lifecycle = "permanent"
+  // distinction = "authoring Session固有のobsolete fieldとsnapshotを保持したrowで、通常Sessionのruntime owner repairとは異なる欠損経路を観測する"
+  // @end-test-value
   it("obsolete field や snapshot を欠損した Character owner の fallback に使わない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -891,6 +927,7 @@ describe("SessionStorageV6", () => {
       storage = null;
 
       const db = new DatabaseSync(dbPath);
+      removeSessionHistoryForLegacyFixture(db, [session.id]);
       db.prepare(`
         UPDATE sessions_v6
         SET character_id = NULL,
@@ -986,6 +1023,7 @@ describe("SessionStorageV6", () => {
       storage = null;
 
       const db = new DatabaseSync(dbPath);
+      removeSessionHistoryForLegacyFixture(db, sessions.map((session) => session.id));
       const replaceSnapshot = db.prepare(`
         UPDATE sessions_v6
         SET character_snapshot_json = ?

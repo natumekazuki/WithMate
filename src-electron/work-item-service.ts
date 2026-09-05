@@ -739,7 +739,7 @@ export class WorkItemService {
     scope: WorkItemListScope,
   ): void {
     const resolvedScope = proof.resolvedScope;
-    const expectedVisibility = resolvedScope.relation === "root_member" ? "root" : "target";
+    const expectedVisibility = resolvedScope.relation === "root_member" ? "root" : "actor";
     if (
       proof.operation !== "work.list"
       || proof.action !== "work.list"
@@ -748,7 +748,7 @@ export class WorkItemService {
       || resolvedScope.resourceId !== null
       || resolvedScope.rootSessionId !== scope.rootSessionId
       || resolvedScope.ownerId !== scope.actorSessionId
-      || (resolvedScope.relation !== "root_member" && resolvedScope.relation !== "assigned")
+      || (resolvedScope.relation !== "root_member" && resolvedScope.relation !== "creator_or_target")
       || scope.visibility !== expectedVisibility
     ) {
       throw new WorkItemAuthorityError("The Work Item list authority proof does not match the requested scope.", {

@@ -1261,12 +1261,23 @@ export class SessionStorageV6 {
   }
 
   setSessionPinned(sessionId: string, isPinned: boolean): SessionSummary {
-    this.db.prepare("UPDATE sessions_v6 SET is_pinned = ? WHERE id = ?").run(isPinned ? 1 : 0, sessionId);
-    const summary = this.getSessionSummary(sessionId);
-    if (!summary) {
-      throw new Error("対象セッションが見つからないよ。");
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const changed = this.db.prepare(`
+        UPDATE sessions_v6
+        SET is_pinned = ?, resource_revision = resource_revision + 1
+        WHERE id = ?
+      `).run(isPinned ? 1 : 0, sessionId);
+      if (Number(changed.changes) !== 1) throw new Error("対象セッションが見つからないよ。");
+      appendStoredSessionSnapshotEvent(this.db, sessionId, "pin_changed");
+      const summary = this.getSessionSummary(sessionId);
+      if (!summary) throw new Error("対象セッションが見つからないよ。");
+      this.db.exec("COMMIT");
+      return summary;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
     }
-    return summary;
   }
 
   getSessionMessageArtifact(sessionId: string, messageIndex: number): MessageArtifact | null {
@@ -1328,12 +1339,14 @@ export class SessionStorageV6 {
         UPDATE sessions_v6
         SET character_snapshot_json = NULL,
             character_id = NULL,
-            thread_id = ''
+            thread_id = '',
+            resource_revision = resource_revision + 1
         WHERE id = ?
       `).run(sessionId);
       if (Number(updateResult.changes) !== 1) {
         throw new Error("Character authoring runtime stateをclearできなかったよ。");
       }
+      appendStoredSessionSnapshotEvent(this.db, sessionId, "character_runtime_cleared");
 
       const storedRow: SessionV6Row = {
         ...currentRow,
@@ -1438,7 +1451,8 @@ export class SessionStorageV6 {
             character_id = CASE WHEN ? = 1 THEN ? ELSE character_id END,
             thread_id = CASE WHEN ? = 1 THEN '' ELSE thread_id END,
             updated_at = ?,
-            last_active_at = ?
+            last_active_at = ?,
+            resource_revision = resource_revision + 1
         WHERE id = ?
       `).run(
         runtimePolicyJson,
@@ -1454,6 +1468,7 @@ export class SessionStorageV6 {
       if (Number(updateResult.changes) !== 1) {
         throw new Error("running turn のSession metadataを更新できなかったよ。");
       }
+      appendStoredSessionSnapshotEvent(this.db, sessionId, "running_turn_started", input.updatedAt);
 
       this.db.prepare(`
         INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at)
@@ -1509,25 +1524,13 @@ export class SessionStorageV6 {
       this.writeSession(normalized, operation);
       if (operation === "create" && normalized.sessionKind === "default" && normalized.roleBinding) {
         ensureBaselineSessionAuthority(this.db, normalized.id, normalized.updatedAt);
-        appendSessionResourceEvent(this.db, {
-          sessionId: normalized.id,
-          revision: 1,
-          eventKind: "created",
-          proof: systemSessionProof(normalized, "session.create", "local_mutation", normalized.updatedAt),
-          operationId: `system:session.create:${normalized.id}`,
-          idempotencyKey: null,
-          occurredAt: normalized.updatedAt,
-          payload: {
-            title: normalized.taskTitle,
-            state: toV6State(normalized),
-            sessionKind: normalized.sessionKind,
-            providerId: normalized.provider,
-            modelId: normalized.model,
-            workspacePath: normalized.workspacePath,
-            updatedAt: normalized.updatedAt,
-          },
-        });
       }
+      appendStoredSessionSnapshotEvent(
+        this.db,
+        normalized.id,
+        operation === "create" ? "created" : "stored",
+        normalized.updatedAt,
+      );
       if (terminalCommit) {
         writeSessionTurnTerminalCommit(this.db, terminalCommit);
       }
@@ -1579,6 +1582,7 @@ export class SessionStorageV6 {
       this.deleteStoredSessionsByIds(removedSessionIds);
       for (const session of normalizedSessions) {
         this.writeSession(session);
+        appendStoredSessionSnapshotEvent(this.db, session.id, "stored", session.updatedAt);
       }
       this.deleteAuxiliarySessionsByIdsIfTableExists(removedAuxiliarySessionIds);
       this.db.exec("COMMIT");
@@ -1808,7 +1812,8 @@ export class SessionStorageV6 {
           character_snapshot_json = excluded.character_snapshot_json,
           workspace_path = excluded.workspace_path,
           updated_at = excluded.updated_at,
-          last_active_at = excluded.last_active_at
+          last_active_at = excluded.last_active_at,
+          resource_revision = sessions_v6.resource_revision + 1
       `;
     const result = this.db.prepare(`
       INSERT INTO sessions_v6 (
@@ -2472,6 +2477,55 @@ function systemSessionProof(
     grantRevision: null,
     evaluatedAt,
   };
+}
+
+function appendStoredSessionSnapshotEvent(
+  db: DatabaseSync,
+  sessionId: string,
+  eventKind: string,
+  occurredAt?: string,
+): void {
+  const row = db.prepare(`
+    SELECT session.resource_revision, session.updated_at,
+      COALESCE(binding.root_session_id, session.id) AS root_session_id
+    FROM sessions_v6 AS session
+    LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = session.id
+    WHERE session.id = ?
+  `).get(sessionId) as {
+    resource_revision: number;
+    updated_at: string;
+    root_session_id: string;
+  } | undefined;
+  if (!row) throw new Error(`Session was not found: ${sessionId}`);
+  const eventAt = occurredAt ?? row.updated_at;
+  const operation = eventKind === "created" ? "session.create" : "session.rename";
+  appendSessionResourceEvent(db, {
+    sessionId,
+    revision: row.resource_revision,
+    eventKind,
+    proof: {
+      principal: { kind: "system", service: "session-storage" },
+      operation,
+      mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+      action: operation,
+      resolvedScope: {
+        resourceKind: operation === "session.create" ? "session_namespace" : "session",
+        resourceId: sessionId,
+        rootSessionId: row.root_session_id,
+        ownerKind: "session",
+        ownerId: sessionId,
+        relation: "self",
+      },
+      effectClass: "local_mutation",
+      grantId: null,
+      grantRevision: null,
+      evaluatedAt: eventAt,
+    },
+    operationId: `system:session-storage:${eventKind}:${sessionId}:${row.resource_revision}`,
+    idempotencyKey: null,
+    occurredAt: eventAt,
+    payload: {},
+  });
 }
 
 function resolveSessionFileWriteIdempotency(

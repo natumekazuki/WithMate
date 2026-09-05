@@ -24,6 +24,8 @@ import {
   revokeSessionAuthorityGrant,
 } from "../../src-electron/session-authority-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
+import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
+import { verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 
 const NOW = "2026-09-05T12:00:00.000Z";
 
@@ -378,6 +380,100 @@ describe("Session authority", () => {
     } finally {
       db.close();
       service.close();
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Sessionとexecutionの各eventはrevision後のcanonical projectionを保持し、replay結果とcurrent rowの不一致をstartup verifierが拒否する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "eventがrequestやresultを欠落したままrevisionだけ一致し、current projectionの改変をverifierが見逃す"
+  // scope = "Session and execution resource event replay verifier"
+  // lifecycle = "permanent"
+  // distinction = "rich projectionをevent payloadから直接確認した後、revisionを変えないcurrent row改変を反証として検出する"
+  // @end-test-value
+  it("Sessionとexecutionのevent replayをcurrent projectionと照合する", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-resource-history-"));
+    const dbPath = path.join(directory, "db.sqlite");
+    const storage = new SessionStorageV6(dbPath);
+    const root = makeRoot("root-history");
+    storage.insertSession(root);
+    storage.upsertSession({
+      ...root,
+      taskTitle: "updated history title",
+      allowedAdditionalDirectories: ["C:/workspace/shared"],
+    });
+    const authority = new SessionAuthorityService({
+      databasePath: dbPath,
+      getExecutionGeneration: () => "generation-1",
+      now: () => new Date(NOW),
+    });
+    const executions = new SessionExecutionStorageV6(dbPath);
+    const db = new DatabaseSync(dbPath);
+    try {
+      const sessionPayload = JSON.parse((db.prepare(`
+        SELECT payload_json
+        FROM session_resource_events_v6
+        WHERE session_id = ?
+        ORDER BY revision DESC
+        LIMIT 1
+      `).get(root.id) as { payload_json: string }).payload_json) as {
+        projection: { title: string; allowedAdditionalDirectories: string[] };
+      };
+      assert.equal(sessionPayload.projection.title, "updated history title");
+      assert.deepEqual(sessionPayload.projection.allowedAdditionalDirectories, ["C:/workspace/shared"]);
+
+      const containerRevision = (db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?")
+        .get(root.id) as { resource_revision: number }).resource_revision;
+      const proof = authority.authorize(binding(root.id), "turn.run", { sessionId: root.id }).proof;
+      executions.startImmediate({
+        id: "execution-history",
+        expectedContainerRevision: containerRevision,
+        sessionId: root.id,
+        request: { prompt: "history request", options: { mode: "strict" } },
+        idempotencyKey: "history-run",
+        requestFingerprint: "history-run-fingerprint",
+        createdAt: NOW,
+        expiresAt: "2026-09-06T12:00:00.000Z",
+        proof,
+      });
+      executions.completeRunning({
+        executionId: "execution-history",
+        state: "completed",
+        result: { assistantText: "history result" },
+        errorCode: "",
+        reason: "",
+        completedAt: "2026-09-05T12:01:00.000Z",
+        expiresAt: "2026-09-06T12:01:00.000Z",
+      });
+      const executionPayload = JSON.parse((db.prepare(`
+        SELECT payload_json
+        FROM session_execution_events_v6
+        WHERE execution_id = 'execution-history'
+        ORDER BY revision DESC
+        LIMIT 1
+      `).get() as { payload_json: string }).payload_json) as {
+        projection: { request: unknown; result: unknown; authorityProof: unknown };
+      };
+      assert.deepEqual(executionPayload.projection.request, {
+        prompt: "history request",
+        options: { mode: "strict" },
+      });
+      assert.deepEqual(executionPayload.projection.result, { assistantText: "history result" });
+      assert.ok(executionPayload.projection.authorityProof);
+      assert.doesNotThrow(() => verifyResourceHistoryProjections(db));
+
+      db.prepare("UPDATE session_executions_v6 SET reason = 'tampered' WHERE id = 'execution-history'").run();
+      assert.throws(
+        () => verifyResourceHistoryProjections(db),
+        /event replay does not match the current projection/,
+      );
+    } finally {
+      db.close();
+      executions.close();
+      authority.close();
       storage.close();
       await rm(directory, { recursive: true, force: true });
     }

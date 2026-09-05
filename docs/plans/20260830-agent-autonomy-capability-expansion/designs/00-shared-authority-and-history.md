@@ -88,6 +88,10 @@ resource event は共通 header と resource 固有 payload を持つ。
 
 訂正は旧 event を削除せず、新 event の `supersedes` で表す。current projection は active event chain から構成できなければならない。
 
+Session と execution の event payload schema revision 2 は、各 revision 適用後の canonical projection snapshot を保持する。Session は durable Session row、execution は request、result、error、authority proof、Work Item association を含む。startup verifier は event header の payload schema revision を確認し、revision 順に snapshot を再生した結果と current projection を比較する。revision 数だけが一致しても projection を再構成できない履歴は migration 完了と扱わない。
+
+payload 上限は resource 固有の入力上限から導出する。Session は runtime body 上限に envelope 分を加え、execution は request と response の両上限に envelope 分を加える。上限超過を payload の切り捨てや一部 projection への置換で成功扱いにしない。
+
 ## 必要な schema と service
 
 - versioned authority grant table と grant event table
@@ -107,6 +111,8 @@ resource event は共通 header と resource 固有 payload を持つ。
 baseline active grantのmigrationとRole authority ceilingの無効化は、同じshared authority cutover sliceで行う。既存全operationについてaction、resource scope、effect class、decision classのmappingをcanonical registryへ用意し、未分類operationが一つでもあればcutoverしない。
 
 migrationは既存Sessionのcurrent Roleと現行operation contractから、移行前に実際に許可されていた範囲だけをbaseline active grantとして生成する。新しいroot construction、cross-root、delete、外部副作用などの能力を推測して加えない。baseline eventへ旧Role binding、mapping revision、生成根拠を保存する。
+
+mapping revision ごとに Role template の必須 permission 全体を照合する。一件でも current mapping grant があることだけでは完了とせず、action、resource kind、relation、effect class、target Role と委譲可否を満たさない Session は fail closed する。Work Item の非 root 一覧は creator または target の和集合、取得は assigned と created を別 grant として表し、同一 root の無関係な Work Item を公開しない。
 
 startupはschema migration、grant backfill、mapping verifierが成功してからAgent-facing application serviceを開始する。cutover後は全operationをgrant evaluatorへ通し、Role fallbackを残さない。失敗時はserviceを開始せず`migration_required`とrepair対象を返す。slice 10は残存Role分岐の削除、default template、表示、Skillの整理だけを行い、authority cutoverを延期しない。
 

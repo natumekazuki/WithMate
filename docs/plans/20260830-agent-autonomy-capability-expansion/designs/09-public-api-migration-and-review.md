@@ -74,6 +74,8 @@ private path、secret、raw provider payload、内部stackをerror detailへ含�
 - current projectionとbaseline event
 - owner、grant、budget、result、decision、artifact visibility
 
+baseline event が replay 対象の場合は、移行時点の current projection を完全な resource 固有 payload として一度だけ保存する。verifier は共通 header の payload schema revision、連続 revision、replay 後 projection を照合し、空 payload や部分 snapshot を暫定成功として受理しない。
+
 table rebuildではforeign key actionによる意図しないchild削除を検出する。旧database fallbackを採る場合、repair不能な新candidateがvalidな旧databaseを隠さない。
 
 ## Compatibility
