@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 
 import type {
   PublicTranscriptAttachmentV1,
@@ -442,7 +443,7 @@ export class SessionTranscriptStorageV6 {
         "session-transcript-export",
         `${principal.kind}:${principal.id}:${input.idempotencyKey}`,
         input.requestFingerprint,
-      );
+      ) + `:${randomUUID()}`;
       this.db.prepare(`
         INSERT INTO session_transcript_export_idempotency_v6 (
           operation, idempotency_key, request_fingerprint, session_id,

@@ -213,9 +213,6 @@ export function ensureBaselineSessionAuthority(db: DatabaseSync, sessionId: stri
     FROM session_authority_grants_v6
     WHERE grantee_session_id = ?
       AND mapping_revision = ?
-      AND issuer_kind = 'system'
-      AND issuer_id = 'session-authority-baseline-migration'
-      AND json_extract(provenance_json, '$.source') = 'role-baseline'
   `).get(sessionId, SESSION_AUTHORITY_MAPPING_REVISION) as { count: number };
   if (existing.count > 0) return;
   for (const item of baselineSessionAuthorityPermissions(binding.session_role)) {

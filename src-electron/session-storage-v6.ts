@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 
 import {
   cloneHomeSessionSummaries,
@@ -1057,7 +1058,7 @@ export class SessionStorageV6 {
         "session-file-write",
         `${principal.kind}:${principal.id}:${input.idempotencyKey}`,
         input.requestFingerprint,
-      );
+      ) + `:${randomUUID()}`;
       this.db.prepare(`
         INSERT INTO session_file_write_idempotency_v6 (
           operation, idempotency_key, request_fingerprint, session_id, relative_path,

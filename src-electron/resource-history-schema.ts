@@ -849,7 +849,10 @@ function verifySagaProjection(db: DatabaseSync, input: {
     const latestPayload = latest ? JSON.parse(latest.payload_json) as Record<string, unknown> : null;
     const terminalKey = projection.state === "applied" ? "result" : "error";
     const expectedResult = projection.result_json === null ? undefined : JSON.parse(projection.result_json) as unknown;
-    if ((projection.operation_id !== expectedOperationId
+    const incarnation = projection.operation_id.slice(expectedOperationId.length);
+    const matchesIdentity = projection.operation_id.startsWith(expectedOperationId)
+      && (incarnation === "" || /^:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(incarnation));
+    if ((!matchesIdentity
       && !(projection.principal_kind === "legacy_unknown" && projection.operation_id === legacyOperationId))
       || invalidEvent
       || preparedPayload?.relativePath !== projection.relative_path

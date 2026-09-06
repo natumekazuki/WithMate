@@ -269,7 +269,7 @@ export class MainSessionCommandFacade {
       const executionService = this.deps.getSessionExecutionService();
       const execution = await executionService.enqueue({
         proof,
-        expectedContainerRevision: executionService.getSessionContainerRevision(sessionId),
+        expectedContainerRevision: () => executionService.getSessionContainerRevision(sessionId),
         sessionId,
         request: executionRequest,
         idempotencyKey: clientRequestId,
@@ -372,7 +372,7 @@ export class MainSessionCommandFacade {
     try {
       replay = executionService.resolveReplay("turn.enqueue", {
         proof,
-        expectedContainerRevision: executionService.getSessionContainerRevision(input.targetSessionId),
+        expectedContainerRevision: () => executionService.getSessionContainerRevision(input.targetSessionId),
         sessionId: input.targetSessionId,
         request: {},
         idempotencyKey: input.idempotencyKey,
@@ -416,7 +416,7 @@ export class MainSessionCommandFacade {
       );
       const execution = await executionService.enqueue({
         proof,
-        expectedContainerRevision: executionService.getSessionContainerRevision(input.targetSessionId),
+        expectedContainerRevision: () => executionService.getSessionContainerRevision(input.targetSessionId),
         sessionId: input.targetSessionId,
         request: {
           initiator: input.initiator,
