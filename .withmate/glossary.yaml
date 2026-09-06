@@ -4,57 +4,235 @@ entries:
     aliases:
       - Glossary
       - 用語集
-    definition: >-
-      Git checkoutごとの.withmate/glossary.yamlを正本として、Session messageの注釈とright paneへリポジトリ固有の用語説明を投影する機能。
+    definition: Git checkoutごとの.withmate/glossary.yamlを正本として、Session messageの注釈とright paneへリポジトリ固有の用語説明を投影する機能。
   - term: Session
     aliases:
       - セッション
-    definition: >-
-      workspace、provider、会話履歴、実行状態をひとまとまりとして扱うWithMateの作業単位。
+    definition: workspace、provider、会話履歴、実行状態をひとまとまりとして扱うWithMateの作業単位。
   - term: Session Window
     aliases:
       - セッションウィンドウ
-    definition: >-
-      Sessionのmessage、composer、実行状況、files、right paneを表示するElectron window。
+    definition: Sessionのmessage、composer、実行状況、files、right paneを表示するElectron window。
   - term: Provider Session
-    definition: >-
-      CodexやGitHub Copilotなどのproviderが、WithMateのSession内で応答とtool実行を行う実行コンテキスト。
+    definition: CodexやGitHub Copilotなどのproviderが、WithMateのSession内で応答とtool実行を行う実行コンテキスト。
   - term: Actor Session
     aliases:
       - 実行主体Session
-    definition: >-
-      runtime bindingによって、Session scoped operationの呼び出し主体として解決されたWithMate Session。
+    definition: runtime bindingによって、Session scoped operationの呼び出し主体として解決されたWithMate Session。
   - term: Runtime binding
     aliases:
       - binding
       - Agent runtime binding
-    definition: >-
-      Provider Sessionをactor Session、operation grant、generationへ結び付ける、推測不能な参照を使った実行時の認可境界。
+    definition: Provider Sessionをactor Session、operation grant、generationへ結び付ける、推測不能な参照を使った実行時の認可境界。
   - term: Primary checkout
     aliases:
       - Primary target
-    definition: >-
-      SessionのworkspacePathから解決され、そのruntime bindingで唯一Repository Glossaryのreadとmutationを許可されたcheckout。
+    definition: SessionのworkspacePathから解決され、そのruntime bindingで唯一Repository Glossaryのreadとmutationを許可されたcheckout。
   - term: Managed Skill
     aliases:
       - 配布Skill
-    definition: >-
-      WithMateがversion、digest、collision、provider別配置を管理してprovider runtimeへ配布するSkill bundle。
+    definition: WithMateがversion、digest、collision、provider別配置を管理してprovider runtimeへ配布するSkill bundle。
   - term: Proactive create
     aliases:
       - 自発登録
-    definition: >-
-      Agentが会話中に見つけた用語を、Settingsのturn上限とturn capabilityに従って自律的にGlossaryへ追加するcreate mode。
+    definition: Agentが会話中に見つけた用語を、Settingsのturn上限とturn capabilityに従って自律的にGlossaryへ追加するcreate mode。
   - term: Effect certainty
     aliases:
       - Effect
-    definition: >-
-      Mutation結果をapplied、none、unknownとして区別し、実際に要求状態へ到達したか、未適用か、確定不能かを表す契約。
+    definition: 変更操作の副作用が適用済み、未適用、確定不能のどこまで確認できるかを表す契約。値名は境界ごとに異なり、resource historyではnone・committed・unknown、Session runtimeではnot_applied・applied・indeterminateを使う。Glossaryのoutcomeであるapplied・convergedとは区別し、確定不能を未適用や成功と扱わない。
   - term: Canonical entry
     aliases:
       - Canonical term
-    definition: >-
-      Aliasを含むlookupが最終的に解決する正式なGlossary entry。annotation activationではこのtermの詳細をright paneへ開く。
+    definition: Aliasを含むlookupが最終的に解決する正式なGlossary entry。annotation activationではこのtermの詳細をright paneへ開く。
   - term: MessageRichText
-    definition: >-
-      Session messageとMarkdown file previewで共有するrich text renderer。Glossary annotationはSession messageのPreviewだけに適用する。
+    definition: Session messageとMarkdown file previewで共有するrich text renderer。Glossary annotationはSession messageのPreviewだけに適用する。
+  - term: Root Session
+    aliases:
+      - ルートSession
+    definition: Sessionの親子ツリーの起点となるSession。配下のSessionが属するroot境界を定める。Root Work Itemとは別のリソースである。
+  - term: Child Session
+    aliases:
+      - 子Session
+    definition: あるSessionを直属の親として持つSession。Sessionの親子関係とWork Itemの親子関係は別々に管理される。
+  - term: Parent Session
+    aliases:
+      - 親Session
+    definition: 対象Sessionの直属の親となるSession。親子関係だけで任意の操作権限が付与されるわけではなく、操作時にはactive grantを評価する。
+  - term: 対象Session
+    aliases:
+      - Target Session
+    definition: 要求で操作対象として指定され、Session application serviceが解決するSession。呼び出し主体のActor Sessionと同一とは限らない。
+  - term: Work Item
+    aliases:
+      - WorkItem
+    definition: 依頼内容、担当Session、進捗、結果を管理する作業リソース。会話の単位であるSessionや一回のTurn executionとは別に状態を持つ。
+  - term: Root Work Item
+    definition: Root Session自身の作業契約、進捗、結果を保持するWork Item。通常の委譲Work Itemとは区別され、委譲の親や子結果のaggregation対象にはしない。
+  - term: Turn execution
+    aliases:
+      - execution
+    definition: 一回のTurn実行を追跡する単位。Session、保存されたTurn、Messageとは別の識別子を持ち、受付から実行終了までの状態を管理する。
+  - term: Queued execution
+    definition: 対象SessionのFIFO queueに永続化され、実行のadmissionがまだ永続化されていないTurn execution。
+  - term: Execution association
+    definition: Turn executionとWork Itemの関連付け。executionの終了状態は、関連するWork Itemの状態を暗黙に遷移させない。
+  - term: Workspace
+    aliases:
+      - ワークスペース
+    definition: Sessionの作業場所として選ばれたdirectory。既存directoryまたはSessionFolderを選び、SessionのworkspacePathとして保持する。
+  - term: SessionFolder
+    definition: Sessionに従属するWithMate管理directory。添付、一時資料、成果物を保存する。Workspaceと同じdirectoryの場合も別の場合もあり、Memoryの保存領域とは異なる。
+  - term: Transcript
+    definition: Sessionの会話履歴を取得・出力するための表現。Turn executionの状態やCoordination Eventの専用履歴とは区別する。
+  - term: Coordination Event
+    definition: Session間の連携、blocker、escalation、ユーザー判断依頼などを記録する専用履歴。通常の応答とは分離され、Turnのtransportやdelivery自体は所有しない。
+  - term: Principal
+    definition: 操作の主体を表す区分。trusted GUIで確認されたuser、有効なruntime bindingを持つagent、限定された保守処理のsystemを区別する。
+  - term: Role
+    definition: Sessionの責務を表す役割。grant作成時のtemplateを提供するが、認可は保存済みactive grantで判定し、Role変更だけで既存grantを暗黙に増減させない。
+  - term: Role template
+    definition: Roleに基づいてgrantの初期構成を作成するための雛形。現在有効なgrantや永続的な権限上限そのものではない。
+  - term: Authority grant
+    aliases:
+      - Active grant
+    definition: issuerからgrantee Sessionへ与える操作権限の記録。対象scope、action、有効期間、副作用classなどを持ち、操作時は現在有効なgrantを評価する。
+  - term: Grant attenuation
+    definition: 子grantに渡すaction、scope、有効期間などをissuerの実効grantの部分集合へ制限し、委譲による権限拡大を防ぐこと。
+  - term: Construction capability
+    definition: 新規リソースを作成できるplacement namespaceと許可範囲を表す権限。作成されたリソースIDを既存のwildcard権限へ暗黙追加する方式とは区別する。
+  - term: Decision class
+    definition: 保存されたinteractionの判断権限分類。user_only、agent_delegable、deny_or_cancelを区別し、Agent requestから分類を指定または格上げできない。
+  - term: Trusted GUI receipt
+    definition: GUI経由のユーザー判断を裏付けるMain Process発行の記録。user principal、対象interaction、回答、revisionを結び付け、Agent向けadapterからは作成できない。
+  - term: Expected revision
+    definition: 変更要求が前提とするリソースの版。現在のrevisionとの不一致を検出し、古い状態に基づく更新を拒否するための条件。
+  - term: Idempotency key
+    definition: 同一principalの同じ操作要求を識別し、再送による二重適用を防ぐkey。同じkeyで異なるpayloadを送ることは同じ要求の再送とは扱わない。
+  - term: Replay
+    definition: 同じidempotency keyとpayloadの再送に対し、保存済みのcanonical resultを返す処理。新しい実行やretryを開始することとは異なる。
+  - term: Current projection
+    definition: リソースの有効なevent履歴から導出される現在状態。履歴と一致する必要があり、履歴そのものとは区別する。
+  - term: Supersedes
+    definition: 訂正後のeventが置き換える過去のeventを示す関係。訂正は旧eventを削除せず、新eventとして記録する。
+  - term: Provenance
+    definition: 操作やリソースがどのprincipal、Actor Session、根拠grant、operationなどに由来するかを追跡するための情報。
+  - term: Auxiliary Session
+    aliases:
+      - 補助Session
+    definition: 親Sessionに紐づく補助的な会話単位。独自のmessage、provider thread、実行状態、モデル設定を持つ。通常Sessionの親子ツリーにおけるChild Sessionとは別の型・管理単位である。
+  - term: Session interaction
+    definition: Session実行中のapprovalまたはelicitationを共通の識別子、revision、判断権限分類、pending・answered・expired状態で管理する対話要求。
+  - term: Approval
+    definition: Session interactionの一種で、実行に対する承認または拒否などの判断を求める要求。回答できる主体は保存されたDecision classと権限に従う。
+  - term: Elicitation
+    definition: Session interactionの一種で、フォームまたはURLを通じて必要な情報の入力を求める要求。フォームでは選択肢、真偽値、文字列、数値などのfieldを扱う。
+  - term: Character Affect
+    definition: Characterの感情状態を対象、感情family、valence、arousal、intensityなどで表す仕組み。Character定義と区別し、relationshipとsessionの層を持つeventや実効状態を扱う。
+  - term: Affect layer
+    definition: Character Affectのeventが属するrelationshipまたはsessionの層。実効状態の寄与元には、この二層に加えてbaselineも記録される。
+  - term: Affect baseline
+    definition: Character Affectの評価に渡す基準成分。selfまたはrelationshipを対象とし、感情値、強度、理由などを持つ。個別の会話eventとは区別する。
+  - term: Effective Affect State
+    definition: Character、user、Sessionに対応する実効感情状態。感情成分と層、評価時刻を持ち、成分ごとに寄与したbaseline・relationship・sessionやeventの情報を表す。
+  - term: Resolved Model Selection
+    definition: 要求されたモデルと推論強度、および解決後のモデルと推論強度を対で保持する選択結果。要求値と実効値を同一視しないための表現。
+  - term: "暫定: Root budget"
+    aliases:
+      - Root budget
+      - ルート予算
+    definition: 計画段階・未実装。Root全体で利用できる資源上限を管理する予算。Rootのhard limitと配下へのallocationを束ね、deadline後もread・cancel・recoveryを妨げない前提で設計する。
+  - term: "暫定: Budget ledger"
+    aliases:
+      - Budget ledger
+      - 予算台帳
+    definition: 計画段階・未実装。budget account、dimension、allocation、reservation、usage eventなどから、予算の現在状態と履歴を追跡する台帳。
+  - term: "暫定: Allocation"
+    aliases:
+      - Allocation
+      - 配分
+    definition: 計画段階・未実装。親の利用可能な予算から子Session、Work Item、delegationなどへ割り当てる枠。authority grantと関連付け、親のavailableを超える配分を許可しない。
+  - term: "暫定: Reservation"
+    aliases:
+      - Reservation
+      - 予約
+    definition: 計画段階・未実装。effect-bearing operationをadmissionする前に、見積もり資源を一時確保する枠。完了時のconsumeや余剰release、cancel・timeout・crash後のreconciliationと区別する。
+  - term: "暫定: Admission"
+    aliases:
+      - Admission
+      - 受付判定
+    definition: 計画段階・未実装。権限、予算、対象状態などを検証し、新しいeffect-bearing operationを実行へ受け入れる処理。hard limit超過時は新規effectを拒否する。
+  - term: "暫定: Settlement"
+    aliases:
+      - Settlement
+      - 精算
+    definition: 計画段階・未実装。operation完了時にactual usageを確定し、reservationから消費分をconsumeして余剰をreleaseする処理。
+  - term: "暫定: Reconciliation"
+    aliases:
+      - Reconciliation
+      - 照合
+    definition: 計画段階・未実装。provider usage、実行状態、reservationやledgerの差異を照合し、crash・遅延usage・stale reservationを回復可能な状態へ整理する処理。
+  - term: "暫定: Result correction"
+    aliases:
+      - Result correction
+      - 結果訂正
+    definition: 計画段階・未実装。Work Itemのresultを上書きせず、新しいresult revisionを追加して旧resultをsupersedeする訂正。既存のaggregation decisionを自動採用し直さない。
+  - term: "暫定: Aggregation decision"
+    aliases:
+      - Aggregation decision
+      - 集約判断
+    definition: 計画段階・未実装。親が直属の子Work Itemのterminal resultをaccepted、excluded、retry_requestedのいずれかとして採用判断する記録。
+  - term: "暫定: Aggregate snapshot"
+    aliases:
+      - Aggregate snapshot
+      - 集約スナップショット
+    definition: 計画段階・未実装。親のresultをfinalizeした時点で、採用したaggregation decisionと子result revisionを固定した記録。後の訂正でstaleになり得る。
+  - term: "暫定: Stale aggregate"
+    aliases:
+      - Stale aggregate
+      - 古い集約結果
+    definition: 計画段階・未実装。子resultまたはaggregation decisionの訂正により、現在の子状態を反映しなくなったaggregate snapshotやfinal result。自動再採用せず、再判断または再finalizeを要求する。
+  - term: "暫定: Delegation"
+    aliases:
+      - Delegation
+      - 委譲
+    definition: 計画段階・未実装。子Session、Work Item、初回Turnなど、委譲に伴う複数resourceを一つのstable IDで相関し、部分成功と復旧を追跡するapplication resource。
+  - term: "暫定: Delegation transaction"
+    aliases:
+      - Delegation transaction
+      - 委譲トランザクション
+    definition: 計画段階・未実装。database変更とprovider起動・Workspace副作用などtransaction外の処理を、state、step、idempotency、recovery情報とともに管理する委譲処理。
+  - term: "暫定: Resource manifest"
+    aliases:
+      - Resource manifest
+      - リソースマニフェスト
+    definition: 計画段階・未実装。Delegationが作成・確定したresource、未完了step、pending recoveryを記録するmanifest。compensationやresumeの対象範囲を限定する。
+  - term: "暫定: Compensation"
+    aliases:
+      - Compensation
+      - 補償処理
+    definition: 計画段階・未実装。Delegationが作成し、他consumerに採用されていないresourceを、作成と逆順で戻す処理。外部副作用全体を完全にrollbackする意味ではない。
+  - term: "暫定: Recovery required"
+    aliases:
+      - Recovery required
+      - 復旧要
+    definition: 計画段階・未実装。自動で安全にDelegationの完了やcompensationを続けられず、明示的なrecovery actionを必要とする状態。採用済みresourceを無理に削除しない。
+  - term: "暫定: Reopen"
+    aliases:
+      - Reopen
+      - 再開
+    definition: 計画段階・未実装。terminalまたはarchive後の作業を、新しい進行として再び扱うlifecycle操作。既存の履歴やresultを消去する意味ではない。
+  - term: "暫定: Clone"
+    aliases:
+      - Clone
+      - 複製
+    definition: 計画段階・未実装。SessionやWork Itemなどを、元resourceの履歴・権限・識別子と混同しない新しいresourceとして複製するlifecycle操作。
+  - term: "暫定: Reuse"
+    aliases:
+      - Reuse
+      - 再利用
+    definition: 計画段階・未実装。既存のSessionやWork Itemなどを別のDelegationや処理へ明示的に引き継いで使う操作。新規作成やcloneとは区別する。
+  - term: "暫定: Adopt"
+    aliases:
+      - Adopt
+      - 取り込み
+    definition: 計画段階・未実装。既存resourceを別の管理主体または管理境界へ、権限・provenance・履歴を検証したうえで管理下に取り込む操作。
