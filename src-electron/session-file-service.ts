@@ -1,3 +1,4 @@
+import type { MutationAuthorityProof } from "../src/session-authority.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import {
@@ -170,11 +171,11 @@ export class SessionFileService {
     }
   }
 
-  writeText(input: SessionRuntimeFileWriteTextInput): Promise<SessionRuntimeFileWriteTextResult> {
-    return this.enqueueMutation(() => this.writeTextNow(input));
+  writeText(input: SessionRuntimeFileWriteTextInput, proof: MutationAuthorityProof): Promise<SessionRuntimeFileWriteTextResult> {
+    return this.enqueueMutation(() => this.writeTextNow(input, proof));
   }
 
-  private async writeTextNow(input: SessionRuntimeFileWriteTextInput): Promise<SessionRuntimeFileWriteTextResult> {
+  private async writeTextNow(input: SessionRuntimeFileWriteTextInput, proof: MutationAuthorityProof): Promise<SessionRuntimeFileWriteTextResult> {
     this.requireDefaultSession(input.sessionId);
     const relativePath = normalizeRelativePath(input.relativePath);
     const contentBytes = Buffer.from(input.content, "utf8");
@@ -191,6 +192,7 @@ export class SessionFileService {
     let prepared;
     try {
       prepared = this.deps.storage.prepareSessionFileWrite({
+        proof,
         idempotencyKey: input.idempotencyKey,
         requestFingerprint,
         sessionId: input.sessionId,
@@ -242,13 +244,14 @@ export class SessionFileService {
           onAfterReplaceProof: this.deps.onAfterReplaceProof,
           onAfterReplaceTargetClaim: this.deps.onAfterReplaceTargetClaim,
           timeoutMs: this.deps.writeTimeoutMs,
-          onPrepared: async (proof) => {
+          onPrepared: async (preparedProof) => {
             this.deps.storage.recordPreparedSessionFileWrite({
+              proof,
               idempotencyKey: input.idempotencyKey,
               requestFingerprint,
-              prepared: proof,
+              prepared: preparedProof,
             });
-            durableProof = proof;
+            durableProof = preparedProof;
             await this.deps.onWritePrepared?.();
           },
         });
@@ -270,7 +273,7 @@ export class SessionFileService {
         if (error instanceof IdentityBoundFileWriteError) {
           if (error.code === "FILE_ALREADY_EXISTS") {
             const terminalError = fileAlreadyExists(relativePath);
-            const rejected = this.rejectWrite(input.idempotencyKey, requestFingerprint, terminalError);
+            const rejected = this.rejectWrite(proof, input.idempotencyKey, requestFingerprint, terminalError);
             await this.cleanupWriteTempBestEffort(
               input.sessionId,
               relativePath,
@@ -301,7 +304,7 @@ export class SessionFileService {
         }
         throw error;
       }
-      const result = this.completeWrite(input.idempotencyKey, requestFingerprint, written, {
+      const result = this.completeWrite(proof, input.idempotencyKey, requestFingerprint, written, {
         file: {
           sessionId: input.sessionId,
           relativePath,
@@ -317,6 +320,7 @@ export class SessionFileService {
   }
 
   private completeWrite(
+    proof: MutationAuthorityProof,
     idempotencyKey: string,
     requestFingerprint: string,
     prepared: SessionFileWritePreparedProof,
@@ -324,6 +328,7 @@ export class SessionFileService {
   ): SessionRuntimeFileWriteTextResult {
     const completedAt = this.now();
     return normalizeWriteResult(this.deps.storage.completeSessionFileWrite({
+      proof,
       idempotencyKey,
       requestFingerprint,
       prepared,
@@ -334,12 +339,14 @@ export class SessionFileService {
   }
 
   private rejectWrite(
+    proof: MutationAuthorityProof,
     idempotencyKey: string,
     requestFingerprint: string,
     error: SessionFileServiceError,
   ): SessionFileServiceError {
     const completedAt = this.now();
     return normalizeStoredWriteError(this.deps.storage.rejectSessionFileWrite({
+      proof,
       idempotencyKey,
       requestFingerprint,
       error: {

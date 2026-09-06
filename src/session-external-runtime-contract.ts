@@ -1,3 +1,4 @@
+import type { AuthorityOperationDefinition } from "./session-authority.js";
 import { APPROVAL_MODE_VALUES, type ApprovalMode } from "./approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES, type CodexSandboxMode } from "./codex-sandbox-mode.js";
 import { isModelReasoningEffort, type ModelReasoningEffort } from "./model-catalog.js";
@@ -133,10 +134,16 @@ export const SESSION_RUNTIME_PROVIDER_IDS = ["codex", "copilot"] as const;
 export type SessionRuntimeProviderId = (typeof SESSION_RUNTIME_PROVIDER_IDS)[number];
 
 export type SessionRuntimeCatalogResult = {
+  authority: {
+    mappingRevision: number;
+    operations: AuthorityOperationDefinition[];
+    budget: "not_implemented_slice_2";
+    validationGaps: readonly string[];
+  };
   revision: number;
   sessionRoleContractRevision: typeof SESSION_ROLE_CONTRACT_REVISION;
   supportedSessionRoles: SessionRole[];
-  allowedChildSessionRoles: Record<SessionRole, ChildSessionRole[]>;
+  baselineChildSessionRoleTemplates: Record<SessionRole, ChildSessionRole[]>;
   maxDelegationDepth: typeof SESSION_ROLE_MAX_DELEGATION_DEPTH;
   sessionTurnCommunicationContractRevision: typeof SESSION_TURN_COMMUNICATION_CONTRACT_REVISION;
   coordinationEvents: {
@@ -187,6 +194,7 @@ export type SessionRuntimePublicRoleBinding = SessionRoleBinding;
 
 export type SessionRuntimeSelfResult = SessionRuntimePublicRoleBinding & {
   sessionId: string;
+  revision: number;
 };
 
 export type SessionRuntimeCreateWorkspace =
@@ -194,6 +202,7 @@ export type SessionRuntimeCreateWorkspace =
   | { kind: "session_folder" };
 
 export type SessionRuntimeCreateInput = {
+  expectedContainerRevision: number;
   sessionRole: ChildSessionRole;
   title: string;
   provider: SessionRuntimeProviderId;
@@ -205,6 +214,7 @@ export type SessionRuntimeCreateInput = {
 export type SessionRuntimeSessionInput = { sessionId: string };
 export type SessionRuntimeSessionListInput = { limit: number; cursor?: string };
 export type SessionRuntimeRenameInput = SessionRuntimeSessionInput & {
+  expectedRevision: number;
   title: string;
   idempotencyKey: string;
 };
@@ -217,6 +227,7 @@ export type SessionRuntimePublicWorkspace = {
 };
 export type SessionRuntimePublicSessionFolder = { path: string; isWorkspace: boolean };
 export type SessionRuntimeSessionSummary = SessionRuntimePublicRoleBinding & {
+  revision: number;
   sessionId: string;
   title: string;
   sessionKind: "default";
@@ -270,6 +281,7 @@ export type SessionRuntimeFileWriteTextResult = {
 };
 
 export type SessionRuntimeWorkItemCreateInput = {
+  expectedContainerRevision: number;
   targetSessionId: string;
   parentWorkItemId?: string;
   goal: string;
@@ -438,6 +450,8 @@ export type SessionRuntimeEffectiveTurn = SessionRuntimeEffectiveTurnBase & (
 );
 
 type SessionRuntimePublicInteractionBase = {
+  revision: number;
+  decisionClass: SessionInteraction["decisionClass"];
   sequence: number;
   interactionId: string;
   sessionId: string;
@@ -509,6 +523,7 @@ export type SessionRuntimeInteractionListResult = {
 };
 
 export type SessionRuntimeInteractionRespondInput = {
+  expectedRevision: number;
   sessionId: string;
   executionId: string;
   interactionId: string;
@@ -568,6 +583,7 @@ export type SessionRuntimeResultByOperation = {
 };
 
 export type SessionRuntimeRunInput = {
+  expectedContainerRevision: number;
   sessionId: string;
   catalogRevision: number;
   idempotencyKey: string;
@@ -580,7 +596,10 @@ export type SessionRuntimeRunInput = {
 
 export type SessionRuntimeEnqueueInput = Omit<SessionRuntimeRunInput, "responseMode" | "waitTimeoutMs">;
 export type SessionRuntimeExecutionInput = { sessionId: string; executionId: string };
-export type SessionRuntimeCancelInput = SessionRuntimeExecutionInput & { idempotencyKey: string };
+export type SessionRuntimeCancelInput = SessionRuntimeExecutionInput & {
+  expectedRevision: number;
+  idempotencyKey: string;
+};
 export type SessionRuntimeListInput = { sessionId: string; limit: number; cursor?: string };
 
 export type SessionRuntimeRequestEnvelope = {
@@ -607,6 +626,27 @@ export type SessionRuntimeError = {
     details: Record<string, string | number | boolean>;
   };
 };
+
+export function sessionRuntimeOperationMayHaveEffect(
+  operation: SessionRuntimeOperation,
+  input?: unknown,
+): boolean {
+  if (operation === "transcript.export") {
+    return input === undefined
+      || (input as { destination?: { kind?: string } }).destination?.kind !== "inline";
+  }
+  return operation === "session.create" || operation === "session.rename"
+    || operation === "session.files.write_text"
+    || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
+    || operation === "work.create" || operation === "work.transition"
+    || operation === "work.revise" || operation === "work.history.append"
+    || operation === "work.result" || operation === "work.cancel"
+    || operation === "work.aggregation.decide" || operation === "work.aggregation.retry"
+    || operation === "interaction.respond"
+    || operation === "coordination.event.create" || operation === "coordination.event.resolve"
+    || operation === "coordination.event.consume"
+    || operation === "coordination.event.cancel" || operation === "coordination.event.correct";
+}
 
 export class SessionRuntimeValidationError extends Error {
   readonly code: string;
@@ -761,7 +801,7 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
 
 function parseCoordinationEventCreateInput(value: unknown): CoordinationEventCreateInput {
   const record = requireCoordinationObject(value, "input");
-  assertCoordinationKeys(record, ["kind", "payload", "executionId", "targetSessionId", "options", "idempotencyKey"], "input");
+  assertCoordinationKeys(record, ["expectedContainerRevision", "kind", "payload", "executionId", "targetSessionId", "options", "idempotencyKey"], "input");
   const kind = requireEnum(record.kind, COORDINATION_EVENT_KINDS.filter((candidate) => candidate !== "correction"), "kind") as CoordinationEventCreateInput["kind"];
   const targetSessionId = record.targetSessionId === undefined ? undefined : requireNonEmptyString(record.targetSessionId, "targetSessionId");
   const options = record.options === undefined ? undefined : validateCoordinationEventOptions(record.options);
@@ -772,6 +812,7 @@ function parseCoordinationEventCreateInput(value: unknown): CoordinationEventCre
     throw invalid("options", "options are required only for user_decision_required events.");
   }
   return {
+    expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
     kind,
     payload: validateCoordinationEventPayload(record.payload),
     ...(record.executionId === undefined ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") }),
@@ -808,8 +849,9 @@ function parseCoordinationEventGetInput(value: unknown): CoordinationEventGetInp
 
 function parseCoordinationEventResolveInput(value: unknown): CoordinationEventResolveInput {
   const record = requireCoordinationObject(value, "input");
-  assertCoordinationKeys(record, ["eventId", "note", "idempotencyKey"], "input");
+  assertCoordinationKeys(record, ["expectedRevision", "eventId", "note", "idempotencyKey"], "input");
   return {
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
     eventId: requireNonEmptyString(record.eventId, "eventId"),
     ...(record.note === undefined ? {} : { note: validateCoordinationEventNote(record.note) }),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
@@ -833,8 +875,9 @@ function parseCoordinationEventConsumeInput(value: unknown): CoordinationEventCo
 
 function parseCoordinationEventCancelInput(value: unknown): CoordinationEventCancelInput {
   const record = requireCoordinationObject(value, "input");
-  assertCoordinationKeys(record, ["eventId", "note", "idempotencyKey"], "input");
+  assertCoordinationKeys(record, ["expectedRevision", "eventId", "note", "idempotencyKey"], "input");
   return {
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
     eventId: requireNonEmptyString(record.eventId, "eventId"),
     ...(record.note === undefined ? {} : { note: validateCoordinationEventNote(record.note) }),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
@@ -843,8 +886,9 @@ function parseCoordinationEventCancelInput(value: unknown): CoordinationEventCan
 
 function parseCoordinationEventCorrectInput(value: unknown): CoordinationEventCorrectInput {
   const record = requireCoordinationObject(value, "input");
-  assertCoordinationKeys(record, ["eventId", "payload", "executionId", "idempotencyKey"], "input");
+  assertCoordinationKeys(record, ["expectedRevision", "eventId", "payload", "executionId", "idempotencyKey"], "input");
   return {
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
     eventId: requireNonEmptyString(record.eventId, "eventId"),
     payload: validateCoordinationEventPayload(record.payload),
     ...(record.executionId === undefined ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") }),
@@ -860,8 +904,9 @@ function requireBoundedString(value: unknown, field: string, maxLength: number):
 
 function parseSessionCreateInput(value: unknown): SessionRuntimeCreateInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["sessionRole", "title", "provider", "catalogRevision", "workspace", "idempotencyKey"], "input");
+  assertKeys(record, ["expectedContainerRevision", "sessionRole", "title", "provider", "catalogRevision", "workspace", "idempotencyKey"], "input");
   return {
+    expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
     sessionRole: requireEnum(record.sessionRole, ["task-coordinator", "executor"] as const, "sessionRole"),
     title: requireNonEmptyString(record.title, "title"),
     provider: requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "provider"),
@@ -901,8 +946,9 @@ function parseSessionInput(value: unknown): SessionRuntimeSessionInput {
 
 function parseSessionRenameInput(value: unknown): SessionRuntimeRenameInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["sessionId", "title", "idempotencyKey"], "input");
+  assertKeys(record, ["expectedRevision", "sessionId", "title", "idempotencyKey"], "input");
   return {
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
     sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
     title: requireNonEmptyString(record.title, "title"),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
@@ -965,12 +1011,13 @@ function parseSessionFileWriteTextInput(value: unknown): SessionRuntimeFileWrite
 function parseWorkItemCreateInput(value: unknown): SessionRuntimeWorkItemCreateInput {
   const record = requireObject(value, "input");
   assertKeys(record, [
-    "targetSessionId", "parentWorkItemId", "goal", "scope", "completionCriteria",
+    "expectedContainerRevision", "targetSessionId", "parentWorkItemId", "goal", "scope", "completionCriteria",
     "authority", "sourceIdentity", "idempotencyKey",
   ], "input");
   const source = requireObject(record.sourceIdentity, "sourceIdentity");
   assertKeys(source, ["workspace", "repository", "branch", "base", "head"], "sourceIdentity");
   return {
+    expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
     targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId"),
     ...(record.parentWorkItemId === undefined
       ? {}
@@ -1265,6 +1312,7 @@ export function projectSessionExecution(
     const turn = projectEffectiveTurn(observation.request);
     return {
       id: execution.id,
+      revision: execution.revision,
       sessionId: execution.sessionId,
       operation: execution.operation,
       state: execution.state,
@@ -1300,6 +1348,8 @@ export function projectSessionInteraction(
 ): SessionRuntimePublicInteraction {
   const base = {
     sequence: interaction.sequence,
+    revision: interaction.revision,
+    decisionClass: interaction.decisionClass,
     interactionId: interaction.id,
     sessionId: interaction.sessionId,
     executionId: interaction.executionId,
@@ -1400,6 +1450,7 @@ function projectTurnResult(result: unknown): { assistantText: string } | null {
 function parseTurnRunInput(value: unknown): SessionRuntimeRunInput {
   const record = requireObject(value, "input");
   assertKeys(record, [
+    "expectedContainerRevision",
     "sessionId",
     "catalogRevision",
     "idempotencyKey",
@@ -1425,6 +1476,7 @@ function parseTurnRunInput(value: unknown): SessionRuntimeRunInput {
 function parseTurnEnqueueInput(value: unknown): SessionRuntimeEnqueueInput {
   const record = requireObject(value, "input");
   assertKeys(record, [
+    "expectedContainerRevision",
     "sessionId",
     "catalogRevision",
     "idempotencyKey",
@@ -1437,6 +1489,7 @@ function parseTurnEnqueueInput(value: unknown): SessionRuntimeEnqueueInput {
 
 function parseTurnMutationBase(record: Record<string, unknown>): SessionRuntimeEnqueueInput {
   return {
+    expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
     sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
     catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
@@ -1540,10 +1593,11 @@ function parseExecutionInput(value: unknown): SessionRuntimeExecutionInput {
 
 function parseCancelInput(value: unknown): SessionRuntimeCancelInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["sessionId", "executionId", "idempotencyKey"], "input");
+  assertKeys(record, ["sessionId", "executionId", "expectedRevision", "idempotencyKey"], "input");
   return {
     sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
     executionId: requireNonEmptyString(record.executionId, "executionId"),
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
 }
@@ -1579,7 +1633,7 @@ function parseInteractionRespondInput(value: unknown): SessionRuntimeInteraction
   const record = requireObject(value, "input");
   assertKeys(
     record,
-    ["sessionId", "executionId", "interactionId", "response", "idempotencyKey", "responseMode", "waitTimeoutMs"],
+    ["sessionId", "executionId", "interactionId", "expectedRevision", "response", "idempotencyKey", "responseMode", "waitTimeoutMs"],
     "input",
   );
   const responseMode = requireEnum(record.responseMode, ["wait", "deferred"] as const, "responseMode");
@@ -1587,6 +1641,7 @@ function parseInteractionRespondInput(value: unknown): SessionRuntimeInteraction
     throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
   }
   return {
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
     sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
     executionId: requireNonEmptyString(record.executionId, "executionId"),
     interactionId: requireNonEmptyString(record.interactionId, "interactionId"),

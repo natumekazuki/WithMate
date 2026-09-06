@@ -63,6 +63,29 @@ function capture() {
   };
 }
 
+function publicExecutionResult() {
+  return {
+    id: "execution-1",
+    revision: 1,
+    sessionId: "session-1",
+    operation: "turn.run" as const,
+    state: "completed" as const,
+    result: { assistantText: "accepted" },
+    errorCode: "",
+    reason: "",
+    createdAt: "2026-08-11T00:00:00.000Z",
+    admittedAt: "2026-08-11T00:00:00.000Z",
+    completedAt: "2026-08-11T00:00:01.000Z",
+    updatedAt: "2026-08-11T00:00:01.000Z",
+    effectiveTurn: null,
+    attachments: [],
+    pendingInteraction: null,
+    partialOutput: null,
+    terminalFailureNotification: null,
+    workItemId: null,
+  };
+}
+
 describe("withmate-session CLI", () => {
   // @test-value v1
   // kind = "security"
@@ -261,6 +284,55 @@ describe("withmate-session CLI", () => {
   });
 
   // @test-value v1
+  // kind = "security"
+  // claim = "raw Session Runtime clientはidentity検証後もstrict public schemaにないfieldを含むresponseを受理しない"
+  // oracle = { type = "contract", ref = "AUTONOMY-PARITY-08" }
+  // failure_mode = "認証済みpeerの私有field混入responseをCLIが成功として公開する"
+  // scope = "withmate-session-runtime-client public response admission"
+  // lifecycle = "permanent"
+  // distinction = "byte上限やidentity mismatchではなく、dispatch後に届く上限内JSONのpublic schema違反を観測する"
+  // @end-test-value
+  test("AUTONOMY-PARITY-08: raw clientは私有fieldを含むpublic responseを拒否する", async () => {
+    const server = createServer((request, response) => {
+      const nonce = request.headers[SESSION_RUNTIME_NONCE_HEADER];
+      response.writeEarlyHints({
+        link: "</v1/operation>; rel=preconnect",
+        [SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER]: connection.applicationInstanceId,
+        [SESSION_RUNTIME_GENERATION_HEADER]: connection.runtimeGenerationId,
+        [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(
+          connection.apiSecret,
+          connection.applicationInstanceId,
+          connection.runtimeGenerationId,
+          typeof nonce === "string" ? nonce : "",
+        ),
+      });
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({
+          ...createSessionRuntimeResult("turn.get", publicExecutionResult()),
+          privateMarker: "must-not-leak",
+        }));
+      });
+    });
+    const port = await listenServer(server);
+    try {
+      await assert.rejects(
+        () => callSessionRuntime(
+          { ...connection, baseUrl: `http://127.0.0.1:${port}` },
+          { schemaVersion: "withmate-session-request-v2", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
+          AbortSignal.timeout(2_000),
+        ),
+        (error) => error instanceof SessionRuntimeClientError
+          && error.dispatched
+          && /invalid public response/.test(error.message),
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  // @test-value v1
   // kind = "contract"
   // claim = "application instanceとgenerationを検証したCLI connectionはversioned operationをSession runtimeへ送る"
   // oracle = { type = "adr", ref = "ADR-023 Selection and binding" }
@@ -288,7 +360,7 @@ describe("withmate-session CLI", () => {
         return {
           schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
           operation,
-          result: { accepted: true },
+          result: publicExecutionResult(),
         };
       },
     });
@@ -399,10 +471,18 @@ describe("withmate-session CLI", () => {
     assert.deepEqual(stdout.json().result.result, { sessionId: "session-actor" });
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "CLI coordination createはactor container revisionを失わずshared strict inputへ渡す"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "CLIだけexpectedContainerRevisionを欠落させstale containerへのcreateを許す"
+  // scope = "withmate-session-cli-coordination-create"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("COORD-ADAPTER-01: coordination event createは共通operationへdispatchする", async () => {
     const stdout = capture();
     const requests: unknown[] = [];
-    const input = { kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" };
+    const input = { expectedContainerRevision: 1, kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" };
     const exitCode = await runWithMateSessionCli([
       "coordination", "event", "create", "--json", JSON.stringify(input),
     ], {
@@ -479,10 +559,18 @@ describe("withmate-session CLI", () => {
     assert.deepEqual(requests, [{ schemaVersion: "withmate-session-request-v2", operation: "work.aggregation.retry", input }]);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "CLI coordination resolveはcurrent event revisionをshared strict inputへ渡す"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "CLIだけexpectedRevisionを欠落させstale blockerを解決する"
+  // scope = "withmate-session-cli-coordination-resolve"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("COORD-RESOLVE-SURFACE-01: agentはCLIでも回答optionなしでblockerを解決できる", async () => {
     const stdout = capture();
     const requests: unknown[] = [];
-    const input = { eventId: "blocker-1", idempotencyKey: "resolve-blocker-1" };
+    const input = { eventId: "blocker-1", expectedRevision: 0, idempotencyKey: "resolve-blocker-1" };
     const exitCode = await runWithMateSessionCli([
       "coordination", "event", "resolve", "--json", JSON.stringify(input),
     ], {
@@ -580,11 +668,20 @@ describe("withmate-session CLI", () => {
     assert.equal(stdout.json().result.operation, "turn.options");
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "CLI interaction responseは対象interactionのexpected revisionをshared boundaryへ渡す"
+  // oracle = { type = "contract", ref = "AUTONOMY-USER-01" }
+  // failure_mode = "CLI adapterがrevisionを落としstaleな回答をcurrent user decisionとして送る"
+  // scope = "withmate-session-cli-interaction-respond"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("EXT-INTERACTION-11: interaction respondをshared exact inputへdispatchする", async () => {
     const requests: any[] = [];
     const stdout = capture();
     const input = {
       sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+      expectedRevision: 1,
       response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1", responseMode: "deferred",
     };
     const exitCode = await runWithMateSessionCli([
@@ -646,6 +743,14 @@ describe("withmate-session CLI", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Copilot Session/Turn createはexpected container revisionとprovider固有tupleを保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "provider別CLI経路だけSessionまたはtarget container revisionを欠落させる"
+  // scope = "withmate-session-cli-copilot-create-and-turn"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("EXT-PROVIDER-02: Copilot Session作成とTurn実行をprovider固有schemaでdispatchする", async () => {
     const requests: any[] = [];
     const stdout = capture();
@@ -663,6 +768,7 @@ describe("withmate-session CLI", () => {
         status: 200,
         value: createSessionRuntimeResult(envelope.operation, {
           id: "execution-1",
+          revision: 1,
           sessionId: "copilot-session",
           operation: envelope.operation,
           state: "queued",
@@ -680,6 +786,7 @@ describe("withmate-session CLI", () => {
 
     assert.equal(await runWithMateSessionCli([
       "session", "create", "--json", JSON.stringify({
+        expectedContainerRevision: 1,
         sessionRole: "executor",
         title: "Copilot",
         provider: "copilot",
@@ -700,6 +807,7 @@ describe("withmate-session CLI", () => {
     };
     assert.equal(await runWithMateSessionCli([
       "turn", "run", "--json", JSON.stringify({
+        expectedContainerRevision: 1,
         sessionId: "copilot-session",
         catalogRevision: 5,
         idempotencyKey: "run-copilot",
@@ -714,10 +822,12 @@ describe("withmate-session CLI", () => {
       ["turn.run", "copilot"],
     ]);
     assert.deepEqual(requests[1].input.terminalFailureNotification, { targetSessionId: "target-session" });
+    assert.equal(requests[1].input.expectedContainerRevision, 1);
 
     const invalid = capture();
     assert.equal(await runWithMateSessionCli([
       "turn", "enqueue", "--json", JSON.stringify({
+        expectedContainerRevision: 2,
         sessionId: "copilot-session",
         catalogRevision: 5,
         idempotencyKey: "mixed-provider-fields",
@@ -730,6 +840,7 @@ describe("withmate-session CLI", () => {
     const invalidNotification = capture();
     assert.equal(await runWithMateSessionCli([
       "turn", "enqueue", "--json", JSON.stringify({
+        expectedContainerRevision: 2,
         sessionId: "copilot-session",
         catalogRevision: 5,
         idempotencyKey: "invalid-notification",
@@ -745,10 +856,18 @@ describe("withmate-session CLI", () => {
     assert.equal(requests.length, 2);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "CLI Session renameはcurrent revisionとcaller-owned idempotency keyを保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "CLI renameがexpectedRevisionを落としlost updateを許す"
+  // scope = "withmate-session-cli-session-rename"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("session renameは明示idempotency keyを維持する", async () => {
     const stdout = capture();
     let request: any;
-    const exitCode = await runWithMateSessionCli(["session", "rename", "--json", JSON.stringify({ sessionId: "s1", title: "Renamed", idempotencyKey: "fixed" })], {
+    const exitCode = await runWithMateSessionCli(["session", "rename", "--json", JSON.stringify({ sessionId: "s1", expectedRevision: 1, title: "Renamed", idempotencyKey: "fixed" })], {
       stdout: stdout.stream,
       discover: async () => connection,
       call: async (_connection, envelope) => {
@@ -795,12 +914,21 @@ describe("withmate-session CLI", () => {
     });
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "revision付きcancelのapplication errorはsafe JSONとapplication error exit codeへ写像される"
+  // oracle = { type = "contract", ref = "docs/runbooks/session-cli.md#Exit codes" }
+  // failure_mode = "CLIがAPI errorをargument errorへ誤分類するかsecretを標準出力へ漏らす"
+  // scope = "withmate-session CLI application error mapping"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("application errorをsafe JSONとexit 3へ写像する", async () => {
     const stdout = capture();
     const exitCode = await runWithMateSessionCli([
       "turn", "cancel", "--json", JSON.stringify({
         sessionId: "session-1",
         executionId: "missing",
+        expectedRevision: 1,
         idempotencyKey: "cancel-missing",
       }),
     ], {
@@ -821,10 +949,19 @@ describe("withmate-session CLI", () => {
     assert.equal(stdout.text().includes("api-secret"), false);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "revision付きSession createでもapplied errorのresource identityをtext出力へ保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "expectedContainerRevision追加後にapplied resultのreconciliation identityを失う"
+  // scope = "withmate-session-cli-applied-create-error"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("APPLIED-ID-01: text errorもapplied resource IDを保持する", async () => {
     const stdout = capture();
     const exitCode = await runWithMateSessionCli([
       "session", "create", "--format", "text", "--json", JSON.stringify({
+        expectedContainerRevision: 1,
         sessionRole: "executor",
         title: "Large projection",
         provider: "codex",
@@ -856,6 +993,14 @@ describe("withmate-session CLI", () => {
     assert.match(stdout.text(), /"sessionId": "session-created"/);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "response lossはreadでnot_applied、revision付きmutationでindeterminateとして公開される"
+  // oracle = { type = "contract", ref = "docs/runbooks/session-cli.md#Exit codes" }
+  // failure_mode = "readを適用不明と誤報するか、cancelの適用可能性を未適用として安全でないretryを促す"
+  // scope = "withmate-session CLI transport effect mapping"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("CLI-EFFECT-09: readのresponse lossはnot_applied、mutationだけindeterminateへ写像する", async () => {
     const unavailable = capture();
     assert.equal(await runWithMateSessionCli(["status"], {
@@ -879,6 +1024,7 @@ describe("withmate-session CLI", () => {
       "turn", "cancel", "--json", JSON.stringify({
         sessionId: "session-1",
         executionId: "execution-1",
+        expectedRevision: 1,
         idempotencyKey: "cancel-response-loss",
       }),
     ], {

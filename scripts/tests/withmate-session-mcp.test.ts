@@ -34,9 +34,10 @@ const connection: SessionRuntimeConnection = {
 };
 
 const executionInput = { sessionId: "session-1", executionId: "execution-1" };
-const cancelInput = { ...executionInput, idempotencyKey: "cancel-key-1" };
+const cancelInput = { ...executionInput, expectedRevision: 1, idempotencyKey: "cancel-key-1" };
 const publicExecution = {
   id: "execution-1",
+  revision: 1,
   sessionId: "session-1",
   operation: "turn.run" as const,
   state: "completed" as const,
@@ -62,6 +63,7 @@ const publicExecution = {
   workItemId: null,
 };
 const publicSession = {
+  revision: 1,
   sessionId: "s1",
   sessionRole: "executor" as const,
   roleContractRevision: 1 as const,
@@ -86,6 +88,7 @@ const publicFile = {
 const publicCoordinationEvent = {
   sequence: 1,
   eventId: "event-1",
+  revision: 0,
   actorSessionId: "session-1",
   sessionRole: "executor" as const,
   roleContractRevision: 1 as const,
@@ -93,6 +96,7 @@ const publicCoordinationEvent = {
   parentSessionId: "task-1",
   delegationDepth: 2,
   kind: "progress" as const,
+  decisionClass: "deny_or_cancel" as const,
   state: "recorded" as const,
   summary: "started",
   payload: { summary: "started" },
@@ -102,6 +106,24 @@ const publicCoordinationEvent = {
   options: [],
   actions: [],
   createdAt: "2026-08-21T00:00:00.000Z",
+};
+const publicResolvedCoordinationEvent = {
+  ...publicCoordinationEvent,
+  revision: 1,
+  kind: "blocker" as const,
+  decisionClass: "agent_delegable" as const,
+  state: "resolved" as const,
+  actions: [{
+    sequence: 1,
+    type: "resolved" as const,
+    actorType: "session" as const,
+    principalKind: "agent" as const,
+    actorSessionId: "session-1",
+    optionId: null,
+    note: null,
+    relatedEventId: null,
+    createdAt: "2026-08-21T00:01:00.000Z",
+  }],
 };
 const publicWorkItem = {
   id: "work-1",
@@ -309,6 +331,14 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "MCP work.createはtarget Sessionのcurrent revisionをexpectedContainerRevisionとしてshared operationへ渡す"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "MCPだけcontainer revisionを欠落させ、stale target SessionへWork Itemを作成する"
+  // scope = "withmate-session-mcp work.create input"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("WORK-ADAPTER-01: Work Item mutationをstrict schemaでshared operationへdispatchする", async () => {
     const requests: any[] = [];
     await withClient(createWithMateSessionMcpServer({
@@ -339,6 +369,7 @@ describe("WithMate Session MCP contract", () => {
       const created = await client.callTool({
         name: "work.create",
         arguments: {
+          expectedContainerRevision: 1,
           targetSessionId: "session-2",
           goal: "goal",
           scope: "scope",
@@ -368,6 +399,7 @@ describe("WithMate Session MCP contract", () => {
       });
       assert.equal(result.isError, undefined);
       assert.deepEqual(requests.map((request) => request.operation), ["work.create", "work.result"]);
+      assert.equal(requests[0].input.expectedContainerRevision, 1);
     });
   });
 
@@ -454,6 +486,14 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "MCP coordination createはexpected container revisionとstrict result provenanceを保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "MCPだけrevisionを欠落させるかcoordination summaryのdecision classを拒否する"
+  // scope = "withmate-session-mcp-coordination-create"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("COORD-ADAPTER-01: Coordination toolを同じstrict operationへdispatchする", async () => {
     const requests: any[] = [];
     await withClient(createWithMateSessionMcpServer({
@@ -469,17 +509,25 @@ describe("WithMate Session MCP contract", () => {
     }), async (client) => {
       const result = await client.callTool({
         name: "coordination.event.create",
-        arguments: { kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" },
+        arguments: { expectedContainerRevision: 1, kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" },
       });
       assert.equal(result.isError, undefined);
     });
     assert.deepEqual(requests, [{
       schemaVersion: "withmate-session-request-v2",
       operation: "coordination.event.create",
-      input: { kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" },
+      input: { expectedContainerRevision: 1, kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" },
     }]);
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "MCP coordination resolveはcurrent revisionを要求しtrusted option回答をAgent surfaceから拒否する"
+  // oracle = { type = "contract", ref = "AUTONOMY-USER-01/AUTONOMY-MUTATION-05" }
+  // failure_mode = "stale event解決またはtrusted GUI optionのAgent偽装を受理する"
+  // scope = "withmate-session-mcp-coordination-resolve"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("COORD-RESOLVE-SURFACE-01: agentは回答optionなしでblockerを解決できる", async () => {
     const requests: any[] = [];
     await withClient(createWithMateSessionMcpServer({
@@ -489,18 +537,21 @@ describe("WithMate Session MCP contract", () => {
         return {
           ok: true,
           status: 200,
-          value: createSessionRuntimeResult(envelope.operation, publicCoordinationEvent as never),
+          value: createSessionRuntimeResult(envelope.operation, publicResolvedCoordinationEvent as never),
         };
       },
     }), async (client) => {
       const result = await client.callTool({
         name: "coordination.event.resolve",
-        arguments: { eventId: "blocker-1", idempotencyKey: "resolve-blocker-1" },
+        arguments: { eventId: "blocker-1", expectedRevision: 0, idempotencyKey: "resolve-blocker-1" },
       });
       assert.equal(result.isError, undefined);
+      assert.equal((result.structuredContent as any).result.revision, 1);
+      assert.equal((result.structuredContent as any).result.decisionClass, "agent_delegable");
+      assert.equal((result.structuredContent as any).result.actions[0].principalKind, "agent");
       const invalid = await client.callTool({
         name: "coordination.event.resolve",
-        arguments: { eventId: "decision-1", optionId: "continue", idempotencyKey: "resolve-decision-1" },
+        arguments: { eventId: "decision-1", expectedRevision: 0, optionId: "continue", idempotencyKey: "resolve-decision-1" },
       });
       assert.equal(invalid.isError, true);
       const consumed = await client.callTool({
@@ -515,7 +566,7 @@ describe("WithMate Session MCP contract", () => {
       {
         schemaVersion: "withmate-session-request-v2",
         operation: "coordination.event.resolve",
-        input: { eventId: "blocker-1", idempotencyKey: "resolve-blocker-1" },
+        input: { eventId: "blocker-1", expectedRevision: 0, idempotencyKey: "resolve-blocker-1" },
       },
       {
         schemaVersion: "withmate-session-request-v2",
@@ -540,6 +591,14 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "MCP Session createはexpected container revisionとcaller-owned keyを必須にする"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "MCP createがcontainer revisionまたはidempotency keyなしでdispatchされる"
+  // scope = "withmate-session-mcp-session-create"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("session.createはcaller-owned keyを必須にし、session.list/getはread-onlyでdispatchする", async () => {
     const requests: any[] = [];
     await withClient(createWithMateSessionMcpServer({
@@ -555,11 +614,13 @@ describe("WithMate Session MCP contract", () => {
       },
     }), async (client) => {
       const created = await client.callTool({ name: "session.create", arguments: {
+        expectedContainerRevision: 1,
         sessionRole: "executor", title: "Demo", provider: "codex", catalogRevision: 1,
         workspace: { kind: "session_folder" },
       } });
       assert.equal(created.isError, true);
       const createdWithKey = await client.callTool({ name: "session.create", arguments: {
+        expectedContainerRevision: 1,
         sessionRole: "executor",
         title: "Demo",
         provider: "codex",
@@ -580,12 +641,12 @@ describe("WithMate Session MCP contract", () => {
 
   // @test-value v1
   // kind = "contract"
-  // claim = "MCP runtime.catalogはWorkItem revision 2とroot改訂・履歴能力をstrict outputで返すread-only operationである"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-  // failure_mode = "MCP catalogだけがrevision 1 schemaを要求してvalidなRoot WorkItem capability projectionをtool errorにする"
+  // claim = "MCP runtime.catalogはauthority mappingとbaseline Role templateを区別してstrict outputで返す"
+  // oracle = { type = "contract", ref = "AUTONOMY-GRANT-02/AUTONOMY-PARITY-08" }
+  // failure_mode = "MCP catalogがauthority mappingを欠落させるかbaseline templateをlive grantとして公開する"
   // scope = "WithMate Session MCP runtime.catalog"
   // lifecycle = "permanent"
-  // distinction = "空input dispatchとrevision 2のnested history catalog outputを同じtool callで検証する"
+  // distinction = "空input dispatch、operation classification、baseline template名を同じtool callで検証する"
   // @end-test-value
   it("RUNTIME-CATALOG-02: runtime.catalogを空inputのread-only operationとしてdispatchする", async () => {
     const requests: unknown[] = [];
@@ -601,7 +662,19 @@ describe("WithMate Session MCP contract", () => {
             sessionRoleContractRevision: 1,
             sessionTurnCommunicationContractRevision: 1,
             supportedSessionRoles: ["standalone", "overall-coordinator", "task-coordinator", "executor"],
-            allowedChildSessionRoles: {
+            authority: {
+              mappingRevision: 1,
+              operations: [{
+                action: "session.create",
+                resourceKind: "session_namespace",
+                scopeSource: "actor",
+                effectClass: "local_mutation",
+                decisionClass: "agent_delegable",
+              }],
+              budget: "not_implemented_slice_2",
+              validationGaps: [],
+            },
+            baselineChildSessionRoleTemplates: {
               standalone: [],
               "overall-coordinator": ["task-coordinator", "executor"],
               "task-coordinator": ["executor"],
@@ -656,7 +729,19 @@ describe("WithMate Session MCP contract", () => {
         sessionRoleContractRevision: 1,
         sessionTurnCommunicationContractRevision: 1,
         supportedSessionRoles: ["standalone", "overall-coordinator", "task-coordinator", "executor"],
-        allowedChildSessionRoles: {
+        authority: {
+          mappingRevision: 1,
+          operations: [{
+            action: "session.create",
+            resourceKind: "session_namespace",
+            scopeSource: "actor",
+            effectClass: "local_mutation",
+            decisionClass: "agent_delegable",
+          }],
+          budget: "not_implemented_slice_2",
+          validationGaps: [],
+        },
+        baselineChildSessionRoleTemplates: {
           standalone: [],
           "overall-coordinator": ["task-coordinator", "executor"],
           "task-coordinator": ["executor"],
@@ -699,6 +784,14 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "MCP session.selfはactor container revisionをpublic resultに保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "Agentが次のcreateに必要なexpectedContainerRevisionをMCPから取得できない"
+  // scope = "withmate-session-mcp-session-self"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("SESSION-SELF-02: session.selfを空inputのread-only operationとしてdispatchする", async () => {
     const requests: unknown[] = [];
     await withClient(createWithMateSessionMcpServer({
@@ -709,6 +802,7 @@ describe("WithMate Session MCP contract", () => {
           ok: true,
           status: 200,
           value: createSessionRuntimeResult("session.self", {
+            revision: 1,
             sessionId: "session-actor",
             sessionRole: "overall-coordinator",
             roleContractRevision: 1,
@@ -727,6 +821,7 @@ describe("WithMate Session MCP contract", () => {
         input: {},
       }]);
       assert.deepEqual((result.structuredContent as any).result, {
+        revision: 1,
         sessionId: "session-actor",
         sessionRole: "overall-coordinator",
         roleContractRevision: 1,
@@ -771,6 +866,14 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "MCP turn.run/enqueueはtarget SessionのexpectedContainerRevisionとprovider固有tupleをshared operationへ渡す"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
+  // failure_mode = "MCP Turn経路だけcontainer revisionを欠落させるかprovider固有fieldを混在させる"
+  // scope = "withmate-session-mcp Turn creation input"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("EXT-PROVIDER-02: Copilot Turnをprovider固有schemaでrun/enqueueへdispatchする", async () => {
     const requests: any[] = [];
     await withClient(createWithMateSessionMcpServer({
@@ -799,6 +902,7 @@ describe("WithMate Session MCP contract", () => {
       assert.equal((await client.callTool({
         name: "turn.run",
         arguments: {
+          expectedContainerRevision: 1,
           sessionId: "session-1",
           catalogRevision: 5,
           idempotencyKey: "run-1",
@@ -810,6 +914,7 @@ describe("WithMate Session MCP contract", () => {
       assert.equal((await client.callTool({
         name: "turn.enqueue",
         arguments: {
+          expectedContainerRevision: 2,
           sessionId: "session-1",
           catalogRevision: 5,
           idempotencyKey: "enqueue-1",
@@ -820,6 +925,7 @@ describe("WithMate Session MCP contract", () => {
       const invalid = await client.callTool({
         name: "turn.enqueue",
         arguments: {
+          expectedContainerRevision: 3,
           sessionId: "session-1",
           catalogRevision: 5,
           idempotencyKey: "enqueue-2",
@@ -830,6 +936,7 @@ describe("WithMate Session MCP contract", () => {
       const invalidNotification = await client.callTool({
         name: "turn.enqueue",
         arguments: {
+          expectedContainerRevision: 3,
           sessionId: "session-1",
           catalogRevision: 5,
           idempotencyKey: "enqueue-3",
@@ -840,12 +947,21 @@ describe("WithMate Session MCP contract", () => {
       assert.equal(invalidNotification.isError, true);
     });
     assert.deepEqual(requests.map((request) => request.operation), ["turn.run", "turn.enqueue"]);
+    assert.deepEqual(requests.map((request) => request.input.expectedContainerRevision), [1, 2]);
     assert.deepEqual(requests.map((request) => request.input.terminalFailureNotification), [
       { targetSessionId: "target-session" },
       { targetSessionId: "target-session" },
     ]);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "MCP turn.runはrevision付きpublic executionを受理し、異なるoperationのexecutionを拒否する"
+  // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05/AUTONOMY-PARITY-08" }
+  // failure_mode = "execution revisionが公開面から落ちるか、enqueue結果をrun結果として受理する"
+  // scope = "withmate-session-mcp public execution result"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("EXT-RESULT-03: turn.runはenqueue executionをoperation別result schemaで拒否する", async () => {
     await withClient(createWithMateSessionMcpServer({
       discover: async () => connection,
@@ -861,6 +977,7 @@ describe("WithMate Session MCP contract", () => {
       const result = await client.callTool({
         name: "turn.run",
         arguments: {
+          expectedContainerRevision: 1,
           sessionId: "session-1",
           catalogRevision: 5,
           idempotencyKey: "run-operation-mismatch",
@@ -952,7 +1069,16 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
-  it("空白のみの識別子をprotocol validationで拒否してruntimeを呼ばない", async () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "MCP inputのidentifier違反とunknown fieldはruntime dispatch前に共通のversioned INVALID_INPUT errorへ収束する"
+  // oracle = { type = "contract", ref = "AUTONOMY-PARITY-08" }
+  // failure_mode = "MCP frameworkの事前validationがoperation handlerを迂回し、code・effect・retryableのないprotocol errorを返す"
+  // scope = "withmate-session-mcp input validation error envelope"
+  // lifecycle = "permanent"
+  // distinction = "application errorやruntime transport errorではなく、MCP tool argumentのstrict validation失敗をruntime未呼出しで観測する"
+  // @end-test-value
+  it("AUTONOMY-PARITY-08: 不正なMCP inputをversioned INVALID_INPUTへ写像してruntimeを呼ばない", async () => {
     let runtimeCalls = 0;
     await withClient(createWithMateSessionMcpServer({
       discover: async () => {
@@ -960,12 +1086,22 @@ describe("WithMate Session MCP contract", () => {
         return connection;
       },
     }), async (client) => {
-      const result = await client.callTool({
+      const blankIdentifier = await client.callTool({
         name: "turn.get",
         arguments: { sessionId: "   ", executionId: "execution-1" },
       });
-      assert.equal(result.isError, true);
-      assert.equal(result.structuredContent, undefined);
+      const unknownField = await client.callTool({
+        name: "turn.get",
+        arguments: { sessionId: "session-1", executionId: "execution-1", privateMarker: "must-not-pass" },
+      });
+      for (const result of [blankIdentifier, unknownField]) {
+        assert.equal(result.isError, true);
+        assert.equal(result.structuredContent, undefined);
+        const error = parseToolError(result as any).error;
+        assert.equal(error.code, "INVALID_INPUT");
+        assert.equal(error.effect, "not_applied");
+        assert.equal(error.retryable, false);
+      }
       assert.equal(runtimeCalls, 0);
     });
   });
@@ -1116,10 +1252,19 @@ describe("WithMate Session MCP contract", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "MCP interaction listはdecision classとrevisionを公開しrespondはexpected revisionを要求する"
+  // oracle = { type = "contract", ref = "AUTONOMY-USER-01" }
+  // failure_mode = "Agentがdecision classを確認できないかstale responseをrevisionなしでdispatchする"
+  // scope = "withmate-session-mcp-interaction"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("EXT-INTERACTION-11: interaction.list/respondをstrict schemaとcombined resultで公開する", async () => {
     const requests: any[] = [];
     const answered = {
-      sequence: 1, interactionId: "interaction-1", sessionId: "session-1", executionId: "execution-1",
+      sequence: 1, revision: 2, decisionClass: "user_only",
+      interactionId: "interaction-1", sessionId: "session-1", executionId: "execution-1",
       kind: "approval", state: "answered",
       request: { title: "Approve", summary: "Run command" },
       resolution: { action: "approve", submittedFields: [], resolvedAt: "2026-08-13T00:00:01.000Z" },
@@ -1129,26 +1274,36 @@ describe("WithMate Session MCP contract", () => {
       discover: async () => connection,
       call: async (_connection, envelope) => {
         requests.push(envelope);
+        if (envelope.operation === "interaction.respond") {
+          return {
+            ok: false,
+            status: 403,
+            value: createSessionRuntimeError({
+              code: "INTERACTION_RESPONSE_FORBIDDEN",
+              message: "The interaction requires a trusted user response.",
+            }),
+          };
+        }
         return {
           ok: true,
           status: 200,
-          value: createSessionRuntimeResult(envelope.operation, envelope.operation === "interaction.list"
-            ? { items: [answered] }
-            : { interaction: answered, execution: publicExecution } as never),
+          value: createSessionRuntimeResult("interaction.list", { items: [answered] }),
         };
       },
     }), async (client) => {
       const listed = await client.callTool({ name: "interaction.list", arguments: { sessionId: "session-1" } });
       assert.equal(listed.isError, undefined);
+      assert.equal((listed.structuredContent as any).result.items[0].decisionClass, "user_only");
+      assert.equal((listed.structuredContent as any).result.items[0].revision, 2);
       const responded = await client.callTool({
         name: "interaction.respond",
         arguments: {
           sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+          expectedRevision: 1,
           response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1", responseMode: "deferred",
         },
       });
-      assert.equal(responded.isError, undefined);
-      assert.equal((responded.structuredContent as any).result.interaction.state, "answered");
+      assert.equal(responded.isError, true);
       assert.deepEqual(requests.map((request) => request.operation), ["interaction.list", "interaction.respond"]);
     });
   });

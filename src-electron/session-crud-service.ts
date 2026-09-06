@@ -1,3 +1,5 @@
+import { SessionAuthorityError, type MutationAdmissionProof } from "../src/session-authority.js";
+import { SessionResourceRevisionConflictError } from "./resource-history-schema.js";
 import { createHash } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
@@ -8,7 +10,6 @@ import { selectWeightedRandomLaunchCharacterId } from "../src/character/characte
 import { buildNewSession, type Session, type SessionSummary } from "../src/session-state.js";
 import {
   buildChildSessionRoleBinding,
-  requireChildSessionRoleAllowed,
   requireSessionRoleBinding,
   SessionRoleBindingError,
   type SessionRoleBinding,
@@ -32,6 +33,7 @@ import { normalizeAllowedAdditionalDirectories } from "./additional-directories.
 import type { SessionLaunchSelection } from "./session-launch-selection-service.js";
 import {
   SessionCrudIdempotencyConflictError,
+  SessionCrudIdempotencyResponseUnavailableError,
   type SessionStorageV6,
   type SessionSummaryPagePosition,
 } from "./session-storage-v6.js";
@@ -48,6 +50,7 @@ type SessionListCursor = {
   sort: typeof SESSION_LIST_SORT;
   lastActiveAt: string;
   sessionId: string;
+  authority: string;
 };
 
 export class SessionCrudError extends Error {
@@ -69,6 +72,7 @@ export type SessionCrudServiceDeps = {
     | "insertSessionIdempotently"
     | "renameSessionIdempotently"
     | "listSessionSummaryPage"
+    | "getSessionResourceRevision"
     | "getSessionSummary"
   >;
   resolveLaunchSelection(providerId: string): Promise<SessionLaunchSelection>;
@@ -94,29 +98,35 @@ export class SessionCrudService {
 
   constructor(private readonly deps: SessionCrudServiceDeps) {}
 
-  create(input: SessionRuntimeCreateInput, actorSessionId: string): Promise<SessionRuntimeSessionDetail> {
-    return this.enqueueMutation(() => this.createNow(input, actorSessionId));
+  create(input: SessionRuntimeCreateInput, actorSessionId: string, proof: MutationAdmissionProof): Promise<SessionRuntimeSessionDetail> {
+    return this.enqueueMutation(() => this.createNow(input, actorSessionId, proof));
   }
 
-  async list(input: SessionRuntimeSessionListInput): Promise<SessionRuntimeSessionListResult> {
-    const position = input.cursor ? decodeSessionListCursor(input.cursor) : undefined;
-    const page = this.deps.storage.listSessionSummaryPage(input.limit + 1, position);
+  async list(input: SessionRuntimeSessionListInput, proof: MutationAdmissionProof): Promise<SessionRuntimeSessionListResult> {
+    const position = input.cursor ? decodeSessionListCursor(input.cursor, proof) : undefined;
+    const page = this.deps.storage.listSessionSummaryPage(
+      input.limit + 1,
+      position,
+      proof.resolvedScope.rootSessionId,
+      proof.resolvedScope.relation === "self" ? proof.principal.actorSessionId : undefined,
+    );
     const visible = page.slice(0, input.limit);
     const last = visible.at(-1);
     return assertCrudProjectionSize({
       items: visible.map((entry) => projectSessionSummary(
         entry.summary,
         this.deps.resolveSessionFilesDirectory(entry.summary.id),
+        this.requireResourceRevision(entry.summary.id),
       )),
       ...(page.length > input.limit && last
-        ? { nextCursor: encodeSessionListCursor({ lastActiveAt: last.lastActiveAt, sessionId: last.summary.id }) }
+        ? { nextCursor: encodeSessionListCursor({ lastActiveAt: last.lastActiveAt, sessionId: last.summary.id }, proof) }
         : {}),
     });
   }
 
   async get(sessionId: string): Promise<SessionRuntimeSessionGetResult> {
     const session = this.requireDefaultSession(sessionId);
-    const detail = projectSessionDetail(session, this.deps.resolveSessionFilesDirectory(session.id));
+    const detail = projectSessionDetail(session, this.deps.resolveSessionFilesDirectory(session.id), this.requireResourceRevision(session.id));
     const branch = detail.workspace.kind === "directory"
       ? await resolveCurrentWorkspaceBranch(this.deps.resolveCurrentWorkspaceBranch, detail.workspace.path)
       : null;
@@ -125,17 +135,17 @@ export class SessionCrudService {
     );
   }
 
-  rename(input: SessionRuntimeRenameInput): Promise<SessionRuntimeSessionDetail> {
-    return this.enqueueMutation(() => this.renameNow(input));
+  rename(input: SessionRuntimeRenameInput, proof: MutationAdmissionProof): Promise<SessionRuntimeSessionDetail> {
+    return this.enqueueMutation(() => this.renameNow(input, proof));
   }
 
-  private async createNow(input: SessionRuntimeCreateInput, actorSessionId: string): Promise<SessionRuntimeSessionDetail> {
+  private async createNow(input: SessionRuntimeCreateInput, actorSessionId: string, proof: MutationAdmissionProof): Promise<SessionRuntimeSessionDetail> {
     const normalizedActorSessionId = actorSessionId.trim();
     const now = this.now();
     try {
       const replay = this.deps.storage.resolveSessionCrudIdempotency(
         "session.create",
-        normalizedActorSessionId,
+        proof,
         input.idempotencyKey,
         (storedResult) => fingerprintSessionCreate(
           normalizedActorSessionId,
@@ -160,11 +170,6 @@ export class SessionCrudService {
         false,
         { sessionId: normalizedActorSessionId },
       );
-    }
-    try {
-      requireChildSessionRoleAllowed(parent.roleBinding, input.sessionRole);
-    } catch (error) {
-      throw mapRoleBindingError(error);
     }
 
     if (this.deps.isProviderSupported && !this.deps.isProviderSupported(input.provider)) {
@@ -238,6 +243,8 @@ export class SessionCrudService {
     let committed = false;
     try {
       const stored = this.deps.storage.insertSessionIdempotently(session, {
+        proof,
+        expectedContainerRevision: input.expectedContainerRevision,
         operation: "session.create",
         principalSessionId: normalizedActorSessionId,
         idempotencyKey: input.idempotencyKey,
@@ -247,6 +254,7 @@ export class SessionCrudService {
         projectResult: (storedSession) => projectSessionDetail(
           storedSession,
           this.deps.resolveSessionFilesDirectory(storedSession.id),
+          this.requireResourceRevision(storedSession.id),
         ),
         resolveReplayFingerprint: (storedResult) => fingerprintSessionCreate(
           normalizedActorSessionId,
@@ -275,13 +283,13 @@ export class SessionCrudService {
     }
   }
 
-  private async renameNow(input: SessionRuntimeRenameInput): Promise<SessionRuntimeSessionDetail> {
-    const fingerprint = fingerprintMutation({ sessionId: input.sessionId, title: input.title });
+  private async renameNow(input: SessionRuntimeRenameInput, proof: MutationAdmissionProof): Promise<SessionRuntimeSessionDetail> {
+    const fingerprint = fingerprintMutation({ sessionId: input.sessionId, title: input.title, expectedRevision: input.expectedRevision, actorSessionId: proof.principal.actorSessionId });
     const now = this.now();
     try {
       const replay = this.deps.storage.resolveSessionCrudIdempotency(
         "session.rename",
-        "",
+        proof,
         input.idempotencyKey,
         fingerprint,
         now.toISOString(),
@@ -292,6 +300,9 @@ export class SessionCrudService {
       }
       this.requireDefaultSession(input.sessionId);
       const renamed = this.deps.storage.renameSessionIdempotently({
+        proof,
+        principalSessionId: proof.principal.actorSessionId,
+        expectedRevision: input.expectedRevision,
         operation: "session.rename",
         sessionId: input.sessionId,
         title: input.title,
@@ -302,6 +313,7 @@ export class SessionCrudService {
         projectResult: (stored) => projectSessionDetail(
           stored,
           this.deps.resolveSessionFilesDirectory(stored.id),
+          this.requireResourceRevision(stored.id),
         ),
       });
       if (!renamed) {
@@ -320,6 +332,12 @@ export class SessionCrudService {
       if (error instanceof SessionCrudError) throw error;
       throw mapStorageMutationError(error);
     }
+  }
+
+  private requireResourceRevision(sessionId: string): number {
+    const revision = this.deps.storage.getSessionResourceRevision(sessionId);
+    if (revision === null) throw new SessionCrudError("SESSION_NOT_FOUND", "The Session resource was not found.", false, { sessionId });
+    return revision;
   }
 
   private requireDefaultSession(sessionId: string): SessionSummary {
@@ -458,10 +476,12 @@ export class SessionCrudService {
 function projectSessionSummary(
   session: SessionSummary,
   sessionFolderPath: string,
+  revision: number,
 ): SessionRuntimeSessionSummary {
   const workspaceKind = samePath(session.workspacePath, sessionFolderPath) ? "session_folder" : "directory";
   return {
     sessionId: session.id,
+    revision,
     title: session.taskTitle,
     sessionKind: "default",
     ...projectRoleBinding(requireProjectedRoleBinding(session)),
@@ -479,8 +499,9 @@ function projectSessionSummary(
 function projectSessionDetail(
   session: Session | SessionSummary,
   sessionFolderPath: string,
+  revision: number,
 ): SessionRuntimeSessionDetail {
-  const summary = projectSessionSummary(session, sessionFolderPath);
+  const summary = projectSessionSummary(session, sessionFolderPath, revision);
   const isWorkspace = samePath(session.workspacePath, sessionFolderPath);
   const workspace: SessionRuntimePublicWorkspace = {
     ...summary.workspace,
@@ -495,6 +516,7 @@ function normalizeSessionDetailProjection(
 ): SessionRuntimeSessionDetail {
   return {
     sessionId: detail.sessionId,
+    revision: detail.revision,
     title: detail.title,
     sessionKind: "default",
     ...projectRoleBinding(requireSessionRoleBinding(detail.sessionId, detail)),
@@ -551,6 +573,7 @@ function fingerprintSessionCreate(
 ): string {
   return fingerprintMutation({
     actorSessionId,
+    expectedContainerRevision: input.expectedContainerRevision,
     sessionRole: input.sessionRole,
     roleBinding,
     title: input.title,
@@ -612,6 +635,8 @@ function mapIdempotencyError(error: unknown): Error {
 }
 
 function mapStorageMutationError(error: unknown): Error {
+  if (error instanceof SessionAuthorityError || error instanceof SessionResourceRevisionConflictError
+    || error instanceof SessionCrudIdempotencyResponseUnavailableError) return error;
   if (error instanceof SessionRuntimeProjectionLimitError) {
     return error;
   }
@@ -636,21 +661,23 @@ function assertCrudProjectionSize<T>(
   return result;
 }
 
-function encodeSessionListCursor(position: SessionSummaryPagePosition): string {
+function encodeSessionListCursor(position: SessionSummaryPagePosition, proof: MutationAdmissionProof): string {
   const cursor: SessionListCursor = {
     version: SESSION_LIST_CURSOR_VERSION,
     operation: "session.list",
     sort: SESSION_LIST_SORT,
+    authority: sessionListAuthorityFingerprint(proof),
     lastActiveAt: position.lastActiveAt,
     sessionId: position.sessionId,
   };
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
-function decodeSessionListCursor(value: string): SessionSummaryPagePosition {
+function decodeSessionListCursor(value: string, proof: MutationAdmissionProof): SessionSummaryPagePosition {
   try {
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<SessionListCursor>;
     if (
+      parsed.authority !== sessionListAuthorityFingerprint(proof) ||
       parsed.version !== SESSION_LIST_CURSOR_VERSION ||
       parsed.operation !== "session.list" ||
       parsed.sort !== SESSION_LIST_SORT ||
@@ -665,4 +692,8 @@ function decodeSessionListCursor(value: string): SessionSummaryPagePosition {
   } catch {
     throw new SessionCrudError("INVALID_CURSOR", "The Session list cursor is invalid.", false, { field: "cursor" });
   }
+}
+
+function sessionListAuthorityFingerprint(proof: MutationAdmissionProof): string {
+  return fingerprintMutation({ actor: proof.principal.actorSessionId, root: proof.resolvedScope.rootSessionId, grantId: proof.grantId, revision: proof.grantRevision });
 }

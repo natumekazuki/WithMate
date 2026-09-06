@@ -9,6 +9,8 @@
 
 ## Budget model
 
+Slice 1 は 2026-09-05 のユーザー承認に基づき、budget 未実装を runtime catalog へ明示し、既存操作別の上限だけを維持する。本 slice で ledger と admission を接続し、その validation gap を解消する。Slice 1 の grant migration に架空の allocation や無制限値は置かず、ここで実際の root policy と既存上限から budget を生成する。
+
 budgetはAgent能力を固定Roleで封鎖せず、自律実行を有限資源へ収めるためのledgerである。soft limitとhard limitを区別する。
 
 - soft limit: Agentへ通知し、縮退、統合、停止、追加grant要求を選ばせる。

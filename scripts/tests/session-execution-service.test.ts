@@ -5,6 +5,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
+import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  type MutationAuthorityProof,
+} from "../../src/session-authority.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import {
   SessionExecutionOwnerMismatchError,
@@ -20,6 +24,30 @@ import {
 } from "../../src-electron/session-execution-storage-v6.js";
 
 const CREATED_AT = "2026-08-10T00:00:00.000Z";
+
+function trustedExecutionProof(
+  operation: "turn.run" | "turn.enqueue" | "turn.cancel",
+  sessionId = "session-1",
+): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-execution-service-test" },
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: operation,
+    resolvedScope: {
+      resourceKind: "execution",
+      resourceId: null,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: CREATED_AT,
+  };
+}
 
 type DeferredDispatch = {
   promise: Promise<SessionExecutionDispatchResult>;
@@ -67,6 +95,28 @@ async function createFixture(options: {
   }
 
   const storage = new SessionExecutionStorageV6(dbPath);
+  const enqueueWithAuthority = storage.enqueue.bind(storage);
+  storage.enqueue = (input) => enqueueWithAuthority({
+    ...input,
+    expectedContainerRevision: input.expectedContainerRevision ?? storage.getSessionContainerRevision(input.sessionId),
+    proof: input.proof ?? trustedExecutionProof("turn.enqueue", input.sessionId),
+  });
+  const startImmediateWithAuthority = storage.startImmediate.bind(storage);
+  storage.startImmediate = (input) => startImmediateWithAuthority({
+    ...input,
+    expectedContainerRevision: input.expectedContainerRevision ?? storage.getSessionContainerRevision(input.sessionId),
+    proof: input.proof ?? trustedExecutionProof("turn.run", input.sessionId),
+  });
+  const cancelQueuedWithAuthority = storage.cancelQueuedIdempotent.bind(storage);
+  storage.cancelQueuedIdempotent = (input) => cancelQueuedWithAuthority({
+    ...input,
+    expectedRevision: input.expectedRevision ?? storage.get(input.executionId)?.revision ?? 1,
+  });
+  const recordIdempotencyWithAuthority = storage.recordIdempotency.bind(storage);
+  storage.recordIdempotency = (input) => recordIdempotencyWithAuthority({
+    ...input,
+    expectedRevision: input.expectedRevision ?? storage.get(input.executionId)?.revision ?? 1,
+  });
   const activeSessions = new Set<string>();
   const dispatches = new Map<string, DeferredDispatch>();
   const dispatchEvents: Array<{ executionId: string; persistedState: string | undefined }> = [];
@@ -94,7 +144,7 @@ async function createFixture(options: {
   let executionIndex = 0;
   let timestampIndex = 0;
   let validationError: Error | null = null;
-  const service = new SessionExecutionService({
+  const productionService = new SessionExecutionService({
     storage,
     validateTurn(_sessionId, request) {
       if (validationError) {
@@ -120,6 +170,7 @@ async function createFixture(options: {
         executionId,
         hasDurableIntent: storage.resolveIdempotency(
           "turn.cancel",
+          trustedExecutionProof("turn.cancel"),
           "cancel-running",
           "cancel-running-fingerprint",
         ) !== null,
@@ -144,6 +195,21 @@ async function createFixture(options: {
     onExecutionChanged: options.onExecutionChanged,
     onExecutionTerminal: options.onExecutionTerminal,
   });
+  const service = new Proxy(productionService, {
+    get(target, property, receiver) {
+      if (property === "run" || property === "enqueue" || property === "cancel") {
+        return (input: Parameters<SessionExecutionService[typeof property]>[0]) => target[property]({
+          ...input,
+          proof: trustedExecutionProof(
+            property === "cancel" ? "turn.cancel" : property === "run" ? "turn.run" : "turn.enqueue",
+            input.sessionId,
+          ),
+        } as never);
+      }
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 
   return {
     directory,
@@ -164,6 +230,7 @@ async function createFixture(options: {
 
 function createInput(index: number, sessionId = "session-1") {
   return {
+    proof: trustedExecutionProof("turn.enqueue", sessionId),
     sessionId,
     request: { userMessage: "message-" + index },
     idempotencyKey: "key-" + index,
@@ -629,6 +696,14 @@ describe("SessionExecutionService", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "terminal executionへの新規cancelはidempotency結果を作らずstate conflictで拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // failure_mode = "terminal executionの取消再試行が新規effectまたはidempotency結果を生成する"
+  // scope = "SessionExecutionService cancel state boundary"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("CANCEL-STATE-10: terminal executionへの新規cancelはidempotency effect前に拒否する", async () => {
     const fixture = await createFixture();
     try {
@@ -649,6 +724,7 @@ describe("SessionExecutionService", () => {
       assert.equal(
         fixture.storage.resolveIdempotency(
           "turn.cancel",
+          trustedExecutionProof("turn.cancel"),
           "cancel-after-completion",
           "cancel-after-completion-fingerprint",
         ),

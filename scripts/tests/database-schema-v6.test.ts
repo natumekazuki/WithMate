@@ -39,6 +39,13 @@ import {
   resolveV6FreshDatabasePath,
 } from "../../src-electron/database-schema-v6.js";
 import { AuditLogStorageV6 } from "../../src-electron/audit-log-storage-v6.js";
+import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
+import { CoordinationEventService } from "../../src-electron/coordination-event-service.js";
+import {
+  CoordinationEventIdempotencyResponseUnavailableError,
+  CoordinationEventStorageV6,
+} from "../../src-electron/coordination-event-storage-v6.js";
+import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 
 type TableInfoRow = {
   name: string;
@@ -249,7 +256,15 @@ describe("database-schema-v6", () => {
     }
   });
 
-  it("既存V6 DBを有効と判定したままexternal runtime tablesをadditiveに適用する", () => {
+  // @test-value v1
+  // kind = "regression"
+  // claim = "旧V6から現行schemaへの移行は既存DBを保持して再実行可能に収束する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // failure_mode = "移行対象を現行と誤認するか必要なruntime tableが作られず起動できない"
+  // scope = "V6 schema migration"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("既存V6 DBへauthorityを含む現行schemaを適用して有効なDBへ移行する", () => {
     const dirPath = mkdtempSync(join(tmpdir(), "withmate-v6-execution-schema-"));
     const dbPath = join(dirPath, APP_DATABASE_V6_FILENAME);
     try {
@@ -270,7 +285,7 @@ describe("database-schema-v6", () => {
         oldDb.close();
       }
 
-      assert.equal(isValidV6Database(dbPath), true);
+      assert.equal(isValidV6Database(dbPath), false);
 
       const upgradedDb = new DatabaseSync(dbPath);
       try {
@@ -339,7 +354,16 @@ describe("database-schema-v6", () => {
     }
   });
 
-  it("ORCH-OUTBOUND-MIGRATE-01: 既存cross-Session executionをorigin snapshotへ一度だけ補完する", () => {
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "cross-Session execution originは初回migrationだけで補完し、完了後に履歴なしで注入されたexecutionを次回startupが補完せず拒否する"
+  // oracle = { type = "contract", ref = "ORCH-OUTBOUND-MIGRATE-01/AUTONOMY-HISTORY-04" }
+  // failure_mode = "migration完了後もstartupがoriginとresource historyを再生成し、非canonical executionを正規の履歴として受理する"
+  // scope = "ensureV6Schema execution origin and resource history migration markers"
+  // lifecycle = "permanent"
+  // distinction = "初回のlegacy executionはoriginと履歴を補完し、その後に同じ形で注入したexecutionは二回目のstartupで履歴欠落として拒否される"
+  // @end-test-value
+  it("ORCH-OUTBOUND-MIGRATE-01: 既存cross-Session executionを初回だけ補完する", () => {
     const db = createV6Schema();
     try {
       db.exec("DROP TABLE session_execution_origins_v6;");
@@ -390,7 +414,10 @@ describe("database-schema-v6", () => {
         "2026-08-23T00:00:02.000Z",
         "2026-08-23T00:00:02.000Z",
       );
-      ensureV6Schema(db);
+      assert.throws(
+        () => ensureV6Schema(db),
+        /Session execution projection has no matching resource event/,
+      );
 
       const origins = db.prepare(`
         SELECT execution_id, source_session_id, target_session_id,
@@ -540,8 +567,19 @@ describe("database-schema-v6", () => {
     }
   });
 
-  it("COORD-RESPONSE-MIGRATE-01: 既存actionを保持しtrusted GUIのblocker responseをrespondedへ移行する", () => {
-    const db = createV6Schema();
+  // @test-value v1
+  // kind = "regression"
+  // claim = "既存Coordination actionとidempotencyを保持し、旧ledgerの再送を二重適用せずresponse unavailableへ収束する"
+  // oracle = { type = "contract", ref = "AUTONOMY-USER-01 / AUTONOMY-MIGRATION-09" }
+  // failure_mode = "legacy GUI回答をAgent provenanceへ誤帰属する、旧ledgerをmiss扱いして同じresponseを再適用する、またはmigration再実行で履歴を重複する"
+  // scope = "populated v6 Coordination authority migration"
+  // lifecycle = "permanent"
+  // distinction = "二回migration後にtrusted GUIとAgent service surfaceから同operation/keyを再送し、既存action/header/idempotency件数が変わらないことを観測する"
+  // @end-test-value
+  it("COORD-RESPONSE-MIGRATE-01: 既存actionを保持しCoordination authority履歴へ再実行可能に移行する", () => {
+    const directory = mkdtempSync(join(tmpdir(), "withmate-coordination-response-migration-"));
+    const dbPath = join(directory, APP_DATABASE_V6_FILENAME);
+    const db = createV6Schema(dbPath);
     try {
       db.exec("DROP TABLE coordination_event_idempotency_v6; DROP TABLE coordination_event_actions_v6;");
       const legacySql = CREATE_V6_COORDINATION_EVENT_TABLES_SQL
@@ -645,8 +683,147 @@ describe("database-schema-v6", () => {
         (db.prepare("SELECT COUNT(*) AS count FROM coordination_event_idempotency_v6 WHERE idempotency_key = ?").get("resolve-before-consume-key") as { count: number }).count,
         1,
       );
+      assert.deepEqual(JSON.parse(JSON.stringify(db.prepare(`
+        SELECT id, principal_kind, receipt_id
+        FROM coordination_event_actions_v6
+        ORDER BY id
+      `).all())), [
+        {
+          id: "blocker-response-before-responded",
+          principal_kind: "user",
+          receipt_id: "coordination-receipt:legacy:blocker-response-before-responded",
+        },
+        {
+          id: "resolve-before-consume",
+          principal_kind: "user",
+          receipt_id: "coordination-receipt:legacy:resolve-before-consume",
+        },
+      ]);
+      assert.deepEqual(JSON.parse(JSON.stringify(db.prepare(`
+        SELECT user_id, event_id, event_revision, response_kind, option_id, note
+        FROM coordination_event_user_receipts_v6
+        ORDER BY event_id
+      `).all())), [
+        {
+          user_id: "local-user",
+          event_id: "blocker-before-responded",
+          event_revision: 1,
+          response_kind: "text",
+          option_id: null,
+          note: "タイトルとアイコンが若干重なっている",
+        },
+        {
+          user_id: "local-user",
+          event_id: "event-before-consume",
+          event_revision: 1,
+          response_kind: "option",
+          option_id: "yes",
+          note: null,
+        },
+      ]);
+      assert.deepEqual(JSON.parse(JSON.stringify(db.prepare(`
+        SELECT principal_kind, principal_id, result_revision
+        FROM coordination_event_idempotency_v6
+        WHERE idempotency_key = 'resolve-before-consume-key'
+      `).get())), {
+        principal_kind: "legacy_unknown",
+        principal_id: "consume-owner",
+        result_revision: 1,
+      });
+      assert.deepEqual(JSON.parse(JSON.stringify(db.prepare(`
+        SELECT kind, decision_class, mapping_revision
+        FROM coordination_event_decision_class_registry_v6
+        ORDER BY kind
+      `).all())), [
+        { kind: "blocker", decision_class: "agent_delegable", mapping_revision: 1 },
+        { kind: "correction", decision_class: "deny_or_cancel", mapping_revision: 1 },
+        { kind: "decision", decision_class: "deny_or_cancel", mapping_revision: 1 },
+        { kind: "escalation", decision_class: "agent_delegable", mapping_revision: 1 },
+        { kind: "progress", decision_class: "deny_or_cancel", mapping_revision: 1 },
+        { kind: "result", decision_class: "deny_or_cancel", mapping_revision: 1 },
+        { kind: "user_decision_required", decision_class: "user_only", mapping_revision: 1 },
+      ]);
+
+      const beforeRetry = {
+        actions: (db.prepare("SELECT COUNT(*) AS count FROM coordination_event_actions_v6").get() as { count: number }).count,
+        headers: (db.prepare("SELECT COUNT(*) AS count FROM resource_event_headers_v6 WHERE resource_kind = 'coordination_event'").get() as { count: number }).count,
+        idempotency: (db.prepare("SELECT COUNT(*) AS count FROM coordination_event_idempotency_v6").get() as { count: number }).count,
+      };
+      const storage = new CoordinationEventStorageV6(dbPath);
+      const authority = new SessionAuthorityService({
+        databasePath: dbPath,
+        getExecutionGeneration: () => "generation-1",
+        now: () => new Date("2099-08-22T00:05:00.000Z"),
+      });
+      let published = false;
+      try {
+        const service = new CoordinationEventService({
+          storage,
+          publishCommitted: () => { published = true; },
+          now: () => new Date("2099-08-22T00:05:00.000Z"),
+        });
+        assert.throws(
+          () => service.resolveFromCoordinationWindow({
+            eventId: "event-before-consume",
+            expectedRevision: 1,
+            optionId: "yes",
+            idempotencyKey: "resolve-before-consume-key",
+          }),
+          (error) => error instanceof CoordinationEventIdempotencyResponseUnavailableError
+            && error.code === "IDEMPOTENCY_RESPONSE_UNAVAILABLE"
+            && error.effect === "applied"
+            && error.eventId === "event-before-consume",
+        );
+        const agentInput = {
+          eventId: "event-before-consume",
+          expectedRevision: 1,
+          note: "agent retry",
+          idempotencyKey: "resolve-before-consume-key",
+        };
+        const agentBinding: ResolvedAgentRuntimeBinding = {
+          bindingId: "binding-consume-owner",
+          bindingIdHash: "binding-hash-consume-owner",
+          actorSessionId: "consume-owner",
+          providerId: "codex",
+          executionGeneration: "generation-1",
+          authoritySnapshot: {
+            sessionKind: "default",
+            sessionRoleBinding: {
+              sessionRole: "standalone",
+              roleContractRevision: 1,
+              rootSessionId: "consume-owner",
+              parentSessionId: null,
+              delegationDepth: 0,
+            },
+          },
+          operationGrants: ["session.runtime.invoke"],
+          createdAt: "2099-08-22T00:05:00.000Z",
+          expiresAt: null,
+        };
+        const proof = authority.authorize(
+          agentBinding,
+          "coordination.event.resolve",
+          agentInput,
+        ).proof;
+        assert.throws(
+          () => service.resolve(agentInput, agentBinding, proof),
+          (error) => error instanceof CoordinationEventIdempotencyResponseUnavailableError
+            && error.effect === "applied"
+            && error.eventId === "event-before-consume",
+        );
+      } finally {
+        authority.close();
+        storage.close();
+      }
+      assert.equal(published, false);
+      assert.deepEqual({
+        actions: (db.prepare("SELECT COUNT(*) AS count FROM coordination_event_actions_v6").get() as { count: number }).count,
+        headers: (db.prepare("SELECT COUNT(*) AS count FROM resource_event_headers_v6 WHERE resource_kind = 'coordination_event'").get() as { count: number }).count,
+        idempotency: (db.prepare("SELECT COUNT(*) AS count FROM coordination_event_idempotency_v6").get() as { count: number }).count,
+      }, beforeRetry);
     } finally {
       db.close();
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 
@@ -1045,11 +1222,20 @@ describe("database-schema-v6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "現行V6の識別条件を満たすDBだけを有効と判定する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // failure_mode = "壊れたschemaを正常と判定し永続化境界が失敗する"
+  // scope = "V6 database validation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("isValidV6Database は filename、schema version、required tables を検証する", () => {
     const dirPath = mkdtempSync(join(tmpdir(), "withmate-v6-schema-"));
     try {
       const validDbPath = join(dirPath, APP_DATABASE_V6_FILENAME);
       const validDb = createV6Schema(validDbPath);
+      ensureV6Schema(validDb);
       validDb.close();
 
       const wrongNameDbPath = join(dirPath, "withmate-v4.db");
@@ -1237,6 +1423,15 @@ describe("database-schema-v6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "V6 schemaはSession tombstone列とproject、message、auditの必須列・外部参照を同時に公開する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "Session削除をretention中の物理削除へ戻すschema変更、または既存のproject、message、audit境界の欠落を受理する"
+  // scope = "V6 project, Session tombstone, message, and audit schema"
+  // lifecycle = "permanent"
+  // distinction = "個別migration SQLの文字列ではなく、fresh databaseが公開する列と外部keyをSQLite metadataから観測する"
+  // @end-test-value
   it("V6 project scope と session/message/audit の最小 schema を固定する", () => {
     const db = createV6Schema();
     try {
@@ -1276,6 +1471,7 @@ describe("database-schema-v6", () => {
         "created_at",
         "updated_at",
         "last_active_at",
+        "deleted_at",
       ]);
       assert.equal(findForeignKey(db, "sessions_v6", "character_id")?.table, "characters");
       assert.equal(findForeignKey(db, "sessions_v6", "project_scope_id")?.table, "project_scopes_v6");

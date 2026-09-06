@@ -1,4 +1,5 @@
 import type { SessionRoleBinding } from "./session-role-binding.js";
+import type { SessionAuthorityDecisionClass } from "./session-authority.js";
 
 export const COORDINATION_EVENT_KINDS = [
   "progress",
@@ -61,6 +62,7 @@ export type CoordinationEventAction = {
   sequence: number;
   type: "responded" | "resolved" | "cancelled" | "superseded" | "consumed";
   actorType: "session" | "trusted_gui";
+  principalKind: "agent" | "user" | "system";
   actorSessionId: string | null;
   optionId: string | null;
   note: string | null;
@@ -71,9 +73,11 @@ export type CoordinationEventAction = {
 export type CoordinationEventSummary = {
   sequence: number;
   eventId: string;
+  revision: number;
   actorSessionId: string;
   sessionRole: CoordinationEventRoleSnapshot["sessionRole"];
   kind: CoordinationEventKind;
+  decisionClass: SessionAuthorityDecisionClass;
   state: CoordinationEventState;
   summary: string;
   createdAt: string;
@@ -98,6 +102,7 @@ export type CoordinationEventCreateInput = {
   executionId?: string;
   targetSessionId?: string;
   options?: CoordinationEventOption[];
+  expectedContainerRevision: number;
   idempotencyKey: string;
 };
 
@@ -124,6 +129,7 @@ export type CoordinationEventGetInput =
 
 export type CoordinationEventResolveInput = {
   eventId: string;
+  expectedRevision: number;
   note?: string;
   idempotencyKey: string;
 };
@@ -137,12 +143,14 @@ export type CoordinationEventConsumeInput = {
 export type CoordinationEventTrustedResolveInput =
   | {
       eventId: string;
+      expectedRevision: number;
       optionId: string;
       note?: never;
       idempotencyKey: string;
     }
   | {
       eventId: string;
+      expectedRevision: number;
       optionId?: never;
       note: string;
       idempotencyKey: string;
@@ -150,12 +158,14 @@ export type CoordinationEventTrustedResolveInput =
 
 export type CoordinationEventCancelInput = {
   eventId: string;
+  expectedRevision: number;
   note?: string;
   idempotencyKey: string;
 };
 
 export type CoordinationEventCorrectInput = {
   eventId: string;
+  expectedRevision: number;
   payload: CoordinationEventPayload;
   executionId?: string;
   idempotencyKey: string;
@@ -172,8 +182,18 @@ export type CoordinationEventInvalidation = {
 };
 
 export function coordinationEventRevision(event: Pick<CoordinationEvent, "actions">): number {
-  return event.actions.reduce((revision, action) => Math.max(revision, action.sequence), 0);
+  return event.actions.length;
 }
+
+export const COORDINATION_EVENT_DECISION_CLASS_BY_KIND = {
+  progress: "deny_or_cancel",
+  decision: "deny_or_cancel",
+  escalation: "agent_delegable",
+  user_decision_required: "user_only",
+  blocker: "agent_delegable",
+  result: "deny_or_cancel",
+  correction: "deny_or_cancel",
+} as const satisfies Record<CoordinationEventKind, SessionAuthorityDecisionClass>;
 
 export type CoordinationEventCorrectionResult = {
   correction: CoordinationEvent;
@@ -289,15 +309,20 @@ export function parseCoordinationEventTrustedListInput(value: unknown): Coordina
 
 export function parseCoordinationEventTrustedResolveInput(value: unknown): CoordinationEventTrustedResolveInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["eventId", "optionId", "note", "idempotencyKey"], "input");
+  assertKeys(record, ["eventId", "expectedRevision", "optionId", "note", "idempotencyKey"], "input");
   const eventId = requireNonEmptyString(record.eventId, "eventId");
+  const expectedRevision = requireRevision(record.expectedRevision, "expectedRevision");
   const idempotencyKey = requireNonEmptyString(record.idempotencyKey, "idempotencyKey");
   const hasOption = record.optionId !== undefined;
   const hasNote = record.note !== undefined;
   if (hasOption === hasNote) throw invalid("input", "Exactly one of optionId or note is required.");
   return hasOption
-    ? { eventId, optionId: requireNonEmptyString(record.optionId, "optionId"), idempotencyKey }
-    : { eventId, note: validateCoordinationEventNote(record.note), idempotencyKey };
+    ? { eventId, expectedRevision, optionId: requireNonEmptyString(record.optionId, "optionId"), idempotencyKey }
+    : { eventId, expectedRevision, note: validateCoordinationEventNote(record.note), idempotencyKey };
+}
+
+export function requireCoordinationEventRevision(value: unknown, field = "expectedRevision"): number {
+  return requireRevision(value, field);
 }
 
 function requireEnumValue<T extends string>(value: unknown, allowed: readonly T[], field: string): T {
@@ -314,6 +339,13 @@ function requireListLimit(value: unknown): number {
       { field: "limit", max: COORDINATION_EVENT_MAX_LIST_LIMIT },
       "LIMIT_EXCEEDED",
     );
+  }
+  return value as number;
+}
+
+function requireRevision(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw invalid(field, `${field} must be a non-negative safe integer.`);
   }
   return value as number;
 }

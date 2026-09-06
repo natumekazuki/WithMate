@@ -8,12 +8,68 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { SESSION_AUTHORITY_MAPPING_REVISION, type MutationAuthorityProof } from "../../src/session-authority.js";
 import { buildNewSession } from "../../src/session-state.js";
 import {
   SessionFileService,
   SessionFileServiceError,
 } from "../../src-electron/session-file-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
+
+function trustedFileWriteProof(sessionId: string): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-file-service-test" },
+    operation: "session.files.write_text",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "session.files.write_text",
+    resolvedScope: {
+      resourceKind: "session_files",
+      resourceId: sessionId,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: "2026-08-12T00:00:00.000Z",
+  };
+}
+
+const writeTextWithAuthority = SessionFileService.prototype.writeText;
+SessionFileService.prototype.writeText = function (input, proof) {
+  return writeTextWithAuthority.call(this, input, proof ?? trustedFileWriteProof(input.sessionId));
+};
+
+const prepareFileWriteWithAuthority = SessionStorageV6.prototype.prepareSessionFileWrite;
+SessionStorageV6.prototype.prepareSessionFileWrite = function (input) {
+  return prepareFileWriteWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedFileWriteProof(input.sessionId),
+  });
+};
+const recordPreparedFileWriteWithAuthority = SessionStorageV6.prototype.recordPreparedSessionFileWrite;
+SessionStorageV6.prototype.recordPreparedSessionFileWrite = function (input) {
+  return recordPreparedFileWriteWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedFileWriteProof("session-a"),
+  });
+};
+const completeFileWriteWithAuthority = SessionStorageV6.prototype.completeSessionFileWrite;
+SessionStorageV6.prototype.completeSessionFileWrite = function (input) {
+  return completeFileWriteWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedFileWriteProof("session-a"),
+  });
+};
+const rejectFileWriteWithAuthority = SessionStorageV6.prototype.rejectSessionFileWrite;
+SessionStorageV6.prototype.rejectSessionFileWrite = function (input) {
+  return rejectFileWriteWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedFileWriteProof("session-a"),
+  });
+};
 
 async function createFixture(options: {
   onWritePrepared?(): void | Promise<void>;

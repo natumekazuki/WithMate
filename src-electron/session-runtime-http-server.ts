@@ -8,11 +8,13 @@ import {
   SessionRuntimeValidationError,
   createSessionRuntimeError,
   parseSessionRuntimeRequestEnvelope,
+  sessionRuntimeOperationMayHaveEffect,
   type SessionRuntimeAdapterKind,
   type SessionRuntimeError,
   type SessionRuntimeOperation,
   type SessionRuntimeResultEnvelope,
 } from "../src/session-external-runtime-contract.js";
+import { parseSessionRuntimeResponseEnvelope } from "../src/session-external-runtime-schema.js";
 import {
   SESSION_RUNTIME_CHALLENGE_HEADER,
   SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
@@ -256,7 +258,20 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
           handlerDrainWaiters.clear();
         }
       }
-      writeJson(response, statusForResponse(result), result);
+      let publicResult: SessionRuntimeResultEnvelope | SessionRuntimeError;
+      try {
+        publicResult = parseSessionRuntimeResponseEnvelope(envelope.operation, result);
+      } catch {
+        publicResult = createSessionRuntimeError({
+          code: "RUNTIME_UNAVAILABLE",
+          message: "Session runtime returned an invalid public response.",
+          retryable: true,
+          effect: sessionRuntimeOperationMayHaveEffect(envelope.operation, envelope.input)
+            ? "indeterminate"
+            : "not_applied",
+        });
+      }
+      writeJson(response, statusForResponse(publicResult), publicResult);
     } catch (error) {
       if (error instanceof SessionRuntimeValidationError) {
         writeJson(response, error.code === "LIMIT_EXCEEDED" ? 413 : 400, createSessionRuntimeError({
@@ -459,6 +474,10 @@ function statusForResponse(value: SessionRuntimeResultEnvelope | SessionRuntimeE
   switch (value.error.code) {
     case "UNAUTHORIZED": return 401;
     case "FORBIDDEN": return 403;
+    case "AUTHORITY_FORBIDDEN":
+    case "AUTHORITY_GRANT_EXPIRED":
+    case "AUTHORITY_GRANT_REVOKED":
+    case "INTERACTION_RESPONSE_FORBIDDEN": return 403;
     case "SESSION_TURN_FORBIDDEN": return 403;
     case "WORK_ITEM_FORBIDDEN": return 403;
     case "WORK_ITEM_AGGREGATION_FORBIDDEN": return 403;
@@ -472,6 +491,11 @@ function statusForResponse(value: SessionRuntimeResultEnvelope | SessionRuntimeE
     case "IDEMPOTENCY_RESPONSE_UNAVAILABLE":
     case "EXECUTION_NOT_CANCELLABLE": return 409;
     case "WORK_ITEM_REVISION_CONFLICT": return 409;
+    case "AUTHORITY_GRANT_REVISION_CONFLICT":
+    case "SESSION_REVISION_CONFLICT":
+    case "EXECUTION_REVISION_CONFLICT":
+    case "INTERACTION_REVISION_CONFLICT":
+    case "COORDINATION_EVENT_REVISION_CONFLICT": return 409;
     case "WORK_ITEM_STATE_CONFLICT": return 409;
     case "WORK_ITEM_PARENT_INVALID": return 409;
     case "WORK_ITEM_AGGREGATION_REVISION_REQUIRED": return 409;
@@ -487,6 +511,7 @@ function statusForResponse(value: SessionRuntimeResultEnvelope | SessionRuntimeE
     case "CONTENT_TOO_LARGE":
     case "LIMIT_EXCEEDED": return 413;
     case "RUNTIME_UNAVAILABLE": return 503;
+    case "AUTHORITY_MIGRATION_REQUIRED": return 503;
     default: return 400;
   }
 }

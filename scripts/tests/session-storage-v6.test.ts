@@ -6,6 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  type MutationAuthorityProof,
+} from "../../src/session-authority.js";
 import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
 import { buildNewSession, type MessageArtifact } from "../../src/session-state.js";
@@ -17,6 +21,31 @@ import {
 } from "../../src-electron/session-storage-v6.js";
 import { WorkItemService } from "../../src-electron/work-item-service.js";
 import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
+
+function trustedMutationProof(
+  operation: MutationAuthorityProof["operation"],
+  sessionId: string,
+  resourceKind: MutationAuthorityProof["resolvedScope"]["resourceKind"],
+): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-storage-test" },
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: operation,
+    resolvedScope: {
+      resourceKind,
+      resourceId: sessionId,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "local_mutation",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: "2026-08-30T00:00:00.000Z",
+  };
+}
 
 async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {
   for (let index = 0; index < attempts; index += 1) {
@@ -97,6 +126,22 @@ function insertCharacterRows(dbPath: string, characterIds: readonly string[]): v
     }
   } finally {
     db.close();
+  }
+}
+
+function removeSessionHistoryForLegacyFixture(db: DatabaseSync, sessionIds: readonly string[]): void {
+  db.exec(`
+    DROP TRIGGER IF EXISTS resource_event_headers_no_delete_v6;
+    DROP TRIGGER IF EXISTS session_resource_events_no_delete_v6;
+  `);
+  const deleteHeader = db.prepare(`
+    DELETE FROM resource_event_headers_v6
+    WHERE resource_kind = 'session' AND resource_id = ?
+  `);
+  const deleteEvents = db.prepare("DELETE FROM session_resource_events_v6 WHERE session_id = ?");
+  for (const sessionId of sessionIds) {
+    deleteHeader.run(sessionId);
+    deleteEvents.run(sessionId);
   }
 }
 
@@ -232,7 +277,7 @@ function completeRootWorkItemsForDeletion(
         state: "in_progress",
         expectedRevision: rootWorkItem.revision,
         idempotencyKey: "complete-for-deletion:" + sessionId + ":start",
-      }, binding);
+      }, binding, trustedMutationProof("work.transition", sessionId, "work_item"));
       service.reportResult({
         workItemId: rootWorkItem.id,
         state: "completed",
@@ -246,7 +291,7 @@ function completeRootWorkItemsForDeletion(
           remainingWork: [],
         },
         idempotencyKey: "complete-for-deletion:" + sessionId + ":result",
-      }, binding);
+      }, binding, trustedMutationProof("work.result", sessionId, "work_item"));
     }
   } finally {
     workItemStorage.close();
@@ -254,6 +299,15 @@ function completeRootWorkItemsForDeletion(
 }
 
 describe("SessionStorageV6", () => {
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Session create/renameはcontainer/resource revisionと権限証明を同じ永続transactionで検証し、同一keyを再起動後もreplayする"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Mutation and idempotency contract" }
+  // failure_mode = "Session投影だけが更新され履歴、container revision、またはidempotency結果が不整合になる"
+  // scope = "SessionStorageV6 create and rename transaction"
+  // lifecycle = "permanent"
+  // distinction = "createの親container revisionとrename対象revisionを別々に競合検証し、storage再生成後のreplayも観測する"
+  // @end-test-value
   it("SESSION-CREATE-IDEMPOTENCY-02: create/renameを永続replayし、一覧を安定順序でページングする", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -261,6 +315,19 @@ describe("SessionStorageV6", () => {
 
     try {
       storage = new SessionStorageV6(dbPath);
+      const actorSession = buildNewSession({
+        id: "actor-a",
+        taskTitle: "Actor",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      });
+      storage.insertSession({ ...actorSession, updatedAt: "2026-08-10T00:00:00.000Z" });
       const makeSession = (id: string, title: string, updatedAt: string) => ({
         ...buildNewSession({
           id,
@@ -285,6 +352,8 @@ describe("SessionStorageV6", () => {
           requestFingerprint: "fingerprint-a",
           createdAt: "2026-08-11T00:00:00.000Z",
           expiresAt: "2026-08-12T00:00:00.000Z",
+          expectedContainerRevision: 1,
+          proof: trustedMutationProof("session.create", "actor-a", "session_namespace"),
           projectResult: (session) => ({ sessionId: session.id, title: session.taskTitle }),
           resolveReplayFingerprint: () => "fingerprint-a",
         },
@@ -302,6 +371,8 @@ describe("SessionStorageV6", () => {
           requestFingerprint: "fingerprint-a",
           createdAt: "2026-08-11T00:01:00.000Z",
           expiresAt: "2026-08-12T00:01:00.000Z",
+          expectedContainerRevision: 1,
+          proof: trustedMutationProof("session.create", "actor-a", "session_namespace"),
           projectResult: () => ({ unexpected: true }),
           resolveReplayFingerprint: () => "fingerprint-a",
         },
@@ -312,7 +383,7 @@ describe("SessionStorageV6", () => {
       assert.throws(
         () => storage?.resolveSessionCrudIdempotency(
           "session.create",
-          "actor-a",
+          trustedMutationProof("session.create", "actor-a", "session_namespace"),
           "create-key",
           "different-fingerprint",
           "2026-08-11T00:02:00.000Z",
@@ -328,6 +399,8 @@ describe("SessionStorageV6", () => {
         operation: "session.rename",
         sessionId: "session-a",
         title: "Renamed",
+        expectedRevision: 1,
+        proof: trustedMutationProof("session.rename", "session-a", "session"),
         idempotencyKey: "rename-key",
         requestFingerprint: "rename-fingerprint",
         createdAt: "2026-08-11T00:04:00.000Z",
@@ -339,13 +412,15 @@ describe("SessionStorageV6", () => {
         lastActiveAt: firstPage[1]!.lastActiveAt,
         sessionId: firstPage[1]!.summary.id,
       });
-      assert.deepEqual(secondPage.map((entry) => entry.summary.id), ["session-a"]);
+      assert.deepEqual(secondPage.map((entry) => entry.summary.id), ["session-a", "actor-a"]);
 
       assert.deepEqual(renamed?.result, { sessionId: "session-a", title: "Renamed" });
       const renamedReplay = storage.renameSessionIdempotently({
         operation: "session.rename",
         sessionId: "session-a",
         title: "Renamed",
+        expectedRevision: 1,
+        proof: trustedMutationProof("session.rename", "session-a", "session"),
         idempotencyKey: "rename-key",
         requestFingerprint: "rename-fingerprint",
         createdAt: "2026-08-11T00:05:00.000Z",
@@ -358,7 +433,7 @@ describe("SessionStorageV6", () => {
       assert.deepEqual(
         storage.resolveSessionCrudIdempotency(
           "session.create",
-          "actor-a",
+          trustedMutationProof("session.create", "actor-a", "session_namespace"),
           "create-key",
           "different-fingerprint",
           "2026-08-13T00:00:00.000Z",
@@ -458,6 +533,7 @@ describe("SessionStorageV6", () => {
       storage = null;
 
       const db = new DatabaseSync(dbPath);
+      removeSessionHistoryForLegacyFixture(db, [legacySession.id]);
       db.prepare("UPDATE sessions_v6 SET runtime_policy_json = json_set(runtime_policy_json, '$.codexReviewer', 'unexpected') WHERE id = ?").run(legacySession.id);
       db.close();
 
@@ -708,6 +784,15 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "履歴導入前のSession rowは保存済みruntime ownerだけを正規化し、表示名やsnapshotからowner identityを推測しない"
+  // oracle = { type = "contract", ref = "docs/runbooks/withmate-character-context.md" }
+  // failure_mode = "legacy migrationが表示名またはsnapshotをcanonical ownerとして採用し、別Characterのidentityへ誤接続する"
+  // scope = "SessionStorageV6 legacy Character owner repair and history baseline"
+  // lifecycle = "permanent"
+  // distinction = "空白付きowner、owner欠損、snapshotのみの三入力を同じstartup repairへ通し、保存済みidentityだけが採用される差を観測する"
+  // @end-test-value
   it("legacy row の owner を trim し、欠損時は表示名や snapshot から推測しない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -768,6 +853,7 @@ describe("SessionStorageV6", () => {
       storage = null;
 
       const db = new DatabaseSync(dbPath);
+      removeSessionHistoryForLegacyFixture(db, sessions.map((session) => session.id));
       const updateOwner = db.prepare(`
         UPDATE sessions_v6
         SET character_id = NULL,
@@ -805,6 +891,15 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "Character authoring Sessionのlegacy repairは廃止済みfieldやsnapshotをowner identityのfallbackにしない"
+  // oracle = { type = "contract", ref = "docs/runbooks/withmate-character-context.md" }
+  // failure_mode = "owner欠損時に廃止済みfieldまたはsnapshotからidentityを復元し、canonical ownerとの不一致を隠す"
+  // scope = "SessionStorageV6 legacy Character authoring owner repair and history baseline"
+  // lifecycle = "permanent"
+  // distinction = "authoring Session固有のobsolete fieldとsnapshotを保持したrowで、通常Sessionのruntime owner repairとは異なる欠損経路を観測する"
+  // @end-test-value
   it("obsolete field や snapshot を欠損した Character owner の fallback に使わない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -832,6 +927,7 @@ describe("SessionStorageV6", () => {
       storage = null;
 
       const db = new DatabaseSync(dbPath);
+      removeSessionHistoryForLegacyFixture(db, [session.id]);
       db.prepare(`
         UPDATE sessions_v6
         SET character_id = NULL,
@@ -927,6 +1023,7 @@ describe("SessionStorageV6", () => {
       storage = null;
 
       const db = new DatabaseSync(dbPath);
+      removeSessionHistoryForLegacyFixture(db, sessions.map((session) => session.id));
       const replaceSnapshot = db.prepare(`
         UPDATE sessions_v6
         SET character_snapshot_json = ?
@@ -1220,14 +1317,14 @@ describe("SessionStorageV6", () => {
 
   // @test-value v1
   // kind = "regression"
-  // claim = "terminal root Sessionのdelete、replace、clear経路は削除対象を親に持つauxiliary_sessionsだけをcleanupする"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
-  // failure_mode = "terminal root Sessionの物理削除後にauxiliary Sessionが孤児化する、または保持対象のrootかactive/recovery companionに属するauxiliary Sessionまで失う"
-  // scope = "SessionStorageV6 Session and auxiliary cleanup transaction"
+  // claim = "terminal root Sessionのdelete、replace、clear経路は通常Session projectionだけをtombstone化しauxiliary_sessionsをretention中保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "Session tombstoneと同時にauxiliary Sessionを消し、保持期間中のturn owner関係を復元不能にする"
+  // scope = "SessionStorageV6 Session tombstone and auxiliary retention"
   // lifecycle = "permanent"
-  // distinction = "delete、replace、clearの三入口とcompanion status別の保持境界を同じreal SQLiteで観測する"
+  // distinction = "delete、replace、clearの三入口を通し、通常Sessionとcompanionを親に持つauxiliary rowの継続保持を同じreal SQLiteで観測する"
   // @end-test-value
-  it("親 Session の削除経路で auxiliary_sessions を cleanup する", async () => {
+  it("Session tombstone経路で auxiliary_sessions を保持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
     let storage: SessionStorageV6 | null = null;
@@ -1262,7 +1359,7 @@ describe("SessionStorageV6", () => {
 
       completeRootWorkItemsForDeletion(dbPath, storage, [deletedParent.id]);
       storage.deleteSession(deletedParent.id);
-      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [replacedParent.id, retainedParent.id]);
+      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [deletedParent.id, replacedParent.id, retainedParent.id]);
 
       insertCompanionSessionRows(dbPath, [
         { id: "companion-active-parent", status: "active" },
@@ -1281,13 +1378,25 @@ describe("SessionStorageV6", () => {
       storage.replaceSessions([{ ...retainedParent, taskTitle: "retained after replace" }]);
       assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [
         "companion-active-parent",
+        "companion-discarded-parent",
+        "companion-merged-parent",
         "companion-recovery-parent",
+        deletedParent.id,
+        replacedParent.id,
         retainedParent.id,
       ]);
 
       completeRootWorkItemsForDeletion(dbPath, storage, [retainedParent.id]);
       storage.clearSessions();
-      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), []);
+      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [
+        "companion-active-parent",
+        "companion-discarded-parent",
+        "companion-merged-parent",
+        "companion-recovery-parent",
+        deletedParent.id,
+        replacedParent.id,
+        retainedParent.id,
+      ]);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);
@@ -1296,14 +1405,14 @@ describe("SessionStorageV6", () => {
 
   // @test-value v1
   // kind = "regression"
-  // claim = "terminal root Sessionのdelete、replace、clear経路は削除対象SessionとAuxiliary Sessionのturn payloadだけをcleanupする"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
-  // failure_mode = "物理削除したSessionのturn payloadが残留する、または保持対象Sessionかactive companion配下の監査payloadまで失う"
-  // scope = "SessionStorageV6 Session turn payload cleanup transaction"
+  // claim = "terminal root Sessionのdelete、replace、clear経路はSessionとAuxiliary Sessionのturn payloadをretention中保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "Session tombstoneが監査対象turn payloadを消し、保持期間中の実行証拠を復元不能にする"
+  // scope = "SessionStorageV6 Session turn payload retention"
   // lifecycle = "permanent"
-  // distinction = "Session直結とauxiliary直結のpayloadをdelete、replace、clearの各入口で区別して観測する"
+  // distinction = "Session直結とauxiliary直結のpayloadをdelete、replace、clearの各入口後に同じreal SQLiteで観測する"
   // @end-test-value
-  it("Session / Auxiliary 削除経路で session_turns_v6 payload を cleanup する", async () => {
+  it("Session tombstone経路で session_turns_v6 payload を保持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
     let storage: SessionStorageV6 | null = null;
@@ -1346,6 +1455,8 @@ describe("SessionStorageV6", () => {
       completeRootWorkItemsForDeletion(dbPath, storage, [deletedParent.id]);
       storage.deleteSession(deletedParent.id);
       assert.deepEqual(listSessionTurnSummaries(dbPath), [
+        "audit-deleted-auxiliary",
+        "audit-deleted-session",
         "audit-replaced-auxiliary",
         "audit-replaced-session",
         "audit-retained-auxiliary",
@@ -1369,13 +1480,27 @@ describe("SessionStorageV6", () => {
       storage.replaceSessions([{ ...retainedParent, taskTitle: "retained audit after replace" }]);
       assert.deepEqual(listSessionTurnSummaries(dbPath), [
         "audit-companion-active-auxiliary",
+        "audit-companion-merged-auxiliary",
+        "audit-deleted-auxiliary",
+        "audit-deleted-session",
+        "audit-replaced-auxiliary",
+        "audit-replaced-session",
         "audit-retained-auxiliary",
         "audit-retained-session",
       ]);
 
       completeRootWorkItemsForDeletion(dbPath, storage, [retainedParent.id]);
       storage.clearSessions();
-      assert.deepEqual(listSessionTurnSummaries(dbPath), []);
+      assert.deepEqual(listSessionTurnSummaries(dbPath), [
+        "audit-companion-active-auxiliary",
+        "audit-companion-merged-auxiliary",
+        "audit-deleted-auxiliary",
+        "audit-deleted-session",
+        "audit-replaced-auxiliary",
+        "audit-replaced-session",
+        "audit-retained-auxiliary",
+        "audit-retained-session",
+      ]);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

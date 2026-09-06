@@ -7,11 +7,19 @@ import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { parseSessionRuntimeOperationInput } from "../../src/session-external-runtime-contract.js";
+import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  SESSION_AUTHORITY_OPERATION_DEFINITIONS,
+  type MutationAuthorityProof,
+} from "../../src/session-authority.js";
+import type { SessionRuntimeOperation } from "../../src/session-external-runtime-contract.js";
 import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
+import { verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
+import { SessionTranscriptStorageV6 } from "../../src-electron/session-transcript-storage-v6.js";
 import {
   WorkItemAuthorityError,
   WorkItemExecutionAssociationError,
@@ -52,6 +60,52 @@ const SOURCE_IDENTITY = {
   head: "head-commit",
 } as const;
 const WIDE_LEGACY_TEXT = "界".repeat(WORK_ITEM_MAX_TEXT_LENGTH);
+
+function trustedProof(operation: SessionRuntimeOperation, ownerId = "root"): MutationAuthorityProof {
+  const definition = SESSION_AUTHORITY_OPERATION_DEFINITIONS[operation];
+  return {
+    principal: { kind: "system", service: "root-work-item-contract-test" },
+    providerId: null,
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: definition.action,
+    resolvedScope: {
+      resourceKind: definition.resourceKind,
+      resourceId: ownerId,
+      rootSessionId: ownerId,
+      ownerKind: "session",
+      ownerId,
+      relation: "self",
+    },
+    effectClass: definition.effectClass,
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: NOW,
+  };
+}
+
+const workItemMutationOperations = {
+  create: "work.create",
+  revise: "work.revise",
+  appendHistory: "work.history.append",
+  transition: "work.transition",
+  reportResult: "work.result",
+  cancel: "work.cancel",
+  decideAggregation: "work.aggregation.decide",
+  retryAggregation: "work.aggregation.retry",
+} as const satisfies Partial<Record<keyof WorkItemService, SessionRuntimeOperation>>;
+
+function withTrustedMutationProof(target: WorkItemService): WorkItemService {
+  return new Proxy(target, {
+    get(service, property, receiver) {
+      const value = Reflect.get(service, property, receiver);
+      const operation = workItemMutationOperations[property as keyof typeof workItemMutationOperations];
+      if (!operation || typeof value !== "function") return value;
+      return (input: unknown, actorBinding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof) =>
+        Reflect.apply(value, service, [input, actorBinding, proof ?? trustedProof(operation, actorBinding.actorSessionId)]);
+    },
+  });
+}
 
 type Harness = {
   directory: string;
@@ -106,12 +160,12 @@ function createSession(input: {
 }
 
 function makeService(harness: Harness): WorkItemService {
-  return new WorkItemService({
+  return withTrustedMutationProof(new WorkItemService({
     storage: harness.workStorage,
     getTurnAuthoritySession: (sessionId) => harness.sessionStorage.getSessionTurnAuthority(sessionId),
     createWorkItemId: () => "work-" + harness.nextWorkItemId++,
     currentTimestamp: () => harness.now,
-  });
+  }));
 }
 
 async function createHarness(): Promise<Harness> {
@@ -184,6 +238,7 @@ function createDelegated(
   parentWorkItemId?: string,
 ): WorkItem {
   return harness.service.create({
+    expectedContainerRevision: currentSessionResourceRevision(harness.dbPath, targetSessionId),
     targetSessionId,
     ...(parentWorkItemId === undefined ? {} : { parentWorkItemId }),
     goal: key + " goal",
@@ -193,6 +248,18 @@ function createDelegated(
     sourceIdentity: SOURCE_IDENTITY,
     idempotencyKey: key,
   }, runtimeBinding(actorSessionId));
+}
+
+function currentSessionResourceRevision(dbPath: string, sessionId: string): number {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?")
+      .get(sessionId) as { resource_revision: number } | undefined;
+    assert.ok(row);
+    return row.resource_revision;
+  } finally {
+    db.close();
+  }
 }
 
 function resultInput(summary: string) {
@@ -362,12 +429,12 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "Root ownerのcontract revision、progress、handoffは一つの単調revisionでcurrent projectionとappend-only eventへ保存され、同一keyの再送は新しいrevisionを作らず、trusted GUI向けrecent historyは最新pageを時系列順で返す"
+  // claim = "Root ownerのcontract revision、progress、handoffは一つの単調revisionでcurrent projectionとappend-only eventへ保存され、startup verifierがdelta replayとの不一致を拒否する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#改訂と進捗の履歴" }
-  // failure_mode = "応答喪失後の再送、stale revision、process再起動、または先頭page固定でcurrent projectionと最新履歴が分岐し次の行動を一意に復元できない"
+  // failure_mode = "応答喪失後の再送、stale revision、process再起動、またはevent payload改変でcurrent projectionと最新履歴が分岐し次の行動を一意に復元できない"
   // scope = "WorkItemService root mutation and WorkItemStorageV6 event stream"
   // lifecycle = "permanent"
-  // distinction = "contract、progress、handoffの三種を連続更新し、replay、異payload key再利用、stale revision、restart recoveryを同じstreamで検証する"
+  // distinction = "contract、progress、handoffの三種を連続更新し、正常replay後に最終handoff payloadだけを改変してstartup verifierの反証を観測する"
   // @end-test-value
   it("RW-2: contract、progress、handoffを単調revisionと履歴へ直列化してreplayする", async () => {
     const harness = await createHarness();
@@ -470,6 +537,60 @@ describe("Root WorkItem contract", () => {
         afterSequence: null,
         limit: 10,
       }, runtimeBinding("root")), history);
+      const tampered = new DatabaseSync(harness.dbPath);
+      try {
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(tampered));
+        tampered.prepare(`
+          UPDATE work_item_events_v6
+          SET payload_json = json_set(payload_json, '$.nextAction', 'tampered')
+          WHERE work_item_id = ? AND revision = 4
+        `).run(rootItem.id);
+        assert.throws(
+          () => verifyResourceHistoryProjections(tampered),
+          /Work Item event replay does not match the current projection/,
+        );
+      } finally {
+        tampered.close();
+      }
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "systemが作成したRoot Work Itemのtyped history actorは、そのRootを所有するSessionに固定される"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // fault = "Root created eventのactor_session_idを別Sessionへ改変してもstartup verifierが受理する"
+  // observable = "verifyResourceHistoryProjectionsが返す例外"
+  // observation_boundary = "component-behavior"
+  // impact = "public Work Item historyへ誤actorを公開する"
+  // risk_tags = ["authorization"]
+  // scope = "Work Item typed event replay verifier"
+  // lifecycle = "permanent"
+  // distinction = "headerのsystem actorはnullのまま、typed created eventだけを実在する別Session IDへ改変してcanonical ownerとの不一致を観測する"
+  // @end-test-value
+  it("AUTONOMY-HISTORY-04: Root created eventのsystem actor改変を拒否する", async () => {
+    const harness = await createHarness();
+    try {
+      insertRootSession(harness, "root", "standalone");
+      insertRootSession(harness, "other-root", "standalone");
+      const rootItem = getRootWorkItem(harness, "root");
+      const tampered = new DatabaseSync(harness.dbPath);
+      try {
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(tampered));
+        tampered.prepare(`
+          UPDATE work_item_events_v6
+          SET actor_session_id = 'other-root'
+          WHERE work_item_id = ? AND revision = 1
+        `).run(rootItem.id);
+        assert.throws(
+          () => verifyResourceHistoryProjections(tampered),
+          /Work Item system actor does not match its canonical owner/,
+        );
+      } finally {
+        tampered.close();
+      }
     } finally {
       await closeHarness(harness);
     }
@@ -564,6 +685,7 @@ describe("Root WorkItem contract", () => {
           requestFingerprint: "oversized-created-event-fingerprint",
           createdAt: NOW,
           expiresAt: EXPIRES,
+          proof: trustedProof("work.create"),
         }),
         (error) => error instanceof WorkItemEventPayloadTooLargeError
           && error.eventType === "created"
@@ -707,6 +829,7 @@ describe("Root WorkItem contract", () => {
         requestFingerprint: "storage-root-child-fingerprint",
         createdAt: NOW,
         expiresAt: EXPIRES,
+        proof: trustedProof("work.create"),
       }), (error: unknown) => error instanceof WorkItemAggregationConflictError
         && error.code === "WORK_ITEM_PARENT_INVALID");
 
@@ -773,6 +896,7 @@ describe("Root WorkItem contract", () => {
         requestFingerprint: "storage-root-decide-fingerprint",
         decidedAt: NOW,
         expiresAt: EXPIRES,
+        proof: trustedProof("work.aggregation.decide"),
       }), isAggregationParentInvalid);
       assert.throws(() => harness.workStorage.retryAggregation({
         parentWorkItemId: rootItem.id,
@@ -797,6 +921,7 @@ describe("Root WorkItem contract", () => {
         reason: null,
         decidedAt: NOW,
         expiresAt: EXPIRES,
+        proof: trustedProof("work.aggregation.retry"),
       }), isAggregationParentInvalid);
 
       const validParent = createDelegated(harness, "root", "task", "retry-valid-parent");
@@ -844,6 +969,7 @@ describe("Root WorkItem contract", () => {
         reason: null,
         decidedAt: NOW,
         expiresAt: EXPIRES,
+        proof: trustedProof("work.aggregation.retry", "task"),
       }), (error: unknown) => error instanceof WorkItemAggregationConflictError
         && error.code === "WORK_ITEM_PARENT_INVALID");
 
@@ -884,12 +1010,14 @@ describe("Root WorkItem contract", () => {
       const enqueued = harness.executionStorage.startImmediate({
         id: "execution-root",
         sessionId: "root",
+        expectedContainerRevision: 1,
         request: { turn: "continue root work" },
         idempotencyKey: "execution-root-key",
         requestFingerprint: "execution-root-fingerprint",
         createdAt: NOW,
         expiresAt: EXPIRES,
         workItemId: rootItem.id,
+        proof: trustedProof("turn.run"),
       });
       assert.equal(enqueued.execution.sessionId, "root");
       assert.equal(harness.workStorage.getExecutionWorkItemId("execution-root"), rootItem.id);
@@ -1039,14 +1167,14 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "active root Sessionの削除は拒否し、削除可能なterminal rootはSession、WorkItem、event、execution、associationを同じtransactionで削除して失敗時は全rowをrollbackする"
-  // oracle = { type = "contract", ref = "docs/adr/028-session-root-work-item.md#Decision" }
-  // failure_mode = "通常turnのexecution associationがterminal Sessionを削除不能にする、または途中失敗でassociationだけ消えてRoot WorkItemとexecutionが分岐する"
-  // scope = "SQLite delete trigger and SessionStorageV6 delete transaction"
+  // claim = "active root Sessionの削除は拒否し、terminal rootの削除はSessionを非表示・認可不能にしながらWorkItem、event、execution、association、idempotencyをretention中保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "Session削除のcascadeで履歴または再送ledgerを失うか、tombstone後のSessionを通常projectionへ返す"
+  // scope = "SessionStorageV6 tombstone and retained Work Item/execution history"
   // lifecycle = "permanent"
-  // distinction = "同じSessionをactive時に拒否した後terminalへ進め、Root WorkItem deleteの失敗注入前後で五表のrollbackと最終削除を直接観測する"
+  // distinction = "同じSessionをactive時に拒否した後terminalへ進め、public readの非表示と関連projection・履歴・複数idempotency ledgerの残存を直接観測する"
   // @end-test-value
-  it("RW-6: active rootの削除を拒否しterminal rootとexecution associationをatomic deleteする", async () => {
+  it("RW-6: active rootを保護しterminal rootを履歴・idempotency保持付きでtombstone化する", async () => {
     const harness = await createHarness();
     try {
       insertRootSession(harness, "root", "standalone");
@@ -1062,12 +1190,14 @@ describe("Root WorkItem contract", () => {
       harness.executionStorage.startImmediate({
         id: "execution-before-terminal",
         sessionId: "root",
+        expectedContainerRevision: currentSessionResourceRevision(harness.dbPath, "root"),
         request: { turn: "finish root work" },
         idempotencyKey: "execution-before-terminal-key",
         requestFingerprint: "execution-before-terminal-fingerprint",
         createdAt: NOW,
         expiresAt: EXPIRES,
         workItemId: rootItem.id,
+        proof: trustedProof("turn.run"),
       });
       harness.executionStorage.completeRunning({
         executionId: "execution-before-terminal",
@@ -1081,41 +1211,47 @@ describe("Root WorkItem contract", () => {
       reportResult(harness, rootItem.id, "root", "completed", active.revision, "root-result");
       assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 3);
 
-      const db = new DatabaseSync(harness.dbPath);
+      const transcriptStorage = new SessionTranscriptStorageV6(harness.dbPath);
       try {
-        db.exec(`
-          CREATE TRIGGER fail_terminal_root_work_item_delete
-          BEFORE DELETE ON work_items_v6
-          WHEN OLD.kind = 'root'
-          BEGIN
-            SELECT RAISE(ABORT, 'injected terminal root delete failure');
-          END;
-        `);
+        transcriptStorage.prepareExport({
+          idempotencyKey: "transcript-key",
+          requestFingerprint: "transcript-fingerprint",
+          sessionId: "root",
+          relativePath: "transcript.json",
+          tempName: "transcript.tmp",
+          createdAt: NOW,
+          expiresAt: EXPIRES,
+          proof: trustedProof("transcript.export"),
+        });
+        transcriptStorage.rejectExport({
+          proof: trustedProof("transcript.export"),
+          idempotencyKey: "transcript-key",
+          requestFingerprint: "transcript-fingerprint",
+          error: { code: "TEST_REJECTION" },
+          completedAt: NOW,
+          expiresAt: EXPIRES,
+        });
       } finally {
-        db.close();
-      }
-      assert.throws(
-        () => harness.sessionStorage.deleteSession("root"),
-        /injected terminal root delete failure/,
-      );
-      assert.ok(harness.sessionStorage.getSession("root"));
-      assert.equal(tableCount(harness.dbPath, "work_items_v6", "id = ?", rootItem.id), 1);
-      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 3);
-      assert.equal(tableCount(harness.dbPath, "session_executions_v6", "id = 'execution-before-terminal'"), 1);
-      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6", "execution_id = 'execution-before-terminal'"), 1);
-      const cleanup = new DatabaseSync(harness.dbPath);
-      try {
-        cleanup.exec("DROP TRIGGER fail_terminal_root_work_item_delete;");
-      } finally {
-        cleanup.close();
+        transcriptStorage.close();
       }
 
       harness.sessionStorage.deleteSession("root");
       assert.equal(harness.sessionStorage.getSession("root"), null);
-      assert.equal(tableCount(harness.dbPath, "work_items_v6", "id = ?", rootItem.id), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 0);
-      assert.equal(tableCount(harness.dbPath, "session_executions_v6", "id = 'execution-before-terminal'"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6", "execution_id = 'execution-before-terminal'"), 0);
+      assert.equal(tableCount(harness.dbPath, "sessions_v6", "id = 'root' AND deleted_at IS NOT NULL"), 1);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "id = ?", rootItem.id), 1);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 3);
+      assert.equal(tableCount(harness.dbPath, "work_item_idempotency_v6", "work_item_id = ?", rootItem.id) > 0, true);
+      assert.equal(tableCount(harness.dbPath, "session_executions_v6", "id = 'execution-before-terminal'"), 1);
+      assert.equal(tableCount(harness.dbPath, "session_execution_idempotency_v6", "execution_id = 'execution-before-terminal'"), 1);
+      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6", "execution_id = 'execution-before-terminal'"), 1);
+      assert.equal(tableCount(harness.dbPath, "session_transcript_export_idempotency_v6", "session_id = 'root'"), 1);
+      const retainedHistory = new DatabaseSync(harness.dbPath);
+      try {
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(retainedHistory));
+        assert.doesNotThrow(() => ensureV6Schema(retainedHistory));
+      } finally {
+        retainedHistory.close();
+      }
 
       insertRootSession(harness, "canceled-root", "standalone");
       const cancelable = getRootWorkItem(harness, "canceled-root");
@@ -1135,7 +1271,7 @@ describe("Root WorkItem contract", () => {
       );
       harness.sessionStorage.deleteSession("canceled-root");
       assert.equal(harness.sessionStorage.getSession("canceled-root"), null);
-      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", cancelable.id), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", cancelable.id), 2);
     } finally {
       await closeHarness(harness);
     }
@@ -1143,14 +1279,14 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "regression"
-  // claim = "Session tree削除は未確定nested delegated WorkItemを拒否し、aggregation decisionとroot finalization後にterminal delegated WorkItem、event、idempotency、execution association、aggregation ledgerを同じtransactionで物理削除する"
-  // oracle = { type = "contract", ref = "docs/adr/028-session-root-work-item.md#Decision" }
-  // failure_mode = "未確定nested resultを削除する、decision済みtreeを永久に削除不能にする、または関連ledgerだけを孤児として残す"
-  // scope = "SessionStorageV6 WorkItem-aware tree deletion"
+  // claim = "Session tree削除は未確定nested delegated WorkItemを拒否し、tombstone後もaggregation履歴を保持してdecision replayとの不一致をstartup verifierが拒否する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // failure_mode = "未確定nested resultを削除するか、tree tombstoneが履歴を消すか、aggregation event改変をcurrent decisionと同じものとして受理する"
+  // scope = "SessionStorageV6 Work Item-aware tree tombstone retention"
   // lifecycle = "permanent"
-  // distinction = "nested delegatedをterminal化した直後の拒否、aggregation decision後のroot finalization、三階層bulk delete後の全関連表を同じfixtureで観測する"
+  // distinction = "nested delegatedの保護と三階層tombstone後の保持を確認し、最後にaccepted eventだけを改変してdecision replayの反証を観測する"
   // @end-test-value
-  it("RW-6B: decision済みnested delegatedをledgerごと削除する", async () => {
+  it("RW-6B: decision済みnested delegatedを履歴・ledger保持付きでtombstone化する", async () => {
     const harness = await createHarness();
     try {
       const root = insertRootSession(harness, "root", "overall-coordinator");
@@ -1180,12 +1316,14 @@ describe("Root WorkItem contract", () => {
       harness.executionStorage.startImmediate({
         id: "delete-tree-execution",
         sessionId: "executor",
+        expectedContainerRevision: currentSessionResourceRevision(harness.dbPath, "executor"),
         request: { turn: "complete nested" },
         idempotencyKey: "delete-tree-execution-key",
         requestFingerprint: "delete-tree-execution-fingerprint",
         createdAt: NOW,
         expiresAt: EXPIRES,
         workItemId: nested.id,
+        proof: trustedProof("turn.run", "executor"),
       });
       harness.executionStorage.completeRunning({
         executionId: "delete-tree-execution",
@@ -1229,14 +1367,31 @@ describe("Root WorkItem contract", () => {
       reportResult(harness, rootItem.id, "root", "completed", activeRoot.revision, "delete-tree-root-result");
 
       harness.sessionStorage.deleteSessions(["root", "task", "executor"]);
-      assert.equal(tableCount(harness.dbPath, "sessions_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_items_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_events_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_idempotency_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_aggregations_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_decisions_v6"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_idempotency_v6"), 0);
+      assert.deepEqual(harness.sessionStorage.listSessions(), []);
+      assert.equal(tableCount(harness.dbPath, "sessions_v6", "deleted_at IS NOT NULL"), 3);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6"), 3);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6") > 0, true);
+      assert.equal(tableCount(harness.dbPath, "work_item_idempotency_v6") > 0, true);
+      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6"), 1);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregations_v6") > 0, true);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_decisions_v6") > 0, true);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_idempotency_v6") > 0, true);
+      const replayDb = new DatabaseSync(harness.dbPath);
+      try {
+        assert.doesNotThrow(() => verifyResourceHistoryProjections(replayDb));
+        replayDb.exec("DROP TRIGGER work_item_aggregation_events_no_update_v6");
+        replayDb.prepare(`
+          UPDATE work_item_aggregation_events_v6
+          SET payload_json = json_set(payload_json, '$.decision', 'excluded')
+          WHERE parent_work_item_id = ? AND event_kind = 'decided'
+        `).run(branch.id);
+        assert.throws(
+          () => verifyResourceHistoryProjections(replayDb),
+          /aggregation decision replay does not match/,
+        );
+      } finally {
+        replayDb.close();
+      }
     } finally {
       await closeHarness(harness);
     }
@@ -1337,12 +1492,12 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "compatibility"
-  // claim = "v1 WorkItem migrationは通常event上限を超える旧契約上有効なsnapshotをbaseline専用上限内で保持し、二回目のrepairで増殖させず、responseを持たないlegacy idempotency replayを適用済みresponse復元不能errorへ収束させる"
+  // claim = "v1 WorkItem migrationは通常event上限を超える旧契約上有効なsnapshotをbaseline専用上限内で保持し、旧principalをlegacy_unknownへ隔離し、同じkeyの再送を適用済みresponse復元不能errorへ収束させる"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Migration と repair" }
-  // failure_mode = "通常eventの512 KiB制約で正規な旧snapshotのmigrationが失敗する、既存委任契約またはledgerを失う、repairでrowを重複する、または旧key再送へ後続revisionを元のcanonical responseとして返す"
+  // failure_mode = "通常eventの512 KiB制約で正規な旧snapshotのmigrationが失敗する、旧principalをcurrent principalへ推測帰属する、repairでrowを重複する、または旧key再送を新規mutationとして通す"
   // scope = "ensureV6Schema WorkItem v1 migration and backfill"
   // lifecycle = "permanent"
-  // distinction = "v1 table shapeへ通常event上限を超えるsnapshotと関連表を投入し、migrationを二回実行した後に旧fingerprint replayのerror tupleを観測する"
+  // distinction = "v1 table shapeへ通常event上限を超えるsnapshotとbare principal ledgerを投入し、二回migration後のlegacy_unknown保存とkey collision errorを観測する"
   // @end-test-value
   it("RW-5: v1 delegatedをbaselineから保持してroot backfillを二回実行しても収束する", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-root-work-item-migration-"));
@@ -1385,9 +1540,14 @@ describe("Root WorkItem contract", () => {
         assert.equal(first.associationWorkItemId, "legacy-parent");
         assert.deepEqual(first.aggregation, { parentWorkItemId: "legacy-parent", aggregateRevision: 2 });
         assert.deepEqual(first.decision, { childWorkItemId: "legacy-child", decisionType: "accepted" });
-        assert.deepEqual(first.idempotency, { operation: "work.transition", workItemId: "legacy-parent" });
+        assert.deepEqual(first.idempotency, {
+          operation: "work.transition",
+          principalKey: "legacy_unknown:legacy-task",
+          workItemId: "legacy-parent",
+        });
         assert.deepEqual(first.aggregationIdempotency, {
           operation: "work.aggregation.decide",
+          principalKey: "legacy_unknown:legacy-task",
           childWorkItemId: "legacy-child",
         });
         assert.equal(first.childResultSummary, "legacy child result");
@@ -1417,12 +1577,13 @@ describe("Root WorkItem contract", () => {
           result: null,
           updatedAt: "2026-08-30T01:00:00.000Z",
           expiresAt: EXPIRES,
+          proof: trustedProof("work.transition", "legacy-task"),
         });
         assert.equal(laterRevision.revision, 4);
         assert.throws(
           () => migratedStorage.resolveIdempotency(
             "work.transition",
-            "legacy-task",
+            trustedProof("work.transition", "legacy-task"),
             "legacy-transition",
             "fingerprint",
             NOW,
@@ -1576,6 +1737,8 @@ function prepareV1WorkItemDatabase(dbPath: string): void {
   try {
     db.exec("PRAGMA foreign_keys = OFF;");
     db.exec(`
+      DROP TRIGGER IF EXISTS resource_event_headers_no_delete_v6;
+      DELETE FROM resource_event_headers_v6 WHERE resource_kind = 'work_item';
       DROP TRIGGER IF EXISTS trg_v6_work_items_protect_session_delete;
       DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;
       DROP INDEX IF EXISTS idx_v6_work_item_aggregation_idempotency_expiry;
@@ -1740,11 +1903,11 @@ function migrationProjection(db: DatabaseSync) {
     FROM work_item_aggregation_decisions_v6 WHERE child_work_item_id = 'legacy-child'
   `).get() as Record<string, unknown>;
   const idempotency = db.prepare(`
-    SELECT operation, work_item_id AS workItemId
+    SELECT operation, principal_session_id AS principalKey, work_item_id AS workItemId
     FROM work_item_idempotency_v6 WHERE idempotency_key = 'legacy-transition'
   `).get() as Record<string, unknown>;
   const aggregationIdempotency = db.prepare(`
-    SELECT operation, child_work_item_id AS childWorkItemId
+    SELECT operation, principal_session_id AS principalKey, child_work_item_id AS childWorkItemId
     FROM work_item_aggregation_idempotency_v6 WHERE idempotency_key = 'legacy-decision'
   `).get() as Record<string, unknown>;
   const result = db.prepare(`

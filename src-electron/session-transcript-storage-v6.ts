@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 
 import type {
   PublicTranscriptAttachmentV1,
@@ -9,10 +10,17 @@ import type {
   PublicTranscriptTurnV1,
 } from "../src/session-transcript.js";
 import { PUBLIC_TRANSCRIPT_SCHEMA_VERSION } from "../src/session-transcript.js";
+import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  type MutationAuthorityProof,
+} from "../src/session-authority.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import { appendSessionFileSagaEvent, createSagaOperationId } from "./resource-history-schema.js";
+import { assertGrantProofCurrent } from "./session-authority-storage.js";
 
 type TranscriptExportRow = {
+  operation_id: string;
   request_fingerprint: string;
   session_id: string;
   relative_path: string;
@@ -24,6 +32,7 @@ type TranscriptExportRow = {
   output_inode: string | null;
   target_precondition_json: string | null;
   result_json: string | null;
+  authority_proof_json: string | null;
 };
 
 type StoredTranscriptTurnRow = {
@@ -422,16 +431,25 @@ export class SessionTranscriptStorageV6 {
     tempName: string;
     createdAt: string;
     expiresAt: string;
+    proof: MutationAuthorityProof;
   }): SessionTranscriptExportReplay {
     return this.transaction(() => {
       this.cleanupTerminalExports(input.createdAt);
-      const existing = this.findExport(input.idempotencyKey);
+      const existing = this.findExport(input.proof, input.idempotencyKey);
       if (existing) return resolveExport(existing, input.requestFingerprint, true);
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
+      const principal = mutationPrincipalIdentity(input.proof);
+      const operationId = createSagaOperationId(
+        "session-transcript-export",
+        `${principal.kind}:${principal.id}:${input.idempotencyKey}`,
+        input.requestFingerprint,
+      ) + `:${randomUUID()}`;
       this.db.prepare(`
         INSERT INTO session_transcript_export_idempotency_v6 (
           operation, idempotency_key, request_fingerprint, session_id,
-          relative_path, temp_name, state, created_at, expires_at
-        ) VALUES ('transcript.export', ?, ?, ?, ?, ?, 'pending', ?, ?)
+          relative_path, temp_name, state, created_at, expires_at, authority_proof_json, operation_id,
+          principal_kind, principal_id
+        ) VALUES ('transcript.export', ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
       `).run(
         input.idempotencyKey,
         input.requestFingerprint,
@@ -440,7 +458,24 @@ export class SessionTranscriptStorageV6 {
         input.tempName,
         input.createdAt,
         input.expiresAt,
+        JSON.stringify(input.proof),
+        operationId,
+        principal.kind,
+        principal.id,
       );
+      appendSessionFileSagaEvent(this.db, {
+        table: "session_transcript_export_events_v6",
+        resourceKind: "transcript",
+        operationId,
+        sessionId: input.sessionId,
+        revision: 1,
+        eventKind: "prepared",
+        proof: input.proof,
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.createdAt,
+        effect: "none",
+        payload: { relativePath: input.relativePath, tempName: input.tempName },
+      });
       return {
         kind: "pending",
         sessionId: input.sessionId,
@@ -457,6 +492,7 @@ export class SessionTranscriptStorageV6 {
   }
 
   recordPreparedOutput(input: {
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     outputSha256: string;
@@ -466,7 +502,7 @@ export class SessionTranscriptStorageV6 {
     targetPrecondition: TranscriptTargetPrecondition;
   }): void {
     this.transaction(() => {
-      const existing = this.findExportRequired(input.idempotencyKey);
+      const existing = this.findExportRequired(input.proof, input.idempotencyKey);
       const resolved = resolveExport(existing, input.requestFingerprint, true);
       if (resolved.kind !== "pending") return;
       if (
@@ -479,22 +515,27 @@ export class SessionTranscriptStorageV6 {
       ) {
         throw new Error("Pending transcript export content changed between retries.");
       }
+      const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         UPDATE session_transcript_export_idempotency_v6
         SET output_sha256 = ?, byte_length = ?, output_device = ?, output_inode = ?, target_precondition_json = ?
-        WHERE operation = 'transcript.export' AND idempotency_key = ? AND state = 'pending'
+        WHERE operation = 'transcript.export'
+          AND principal_kind = ? AND principal_id = ? AND idempotency_key = ? AND state = 'pending'
       `).run(
         input.outputSha256,
         input.byteLength,
         input.outputDevice,
         input.outputInode,
         JSON.stringify(input.targetPrecondition),
+        principal.kind,
+        principal.id,
         input.idempotencyKey,
       );
     });
   }
 
   completeExport(input: {
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     outputSha256: string;
@@ -507,7 +548,7 @@ export class SessionTranscriptStorageV6 {
     expiresAt: string;
   }): unknown {
     return this.transaction(() => {
-      const existing = this.findExportRequired(input.idempotencyKey);
+      const existing = this.findExportRequired(input.proof, input.idempotencyKey);
       const resolved = resolveExport(existing, input.requestFingerprint, true);
       if (resolved.kind === "replay") return resolved.result;
       if (resolved.kind === "rejected") throw new Error("Rejected transcript export cannot become applied.");
@@ -522,16 +563,37 @@ export class SessionTranscriptStorageV6 {
         throw new Error("Transcript export completion does not match the prepared output.");
       }
       const resultJson = serializeJson(input.result);
+      const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         UPDATE session_transcript_export_idempotency_v6
         SET state = 'applied', result_json = ?, created_at = ?, expires_at = ?
-        WHERE operation = 'transcript.export' AND idempotency_key = ? AND state = 'pending'
-      `).run(resultJson, input.completedAt, input.expiresAt, input.idempotencyKey);
+        WHERE operation = 'transcript.export'
+          AND principal_kind = ? AND principal_id = ? AND idempotency_key = ? AND state = 'pending'
+      `).run(resultJson, input.completedAt, input.expiresAt, principal.kind, principal.id, input.idempotencyKey);
+      appendSessionFileSagaEvent(this.db, {
+        table: "session_transcript_export_events_v6",
+        resourceKind: "transcript",
+        operationId: existing.operation_id,
+        sessionId: existing.session_id,
+        revision: 2,
+        eventKind: "applied",
+        proof: decodeTranscriptMutationProof(
+          this.db,
+          existing.session_id,
+          existing.authority_proof_json,
+          input.completedAt,
+        ),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.completedAt,
+        effect: "committed",
+        payload: { relativePath: existing.relative_path, result: input.result },
+      });
       return JSON.parse(resultJson) as unknown;
     });
   }
 
   rejectExport(input: {
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     error: unknown;
@@ -539,16 +601,36 @@ export class SessionTranscriptStorageV6 {
     expiresAt: string;
   }): unknown {
     return this.transaction(() => {
-      const existing = this.findExportRequired(input.idempotencyKey);
+      const existing = this.findExportRequired(input.proof, input.idempotencyKey);
       const resolved = resolveExport(existing, input.requestFingerprint, true);
       if (resolved.kind === "rejected") return resolved.error;
       if (resolved.kind === "replay") throw new Error("Applied transcript export cannot become rejected.");
       const resultJson = serializeJson(input.error);
+      const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         UPDATE session_transcript_export_idempotency_v6
         SET state = 'rejected', result_json = ?, created_at = ?, expires_at = ?
-        WHERE operation = 'transcript.export' AND idempotency_key = ? AND state = 'pending'
-      `).run(resultJson, input.completedAt, input.expiresAt, input.idempotencyKey);
+        WHERE operation = 'transcript.export'
+          AND principal_kind = ? AND principal_id = ? AND idempotency_key = ? AND state = 'pending'
+      `).run(resultJson, input.completedAt, input.expiresAt, principal.kind, principal.id, input.idempotencyKey);
+      appendSessionFileSagaEvent(this.db, {
+        table: "session_transcript_export_events_v6",
+        resourceKind: "transcript",
+        operationId: existing.operation_id,
+        sessionId: existing.session_id,
+        revision: 2,
+        eventKind: "rejected",
+        proof: decodeTranscriptMutationProof(
+          this.db,
+          existing.session_id,
+          existing.authority_proof_json,
+          input.completedAt,
+        ),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.completedAt,
+        effect: "unknown",
+        payload: { relativePath: existing.relative_path, error: input.error },
+      });
       return JSON.parse(resultJson) as unknown;
     });
   }
@@ -565,17 +647,30 @@ export class SessionTranscriptStorageV6 {
     this.db.close();
   }
 
-  private findExport(idempotencyKey: string): TranscriptExportRow | null {
-    return (this.db.prepare(`
-      SELECT request_fingerprint, session_id, relative_path, temp_name, state,
-             output_sha256, byte_length, output_device, output_inode, target_precondition_json, result_json
+  private findExport(proof: MutationAuthorityProof, idempotencyKey: string): TranscriptExportRow | null {
+    const principal = mutationPrincipalIdentity(proof);
+    const row = (this.db.prepare(`
+      SELECT operation_id, request_fingerprint, session_id, relative_path, temp_name, state,
+             output_sha256, byte_length, output_device, output_inode, target_precondition_json, result_json,
+             authority_proof_json
       FROM session_transcript_export_idempotency_v6
-      WHERE operation = 'transcript.export' AND idempotency_key = ?
-    `).get(idempotencyKey) as TranscriptExportRow | undefined) ?? null;
+      WHERE operation = 'transcript.export'
+        AND principal_kind = ? AND principal_id = ? AND idempotency_key = ?
+    `).get(principal.kind, principal.id, idempotencyKey) as TranscriptExportRow | undefined) ?? null;
+    if (row) return row;
+    const legacy = this.db.prepare(`
+      SELECT state
+      FROM session_transcript_export_idempotency_v6
+      WHERE operation = 'transcript.export'
+        AND principal_kind = 'legacy_unknown' AND idempotency_key = ?
+      LIMIT 1
+    `).get(idempotencyKey) as { state: "pending" | "applied" | "rejected" } | undefined;
+    if (legacy) throw new SessionTranscriptIdempotencyResponseUnavailableError(idempotencyKey, legacy.state);
+    return null;
   }
 
-  private findExportRequired(idempotencyKey: string): TranscriptExportRow {
-    const row = this.findExport(idempotencyKey);
+  private findExportRequired(proof: MutationAuthorityProof, idempotencyKey: string): TranscriptExportRow {
+    const row = this.findExport(proof, idempotencyKey);
     if (!row) throw new Error("Prepared transcript export idempotency record is missing.");
     return row;
   }
@@ -868,4 +963,57 @@ function serializeJson(value: unknown): string {
   const result = JSON.stringify(value);
   if (result === undefined) throw new TypeError("Transcript export result must be JSON serializable.");
   return result;
+}
+
+export class SessionTranscriptIdempotencyResponseUnavailableError extends Error {
+  readonly code = "IDEMPOTENCY_RESPONSE_UNAVAILABLE";
+  readonly effect: "applied" | "indeterminate";
+
+  constructor(readonly idempotencyKey: string, readonly state: "pending" | "applied" | "rejected") {
+    super("The original transcript export response is unavailable after migration.");
+    this.name = "SessionTranscriptIdempotencyResponseUnavailableError";
+    this.effect = state === "applied" ? "applied" : "indeterminate";
+  }
+}
+
+function mutationPrincipalIdentity(proof: MutationAuthorityProof): {
+  kind: "agent" | "user" | "system";
+  id: string;
+} {
+  if (proof.principal.kind === "agent") {
+    return { kind: "agent", id: proof.principal.actorSessionId };
+  }
+  if (proof.principal.kind === "user") {
+    return { kind: "user", id: "local-user" };
+  }
+  return { kind: "system", id: proof.principal.service };
+}
+
+function decodeTranscriptMutationProof(
+  db: DatabaseSync,
+  sessionId: string,
+  serialized: string | null,
+  evaluatedAt: string,
+): MutationAuthorityProof {
+  if (serialized !== null) return JSON.parse(serialized) as MutationAuthorityProof;
+  const binding = db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?")
+    .get(sessionId) as { root_session_id: string } | undefined;
+  return {
+    principal: { kind: "system", service: "session-transcript-migration-recovery" },
+    operation: "transcript.export",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "transcript.export",
+    resolvedScope: {
+      resourceKind: "transcript",
+      resourceId: sessionId,
+      rootSessionId: binding?.root_session_id ?? sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt,
+  };
 }

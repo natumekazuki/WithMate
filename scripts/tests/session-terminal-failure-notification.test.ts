@@ -6,6 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
+import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
+import { ensureBaselineSessionAuthority } from "../../src-electron/session-authority-storage.js";
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
 import {
   TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
@@ -17,9 +19,43 @@ import {
 import { SessionTerminalFailureNotificationStorageV6 } from "../../src-electron/session-terminal-failure-notification-storage-v6.js";
 import { projectTerminalFailureNotification } from "../../src/session-terminal-failure-notification.js";
 import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
+import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  type MutationAuthorityProof,
+} from "../../src/session-authority.js";
 
 const SOURCE_CREATED_AT = "2026-08-18T00:00:00.000Z";
 const SOURCE_FAILED_AT = "2026-08-18T00:01:00.000Z";
+
+function trustedExecutionProof(sessionId: string): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "terminal-failure-notification-test" },
+    operation: "turn.run",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "turn.run",
+    resolvedScope: {
+      resourceKind: "execution",
+      resourceId: null,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: SOURCE_CREATED_AT,
+  };
+}
+
+const startImmediateWithAuthority = SessionExecutionStorageV6.prototype.startImmediate;
+SessionExecutionStorageV6.prototype.startImmediate = function (input) {
+  return startImmediateWithAuthority.call(this, {
+    ...input,
+    expectedContainerRevision: input.expectedContainerRevision ?? this.getSessionContainerRevision(input.sessionId),
+    proof: input.proof ?? trustedExecutionProof(input.sessionId),
+  });
+};
 
 async function createFixture() {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-terminal-notification-"));
@@ -36,10 +72,36 @@ async function createFixture() {
     insert.run("source-session", "Source", SOURCE_CREATED_AT, SOURCE_CREATED_AT, SOURCE_CREATED_AT);
     insert.run("target-session", "Target", SOURCE_CREATED_AT, SOURCE_CREATED_AT, SOURCE_CREATED_AT);
     insertStandaloneRoleBindingsForSessions(db);
+    db.prepare(`
+      UPDATE session_role_bindings_v6
+      SET session_role = 'overall-coordinator'
+      WHERE session_id = 'source-session'
+    `).run();
+    db.prepare(`
+      UPDATE session_role_bindings_v6
+      SET session_role = 'executor', root_session_id = 'source-session',
+        parent_session_id = 'source-session', delegation_depth = 1
+      WHERE session_id = 'target-session'
+    `).run();
+    ensureBaselineSessionAuthority(db, "source-session", SOURCE_CREATED_AT);
+    ensureBaselineSessionAuthority(db, "target-session", SOURCE_CREATED_AT);
   } finally {
     db.close();
   }
   const executionStorage = new SessionExecutionStorageV6(dbPath);
+  const authority = new SessionAuthorityService({
+    databasePath: dbPath,
+    getExecutionGeneration: () => "generation-1",
+    now: () => new Date(SOURCE_CREATED_AT),
+  });
+  let notificationProof: MutationAuthorityProof;
+  try {
+    notificationProof = authority.authorizeSessionAct("source-session", "turn.enqueue", {
+      sessionId: "target-session",
+    }).proof;
+  } finally {
+    authority.close();
+  }
   const request = {
     initiator: {
       kind: "session" as const,
@@ -78,6 +140,7 @@ async function createFixture() {
     requestFingerprint: "source-fingerprint",
     createdAt: SOURCE_CREATED_AT,
     expiresAt: "2026-08-19T00:00:00.000Z",
+    terminalFailureNotificationProof: notificationProof,
   });
   executionStorage.completeRunning({
     executionId: "source-execution",
@@ -92,11 +155,21 @@ async function createFixture() {
     directory,
     dbPath,
     executionStorage,
+    notificationProof,
     notificationStorage: new SessionTerminalFailureNotificationStorageV6(dbPath),
   };
 }
 
 describe("Session terminal failure notification", () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "startup候補は通知設定をagent proof付きで保存したterminal executionのうちdelivery未作成の先頭batchだけを返す"
+  // oracle = { type = "contract", ref = "TN-BOUND-08 / TN-AUTH-REVOKE-08" }
+  // failure_mode = "通知先authorityを保存していないexecutionを候補にするか、delivery作成済み・未設定・batch外のexecutionまで返す"
+  // scope = "terminal failure notification startup candidate query"
+  // lifecycle = "permanent"
+  // distinction = "通知設定あり、設定なし、delivery作成済みを同じDBへ保存し、limit 1の候補IDを比較する"
+  // @end-test-value
   it("TN-BOUND-08: startup候補は通知設定あり・delivery未作成だけを指定batchへ制限する", async () => {
     const fixture = await createFixture();
     try {
@@ -110,6 +183,7 @@ describe("Session terminal failure notification", () => {
         requestFingerprint: "configured-second-fingerprint",
         createdAt: "2026-08-18T00:01:02.000Z",
         expiresAt: "2026-08-19T00:01:02.000Z",
+        terminalFailureNotificationProof: fixture.notificationProof,
       });
       fixture.executionStorage.completeRunning({
         executionId: "configured-second",
@@ -206,6 +280,15 @@ describe("Session terminal failure notification", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "通知先authorityを保存したinterrupted sourceもstartup reconciliationから同じ安全な通知経路へ配送する"
+  // oracle = { type = "contract", ref = "TN-TERM-03 / TN-AUTH-REVOKE-08" }
+  // failure_mode = "failedだけを対象にしてinterrupted sourceの通知を失うか、保存時の通知先authorityを省略する"
+  // scope = "interrupted terminal failure notification reconciliation"
+  // lifecycle = "permanent"
+  // distinction = "同じ通知snapshotを持つexecutionをinterruptedへ確定し、startup経由のpromptとdelivery stateを観測する"
+  // @end-test-value
   it("TN-TERM-03: interrupted sourceもstartup reconciliationから配送する", async () => {
     const fixture = await createFixture();
     try {
@@ -219,6 +302,7 @@ describe("Session terminal failure notification", () => {
         requestFingerprint: "interrupted-fingerprint",
         createdAt: "2026-08-18T00:01:02.000Z",
         expiresAt: "2026-08-19T00:01:02.000Z",
+        terminalFailureNotificationProof: fixture.notificationProof,
       });
       fixture.executionStorage.completeRunning({
         executionId: "interrupted-source",
@@ -745,6 +829,15 @@ describe("Session terminal failure notification", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "通知先authority付きexecutionのterminal wakeが一時失敗してもsource execution IDを保持し同一processで配送を再試行する"
+  // oracle = { type = "contract", ref = "TN-DELIVERY-04 / TN-AUTH-REVOKE-08" }
+  // failure_mode = "wake失敗時に対象executionを失い再試行しないか、別executionとして二重配送する"
+  // scope = "terminal notification wake retry identity"
+  // lifecycle = "permanent"
+  // distinction = "createPendingを一度だけ失敗させ、同じsource executionから二回目のwakeでdeliveryがenqueuedへ収束することを観測する"
+  // @end-test-value
   it("TN-DELIVERY-04: terminal wakeの一時失敗はexecution IDを保持して再試行する", async () => {
     const fixture = await createFixture();
     const originalCreate = fixture.notificationStorage.createPending.bind(fixture.notificationStorage);
@@ -788,6 +881,7 @@ describe("Session terminal failure notification", () => {
         requestFingerprint: "woken-source-fingerprint",
         createdAt: "2026-08-18T00:02:01.000Z",
         expiresAt: "2026-08-19T00:02:01.000Z",
+        terminalFailureNotificationProof: fixture.notificationProof,
       });
       fixture.executionStorage.completeRunning({
         executionId: "woken-source",

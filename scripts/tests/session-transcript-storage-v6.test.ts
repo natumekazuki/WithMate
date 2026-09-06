@@ -5,6 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
+import { SESSION_AUTHORITY_MAPPING_REVISION, type MutationAuthorityProof } from "../../src/session-authority.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import {
   CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL,
@@ -18,6 +19,56 @@ import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-
 
 const NOW = "2026-08-13T00:00:00.000Z";
 const EXPIRES = "2026-08-14T00:00:00.000Z";
+
+function trustedTranscriptProof(sessionId: string): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-transcript-storage-test" },
+    operation: "transcript.export",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "transcript.export",
+    resolvedScope: {
+      resourceKind: "transcript",
+      resourceId: sessionId,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: NOW,
+  };
+}
+
+const prepareExportWithAuthority = SessionTranscriptStorageV6.prototype.prepareExport;
+SessionTranscriptStorageV6.prototype.prepareExport = function (input) {
+  return prepareExportWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedTranscriptProof(input.sessionId),
+  });
+};
+const recordPreparedExportWithAuthority = SessionTranscriptStorageV6.prototype.recordPreparedOutput;
+SessionTranscriptStorageV6.prototype.recordPreparedOutput = function (input) {
+  return recordPreparedExportWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedTranscriptProof("session-1"),
+  });
+};
+const completeExportWithAuthority = SessionTranscriptStorageV6.prototype.completeExport;
+SessionTranscriptStorageV6.prototype.completeExport = function (input) {
+  return completeExportWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedTranscriptProof("session-1"),
+  });
+};
+const rejectExportWithAuthority = SessionTranscriptStorageV6.prototype.rejectExport;
+SessionTranscriptStorageV6.prototype.rejectExport = function (input) {
+  return rejectExportWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedTranscriptProof("session-1"),
+  });
+};
 
 async function fixture() {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-transcript-storage-"));
@@ -149,6 +200,15 @@ describe("SessionTranscriptStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "transcript exportはprepared proofとterminal resultをidempotency ledgerとresource eventへ一致して保存し、startupで改変ledgerを拒否する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04/AUTONOMY-MUTATION-05" }
+  // failure_mode = "出力identityの異なる完了を受理するか、eventと異なるresult_jsonをretry結果として返せる"
+  // scope = "SessionTranscriptStorageV6 export idempotency replay"
+  // lifecycle = "permanent"
+  // distinction = "prepared outputの一致、正常retry、fingerprint conflictに加え、terminal eventを保ったままledger resultだけを改変してstartup拒否を観測する"
+  // @end-test-value
   it("EXT-EXPORT-14: pending output hashを固定しapplied/rejected replayとconflictを表す", async () => {
     const f = await fixture();
     try {
@@ -237,6 +297,20 @@ describe("SessionTranscriptStorageV6", () => {
         }),
         SessionTranscriptIdempotencyConflictError,
       );
+      const replayDb = new DatabaseSync(f.dbPath);
+      try {
+        replayDb.prepare(`
+          UPDATE session_transcript_export_idempotency_v6
+          SET result_json = json_object('destination', 'tampered')
+          WHERE idempotency_key = 'export-1'
+        `).run();
+        assert.throws(
+          () => ensureV6Schema(replayDb),
+          /idempotency replay does not match its resource history/,
+        );
+      } finally {
+        replayDb.close();
+      }
     } finally {
       f.storage.close();
       await rm(f.directory, { recursive: true, force: true });
@@ -244,15 +318,15 @@ describe("SessionTranscriptStorageV6", () => {
   });
 
   // @test-value v1
-  // kind = "compatibility"
-  // claim = "削除可能なterminal root Sessionの物理削除はtranscript export idempotency recordをcascade削除する"
+  // kind = "invariant"
+  // claim = "削除可能なterminal root Sessionをtombstone化してもtranscript export idempotency recordをretention中保持する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
-  // failure_mode = "Root WorkItem削除保護の追加後にtranscript export ledgerだけが残り削除済みSessionを参照する"
-  // scope = "SessionTranscriptStorageV6 Session deletion cascade"
+  // failure_mode = "Session削除のcascadeでtranscript export ledgerが失われ、同じidempotency keyの再送判定ができなくなる"
+  // scope = "SessionTranscriptStorageV6 Session tombstone retention"
   // lifecycle = "permanent"
-  // distinction = "populated schema repair後のterminal root削除とexport ledger cascadeを同じreal SQLiteで観測する"
+  // distinction = "populated schema repair後に正式なexport保存経路でledgerを作り、Session projectionのtombstone後も同じrowが残ることをFK境界で観測する"
   // @end-test-value
-  it("EXT-EXPORT-14: populated V6へadditive再適用しSession削除でexport recordをcascadeする", async () => {
+  it("EXT-EXPORT-14: populated V6へadditive再適用しSession tombstone後もexport recordを保持する", async () => {
     const f = await fixture();
     f.storage.close();
     try {
@@ -268,25 +342,43 @@ describe("SessionTranscriptStorageV6", () => {
         `).get() as { sql: string };
         assert.equal(schema.sql.includes("state IN ('pending', 'applied', 'rejected')"), true);
         assert.equal(CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL.includes("output_sha256"), true);
-        db.prepare(`
-          INSERT INTO session_transcript_export_idempotency_v6 (
-            operation, idempotency_key, request_fingerprint, session_id,
-            relative_path, temp_name, state, created_at, expires_at
-          ) VALUES ('transcript.export', 'pending', 'fp', 'session-1', 'a.json', '.a.tmp', 'pending', ?, ?)
-        `).run(NOW, EXPIRES);
-        db.prepare(`
-          UPDATE work_items_v6
-          SET state = 'completed', revision = revision + 1, result_json = ?, updated_at = ?
-          WHERE kind = 'root' AND root_session_id = 'session-1'
-        `).run(JSON.stringify({ outcome: "completed" }), NOW);
-        db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = 'session-1'").run();
-        db.prepare("DELETE FROM sessions_v6 WHERE id = 'session-1'").run();
-        const count = db.prepare(`
-          SELECT COUNT(*) AS count FROM session_transcript_export_idempotency_v6
-        `).get() as { count: number };
-        assert.equal(count.count, 0);
       } finally {
         db.close();
+      }
+      const transcriptStorage = new SessionTranscriptStorageV6(f.dbPath);
+      try {
+        transcriptStorage.prepareExport({
+          idempotencyKey: "pending",
+          requestFingerprint: "fp",
+          sessionId: "session-1",
+          relativePath: "a.json",
+          tempName: ".a.tmp",
+          createdAt: NOW,
+          expiresAt: EXPIRES,
+          proof: trustedTranscriptProof("session-1"),
+        });
+      } finally {
+        transcriptStorage.close();
+      }
+      const tombstoneDb = new DatabaseSync(f.dbPath);
+      try {
+        tombstoneDb.prepare("UPDATE sessions_v6 SET deleted_at = ? WHERE id = 'session-1'").run(NOW);
+      } finally {
+        tombstoneDb.close();
+      }
+      const resultDb = new DatabaseSync(f.dbPath);
+      try {
+        const count = resultDb.prepare(`
+          SELECT COUNT(*) AS count FROM session_transcript_export_idempotency_v6
+        `).get() as { count: number };
+        assert.equal(count.count, 1);
+        assert.equal(
+          (resultDb.prepare("SELECT COUNT(*) AS count FROM sessions_v6 WHERE id = 'session-1' AND deleted_at IS NOT NULL")
+            .get() as { count: number }).count,
+          1,
+        );
+      } finally {
+        resultDb.close();
       }
     } finally {
       await rm(f.directory, { recursive: true, force: true });

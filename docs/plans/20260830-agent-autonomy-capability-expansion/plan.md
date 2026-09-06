@@ -19,9 +19,9 @@ Role は標準の責務、routing、表示、初期 grant template を表す。R
 
 ## 現在地と依存関係
 
-現行の Agent 向け公開面は `SESSION_RUNTIME_OPERATIONS` の 35 操作である。Session は作成、取得、一覧、rename、Work Item は作成、状態遷移、結果、取消、直属子集約、SessionFolder は UTF-8 text の list、read、write に限られる。
+Slice 1 の開始コミット `890aa0e5b29834c82d73e907b979b83c2323e4dc` では、Agent 向け公開面は `SESSION_RUNTIME_OPERATIONS` の 38 操作である。操作集合は registry を正本とし、この件数を固定の契約にはしない。Root WorkItem の改訂と履歴操作も切り替え対象に含む。
 
-`docs/plans/20260830-session-root-work-item/plan.md` に基づく Root WorkItem 実装は、本計画と並行して別 Worktree で進行している。本計画はその実装を中止または巻き戻さず、統合済みの Root WorkItem を基準に後続 contract revision を追加する。
+`docs/plans/20260830-session-root-work-item/plan.md` に基づく Root WorkItem 実装は、Slice 1 の開始コミットへ統合済みである。v6.3.26 との統合検証と review closure は `docs/plans/20260905-v6326-v640-integration/plan.md` に記録されている。統合済みの Root WorkItem を基準に後続 contract revision を追加する。
 
 Root WorkItem 計画の次の判断は、本計画の対応 slice が統合された時点で置き換える。
 
@@ -36,7 +36,7 @@ Root WorkItem の一意性、自己所有、Session 作成との原子性、appe
 
 本計画の実装中は、v6.4.0 の Work Item 機能を作業管理に使用しない。実装 Session の起動と引継ぎには、Git Worktree と SessionFolder 配下の自己完結した初回プロンプトを使用する。Work Item の作成、更新、集約を前提にした自動統括は、v6.4.0 のリリースと導入が完了するまで行わない。
 
-現在は `feat/v6.4.0-session-root-work-item` が進行中であり、追加の実装 Worktree は作成しない。次の `Shared authority and history cutover` は、次の条件をすべて満たした後に開始する。
+Root WorkItem の統合を受け、`Shared authority and history cutover` を `feat/v6.4.0-shared-authority-history` で開始した。開始条件は次のとおりである。
 
 - Root WorkItem 実装の直接検証と必要な commit-bound review が完了し、未解決 blocking finding がない。
 - 実装 commit が `feat/v6.4.0` へ統合されている。
@@ -246,7 +246,7 @@ transport ごとに入出力形式を変える必要がある場合も、resourc
 
 | 順序 | Slice | 主な成果 | 依存 |
 | --- | --- | --- | --- |
-| 0 | Root WorkItem baseline | root Session の自己所有 WorkItem と履歴 | 進行中実装の統合 |
+| 0 | Root WorkItem baseline | root Session の自己所有 WorkItem と履歴 | 開始コミットへ統合済み |
 | 1 | Shared authority and history cutover | principal、grant evaluator、user decision policy、mutation envelope、既存Roleからbaseline active grantへのmigration、既存全operationのgrant mappingと一括cutover | 0 |
 | 2 | Resource budget | root ledger、reserve、reconcile、admission | 1 |
 | 3 | Session lifecycle | create拡張、configure、move、clone、restore、archive、delete | 1、2 |
@@ -276,7 +276,47 @@ transport ごとに入出力形式を変える必要がある場合も、resourc
 
 ## Test と validation の進め方
 
+### Slice 1 の Closure Map
+
+開始コミットは `890aa0e5b29834c82d73e907b979b83c2323e4dc`。対象は開始時の 38 操作と、その保存、GUI の判断入力、provider binding である。新しい lifecycle、grant の公開 CRUD、budget ledger は対象外とする。budget の段階導入を承認済み契約として、以下の実装 gate を ready とする。
+
+| Invariant | 契約根拠と canonical owner | 兄弟入口と failure timing | 直接検証 |
+| --- | --- | --- | --- |
+| AUTONOMY-USER-01 | `designs/00-shared-authority-and-history.md` の User decision。interaction と Coordination の保存済み decision class が回答可否を所有する | Agent HTTP/CLI/MCP と trusted GUI。receipt 偽装、古い revision、provider continuation の commit 後失敗 | service/storage integration で拒否、保存 principal、履歴、effect を確認 |
+| AUTONOMY-GRANT-02 | 同設計の grant subset と baseline cutover。authority service と grant storage | 親子 grant、template、失効、期限、兄弟 Session。DB writer lock 取得前後の revoke | evaluator と populated DB integration で権限縮小、revision、rollback を確認 |
+| AUTONOMY-IDENTITY-03 | 同設計の principal。runtime binding と canonical resource relation | 全 38 操作、list cursor、provider generation、GUI。caller の actor/root/owner/issuer field | strict adapter validation と service scope/generation integration |
+| AUTONOMY-HISTORY-04 | 同設計の event contract。resource ごとの event payload と共通 provenance header | WorkItem、aggregation、Session、execution、interaction、Coordination、file preparation。baseline と更新の境界 | event replay と projection、principal と根拠 grant の一致 |
+| AUTONOMY-MUTATION-05 | 同設計の mutation envelope。各 storage transaction | create、existing mutation、既存 file/provider の preparation と recovery。commit 前、commit 後通知、response loss | transaction failure injection、canonical replay、別 payload conflict、部分 effect |
+| AUTONOMY-PARITY-08 | `designs/09-public-api-migration-and-review.md` の Public surface parity | TypeScript、application、HTTP、CLI、MCP、catalog、managed Skill | 集合同期、strict input/output、型検査、build |
+| AUTONOMY-MIGRATION-09 | `designs/00-shared-authority-and-history.md` の Baseline migration と ADR 028 の既存 row 保持 | fresh/populated schema、再実行、startup verifier。Role fallback は除外 | root 一意性、binding、result、aggregation、execution association、idempotency の移行前後比較 |
+
+grant の確認だけを service の事前チェックに置かず、各 resource の transaction 内で同じ DB 接続から根拠 revision を確認する。既存の filesystem/provider 操作は、永続化した preparation/execution admission を失効との順序確定点とし、以後は同じ operation の回復として結果を保存する。file の競合は既存 identity-bound proof で検証し、未実装の file revision を作らない。
+
+認可、永続化、公開境界を横断するため complete-diff review を一度実施する。固定 commit での grant escalation、receipt 偽装、revoke/replay、private projection を review lens とする。実装と直接検証の結果、commit-bound evidence は完了時に追記する。
+
 各実装 slice は test 編集前に `design-tests` を使い、failure mode、consumer、accepted contract、stable owner に最も近い check を選ぶ。TypeScript test を追加または意味変更する場合は、base commit から対象 snapshot までの Git 差分を `review-test-value` の Git mode へ渡し、選択された test へ `@test-value` を置く。
+
+### Slice 1 の進捗
+
+2026-09-06 時点で、開始コミットからの principal、grant evaluator、user decision policy、共通 mutation envelope、resource history、baseline migration、38 操作の authority mapping、application／HTTP／CLI／MCP／runtime catalog／managed Skill の切り替えを実装した。Root budget の ledger と admission は承認済みの段階導入に従い Slice 2 に残し、runtime catalog では未実装として公開する。
+
+実装コミット `e88abf85cd111c3360e2bc78d35cc68cb940da41` を固定した complete-diff review では、非 root Session が自身の作成した Work Item を参照できない可視性欠落と、Session／execution event payload から current projection を再構成できない履歴欠落の二件を blocking と分類した。修正では Work Item の creator-or-target list と created get を mapping revision 2 のgrantへ追加し、Session／execution の各eventへ schema revision 2 の完全な projection snapshot を保存してstartup replay verifierでcurrent rowと照合する。baseline verifierもRole templateの必須permission全体を検証する。
+
+修正コミット `35b91295fa78bbc5c4c084360c7010b3f96237be` のtargeted reviewではWork Item可視性をclosedと判定した。履歴については、source Session削除時にsource-owned origin rowがcascadeし、target-owned execution projectionとevent snapshotが不一致になる兄弟lifecycleを追加のblockingと分類した。originはexecutionのcanonical replay対象から外し、target executionを保持したsource Session削除後のreplayを直接検証した。追加修正コミット `5671a9cf999d87d6ff58674484bcc7c6219e5d17` のresulting delta reviewはapproveで、対象finding familyに未解決blocking、validation gap、残リスクはない。
+
+続くreviewでは、通知先grantの失効競合、Session通常削除によるretention履歴とidempotencyの消失、baseline grantの過剰許可とrevoke後の起動失敗、全resourceのstartup replay検証不足、raw client／CLIの公開応答未検証、MCPだけ異なるunknown field errorをblockingと分類した。修正コミット `04a5f6c1` は通知先proofをexecution admission transactionへ渡し、baseline grantをRole templateの完全一致として検証してmigration完了とactive authorityを分離した。`ce4c4ede` はapplication dispatch前とraw client受信後にcanonical response validatorを適用し、CLIとMCPのversioned error semanticsを統一した。`45ad0622` はSession通常削除をtombstone化し、retention対象の履歴とretry identityを保持した。`0af8fdcf` は全typed eventと共通headerを照合し、Work Item、aggregation、Session、execution、interaction、Coordination、file write、transcript exportのprojectionまたはledgerをstartupで再生検証する。
+
+固定コミット `b5759d47aaab7eeb78326685d691f6c6fdeae504` のtargeted closureでは、H-01、H-02、M-01、M-02、M-04、M-05とmain IPC test-valueをclosedと判定した。M-03は、startup前のbackfillが欠落履歴を再生成すること、Work ItemとCoordination createdのprincipal誤帰属および存在しないgrant revisionを受理すること、interactionの途中revisionとsupersedes参照先を検証しないこと、file write／transcript export ledgerのterminal resultをeventから照合しないことを未解決blockingと判定した。追加修正ではresource history migration markerでbackfillを初回migrationに限定し、Work Item typed eventへprincipal kindを保存する。さらにgrant eventの同一revision、interaction履歴の連続性とsupersedes参照先、sagaのoperation identity・principal・path・terminal resultをstartup verifierで照合する。
+
+最初のreview修正後の直接検証は `npm run typecheck`、`npm test`（3452 tests、3451 pass、1 skip、0 fail）、`npm run build`、`git diff --check` を通過した。今回のblocking修正後は`npm run typecheck`、`npm run build`、`npm test`（3458 tests、3457 pass、1 skip、0 fail）、`git diff --check`を通過した。全testの初回実行ではWork Itemの履歴backfillとprojection repairを同じmarkerで抑止していたため、partial schema repair testが失敗した。typed eventとheaderの生成だけを初回migrationへ限定し、既存履歴からのaggregation projection再構築は再実行可能に戻した後、対象testと全testの再実行が成功した。`review-test-value`のGit modeは開始コミットからのTypeScript test 141件を診断0で抽出し、今回追加または意味変更したrecordはclaim、failure mode、observableの対応を確認して全件`ACCEPT`とした。
+
+修正コミット `a7c459b6964610c0b72f367ea50079358f25917c` のexact-source reviewでは、interaction、Coordination、file write、transcript exportを含む再生照合をclosedと判定した。一方、Settings resetがmigration markerを消してlegacy backfillを再有効化する経路と、system principalによるRoot Work Item created eventのtyped actor誤帰属を受理する経路をM-03の残存blockingと判定した。追加修正コミット `f45339b0d105c06b788e2eef3c0fdc72a71800cb` はreset対象を利用者設定keyへ限定して内部markerを保持し、Root Work Itemのtyped actorをcanonical target Sessionと照合する。
+
+`f45339b0d105c06b788e2eef3c0fdc72a71800cb` のtargeted closure reviewはapproveで、M-03の残存2件をclosedと判定した。対象test 58件、`npm run typecheck`、`npm run build`、`git diff --check`は成功した。全testは3459件中3457件成功、1件skip、画像preview lifecycleの1件が30秒でtimeoutしたが、同一testの即時単独再実行は93 msで成功したため、このfailureは対象変更外のflaky validation gapとして扱う。追加または意味変更したtest 2件は現行`review-test-value`のGit modeで診断0となり、両方を`ACCEPT`とした。対象finding familyに未解決blocking、accepted risk、残リスクはない。
+
+2026-09-07 の追加指摘3件は `38fa9821` で修正した。起動時のbaseline補完は委譲由来を含む既存grantを認識し、子Sessionのrevoke後も独立system grantを追加しない。GUI・scheduler・通知の内部enqueueは非同期検証とSession lock待機後にrevisionを取得し、外部要求の明示revisionはそのまま保存境界で照合する。ファイル書き込みとtranscript exportは、新規受付時のoperation IDへUUIDを追加し、期限後の同一キー再利用を保持済み履歴から区別する。期限内の再送と既存履歴の照合は維持する。
+
+追加の回帰4ケースと関連既存test 174件、`npm run typecheck`、`npm run build`、`git diff --check` が成功した。全suiteとGUI目視は今回再実行していない。`review-test-value`は今回のbase `271e0b06` から3宣言を抽出し、専用審査の最終generationで全件`ACCEPT`、全体`PASS`、未解決項目なしとなった。審査途中のツール契約変更による停止と、内部原因を直接観測するように読めるmetadataへの指摘を解消し、test本文を変えずにfault記述を実際の観測結果へ合わせた。
 
 基本 check は次の順で実行する。
 
@@ -311,6 +351,14 @@ transport ごとに入出力形式を変える必要がある場合も、resourc
 - 本 plan と個別設計は実装順、境界、検証、review の追跡に使い、実装後の field 一覧を重複する恒久仕様にはしない。
 
 ## Validation gap
+
+### Slice 1 の budget 段階導入
+
+2026-09-05 のユーザー承認により、Slice 1 は principal、grant、decision、revision、history の切り替えを行い、root budget の ledger、reserve、reconcile、admission は Slice 2 で接続する。Slice 1 では既存の操作別上限を維持し、budget が未実装であることを runtime catalog に明示する。既存上限を root budget の保証と扱わず、無制限の値、評価成功を返す代用品、架空の allocation reference を作らない。
+
+AUTONOMY-BUDGET-07 の reserve と allocation の検証は Slice 2 の完了条件とする。Slice 1 の grant は未実装の budget を根拠に権限を増やさず、既存操作の baseline を超える新規能力を発行しない。この段階導入は Role authority cutover と履歴整合を延期する理由にはしない。
+
+### Provider の直接実行経路
 
 Provider自身のshell、Git、外部service toolはSession Runtime APIを経由しない場合がある。Session Runtimeのgrantだけでは、未委譲の外部副作用を完全には強制できない。
 

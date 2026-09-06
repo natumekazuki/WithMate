@@ -592,15 +592,19 @@ describe("AppSettingsStorage", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "regression"
-  // claim = "test declaration at line 507 preserves its observable contract"
-  // oracle = { type = "contract", ref = "-507" }
-  // failure_mode = "line 507 violates its expected output or boundary behavior"
-  // scope = "app-settings-storage.test"
+  // claim = "設定リセットはuser設定だけを既定値へ戻し、startup migrationの完了markerを保持する"
+  // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04" }
+  // fault = "設定リセットがresource history migration markerまで削除する"
+  // observable = "reset後のuser設定projectionとapp_settings上のresource history migration marker"
+  // observation_boundary = "component-behavior"
+  // impact = "次回startupで欠落履歴のbackfillが再有効化される"
+  // scope = "AppSettingsStorage.resetSettings"
   // lifecycle = "permanent"
+  // distinction = "user設定のreset結果と再読込結果に加え、同じapp_settings table上の内部migration markerが残ることを観測する"
   // @end-test-value
-  it("resetSettings で app settings を canonical default へ戻し、再読込後も維持される", async () => {
+  it("resetSettingsはuser設定をcanonical defaultへ戻してmigration markerを保持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
 
@@ -679,6 +683,13 @@ describe("AppSettingsStorage", () => {
       storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
       storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
 
+      const database = new DatabaseSync(dbPath);
+      database.prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES ('resource_history_v6_migrated_at', '1', '2026-09-06T00:00:00.000Z')
+      `).run();
+      database.close();
+
       const reset = storage.resetSettings();
       storage.close();
 
@@ -686,8 +697,17 @@ describe("AppSettingsStorage", () => {
       const loaded = reopened.getSettings();
       reopened.close();
 
+      const verifiedDatabase = new DatabaseSync(dbPath, { readOnly: true });
+      const resourceHistoryMigrationMarker = verifiedDatabase.prepare(`
+        SELECT setting_value
+        FROM app_settings
+        WHERE setting_key = 'resource_history_v6_migrated_at'
+      `).get() as { setting_value: string } | undefined;
+      verifiedDatabase.close();
+
       assert.deepEqual(reset, createDefaultAppSettings());
       assert.deepEqual(loaded, createDefaultAppSettings());
+      assert.equal(resourceHistoryMigrationMarker?.setting_value, "1");
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }

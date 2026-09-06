@@ -32,6 +32,27 @@ const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
 const USER_MICROCOPY_CATALOG_KEY = "user_microcopy_catalog_json";
+const RESETTABLE_APP_SETTING_KEYS = [
+  MEMORY_GENERATION_ENABLED_KEY,
+  LAUNCH_AT_LOGIN_ENABLED_KEY,
+  SESSION_TURN_NOTIFICATION_ENABLED_KEY,
+  SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY,
+  AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY,
+  SCROLL_TO_LATEST_ON_SEND_KEY,
+  SESSION_HEADER_VISIBILITY_KEY,
+  SESSION_ACTION_DOCK_PRESENTATION_KEY,
+  SESSION_SIDE_PANE_KEY,
+  SESSION_LAYOUT_PRIORITY_KEY,
+  LEGACY_SESSION_RIGHT_PANE_VISIBLE_KEY,
+  KEYBOARD_SHORTCUTS_KEY,
+  MEMORY_FILE_QUOTA_BYTES_KEY,
+  GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY,
+  GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY,
+  CODING_PROVIDER_SETTINGS_KEY,
+  MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
+  MATE_MEMORY_GENERATION_SETTINGS_KEY,
+  USER_MICROCOPY_CATALOG_KEY,
+] as const;
 
 type AppSettingRow = {
   setting_key: string;
@@ -565,7 +586,10 @@ export class AppSettingsStorage {
   resetSettings(): AppSettings {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.db.exec("DELETE FROM app_settings;");
+      this.db.prepare(`
+        DELETE FROM app_settings
+        WHERE setting_key IN (${RESETTABLE_APP_SETTING_KEYS.map(() => "?").join(", ")})
+      `).run(...RESETTABLE_APP_SETTING_KEYS);
       this.ensureSessionSidePaneDefault();
       this.ensureDefaults();
       this.db.exec("COMMIT");

@@ -14,10 +14,9 @@ import {
   type CoordinationEventListResult,
   type CoordinationEventTrustedListInput,
   type CoordinationEventResolveInput,
-  type CoordinationEventRoleSnapshot,
   type PendingCoordinationResponse,
 } from "../src/coordination-event.js";
-import { requireSessionRoleBinding, type SessionRoleBinding } from "../src/session-role-binding.js";
+import { isAgentMutationProof, type MutationAuthorityProof } from "../src/session-authority.js";
 import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
 import {
   CoordinationEventStorageV6,
@@ -37,15 +36,14 @@ export class CoordinationEventPublicationError extends Error {
 export type CoordinationEventServiceDeps = {
   storage: CoordinationEventStorageV6;
   publishCommitted(event: CoordinationEvent): void;
-  getSessionRoleBinding?(sessionId: string): SessionRoleBinding | null;
   now?(): Date;
 };
 
 export class CoordinationEventService {
   constructor(private readonly deps: CoordinationEventServiceDeps) {}
 
-  create(input: CoordinationEventCreateInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
-    const principal = sessionPrincipal(binding);
+  create(input: CoordinationEventCreateInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): CoordinationEvent {
+    const principal = sessionPrincipal(binding, proof);
     const result = this.deps.storage.create({
       principal,
       kind: input.kind,
@@ -53,6 +51,7 @@ export class CoordinationEventService {
       executionId: input.executionId ?? null,
       targetSessionId: input.targetSessionId ?? null,
       options: input.options ?? [],
+      expectedContainerRevision: input.expectedContainerRevision,
       idempotencyKey: input.idempotencyKey,
       requestFingerprint: fingerprint("coordination.event.create", principal, withoutKey(input)),
       createdAt: this.now(),
@@ -61,8 +60,8 @@ export class CoordinationEventService {
     return result.event;
   }
 
-  list(input: CoordinationEventListInput, binding: ResolvedAgentRuntimeBinding): CoordinationEventListResult {
-    const principal = sessionPrincipal(binding);
+  list(input: CoordinationEventListInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): CoordinationEventListResult {
+    const principal = sessionPrincipal(binding, proof);
     const beforeSequence = input.cursor ? decodeCursor(principal.sessionId, input, input.cursor) : null;
     const result = this.deps.storage.list(principal, input, beforeSequence);
     return {
@@ -87,33 +86,51 @@ export class CoordinationEventService {
   }
 
   resolveFromCoordinationWindow(input: CoordinationEventTrustedResolveInput): CoordinationEvent {
-    return this.resolveAs(input, this.coordinationWindowPrincipalFor(input.eventId));
+    const outcome = this.deps.storage.resolveFromTrustedGui({
+      eventId: input.eventId,
+      expectedRevision: input.expectedRevision,
+      optionId: "optionId" in input ? input.optionId ?? null : null,
+      note: input.note ?? null,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: trustedFingerprint("coordination.event.resolve", withoutKey(input)),
+      createdAt: this.now(),
+    });
+    this.publish(outcome.event);
+    return outcome.event;
   }
 
   cancelFromCoordinationWindow(input: CoordinationEventCancelInput): CoordinationEvent {
-    return this.cancelAs(input, this.coordinationWindowPrincipalFor(input.eventId));
+    const outcome = this.deps.storage.cancelFromTrustedGui({
+      eventId: input.eventId,
+      expectedRevision: input.expectedRevision,
+      note: input.note ?? null,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: trustedFingerprint("coordination.event.cancel", withoutKey(input)),
+      createdAt: this.now(),
+    });
+    this.publish(outcome.event);
+    return outcome.event;
   }
 
-  get(input: CoordinationEventGetInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
-    const principal = sessionPrincipal(binding);
+  get(input: CoordinationEventGetInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): CoordinationEvent {
+    const principal = sessionPrincipal(binding, proof);
     return "eventId" in input && input.eventId
       ? this.deps.storage.getVisible(principal, input.eventId)
       : this.deps.storage.getByIdempotencyKey(principal, input.idempotencyKey!);
   }
 
-  resolve(input: CoordinationEventResolveInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
-    return this.resolveAs(input, sessionPrincipal(binding));
+  resolve(input: CoordinationEventResolveInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): CoordinationEvent {
+    return this.resolveAs(input, sessionPrincipal(binding, proof));
   }
 
   listPendingResponsesForSession(
     sessionId: string,
-    roleBinding: CoordinationEventRoleSnapshot,
   ): PendingCoordinationResponse[] {
-    return this.deps.storage.listPendingResponses({ sessionId, actorType: "session", roleBinding });
+    return this.deps.storage.listPendingResponses(sessionId);
   }
 
-  consume(input: CoordinationEventConsumeInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
-    const principal = sessionPrincipal(binding);
+  consume(input: CoordinationEventConsumeInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): CoordinationEvent {
+    const principal = sessionPrincipal(binding, proof);
     const outcome = this.deps.storage.consume({
       principal,
       eventId: input.eventId,
@@ -126,15 +143,16 @@ export class CoordinationEventService {
     return outcome.event;
   }
 
-  cancel(input: CoordinationEventCancelInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
-    return this.cancelAs(input, sessionPrincipal(binding));
+  cancel(input: CoordinationEventCancelInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): CoordinationEvent {
+    return this.cancelAs(input, sessionPrincipal(binding, proof));
   }
 
-  correct(input: CoordinationEventCorrectInput, binding: ResolvedAgentRuntimeBinding): CoordinationEventCorrectionResult {
-    const principal = sessionPrincipal(binding);
+  correct(input: CoordinationEventCorrectInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): CoordinationEventCorrectionResult {
+    const principal = sessionPrincipal(binding, proof);
     const outcome = this.deps.storage.correct({
       principal,
       eventId: input.eventId,
+      expectedRevision: input.expectedRevision,
       payload: input.payload,
       executionId: input.executionId ?? null,
       idempotencyKey: input.idempotencyKey,
@@ -152,6 +170,7 @@ export class CoordinationEventService {
     const outcome = this.deps.storage.resolve({
       principal,
       eventId: input.eventId,
+      expectedRevision: input.expectedRevision,
       optionId: "optionId" in input ? input.optionId ?? null : null,
       note: input.note ?? null,
       idempotencyKey: input.idempotencyKey,
@@ -166,6 +185,7 @@ export class CoordinationEventService {
     const outcome = this.deps.storage.cancel({
       principal,
       eventId: input.eventId,
+      expectedRevision: input.expectedRevision,
       optionId: null,
       note: input.note ?? null,
       idempotencyKey: input.idempotencyKey,
@@ -174,17 +194,6 @@ export class CoordinationEventService {
     });
     this.publish(outcome.event);
     return outcome.event;
-  }
-
-  private coordinationWindowPrincipalFor(eventId: string): CoordinationMutationPrincipal {
-    const event = this.deps.storage.getTrusted(eventId);
-    const roleBinding = this.deps.getSessionRoleBinding?.(event.actorSessionId) ?? null;
-    if (!roleBinding) throw new CoordinationEventValidationError(
-      "The event owner no longer has a canonical Session Role binding.",
-      { field: "eventId" },
-      "SESSION_BINDING_FORBIDDEN",
-    );
-    return { sessionId: event.actorSessionId, actorType: "trusted_gui", roleBinding };
   }
 
   private publish(event: CoordinationEvent): void {
@@ -200,19 +209,23 @@ export class CoordinationEventService {
   }
 }
 
-function sessionPrincipal(binding: ResolvedAgentRuntimeBinding): CoordinationMutationPrincipal {
-  const snapshot = binding.authoritySnapshot.sessionRoleBinding;
-  if (binding.authoritySnapshot.sessionKind !== "default" || !snapshot) {
+function sessionPrincipal(
+  binding: ResolvedAgentRuntimeBinding,
+  proof: MutationAuthorityProof,
+): CoordinationMutationPrincipal {
+  if (!isAgentMutationProof(proof)
+    || proof.principal.actorSessionId !== binding.actorSessionId
+    || proof.principal.runtimeGeneration !== binding.executionGeneration
+    || proof.providerId !== binding.providerId) {
     throw new CoordinationEventValidationError(
-      "Coordination events require a normal Session Role binding.",
+      "The coordination authority proof does not match the runtime binding.",
       { field: "agentRuntimeBinding" },
       "SESSION_BINDING_FORBIDDEN",
     );
   }
   return {
     sessionId: binding.actorSessionId,
-    actorType: "session",
-    roleBinding: requireSessionRoleBinding(binding.actorSessionId, snapshot),
+    proof,
   };
 }
 
@@ -225,8 +238,16 @@ function fingerprint(operation: string, principal: CoordinationMutationPrincipal
   return createHash("sha256").update(stableJson({
     operation,
     principalSessionId: principal.sessionId,
-    principalType: principal.actorType,
-    roleSnapshot: principal.roleBinding,
+    principalType: principal.proof.principal.kind,
+    input,
+  }), "utf8").digest("hex");
+}
+
+function trustedFingerprint(operation: string, input: unknown): string {
+  return createHash("sha256").update(stableJson({
+    operation,
+    principalType: "user",
+    principalId: "local-user",
     input,
   }), "utf8").digest("hex");
 }

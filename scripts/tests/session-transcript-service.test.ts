@@ -7,6 +7,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
+import { SESSION_AUTHORITY_MAPPING_REVISION, type MutationAuthorityProof } from "../../src/session-authority.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import {
   SessionTranscriptService,
@@ -19,6 +20,32 @@ import {
   SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES,
   SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES,
 } from "../../src/session-transcript.js";
+
+function trustedTranscriptProof(sessionId: string): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-transcript-service-test" },
+    operation: "transcript.export",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "transcript.export",
+    resolvedScope: {
+      resourceKind: "transcript",
+      resourceId: sessionId,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: CREATED_AT,
+  };
+}
+
+const exportWithAuthority = SessionTranscriptService.prototype.export;
+SessionTranscriptService.prototype.export = function (input, proof) {
+  return exportWithAuthority.call(this, input, proof ?? trustedTranscriptProof(input.sessionId));
+};
 
 const CREATED_AT = "2026-08-13T00:00:00.000Z";
 const EARLIER_AT = "2026-08-12T00:00:00.000Z";

@@ -6,11 +6,62 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { SESSION_AUTHORITY_MAPPING_REVISION, type MutationAuthorityProof } from "../../src/session-authority.js";
 import { buildNewSession } from "../../src/session-state.js";
 import {
   SessionFileWriteIdempotencyConflictError,
   SessionStorageV6,
 } from "../../src-electron/session-storage-v6.js";
+
+function trustedFileWriteProof(sessionId: string): MutationAuthorityProof {
+  return {
+    principal: { kind: "system", service: "session-file-write-storage-test" },
+    operation: "session.files.write_text",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "session.files.write_text",
+    resolvedScope: {
+      resourceKind: "session_files",
+      resourceId: sessionId,
+      rootSessionId: sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: "2026-08-12T00:00:00.000Z",
+  };
+}
+
+const prepareFileWriteWithAuthority = SessionStorageV6.prototype.prepareSessionFileWrite;
+SessionStorageV6.prototype.prepareSessionFileWrite = function (input) {
+  return prepareFileWriteWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedFileWriteProof(input.sessionId),
+  });
+};
+const recordPreparedFileWriteWithAuthority = SessionStorageV6.prototype.recordPreparedSessionFileWrite;
+SessionStorageV6.prototype.recordPreparedSessionFileWrite = function (input) {
+  return recordPreparedFileWriteWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedFileWriteProof("session-a"),
+  });
+};
+const completeFileWriteWithAuthority = SessionStorageV6.prototype.completeSessionFileWrite;
+SessionStorageV6.prototype.completeSessionFileWrite = function (input) {
+  return completeFileWriteWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedFileWriteProof("session-a"),
+  });
+};
+const rejectFileWriteWithAuthority = SessionStorageV6.prototype.rejectSessionFileWrite;
+SessionStorageV6.prototype.rejectSessionFileWrite = function (input) {
+  return rejectFileWriteWithAuthority.call(this, {
+    ...input,
+    proof: input.proof ?? trustedFileWriteProof("session-a"),
+  });
+};
 
 describe("Session file write idempotency storage", () => {
   it("SF-WRITE-01: pendingとappliedとrejectedを再生し、異なるfingerprintを拒否する", async () => {
@@ -274,6 +325,85 @@ describe("Session file write idempotency storage", () => {
         createdAt: "2026-08-12T00:00:00.000Z",
         expiresAt: "2026-08-13T00:00:00.000Z",
       }).kind, "pending");
+    } finally {
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "同じrequest fingerprintを持つ別idempotency keyのwrite prepareは、別operationとしてprojection・resource event・共通headerへ一対一で永続化される"
+  // oracle = { type = "contract", ref = "HISTORY-04 / MUTATION-05" }
+  // failure_mode = "request fingerprintだけでoperation identityを作り、同内容の別writeが履歴UNIQUE制約で失敗するか同一operationへ合流する"
+  // scope = "SessionStorageV6 file-write admission transaction"
+  // lifecycle = "permanent"
+  // distinction = "同一key replayではなく、payloadが同一でも独立した二つのidempotency operationを観測する"
+  // @end-test-value
+  it("同内容の別idempotency operationを独立した履歴として保存する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-file-write-history-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    const storage = new SessionStorageV6(dbPath);
+    try {
+      const setupDb = new DatabaseSync(dbPath);
+      setupDb.prepare(`
+        INSERT INTO characters (id, name, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+      `).run("character-a", "Character A", "2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z");
+      setupDb.close();
+      storage.insertSession(buildNewSession({
+        id: "session-a",
+        provider: "codex",
+        catalogRevision: 1,
+        taskTitle: "Session A",
+        workspaceLabel: "SessionFolder",
+        workspacePath: tempDirectory,
+        branch: "",
+        characterId: "character-a",
+        character: "Character A",
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        codexSandboxMode: "workspace-write",
+        model: "gpt-test",
+        reasoningEffort: "high",
+      }));
+
+      for (const key of ["same-content-a", "same-content-b"]) {
+        storage.prepareSessionFileWrite({
+          idempotencyKey: key,
+          requestFingerprint: "same-request-fingerprint",
+          sessionId: "session-a",
+          relativePath: "same.md",
+          tempName: `.${key}.tmp`,
+          createdAt: "2026-08-12T00:00:00.000Z",
+          expiresAt: "2026-08-13T00:00:00.000Z",
+        });
+      }
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const projections = db.prepare(`
+          SELECT operation_id
+          FROM session_file_write_idempotency_v6
+          WHERE idempotency_key IN ('same-content-a', 'same-content-b')
+          ORDER BY idempotency_key
+        `).all() as Array<{ operation_id: string }>;
+        assert.equal(projections.length, 2);
+        assert.notEqual(projections[0]?.operation_id, projections[1]?.operation_id);
+        for (const { operation_id: operationId } of projections) {
+          assert.deepEqual({ ...db.prepare(`
+            SELECT event.event_kind, header.principal_kind, header.effect
+            FROM session_file_write_events_v6 AS event
+            INNER JOIN resource_event_headers_v6 AS header ON header.event_id = event.event_id
+            WHERE event.operation_id = ?
+          `).get(operationId) as Record<string, unknown> }, {
+            event_kind: "prepared",
+            principal_kind: "system",
+            effect: "none",
+          });
+        }
+      } finally {
+        db.close();
+      }
     } finally {
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });

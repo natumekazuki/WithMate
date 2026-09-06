@@ -25,8 +25,11 @@ import {
   type WorkItemResult,
   type WorkItemState,
 } from "../src/work-item.js";
+import type { MutationAuthorityProof } from "../src/session-authority.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import { appendWorkItemAggregationEvent, appendWorkItemEventHeader, claimSessionContainerRevision } from "./resource-history-schema.js";
+import { assertGrantProofCurrent } from "./session-authority-storage.js";
 
 export type WorkItemMutationOperation =
   | "work.create"
@@ -85,6 +88,7 @@ type WorkItemAggregationDecisionRow = {
 
 type WorkItemAggregationIdempotencyInput = {
   actorSessionId: string;
+  proof: MutationAuthorityProof;
   idempotencyKey: string;
   requestFingerprint: string;
   decidedAt: string;
@@ -109,9 +113,10 @@ export class WorkItemIdempotencyConflictError extends Error {
 
 export class WorkItemIdempotencyResponseUnavailableError extends Error {
   readonly code = "IDEMPOTENCY_RESPONSE_UNAVAILABLE";
+  readonly effect = "applied" as const;
 
   constructor(
-    readonly operation: WorkItemMutationOperation,
+    readonly operation: WorkItemMutationOperation | WorkItemAggregationMutationOperation,
     readonly idempotencyKey: string,
     readonly workItemId: string,
   ) {
@@ -163,20 +168,32 @@ export class WorkItemStorageV6 {
 
   resolveIdempotency(
     operation: WorkItemMutationOperation,
-    principalSessionId: string,
+    proof: MutationAuthorityProof,
     idempotencyKey: string,
     requestFingerprint: string,
     observedAt: string,
   ): WorkItem | null {
     this.cleanupExpiredIdempotency(observedAt);
+    const principalKey = workItemPrincipalKey(proof);
     const row = this.db.prepare(`
       SELECT request_fingerprint, work_item_id, response_json
       FROM work_item_idempotency_v6
       WHERE operation = ? AND principal_session_id = ? AND idempotency_key = ?
-    `).get(operation, principalSessionId, idempotencyKey) as
+    `).get(operation, principalKey, idempotencyKey) as
       | { request_fingerprint: string; work_item_id: string; response_json: string | null }
       | undefined;
-    if (!row) return null;
+    if (!row) {
+      const legacy = this.db.prepare(`
+        SELECT work_item_id
+        FROM work_item_idempotency_v6
+        WHERE operation = ? AND principal_session_id LIKE 'legacy_unknown:%' AND idempotency_key = ?
+        LIMIT 1
+      `).get(operation, idempotencyKey) as { work_item_id: string } | undefined;
+      if (legacy) {
+        throw new WorkItemIdempotencyResponseUnavailableError(operation, idempotencyKey, legacy.work_item_id);
+      }
+      return null;
+    }
     if (row.request_fingerprint !== requestFingerprint) {
       throw new WorkItemIdempotencyConflictError(operation, idempotencyKey);
     }
@@ -192,19 +209,22 @@ export class WorkItemStorageV6 {
     principalSessionId: string;
     idempotencyKey: string;
     requestFingerprint: string;
+    expectedContainerRevision: number;
     createdAt: string;
     expiresAt: string;
+    proof: MutationAuthorityProof;
   }): WorkItem {
     assertValidWorkItemBinding(input.binding);
     return this.transaction(() => {
       const replay = this.resolveIdempotency(
         "work.create",
-        input.principalSessionId,
+        input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
         input.createdAt,
       );
       if (replay) return replay;
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
       if (input.binding.parentWorkItemId !== null) {
         const parent = this.getRequired(input.binding.parentWorkItemId);
         if (
@@ -259,14 +279,39 @@ export class WorkItemStorageV6 {
           updatedAt: input.createdAt,
         }),
         createdAt: input.createdAt,
+        proof: input.proof,
+        operationId: workItemOperationId("work.create", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+      });
+      claimSessionContainerRevision(this.db, {
+        sessionId: input.binding.targetSessionId,
+        expectedRevision: input.expectedContainerRevision,
+        eventKind: "work_item_created",
+        proof: input.proof,
+        operationId: workItemOperationId("work.create", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.createdAt,
+        payload: { workItemId: input.id },
       });
       if (input.binding.parentWorkItemId !== null) {
         this.incrementAggregateRevision(input.binding.parentWorkItemId, input.createdAt);
+        const aggregateRevision = this.getAggregationSummary(input.binding.parentWorkItemId).aggregateRevision;
+        appendWorkItemAggregationEvent(this.db, {
+          parentWorkItemId: input.binding.parentWorkItemId,
+          childWorkItemId: input.id,
+          aggregateRevision,
+          eventKind: "child_added",
+          proof: input.proof,
+          operationId: workItemOperationId("work.create", input.proof, input.requestFingerprint),
+          idempotencyKey: input.idempotencyKey,
+          occurredAt: input.createdAt,
+          payload: { childWorkItemId: input.id, childRevision: 1 },
+        });
       }
       const created = this.getRequired(input.id);
       this.insertIdempotency(
         "work.create",
-        input.principalSessionId,
+        input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
         input.id,
@@ -290,6 +335,7 @@ export class WorkItemStorageV6 {
     updatedAt: string;
     expiresAt: string;
     expectedAggregateRevision?: number;
+    proof: MutationAuthorityProof;
   }): WorkItem {
     if (
       (input.operation === "work.result" && (!isWorkItemResultState(input.state) || input.result?.outcome !== input.state))
@@ -307,12 +353,13 @@ export class WorkItemStorageV6 {
     return this.transaction(() => {
       const replay = this.resolveIdempotency(
         input.operation,
-        input.principalSessionId,
+        input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
         input.updatedAt,
       );
       if (replay) return replay;
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.updatedAt));
       const current = this.getRequired(input.workItemId);
       if (current.revision !== input.expectedRevision) {
         throw new WorkItemRevisionConflictError(input.workItemId, input.expectedRevision, current.revision);
@@ -353,10 +400,13 @@ export class WorkItemStorageV6 {
           ? { from: current.state, to: input.result.outcome, result: input.result }
           : { from: current.state, to: input.state },
         createdAt: input.updatedAt,
+        proof: input.proof,
+        operationId: workItemOperationId(input.operation, input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
       });
       this.insertIdempotency(
         input.operation,
-        input.principalSessionId,
+        input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
         input.workItemId,
@@ -380,16 +430,18 @@ export class WorkItemStorageV6 {
     authority: string;
     updatedAt: string;
     expiresAt: string;
+    proof: MutationAuthorityProof;
   }): WorkItem {
     return this.transaction(() => {
       const replay = this.resolveIdempotency(
         "work.revise",
-        input.principalSessionId,
+        input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
         input.updatedAt,
       );
       if (replay) return replay;
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.updatedAt));
       const current = this.getRequired(input.workItemId);
       this.requireRootOwner(current, input.principalSessionId);
       this.requireExpectedRevision(current, input.expectedRevision);
@@ -429,10 +481,13 @@ export class WorkItemStorageV6 {
         actorSessionId: input.principalSessionId,
         payload: { before, after },
         createdAt: input.updatedAt,
+        proof: input.proof,
+        operationId: workItemOperationId("work.revise", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
       });
       this.insertIdempotency(
         "work.revise",
-        input.principalSessionId,
+        input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
         input.workItemId,
@@ -456,16 +511,18 @@ export class WorkItemStorageV6 {
     nextAction: string;
     createdAt: string;
     expiresAt: string;
+    proof: MutationAuthorityProof;
   }): WorkItem {
     return this.transaction(() => {
       const replay = this.resolveIdempotency(
         "work.history.append",
-        input.principalSessionId,
+        input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
         input.createdAt,
       );
       if (replay) return replay;
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
       const current = this.getRequired(input.workItemId);
       this.requireRootOwner(current, input.principalSessionId);
       this.requireExpectedRevision(current, input.expectedRevision);
@@ -502,10 +559,13 @@ export class WorkItemStorageV6 {
         actorSessionId: input.principalSessionId,
         payload,
         createdAt: input.createdAt,
+        proof: input.proof,
+        operationId: workItemOperationId("work.history.append", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
       });
       this.insertIdempotency(
         "work.history.append",
-        input.principalSessionId,
+        input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
         input.workItemId,
@@ -714,15 +774,33 @@ export class WorkItemStorageV6 {
     decision: Exclude<WorkItemAggregationDecisionType, "retry_requested">; reason: string | null;
     expectedAggregateRevision: number; idempotencyKey: string; requestFingerprint: string;
     decidedAt: string; expiresAt: string;
+    proof: MutationAuthorityProof;
   }): WorkItemAggregationDecision {
     return this.transaction(() => {
-      const replay = this.resolveAggregationIdempotency("work.aggregation.decide", input.actorSessionId, input.idempotencyKey, input.requestFingerprint, input.decidedAt);
+      const replay = this.resolveAggregationIdempotency("work.aggregation.decide", input.proof, input.idempotencyKey, input.requestFingerprint, input.decidedAt);
       if (replay) return replay;
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.decidedAt));
       const parent = this.getRequired(input.parentWorkItemId);
       const child = this.requireAggregationMutation(parent, input.childWorkItemId, input.actorSessionId, input.expectedAggregateRevision);
       this.validateDecision(child, input.decision, input.reason);
       this.insertDecision({ ...input, child, replacementWorkItemId: null });
       this.incrementAggregateRevision(parent.id, input.decidedAt);
+      appendWorkItemAggregationEvent(this.db, {
+        parentWorkItemId: parent.id,
+        childWorkItemId: child.id,
+        aggregateRevision: input.expectedAggregateRevision + 1,
+        eventKind: "decided",
+        proof: input.proof,
+        operationId: workItemOperationId("work.aggregation.decide", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.decidedAt,
+        payload: {
+          childRevision: child.revision,
+          decision: input.decision,
+          reason: input.reason,
+          replacementWorkItemId: null,
+        },
+      });
       this.insertAggregationIdempotency("work.aggregation.decide", input, child.id, null);
       return this.getDecision(child.id)!;
     });
@@ -732,11 +810,13 @@ export class WorkItemStorageV6 {
     parentWorkItemId: string; childWorkItemId: string; actorSessionId: string;
     expectedAggregateRevision: number; idempotencyKey: string; requestFingerprint: string;
     replacementId: string; replacementBinding: DelegatedWorkItemBinding; decidedAt: string; expiresAt: string; reason: string | null;
+    proof: MutationAuthorityProof;
   }): { decision: WorkItemAggregationDecision; replacement: WorkItem } {
     assertValidWorkItemBinding(input.replacementBinding);
     return this.transaction(() => {
-      const replay = this.resolveAggregationIdempotency("work.aggregation.retry", input.actorSessionId, input.idempotencyKey, input.requestFingerprint, input.decidedAt);
+      const replay = this.resolveAggregationIdempotency("work.aggregation.retry", input.proof, input.idempotencyKey, input.requestFingerprint, input.decidedAt);
       if (replay) return { decision: replay, replacement: this.getRequired(replay.replacementWorkItemId!) };
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.decidedAt));
       const parent = this.getRequired(input.parentWorkItemId);
       const child = this.requireAggregationMutation(parent, input.childWorkItemId, input.actorSessionId, input.expectedAggregateRevision);
       this.validateDecision(child, "retry_requested", input.reason);
@@ -769,9 +849,39 @@ export class WorkItemStorageV6 {
         actorSessionId: input.actorSessionId,
         payload: createdEventPayload(replacement),
         createdAt: input.decidedAt,
+        proof: input.proof,
+        operationId: workItemOperationId("work.aggregation.retry", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
       });
       this.insertDecision({ ...input, child, decision: "retry_requested", replacementWorkItemId: input.replacementId });
       this.incrementAggregateRevision(parent.id, input.decidedAt, 2);
+      appendWorkItemAggregationEvent(this.db, {
+        parentWorkItemId: parent.id,
+        childWorkItemId: replacement.id,
+        aggregateRevision: input.expectedAggregateRevision + 1,
+        eventKind: "child_added",
+        proof: input.proof,
+        operationId: workItemOperationId("work.aggregation.retry", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.decidedAt,
+        payload: { childWorkItemId: replacement.id, childRevision: replacement.revision },
+      });
+      appendWorkItemAggregationEvent(this.db, {
+        parentWorkItemId: parent.id,
+        childWorkItemId: child.id,
+        aggregateRevision: input.expectedAggregateRevision + 2,
+        eventKind: "retry_requested",
+        proof: input.proof,
+        operationId: workItemOperationId("work.aggregation.retry", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.decidedAt,
+        payload: {
+          childRevision: child.revision,
+          decision: "retry_requested",
+          reason: input.reason,
+          replacementWorkItemId: replacement.id,
+        },
+      });
       this.insertAggregationIdempotency("work.aggregation.retry", input, child.id, input.replacementId);
       return { decision: this.getDecision(child.id)!, replacement };
     });
@@ -918,21 +1028,34 @@ export class WorkItemStorageV6 {
     actorSessionId: string | null;
     payload: WorkItemEvent["payload"];
     createdAt: string;
+    proof: MutationAuthorityProof;
+    operationId: string;
+    idempotencyKey: string | null;
   }): void {
     assertWorkItemEventPayloadWithinLimit(input.type, input.payload);
     const payloadJson = serializeJson(input.payload, "Work Item event payload");
     this.db.prepare(`
       INSERT INTO work_item_events_v6 (
-        work_item_id, revision, event_type, actor_session_id, payload_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        work_item_id, revision, event_type, actor_session_id, principal_kind, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.workItemId,
       input.revision,
       input.type,
       input.actorSessionId,
+      input.proof.principal.kind,
       payloadJson,
       input.createdAt,
     );
+    appendWorkItemEventHeader(this.db, {
+      workItemId: input.workItemId,
+      revision: input.revision,
+      eventKind: input.type,
+      proof: input.proof,
+      operationId: input.operationId,
+      idempotencyKey: input.idempotencyKey,
+      occurredAt: input.createdAt,
+    });
   }
 
   private incrementAggregateRevision(parentWorkItemId: string, updatedAt: string, amount = 1): void {
@@ -971,17 +1094,26 @@ export class WorkItemStorageV6 {
 
   resolveAggregationIdempotency(
     operation: WorkItemAggregationMutationOperation,
-    actorSessionId: string,
+    proof: MutationAuthorityProof,
     key: string,
     fingerprint: string,
     observedAt: string,
   ): WorkItemAggregationDecision | null {
     this.cleanupExpiredIdempotency(observedAt);
+    const principalKey = workItemPrincipalKey(proof);
     const row = this.db.prepare(`SELECT request_fingerprint, child_work_item_id FROM work_item_aggregation_idempotency_v6
-      WHERE operation = ? AND principal_session_id = ? AND idempotency_key = ?`).get(operation, actorSessionId, key) as
+      WHERE operation = ? AND principal_session_id = ? AND idempotency_key = ?`).get(operation, principalKey, key) as
       | { request_fingerprint: string; child_work_item_id: string }
       | undefined;
-    if (!row) return null;
+    if (!row) {
+      const legacy = this.db.prepare(`SELECT child_work_item_id FROM work_item_aggregation_idempotency_v6
+        WHERE operation = ? AND principal_session_id LIKE 'legacy_unknown:%' AND idempotency_key = ? LIMIT 1`)
+        .get(operation, key) as { child_work_item_id: string } | undefined;
+      if (legacy) {
+        throw new WorkItemIdempotencyResponseUnavailableError(operation, key, legacy.child_work_item_id);
+      }
+      return null;
+    }
     if (row.request_fingerprint !== fingerprint) throw new WorkItemIdempotencyConflictError(operation, key);
     return this.getDecision(row.child_work_item_id);
   }
@@ -996,13 +1128,13 @@ export class WorkItemStorageV6 {
       operation, principal_session_id, idempotency_key, request_fingerprint, child_work_item_id,
       replacement_work_item_id, created_at, expires_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(operation, input.actorSessionId, input.idempotencyKey, input.requestFingerprint, childId,
+      .run(operation, workItemPrincipalKey(input.proof), input.idempotencyKey, input.requestFingerprint, childId,
         replacementId, input.decidedAt, input.expiresAt);
   }
 
   private insertIdempotency(
     operation: WorkItemMutationOperation,
-    principalSessionId: string,
+    proof: MutationAuthorityProof,
     idempotencyKey: string,
     requestFingerprint: string,
     workItemId: string,
@@ -1017,7 +1149,7 @@ export class WorkItemStorageV6 {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       operation,
-      principalSessionId,
+      workItemPrincipalKey(proof),
       idempotencyKey,
       requestFingerprint,
       workItemId,
@@ -1145,4 +1277,18 @@ function serializeJson(value: unknown, label: string): string {
   const serialized = JSON.stringify(value);
   if (serialized === undefined) throw new TypeError(`${label} must be JSON serializable.`);
   return serialized;
+}
+
+function workItemOperationId(
+  operation: WorkItemMutationOperation | WorkItemAggregationMutationOperation,
+  proof: MutationAuthorityProof,
+  requestFingerprint: string,
+): string {
+  return `work-item-operation:${operation}:${workItemPrincipalKey(proof)}:${requestFingerprint}`;
+}
+
+function workItemPrincipalKey(proof: MutationAuthorityProof): string {
+  if (proof.principal.kind === "agent") return `agent:${proof.principal.actorSessionId}`;
+  if (proof.principal.kind === "user") return "user:local-user";
+  return `system:${proof.principal.service}`;
 }

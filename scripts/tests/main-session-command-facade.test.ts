@@ -85,17 +85,27 @@ type MainSessionCommandFacadeTestDeps =
 function createMainSessionCommandFacade(
   deps: MainSessionCommandFacadeTestDeps,
 ): MainSessionCommandFacade {
+  const resolveExecutionService = deps.getSessionExecutionService ?? (() => ({
+    async enqueue() { throw new Error("unused"); },
+    getRecord() { throw new Error("unused"); },
+    listRecords() { return []; },
+    async cancel() { throw new Error("unused"); },
+  }) as never);
   return new MainSessionCommandFacade({
     dismissSessionTurnNotification: () => undefined,
     cancelSessionRun: (sessionId) => deps.getSessionRuntimeService().cancelRun(sessionId),
     validateWorkspaceDirectory: async () => ({ valid: true }),
-    getSessionExecutionService: () => ({
-      async enqueue() { throw new Error("unused"); },
-      getRecord() { throw new Error("unused"); },
-      listRecords() { return []; },
-      async cancel() { throw new Error("unused"); },
-    }) as never,
     ...deps,
+    getSessionExecutionService: () => {
+      const service = resolveExecutionService();
+      if (typeof service.getSessionContainerRevision === "function") return service;
+      return new Proxy(service, {
+        get(target, property, receiver) {
+          if (property === "getSessionContainerRevision") return () => 1;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    },
   });
 }
 

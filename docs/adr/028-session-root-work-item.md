@@ -4,6 +4,8 @@
 
 Accepted
 
+Roleとcommunication policyを実効権限の根拠とする判断はADR 029で置き換えた。Root Work Itemの一意性、自己所有、履歴とSession作成の原子性は維持する。
+
 ## Context
 
 `standalone` と `overall-coordinator` のroot Sessionは、委譲先の進行だけでなく、自身の目的、判断、引継ぎ状態を後続Sessionが復元できる形で保持する必要がある。既存のdelegated Work Itemは作成者から対象Sessionへの不変な委任契約であり、root用途の追加でその作成権限やcreator/target関係を緩和してはならない。

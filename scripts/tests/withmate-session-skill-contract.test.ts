@@ -91,6 +91,28 @@ describe("withmate-session managed Skill contract", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "managed guidanceはlive grantとbaseline templateを区別しrevision付きmutationとuser-only回答拒否を案内する"
+  // oracle = { type = "contract", ref = "AUTONOMY-USER-01/AUTONOMY-GRANT-02/AUTONOMY-MUTATION-05" }
+  // failure_mode = "AgentがRole templateをcurrent authorityと誤認するかstale mutationまたはuser receipt偽装を試みる"
+  // scope = "withmate-session-managed-skill-authority-revision"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("shared authority、revision、user decision境界を配布Skillへ同期する", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const contract = `${skill}\n${operations}`;
+
+    assert.match(contract, /authority\.operations[\s\S]*not as proof that the current actor holds a grant/i);
+    assert.match(contract, /baselineChildSessionRoleTemplates[\s\S]*grant issuance templates/i);
+    assert.match(contract, /session\.self\.revision[\s\S]*expectedContainerRevision/);
+    assert.match(contract, /event summary's current `revision` as `expectedRevision`/);
+    assert.match(contract, /interaction[\s\S]*`decisionClass`[\s\S]*`expectedRevision`/i);
+    assert.match(contract, /provider approval and elicitation[\s\S]*`user_only`[\s\S]*trusted GUI/i);
+    assert.match(contract, /principalKind[\s\S]*provenance/i);
+  });
+
   it("DECOMP-POLICY-01: no-split、直属executor、task coordinatorの選択基準を案内する", async () => {
     const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
 

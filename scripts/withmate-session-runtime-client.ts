@@ -34,12 +34,16 @@ import {
 import { selectRuntimeDiscoveryRecord } from "../src/runtime-discovery/runtime-discovery-selector.js";
 import type {
   SessionRuntimeAdapterKind,
+  SessionRuntimeError,
+  SessionRuntimeOperation,
   SessionRuntimeRequestEnvelope,
+  SessionRuntimeResultEnvelope,
 } from "../src/session-external-runtime-contract.js";
 import {
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   assertSessionRuntimeRequestBodySize,
 } from "../src/session-external-runtime-contract.js";
+import { parseSessionRuntimeResponseEnvelope } from "../src/session-external-runtime-schema.js";
 
 export type SessionRuntimeConnection = {
   adapter: SessionRuntimeAdapterKind;
@@ -51,11 +55,11 @@ export type SessionRuntimeConnection = {
   agentRuntimeBindingReference?: string;
 };
 
-export type SessionRuntimeClientResponse = {
-  ok: boolean;
-  status: number;
-  value: unknown;
-};
+export type SessionRuntimeClientResponse<O extends SessionRuntimeOperation = SessionRuntimeOperation> =
+  | { ok: true; status: number; value: SessionRuntimeResultEnvelope<O> }
+  | { ok: false; status: number; value: SessionRuntimeError };
+
+type RawHttpResponse = { ok: boolean; status: number; value: unknown };
 
 export class SessionRuntimeClientError extends Error {
   readonly dispatched: boolean;
@@ -226,7 +230,7 @@ export async function callSessionRuntime(
   connection: SessionRuntimeConnection,
   envelope: SessionRuntimeRequestEnvelope,
   signal: AbortSignal,
-): Promise<SessionRuntimeClientResponse> {
+): Promise<SessionRuntimeClientResponse<typeof envelope.operation>> {
   const nonce = randomBytes(16).toString("base64url");
   const body = JSON.stringify({
     schemaVersion: SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
@@ -240,7 +244,21 @@ export async function callSessionRuntime(
   });
   assertSessionRuntimeRequestBodySize(Buffer.byteLength(body, "utf8"));
   const url = new URL(SESSION_RUNTIME_OPERATION_PATH, connection.baseUrl);
-  return requestAuthenticatedJson(url, connection, nonce, body, signal);
+  return requestAuthenticatedJson(url, connection, nonce, body, envelope.operation, signal);
+}
+
+export function validateSessionRuntimeClientResponse<O extends SessionRuntimeOperation>(
+  operation: O,
+  response: RawHttpResponse,
+): SessionRuntimeClientResponse<O> {
+  const value = parseSessionRuntimeResponseEnvelope(operation, response.value);
+  const isError = "error" in value;
+  if (response.ok === isError) {
+    throw new TypeError("Session runtime response kind does not match its HTTP status.");
+  }
+  return isError
+    ? { ok: false, status: response.status, value }
+    : { ok: true, status: response.status, value };
 }
 
 function requestAuthenticatedJson(
@@ -248,6 +266,7 @@ function requestAuthenticatedJson(
   connection: SessionRuntimeConnection,
   nonce: string,
   body: string,
+  operation: SessionRuntimeOperation,
   signal: AbortSignal,
 ): Promise<SessionRuntimeClientResponse> {
   return new Promise((resolve, reject) => {
@@ -282,12 +301,20 @@ function requestAuthenticatedJson(
       void readJsonResponse(response).then(
         (value) => {
           if (settled) return;
-          settled = true;
-          resolve({
+          const raw = {
             ok: response.statusCode !== undefined && response.statusCode >= 200 && response.statusCode < 300,
             status: response.statusCode ?? 0,
             value,
-          });
+          };
+          try {
+            const validated = validateSessionRuntimeClientResponse(operation, raw);
+            settled = true;
+            resolve(validated);
+          } catch (error) {
+            response.destroy();
+            request.destroy();
+            fail("Session runtime returned an invalid public response.", error);
+          }
         },
         (error: Error) => {
           response.destroy();
@@ -334,7 +361,7 @@ function requestAuthenticatedJson(
 function requestJson(
   url: URL,
   options: { method: "GET" | "POST"; headers: Record<string, string>; body?: string; signal: AbortSignal },
-): Promise<SessionRuntimeClientResponse> {
+): Promise<RawHttpResponse> {
   return new Promise((resolve, reject) => {
     let dispatched = false;
     const request = httpRequest({

@@ -13,6 +13,10 @@
 
 Role は grant 作成時の template だけを提供し、認可時は保存済み active grant を評価する。Role の変更だけで既存 grant を暗黙に増減させない。
 
+## Slice 1 と budget の段階導入
+
+2026-09-05 のユーザー承認により、以下の budget allocation と admission の記述は Slice 2 接続後の契約とする。Slice 1 では既存の操作別上限を維持し、runtime catalog に root budget 未実装を明示する。budget の評価成功を返す代用品、無制限値、架空の allocation reference は追加しない。grant の action、scope、有効期間、effect class の縮小と既存操作の authority cutover は Slice 1 で完了する。
+
 ## Principal と authority
 
 principal は少なくとも次を区別する。
@@ -61,9 +65,9 @@ effect-bearing operationは一つの形へ押し込まず、次の三つへ分�
 
 1. runtime binding と principal を解決する。
 2. canonical container、target resource、またはoperation identityとcurrent revisionを取得する。
-3. active grant と budget を評価する。
+3. actor と、通知先など同じmutationへ保存する副次targetのactive grantを評価する。Slice 2 接続後は budget reserve も成功してから進む。Slice 1 では前節の段階導入契約に従う。
 4. operation 固有不変条件を検証する。
-5. create／existing mutationはtransaction内でprojection、event、idempotency resultを保存する。sagaはoperation revision、完了step、committed manifest、次のrecovery stateを各stepのtransactionで保存する。
+5. create／existing mutationはtransaction内でactorと副次targetのgrant revisionを再検証し、projection、event、idempotency resultを保存する。sagaはoperation revision、完了step、committed manifest、次のrecovery stateを各stepのtransactionで保存する。
 6. commit 後に publication を行う。
 7. response loss 時は同じ key と payload で replay する。
 
@@ -83,6 +87,14 @@ resource event は共通 header と resource 固有 payload を持つ。
 - payload schema revision
 
 訂正は旧 event を削除せず、新 event の `supersedes` で表す。current projection は active event chain から構成できなければならない。
+
+Session と execution の event payload schema revision 2 は、各 revision 適用後の canonical projection snapshot を保持する。Session は durable Session row、execution は request、result、error、authority proof、Work Item association を含む。Work Item、aggregation、interaction、Coordination、file write、transcript exportもresource固有eventからcurrent projectionまたはidempotency resultを再生できなければならない。Work Item typed eventはheaderと独立にprincipal kindを保持し、actorとgrant provenanceの照合元にする。Coordination eventも作成時principal kindをtyped projectionへ保持し、作成headerのprincipalとactorを照合する。file writeとtranscript exportは、session、path、principal、request fingerprintから導出するoperation identity、terminal resultまたはerrorをeventから再構成し、retry ledgerと一致させる。
+
+startup verifierは全resourceについてtyped eventと共通headerの一対一対応を確認し、resource ID、root、owner、event kind、revision、principal、actor、根拠grant、supersedes、payload schema revision、effectを照合する。agent headerのgrant revisionは正数であるだけでなく、同じgrant IDとrevisionのgrant eventが存在しなければならない。その後、revision順にeventを再生した結果とcurrent projectionまたはledgerを比較する。interactionはmigration baselineからcurrent revisionまでの連続性とsupersedes参照先も検証する。revision数またはheaderのschema revisionだけが一致してもmigration完了と扱わない。
+
+legacy projectionからtyped eventとheaderを生成するbackfillは、`app_settings`のresource history migration markerがない初回migrationに限る。markerはtracked resourceが存在し、全backfillとstartup verifierが同一transactionで成功した後に記録する。marker記録後のstartupは欠落eventやheaderを再生成せず、履歴破損としてfail closedにする。
+
+payload 上限は resource 固有の入力上限から導出する。Session は runtime body 上限に envelope 分を加え、execution は request と response の両上限に envelope 分を加える。上限超過を payload の切り捨てや一部 projection への置換で成功扱いにしない。
 
 ## 必要な schema と service
 
@@ -104,12 +116,16 @@ baseline active grantのmigrationとRole authority ceilingの無効化は、同�
 
 migrationは既存Sessionのcurrent Roleと現行operation contractから、移行前に実際に許可されていた範囲だけをbaseline active grantとして生成する。新しいroot construction、cross-root、delete、外部副作用などの能力を推測して加えない。baseline eventへ旧Role binding、mapping revision、生成根拠を保存する。
 
+mapping revisionごとに、baseline由来の各grantをRole templateの完全一致として照合する。action、resource kind、relation、effect class、target Role、委譲可否、child ceilingの不足と過剰をどちらも拒否し、通常のdelegated grantとは別に検証する。Work Itemの非root一覧はcreatorまたはtargetの和集合、取得はassignedとcreatedを別grantとして表し、同一rootの無関係なWork Itemを公開しない。
+
+baseline migrationの完了判定は、対象Roleとmapping revisionのbaseline eventが作成済みであることを根拠にする。利用者が正規にrevokeしたbaseline grantは再生成せず、active grant不足をmigration未完了へ読み替えない。起動後のmutation可否は、その時点のactive grant評価で独立に判定する。
+
 startupはschema migration、grant backfill、mapping verifierが成功してからAgent-facing application serviceを開始する。cutover後は全operationをgrant evaluatorへ通し、Role fallbackを残さない。失敗時はserviceを開始せず`migration_required`とrepair対象を返す。slice 10は残存Role分岐の削除、default template、表示、Skillの整理だけを行い、authority cutoverを延期しない。
 
 ## Failure timing
 
 - grant evaluation前に mutation用resourceを作成しない。
-- grant revokeとmutation commitが競合した場合は、同じtransactionで参照したgrant revisionを記録する。
+- grant revokeとmutation commitが競合した場合は、actorと保存対象の副次targetについて同じtransactionでgrantを再検証し、参照したgrant revisionを記録する。
 - commit後publication failureは `effect: committed` とresource ID、revisionを返す。
 - timeout後の別payload再送は idempotency conflict とする。
 - owner削除後もretention中のevent、idempotency、remote cleanupに必要なidentityを保持する。
@@ -125,9 +141,9 @@ startupはschema migration、grant backfill、mapping verifierが成功してか
 - actor、owner、root、issuerのspoof fieldをraw adapterから受理しない。
 - createとexisting-resource mutationでprojection、event、idempotency resultがfailure injectionによって部分保存されない。
 - sagaの各failure pointでoperation revision、committed manifest、effect certainty、recovery stateが一致する。
-- event replay結果とcurrent projectionが一致する。
+- typed eventと共通headerが一対一で対応し、全resourceのevent replay結果がcurrent projectionまたはidempotency ledgerと一致する。
 - 同一key replayと別payload conflictを全resource共通contractで検証する。
-- populated databaseのbaseline grant backfillと既存全operation mappingを検証し、未分類operation、過大grant、Role fallbackを拒否する。
+- populated databaseのbaseline grant backfillと既存全operation mappingを検証し、未分類operation、過大grant、Role fallbackを拒否する。正規にrevokeしたbaseline grantの再生成やmigration failureも拒否する。
 
 ## Review lens
 

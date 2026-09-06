@@ -44,6 +44,11 @@ import { SessionTurnValidationError } from "./session-turn-validation-error.js";
 import type { SessionTerminalFailureNotificationEnqueueResult } from "./session-terminal-failure-notification-service.js";
 import type { TurnInitiator } from "../src/session-execution.js";
 import type { SessionRuntimeTerminalFailureNotificationProjection } from "../src/session-external-runtime-contract.js";
+import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  type MutationAuthorityProof,
+  type SessionAuthorityPrincipal,
+} from "../src/session-authority.js";
 
 type MainSessionCommandFacadeDeps = {
   getSession(sessionId: string): Session | null;
@@ -227,6 +232,22 @@ export class MainSessionCommandFacade {
     sessionId: string,
     request: RunSessionTurnRequest,
   ): Promise<EnqueueSessionTurnResult> {
+    return this.enqueueSessionTurnWithProof(
+      sessionId,
+      request,
+      trustedExecutionProof({
+        principal: { kind: "user", receiptId: "main-session-command" },
+        operation: "turn.enqueue",
+        sessionId,
+      }),
+    );
+  }
+
+  private async enqueueSessionTurnWithProof(
+    sessionId: string,
+    request: RunSessionTurnRequest,
+    proof: MutationAuthorityProof,
+  ): Promise<EnqueueSessionTurnResult> {
     const clientRequestId = request.clientRequestId?.trim() ?? "";
     if (!clientRequestId) {
       return admissionFailure("INVALID_INPUT", "送信要求の識別子が不足しています。", false);
@@ -245,7 +266,10 @@ export class MainSessionCommandFacade {
       turn: { ...request, clientRequestId },
     };
     try {
-      const execution = await this.deps.getSessionExecutionService().enqueue({
+      const executionService = this.deps.getSessionExecutionService();
+      const execution = await executionService.enqueue({
+        proof,
+        expectedContainerRevision: () => executionService.getSessionContainerRevision(sessionId),
         sessionId,
         request: executionRequest,
         idempotencyKey: clientRequestId,
@@ -279,8 +303,15 @@ export class MainSessionCommandFacade {
       initiator: { kind: "user" as const },
       turn: { ...request, clientRequestId },
     };
+    const proof = trustedExecutionProof({
+      principal: { kind: "system", service: "session-scheduler" },
+      operation: "turn.enqueue",
+      sessionId,
+    });
     const executionService = this.deps.getSessionExecutionService();
     const replay = executionService.resolveReplay("turn.enqueue", {
+      proof,
+      expectedContainerRevision: executionService.getSessionContainerRevision(sessionId),
       sessionId,
       request: executionRequest,
       idempotencyKey: clientRequestId,
@@ -312,7 +343,11 @@ export class MainSessionCommandFacade {
       if (mapped) return { ok: false, error: mapped };
       throw error;
     }
-    return this.enqueueSessionTurn(sessionId, request);
+    return this.enqueueSessionTurnWithProof(
+      sessionId,
+      request,
+      proof,
+    );
   }
 
   async enqueueTerminalFailureNotificationTurn(input: {
@@ -327,10 +362,17 @@ export class MainSessionCommandFacade {
       initiator: input.initiator,
       prompt: input.prompt,
     });
+    const proof = trustedExecutionProof({
+      principal: { kind: "system", service: "terminal-failure-notification" },
+      operation: "turn.enqueue",
+      sessionId: input.targetSessionId,
+    });
     const executionService = this.deps.getSessionExecutionService();
     let replay: ReturnType<SessionExecutionService["resolveReplay"]>;
     try {
       replay = executionService.resolveReplay("turn.enqueue", {
+        proof,
+        expectedContainerRevision: () => executionService.getSessionContainerRevision(input.targetSessionId),
         sessionId: input.targetSessionId,
         request: {},
         idempotencyKey: input.idempotencyKey,
@@ -373,6 +415,8 @@ export class MainSessionCommandFacade {
         session.provider,
       );
       const execution = await executionService.enqueue({
+        proof,
+        expectedContainerRevision: () => executionService.getSessionContainerRevision(input.targetSessionId),
         sessionId: input.targetSessionId,
         request: {
           initiator: input.initiator,
@@ -416,7 +460,14 @@ export class MainSessionCommandFacade {
         );
       }
       await this.deps.getSessionExecutionService().cancel({
+        proof: trustedExecutionProof({
+          principal: { kind: "user", receiptId: "main-session-command" },
+          operation: "turn.cancel",
+          sessionId,
+          resourceId: request.executionId,
+        }),
         sessionId,
+        expectedRevision: execution.revision,
         executionId: request.executionId,
         idempotencyKey: request.clientRequestId,
         requestFingerprint: fingerprintGuiCancel(sessionId, request),
@@ -446,6 +497,32 @@ export class MainSessionCommandFacade {
       await this.deps.cleanupSessionFilesDirectory?.(sessionId);
     }
   }
+}
+
+function trustedExecutionProof(input: {
+  principal: Extract<SessionAuthorityPrincipal, { kind: "user" | "system" }>;
+  operation: "turn.enqueue" | "turn.cancel";
+  sessionId: string;
+  resourceId?: string;
+}): MutationAuthorityProof {
+  return {
+    principal: input.principal,
+    operation: input.operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: input.operation,
+    resolvedScope: {
+      resourceKind: "execution",
+      resourceId: input.resourceId ?? null,
+      rootSessionId: input.sessionId,
+      ownerKind: "session",
+      ownerId: input.sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: new Date().toISOString(),
+  };
 }
 
 function projectSessionInboundExecutions(

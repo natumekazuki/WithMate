@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 
 import {
   cloneHomeSessionSummaries,
@@ -27,6 +28,10 @@ import {
 } from "../src/session-role-binding.js";
 import type { SessionTurnAuthoritySession } from "../src/session-turn-communication-authority.js";
 import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  type MutationAuthorityProof,
+} from "../src/session-authority.js";
+import {
   assertWorkItemEventPayloadWithinLimit,
   type WorkItemCreatedEventPayload,
 } from "../src/work-item.js";
@@ -46,9 +51,22 @@ import {
   registerSessionProviderIdNormalizer,
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
 } from "./session-provider-id-sql.js";
-import { deleteAuditEventsForSessionTargets } from "./audit-log-storage-v6.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import {
+  appendSessionFileSagaEvent,
+  appendSessionResourceEvent,
+  appendWorkItemEventHeader,
+  claimSessionContainerRevision,
+  createSagaOperationId,
+  getSessionResourceRevision as readSessionResourceRevision,
+  SessionResourceRevisionConflictError,
+} from "./resource-history-schema.js";
+import {
+  assertGrantProofCurrent,
+  createDelegatedChildAuthority,
+  ensureBaselineSessionAuthority,
+} from "./session-authority-storage.js";
 import {
   SessionIdCollisionError,
   SessionRunningTurnStartConflictError,
@@ -282,6 +300,7 @@ type SessionRoleBindingRow = {
 };
 
 type SessionFileWriteIdempotencyRow = {
+  operation_id: string;
   request_fingerprint: string;
   session_id: string;
   relative_path: string;
@@ -293,6 +312,7 @@ type SessionFileWriteIdempotencyRow = {
   file_inode: string | null;
   target_precondition_json: string | null;
   result_json: string | null;
+  authority_proof_json: string | null;
 };
 
 export type SessionFileWritePreparedProof = {
@@ -318,6 +338,16 @@ export class SessionCrudIdempotencyConflictError extends Error {
   constructor() {
     super("The idempotency key was already used with different input.");
     this.name = "SessionCrudIdempotencyConflictError";
+  }
+}
+
+export class SessionCrudIdempotencyResponseUnavailableError extends Error {
+  readonly code = "IDEMPOTENCY_RESPONSE_UNAVAILABLE";
+  readonly effect = "applied" as const;
+
+  constructor(readonly operation: SessionCrudOperation, readonly idempotencyKey: string) {
+    super(`The original Session mutation response is unavailable after migration: ${operation}`);
+    this.name = "SessionCrudIdempotencyResponseUnavailableError";
   }
 }
 
@@ -353,6 +383,17 @@ export class SessionFileWriteIdempotencyConflictError extends Error {
     this.name = "SessionFileWriteIdempotencyConflictError";
   }
 }
+
+export class SessionFileWriteIdempotencyResponseUnavailableError extends Error {
+  readonly code = "IDEMPOTENCY_RESPONSE_UNAVAILABLE";
+  readonly effect: "applied" | "indeterminate";
+
+  constructor(readonly idempotencyKey: string, readonly state: "pending" | "applied" | "rejected") {
+    super("The original Session file write response is unavailable after migration.");
+    this.name = "SessionFileWriteIdempotencyResponseUnavailableError";
+    this.effect = state === "applied" ? "applied" : "indeterminate";
+  }
+}
 type DecodedSessionV6RuntimeState = {
   runtimePolicy: Record<string, unknown>;
   characterId: string;
@@ -360,8 +401,6 @@ type DecodedSessionV6RuntimeState = {
   threadId: string;
 };
 
-const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
-const COMPANION_SESSIONS_TABLE_NAME = "companion_sessions";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -529,6 +568,7 @@ export class SessionStorageV6 {
         b.delegation_depth AS role_delegation_depth
       FROM sessions_v6
       LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
+      WHERE sessions_v6.deleted_at IS NULL
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6Row[];
     return cloneSessions(rows.map((row) => this.rowToSession(row)));
@@ -538,6 +578,7 @@ export class SessionStorageV6 {
     const rows = this.db.prepare(`
       SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
+      WHERE deleted_at IS NULL
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6SummaryRow[];
     return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummaryProjection(row)));
@@ -549,7 +590,7 @@ export class SessionStorageV6 {
     const rows = this.db.prepare(`
       SELECT s.id AS session_id, s.title AS task_title
       FROM json_each(?) AS requested
-      INNER JOIN sessions_v6 AS s ON s.id = requested.value
+      INNER JOIN sessions_v6 AS s ON s.id = requested.value AND s.deleted_at IS NULL
       ORDER BY requested.key ASC
     `).all(JSON.stringify(normalizedIds)) as RelatedSessionSummaryRow[];
     return rows.map((row) => ({ sessionId: row.session_id, taskTitle: row.task_title }));
@@ -562,7 +603,7 @@ export class SessionStorageV6 {
              b.parent_session_id, b.delegation_depth
       FROM sessions_v6 AS s
       INNER JOIN session_role_bindings_v6 AS b ON b.session_id = s.id
-      WHERE s.id = ?
+      WHERE s.id = ? AND s.deleted_at IS NULL
     `).get(sessionId.trim()) as SessionTurnAuthorityRow | undefined;
     if (!row) return null;
     return {
@@ -590,7 +631,7 @@ export class SessionStorageV6 {
       : decodeSessionSummaryCursor(parsed.cursor, parsed.scope, parsed.searchText);
     const search = buildSessionSummarySearchClause("s", parsed.searchText);
     const keyset = buildSessionSummaryKeysetClause("s", cursor);
-    const where: string[] = [];
+    const where: string[] = ["s.deleted_at IS NULL"];
     const params: string[] = [];
 
     if (parsed.scope === "pinned") {
@@ -650,11 +691,13 @@ export class SessionStorageV6 {
       SELECT ${characterIdExpression} AS character_id
       FROM sessions_v6 AS s
       WHERE s.session_kind = 'default'
+        AND s.deleted_at IS NULL
         AND ${characterIdExpression} IS NOT NULL
         AND NOT EXISTS (
           SELECT 1
           FROM sessions_v6 AS newer
           WHERE newer.session_kind = 'default'
+            AND newer.deleted_at IS NULL
             AND ${newerCharacterIdExpression} = ${characterIdExpression}
             AND (
               newer.last_active_at > s.last_active_at
@@ -678,7 +721,8 @@ export class SessionStorageV6 {
     const row = this.db.prepare(`
       SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
-      WHERE ${SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION}(provider_id) = ?
+      WHERE deleted_at IS NULL
+        AND ${SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION}(provider_id) = ?
       ORDER BY last_active_at DESC, id DESC
       LIMIT 1
     `).get(normalizeProviderId(normalizedProviderId)) as SessionV6SummaryRow | undefined;
@@ -695,7 +739,7 @@ export class SessionStorageV6 {
         b.delegation_depth AS role_delegation_depth
       FROM sessions_v6
       LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
-      WHERE sessions_v6.id = ?
+      WHERE sessions_v6.id = ? AND sessions_v6.deleted_at IS NULL
     `).get(sessionId) as SessionV6Row | undefined;
     return row ? this.rowToSession(row) : null;
   }
@@ -704,16 +748,27 @@ export class SessionStorageV6 {
     const row = this.db.prepare(`
       SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
-      WHERE id = ?
+      WHERE id = ? AND deleted_at IS NULL
     `).get(sessionId) as SessionV6SummaryRow | undefined;
     return row ? this.rowToSessionSummaryProjection(row) : null;
   }
 
+  getSessionResourceRevision(sessionId: string): number | null {
+    return readSessionResourceRevision(this.db, sessionId);
+  }
+
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult;
-  listSessionSummaryPage(limit: number, position?: SessionSummaryPagePosition): SessionSummaryPageEntry[];
+  listSessionSummaryPage(
+    limit: number,
+    position?: SessionSummaryPagePosition,
+    rootSessionId?: string,
+    sessionId?: string,
+  ): SessionSummaryPageEntry[];
   listSessionSummaryPage(
     requestOrLimit?: SessionSummaryPageRequest | null | number,
     position?: SessionSummaryPagePosition,
+    rootSessionId?: string,
+    sessionId?: string,
   ): HomeSessionSummaryPageResult | SessionSummaryPageEntry[] {
     if (typeof requestOrLimit !== "number") {
       return this.queryHomeSessionSummaryPage(requestOrLimit);
@@ -724,17 +779,38 @@ export class SessionStorageV6 {
           SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
           FROM sessions_v6
           WHERE session_kind = 'default'
+            AND deleted_at IS NULL
+            AND (? IS NULL OR EXISTS (
+              SELECT 1 FROM session_role_bindings_v6 AS root_scope
+              WHERE root_scope.session_id = sessions_v6.id AND root_scope.root_session_id = ?
+            ))
+            AND (? IS NULL OR sessions_v6.id = ?)
             AND (last_active_at < ? OR (last_active_at = ? AND id < ?))
           ORDER BY last_active_at DESC, id DESC
           LIMIT ?
-        `).all(position.lastActiveAt, position.lastActiveAt, position.sessionId, limit)
+        `).all(
+          rootSessionId ?? null,
+          rootSessionId ?? null,
+          sessionId ?? null,
+          sessionId ?? null,
+          position.lastActiveAt,
+          position.lastActiveAt,
+          position.sessionId,
+          limit,
+        )
       : this.db.prepare(`
           SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
           FROM sessions_v6
           WHERE session_kind = 'default'
+            AND deleted_at IS NULL
+            AND (? IS NULL OR EXISTS (
+              SELECT 1 FROM session_role_bindings_v6 AS root_scope
+              WHERE root_scope.session_id = sessions_v6.id AND root_scope.root_session_id = ?
+            ))
+            AND (? IS NULL OR sessions_v6.id = ?)
           ORDER BY last_active_at DESC, id DESC
           LIMIT ?
-        `).all(limit)) as SessionV6SummaryRow[];
+        `).all(rootSessionId ?? null, rootSessionId ?? null, sessionId ?? null, sessionId ?? null, limit)) as SessionV6SummaryRow[];
     return rows.map((row) => ({
       summary: this.rowToSessionSummaryProjection(row),
       lastActiveAt: row.last_active_at,
@@ -743,7 +819,7 @@ export class SessionStorageV6 {
 
   resolveSessionCrudIdempotency(
     operation: SessionCrudOperation,
-    principalSessionId: string,
+    proof: MutationAuthorityProof,
     idempotencyKey: string,
     resolveExpectedFingerprint: string | ((result: unknown) => string),
     nowIso: string,
@@ -751,14 +827,20 @@ export class SessionStorageV6 {
     this.cleanupSessionCrudIdempotency(nowIso);
     return this.resolveSessionCrudIdempotencyWithoutCleanup(
       operation,
-      principalSessionId,
+      sessionPrincipalKey(proof),
       idempotencyKey,
       resolveExpectedFingerprint,
     );
   }
 
   getSessionRoleBinding(sessionId: string): SessionRoleBinding | null {
-    const row = this.findSessionRoleBindingRow(sessionId);
+    const row = this.db.prepare(`
+      SELECT binding.session_role, binding.role_contract_revision, binding.root_session_id,
+             binding.parent_session_id, binding.delegation_depth
+      FROM session_role_bindings_v6 AS binding
+      INNER JOIN sessions_v6 AS session ON session.id = binding.session_id
+      WHERE binding.session_id = ? AND session.deleted_at IS NULL
+    `).get(sessionId) as SessionRoleBindingRow | undefined;
     return row ? decodeSessionRoleBinding(sessionId, row) : null;
   }
 
@@ -767,9 +849,11 @@ export class SessionStorageV6 {
     if (uniqueSessionIds.length === 0) return new Set();
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
     const rows = this.db.prepare(`
-      SELECT DISTINCT parent_session_id AS id
-      FROM session_role_bindings_v6
-      WHERE parent_session_id IN (${placeholders})
+      SELECT DISTINCT binding.parent_session_id AS id
+      FROM session_role_bindings_v6 AS binding
+      INNER JOIN sessions_v6 AS child ON child.id = binding.session_id
+      WHERE binding.parent_session_id IN (${placeholders})
+        AND child.deleted_at IS NULL
     `).all(...uniqueSessionIds) as SessionIdRow[];
     return new Set(rows.map((row) => row.id));
   }
@@ -783,6 +867,8 @@ export class SessionStorageV6 {
       requestFingerprint: string;
       createdAt: string;
       expiresAt: string;
+      expectedContainerRevision: number;
+      proof: MutationAuthorityProof;
       projectResult(session: Session): unknown;
       resolveReplayFingerprint(result: unknown): string;
     },
@@ -792,7 +878,7 @@ export class SessionStorageV6 {
     try {
       const replay = this.resolveSessionCrudIdempotencyWithoutCleanup(
         input.operation,
-        input.principalSessionId,
+        sessionPrincipalKey(input.proof),
         input.idempotencyKey,
         input.resolveReplayFingerprint,
       );
@@ -805,7 +891,58 @@ export class SessionStorageV6 {
         return { session: stored, result: replay.result, replayed: true };
       }
 
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
+      const currentContainerRevision = readSessionResourceRevision(this.db, input.principalSessionId);
+      if (currentContainerRevision === null) {
+        throw new Error(`Session container was not found: ${input.principalSessionId}`);
+      }
+      if (currentContainerRevision !== input.expectedContainerRevision) {
+        throw new SessionResourceRevisionConflictError(
+          input.principalSessionId,
+          input.expectedContainerRevision,
+          currentContainerRevision,
+        );
+      }
+
       this.writeSession(normalized, "create");
+      if (input.proof.principal.kind === "agent") {
+        createDelegatedChildAuthority(this.db, {
+          parentProof: input.proof,
+          childSessionId: normalized.id,
+          operationId: sessionOperationId(input.operation, input.proof, input.requestFingerprint),
+          createdAt: input.createdAt,
+        });
+      } else {
+        ensureBaselineSessionAuthority(this.db, normalized.id, input.createdAt);
+      }
+      appendSessionResourceEvent(this.db, {
+        sessionId: normalized.id,
+        revision: 1,
+        eventKind: "created",
+        proof: input.proof,
+        operationId: sessionOperationId(input.operation, input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.createdAt,
+        payload: {
+          title: normalized.taskTitle,
+          state: toV6State(normalized),
+          sessionKind: normalized.sessionKind,
+          providerId: normalized.provider,
+          modelId: normalized.model,
+          workspacePath: normalized.workspacePath,
+          updatedAt: normalized.updatedAt,
+        },
+      });
+      claimSessionContainerRevision(this.db, {
+        sessionId: input.principalSessionId,
+        expectedRevision: input.expectedContainerRevision,
+        eventKind: "child_created",
+        proof: input.proof,
+        operationId: sessionOperationId(input.operation, input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.createdAt,
+        payload: { childSessionId: normalized.id },
+      });
       const stored = this.getSession(normalized.id) ?? normalized;
       const result = input.projectResult(stored);
       this.insertSessionCrudIdempotency(input, stored.id, result);
@@ -818,10 +955,12 @@ export class SessionStorageV6 {
   }
 
   renameSessionIdempotently(input: {
-      operation: "session.rename";
+    operation: "session.rename";
     principalSessionId?: string;
     sessionId: string;
     title: string;
+    expectedRevision: number;
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     createdAt: string;
@@ -832,7 +971,7 @@ export class SessionStorageV6 {
     try {
       const replay = this.resolveSessionCrudIdempotencyWithoutCleanup(
         input.operation,
-        input.principalSessionId ?? "",
+        sessionPrincipalKey(input.proof),
         input.idempotencyKey,
         input.requestFingerprint,
       );
@@ -845,16 +984,33 @@ export class SessionStorageV6 {
         return { session: stored, result: replay.result, replayed: true };
       }
 
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
+
       const current = this.getSessionSummary(input.sessionId);
       if (!current || current.sessionKind !== "default") {
         this.db.exec("COMMIT");
         return null;
       }
-      this.db.prepare(`
+      const changed = this.db.prepare(`
         UPDATE sessions_v6
-        SET title = ?, updated_at = ?
-        WHERE id = ? AND session_kind = 'default'
-      `).run(input.title, input.createdAt, input.sessionId);
+        SET title = ?, updated_at = ?, resource_revision = resource_revision + 1
+        WHERE id = ? AND deleted_at IS NULL AND session_kind = 'default' AND resource_revision = ?
+      `).run(input.title, input.createdAt, input.sessionId, input.expectedRevision);
+      const actualRevision = readSessionResourceRevision(this.db, input.sessionId);
+      if (changed.changes !== 1 || actualRevision !== input.expectedRevision + 1) {
+        if (actualRevision === null) return null;
+        throw new SessionResourceRevisionConflictError(input.sessionId, input.expectedRevision, actualRevision);
+      }
+      appendSessionResourceEvent(this.db, {
+        sessionId: input.sessionId,
+        revision: actualRevision,
+        eventKind: "renamed",
+        proof: input.proof,
+        operationId: sessionOperationId(input.operation, input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.createdAt,
+        payload: { beforeTitle: current.taskTitle, title: input.title, updatedAt: input.createdAt },
+      });
       const stored = this.getSessionSummary(input.sessionId);
       if (!stored) {
         throw new Error("Renamed Session could not be read back.");
@@ -885,21 +1041,30 @@ export class SessionStorageV6 {
     tempName: string;
     createdAt: string;
     expiresAt: string;
+    proof: MutationAuthorityProof;
   }): SessionFileWriteReplayResult {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.cleanupAppliedSessionFileWriteIdempotency(input.createdAt);
-      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      const existing = this.findSessionFileWriteIdempotency(input.proof, input.idempotencyKey);
       if (existing) {
         const resolved = resolveSessionFileWriteIdempotency(existing, input.requestFingerprint);
         this.db.exec("COMMIT");
         return resolved;
       }
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
+      const principal = mutationPrincipalIdentity(input.proof);
+      const operationId = createSagaOperationId(
+        "session-file-write",
+        `${principal.kind}:${principal.id}:${input.idempotencyKey}`,
+        input.requestFingerprint,
+      ) + `:${randomUUID()}`;
       this.db.prepare(`
         INSERT INTO session_file_write_idempotency_v6 (
           operation, idempotency_key, request_fingerprint, session_id, relative_path,
-          temp_name, state, result_json, created_at, expires_at
-        ) VALUES ('session.files.write_text', ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+          temp_name, state, result_json, created_at, expires_at, authority_proof_json, operation_id,
+          principal_kind, principal_id
+        ) VALUES ('session.files.write_text', ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?, ?, ?)
       `).run(
         input.idempotencyKey,
         input.requestFingerprint,
@@ -908,7 +1073,24 @@ export class SessionStorageV6 {
         input.tempName,
         input.createdAt,
         input.expiresAt,
+        JSON.stringify(input.proof),
+        operationId,
+        principal.kind,
+        principal.id,
       );
+      appendSessionFileSagaEvent(this.db, {
+        table: "session_file_write_events_v6",
+        resourceKind: "session_files",
+        operationId,
+        sessionId: input.sessionId,
+        revision: 1,
+        eventKind: "prepared",
+        proof: input.proof,
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.createdAt,
+        effect: "none",
+        payload: { relativePath: input.relativePath, tempName: input.tempName },
+      });
       this.db.exec("COMMIT");
       return {
         kind: "pending",
@@ -925,13 +1107,14 @@ export class SessionStorageV6 {
   }
 
   recordPreparedSessionFileWrite(input: {
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     prepared: SessionFileWritePreparedProof;
   }): void {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      const existing = this.findSessionFileWriteIdempotency(input.proof, input.idempotencyKey);
       if (!existing) throw new Error("Prepared Session file write idempotency record is missing.");
       const resolved = resolveSessionFileWriteIdempotency(existing, input.requestFingerprint);
       if (resolved.kind !== "pending") {
@@ -941,16 +1124,20 @@ export class SessionStorageV6 {
       if (resolved.prepared && !samePreparedProof(resolved.prepared, input.prepared)) {
         throw new Error("Pending Session file write proof changed between retries.");
       }
+      const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         UPDATE session_file_write_idempotency_v6
         SET output_sha256 = ?, byte_length = ?, file_device = ?, file_inode = ?, target_precondition_json = ?
-        WHERE operation = 'session.files.write_text' AND idempotency_key = ? AND state = 'pending'
+        WHERE operation = 'session.files.write_text'
+          AND principal_kind = ? AND principal_id = ? AND idempotency_key = ? AND state = 'pending'
       `).run(
         input.prepared.sha256,
         input.prepared.byteLength,
         input.prepared.device,
         input.prepared.inode,
         JSON.stringify(input.prepared.targetPrecondition),
+        principal.kind,
+        principal.id,
         input.idempotencyKey,
       );
       this.db.exec("COMMIT");
@@ -961,6 +1148,7 @@ export class SessionStorageV6 {
   }
 
   completeSessionFileWrite(input: {
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     prepared: SessionFileWritePreparedProof;
@@ -970,7 +1158,7 @@ export class SessionStorageV6 {
   }): unknown {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      const existing = this.findSessionFileWriteIdempotency(input.proof, input.idempotencyKey);
       if (!existing) {
         throw new Error("Prepared Session file write idempotency record is missing.");
       }
@@ -986,11 +1174,32 @@ export class SessionStorageV6 {
         throw new Error("Session file write completion does not match the prepared proof.");
       }
       const resultJson = JSON.stringify(input.result);
+      const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         UPDATE session_file_write_idempotency_v6
         SET state = 'applied', result_json = ?, created_at = ?, expires_at = ?
-        WHERE operation = 'session.files.write_text' AND idempotency_key = ?
-      `).run(resultJson, input.completedAt, input.expiresAt, input.idempotencyKey);
+        WHERE operation = 'session.files.write_text'
+          AND principal_kind = ? AND principal_id = ? AND idempotency_key = ?
+      `).run(resultJson, input.completedAt, input.expiresAt, principal.kind, principal.id, input.idempotencyKey);
+      const proof = decodeStoredMutationProof(
+        this.db,
+        existing.session_id,
+        existing.authority_proof_json,
+        input.completedAt,
+      );
+      appendSessionFileSagaEvent(this.db, {
+        table: "session_file_write_events_v6",
+        resourceKind: "session_files",
+        operationId: existing.operation_id,
+        sessionId: existing.session_id,
+        revision: 2,
+        eventKind: "applied",
+        proof,
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.completedAt,
+        effect: "committed",
+        payload: { relativePath: existing.relative_path, result: input.result },
+      });
       this.db.exec("COMMIT");
       return JSON.parse(resultJson) as unknown;
     } catch (error) {
@@ -1000,6 +1209,7 @@ export class SessionStorageV6 {
   }
 
   rejectSessionFileWrite(input: {
+    proof: MutationAuthorityProof;
     idempotencyKey: string;
     requestFingerprint: string;
     error: unknown;
@@ -1008,7 +1218,7 @@ export class SessionStorageV6 {
   }): unknown {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      const existing = this.findSessionFileWriteIdempotency(input.proof, input.idempotencyKey);
       if (!existing) {
         throw new Error("Prepared Session file write idempotency record is missing.");
       }
@@ -1021,11 +1231,32 @@ export class SessionStorageV6 {
         throw new Error("Applied Session file write cannot be completed as rejected.");
       }
       const errorJson = JSON.stringify(input.error);
+      const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         UPDATE session_file_write_idempotency_v6
         SET state = 'rejected', result_json = ?, created_at = ?, expires_at = ?
-        WHERE operation = 'session.files.write_text' AND idempotency_key = ?
-      `).run(errorJson, input.completedAt, input.expiresAt, input.idempotencyKey);
+        WHERE operation = 'session.files.write_text'
+          AND principal_kind = ? AND principal_id = ? AND idempotency_key = ?
+      `).run(errorJson, input.completedAt, input.expiresAt, principal.kind, principal.id, input.idempotencyKey);
+      const proof = decodeStoredMutationProof(
+        this.db,
+        existing.session_id,
+        existing.authority_proof_json,
+        input.completedAt,
+      );
+      appendSessionFileSagaEvent(this.db, {
+        table: "session_file_write_events_v6",
+        resourceKind: "session_files",
+        operationId: existing.operation_id,
+        sessionId: existing.session_id,
+        revision: 2,
+        eventKind: "rejected",
+        proof,
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.completedAt,
+        effect: "unknown",
+        payload: { relativePath: existing.relative_path, error: input.error },
+      });
       this.db.exec("COMMIT");
       return JSON.parse(errorJson) as unknown;
     } catch (error) {
@@ -1043,12 +1274,23 @@ export class SessionStorageV6 {
   }
 
   setSessionPinned(sessionId: string, isPinned: boolean): SessionSummary {
-    this.db.prepare("UPDATE sessions_v6 SET is_pinned = ? WHERE id = ?").run(isPinned ? 1 : 0, sessionId);
-    const summary = this.getSessionSummary(sessionId);
-    if (!summary) {
-      throw new Error("対象セッションが見つからないよ。");
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const changed = this.db.prepare(`
+        UPDATE sessions_v6
+        SET is_pinned = ?, resource_revision = resource_revision + 1
+        WHERE id = ? AND deleted_at IS NULL
+      `).run(isPinned ? 1 : 0, sessionId);
+      if (Number(changed.changes) !== 1) throw new Error("対象セッションが見つからないよ。");
+      appendStoredSessionSnapshotEvent(this.db, sessionId, "pin_changed");
+      const summary = this.getSessionSummary(sessionId);
+      if (!summary) throw new Error("対象セッションが見つからないよ。");
+      this.db.exec("COMMIT");
+      return summary;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
     }
-    return summary;
   }
 
   getSessionMessageArtifact(sessionId: string, messageIndex: number): MessageArtifact | null {
@@ -1064,7 +1306,7 @@ export class SessionStorageV6 {
     const rows = this.db.prepare(`
       SELECT id
       FROM sessions_v6
-      WHERE last_active_at < ?
+      WHERE deleted_at IS NULL AND last_active_at < ?
       ORDER BY last_active_at ASC, id ASC
     `).all(cutoff.cutoffIso) as SessionIdRow[];
     return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
@@ -1097,7 +1339,7 @@ export class SessionStorageV6 {
           b.delegation_depth AS role_delegation_depth
         FROM sessions_v6
         LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
-        WHERE sessions_v6.id = ?
+        WHERE sessions_v6.id = ? AND sessions_v6.deleted_at IS NULL
       `).get(sessionId) as SessionV6Row | undefined;
       if (!currentRow) {
         throw new Error("対象セッションが見つからないよ。");
@@ -1110,12 +1352,14 @@ export class SessionStorageV6 {
         UPDATE sessions_v6
         SET character_snapshot_json = NULL,
             character_id = NULL,
-            thread_id = ''
-        WHERE id = ?
+            thread_id = '',
+            resource_revision = resource_revision + 1
+        WHERE id = ? AND deleted_at IS NULL
       `).run(sessionId);
       if (Number(updateResult.changes) !== 1) {
         throw new Error("Character authoring runtime stateをclearできなかったよ。");
       }
+      appendStoredSessionSnapshotEvent(this.db, sessionId, "character_runtime_cleared");
 
       const storedRow: SessionV6Row = {
         ...currentRow,
@@ -1159,7 +1403,7 @@ export class SessionStorageV6 {
           b.delegation_depth AS role_delegation_depth
         FROM sessions_v6
         LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
-        WHERE sessions_v6.id = ?
+        WHERE sessions_v6.id = ? AND sessions_v6.deleted_at IS NULL
       `).get(sessionId) as SessionV6Row | undefined;
       if (!currentRow) {
         throw new Error("対象セッションが見つからないよ。");
@@ -1220,8 +1464,9 @@ export class SessionStorageV6 {
             character_id = CASE WHEN ? = 1 THEN ? ELSE character_id END,
             thread_id = CASE WHEN ? = 1 THEN '' ELSE thread_id END,
             updated_at = ?,
-            last_active_at = ?
-        WHERE id = ?
+            last_active_at = ?,
+            resource_revision = resource_revision + 1
+        WHERE id = ? AND deleted_at IS NULL
       `).run(
         runtimePolicyJson,
         updatesCharacterSnapshot ? 1 : 0,
@@ -1236,6 +1481,7 @@ export class SessionStorageV6 {
       if (Number(updateResult.changes) !== 1) {
         throw new Error("running turn のSession metadataを更新できなかったよ。");
       }
+      appendStoredSessionSnapshotEvent(this.db, sessionId, "running_turn_started", input.updatedAt);
 
       this.db.prepare(`
         INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at)
@@ -1289,6 +1535,15 @@ export class SessionStorageV6 {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.writeSession(normalized, operation);
+      if (operation === "create" && normalized.sessionKind === "default" && normalized.roleBinding) {
+        ensureBaselineSessionAuthority(this.db, normalized.id, normalized.updatedAt);
+      }
+      appendStoredSessionSnapshotEvent(
+        this.db,
+        normalized.id,
+        operation === "create" ? "created" : "stored",
+        normalized.updatedAt,
+      );
       if (terminalCommit) {
         writeSessionTurnTerminalCommit(this.db, terminalCommit);
       }
@@ -1331,17 +1586,11 @@ export class SessionStorageV6 {
     try {
       const retainedSessionIds = normalizedSessions.map((session) => session.id);
       const removedSessionIds = this.listStoredSessionIdsExcept(retainedSessionIds);
-      const removedAuxiliarySessionIds = this.listAuxiliarySessionIdsWithoutValidParents(retainedSessionIds);
-      deleteAuditEventsForSessionTargets(this.db, {
-        sessionIds: removedSessionIds,
-        auxiliarySessionIds: removedAuxiliarySessionIds,
-      });
-      this.db.exec("DELETE FROM session_messages_v6;");
-      this.deleteStoredSessionsByIds(removedSessionIds);
+      this.tombstoneStoredSessionsByIds(removedSessionIds);
       for (const session of normalizedSessions) {
         this.writeSession(session);
+        appendStoredSessionSnapshotEvent(this.db, session.id, "stored", session.updatedAt);
       }
-      this.deleteAuxiliarySessionsByIdsIfTableExists(removedAuxiliarySessionIds);
       this.db.exec("COMMIT");
       return this.listSessions();
     } catch (error) {
@@ -1360,23 +1609,9 @@ export class SessionStorageV6 {
       return;
     }
 
-    const placeholders = uniqueSessionIds.map(() => "?").join(", ");
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.deleteTerminalRootWorkItemsForSessions(uniqueSessionIds);
-      const auxiliarySessionIds = this.listAuxiliarySessionIdsForParentsIfTableExists(uniqueSessionIds);
-      deleteAuditEventsForSessionTargets(this.db, {
-        sessionIds: uniqueSessionIds,
-        auxiliarySessionIds,
-      });
-      for (const delegationDepth of [2, 1, 0]) {
-        this.db.prepare(`
-          DELETE FROM session_role_bindings_v6
-          WHERE session_id IN (${placeholders}) AND delegation_depth = ?
-        `).run(...uniqueSessionIds, delegationDepth);
-      }
-      this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
-      this.deleteAuxiliarySessionsForParentsIfTableExists(uniqueSessionIds);
+      this.tombstoneStoredSessionsByIds(uniqueSessionIds);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -1387,16 +1622,9 @@ export class SessionStorageV6 {
   clearSessions(): void {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      const sessionIds = (this.db.prepare("SELECT id FROM sessions_v6").all() as SessionIdRow[])
+      const sessionIds = (this.db.prepare("SELECT id FROM sessions_v6 WHERE deleted_at IS NULL").all() as SessionIdRow[])
         .map((row) => row.id);
-      this.deleteTerminalRootWorkItemsForSessions(sessionIds);
-      deleteAuditEventsForSessionTargets(this.db, { allSessionTargets: true });
-      this.db.exec("DELETE FROM session_messages_v6;");
-      this.db.exec("DELETE FROM session_role_bindings_v6 WHERE delegation_depth = 2;");
-      this.db.exec("DELETE FROM session_role_bindings_v6 WHERE delegation_depth = 1;");
-      this.db.exec("DELETE FROM session_role_bindings_v6 WHERE delegation_depth = 0;");
-      this.db.exec("DELETE FROM sessions_v6;");
-      this.deleteAllAuxiliarySessionsIfTableExists();
+      this.tombstoneStoredSessionsByIds(sessionIds);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -1420,6 +1648,13 @@ export class SessionStorageV6 {
       WHERE operation = ? AND principal_session_id = ? AND idempotency_key = ?
     `).get(operation, principalSessionId, idempotencyKey) as SessionCrudIdempotencyRow | undefined;
     if (!row) {
+      const legacy = this.db.prepare(`
+        SELECT 1
+        FROM session_crud_idempotency_v6
+        WHERE operation = ? AND principal_session_id LIKE 'legacy_unknown:%' AND idempotency_key = ?
+        LIMIT 1
+      `).get(operation, idempotencyKey);
+      if (legacy) throw new SessionCrudIdempotencyResponseUnavailableError(operation, idempotencyKey);
       return { kind: "absent" };
     }
     const result = JSON.parse(row.result_json) as unknown;
@@ -1440,6 +1675,7 @@ export class SessionStorageV6 {
     input: {
       operation: SessionCrudOperation;
       principalSessionId?: string;
+      proof: MutationAuthorityProof;
       idempotencyKey: string;
       requestFingerprint: string;
       createdAt: string;
@@ -1461,7 +1697,7 @@ export class SessionStorageV6 {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.operation,
-      input.principalSessionId ?? "",
+      sessionPrincipalKey(input.proof),
       input.idempotencyKey,
       input.requestFingerprint,
       sessionId,
@@ -1471,13 +1707,29 @@ export class SessionStorageV6 {
     );
   }
 
-  private findSessionFileWriteIdempotency(idempotencyKey: string): SessionFileWriteIdempotencyRow | undefined {
-    return this.db.prepare(`
-      SELECT request_fingerprint, session_id, relative_path, temp_name, state,
-        output_sha256, byte_length, file_device, file_inode, target_precondition_json, result_json
+  private findSessionFileWriteIdempotency(
+    proof: MutationAuthorityProof,
+    idempotencyKey: string,
+  ): SessionFileWriteIdempotencyRow | undefined {
+    const principal = mutationPrincipalIdentity(proof);
+    const row = this.db.prepare(`
+      SELECT operation_id, request_fingerprint, session_id, relative_path, temp_name, state,
+        output_sha256, byte_length, file_device, file_inode, target_precondition_json, result_json,
+        authority_proof_json
       FROM session_file_write_idempotency_v6
-      WHERE operation = 'session.files.write_text' AND idempotency_key = ?
-    `).get(idempotencyKey) as SessionFileWriteIdempotencyRow | undefined;
+      WHERE operation = 'session.files.write_text'
+        AND principal_kind = ? AND principal_id = ? AND idempotency_key = ?
+    `).get(principal.kind, principal.id, idempotencyKey) as SessionFileWriteIdempotencyRow | undefined;
+    if (row) return row;
+    const legacy = this.db.prepare(`
+      SELECT state
+      FROM session_file_write_idempotency_v6
+      WHERE operation = 'session.files.write_text'
+        AND principal_kind = 'legacy_unknown' AND idempotency_key = ?
+      LIMIT 1
+    `).get(idempotencyKey) as { state: "pending" | "applied" | "rejected" } | undefined;
+    if (legacy) throw new SessionFileWriteIdempotencyResponseUnavailableError(idempotencyKey, legacy.state);
+    return undefined;
   }
 
   private findSessionRoleBindingRow(sessionId: string): SessionRoleBindingRow | undefined {
@@ -1545,7 +1797,9 @@ export class SessionStorageV6 {
           character_snapshot_json = excluded.character_snapshot_json,
           workspace_path = excluded.workspace_path,
           updated_at = excluded.updated_at,
-          last_active_at = excluded.last_active_at
+          last_active_at = excluded.last_active_at,
+          resource_revision = sessions_v6.resource_revision + 1
+        WHERE sessions_v6.deleted_at IS NULL
       `;
     const result = this.db.prepare(`
       INSERT INTO sessions_v6 (
@@ -1596,7 +1850,7 @@ export class SessionStorageV6 {
       session.updatedAt,
       session.updatedAt,
     );
-    if (operation === "create" && Number(result.changes) === 0) {
+    if (Number(result.changes) === 0) {
       throw new SessionIdCollisionError(session.id);
     }
 
@@ -1744,9 +1998,18 @@ export class SessionStorageV6 {
     );
     this.db.prepare(`
       INSERT INTO work_item_events_v6 (
-        work_item_id, revision, event_type, actor_session_id, payload_json, created_at
-      ) VALUES (?, 1, 'created', ?, ?, ?)
+        work_item_id, revision, event_type, actor_session_id, principal_kind, payload_json, created_at
+      ) VALUES (?, 1, 'created', ?, 'system', ?, ?)
     `).run(workItemId, session.id, JSON.stringify(payload), session.updatedAt);
+    appendWorkItemEventHeader(this.db, {
+      workItemId,
+      revision: 1,
+      eventKind: "created",
+      proof: systemSessionProof(session, "session.create", "local_mutation", session.updatedAt),
+      operationId: `system:root-work-item.create:${session.id}`,
+      idempotencyKey: null,
+      occurredAt: session.updatedAt,
+    });
   }
 
   private rowToSessionSummaryProjection(row: SessionV6SummaryRow): SessionSummary {
@@ -1888,40 +2151,37 @@ export class SessionStorageV6 {
     return session;
   }
 
-  private auxiliarySessionsTableExists(): boolean {
-    return Boolean(this.db.prepare(`
-      SELECT 1
-      FROM sqlite_master
-      WHERE type = 'table'
-        AND name = ?
-    `).get(AUXILIARY_SESSIONS_TABLE_NAME));
-  }
-
   private listStoredSessionIdsExcept(retainedSessionIds: Iterable<string>): string[] {
     const retained = new Set(Array.from(retainedSessionIds).map((sessionId) => sessionId.trim()).filter(Boolean));
-    const rows = this.db.prepare("SELECT id FROM sessions_v6").all() as SessionIdRow[];
+    const rows = this.db.prepare("SELECT id FROM sessions_v6 WHERE deleted_at IS NULL").all() as SessionIdRow[];
     return rows.map((row) => row.id).filter((id) => !retained.has(id));
   }
 
-  private deleteStoredSessionsByIds(sessionIds: readonly string[]): void {
+  private tombstoneStoredSessionsByIds(sessionIds: readonly string[]): void {
     const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
     if (uniqueSessionIds.length === 0) {
       return;
     }
 
-    this.deleteTerminalRootWorkItemsForSessions(uniqueSessionIds);
-
+    this.assertSessionsDeletable(uniqueSessionIds);
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
-    for (const delegationDepth of [2, 1, 0]) {
+    const activeRows = this.db.prepare(`
+      SELECT id FROM sessions_v6
+      WHERE id IN (${placeholders}) AND deleted_at IS NULL
+      ORDER BY id
+    `).all(...uniqueSessionIds) as SessionIdRow[];
+    const deletedAt = new Date().toISOString();
+    for (const row of activeRows) {
       this.db.prepare(`
-        DELETE FROM session_role_bindings_v6
-        WHERE session_id IN (${placeholders}) AND delegation_depth = ?
-      `).run(...uniqueSessionIds, delegationDepth);
+        UPDATE sessions_v6
+        SET deleted_at = ?, updated_at = ?, resource_revision = resource_revision + 1
+        WHERE id = ? AND deleted_at IS NULL
+      `).run(deletedAt, deletedAt, row.id);
+      appendStoredSessionSnapshotEvent(this.db, row.id, "deleted", deletedAt);
     }
-    this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
   }
 
-  private deleteTerminalRootWorkItemsForSessions(sessionIds: readonly string[]): void {
+  private assertSessionsDeletable(sessionIds: readonly string[]): void {
     const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
     if (uniqueSessionIds.length === 0) return;
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
@@ -1968,160 +2228,135 @@ export class SessionStorageV6 {
       throw new Error(`WORK_ITEM_SESSION_PROTECTED: ${protectedItem.id}`);
     }
 
-    const cleanupRows = this.db.prepare(`
-      SELECT item.id
-      FROM work_items_v6 AS item
-      WHERE (
-        item.root_session_id IN (${placeholders})
-        OR item.creator_session_id IN (${placeholders})
-        OR item.target_session_id IN (${placeholders})
-      )
-        AND item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
-        AND (
-          item.kind = 'root'
-          OR (
-            item.parent_work_item_id IS NULL
-            AND (
-              item.state = 'canceled'
-              OR (
-                item.result_json IS NOT NULL
-                AND EXISTS (
-                  SELECT 1
-                  FROM work_items_v6 AS root_item
-                  WHERE root_item.kind = 'root'
-                    AND root_item.root_session_id = item.root_session_id
-                    AND root_item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
-                )
-              )
-            )
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM work_item_aggregation_decisions_v6 AS decision
-            WHERE decision.child_work_item_id = item.id
-              AND decision.child_revision = item.revision
-          )
-        )
-    `).all(...uniqueSessionIds, ...uniqueSessionIds, ...uniqueSessionIds) as Array<{ id: string }>;
-    const cleanupWorkItemIds = cleanupRows.map((row) => row.id);
-    if (cleanupWorkItemIds.length === 0) return;
-    const itemPlaceholders = cleanupWorkItemIds.map(() => "?").join(", ");
-
-    this.db.prepare(`DELETE FROM work_item_execution_associations_v6 WHERE work_item_id IN (${itemPlaceholders})`)
-      .run(...cleanupWorkItemIds);
-    this.db.prepare(`
-      DELETE FROM work_item_aggregation_idempotency_v6
-      WHERE child_work_item_id IN (${itemPlaceholders})
-        OR replacement_work_item_id IN (${itemPlaceholders})
-    `).run(...cleanupWorkItemIds, ...cleanupWorkItemIds);
-    this.db.prepare(`
-      DELETE FROM work_item_aggregation_decisions_v6
-      WHERE parent_work_item_id IN (${itemPlaceholders})
-        OR child_work_item_id IN (${itemPlaceholders})
-        OR replacement_work_item_id IN (${itemPlaceholders})
-    `).run(...cleanupWorkItemIds, ...cleanupWorkItemIds, ...cleanupWorkItemIds);
-    this.db.prepare(`DELETE FROM work_item_aggregations_v6 WHERE parent_work_item_id IN (${itemPlaceholders})`)
-      .run(...cleanupWorkItemIds);
-    this.db.prepare(`DELETE FROM work_items_v6 WHERE id IN (${itemPlaceholders})`).run(...cleanupWorkItemIds);
   }
 
-  private listAuxiliarySessionIdsForParentsIfTableExists(parentSessionIds: readonly string[]): string[] {
-    if (!this.auxiliarySessionsTableExists()) {
-      return [];
-    }
+}
 
-    const uniqueParentIds = Array.from(new Set(parentSessionIds.map((parentSessionId) => parentSessionId.trim()).filter(Boolean)));
-    if (uniqueParentIds.length === 0) {
-      return [];
-    }
+function sessionOperationId(operation: SessionCrudOperation, proof: MutationAuthorityProof, requestFingerprint: string): string {
+  return `session-operation:${operation}:${sessionPrincipalKey(proof)}:${requestFingerprint}`;
+}
 
-    const placeholders = uniqueParentIds.map(() => "?").join(", ");
-    const rows = this.db.prepare(`
-      SELECT id
-      FROM auxiliary_sessions
-      WHERE parent_session_id IN (${placeholders})
-    `).all(...uniqueParentIds) as SessionIdRow[];
-    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
+function sessionPrincipalKey(proof: MutationAuthorityProof): string {
+  const principal = mutationPrincipalIdentity(proof);
+  return `${principal.kind}:${principal.id}`;
+}
+
+function mutationPrincipalIdentity(proof: MutationAuthorityProof): {
+  kind: "agent" | "user" | "system";
+  id: string;
+} {
+  if (proof.principal.kind === "agent") {
+    return { kind: "agent", id: proof.principal.actorSessionId };
   }
-
-  private deleteAuxiliarySessionsForParentsIfTableExists(parentSessionIds: readonly string[]): void {
-    if (!this.auxiliarySessionsTableExists()) {
-      return;
-    }
-
-    const uniqueParentIds = Array.from(new Set(parentSessionIds.map((parentSessionId) => parentSessionId.trim()).filter(Boolean)));
-    if (uniqueParentIds.length === 0) {
-      return;
-    }
-
-    const placeholders = uniqueParentIds.map(() => "?").join(", ");
-    this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id IN (${placeholders})`).run(...uniqueParentIds);
+  if (proof.principal.kind === "user") {
+    return { kind: "user", id: "local-user" };
   }
+  return { kind: "system", id: proof.principal.service };
+}
 
-  private deleteAuxiliarySessionsByIdsIfTableExists(auxiliarySessionIds: readonly string[]): void {
-    if (!this.auxiliarySessionsTableExists()) {
-      return;
-    }
+function decodeStoredMutationProof(
+  db: DatabaseSync,
+  sessionId: string,
+  serialized: string | null,
+  evaluatedAt: string,
+): MutationAuthorityProof {
+  if (serialized !== null) return JSON.parse(serialized) as MutationAuthorityProof;
+  const binding = db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?")
+    .get(sessionId) as { root_session_id: string } | undefined;
+  return {
+    principal: { kind: "system", service: "session-file-write-migration-recovery" },
+    operation: "session.files.write_text",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "session.files.write_text",
+    resolvedScope: {
+      resourceKind: "session_files",
+      resourceId: sessionId,
+      rootSessionId: binding?.root_session_id ?? sessionId,
+      ownerKind: "session",
+      ownerId: sessionId,
+      relation: "self",
+    },
+    effectClass: "external_side_effect",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt,
+  };
+}
 
-    const uniqueAuxiliarySessionIds = Array.from(new Set(auxiliarySessionIds.map((auxiliarySessionId) => auxiliarySessionId.trim()).filter(Boolean)));
-    if (uniqueAuxiliarySessionIds.length === 0) {
-      return;
-    }
+function systemSessionProof(
+  session: Session,
+  operation: "session.create",
+  effectClass: "local_mutation",
+  evaluatedAt: string,
+): MutationAuthorityProof {
+  const binding = requireSessionRoleBinding(session.id, session.roleBinding);
+  return {
+    principal: { kind: "system", service: "session-storage" },
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: operation,
+    resolvedScope: {
+      resourceKind: "session_namespace",
+      resourceId: session.id,
+      rootSessionId: binding.rootSessionId,
+      ownerKind: "session",
+      ownerId: session.id,
+      relation: "self",
+    },
+    effectClass,
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt,
+  };
+}
 
-    const placeholders = uniqueAuxiliarySessionIds.map(() => "?").join(", ");
-    this.db.prepare(`DELETE FROM auxiliary_sessions WHERE id IN (${placeholders})`).run(...uniqueAuxiliarySessionIds);
-  }
-
-  private deleteAllAuxiliarySessionsIfTableExists(): void {
-    if (!this.auxiliarySessionsTableExists()) {
-      return;
-    }
-
-    this.db.prepare("DELETE FROM auxiliary_sessions").run();
-  }
-
-  private companionSessionsTableExists(): boolean {
-    return Boolean(this.db.prepare(`
-      SELECT 1
-      FROM sqlite_master
-      WHERE type = 'table'
-        AND name = ?
-    `).get(COMPANION_SESSIONS_TABLE_NAME));
-  }
-
-  private listRetainedCompanionSessionIds(): string[] {
-    if (!this.companionSessionsTableExists()) {
-      return [];
-    }
-
-    const rows = this.db
-      .prepare("SELECT id FROM companion_sessions WHERE status NOT IN ('merged', 'discarded')")
-      .all() as SessionIdRow[];
-    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
-  }
-
-  private listAuxiliarySessionIdsWithoutValidParents(retainedParentSessionIds: Iterable<string>): string[] {
-    if (!this.auxiliarySessionsTableExists()) {
-      return [];
-    }
-
-    const validParentSessionIds = Array.from(new Set([
-      ...retainedParentSessionIds,
-      ...this.listRetainedCompanionSessionIds(),
-    ]));
-    if (validParentSessionIds.length === 0) {
-      const rows = this.db.prepare("SELECT id FROM auxiliary_sessions").all() as SessionIdRow[];
-      return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
-    }
-
-    const placeholders = validParentSessionIds.map(() => "?").join(", ");
-    const rows = this.db.prepare(`
-      SELECT id
-      FROM auxiliary_sessions
-      WHERE parent_session_id NOT IN (${placeholders})
-    `).all(...validParentSessionIds) as SessionIdRow[];
-    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
-  }
+function appendStoredSessionSnapshotEvent(
+  db: DatabaseSync,
+  sessionId: string,
+  eventKind: string,
+  occurredAt?: string,
+): void {
+  const row = db.prepare(`
+    SELECT session.resource_revision, session.updated_at,
+      COALESCE(binding.root_session_id, session.id) AS root_session_id
+    FROM sessions_v6 AS session
+    LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = session.id
+    WHERE session.id = ?
+  `).get(sessionId) as {
+    resource_revision: number;
+    updated_at: string;
+    root_session_id: string;
+  } | undefined;
+  if (!row) throw new Error(`Session was not found: ${sessionId}`);
+  const eventAt = occurredAt ?? row.updated_at;
+  const operation = eventKind === "created" ? "session.create" : "session.rename";
+  appendSessionResourceEvent(db, {
+    sessionId,
+    revision: row.resource_revision,
+    eventKind,
+    proof: {
+      principal: { kind: "system", service: "session-storage" },
+      operation,
+      mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+      action: operation,
+      resolvedScope: {
+        resourceKind: operation === "session.create" ? "session_namespace" : "session",
+        resourceId: sessionId,
+        rootSessionId: row.root_session_id,
+        ownerKind: "session",
+        ownerId: sessionId,
+        relation: "self",
+      },
+      effectClass: "local_mutation",
+      grantId: null,
+      grantRevision: null,
+      evaluatedAt: eventAt,
+    },
+    operationId: `system:session-storage:${eventKind}:${sessionId}:${row.resource_revision}`,
+    idempotencyKey: null,
+    occurredAt: eventAt,
+    payload: {},
+  });
 }
 
 function resolveSessionFileWriteIdempotency(

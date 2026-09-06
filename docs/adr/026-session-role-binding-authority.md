@@ -4,6 +4,8 @@
 
 Accepted
 
+実効権限をRoleで制限する判断はADR 029で置き換えた。immutable bindingの構造契約は維持する。
+
 ## Context
 
 AgentがSessionを子として作成するには、callerが申告したparentやprompt上の指示ではなく、provider executionに結び付いたactor Sessionから作成権限を判定する必要がある。GUIのroot作成とAgent向けchild作成が別々にRoleを決めると、保存済みSession、runtime binding、public projection、Turn promptの間でauthorityがずれる。

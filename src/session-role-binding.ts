@@ -62,7 +62,10 @@ export function buildChildSessionRoleBinding(
 ): SessionRoleBinding {
   const normalizedParentSessionId = parentSessionId.trim();
   const canonicalParentBinding = requireSessionRoleBinding(normalizedParentSessionId, parentBinding);
-  const delegationDepth = requireChildSessionRoleAllowed(canonicalParentBinding, sessionRole);
+  const delegationDepth = canonicalParentBinding.delegationDepth + 1;
+  if (delegationDepth > SESSION_ROLE_MAX_DELEGATION_DEPTH) {
+    throw new SessionRoleBindingError("SESSION_ROLE_DEPTH_EXCEEDED", "Session delegation depth exceeds the structural limit.");
+  }
   return requireSessionRoleBinding(sessionId, {
     sessionRole,
     roleContractRevision: SESSION_ROLE_CONTRACT_REVISION,

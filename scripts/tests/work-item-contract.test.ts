@@ -9,6 +9,11 @@ import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
+import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
+import {
+  backfillBaselineSessionAuthority,
+  revokeSessionAuthorityGrant,
+} from "../../src-electron/session-authority-storage.js";
 import {
   WorkItemAuthorityError,
   WorkItemExecutionAssociationError,
@@ -23,11 +28,64 @@ import {
   WorkItemStorageV6,
 } from "../../src-electron/work-item-storage-v6.js";
 import { parseSessionRuntimeOperationInput } from "../../src/session-external-runtime-contract.js";
+import {
+  SESSION_AUTHORITY_MAPPING_REVISION,
+  SESSION_AUTHORITY_OPERATION_DEFINITIONS,
+  SessionAuthorityError,
+  type MutationAuthorityProof,
+} from "../../src/session-authority.js";
+import type { SessionRuntimeOperation } from "../../src/session-external-runtime-contract.js";
 import { WORK_ITEM_TRANSITIONS } from "../../src/work-item.js";
 
 const NOW = "2026-08-24T12:00:00.000Z";
 const EXPIRES = "2026-08-25T12:00:00.000Z";
 const AFTER_EXPIRES = "2026-08-25T12:00:00.001Z";
+
+function trustedProof(operation: SessionRuntimeOperation, ownerId = "root"): MutationAuthorityProof {
+  const definition = SESSION_AUTHORITY_OPERATION_DEFINITIONS[operation];
+  return {
+    principal: { kind: "system", service: "work-item-contract-test" },
+    providerId: null,
+    operation,
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: definition.action,
+    resolvedScope: {
+      resourceKind: definition.resourceKind,
+      resourceId: ownerId,
+      rootSessionId: "root",
+      ownerKind: "session",
+      ownerId,
+      relation: "self",
+    },
+    effectClass: definition.effectClass,
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: NOW,
+  };
+}
+
+const workItemMutationOperations = {
+  create: "work.create",
+  revise: "work.revise",
+  appendHistory: "work.history.append",
+  transition: "work.transition",
+  reportResult: "work.result",
+  cancel: "work.cancel",
+  decideAggregation: "work.aggregation.decide",
+  retryAggregation: "work.aggregation.retry",
+} as const satisfies Partial<Record<keyof WorkItemService, SessionRuntimeOperation>>;
+
+function withTrustedMutationProof(target: WorkItemService): WorkItemService {
+  return new Proxy(target, {
+    get(service, property, receiver) {
+      const value = Reflect.get(service, property, receiver);
+      const operation = workItemMutationOperations[property as keyof typeof workItemMutationOperations];
+      if (!operation || typeof value !== "function") return value;
+      return (input: unknown, actorBinding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof) =>
+        Reflect.apply(value, service, [input, actorBinding, proof ?? trustedProof(operation, actorBinding.actorSessionId)]);
+    },
+  });
+}
 
 function binding(actorSessionId: string): ResolvedAgentRuntimeBinding {
   return {
@@ -56,11 +114,13 @@ describe("Work Item contract", () => {
   let dbPath: string;
   let storage: WorkItemStorageV6;
   let service: WorkItemService;
+  let authorityService: SessionAuthorityService;
   let nextId: number;
   let currentNow: string;
+  let createContainerRevisions: Map<string, number>;
 
   function makeService(targetStorage: WorkItemStorageV6): WorkItemService {
-    return new WorkItemService({
+    return withTrustedMutationProof(new WorkItemService({
       storage: targetStorage,
       getTurnAuthoritySession(sessionId) {
         const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -86,7 +146,7 @@ describe("Work Item contract", () => {
       },
       createWorkItemId: () => "work-" + nextId++,
       currentTimestamp: () => currentNow,
-    });
+    }));
   }
 
   beforeEach(async () => {
@@ -101,7 +161,7 @@ describe("Work Item contract", () => {
           created_at, updated_at, last_active_at
         ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
       `);
-      for (const id of ["root", "task", "task-sibling", "executor", "sibling", "standalone", "other-root"]) {
+      for (const id of ["root", "task", "task-sibling", "executor", "retry-executor", "sibling", "standalone", "other-root"]) {
         insertSession.run(id, id, NOW, NOW, NOW);
       }
       const insertRole = db.prepare(`
@@ -113,25 +173,38 @@ describe("Work Item contract", () => {
       insertRole.run("task", "task-coordinator", "root", "root", 1);
       insertRole.run("task-sibling", "task-coordinator", "root", "root", 1);
       insertRole.run("executor", "executor", "root", "task", 2);
+      insertRole.run("retry-executor", "executor", "root", "task", 2);
       insertRole.run("sibling", "executor", "root", "root", 1);
       insertRole.run("standalone", "standalone", "standalone", null, 0);
       insertRole.run("other-root", "overall-coordinator", "other-root", null, 0);
+      backfillBaselineSessionAuthority(db, NOW);
     } finally {
       db.close();
     }
     storage = new WorkItemStorageV6(dbPath);
     nextId = 1;
     currentNow = NOW;
+    createContainerRevisions = new Map();
+    authorityService = new SessionAuthorityService({
+      databasePath: dbPath,
+      getExecutionGeneration: () => "generation-1",
+      now: () => new Date(currentNow),
+    });
     service = makeService(storage);
   });
 
   afterEach(async () => {
+    authorityService.close();
     storage.close();
     await rm(directory, { recursive: true, force: true });
   });
 
   function createRootWork(key = "create-root") {
+    const expectedContainerRevision = createContainerRevisions.get(key)
+      ?? currentSessionResourceRevision("task");
+    createContainerRevisions.set(key, expectedContainerRevision);
     return service.create({
+      expectedContainerRevision,
       targetSessionId: "task",
       goal: "Delegate a task",
       scope: "Work Item slice",
@@ -142,11 +215,36 @@ describe("Work Item contract", () => {
     }, binding("root"));
   }
 
+  function createWithActiveGrant(
+    input: Omit<Parameters<WorkItemService["create"]>[0], "expectedContainerRevision">,
+    actorBinding: ResolvedAgentRuntimeBinding,
+  ) {
+    const admittedInput = {
+      ...input,
+      expectedContainerRevision: currentSessionResourceRevision(input.targetSessionId),
+    };
+    const proof = authorityService.authorize(actorBinding, "work.create", admittedInput).proof;
+    return service.create(admittedInput, actorBinding, proof);
+  }
+
   function createChild(parentWorkItemId: string, key: string) {
     return service.create({
+      expectedContainerRevision: currentSessionResourceRevision("executor"),
       targetSessionId: "executor", parentWorkItemId, goal: "child", scope: "scope",
       completionCriteria: "done", authority: "local", sourceIdentity, idempotencyKey: key,
     }, binding("task"));
+  }
+
+  function currentSessionResourceRevision(sessionId: string): number {
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const row = db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?")
+        .get(sessionId) as { resource_revision: number } | undefined;
+      assert.ok(row);
+      return row.resource_revision;
+    } finally {
+      db.close();
+    }
   }
 
   function completeChild(workItemId: string, key: string) {
@@ -199,18 +297,8 @@ describe("Work Item contract", () => {
     const parent = createRootWork("retry-parent");
     const child = createChild(parent.id, "retry-child");
     service.cancel({ workItemId: child.id, expectedRevision: 1, idempotencyKey: "cancel-child" }, binding("task"));
-    const db = new DatabaseSync(dbPath);
-    try {
-      db.prepare(`
-        UPDATE session_role_bindings_v6
-        SET session_role = 'executor', root_session_id = 'root', parent_session_id = 'task', delegation_depth = 2
-        WHERE session_id = 'task-sibling'
-      `).run();
-    } finally {
-      db.close();
-    }
     const request = {
-      parentWorkItemId: parent.id, childWorkItemId: child.id, targetSessionId: "task-sibling",
+      parentWorkItemId: parent.id, childWorkItemId: child.id, targetSessionId: "retry-executor",
       goal: "retry", scope: "retry scope", completionCriteria: "done", authority: "local", sourceIdentity,
       expectedAggregateRevision: 1, idempotencyKey: "retry-request",
     } as const;
@@ -319,11 +407,21 @@ describe("Work Item contract", () => {
     assert.throws(() => createChild(parent.id, "late-child"), WorkItemParentError);
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "同一principalとidempotency keyの同一create requestはimmutable bindingをreplayし、異なるrequestは拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-IDENTITY-01-immutable-binding" }
+  // failure_mode = "retryが重複Work Itemを作成するか、同じkeyの別targetやgoalが既存bindingを上書きする"
+  // scope = "WorkItemService create idempotency"
+  // lifecycle = "permanent"
+  // distinction = "同一requestのreplayと異なるtargetのcollisionを同じledgerに対して観測する"
+  // @end-test-value
   it("WORK-IDENTITY-01: create replayはimmutable bindingを復元し異なるfingerprintを拒否する", () => {
     const created = createRootWork();
     assert.equal(createRootWork().id, created.id);
     assert.deepEqual(storage.get(created.id), created);
     assert.throws(() => service.create({
+      expectedContainerRevision: currentSessionResourceRevision("sibling"),
       targetSessionId: "sibling",
       goal: "Changed",
       scope: "Work Item slice",
@@ -345,10 +443,19 @@ describe("Work Item contract", () => {
     assert.deepEqual(replayed, created);
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "trusted principalのWork Item idempotency ledgerは24時間後だけ削除され、同じprincipalとkeyの新規要求へ再利用できる"
+  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-IDEM-07-idempotency-retention" }
+  // failure_mode = "principal namespace変更で期限内ledgerを見失うか、期限後の同じkeyを永久に拒否する"
+  // scope = "WorkItemStorageV6 idempotency retention"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("WORK-IDEM-07: 24時間経過後はledgerを削除して同じkeyを新しい要求へ再利用できる", () => {
     const first = createRootWork("expiring-key");
     currentNow = AFTER_EXPIRES;
     const second = service.create({
+      expectedContainerRevision: currentSessionResourceRevision("task"),
       targetSessionId: "task",
       goal: "New delegation after retention",
       scope: "scope",
@@ -362,7 +469,7 @@ describe("Work Item contract", () => {
     try {
       assert.equal((db.prepare(`
         SELECT COUNT(*) AS count FROM work_item_idempotency_v6
-        WHERE principal_session_id = 'root' AND idempotency_key = 'expiring-key'
+        WHERE principal_session_id = 'system:work-item-contract-test' AND idempotency_key = 'expiring-key'
       `).get() as { count: number }).count, 1);
     } finally {
       db.close();
@@ -400,8 +507,26 @@ describe("Work Item contract", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "baseline active grantを持つcoordinatorの直属Work Item作成を許可し、canonical Session tree外またはactive parentなしの委譲を拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-AUTH-02-authority" }
+  // failure_mode = "正規なactive grantの直属委譲を拒否するか、上方向、sibling、cross-root、自己target、またはinactive parentへの委譲を保存する"
+  // scope = "SessionAuthorityService and WorkItemService delegation admission"
+  // lifecycle = "permanent"
+  // distinction = "許可pathはbaseline active grantのproofを使い、拒否pathはcanonical parent/target graphの各境界を対比する"
+  // @end-test-value
   it("WORK-AUTH-02: coordinatorとactive parentだけが直属targetへ委譲できる", () => {
-    const parent = createRootWork();
+    const parentInput = {
+      targetSessionId: "task",
+      goal: "Delegate a task",
+      scope: "Work Item slice",
+      completionCriteria: "All direct checks pass",
+      authority: "Local repository changes",
+      sourceIdentity,
+      idempotencyKey: "create-root",
+    };
+    const parent = createWithActiveGrant(parentInput, binding("root"));
     assert.throws(() => service.create({
       targetSessionId: "root",
       goal: "upward communication is not delegation",
@@ -457,7 +582,7 @@ describe("Work Item contract", () => {
       idempotencyKey: "self",
     }, binding("task")), WorkItemAuthorityError);
 
-    const child = service.create({
+    const childInput = {
       targetSessionId: "executor",
       parentWorkItemId: parent.id,
       goal: "child",
@@ -466,7 +591,8 @@ describe("Work Item contract", () => {
       authority: "local",
       sourceIdentity,
       idempotencyKey: "child",
-    }, binding("task"));
+    };
+    const child = createWithActiveGrant(childInput, binding("task"));
     assert.equal(child.parentWorkItemId, parent.id);
     assert.throws(() => service.create({
       targetSessionId: "executor",
@@ -482,16 +608,24 @@ describe("Work Item contract", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "bounded listはroot actorへ同じroot配下のRoot WorkItemとdelegated WorkItemをsequence順で返し、child actorへ自身が作成または担当するdelegated WorkItemだけを返す"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#直接検証" }
-  // failure_mode = "Root WorkItemがroot一覧から欠落する、childへroot-wideな作業が漏れる、またはcursor境界で項目を重複か欠落させる"
+  // claim = "非root actorはcreatorまたはtargetのWork Itemを列挙・取得でき、同rootの無関係な項目は参照できない"
+  // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md#Work Item operation" }
+  // failure_mode = "creatorが直属executorへ委譲したWork Itemを再取得できない、またはactorとの関係がない同root Work Itemまで公開する"
   // scope = "WorkItemService bounded list visibility and keyset pagination"
   // lifecycle = "permanent"
-  // distinction = "root projectionを含む第一pageとdelegatedだけの第二pageを分け、actor visibilityの非対称性も同じfixtureで観測する"
+  // distinction = "task coordinatorがtargetの項目とcreatorの項目を和集合で参照し、sibling項目を除外することをroot visibilityと対比する"
   // @end-test-value
   it("WORK-AUTH-02: bounded listはrootとactor visibilityをstorage queryで固定する", () => {
-    const assigned = createRootWork("list-task");
-    const sibling = service.create({
+    const assigned = createWithActiveGrant({
+      targetSessionId: "task",
+      goal: "Delegate a task",
+      scope: "Work Item slice",
+      completionCriteria: "All direct checks pass",
+      authority: "Local repository changes",
+      sourceIdentity,
+      idempotencyKey: "list-task",
+    }, binding("root"));
+    const siblingInput = {
       targetSessionId: "sibling",
       goal: "sibling",
       scope: "scope",
@@ -499,30 +633,96 @@ describe("Work Item contract", () => {
       authority: "local",
       sourceIdentity,
       idempotencyKey: "list-sibling",
-    }, binding("root"));
-    assert.deepEqual(service.resolveListScope(binding("root")), {
+    };
+    const sibling = createWithActiveGrant(siblingInput, binding("root"));
+    const delegated = createWithActiveGrant({
+      targetSessionId: "executor",
+      parentWorkItemId: assigned.id,
+      goal: "executor child",
+      scope: "scope",
+      completionCriteria: "done",
+      authority: "local",
+      sourceIdentity,
+      idempotencyKey: "list-executor-child",
+    }, binding("task"));
+    const rootBinding = binding("root");
+    const rootListInput = { limit: 10, afterSequence: null };
+    const rootListProof = authorityService.authorize(rootBinding, "work.list", rootListInput).proof;
+    assert.equal(rootListProof.resolvedScope.relation, "root_member");
+    assert.deepEqual(service.resolveListScope(rootBinding, rootListProof), {
       rootSessionId: "root",
       actorSessionId: "root",
       visibility: "root",
     });
-    assert.deepEqual(service.resolveListScope(binding("task")), {
+    const taskBinding = binding("task");
+    const taskListProof = authorityService.authorize(taskBinding, "work.list", rootListInput).proof;
+    assert.deepEqual(service.resolveListScope(taskBinding, taskListProof), {
       rootSessionId: "root",
       actorSessionId: "task",
       visibility: "actor",
     });
-    assert.deepEqual(service.list({ limit: 10, afterSequence: null }, binding("task")).map((item) => item.id), [assigned.id]);
+    assert.deepEqual(
+      service.list(rootListInput, taskBinding, taskListProof).map((item) => item.id),
+      [assigned.id, delegated.id],
+    );
+    const createdGetProof = authorityService.authorize(taskBinding, "work.get", {
+      workItemId: delegated.id,
+    }).proof;
+    assert.equal(createdGetProof.resolvedScope.relation, "created");
+    assert.equal(service.get(delegated.id, taskBinding, createdGetProof).id, delegated.id);
+    assert.throws(() => authorityService.authorize(taskBinding, "work.get", {
+      workItemId: sibling.id,
+    }), SessionAuthorityError);
     const rootItem = storage.get("root-work-item:root");
     assert.ok(rootItem);
-    const firstPage = service.list({ limit: 1, afterSequence: null }, binding("root"));
+    const firstPage = service.list({ limit: 1, afterSequence: null }, rootBinding, rootListProof);
     assert.deepEqual(firstPage.map((item) => item.id), [rootItem.id]);
-    const secondPage = service.list({ limit: 1, afterSequence: firstPage[0]!.sequence }, binding("root"));
+    const secondPage = service.list({ limit: 1, afterSequence: firstPage[0]!.sequence }, rootBinding, rootListProof);
     assert.deepEqual(secondPage.map((item) => item.id), [assigned.id]);
     assert.deepEqual(service.list({
       limit: 1,
       afterSequence: secondPage[0]!.sequence,
-    }, binding("root")).map((item) => item.id), [sibling.id]);
+    }, rootBinding, rootListProof).map((item) => item.id), [sibling.id]);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const grant = db.prepare(`
+        SELECT grant_id, revision FROM session_authority_grants_v6
+        WHERE grantee_session_id = 'root'
+          AND relation_selector = 'root_member'
+          AND actions_json = '["work.list"]'
+      `).get() as { grant_id: string; revision: number };
+      revokeSessionAuthorityGrant(db, {
+        grantId: grant.grant_id,
+        expectedRevision: grant.revision,
+        principal: { kind: "system", service: "work-item-contract-test" },
+        revokedAt: NOW,
+      });
+    } finally {
+      db.close();
+    }
+    const creatorOrTargetProof = authorityService.authorize(rootBinding, "work.list", rootListInput).proof;
+    assert.equal(creatorOrTargetProof.resolvedScope.relation, "creator_or_target");
+    assert.deepEqual(service.resolveListScope(rootBinding, creatorOrTargetProof), {
+      rootSessionId: "root",
+      actorSessionId: "root",
+      visibility: "actor",
+    });
+    assert.deepEqual(
+      service.list(rootListInput, rootBinding, creatorOrTargetProof).map((item) => item.id),
+      [rootItem.id, assigned.id, sibling.id],
+    );
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "Work Item mutationはexpected revisionと状態遷移を検証し、terminal resultを同じtransactionで保存して同一idempotency keyを同じresponseへ収束させる"
+  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-STATE-03-state-transition" }
+  // failure_mode = "stale revision、terminalからの再開、またはresultとstateの部分保存を許し、再送時に異なるprojectionを返す"
+  // scope = "WorkItemService and WorkItemStorageV6 mutation boundary"
+  // lifecycle = "permanent"
+  // distinction = "個別の遷移表ではなくSQLite projection、result、idempotent replay、terminal再遷移拒否を一連のobservableとして検証する"
+  // @end-test-value
   it("WORK-STATE-03/WORK-RESULT-04: revision付き遷移とterminal resultを同時commitする", () => {
     const item = createRootWork();
     assert.throws(() => service.transition({
@@ -598,6 +798,8 @@ describe("Work Item contract", () => {
       state: "in_progress",
       result: null,
       updatedAt: NOW,
+      expiresAt: EXPIRES,
+      proof: trustedProof("work.transition", "task"),
     }), WorkItemStateConflictError);
   });
 
@@ -691,6 +893,15 @@ describe("Work Item contract", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Session executionはactive Work Itemのtargetだけへ関連付けられ、execution作成とassociationを同じtransactionで永続化する"
+  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-EXEC-05-execution-association" }
+  // failure_mode = "terminalまたは別targetのWork Itemをexecutionへ関連付けるか、再起動後にassociationを失って実行帰属が分岐する"
+  // scope = "SessionExecutionStorageV6 Work Item association"
+  // lifecycle = "permanent"
+  // distinction = "serviceの事前判定だけでなくenqueue、即時実行、再起動read、拒否時rollbackをreal SQLiteで観測する"
+  // @end-test-value
   it("WORK-EXEC-05: active target associationをexecutionと同時保存しterminal/mismatchを拒否する", () => {
     const item = createRootWork();
     assert.equal(service.requireExecutionAssociation(item.id, "root", "task").id, item.id);
@@ -703,12 +914,14 @@ describe("Work Item contract", () => {
       executionStorage.enqueue({
         id: "execution-work-1",
         sessionId: "task",
+        expectedContainerRevision: currentSessionResourceRevision("task"),
         request: { turn: { userMessage: "work" } },
         idempotencyKey: "execution-key",
         requestFingerprint: "execution-fingerprint",
         createdAt: NOW,
         expiresAt: EXPIRES,
         workItemId: item.id,
+        proof: trustedProof("turn.enqueue", "task"),
       });
       assert.equal(executionStorage.getExecutionWorkItemId("execution-work-1"), item.id);
     } finally {
@@ -734,12 +947,14 @@ describe("Work Item contract", () => {
       assert.throws(() => staleValidationStorage.enqueue({
         id: "execution-after-terminal",
         sessionId: "task",
+        expectedContainerRevision: 2,
         request: { turn: { userMessage: "stale validation" } },
         idempotencyKey: "execution-after-terminal-key",
         requestFingerprint: "execution-after-terminal-fingerprint",
         createdAt: NOW,
         expiresAt: EXPIRES,
         workItemId: item.id,
+        proof: trustedProof("turn.enqueue", "task"),
       }), /Work Item.*active target/);
       assert.equal(staleValidationStorage.get("execution-after-terminal"), null);
 
@@ -747,12 +962,14 @@ describe("Work Item contract", () => {
       assert.throws(() => staleValidationStorage.startImmediate({
         id: "execution-target-mismatch",
         sessionId: "executor",
+        expectedContainerRevision: 1,
         request: { turn: { userMessage: "wrong target" } },
         idempotencyKey: "execution-target-mismatch-key",
         requestFingerprint: "execution-target-mismatch-fingerprint",
         createdAt: NOW,
         expiresAt: EXPIRES,
         workItemId: mismatchedItem.id,
+        proof: trustedProof("turn.run", "executor"),
       }), /Work Item.*active target/);
       assert.equal(staleValidationStorage.get("execution-target-mismatch"), null);
     } finally {
@@ -767,6 +984,15 @@ describe("Work Item contract", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "partial V6 schema repairは既存Session、execution、Work Itemを保持し、欠落したWork Item aggregationとauthority history schemaを再作成して二回実行で収束する"
+  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#Migration" }
+  // failure_mode = "repairが既存projectionを消す、aggregation revisionを再構築できない、または再実行でschemaやrowを増殖させる"
+  // scope = "ensureV6Schema partial Work Item repair"
+  // lifecycle = "permanent"
+  // distinction = "fresh database作成ではなく関連表だけを欠落させた既存DBを二回repairし、既存rowと再構築projectionを観測する"
+  // @end-test-value
   it("WORK-MIGRATE-06: partial repairは既存Session、execution、Work Itemを保持して再実行可能に収束する", () => {
     const item = createRootWork();
     let parent = createRootWork("migration-parent");
@@ -783,11 +1009,13 @@ describe("Work Item contract", () => {
       executionStorage.enqueue({
         id: "execution-existing",
         sessionId: "task",
+        expectedContainerRevision: currentSessionResourceRevision("task"),
         request: { turn: { userMessage: "existing" } },
         idempotencyKey: "existing-key",
         requestFingerprint: "existing-fingerprint",
         createdAt: NOW,
         expiresAt: EXPIRES,
+        proof: trustedProof("turn.enqueue", "task"),
       });
     } finally {
       executionStorage.close();
@@ -805,10 +1033,10 @@ describe("Work Item contract", () => {
       `);
       ensureV6Schema(db);
       ensureV6Schema(db);
-      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number }).count, 7);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number }).count, 8);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6 WHERE id = 'execution-existing'").get() as { count: number }).count, 1);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM work_items_v6 WHERE id = ?").get(item.id) as { count: number }).count, 1);
-      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name LIKE 'work_item_aggregation%'").get() as { count: number }).count, 3);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name LIKE 'work_item_aggregation%'").get() as { count: number }).count, 4);
       assert.equal((db.prepare("SELECT aggregate_revision FROM work_item_aggregations_v6 WHERE parent_work_item_id = ?").get(parent.id) as { aggregate_revision: number }).aggregate_revision, 1);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'trigger' AND name = 'trg_v6_work_items_protect_session_delete'").get() as { count: number }).count, 1);
     } finally {
@@ -842,6 +1070,14 @@ describe("Work Item contract", () => {
     assert.equal(finalized.state, "completed");
   });
 
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "expiry列のないtrusted principal ledgerを保持し、作成時刻から24時間のexpiryを補完する"
+  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#Migration" }
+  // failure_mode = "schema repairがnamespaced principal ledgerを削除するか、誤ったexpiryで再送保護期間を変える"
+  // scope = "Work Item idempotency expiry migration"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("WORK-MIGRATE-06/WORK-IDEM-07: expiry列のない既存ledgerを保持して24時間expiryを補完する", () => {
     const item = createRootWork("legacy-ledger");
     storage.close();
@@ -852,7 +1088,9 @@ describe("Work Item contract", () => {
       ensureV6Schema(db);
       const row = db.prepare(`
         SELECT work_item_id, expires_at FROM work_item_idempotency_v6
-        WHERE operation = 'work.create' AND principal_session_id = 'root' AND idempotency_key = 'legacy-ledger'
+        WHERE operation = 'work.create'
+          AND principal_session_id = 'system:work-item-contract-test'
+          AND idempotency_key = 'legacy-ledger'
       `).get() as { work_item_id: string; expires_at: string };
       assert.equal(row.work_item_id, item.id);
       assert.equal(row.expires_at, EXPIRES);
@@ -863,8 +1101,17 @@ describe("Work Item contract", () => {
     service = makeService(storage);
   });
 
+  // @test-value v1
+  // kind = "security"
+  // claim = "expected container revision付きWork Item createもunknown fieldを拒否し、result size上限を副作用前に強制する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // failure_mode = "revision追加でexact inputまたはresult byte limit検証を迂回する"
+  // scope = "Session Runtime Work Item mutation parser"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("WORK-RESULT-04: raw contractはunknown fieldとresult size超過を副作用前に拒否する", () => {
     assert.throws(() => parseSessionRuntimeOperationInput("work.create", {
+      expectedContainerRevision: 1,
       targetSessionId: "task",
       goal: "goal",
       scope: "scope",

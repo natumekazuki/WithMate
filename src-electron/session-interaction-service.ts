@@ -7,6 +7,7 @@ import {
   type SessionInteraction,
   type SessionInteractionPublicPayload,
   type SessionInteractionResponse,
+  type SessionInteractionResponsePrincipal,
 } from "../src/session-interaction.js";
 import type { LiveApprovalRequest, LiveElicitationRequest } from "../src/runtime-state.js";
 import {
@@ -41,11 +42,43 @@ export type RespondToSessionInteractionServiceInput = {
   sessionId: string;
   executionId: string;
   interactionId: string;
+  expectedRevision: number;
+  principal: Extract<SessionInteractionResponsePrincipal, { kind: "agent" }>;
   response: SessionInteractionResponse;
   idempotencyKey: string;
   respondedAt: string;
   expiresAt: string;
 };
+
+type TrustedUserResponseInput = Omit<RespondToSessionInteractionServiceInput, "principal">;
+
+type TrustedUserReceipt = Readonly<{
+  principal: { kind: "user" };
+  interactionId: string;
+  expectedRevision: number;
+  response: SessionInteractionResponse;
+}>;
+
+const RESPOND_WITH_TRUSTED_USER_RECEIPT = Symbol("respondWithTrustedUserReceipt");
+
+export type TrustedSessionInteractionResponder = {
+  getPendingForExecution(executionId: string): SessionInteraction | null;
+  respond(input: TrustedUserResponseInput): RespondToSessionInteractionServiceResult;
+};
+
+export function createTrustedSessionInteractionResponder(
+  service: SessionInteractionService,
+): TrustedSessionInteractionResponder {
+  return Object.freeze({
+    getPendingForExecution: (executionId: string) => service.getPendingForExecution(executionId),
+    respond: (input: TrustedUserResponseInput) => service[RESPOND_WITH_TRUSTED_USER_RECEIPT](input, Object.freeze({
+      principal: { kind: "user" as const },
+      interactionId: input.interactionId,
+      expectedRevision: input.expectedRevision,
+      response: input.response,
+    })),
+  });
+}
 
 export type RespondToSessionInteractionServiceResult = {
   interaction: SessionInteraction;
@@ -77,6 +110,21 @@ export class SessionInteractionContinuationUnavailableError extends Error {
   constructor(readonly interactionId: string) {
     super(`Session interaction provider continuation is unavailable: ${interactionId}`);
     this.name = "SessionInteractionContinuationUnavailableError";
+  }
+}
+
+export class SessionInteractionContinuationSettlementError extends Error {
+  readonly code = "INTERACTION_CONTINUATION_SETTLEMENT_UNKNOWN";
+  readonly effect = "committed";
+  readonly continuationEffect = "unknown";
+
+  constructor(
+    readonly interactionId: string,
+    readonly revision: number,
+    options: ErrorOptions,
+  ) {
+    super(`Session interaction committed, but provider continuation settlement is unknown: ${interactionId}`, options);
+    this.name = "SessionInteractionContinuationSettlementError";
   }
 }
 
@@ -123,6 +171,28 @@ export class SessionInteractionService {
   }
 
   respond(input: RespondToSessionInteractionServiceInput): RespondToSessionInteractionServiceResult {
+    return this.respondWithPrincipal(input, input.principal);
+  }
+
+  [RESPOND_WITH_TRUSTED_USER_RECEIPT](
+    input: TrustedUserResponseInput,
+    receipt: TrustedUserReceipt,
+  ): RespondToSessionInteractionServiceResult {
+    if (
+      receipt.principal.kind !== "user"
+      || receipt.interactionId !== input.interactionId
+      || receipt.expectedRevision !== input.expectedRevision
+      || receipt.response !== input.response
+    ) {
+      throw new TypeError("Trusted session interaction user receipt does not match the response.");
+    }
+    return this.respondWithPrincipal(input, receipt.principal);
+  }
+
+  private respondWithPrincipal(
+    input: TrustedUserResponseInput,
+    principal: Exclude<SessionInteractionResponsePrincipal, { kind: "system" }>,
+  ): RespondToSessionInteractionServiceResult {
     const current = this.storage.get(input.interactionId);
     if (!current) {
       throw new SessionInteractionNotFoundError(input.interactionId);
@@ -143,6 +213,8 @@ export class SessionInteractionService {
       sessionId: input.sessionId,
       executionId: input.executionId,
       interactionId: input.interactionId,
+      expectedRevision: input.expectedRevision,
+      principal,
       action: input.response.kind === "approval" ? input.response.decision : input.response.action,
       submittedFields,
       idempotencyKey: input.idempotencyKey,
@@ -154,7 +226,15 @@ export class SessionInteractionService {
     if (!result.replayed) {
       this.continuations.delete(input.interactionId);
       this.notifyExecutionChanged(input.executionId);
-      continueProvider(continuation, input.response);
+      try {
+        continueProvider(continuation, input.response);
+      } catch (cause) {
+        throw new SessionInteractionContinuationSettlementError(
+          result.interaction.id,
+          result.interaction.revision,
+          { cause },
+        );
+      }
     }
     return projectResponseResult(result);
   }
@@ -267,7 +347,7 @@ export function projectElicitationInteractionPublicPayload(
 export function fingerprintSessionInteractionResponse(
   input: Pick<
     RespondToSessionInteractionServiceInput,
-    "sessionId" | "executionId" | "interactionId" | "response"
+    "sessionId" | "executionId" | "interactionId" | "expectedRevision" | "response"
   >,
 ): string {
   return createHash("sha256").update(stableJson({
@@ -275,6 +355,7 @@ export function fingerprintSessionInteractionResponse(
     sessionId: input.sessionId,
     executionId: input.executionId,
     interactionId: input.interactionId,
+    expectedRevision: input.expectedRevision,
     response: input.response,
   })).digest("hex");
 }
