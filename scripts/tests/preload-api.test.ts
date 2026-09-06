@@ -30,14 +30,16 @@ function createIpcRendererStub() {
   };
 }
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "preloadのinvoke APIはdomainごとのrequestを対応する専用IPC channelへ変換せず渡す"
+// claim = "preloadのinvoke APIはdomainごとのrequest入力を保持し、正しい専用IPC channelへ転送する"
 // oracle = { type = "contract", ref = "WithMateWindowApi invoke methods and withmate-ipc-channels" }
-// failure_mode = "renderer requestが別channelへ送られるか、引数の欠落または変換を受けてMainへ到達する"
+// fault = "Resource budget requestを別channelへ送るか、入力を欠落させてMainへ渡す"
+// observable = "ipcRenderer.invokeが受け取ったchannel名と引数"
+// observation_boundary = "public-boundary"
 // scope = "preload invoke API"
 // lifecycle = "permanent"
-// distinction = "file tree context menuを含むinvoke method群のchannelと引数を一括して検証する"
+// distinction = "公開key集合では検出できないResource budget methodごとのchannelと入力対応を検証する"
 // @end-test-value
 test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる", async () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -66,6 +68,32 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   assert.deepEqual(await api.deleteSessionsLastActiveBefore({ cutoffDate: "2026-07-01" }), {
     channel: "withmate:delete-sessions-last-active-before",
     args: [{ cutoffDate: "2026-07-01" }],
+  });
+  assert.deepEqual(await api.getResourceBudget({ sessionId: "root-1" }), {
+    channel: "withmate:get-resource-budget",
+    args: [{ sessionId: "root-1" }],
+  });
+  assert.deepEqual(await api.listResourceBudgets({ sessionId: "root-1", limit: 50 }), {
+    channel: "withmate:list-resource-budgets",
+    args: [{ sessionId: "root-1", limit: 50 }],
+  });
+  assert.deepEqual(await api.configureResourceBudget({
+    sessionId: "root-1",
+    accountId: "budget-root-1",
+    expectedRevision: 1,
+    hardLimits: { totalTurns: 2_000 },
+    retryPerExecutionLimit: 5,
+    idempotencyKey: "configure-1",
+  }), {
+    channel: "withmate:configure-resource-budget",
+    args: [{
+      sessionId: "root-1",
+      accountId: "budget-root-1",
+      expectedRevision: 1,
+      hardLimits: { totalTurns: 2_000 },
+      retryPerExecutionLimit: 5,
+      idempotencyKey: "configure-1",
+    }],
   });
   assert.deepEqual(await api.getMemoryV6Diagnostics(), {
     channel: "withmate:get-memory-v6-diagnostics",
@@ -464,14 +492,16 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
   unsubscribe();
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "preloadの公開API surfaceはWithMateWindowApiの現行keyを過不足なくexposeする"
 // oracle = { type = "contract", ref = "WithMateWindowApi public surface" }
-// failure_mode = "型に存在するIPC methodがrendererへexposeされないか、廃止済みmethodが公開surfaceへ残る"
+// fault = "Resource budget methodをrendererへexposeしないか、公開surfaceへ契約外methodを残す"
+// observable = "createWithMateWindowApiが返すobjectのsorted key集合"
+// observation_boundary = "public-boundary"
 // scope = "preload public API keys"
 // lifecycle = "permanent"
-// distinction = "tree path context menuを含む公開method集合全体とremoved key不在を検証する"
+// distinction = "invoke先ではなくWithMateWindowApi全体の公開method集合とremoved key不在を検証する"
 // @end-test-value
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -486,6 +516,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "cancelCoordinationEvent",
     "cancelSessionRun",
     "closeAuxiliarySession",
+    "configureResourceBudget",
     "copyFilesToSessionFiles",
     "copySessionFilePreviewImage",
     "copySessionFileObject",
@@ -523,6 +554,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getLiveSessionRun",
     "getModelCatalog",
     "getProviderQuotaTelemetry",
+    "getResourceBudget",
     "getRootWorkItem",
     "getSession",
     "getSessionWindowRestoreSet",
@@ -566,6 +598,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionSkills",
     "listSessionCharacterUsage",
     "listRelatedSessionSummaries",
+    "listResourceBudgets",
     "listRootWorkItemHistory",
     "listSessionSummaryPage",
     "listFileRootChanges",

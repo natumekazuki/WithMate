@@ -3,11 +3,13 @@ import test from "node:test";
 
 import { createMainIpcRegistrationDeps } from "../../src-electron/main-ipc-deps.js";
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
-// claim = "test declaration at line 6 preserves its observable contract"
-// oracle = { type = "contract", ref = "-6" }
-// failure_mode = "line 6 violates its expected output or boundary behavior"
+// claim = "grouped IPC依存のopenHomeWindow・openMemoryV6ReviewWindow・openSessionWindow、Settings・MemoryReview判定、Session Window restore、trusted Resource budget configure、Mate get・mutationの実呼出しは元delegateへ転送する"
+// oracle = { type = "contract", ref = "src-electron/main-ipc-deps.ts createMainIpcRegistrationDeps" }
+// fault = "観測対象のwindow・Resource budget configure・Mate依存が欠落するか別delegateへ転送される"
+// observable = "組み立て後の依存を呼んだ際に記録されるdelegate呼び出し"
+// observation_boundary = "component-behavior"
 // scope = "main-ipc-deps.test"
 // lifecycle = "permanent"
 // @end-test-value
@@ -117,6 +119,12 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
       updateAppSettings: (settings) => settings,
       updateChatLayoutPreference: () => ({}) as never,
+      getResourceBudget: () => null,
+      listResourceBudgets: () => ({ items: [] }),
+      configureResourceBudgetAsTrustedUser: () => {
+        calls.push("configureResourceBudget");
+        return {} as never;
+      },
       getAppDatabaseDiagnostics: () => ({}) as never,
       getMemoryV6Diagnostics: () => ({}) as never,
       installMemoryV6CliShim: () => ({}) as never,
@@ -298,6 +306,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
   assert.deepEqual(await deps.getSessionWindowRestoreSet(), ["session-1"]);
   assert.deepEqual((await deps.restoreSessionWindows()).openedSessionIds, ["session-1"]);
+  await deps.configureResourceBudgetAsTrustedUser({} as never);
   await deps.getMateState();
   await deps.getMateProfile();
   await deps.createMate({ displayName: "Buddy" });
@@ -312,6 +321,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     "openSession:session-1",
     "getSessionWindowRestoreSet",
     "restoreSessionWindows",
+    "configureResourceBudget",
     "getMateState",
     "getMateProfile",
     "createMate:Buddy",

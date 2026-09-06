@@ -237,6 +237,36 @@ export function ensureBaselineSessionAuthority(db: DatabaseSync, sessionId: stri
       },
     });
   }
+  ensureBudgetSessionAuthority(db, sessionId, issuedAt);
+}
+
+const BUDGET_AUTHORITY_MIGRATION_KEY = "resource_budget_authority_v1_migrated_at";
+const BUDGET_ACTIONS = ["budget.get", "budget.list", "budget.configure"] as const;
+
+export function ensureBudgetSessionAuthority(db: DatabaseSync, sessionId: string, issuedAt: string): void {
+  const rows = db.prepare("SELECT * FROM session_authority_grants_v6 WHERE grantee_session_id = ?")
+    .all(sessionId) as GrantRow[];
+  if (rows.some((row) => grantProvenanceSource(row) === "resource-budget-v1")) return;
+  const source = rows.find((row) => JSON.parse(row.actions_json).includes("session.self"));
+  if (!source) throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "Budget authority requires existing Session authority.");
+  for (const action of BUDGET_ACTIONS) {
+    insertGrant(db, {
+      rootSessionId: source.root_session_id,
+      issuerKind: "system",
+      issuerId: "resource-budget-v1-migration",
+      issuerGrantId: source.grant_id,
+      issuerGrantRevision: 1,
+      granteeSessionId: sessionId,
+      permission: permission(action, "self"),
+      childCeiling: [],
+      issuedAt,
+      expiresAt: source.expires_at,
+      eventKind: "baseline_issued",
+      eventPrincipalKind: "system",
+      eventActorSessionId: null,
+      provenance: { source: "resource-budget-v1", sourceGrantId: source.grant_id, policy: "user-approved-2026-09-07" },
+    });
+  }
 }
 
 export function backfillBaselineSessionAuthority(db: DatabaseSync, issuedAt: string): void {
@@ -250,6 +280,13 @@ export function backfillBaselineSessionAuthority(db: DatabaseSync, issuedAt: str
     ORDER BY delegation_depth, session_id
   `).all() as Array<{ session_id: string }>;
   for (const row of rows) ensureBaselineSessionAuthority(db, row.session_id, issuedAt);
+  const migrated = db.prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+    .get(BUDGET_AUTHORITY_MIGRATION_KEY);
+  if (!migrated) {
+    for (const row of rows) ensureBudgetSessionAuthority(db, row.session_id, issuedAt);
+    if (rows.length > 0) db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)")
+      .run(BUDGET_AUTHORITY_MIGRATION_KEY, issuedAt, issuedAt);
+  }
   verifySessionAuthorityMigration(db);
 }
 
@@ -304,6 +341,7 @@ export function createDelegatedChildAuthority(db: DatabaseSync, input: {
   if (count.count === 0) {
     throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The parent construction grant does not provide a child authority ceiling.");
   }
+  ensureBudgetSessionAuthority(db, input.childSessionId, input.createdAt);
 }
 
 export function listActiveSessionAuthorityGrants(
@@ -432,17 +470,39 @@ export function verifySessionAuthorityMigration(db: DatabaseSync): void {
     const rows = readGrants.all(binding.session_id, SESSION_AUTHORITY_MAPPING_REVISION) as GrantRow[];
     const baselineRows = rows.filter((row) => grantProvenanceSource(row) === "role-baseline");
     const delegatedRows = rows.filter((row) => grantProvenanceSource(row) === "child-construction");
+    const budgetRows = rows.filter((row) => grantProvenanceSource(row) === "resource-budget-v1");
     if (baselineRows.length === 0 && delegatedRows.length === 0) {
       throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "A Session has no recognized authority grant provenance.", {
         sessionId: binding.session_id,
       });
     }
     if (baselineRows.length > 0) verifyBaselineGrantSet(binding, baselineRows);
-    if (baselineRows.length + delegatedRows.length !== rows.length) {
+    verifyBudgetAuthorityGrantSet(binding.session_id, budgetRows, rows);
+    if (baselineRows.length + delegatedRows.length + budgetRows.length !== rows.length) {
       throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "A Session authority grant has unknown provenance.", {
         sessionId: binding.session_id,
       });
     }
+  }
+}
+
+function verifyBudgetAuthorityGrantSet(sessionId: string, rows: GrantRow[], allRows: GrantRow[]): void {
+  const source = allRows.find((row) => JSON.parse(row.actions_json).includes("session.self"));
+  if (!source || rows.length !== BUDGET_ACTIONS.length || BUDGET_ACTIONS.some((action) =>
+    rows.filter((row) => {
+      const grant = decodeGrant(row);
+      return grant.actions.length === 1 && grant.actions[0] === action
+        && grant.rootSessionId === source.root_session_id && grant.granteeSessionId === sessionId
+        && grant.issuerKind === "system" && grant.issuerId === "resource-budget-v1-migration"
+        && grant.issuerGrantId === source.grant_id && grant.issuerGrantRevision === 1
+        && grant.resourceKind === "budget" && grant.relationSelector === "self"
+        && grant.effectClass === SESSION_AUTHORITY_OPERATION_DEFINITIONS[action].effectClass
+        && !grant.delegable && grant.childCeiling.length === 0
+        && [...grant.targetSessionRoles].sort().join() === [...ALL_ROLES].sort().join()
+        && grant.expiresAt === source.expires_at
+        && parseGrantProvenance(row).sourceGrantId === source.grant_id;
+    }).length !== 1)) {
+    throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "Budget authority grant set is inconsistent.", { sessionId });
   }
 }
 

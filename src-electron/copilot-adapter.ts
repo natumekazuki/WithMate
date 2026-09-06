@@ -2828,6 +2828,13 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         throw error;
       }
 
+      if (input.onAutomaticRetry && input.providerGenerationId) {
+        await input.onAutomaticRetry({
+          providerGenerationId: input.providerGenerationId,
+          usage: error instanceof ProviderTurnError ? error.partialResult.usage : null,
+        });
+      }
+
       logCopilotRuntime("retrying stale connection", {
         provider: input.providerCatalog.id,
         model: input.session.model,

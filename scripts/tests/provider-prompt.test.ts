@@ -76,6 +76,51 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("composeProviderPrompt", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "現在超過しているsoft budgetを信頼済みsystem contextとして次Turnへ渡し、soft alert自体は停止条件にしない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#budget-model" }
+  // fault = "soft budget alertをprovider promptから欠落させるか、利用者由来inputまたはhard stop指示として配置する"
+  // observable = "composeProviderPromptが返すsystemBodyTextとinputBodyTextのalert section、dimension、usage、soft limit"
+  // observation_boundary = "component-behavior"
+  // scope = "provider-prompt-resource-budget-alerts"
+  // lifecycle = "permanent"
+  // distinction = "budget.getのUI projectionではなく、実行AIが次Turnで受け取るprovider prompt境界を観測する"
+  // @end-test-value
+  it("Resource Budget soft alertをadvisory system contextとして渡す", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Test",
+      characterIconPath: "",
+      characterThemeColors,
+      approvalMode: "untrusted",
+    });
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "続きを実行して",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+      resourceBudgetAlerts: [
+        { dimension: "totalTurns", softLimit: 800, usage: 825 },
+        { dimension: "storageBytes", softLimit: 805_306_368, usage: 900_000_000 },
+      ],
+    });
+
+    assert.match(prompt.systemBodyText, /# Resource Budget Alerts/);
+    assert.match(prompt.systemBodyText, /trusted current runtime observations from WithMate/);
+    assert.match(prompt.systemBodyText, /A soft alert is not a hard admission stop/);
+    assert.match(prompt.systemBodyText, /`totalTurns`: usage 825; soft limit 800/);
+    assert.match(prompt.systemBodyText, /`storageBytes`: usage 900000000; soft limit 805306368/);
+    assert.doesNotMatch(prompt.inputBodyText, /Resource Budget Alerts|soft limit 800/);
+  });
+
   it("EXT-ATTACH-10: Codex file/folder attachmentはSessionFolder相対manifestだけをpromptへ投影する", () => {
     const session = buildNewSession({
       taskTitle: "task",

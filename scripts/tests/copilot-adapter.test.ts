@@ -1552,6 +1552,17 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     assert.equal(shouldRetryCopilotTurn(missingSessionWithOperation), false);
   });
 
+  // @test-value v2
+  // kind = "regression"
+  // claim = "Copilot内部のstale connection retryは再接続前に元provider generationとpartial usageをbudget callbackへ一度渡す"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Deadline-と-retry" }
+  // fault = "Copilot内部retryがonAutomaticRetryを呼ばない、二重に呼ぶ、またはcallbackへ渡す失敗attemptのgeneration IDやusageを欠落させる"
+  // observable = "onAutomaticRetry callbackの回数とprovider generation ID、usage"
+  // observation_boundary = "component-behavior"
+  // scope = "copilot-stale-connection-budget-retry"
+  // lifecycle = "permanent"
+  // distinction = "retry可否helperだけでなく実際のCopilotAdapter retry制御からcallbackを観測する"
+  // @end-test-value
   it("CopilotAdapter は cached session の SessionNotFound を 1 回だけ internal retry する", async () => {
     const adapter = {
       composePrompt() {
@@ -1569,7 +1580,17 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       resetRecoverableConnection(input: RunSessionTurnInput): Promise<void>;
     };
 
-    const input = createRunSessionInput({ threadId: "thread-stale" });
+    const retryCallbacks: Array<{ providerGenerationId: string; usage: RunSessionTurnResult["usage"] }> = [];
+    const callOrder: string[] = [];
+    const failedUsage = { inputTokens: 7, cachedInputTokens: 2, outputTokens: 3 };
+    const input: RunSessionTurnInput = {
+      ...createRunSessionInput({ threadId: "thread-stale" }),
+      providerGenerationId: "provider-generation-1",
+      onAutomaticRetry: (retry) => {
+        callOrder.push("retry-callback");
+        retryCallbacks.push(retry);
+      },
+    };
     const attempts: string[] = [];
     const resetCalls: string[] = [];
     const expected = createPartialResult({ threadId: "thread-fresh", assistantText: "回復したよ。" });
@@ -1577,12 +1598,17 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     adapter.runSessionTurnOnce = async (_input, _prompt) => {
       attempts.push("attempt");
       if (attempts.length === 1) {
-        throw new ProviderTurnError("SessionNotFound: session not found", createPartialResult(), false);
+        throw new ProviderTurnError(
+          "SessionNotFound: session not found",
+          createPartialResult({ usage: failedUsage }),
+          false,
+        );
       }
 
       return expected;
     };
     adapter.resetRecoverableConnection = async (nextInput) => {
+      callOrder.push("reset-connection");
       resetCalls.push(nextInput.session.id);
     };
 
@@ -1591,6 +1617,8 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     assert.equal(result, expected);
     assert.equal(attempts.length, 2);
     assert.deepEqual(resetCalls, [input.session.id]);
+    assert.deepEqual(callOrder, ["retry-callback", "reset-connection"]);
+    assert.deepEqual(retryCallbacks, [{ providerGenerationId: "provider-generation-1", usage: failedUsage }]);
   });
 
   it("CopilotAdapter は SessionNotFound 後に同じ入力で internal retry する", async () => {

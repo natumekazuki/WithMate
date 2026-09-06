@@ -27,6 +27,7 @@ export const SESSION_AUTHORITY_RESOURCE_KINDS = [
   "interaction",
   "coordination_event",
   "transcript",
+  "budget",
 ] as const;
 export type SessionAuthorityResourceKind = (typeof SESSION_AUTHORITY_RESOURCE_KINDS)[number];
 
@@ -194,6 +195,9 @@ const definition = <T extends SessionRuntimeOperation>(
 ): AuthorityOperationDefinition => ({ action, resourceKind, scopeSource, effectClass, decisionClass });
 
 export const SESSION_AUTHORITY_OPERATION_DEFINITIONS = {
+  "budget.get": definition("budget.get", "budget", "session", "read"),
+  "budget.list": definition("budget.list", "budget", "session", "read"),
+  "budget.configure": definition("budget.configure", "budget", "session", "local_mutation"),
   "runtime.catalog": definition("runtime.catalog", "runtime", "actor", "read"),
   "session.self": definition("session.self", "session", "actor", "read"),
   "session.create": definition("session.create", "session_namespace", "actor", "local_mutation"),

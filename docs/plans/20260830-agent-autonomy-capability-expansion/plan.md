@@ -352,6 +352,24 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 ## Validation gap
 
+### Slice 2 の実装・検証対象
+
+Root ledger、原子的な予約と精算、Session／Work Item作成数、実行queue、Provider retry／使用量、SessionFolderの仲介書き込み、Settingsからの上限・期限延長を接続した。初期policyは2026-09-07のユーザー指定を採用し、token・費用は計測のみとする。設計の採用方針とADR 030を正本とする。
+
+| Direct validation | 実在する検証入口 |
+| --- | --- |
+| 同時予約・exact limit・子配分 | `scripts/tests/resource-budget.test.ts` の独立process競合と配分／親予約 |
+| replay・crash・late usage・deadline延長 | budget storageと`session-execution-service.test.ts`、`session-runtime-service.test.ts` |
+| grant revoke・migration保持 | `session-authority.test.ts`、budget ledger verifier |
+| Session／Work Item累積数 | `session-crud-service.test.ts`、`work-item-contract.test.ts` |
+| 仲介書き込み・実容量・不明時停止 | `resource-budget-files.test.ts`、既存file／transcript tests |
+| public parity・trusted Settings | runtime contract/application/HTTP/CLI/MCP tests、IPC sender test |
+| soft alert通知 | `provider-prompt.test.ts` の次Turn system context |
+
+容量はRoot共有枠とし、子別容量配分は提供しない。Providerや利用者によるSessionFolderの直接編集は事前予約外で、観測時に不明・超過なら新規dispatchを止める。canonical execution IDを経由しないauxiliary／companionの直接Provider実行は、Turn・retry・generation使用量ledgerの保証外とする。delegation resource、move、transfer、artifactの接続は後続Sliceで扱う。
+
+ledgerとtombstoneはreplay・遅延精算のため保持し、通常削除や設定延長で消去しない。公開使用量明細は最大100件と集約値を返す。長期Rootの自動交代・履歴圧縮はこのSliceで追加しない。
+
 ### Slice 1 の budget 段階導入
 
 2026-09-05 のユーザー承認により、Slice 1 は principal、grant、decision、revision、history の切り替えを行い、root budget の ledger、reserve、reconcile、admission は Slice 2 で接続する。Slice 1 では既存の操作別上限を維持し、budget が未実装であることを runtime catalog に明示する。既存上限を root budget の保証と扱わず、無制限の値、評価成功を返す代用品、架空の allocation reference を作らない。

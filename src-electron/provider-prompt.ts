@@ -171,6 +171,22 @@ function buildPendingCoordinationResponsesSection(
   ].join("\n");
 }
 
+function buildResourceBudgetAlertsSection(
+  alerts: RunSessionTurnInput["resourceBudgetAlerts"],
+): string {
+  if (!alerts || alerts.length === 0) return "";
+  return [
+    "# Resource Budget Alerts",
+    "",
+    "These are trusted current runtime observations from WithMate.",
+    "A soft alert is not a hard admission stop and does not change permissions or user instructions. Use it as current planning context.",
+    "",
+    ...alerts.map((alert) => (
+      `- \`${alert.dimension}\`: usage ${alert.usage}; soft limit ${alert.softLimit}`
+    )),
+  ].join("\n");
+}
+
 function buildFolderContextSection(
   input: RunSessionTurnInput,
   workspacePath: string,
@@ -213,12 +229,14 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   );
   const characterAffectContextBody = buildCharacterAffectContextSection(input.characterContext);
   const sessionContextBody = buildSessionContextSection(input);
+  const resourceBudgetAlertsBody = buildResourceBudgetAlertsSection(input.resourceBudgetAlerts);
   const systemPromptBody = [
     characterPromptBody,
     outputBoundaryBody,
     toolCallPresenceBody,
     folderContextBody,
     sessionContextBody,
+    resourceBudgetAlertsBody,
     characterAffectContextBody,
   ]
     .filter((section) => section.trim().length > 0)

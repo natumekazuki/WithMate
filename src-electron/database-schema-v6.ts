@@ -1,6 +1,7 @@
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { backfillBaselineSessionAuthority } from "./session-authority-storage.js";
+import { ensureResourceBudgetSchema, backfillResourceBudgets, verifyResourceBudgetLedger } from "./resource-budget-storage.js";
 import { ensureResourceHistorySchema, verifyResourceHistoryProjections } from "./resource-history-schema.js";
 import { ensureSessionInteractionAuthoritySchema } from "./session-interaction-authority-schema.js";
 import { ensureCoordinationEventAuthoritySchema } from "./coordination-event-authority-schema.js";
@@ -3899,6 +3900,9 @@ export function ensureV6Schema(db: DatabaseSync): void {
     ensureResourceHistorySchema(db, { backfillLegacyHistory });
     ensureSessionInteractionAuthoritySchema(db, { backfillLegacyHistory });
     ensureCoordinationEventAuthoritySchema(db, { backfillLegacyHistory });
+    ensureResourceBudgetSchema(db);
+    backfillResourceBudgets(db, new Date().toISOString());
+    verifyResourceBudgetLedger(db);
     verifyResourceHistoryProjections(db);
     const hasTrackedResource = db.prepare(`
       SELECT 1 FROM sessions_v6

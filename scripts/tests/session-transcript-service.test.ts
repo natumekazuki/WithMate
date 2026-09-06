@@ -11,6 +11,7 @@ import { SESSION_AUTHORITY_MAPPING_REVISION, type MutationAuthorityProof } from 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import {
   SessionTranscriptService,
+  type SessionTranscriptServiceDeps,
   SessionTranscriptServiceError,
 } from "../../src-electron/session-transcript-service.js";
 import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
@@ -56,6 +57,7 @@ async function createFixture(options: {
   onAfterReplaceTargetClaim?(): void;
   onAfterReplaceRename?(): void;
   onAfterPublish?(): void;
+  resourceBudget?: SessionTranscriptServiceDeps["resourceBudget"];
 } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-transcript-"));
   const sessionFolder = path.join(directory, "session-files", "session-1");
@@ -430,6 +432,54 @@ describe("SessionTranscriptService", () => {
       assert.equal(recovered.destination, "session_folder");
       assert.equal(recoveredIdentity.ino, firstIdentity.ino);
       assert.equal((await readdir(path.dirname(targetPath))).some((name) => name.includes("test-temp")), true);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "prepared transcriptの再開は元requestのmaxBytesではなく確定済みoutput byteLengthだけを予約対象にする"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#admission-と-settlement" }
+  // fault = "小さいprepared outputの回復に大きいmaxBytesを再予約し、exact storage limitから再開できない"
+  // observable = "response loss前後にresource budgetへ渡されたbytesとalreadyCommittedBytes"
+  // observation_boundary = "component-behavior"
+  // scope = "session-transcript-storage-budget-recovery"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("prepared outputの実byte長だけを使ってstorage reservationを再開する", async () => {
+    const reservations: Array<{ bytes: number; resumed: boolean; alreadyCommittedBytes: number }> = [];
+    const resourceBudget = {
+      reserve: async (_sessionId: string, bytes: number, _operationId: string, resumed = false, alreadyCommittedBytes = 0) => {
+        reservations.push({ bytes, resumed, alreadyCommittedBytes });
+        return { reservation: null, alreadyCommittedBytes, releaseLock: () => undefined };
+      },
+      settleApplied: async () => undefined,
+      release: () => undefined,
+      reconcileRequired: async () => undefined,
+    } satisfies NonNullable<SessionTranscriptServiceDeps["resourceBudget"]>;
+    let failAfterPublish = true;
+    const fixture = await createFixture({
+      resourceBudget,
+      onAfterPublish: () => {
+        if (failAfterPublish) {
+          failAfterPublish = false;
+          throw new Error("simulated response loss");
+        }
+      },
+    });
+    const input = folderInput({ idempotencyKey: "budget-response-loss", maxBytes: 1024 * 1024 });
+    try {
+      await assert.rejects(fixture.service.export(input), /simulated response loss/);
+      const targetPath = path.join(fixture.sessionFolder, "exports", "transcript.json");
+      const outputBytes = (await stat(targetPath)).size;
+      await fixture.service.export(input);
+
+      assert.deepEqual(reservations, [
+        { bytes: input.maxBytes, resumed: false, alreadyCommittedBytes: 0 },
+        { bytes: outputBytes, resumed: true, alreadyCommittedBytes: outputBytes },
+      ]);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

@@ -2,11 +2,32 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  getProviderTokenUsageConfidence,
   normalizeCodexTokenUsage,
   normalizeCopilotTokenUsage,
 } from "../../src-electron/provider-token-usage.js";
 
 describe("provider token usage", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "providerが明示したtotal tokenだけをreportedとし、componentから補完した合計はestimated、usage欠落はunknownとして区別できる"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Budget-model" }
+  // fault = "欠落tokenを0としてreported扱いする、またはprovider明示totalと推定合計を区別できない"
+  // observable = "normalized usageに対応するconfidence"
+  // observation_boundary = "component-behavior"
+  // scope = "provider-token-usage-confidence"
+  // lifecycle = "permanent"
+  // distinction = "audit用数値projectionを維持しながらbudget ledgerへ渡す根拠の強さを別途観測する"
+  // @end-test-value
+  it("token usageのreported / estimated / unknownを区別する", () => {
+    const reported = normalizeCopilotTokenUsage({ inputTokens: 8, outputTokens: 2, totalTokens: 10 });
+    const estimated = normalizeCopilotTokenUsage({ inputTokens: 8, outputTokens: 2 });
+
+    assert.equal(getProviderTokenUsageConfidence(reported), "reported");
+    assert.equal(getProviderTokenUsageConfidence(estimated), "estimated");
+    assert.equal(getProviderTokenUsageConfidence(null), null);
+  });
+
   it("Codex usage を共通形式へ正規化する", () => {
     assert.deepEqual(
       normalizeCodexTokenUsage({

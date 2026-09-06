@@ -13,6 +13,7 @@ import { buildNewSession, projectSessionSummary } from "../../src/session-state.
 import type { SessionRuntimeOperation } from "../../src/session-external-runtime-contract.js";
 import { SessionCrudError, SessionCrudService } from "../../src-electron/session-crud-service.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
+import { ResourceBudgetStorage } from "../../src-electron/resource-budget-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
 const character: CharacterCatalogEntry = {
@@ -46,19 +47,22 @@ async function removeDirectory(targetPath: string): Promise<void> {
 }
 
 function createRootSession(id: string, rootSessionRole: "standalone" | "overall-coordinator" = "overall-coordinator") {
-  return buildNewSession({
-    id,
-    rootSessionRole,
-    taskTitle: id,
-    workspaceLabel: "workspace",
-    workspacePath: "C:/workspace",
-    branch: "main",
-    characterId: character.id,
-    character: character.name,
-    characterIconPath: "",
-    characterThemeColors: character.theme,
-    approvalMode: DEFAULT_APPROVAL_MODE,
-  });
+  return {
+    ...buildNewSession({
+      id,
+      rootSessionRole,
+      taskTitle: id,
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: character.id,
+      character: character.name,
+      characterIconPath: "",
+      characterThemeColors: character.theme,
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    }),
+    updatedAt: AUTHORITY_NOW,
+  };
 }
 
 function authorize(
@@ -90,15 +94,26 @@ function sessionRevision(storage: SessionStorageV6, sessionId: string): number {
   return revision;
 }
 
+function committedSessionCount(dbPath: string, sessionId: string): number {
+  const storage = new ResourceBudgetStorage(dbPath);
+  try {
+    return storage.get(sessionId).dimensions.sessions.committed;
+  } finally {
+    storage.close();
+  }
+}
+
 describe("SessionCrudService", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "Session create replayとcanonical list projectionはauthority proofのprincipalとroot scopeを保つ"
-  // oracle = { type = "contract", ref = "AUTONOMY-GRANT-02 / AUTONOMY-MUTATION-05" }
-  // failure_mode = "self listが同rootの別Sessionを返す、root_member listが別rootを返す、またはcreate replayがcontainer revisionを二重消費する"
+  // claim = "Session create replayとcanonical listはauthority scopeを保ち、root累積Session数を二重消費せず削除後も消費済み枠を返却しない"
+  // oracle = { type = "contract", ref = "AUTONOMY-GRANT-02 / AUTONOMY-MUTATION-05; docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md" }
+  // fault = "同root外のSessionを公開する、同一createの再送を新規Sessionとして計上する、またはSession削除で累積消費を減らす"
+  // observable = "Session list projectionとroot budgetのsessions.committed"
+  // observation_boundary = "component-behavior"
   // scope = "SessionCrudService real SQLite create and list"
   // lifecycle = "permanent"
-  // distinction = "同一rootの親子Sessionと別root Sessionをreal storageへ保存し、serviceのpublic projectionでselfとroot_memberを比較する"
+  // distinction = "Session projectionとauthorityに加え、同じSQLite transactionへ接続された累積Session数をreplayと削除の前後で観測する"
   // @end-test-value
   it("create replayはCharacterを再抽選せず、public projectionとGUI同期を一度だけ確定する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-crud-"));
@@ -212,6 +227,7 @@ describe("SessionCrudService", () => {
         actorSessionId,
         authorize(authority, storage, actorSessionId, "session.create", input),
       );
+      assert.equal(committedSessionCount(dbPath, actorSessionId), 2);
 
       assert.deepEqual(replay, created);
       assert.equal(created.sessionId, "session-1");
@@ -366,6 +382,9 @@ describe("SessionCrudService", () => {
       );
       assert.equal(copilot.provider.id, "copilot");
       assert.equal(storage.getSession(copilot.sessionId)?.provider, "copilot");
+      const committedBeforeDelete = committedSessionCount(dbPath, actorSessionId);
+      storage.deleteSession(copilot.sessionId);
+      assert.equal(committedSessionCount(dbPath, actorSessionId), committedBeforeDelete);
     } finally {
       authority?.close();
       storage.close();

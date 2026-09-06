@@ -79,6 +79,7 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
   "Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
   "Use the target Session revision for work.create and turn.run/enqueue expectedContainerRevision, and the execution revision for turn.cancel expectedRevision; refresh after each mutation.",
   "Treat runtime.catalog authority operations as classifications, not current grants; baselineChildSessionRoleTemplates are grant issuance templates.",
+  "Read budget.get before capacity-sensitive effects; soft-limit alerts guide Agent choices, while hard-limit and deadline errors block new effects. Root hard-limit and per-execution retry-limit increases require trusted user or issuer authority.",
   "Never answer a user_only interaction or create a user-principal receipt; provider approvals and elicitations require the trusted GUI.",
   "A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
   "Use a delegated Work Item to track one assignment across multiple executions; do not treat an execution as the Work Item identity.",
@@ -93,6 +94,9 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
 
 export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "runtime.catalog", title: "Get runtime catalog", description: "Read the current public Provider and model catalog.", readOnly: true, destructive: false },
+  { name: "budget.get", title: "Get resource budget", description: "Read the resource budget account for one visible Session.", readOnly: true, destructive: false },
+  { name: "budget.list", title: "List resource budgets", description: "List resource budget accounts visible within the bound actor's root.", readOnly: true, destructive: false },
+  { name: "budget.configure", title: "Configure resource budget", description: "Configure limits within the actor's existing allocation; increasing a root hard limit requires trusted user authority.", readOnly: false, destructive: false },
   { name: "session.self", title: "Resolve actor Session", description: "Resolve the current provider actor Session from its runtime binding.", readOnly: true, destructive: false },
   { name: "session.create", title: "Create child Session", description: "Create an authorized child Session from the actor's current expectedContainerRevision and an explicit workspace.", readOnly: false, destructive: false },
   { name: "session.list", title: "List Sessions", description: "List normal Sessions with keyset pagination.", readOnly: true, destructive: false },
@@ -251,6 +255,24 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: createSessionRuntimeAdvertisedInputSchema("runtime.catalog"),
     outputSchema: createSessionRuntimeOutputSchema("runtime.catalog"),
   }, async (input) => executeOperation("runtime.catalog", input, deps));
+  server.registerTool("budget.get", {
+    ...definitions.get("budget.get")!,
+    annotations: annotations(definitions.get("budget.get")!),
+    inputSchema: createSessionRuntimeAdvertisedInputSchema("budget.get"),
+    outputSchema: createSessionRuntimeOutputSchema("budget.get"),
+  }, async (input) => executeOperation("budget.get", input, deps));
+  server.registerTool("budget.list", {
+    ...definitions.get("budget.list")!,
+    annotations: annotations(definitions.get("budget.list")!),
+    inputSchema: createSessionRuntimeAdvertisedInputSchema("budget.list"),
+    outputSchema: createSessionRuntimeOutputSchema("budget.list"),
+  }, async (input) => executeOperation("budget.list", input, deps));
+  server.registerTool("budget.configure", {
+    ...definitions.get("budget.configure")!,
+    annotations: annotations(definitions.get("budget.configure")!),
+    inputSchema: createSessionRuntimeAdvertisedInputSchema("budget.configure"),
+    outputSchema: createSessionRuntimeOutputSchema("budget.configure"),
+  }, async (input) => executeOperation("budget.configure", input, deps));
   server.registerTool("session.self", {
     ...definitions.get("session.self")!,
     annotations: annotations(definitions.get("session.self")!),

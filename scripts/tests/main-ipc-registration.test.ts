@@ -23,6 +23,9 @@ import {
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_RESOURCE_BUDGET_CHANNEL,
+  WITHMATE_LIST_RESOURCE_BUDGETS_CHANNEL,
+  WITHMATE_CONFIGURE_RESOURCE_BUDGET_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
   WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
@@ -179,14 +182,16 @@ function createSessionRequest(workspace: Record<string, unknown>) {
   };
 }
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "Main IPC registrationは現行の公開channelを登録し、廃止済みchannelを登録しない"
+// claim = "Main IPC registrationはResource budgetのget/list/configureを含む列挙したchannelを登録し、列挙した廃止済みchannelを登録しない"
 // oracle = { type = "contract", ref = "withmate-ipc-channels public surface" }
-// failure_mode = "preloadが公開したchannelにMain handlerがないか、廃止済みchannelが再び呼び出し可能になる"
+// fault = "Resource budgetの公開channelを登録しないか、廃止済みchannelを再登録する"
+// observable = "registerMainIpcHandlersがIpcMainへ登録したchannel集合"
+// observation_boundary = "public-boundary"
 // scope = "Main IPC public channel registration"
 // lifecycle = "permanent"
-// distinction = "file tree context menuを含む公開channel集合とremoved channel不在を検証する"
+// distinction = "個別handlerのauthority検証とは別に、列挙したchannelの存在と廃止済みchannelの不在を観測する"
 // @end-test-value
 test("registerMainIpcHandlers は保持する public IPC だけを登録する", () => {
   const { ipcMain, handlers } = createIpcMainStub();
@@ -217,6 +222,9 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_RESOURCE_BUDGET_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_RESOURCE_BUDGETS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CONFIGURE_RESOURCE_BUDGET_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL));
@@ -900,6 +908,61 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
     { target: "actionDock", value: "expanded" },
     { target: "priority", value: "dock-first" },
   ]);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "Resource budget configure IPCはSettings Window senderだけが検証済み入力でtrusted設定delegateへ到達する"
+// oracle = { type = "contract", ref = "src-electron/main-ipc-registration.ts registerSettingsHandlers" }
+// fault = "Settings以外のsenderまたはunexpected fieldを含む入力がtrusted設定delegateへ到達する"
+// observable = "configure handlerの拒否結果とconfigureResourceBudgetAsTrustedUserへ渡った入力"
+// observation_boundary = "public-boundary"
+// scope = "Resource budget Settings IPC authority"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// distinction = "root上限の実認可はcore testへ委ね、rendererからtrusted user設定delegateへ入るIPC senderと入力の境界だけを検証する"
+// @end-test-value
+test("Resource budget configure IPC は Settings Window だけを trusted user として扱う", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settingsWindow = createWindowStub("file:///home.html?mode=settings");
+  const homeWindow = createWindowStub("file:///home.html");
+  let currentWindow = homeWindow;
+  const received: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    configureResourceBudgetAsTrustedUser: (input: unknown) => {
+      received.push(input);
+      return { revision: 2 };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_CONFIGURE_RESOURCE_BUDGET_CHANNEL);
+  assert.ok(handler);
+
+  const input = {
+    sessionId: "root-1",
+    accountId: "budget-root-1",
+    expectedRevision: 1,
+    hardLimits: { totalTurns: 2_000 },
+    retryPerExecutionLimit: 5,
+    deadlineAt: "2026-11-01T00:00:00.000Z",
+    idempotencyKey: "settings-configure-1",
+  };
+  await assert.rejects(
+    () => handler({ sender: {} }, input) as Promise<unknown>,
+    /Settings window/,
+  );
+  assert.deepEqual(received, []);
+
+  currentWindow = settingsWindow;
+  assert.deepEqual(await handler({ sender: {} }, input), { revision: 2 });
+  assert.deepEqual(received, [input]);
+  await assert.rejects(
+    () => handler({ sender: {} }, { ...input, unexpected: true }) as Promise<unknown>,
+    /unexpected fields/,
+  );
+  assert.deepEqual(received, [input]);
 });
 
 // @test-value v1

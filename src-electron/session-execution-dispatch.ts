@@ -9,7 +9,12 @@ export async function runSessionExecutionDispatch(input: {
   try {
     const outcome = await input.runTurn();
     if (outcome.terminalState === "canceled") {
-      return { state: "canceled", result: null, reason: "user_requested" };
+      return {
+        state: "canceled",
+        result: null,
+        reason: "user_requested",
+        ...(outcome.providerTerminationPending ? { providerTerminationPending: true } : {}),
+      };
     }
     if (outcome.terminalState === "failed") {
       return {
@@ -17,6 +22,7 @@ export async function runSessionExecutionDispatch(input: {
         result: null,
         errorCode: "PROVIDER_FAILURE",
         reason: "provider_turn_failed",
+        ...(outcome.providerTerminationPending ? { providerTerminationPending: true } : {}),
       };
     }
     const session: Session = outcome.session;

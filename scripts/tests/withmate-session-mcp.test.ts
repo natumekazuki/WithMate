@@ -184,18 +184,23 @@ describe("WithMate Session MCP contract", () => {
       assert.equal(parseToolError(result as any).error.code, "RUNTIME_AMBIGUOUS");
     });
   });
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "MCPはRoot WorkItem三操作を含む全38 toolをdotted name、strict schema、read/write annotation付きで公開する"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-  // failure_mode = "HTTP/CLIにある操作がMCP tool一覧から欠落するか、いずれかのtoolのreadOnly/destructive分類が実際のeffectと分岐してclientが操作を誤分類する"
+  // claim = "MCPはbudget三操作を含む全41 toolをdotted name、strict schema、read/write annotation付きで公開する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-public-api-migration-and-review.md#public-surface-parity" }
+  // fault = "HTTPまたはCLIにあるbudget操作がMCP tool一覧から欠落するかreadOnly/destructive分類が実際のeffectと分岐する"
+  // observable = "MCP tools/listのtool名、input/output schema、effect annotation"
+  // observation_boundary = "public-boundary"
   // scope = "WithMate Session MCP tool catalog"
   // lifecycle = "permanent"
-  // distinction = "個別tool dispatchではなく、全38件の独立した期待表でtool集合、schema strictness、readOnly/destructive annotationを横断検証する"
+  // distinction = "個別tool dispatchではなく、全41件の独立した期待表でtool集合、schema strictness、readOnly/destructive annotationを横断検証する"
   // @end-test-value
-  it("全38 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("全41 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     const expectedEffectAnnotations: Record<string, { readOnlyHint: boolean; destructiveHint: boolean }> = {
       "runtime.catalog": { readOnlyHint: true, destructiveHint: false },
+      "budget.get": { readOnlyHint: true, destructiveHint: false },
+      "budget.list": { readOnlyHint: true, destructiveHint: false },
+      "budget.configure": { readOnlyHint: false, destructiveHint: false },
       "session.self": { readOnlyHint: true, destructiveHint: false },
       "session.create": { readOnlyHint: false, destructiveHint: false },
       "session.list": { readOnlyHint: true, destructiveHint: false },
@@ -639,17 +644,40 @@ describe("WithMate Session MCP contract", () => {
     assert.deepEqual(requests.slice(1).map((request) => request.operation), ["session.list", "session.get"]);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "MCP runtime.catalogはauthority mappingとbaseline Role templateを区別してstrict outputで返す"
-  // oracle = { type = "contract", ref = "AUTONOMY-GRANT-02/AUTONOMY-PARITY-08" }
-  // failure_mode = "MCP catalogがauthority mappingを欠落させるかbaseline templateをlive grantとして公開する"
+  // claim = "MCP runtime.catalogはauthority mapping、resource budget契約、baseline Role templateを区別してstrict outputで返す"
+  // oracle = { type = "contract", ref = "AUTONOMY-GRANT-02/AUTONOMY-PARITY-08 and designs/08-resource-budget.md" }
+  // fault = "MCP catalogがresource budget契約を欠落させるかbaseline templateをlive grantとして公開する"
+  // observable = "MCP structuredContentのruntime.catalog resultとdispatch request envelope"
+  // observation_boundary = "public-boundary"
   // scope = "WithMate Session MCP runtime.catalog"
   // lifecycle = "permanent"
-  // distinction = "空input dispatch、operation classification、baseline template名を同じtool callで検証する"
+  // distinction = "空input dispatch、operation classification、budget projection、baseline template名を同じtool callで検証する"
   // @end-test-value
   it("RUNTIME-CATALOG-02: runtime.catalogを空inputのread-only operationとしてdispatchする", async () => {
     const requests: unknown[] = [];
+    const budgetCatalog = {
+      contractRevision: 1 as const,
+      operations: ["get", "list", "configure"] as const,
+      dimensions: ["concurrentTurns", "queuedTurns", "totalTurns", "retries", "sessions", "workItems", "delegations", "storageBytes"] as const,
+      defaultHardLimits: {
+        concurrentTurns: 4,
+        queuedTurns: 100,
+        totalTurns: 1000,
+        retries: 100,
+        sessions: 100,
+        workItems: 500,
+        delegations: 500,
+        storageBytes: 1073741824,
+      },
+      retryPerExecutionLimit: 3,
+      defaultDurationMs: 2592000000,
+      defaultListLimit: 50,
+      maxListLimit: 500,
+      meteredUsage: ["tokens", "monetary_cost", "provider_usage"] as const,
+      constraints: [],
+    };
     await withClient(createWithMateSessionMcpServer({
       discover: async () => connection,
       call: async (_connection, envelope) => {
@@ -671,7 +699,7 @@ describe("WithMate Session MCP contract", () => {
                 effectClass: "local_mutation",
                 decisionClass: "agent_delegable",
               }],
-              budget: "not_implemented_slice_2",
+              budget: budgetCatalog,
               validationGaps: [],
             },
             baselineChildSessionRoleTemplates: {
@@ -738,7 +766,7 @@ describe("WithMate Session MCP contract", () => {
             effectClass: "local_mutation",
             decisionClass: "agent_delegable",
           }],
-          budget: "not_implemented_slice_2",
+          budget: budgetCatalog,
           validationGaps: [],
         },
         baselineChildSessionRoleTemplates: {

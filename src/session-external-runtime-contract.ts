@@ -4,6 +4,23 @@ import { CODEX_SANDBOX_MODE_VALUES, type CodexSandboxMode } from "./codex-sandbo
 import { isModelReasoningEffort, type ModelReasoningEffort } from "./model-catalog.js";
 import type { SessionExecution } from "./session-execution.js";
 import {
+  RESOURCE_BUDGET_CONTRACT_REVISION,
+  RESOURCE_BUDGET_DEFAULT_DURATION_MS,
+  RESOURCE_BUDGET_DEFAULT_HARD_LIMITS,
+  RESOURCE_BUDGET_DEFAULT_LIST_LIMIT,
+  RESOURCE_BUDGET_DIMENSIONS,
+  RESOURCE_BUDGET_MAX_LIST_LIMIT,
+  RESOURCE_BUDGET_RETRY_PER_EXECUTION_LIMIT,
+  parseResourceBudgetConfigureInput,
+  parseResourceBudgetGetInput,
+  parseResourceBudgetListInput,
+  type ResourceBudget,
+  type ResourceBudgetConfigureInput,
+  type ResourceBudgetGetInput,
+  type ResourceBudgetListInput,
+  type ResourceBudgetListResult,
+} from "./resource-budget.js";
+import {
   type SessionInteraction,
   type SessionInteractionResponse,
 } from "./session-interaction.js";
@@ -88,6 +105,9 @@ export const SESSION_RUNTIME_MAX_TURN_ATTACHMENTS = 32;
 
 export const SESSION_RUNTIME_OPERATIONS = [
   "runtime.catalog",
+  "budget.get",
+  "budget.list",
+  "budget.configure",
   "session.self",
   "session.create",
   "session.list",
@@ -137,7 +157,18 @@ export type SessionRuntimeCatalogResult = {
   authority: {
     mappingRevision: number;
     operations: AuthorityOperationDefinition[];
-    budget: "not_implemented_slice_2";
+    budget: {
+      contractRevision: typeof RESOURCE_BUDGET_CONTRACT_REVISION;
+      operations: readonly ["get", "list", "configure"];
+      dimensions: typeof RESOURCE_BUDGET_DIMENSIONS;
+      defaultHardLimits: typeof RESOURCE_BUDGET_DEFAULT_HARD_LIMITS;
+      retryPerExecutionLimit: typeof RESOURCE_BUDGET_RETRY_PER_EXECUTION_LIMIT;
+      defaultDurationMs: typeof RESOURCE_BUDGET_DEFAULT_DURATION_MS;
+      defaultListLimit: typeof RESOURCE_BUDGET_DEFAULT_LIST_LIMIT;
+      maxListLimit: typeof RESOURCE_BUDGET_MAX_LIST_LIMIT;
+      meteredUsage: readonly ["tokens", "monetary_cost", "provider_usage"];
+      constraints: readonly string[];
+    };
     validationGaps: readonly string[];
   };
   revision: number;
@@ -540,9 +571,18 @@ export type SessionRuntimeInteractionRespondResult = {
 
 export type SessionRuntimeTranscriptExportInput = SessionTranscriptExportInput;
 export type SessionRuntimeTranscriptExportResult = SessionTranscriptExportResult;
+export type SessionRuntimeBudgetGetInput = ResourceBudgetGetInput;
+export type SessionRuntimeBudgetListInput = ResourceBudgetListInput;
+export type SessionRuntimeBudgetConfigureInput = ResourceBudgetConfigureInput;
+export type SessionRuntimeBudgetGetResult = ResourceBudget;
+export type SessionRuntimeBudgetListResult = ResourceBudgetListResult;
+export type SessionRuntimeBudgetConfigureResult = ResourceBudget;
 
 export type SessionRuntimeResultByOperation = {
   "runtime.catalog": SessionRuntimeCatalogResult;
+  "budget.get": SessionRuntimeBudgetGetResult;
+  "budget.list": SessionRuntimeBudgetListResult;
+  "budget.configure": SessionRuntimeBudgetConfigureResult;
   "session.self": SessionRuntimeSelfResult;
   "session.create": SessionRuntimeSessionDetail;
   "session.list": SessionRuntimeSessionListResult;
@@ -714,6 +754,9 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
     assertKeys(record, [], "input");
     return {};
   }
+  if (operation === "budget.get") return parseResourceBudgetGetInput(value);
+  if (operation === "budget.list") return parseResourceBudgetListInput(value);
+  if (operation === "budget.configure") return parseResourceBudgetConfigureInput(value);
   if (operation === "session.create") {
     return parseSessionCreateInput(value);
   }

@@ -83,6 +83,7 @@ import {
   writeSessionTurnTerminalCommit,
   type SessionTurnTerminalCommit,
 } from "./session-turn-terminal-commit.js";
+import { ResourceBudgetStorage } from "./resource-budget-storage.js";
 import type {
   SessionCharacterAuthoringRuntimeClearInput,
   SessionCharacterAuthoringRuntimeClearResult,
@@ -550,12 +551,27 @@ function decodeMessage(row: MessageV6Row): Message | null {
 
 export class SessionStorageV6 {
   private readonly db: DatabaseSync;
+  private readonly resourceBudgetStorage: ResourceBudgetStorage;
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
     registerSessionProviderIdNormalizer(this.db);
     ensureV6Schema(this.db);
     this.ensureSchema();
+    this.resourceBudgetStorage = new ResourceBudgetStorage(this.db);
+  }
+
+  listRootMemberSessionIds(sessionId: string): string[] {
+    return (this.db.prepare(`
+      SELECT member.session_id FROM session_role_bindings_v6 AS member
+      INNER JOIN session_role_bindings_v6 AS target ON target.root_session_id = member.root_session_id
+      WHERE target.session_id = ? ORDER BY member.session_id
+    `).all(sessionId) as Array<{ session_id: string }>).map((row) => row.session_id);
+  }
+
+  listRootSessionIds(): string[] {
+    return (this.db.prepare("SELECT DISTINCT root_session_id FROM session_role_bindings_v6 ORDER BY root_session_id")
+      .all() as Array<{ root_session_id: string }>).map((row) => row.root_session_id);
   }
 
   listSessions(): Session[] {
@@ -905,6 +921,7 @@ export class SessionStorageV6 {
       }
 
       this.writeSession(normalized, "create");
+      this.consumeCreatedSessionResources(normalized, input.principalSessionId);
       if (input.proof.principal.kind === "agent") {
         createDelegatedChildAuthority(this.db, {
           parentProof: input.proof,
@@ -1535,6 +1552,9 @@ export class SessionStorageV6 {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.writeSession(normalized, operation);
+      if (operation === "create") {
+        this.consumeCreatedSessionResources(normalized);
+      }
       if (operation === "create" && normalized.sessionKind === "default" && normalized.roleBinding) {
         ensureBaselineSessionAuthority(this.db, normalized.id, normalized.updatedAt);
       }
@@ -1916,6 +1936,28 @@ export class SessionStorageV6 {
     if (!columns.has("artifact_body")) {
       this.db.exec("ALTER TABLE session_messages_v6 ADD COLUMN artifact_body TEXT;");
     }
+  }
+
+  private consumeCreatedSessionResources(session: Session, accountOwnerSessionId?: string): void {
+    if (session.sessionKind !== "default" || !session.roleBinding) return;
+    const binding = session.roleBinding;
+    const isRoot = binding.rootSessionId === session.id
+      && binding.parentSessionId === null
+      && binding.delegationDepth === 0;
+    if (isRoot) {
+      this.resourceBudgetStorage.bootstrapRootBudget({
+        rootSessionId: session.id,
+        rootCreatedAt: session.updatedAt,
+        createdAt: session.updatedAt,
+      });
+      return;
+    }
+    this.resourceBudgetStorage.consumeCount({
+      sessionId: accountOwnerSessionId ?? binding.parentSessionId ?? session.id,
+      dimension: "sessions",
+      idempotencyKey: `session.create:${session.id}`,
+      consumedAt: session.updatedAt,
+    });
   }
 
   private ensureRootWorkItem(session: Session): void {

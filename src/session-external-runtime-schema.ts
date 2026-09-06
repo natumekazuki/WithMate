@@ -3,6 +3,15 @@ import { z } from "zod";
 import { APPROVAL_MODE_VALUES } from "./approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES } from "./codex-sandbox-mode.js";
 import {
+  RESOURCE_BUDGET_CONTRACT_REVISION,
+  RESOURCE_BUDGET_DEFAULT_DURATION_MS,
+  RESOURCE_BUDGET_DEFAULT_HARD_LIMITS,
+  RESOURCE_BUDGET_DEFAULT_LIST_LIMIT,
+  RESOURCE_BUDGET_DIMENSIONS,
+  RESOURCE_BUDGET_MAX_LIST_LIMIT,
+  RESOURCE_BUDGET_RETRY_PER_EXECUTION_LIMIT,
+} from "./resource-budget.js";
+import {
   COORDINATION_EVENT_DEFAULT_LIST_LIMIT,
   COORDINATION_EVENT_KINDS,
   COORDINATION_EVENT_MAX_LIST_LIMIT,
@@ -47,7 +56,46 @@ import {
 } from "./session-external-runtime-contract.js";
 const reasoningEffortSchema = z.enum(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const nonEmptyStringSchema = z.string().trim().min(1);
+const budgetTimestampSchema = z.iso.datetime({ offset: true });
 const runtimeCatalogInputSchema = z.object({}).strict();
+const budgetGetInputSchema = z.object({ sessionId: nonEmptyStringSchema }).strict();
+const budgetListInputSchema = z.object({
+  sessionId: nonEmptyStringSchema,
+  limit: z.number().int().positive().max(RESOURCE_BUDGET_MAX_LIST_LIMIT),
+  cursor: nonEmptyStringSchema.optional(),
+}).strict();
+const budgetAmountsShape = Object.fromEntries(
+  RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, z.number().int().nonnegative().optional()]),
+) as Record<(typeof RESOURCE_BUDGET_DIMENSIONS)[number], z.ZodOptional<z.ZodNumber>>;
+const budgetRequiredAmountsShape = Object.fromEntries(
+  RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, z.number().int().nonnegative()]),
+) as Record<(typeof RESOURCE_BUDGET_DIMENSIONS)[number], z.ZodNumber>;
+const budgetChildAllocationHardLimitsSchema = z.object({
+  ...budgetRequiredAmountsShape,
+  storageBytes: z.literal(0),
+}).strict();
+const budgetSoftLimitsSchema = z.object(Object.fromEntries(
+  RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, z.number().int().nonnegative().nullable().optional()]),
+) as Record<(typeof RESOURCE_BUDGET_DIMENSIONS)[number], z.ZodOptional<z.ZodNullable<z.ZodNumber>>>).strict();
+const budgetConfigureInputSchema = z.object({
+  sessionId: nonEmptyStringSchema,
+  accountId: nonEmptyStringSchema,
+  expectedRevision: z.number().int().positive(),
+  hardLimits: z.object(budgetAmountsShape).strict().optional(),
+  softLimits: budgetSoftLimitsSchema.optional(),
+  deadlineAt: budgetTimestampSchema.optional(),
+  expiresAt: budgetTimestampSchema.nullable().optional(),
+  revoked: z.boolean().optional(),
+  retryPerExecutionLimit: z.number().int().nonnegative().optional(),
+  childAllocation: z.object({
+    accountId: nonEmptyStringSchema,
+    childSessionId: nonEmptyStringSchema,
+    hardLimits: budgetChildAllocationHardLimitsSchema,
+    softLimits: budgetSoftLimitsSchema.optional(),
+    expiresAt: budgetTimestampSchema.nullable().optional(),
+  }).strict().optional(),
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
 const commonTurnShape = {
   userMessage: nonEmptyStringSchema,
   model: nonEmptyStringSchema,
@@ -694,6 +742,67 @@ const workItemAggregationItemSchema = z.object({
   }).strict(),
   hasResult: z.boolean(), resultSummary: z.string().nullable(), decision: workItemAggregationDecisionSchema.nullable(),
 }).strict();
+const budgetDimensionStateSchema = z.object({
+  hardLimit: z.number().int().nonnegative(),
+  softLimit: z.number().int().nonnegative().nullable(),
+  committed: z.number().int().nonnegative(),
+  reserved: z.number().int().nonnegative(),
+  allocatedToChildren: z.number().int().nonnegative(),
+  available: z.number().int().nonnegative(),
+  softLimitExceeded: z.boolean(),
+  measurement: z.enum(["known", "unknown"]),
+  unknownSince: z.string().nullable(),
+}).strict();
+const budgetSchema = z.object({
+  contractRevision: z.literal(RESOURCE_BUDGET_CONTRACT_REVISION),
+  accountId: z.string(),
+  accountKind: z.enum(["root", "session"]),
+  rootSessionId: z.string(),
+  ownerSessionId: z.string(),
+  appliesToSessionId: z.string(),
+  allocationSource: z.enum(["owned", "root_shared"]),
+  rootManagedDimensions: z.array(z.enum(RESOURCE_BUDGET_DIMENSIONS)).max(RESOURCE_BUDGET_DIMENSIONS.length),
+  parentAccountId: z.string().nullable(),
+  authorityGrantId: z.string().nullable(),
+  authorityGrantRevision: z.number().int().positive().nullable(),
+  expiresAt: z.string().nullable(),
+  revokedAt: z.string().nullable(),
+  deadlineAt: z.string(),
+  retryPerExecutionLimit: z.number().int().nonnegative(),
+  revision: z.number().int().positive(),
+  dimensions: z.object(Object.fromEntries(
+    RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, budgetDimensionStateSchema]),
+  ) as Record<(typeof RESOURCE_BUDGET_DIMENSIONS)[number], typeof budgetDimensionStateSchema>).strict(),
+  alerts: z.array(z.object({
+    dimension: z.enum(RESOURCE_BUDGET_DIMENSIONS),
+    softLimit: z.number().int().nonnegative(),
+    usage: z.number().int().nonnegative(),
+  }).strict()),
+  meteredUsage: z.array(z.object({
+    usageId: z.string(),
+    executionId: z.string().nullable(),
+    providerGenerationId: z.string().nullable(),
+    reservationId: z.string().nullable(),
+    unit: z.enum(["tokens", "monetary_cost", "provider_usage"]),
+    amount: z.number().nonnegative().nullable(),
+    currency: z.string().nullable(),
+    confidence: z.enum(["unknown", "estimated", "reported", "settled"]),
+    observedAt: z.string(),
+  }).strict()).max(100),
+  meteredUsageTruncated: z.boolean(),
+  meteredUsageSummary: z.object({
+    knownTokens: z.number().nonnegative(),
+    knownProviderUsage: z.number().nonnegative(),
+    monetaryCostByCurrency: z.record(z.string(), z.number().nonnegative()),
+    unknownRecords: z.object({
+      tokens: z.number().int().nonnegative(),
+      monetary_cost: z.number().int().nonnegative(),
+      provider_usage: z.number().int().nonnegative(),
+    }).strict(),
+  }).strict(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+}).strict();
 const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "runtime.catalog": z.object({
     revision: z.number().int(),
@@ -709,7 +818,20 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
         effectClass: z.enum(SESSION_AUTHORITY_EFFECT_CLASSES),
         decisionClass: z.enum(SESSION_AUTHORITY_DECISION_CLASSES),
       }).strict()),
-      budget: z.literal("not_implemented_slice_2"),
+      budget: z.object({
+        contractRevision: z.literal(RESOURCE_BUDGET_CONTRACT_REVISION),
+        operations: z.tuple([z.literal("get"), z.literal("list"), z.literal("configure")]),
+        dimensions: z.tuple(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => z.literal(dimension)) as [z.ZodLiteral<(typeof RESOURCE_BUDGET_DIMENSIONS)[number]>, ...z.ZodLiteral<(typeof RESOURCE_BUDGET_DIMENSIONS)[number]>[]]),
+        defaultHardLimits: z.object(Object.fromEntries(
+          RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, z.literal(RESOURCE_BUDGET_DEFAULT_HARD_LIMITS[dimension])]),
+        ) as Record<(typeof RESOURCE_BUDGET_DIMENSIONS)[number], z.ZodLiteral<number>>).strict(),
+        retryPerExecutionLimit: z.literal(RESOURCE_BUDGET_RETRY_PER_EXECUTION_LIMIT),
+        defaultDurationMs: z.literal(RESOURCE_BUDGET_DEFAULT_DURATION_MS),
+        defaultListLimit: z.literal(RESOURCE_BUDGET_DEFAULT_LIST_LIMIT),
+        maxListLimit: z.literal(RESOURCE_BUDGET_MAX_LIST_LIMIT),
+        meteredUsage: z.tuple([z.literal("tokens"), z.literal("monetary_cost"), z.literal("provider_usage")]),
+        constraints: z.array(z.string()),
+      }).strict(),
       validationGaps: z.array(z.string()),
     }).strict(),
     sessionRoleContractRevision: z.literal(1),
@@ -776,6 +898,12 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       models: z.array(modelSchema),
     }).strict()),
   }).strict(),
+  "budget.get": budgetSchema,
+  "budget.list": z.object({
+    items: z.array(budgetSchema).max(RESOURCE_BUDGET_MAX_LIST_LIMIT),
+    nextCursor: z.string().optional(),
+  }).strict(),
+  "budget.configure": budgetSchema,
   "session.self": z.object({ revision: z.number().int().positive(), sessionId: z.string(), ...sessionRoleBindingShape }).strict(),
   "session.create": sessionDetailSchema,
   "session.list": z.object({ items: z.array(sessionSummarySchema), nextCursor: z.string().optional() }).strict(),
@@ -845,6 +973,9 @@ export function createSessionRuntimeOutputSchema(operation: SessionRuntimeOperat
 
 const inputSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "runtime.catalog": runtimeCatalogInputSchema,
+  "budget.get": budgetGetInputSchema,
+  "budget.list": budgetListInputSchema,
+  "budget.configure": budgetConfigureInputSchema,
   "session.self": runtimeCatalogInputSchema,
   "session.create": sessionCreateInputSchema,
   "session.list": sessionListInputSchema,

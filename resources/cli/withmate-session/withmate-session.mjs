@@ -76,6 +76,168 @@ function isModelReasoningEffort(value) {
 	return typeof value === "string" && REASONING_EFFORT_SET.has(value);
 }
 //#endregion
+//#region src/resource-budget.ts
+var RESOURCE_BUDGET_DIMENSIONS = [
+	"concurrentTurns",
+	"queuedTurns",
+	"totalTurns",
+	"retries",
+	"sessions",
+	"workItems",
+	"delegations",
+	"storageBytes"
+];
+var RESOURCE_BUDGET_DEFAULT_HARD_LIMITS = {
+	concurrentTurns: 4,
+	queuedTurns: 100,
+	totalTurns: 1e3,
+	retries: 100,
+	sessions: 100,
+	workItems: 500,
+	delegations: 500,
+	storageBytes: 1073741824
+};
+var RESOURCE_BUDGET_DEFAULT_DURATION_MS = 2592e6;
+var ResourceBudgetValidationError = class extends TypeError {
+	constructor(message) {
+		super(message);
+		this.name = "ResourceBudgetValidationError";
+	}
+};
+function parseResourceBudgetGetInput(value) {
+	const object = requireObject$2(value, "budget.get input");
+	assertKeys$2(object, ["sessionId"], "budget.get input");
+	return { sessionId: requireNonEmptyString$1(object.sessionId, "sessionId") };
+}
+function parseResourceBudgetListInput(value) {
+	const object = requireObject$2(value, "budget.list input");
+	assertKeys$2(object, [
+		"sessionId",
+		"limit",
+		"cursor"
+	], "budget.list input");
+	const limit = requirePositiveSafeInteger(object.limit, "limit");
+	if (limit > 500) throw new ResourceBudgetValidationError(`limit must be at most 500.`);
+	const cursor = object.cursor === void 0 ? void 0 : requireNonEmptyString$1(object.cursor, "cursor");
+	return {
+		sessionId: requireNonEmptyString$1(object.sessionId, "sessionId"),
+		limit,
+		...cursor ? { cursor } : {}
+	};
+}
+function parseResourceBudgetConfigureInput(value) {
+	const object = requireObject$2(value, "budget.configure input");
+	assertKeys$2(object, [
+		"sessionId",
+		"accountId",
+		"expectedRevision",
+		"hardLimits",
+		"softLimits",
+		"deadlineAt",
+		"expiresAt",
+		"revoked",
+		"retryPerExecutionLimit",
+		"childAllocation",
+		"idempotencyKey"
+	], "budget.configure input");
+	const hardLimits = object.hardLimits === void 0 ? void 0 : parseAmounts(object.hardLimits, false, "hardLimits");
+	const softLimits = object.softLimits === void 0 ? void 0 : parseSoftLimits(object.softLimits);
+	const deadlineAt = object.deadlineAt === void 0 ? void 0 : requireTimestamp(object.deadlineAt, "deadlineAt");
+	const expiresAt = object.expiresAt === void 0 || object.expiresAt === null ? object.expiresAt : requireTimestamp(object.expiresAt, "expiresAt");
+	if (object.revoked !== void 0 && typeof object.revoked !== "boolean") throw new ResourceBudgetValidationError("revoked must be a boolean.");
+	const retryPerExecutionLimit = object.retryPerExecutionLimit === void 0 ? void 0 : requireNonNegativeSafeInteger(object.retryPerExecutionLimit, "retryPerExecutionLimit");
+	const childAllocation = object.childAllocation === void 0 ? void 0 : parseChildAllocation(object.childAllocation);
+	if (childAllocation !== void 0 && (hardLimits !== void 0 || softLimits !== void 0 || deadlineAt !== void 0 || object.expiresAt !== void 0 || object.revoked !== void 0 || retryPerExecutionLimit !== void 0)) throw new ResourceBudgetValidationError("childAllocation cannot be combined with account policy changes.");
+	if (hardLimits === void 0 && softLimits === void 0 && deadlineAt === void 0 && object.expiresAt === void 0 && object.revoked === void 0 && retryPerExecutionLimit === void 0 && childAllocation === void 0) throw new ResourceBudgetValidationError("budget.configure must contain a change.");
+	return {
+		sessionId: requireNonEmptyString$1(object.sessionId, "sessionId"),
+		accountId: requireNonEmptyString$1(object.accountId, "accountId"),
+		expectedRevision: requirePositiveSafeInteger(object.expectedRevision, "expectedRevision"),
+		...hardLimits ? { hardLimits } : {},
+		...softLimits ? { softLimits } : {},
+		...deadlineAt ? { deadlineAt } : {},
+		...object.expiresAt !== void 0 ? { expiresAt } : {},
+		...object.revoked !== void 0 ? { revoked: object.revoked } : {},
+		...retryPerExecutionLimit !== void 0 ? { retryPerExecutionLimit } : {},
+		...childAllocation ? { childAllocation } : {},
+		idempotencyKey: requireNonEmptyString$1(object.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseChildAllocation(value) {
+	const object = requireObject$2(value, "childAllocation");
+	assertKeys$2(object, [
+		"accountId",
+		"childSessionId",
+		"hardLimits",
+		"softLimits",
+		"expiresAt"
+	], "childAllocation");
+	const hardLimits = parseAmounts(object.hardLimits, true, "childAllocation.hardLimits");
+	if (hardLimits.storageBytes !== 0) throw new ResourceBudgetValidationError("childAllocation.hardLimits.storageBytes must be 0 because storage is metered at the root SessionFolder.");
+	const softLimits = object.softLimits === void 0 ? void 0 : parseSoftLimits(object.softLimits);
+	if (softLimits?.storageBytes !== void 0 && softLimits.storageBytes !== null) throw new ResourceBudgetValidationError("childAllocation.softLimits.storageBytes must be null or omitted because storage is metered at the root SessionFolder.");
+	const expiresAt = object.expiresAt === void 0 || object.expiresAt === null ? object.expiresAt : requireTimestamp(object.expiresAt, "childAllocation.expiresAt");
+	return {
+		accountId: requireNonEmptyString$1(object.accountId, "childAllocation.accountId"),
+		childSessionId: requireNonEmptyString$1(object.childSessionId, "childAllocation.childSessionId"),
+		hardLimits,
+		...softLimits ? { softLimits } : {},
+		...object.expiresAt !== void 0 ? { expiresAt } : {}
+	};
+}
+function parseAmounts(value, requireAll, label) {
+	const object = requireObject$2(value, label);
+	assertKeys$2(object, RESOURCE_BUDGET_DIMENSIONS, label);
+	const result = {};
+	for (const dimension of RESOURCE_BUDGET_DIMENSIONS) {
+		if (object[dimension] === void 0) {
+			if (requireAll) throw new ResourceBudgetValidationError(`${label}.${dimension} is required.`);
+			continue;
+		}
+		result[dimension] = requireNonNegativeSafeInteger(object[dimension], `${label}.${dimension}`);
+	}
+	if (Object.keys(result).length === 0) throw new ResourceBudgetValidationError(`${label} must not be empty.`);
+	return result;
+}
+function parseSoftLimits(value) {
+	const object = requireObject$2(value, "softLimits");
+	assertKeys$2(object, RESOURCE_BUDGET_DIMENSIONS, "softLimits");
+	const result = {};
+	for (const dimension of RESOURCE_BUDGET_DIMENSIONS) {
+		const item = object[dimension];
+		if (item === void 0) continue;
+		result[dimension] = item === null ? null : requireNonNegativeSafeInteger(item, `softLimits.${dimension}`);
+	}
+	if (Object.keys(result).length === 0) throw new ResourceBudgetValidationError("softLimits must not be empty.");
+	return result;
+}
+function requireObject$2(value, label) {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ResourceBudgetValidationError(`${label} must be an object.`);
+	return value;
+}
+function assertKeys$2(object, allowed, label) {
+	const unexpected = Object.keys(object).filter((key) => !allowed.includes(key));
+	if (unexpected.length > 0) throw new ResourceBudgetValidationError(`${label} contains unexpected fields: ${unexpected.join(", ")}.`);
+}
+function requireNonEmptyString$1(value, label) {
+	if (typeof value !== "string" || value.trim().length === 0) throw new ResourceBudgetValidationError(`${label} must be a non-empty string.`);
+	return value;
+}
+function requireTimestamp(value, label) {
+	const text = requireNonEmptyString$1(value, label);
+	if (!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(text) || !Number.isFinite(Date.parse(text))) throw new ResourceBudgetValidationError(`${label} must be an ISO timestamp with a timezone.`);
+	return new Date(text).toISOString();
+}
+function requireNonNegativeSafeInteger(value, label) {
+	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new ResourceBudgetValidationError(`${label} must be a non-negative safe integer.`);
+	return value;
+}
+function requirePositiveSafeInteger(value, label) {
+	const result = requireNonNegativeSafeInteger(value, label);
+	if (result === 0) throw new ResourceBudgetValidationError(`${label} must be positive.`);
+	return result;
+}
+//#endregion
 //#region src/coordination-event.ts
 var COORDINATION_EVENT_KINDS = [
 	"progress",
@@ -254,6 +416,9 @@ var SESSION_RUNTIME_MAX_FILE_TEXT_BYTES = 8388608;
 var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
 var SESSION_RUNTIME_OPERATIONS = [
 	"runtime.catalog",
+	"budget.get",
+	"budget.list",
+	"budget.configure",
 	"session.self",
 	"session.create",
 	"session.list",
@@ -321,6 +486,9 @@ function parseSessionRuntimeOperationInput(operation, value) {
 		assertKeys(requireObject(value, "input"), [], "input");
 		return {};
 	}
+	if (operation === "budget.get") return parseResourceBudgetGetInput(value);
+	if (operation === "budget.list") return parseResourceBudgetListInput(value);
+	if (operation === "budget.configure") return parseResourceBudgetConfigureInput(value);
 	if (operation === "session.create") return parseSessionCreateInput(value);
 	if (operation === "session.list") return parseSessionListInput(value);
 	if (operation === "session.get") return parseSessionInput(value);
@@ -8750,7 +8918,8 @@ var SESSION_AUTHORITY_RESOURCE_KINDS = [
 	"execution",
 	"interaction",
 	"coordination_event",
-	"transcript"
+	"transcript",
+	"budget"
 ];
 //#endregion
 //#region src/session-external-runtime-schema.ts
@@ -8764,7 +8933,39 @@ var reasoningEffortSchema = _enum([
 	"ultra"
 ]);
 var nonEmptyStringSchema = string().trim().min(1);
+var budgetTimestampSchema = datetime({ offset: true });
 var runtimeCatalogInputSchema = object$1({}).strict();
+var budgetGetInputSchema = object$1({ sessionId: nonEmptyStringSchema }).strict();
+var budgetListInputSchema = object$1({
+	sessionId: nonEmptyStringSchema,
+	limit: number().int().positive().max(500),
+	cursor: nonEmptyStringSchema.optional()
+}).strict();
+var budgetAmountsShape = Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, number().int().nonnegative().optional()]));
+var budgetChildAllocationHardLimitsSchema = object$1({
+	...Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, number().int().nonnegative()])),
+	storageBytes: literal(0)
+}).strict();
+var budgetSoftLimitsSchema = object$1(Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, number().int().nonnegative().nullable().optional()]))).strict();
+var budgetConfigureInputSchema = object$1({
+	sessionId: nonEmptyStringSchema,
+	accountId: nonEmptyStringSchema,
+	expectedRevision: number().int().positive(),
+	hardLimits: object$1(budgetAmountsShape).strict().optional(),
+	softLimits: budgetSoftLimitsSchema.optional(),
+	deadlineAt: budgetTimestampSchema.optional(),
+	expiresAt: budgetTimestampSchema.nullable().optional(),
+	revoked: boolean().optional(),
+	retryPerExecutionLimit: number().int().nonnegative().optional(),
+	childAllocation: object$1({
+		accountId: nonEmptyStringSchema,
+		childSessionId: nonEmptyStringSchema,
+		hardLimits: budgetChildAllocationHardLimitsSchema,
+		softLimits: budgetSoftLimitsSchema.optional(),
+		expiresAt: budgetTimestampSchema.nullable().optional()
+	}).strict().optional(),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
 var commonTurnShape = {
 	userMessage: nonEmptyStringSchema,
 	model: nonEmptyStringSchema,
@@ -9734,6 +9935,74 @@ var workItemAggregationItemSchema = object$1({
 	resultSummary: string().nullable(),
 	decision: workItemAggregationDecisionSchema.nullable()
 }).strict();
+var budgetDimensionStateSchema = object$1({
+	hardLimit: number().int().nonnegative(),
+	softLimit: number().int().nonnegative().nullable(),
+	committed: number().int().nonnegative(),
+	reserved: number().int().nonnegative(),
+	allocatedToChildren: number().int().nonnegative(),
+	available: number().int().nonnegative(),
+	softLimitExceeded: boolean(),
+	measurement: _enum(["known", "unknown"]),
+	unknownSince: string().nullable()
+}).strict();
+var budgetSchema = object$1({
+	contractRevision: literal(1),
+	accountId: string(),
+	accountKind: _enum(["root", "session"]),
+	rootSessionId: string(),
+	ownerSessionId: string(),
+	appliesToSessionId: string(),
+	allocationSource: _enum(["owned", "root_shared"]),
+	rootManagedDimensions: array(_enum(RESOURCE_BUDGET_DIMENSIONS)).max(RESOURCE_BUDGET_DIMENSIONS.length),
+	parentAccountId: string().nullable(),
+	authorityGrantId: string().nullable(),
+	authorityGrantRevision: number().int().positive().nullable(),
+	expiresAt: string().nullable(),
+	revokedAt: string().nullable(),
+	deadlineAt: string(),
+	retryPerExecutionLimit: number().int().nonnegative(),
+	revision: number().int().positive(),
+	dimensions: object$1(Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, budgetDimensionStateSchema]))).strict(),
+	alerts: array(object$1({
+		dimension: _enum(RESOURCE_BUDGET_DIMENSIONS),
+		softLimit: number().int().nonnegative(),
+		usage: number().int().nonnegative()
+	}).strict()),
+	meteredUsage: array(object$1({
+		usageId: string(),
+		executionId: string().nullable(),
+		providerGenerationId: string().nullable(),
+		reservationId: string().nullable(),
+		unit: _enum([
+			"tokens",
+			"monetary_cost",
+			"provider_usage"
+		]),
+		amount: number().nonnegative().nullable(),
+		currency: string().nullable(),
+		confidence: _enum([
+			"unknown",
+			"estimated",
+			"reported",
+			"settled"
+		]),
+		observedAt: string()
+	}).strict()).max(100),
+	meteredUsageTruncated: boolean(),
+	meteredUsageSummary: object$1({
+		knownTokens: number().nonnegative(),
+		knownProviderUsage: number().nonnegative(),
+		monetaryCostByCurrency: record(string(), number().nonnegative()),
+		unknownRecords: object$1({
+			tokens: number().int().nonnegative(),
+			monetary_cost: number().int().nonnegative(),
+			provider_usage: number().int().nonnegative()
+		}).strict()
+	}).strict(),
+	createdAt: string(),
+	updatedAt: string()
+}).strict();
 var resultSchemas = {
 	"runtime.catalog": object$1({
 		revision: number().int(),
@@ -9756,7 +10025,26 @@ var resultSchemas = {
 				effectClass: _enum(SESSION_AUTHORITY_EFFECT_CLASSES),
 				decisionClass: _enum(SESSION_AUTHORITY_DECISION_CLASSES)
 			}).strict()),
-			budget: literal("not_implemented_slice_2"),
+			budget: object$1({
+				contractRevision: literal(1),
+				operations: tuple([
+					literal("get"),
+					literal("list"),
+					literal("configure")
+				]),
+				dimensions: tuple(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => literal(dimension))),
+				defaultHardLimits: object$1(Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, literal(RESOURCE_BUDGET_DEFAULT_HARD_LIMITS[dimension])]))).strict(),
+				retryPerExecutionLimit: literal(3),
+				defaultDurationMs: literal(RESOURCE_BUDGET_DEFAULT_DURATION_MS),
+				defaultListLimit: literal(50),
+				maxListLimit: literal(500),
+				meteredUsage: tuple([
+					literal("tokens"),
+					literal("monetary_cost"),
+					literal("provider_usage")
+				]),
+				constraints: array(string())
+			}).strict(),
 			validationGaps: array(string())
 		}).strict(),
 		sessionRoleContractRevision: literal(1),
@@ -9832,6 +10120,12 @@ var resultSchemas = {
 			models: array(modelSchema)
 		}).strict())
 	}).strict(),
+	"budget.get": budgetSchema,
+	"budget.list": object$1({
+		items: array(budgetSchema).max(500),
+		nextCursor: string().optional()
+	}).strict(),
+	"budget.configure": budgetSchema,
 	"session.self": object$1({
 		revision: number().int().positive(),
 		sessionId: string(),
@@ -9947,6 +10241,9 @@ function createSessionRuntimeOutputSchema(operation) {
 }
 var inputSchemas = {
 	"runtime.catalog": runtimeCatalogInputSchema,
+	"budget.get": budgetGetInputSchema,
+	"budget.list": budgetListInputSchema,
+	"budget.configure": budgetConfigureInputSchema,
 	"session.self": runtimeCatalogInputSchema,
 	"session.create": sessionCreateInputSchema,
 	"session.list": sessionListInputSchema,
@@ -26040,6 +26337,7 @@ var SESSION_MCP_SERVER_INSTRUCTIONS = [
 	"Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
 	"Use the target Session revision for work.create and turn.run/enqueue expectedContainerRevision, and the execution revision for turn.cancel expectedRevision; refresh after each mutation.",
 	"Treat runtime.catalog authority operations as classifications, not current grants; baselineChildSessionRoleTemplates are grant issuance templates.",
+	"Read budget.get before capacity-sensitive effects; soft-limit alerts guide Agent choices, while hard-limit and deadline errors block new effects. Root hard-limit and per-execution retry-limit increases require trusted user or issuer authority.",
 	"Never answer a user_only interaction or create a user-principal receipt; provider approvals and elicitations require the trusted GUI.",
 	"A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
 	"Use a delegated Work Item to track one assignment across multiple executions; do not treat an execution as the Work Item identity.",
@@ -26057,6 +26355,27 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		title: "Get runtime catalog",
 		description: "Read the current public Provider and model catalog.",
 		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "budget.get",
+		title: "Get resource budget",
+		description: "Read the resource budget account for one visible Session.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "budget.list",
+		title: "List resource budgets",
+		description: "List resource budget accounts visible within the bound actor's root.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "budget.configure",
+		title: "Configure resource budget",
+		description: "Configure limits within the actor's existing allocation; increasing a root hard limit requires trusted user authority.",
+		readOnly: false,
 		destructive: false
 	},
 	{
@@ -26414,6 +26733,24 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: createSessionRuntimeAdvertisedInputSchema("runtime.catalog"),
 		outputSchema: createSessionRuntimeOutputSchema("runtime.catalog")
 	}, async (input) => executeOperation("runtime.catalog", input, deps));
+	server.registerTool("budget.get", {
+		...definitions.get("budget.get"),
+		annotations: annotations(definitions.get("budget.get")),
+		inputSchema: createSessionRuntimeAdvertisedInputSchema("budget.get"),
+		outputSchema: createSessionRuntimeOutputSchema("budget.get")
+	}, async (input) => executeOperation("budget.get", input, deps));
+	server.registerTool("budget.list", {
+		...definitions.get("budget.list"),
+		annotations: annotations(definitions.get("budget.list")),
+		inputSchema: createSessionRuntimeAdvertisedInputSchema("budget.list"),
+		outputSchema: createSessionRuntimeOutputSchema("budget.list")
+	}, async (input) => executeOperation("budget.list", input, deps));
+	server.registerTool("budget.configure", {
+		...definitions.get("budget.configure"),
+		annotations: annotations(definitions.get("budget.configure")),
+		inputSchema: createSessionRuntimeAdvertisedInputSchema("budget.configure"),
+		outputSchema: createSessionRuntimeOutputSchema("budget.configure")
+	}, async (input) => executeOperation("budget.configure", input, deps));
 	server.registerTool("session.self", {
 		...definitions.get("session.self"),
 		annotations: annotations(definitions.get("session.self")),
@@ -26663,6 +27000,9 @@ var SessionCliUsageError = class extends Error {
 };
 var commandMap = /* @__PURE__ */ new Map([
 	["runtime catalog", "runtime.catalog"],
+	["budget get", "budget.get"],
+	["budget list", "budget.list"],
+	["budget configure", "budget.configure"],
 	["session self", "session.self"],
 	["session create", "session.create"],
 	["session list", "session.list"],
@@ -26812,16 +27152,16 @@ async function runWithMateSessionCli(args, deps = {}) {
 	}
 }
 function isMutationCommand(command, input) {
-	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "work create" || command === "work transition" || command === "work revise" || command === "work history append" || command === "work result" || command === "work cancel" || command === "work aggregation decide" || command === "work aggregation retry" || command === "interaction respond" || command === "coordination event create" || command === "coordination event resolve" || command === "coordination event consume" || command === "coordination event cancel" || command === "coordination event correct" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
+	return command === "budget configure" || command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "work create" || command === "work transition" || command === "work revise" || command === "work history append" || command === "work result" || command === "work cancel" || command === "work aggregation decide" || command === "work aggregation retry" || command === "interaction respond" || command === "coordination event create" || command === "coordination event resolve" || command === "coordination event consume" || command === "coordination event cancel" || command === "coordination event correct" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 async function parseArgs(args, deps) {
 	const fileCommand = args[0] === "session" && args[1] === "files";
 	const coordinationCommand = args[0] === "coordination" && args[1] === "event";
 	const workAggregationCommand = args[0] === "work" && args[1] === "aggregation";
 	const workHistoryCommand = args[0] === "work" && args[1] === "history";
-	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session" || args[0] === "work" || args[0] === "interaction" || args[0] === "transcript";
+	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "budget" || args[0] === "session" || args[0] === "work" || args[0] === "interaction" || args[0] === "transcript";
 	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand || workAggregationCommand || workHistoryCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work aggregation get|list|decide|retry|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|budget get|list|configure|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work aggregation get|list|decide|retry|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
 	const optionStart = fileCommand || coordinationCommand || workAggregationCommand || workHistoryCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;

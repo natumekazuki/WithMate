@@ -1397,14 +1397,16 @@ describe("Root WorkItem contract", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "regression"
-  // claim = "parent-null delegated resultは報告だけでは回収済みにならず、root WorkItemがactiveな間はtarget Session削除をserviceとschema triggerの両方で拒否し、root terminal後だけtreeと共に削除できる"
+  // claim = "root Work Itemがpendingの間は未回収top-level delegated resultを保持し、target Session削除をserviceとschema triggerの両方で拒否する"
   // oracle = { type = "adr", ref = "docs/adr/028-session-root-work-item.md#Decision" }
-  // failure_mode = "top-level result報告直後のtarget Session削除が成功し、root revisionや履歴に採用証拠がないまま唯一のresultを失う"
-  // scope = "SessionStorageV6 and SQLite trigger WorkItem-aware deletion"
+  // fault = "root Work Itemがpendingのときtop-level result報告直後にtarget Session削除を許可し、未回収resultまたはroot revisionと履歴を失う"
+  // observable = "serviceとraw SQLのSession削除拒否、保存済みWork Item result、root revisionと履歴"
+  // observation_boundary = "component-behavior"
+  // scope = "pending root Work Itemのtop-level resultを保護するSession削除境界"
   // lifecycle = "permanent"
-  // distinction = "nested aggregationではなくparent-null delegatedを使い、active rootでのservice deleteとraw SQL delete、root terminal後のcleanupを順に観測する"
+  // distinction = "parent-null delegatedのresult報告後、root Work Itemをin_progressへ移す前にservice deleteとraw SQL deleteを試し、拒否後のresult、revision、履歴を比較する"
   // @end-test-value
   it("RW-6C: top-level delegated resultをroot terminalまで保護する", async () => {
     const harness = await createHarness();
@@ -1412,6 +1414,7 @@ describe("Root WorkItem contract", () => {
       const root = insertRootSession(harness, "root", "overall-coordinator");
       insertChildSession(harness, "task", root, "executor");
       const rootItem = getRootWorkItem(harness, "root");
+      assert.equal(rootItem.state, "pending");
       const branch = createDelegated(harness, "root", "task", "top-level-result");
       const activeBranch = harness.service.transition({
         workItemId: branch.id,
@@ -1470,6 +1473,7 @@ describe("Root WorkItem contract", () => {
         rawCleanup.exec(`
           PRAGMA foreign_keys = ON;
           BEGIN IMMEDIATE;
+          DROP TRIGGER resource_budget_events_no_delete_v6;
           DELETE FROM session_role_bindings_v6 WHERE session_id IN ('root', 'task');
           DELETE FROM sessions_v6 WHERE id = 'task';
           DELETE FROM sessions_v6 WHERE id = 'root';
