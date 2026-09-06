@@ -314,6 +314,10 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 `f45339b0d105c06b788e2eef3c0fdc72a71800cb` のtargeted closure reviewはapproveで、M-03の残存2件をclosedと判定した。対象test 58件、`npm run typecheck`、`npm run build`、`git diff --check`は成功した。全testは3459件中3457件成功、1件skip、画像preview lifecycleの1件が30秒でtimeoutしたが、同一testの即時単独再実行は93 msで成功したため、このfailureは対象変更外のflaky validation gapとして扱う。追加または意味変更したtest 2件は現行`review-test-value`のGit modeで診断0となり、両方を`ACCEPT`とした。対象finding familyに未解決blocking、accepted risk、残リスクはない。
 
+2026-09-07 の追加指摘3件は `38fa9821` で修正した。起動時のbaseline補完は委譲由来を含む既存grantを認識し、子Sessionのrevoke後も独立system grantを追加しない。GUI・scheduler・通知の内部enqueueは非同期検証とSession lock待機後にrevisionを取得し、外部要求の明示revisionはそのまま保存境界で照合する。ファイル書き込みとtranscript exportは、新規受付時のoperation IDへUUIDを追加し、期限後の同一キー再利用を保持済み履歴から区別する。期限内の再送と既存履歴の照合は維持する。
+
+追加の回帰4ケースと関連既存test 174件、`npm run typecheck`、`npm run build`、`git diff --check` が成功した。全suiteとGUI目視は今回再実行していない。`review-test-value`は今回のbase `271e0b06` から3宣言を抽出し、専用審査の最終generationで全件`ACCEPT`、全体`PASS`、未解決項目なしとなった。審査途中のツール契約変更による停止と、内部原因を直接観測するように読めるmetadataへの指摘を解消し、test本文を変えずにfault記述を実際の観測結果へ合わせた。
+
 基本 check は次の順で実行する。
 
 1. domain validator、schema、storage、service の targeted test
