@@ -67,6 +67,11 @@ const budgetListInputSchema = z.object({
 const budgetAmountsShape = Object.fromEntries(
   RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, z.number().int().nonnegative().optional()]),
 ) as Record<(typeof RESOURCE_BUDGET_DIMENSIONS)[number], z.ZodOptional<z.ZodNumber>>;
+const budgetPartialAmountsSchema = z.object(budgetAmountsShape).strict()
+  .refine((amounts) => Object.values(amounts).some((amount) => amount !== undefined), {
+    message: "hardLimits must not be empty.",
+  })
+  .meta({ minProperties: 1 });
 const budgetRequiredAmountsShape = Object.fromEntries(
   RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, z.number().int().nonnegative()]),
 ) as Record<(typeof RESOURCE_BUDGET_DIMENSIONS)[number], z.ZodNumber>;
@@ -74,14 +79,31 @@ const budgetChildAllocationHardLimitsSchema = z.object({
   ...budgetRequiredAmountsShape,
   storageBytes: z.literal(0),
 }).strict();
-const budgetSoftLimitsSchema = z.object(Object.fromEntries(
+const budgetSoftLimitsShape = Object.fromEntries(
   RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, z.number().int().nonnegative().nullable().optional()]),
-) as Record<(typeof RESOURCE_BUDGET_DIMENSIONS)[number], z.ZodOptional<z.ZodNullable<z.ZodNumber>>>).strict();
+) as Record<(typeof RESOURCE_BUDGET_DIMENSIONS)[number], z.ZodOptional<z.ZodNullable<z.ZodNumber>>>;
+const budgetSoftLimitsSchema = z.object(budgetSoftLimitsShape).strict()
+  .refine((limits) => Object.values(limits).some((limit) => limit !== undefined), {
+    message: "softLimits must not be empty.",
+  })
+  .meta({ minProperties: 1 });
+const budgetChildSoftLimitsSchema = z.object({
+  ...budgetSoftLimitsShape,
+  storageBytes: z.null().optional(),
+}).strict()
+  .refine((limits) => Object.values(limits).some((limit) => limit !== undefined), {
+    message: "childAllocation.softLimits must not be empty.",
+  })
+  .meta({ minProperties: 1 });
+const BUDGET_ACCOUNT_POLICY_FIELDS = [
+  "hardLimits", "softLimits", "deadlineAt", "expiresAt", "revoked", "retryPerExecutionLimit",
+] as const;
+const budgetPolicyRequiredAnyOf = BUDGET_ACCOUNT_POLICY_FIELDS.map((field) => ({ required: [field] }));
 const budgetConfigureInputSchema = z.object({
   sessionId: nonEmptyStringSchema,
   accountId: nonEmptyStringSchema,
   expectedRevision: z.number().int().positive(),
-  hardLimits: z.object(budgetAmountsShape).strict().optional(),
+  hardLimits: budgetPartialAmountsSchema.optional(),
   softLimits: budgetSoftLimitsSchema.optional(),
   deadlineAt: budgetTimestampSchema.optional(),
   expiresAt: budgetTimestampSchema.nullable().optional(),
@@ -91,11 +113,27 @@ const budgetConfigureInputSchema = z.object({
     accountId: nonEmptyStringSchema,
     childSessionId: nonEmptyStringSchema,
     hardLimits: budgetChildAllocationHardLimitsSchema,
-    softLimits: budgetSoftLimitsSchema.optional(),
+    softLimits: budgetChildSoftLimitsSchema.optional(),
     expiresAt: budgetTimestampSchema.nullable().optional(),
   }).strict().optional(),
   idempotencyKey: nonEmptyStringSchema,
-}).strict();
+}).strict().refine((input) => {
+  const hasPolicyChange = BUDGET_ACCOUNT_POLICY_FIELDS.some((field) => input[field] !== undefined);
+  return input.childAllocation === undefined ? hasPolicyChange : !hasPolicyChange;
+}, {
+  message: "budget.configure must contain either account policy changes or childAllocation, but not both.",
+}).meta({
+  anyOf: [
+    {
+      required: ["childAllocation"],
+      not: { anyOf: budgetPolicyRequiredAnyOf },
+    },
+    {
+      not: { required: ["childAllocation"] },
+      anyOf: budgetPolicyRequiredAnyOf,
+    },
+  ],
+});
 const commonTurnShape = {
   userMessage: nonEmptyStringSchema,
   model: nonEmptyStringSchema,

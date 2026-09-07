@@ -8941,17 +8941,31 @@ var budgetListInputSchema = object$1({
 	limit: number().int().positive().max(500),
 	cursor: nonEmptyStringSchema.optional()
 }).strict();
-var budgetAmountsShape = Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, number().int().nonnegative().optional()]));
+var budgetPartialAmountsSchema = object$1(Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, number().int().nonnegative().optional()]))).strict().refine((amounts) => Object.values(amounts).some((amount) => amount !== void 0), { message: "hardLimits must not be empty." }).meta({ minProperties: 1 });
 var budgetChildAllocationHardLimitsSchema = object$1({
 	...Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, number().int().nonnegative()])),
 	storageBytes: literal(0)
 }).strict();
-var budgetSoftLimitsSchema = object$1(Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, number().int().nonnegative().nullable().optional()]))).strict();
+var budgetSoftLimitsShape = Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, number().int().nonnegative().nullable().optional()]));
+var budgetSoftLimitsSchema = object$1(budgetSoftLimitsShape).strict().refine((limits) => Object.values(limits).some((limit) => limit !== void 0), { message: "softLimits must not be empty." }).meta({ minProperties: 1 });
+var budgetChildSoftLimitsSchema = object$1({
+	...budgetSoftLimitsShape,
+	storageBytes: _null().optional()
+}).strict().refine((limits) => Object.values(limits).some((limit) => limit !== void 0), { message: "childAllocation.softLimits must not be empty." }).meta({ minProperties: 1 });
+var BUDGET_ACCOUNT_POLICY_FIELDS = [
+	"hardLimits",
+	"softLimits",
+	"deadlineAt",
+	"expiresAt",
+	"revoked",
+	"retryPerExecutionLimit"
+];
+var budgetPolicyRequiredAnyOf = BUDGET_ACCOUNT_POLICY_FIELDS.map((field) => ({ required: [field] }));
 var budgetConfigureInputSchema = object$1({
 	sessionId: nonEmptyStringSchema,
 	accountId: nonEmptyStringSchema,
 	expectedRevision: number().int().positive(),
-	hardLimits: object$1(budgetAmountsShape).strict().optional(),
+	hardLimits: budgetPartialAmountsSchema.optional(),
 	softLimits: budgetSoftLimitsSchema.optional(),
 	deadlineAt: budgetTimestampSchema.optional(),
 	expiresAt: budgetTimestampSchema.nullable().optional(),
@@ -8961,11 +8975,20 @@ var budgetConfigureInputSchema = object$1({
 		accountId: nonEmptyStringSchema,
 		childSessionId: nonEmptyStringSchema,
 		hardLimits: budgetChildAllocationHardLimitsSchema,
-		softLimits: budgetSoftLimitsSchema.optional(),
+		softLimits: budgetChildSoftLimitsSchema.optional(),
 		expiresAt: budgetTimestampSchema.nullable().optional()
 	}).strict().optional(),
 	idempotencyKey: nonEmptyStringSchema
-}).strict();
+}).strict().refine((input) => {
+	const hasPolicyChange = BUDGET_ACCOUNT_POLICY_FIELDS.some((field) => input[field] !== void 0);
+	return input.childAllocation === void 0 ? hasPolicyChange : !hasPolicyChange;
+}, { message: "budget.configure must contain either account policy changes or childAllocation, but not both." }).meta({ anyOf: [{
+	required: ["childAllocation"],
+	not: { anyOf: budgetPolicyRequiredAnyOf }
+}, {
+	not: { required: ["childAllocation"] },
+	anyOf: budgetPolicyRequiredAnyOf
+}] });
 var commonTurnShape = {
 	userMessage: nonEmptyStringSchema,
 	model: nonEmptyStringSchema,

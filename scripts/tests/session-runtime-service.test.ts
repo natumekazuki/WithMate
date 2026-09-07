@@ -2230,14 +2230,14 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "regression"
-  // claim = "cancel grace後も生存するproviderの実終了まで実行を保持し、late usageと終了通知を同じexecutionへ記録する"
+  // claim = "cancel grace後も生存するproviderの実終了まで実行を保持し、late final usageだけをgeneration callbackへ渡す"
   // oracle = { type = "contract", ref = "docs/adr/030-root-resource-budget.md#決定" }
-  // fault = "grace deadlineでprovider promiseの追跡を終え、late usageまたは実終了通知を破棄する"
-  // observable = "terminal resultのpending flag、generation記録列、termination callback、isRunInFlight"
+  // fault = "grace時点のlive partial usageをsettled callbackへ渡し、同confidenceで値が異なるlate final usageと競合させる"
+  // observable = "terminal resultのpending flag、usageを含むgeneration callback全列、termination callback、isRunInFlight"
   // observation_boundary = "component-behavior"
   // scope = "session-runtime-provider-cancel-grace-late-settlement"
   // lifecycle = "permanent"
-  // distinction = "grace内にproviderが完了する競合ではなく、terminal返却後もprovider promiseが生存する経路を扱う"
+  // distinction = "ledger投影ではなく、異なるpartial/final usageを持つprovider promiseのcallback境界を観測する"
   // @end-test-value
   it("provider が cancel 後も生存する間は terminal session への再送を拒否する", async () => {
     const session = createSession();
@@ -2245,6 +2245,9 @@ describe("SessionRuntimeService", () => {
     let observedAbortSignal: AbortSignal | undefined;
     let observedAbort = false;
     let resolveProvider: ((result: RunSessionTurnResult) => void) | null = null;
+    let liveState: LiveSessionRunState | null = null;
+    const partialUsage = { inputTokens: 3, cachedInputTokens: 0, outputTokens: 1 };
+    const lateUsage = { inputTokens: 8, cachedInputTokens: 0, outputTokens: 5, totalTokens: 13 };
     const providerGenerations: Parameters<NonNullable<SessionRuntimeServiceDeps["recordProviderGeneration"]>>[0][] = [];
     const settledExecutions: Parameters<NonNullable<SessionRuntimeServiceDeps["settleTerminatingProviderExecution"]>>[0][] = [];
     const adapter: ProviderCodingAdapter = {
@@ -2262,7 +2265,7 @@ describe("SessionRuntimeService", () => {
       },
       invalidateSessionThread() {},
       invalidateAllSessionThreads() {},
-      runSessionTurn(input) {
+      async runSessionTurn(input, onProgress) {
         observedAbortSignal = input.signal;
         if (!input.signal) {
           throw new Error("AbortSignal が渡されていないよ。");
@@ -2272,6 +2275,10 @@ describe("SessionRuntimeService", () => {
         signal.addEventListener("abort", () => {
           observedAbort = true;
         }, { once: true });
+        await onProgress?.(createLiveRunState({
+          sessionId: session.id,
+          usage: partialUsage,
+        }));
         return new Promise<RunSessionTurnResult>((resolve) => {
           resolveProvider = resolve;
         });
@@ -2310,9 +2317,11 @@ describe("SessionRuntimeService", () => {
         return createAuditLogBase(input);
       },
       updateAuditLog() {},
-      setLiveSessionRun() {},
+      setLiveSessionRun(_sessionId, state) {
+        liveState = state;
+      },
       getLiveSessionRun() {
-        return null;
+        return liveState;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
         return "approve";
@@ -2359,19 +2368,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.session.runState, "idle");
     assert.equal(result.providerTerminationPending, true);
     assert.equal(service.hasInFlightRuns(), true);
-    assert.deepEqual(providerGenerations.map(({ providerGenerationId, phase, confidence }) => ({
+    assert.deepEqual(providerGenerations.map(({ providerGenerationId, phase, usage, confidence }) => ({
       providerGenerationId,
       phase,
+      usage,
       confidence,
     })), [
       {
         providerGenerationId: "execution-cancel-grace:provider-generation:1",
         phase: "started",
-        confidence: "unknown",
-      },
-      {
-        providerGenerationId: "execution-cancel-grace:provider-generation:1",
-        phase: "settled",
+        usage: null,
         confidence: "unknown",
       },
     ]);
@@ -2383,21 +2389,28 @@ describe("SessionRuntimeService", () => {
     if (!resolveProvider) {
       throw new Error("provider resolve が取得できていないよ。");
     }
-    resolveProvider(createPartialResult({
-      usage: { inputTokens: 8, cachedInputTokens: 0, outputTokens: 5, totalTokens: 13 },
-    }));
+    resolveProvider(createPartialResult({ usage: lateUsage }));
     await waitForCondition(() => settledExecutions.length === 1, "late provider終了がexecutionへ反映されること");
     assert.equal(service.hasInFlightRuns(), false);
-    assert.deepEqual(providerGenerations.map(({ providerGenerationId, phase, confidence }) => ({
+    assert.deepEqual(providerGenerations.map(({ providerGenerationId, phase, usage, confidence }) => ({
       providerGenerationId,
       phase,
+      usage,
       confidence,
-    })).at(-1), {
-      providerGenerationId: "execution-cancel-grace:provider-generation:1",
-      phase: "settled",
-      confidence: "estimated",
-    });
-    assert.equal(providerGenerations.at(-1)?.usage?.totalTokens, 13);
+    })), [
+      {
+        providerGenerationId: "execution-cancel-grace:provider-generation:1",
+        phase: "started",
+        usage: null,
+        confidence: "unknown",
+      },
+      {
+        providerGenerationId: "execution-cancel-grace:provider-generation:1",
+        phase: "settled",
+        usage: lateUsage,
+        confidence: "estimated",
+      },
+    ]);
     assert.equal(settledExecutions[0]?.executionId, "execution-cancel-grace");
     assert.deepEqual(approvalResolutions, [
       { sessionId: session.id, decision: "deny" },

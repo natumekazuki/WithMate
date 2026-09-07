@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { z } from "zod";
 
 import {
   SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES,
@@ -10,6 +11,7 @@ import {
   projectSessionExecution,
 } from "../../src/session-external-runtime-contract.js";
 import {
+  createSessionRuntimeAdvertisedInputSchema,
   createSessionRuntimeInputSchema,
   parseSessionRuntimeResultEnvelope,
 } from "../../src/session-external-runtime-schema.js";
@@ -50,8 +52,8 @@ test("RUNTIME-CATALOG-01: runtime.catalog accepts only an explicit empty input",
 // kind = "contract"
 // claim = "budget公開操作はUTC正規化timestampとroot共有storageを二重配分しないstrictな子配分、およびroot管理dimensionを明示するstrict responseだけを受理する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#公開操作候補" }
-// fault = "timezoneなしtimestampや子への非zero storage、spoof field、親policy併用、上限超過list、不正retry設定、root管理dimension欠落またはprivate response fieldを受理する"
-// observable = "request/result envelope parserのvalidated payloadとvalidation throw"
+// fault = "空limitや変更なし、childとpolicy併用、timezoneなしtimestamp、子へのstorage数値、spoof field、または不正responseを受理・広告する"
+// observable = "canonical parserとruntime schemaの受理結果、およびadvertised JSON SchemaのminProperties・anyOf・not構造"
 // observation_boundary = "public-boundary"
 // scope = "Session runtime resource budget request contract"
 // lifecycle = "permanent"
@@ -131,6 +133,47 @@ test("RESOURCE-BUDGET-PUBLIC-01: budget requestをstrictに検証する", () => 
   assert.equal(normalizedTimestamp.input.deadlineAt, "2026-10-01T00:00:00.000Z");
   const configureInputSchema = createSessionRuntimeInputSchema("budget.configure");
   assert.equal(configureInputSchema.safeParse(childAllocation.input).success, true);
+  const configureBase = {
+    sessionId: "root-session",
+    accountId: "root-account",
+    expectedRevision: 2,
+    idempotencyKey: "budget-configure-schema-parity",
+  };
+  for (const invalidInput of [
+    configureBase,
+    { ...configureBase, hardLimits: {} },
+    { ...configureBase, softLimits: {} },
+    { ...configureBase, hardLimits: undefined },
+    { ...childAllocation.input, softLimits: { totalTurns: 90 } },
+    {
+      ...childAllocation.input,
+      childAllocation: {
+        ...childAllocation.input.childAllocation,
+        softLimits: { storageBytes: 0 },
+      },
+    },
+    {
+      ...childAllocation.input,
+      childAllocation: {
+        ...childAllocation.input.childAllocation,
+        softLimits: { storageBytes: 1 },
+      },
+    },
+  ]) {
+    assert.equal(configureInputSchema.safeParse(invalidInput).success, false);
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "budget.configure",
+      input: invalidInput,
+    }));
+  }
+  assert.equal(configureInputSchema.safeParse({
+    ...childAllocation.input,
+    childAllocation: {
+      ...childAllocation.input.childAllocation,
+      softLimits: { storageBytes: null },
+    },
+  }).success, true);
   assert.equal(configureInputSchema.safeParse({
     sessionId: "root-session",
     accountId: "root-account",
@@ -154,6 +197,30 @@ test("RESOURCE-BUDGET-PUBLIC-01: budget requestをstrictに検証する", () => 
       },
     },
   }).success, false);
+  const advertisedConfigureSchema = z.toJSONSchema(
+    createSessionRuntimeAdvertisedInputSchema("budget.configure"),
+  ) as Record<string, any>;
+  assert.equal(advertisedConfigureSchema.properties.hardLimits.minProperties, 1);
+  assert.equal(advertisedConfigureSchema.properties.softLimits.minProperties, 1);
+  assert.equal(advertisedConfigureSchema.properties.childAllocation.properties.softLimits.minProperties, 1);
+  assert.deepEqual(
+    advertisedConfigureSchema.properties.childAllocation.properties.softLimits.properties.storageBytes,
+    { type: "null" },
+  );
+  assert.deepEqual(advertisedConfigureSchema.anyOf, [
+    {
+      required: ["childAllocation"],
+      not: {
+        anyOf: ["hardLimits", "softLimits", "deadlineAt", "expiresAt", "revoked", "retryPerExecutionLimit"]
+          .map((field) => ({ required: [field] })),
+      },
+    },
+    {
+      not: { required: ["childAllocation"] },
+      anyOf: ["hardLimits", "softLimits", "deadlineAt", "expiresAt", "revoked", "retryPerExecutionLimit"]
+        .map((field) => ({ required: [field] })),
+    },
+  ]);
   assert.equal(configureInputSchema.safeParse({
     ...childAllocation.input,
     childAllocation: {

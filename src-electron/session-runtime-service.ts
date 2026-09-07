@@ -1802,11 +1802,13 @@ export class SessionRuntimeService {
         await recordProviderGeneration(providerGenerationId, "settled", result.usage);
         return result;
       } catch (error) {
-        await recordProviderGeneration(
-          providerGenerationId,
-          "settled",
-          error instanceof ProviderTurnError ? error.partialResult.usage : null,
-        );
+        if (!providerTerminationPending) {
+          await recordProviderGeneration(
+            providerGenerationId,
+            "settled",
+            error instanceof ProviderTurnError ? error.partialResult.usage : null,
+          );
+        }
         throw error;
       }
     };
