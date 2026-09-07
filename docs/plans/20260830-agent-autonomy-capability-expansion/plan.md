@@ -370,6 +370,16 @@ Root ledger、原子的な予約と精算、Session／Work Item作成数、実�
 
 ledgerとtombstoneはreplay・遅延精算のため保持し、通常削除や設定延長で消去しない。公開使用量明細は最大100件と集約値を返す。長期Rootの自動交代・履歴圧縮はこのSliceで追加しない。
 
+### Slice 2 の完了記録
+
+2026-09-07、開始コミット`d5917a9cc455be879afa9e7f78bec3d8cc4a41ec`からの実装を`1025e2980bd01800dd592796e79a6871dc4be68c`へ固定した。Settingsで上限または期限を延長すると、同じRootの消費済み使用量・履歴・terminal結果を保持して保留queueを再開する。token・費用は上限管理に含めず、観測できない値をunknownとして扱う。
+
+clean detached worktreeでの独立complete-diff reviewは、cancel grace後の途中usageが遅延した最終usageと競合する問題と、`budget.configure`のruntime入力制約と公開JSON Schemaの不一致をblockingとして採用した。修正コミット`c10e3468163aaa1eb4449a538ac69ff892317302`では、Provider実終了待ちの間はgenerationをunknownのまま保持し、late observerだけが最終usageを確定する。設定入力の空map・変更なし・子配分とpolicy変更の併用・子storageの数値指定は、runtimeと公開schemaの両方で拒否する。同じ2件のfinding familyに限定したtargeted closureは両件closed、新たな回帰なしとなった。review worktreeは終了時のHEAD・cleanlinessを確認して削除した。
+
+`c10e3468163aaa1eb4449a538ac69ff892317302`上で`npm test`（3490件、3489 pass、1 skip、0 fail）、`npm run typecheck`、`npm run build`、`git diff --check`が成功した。skipはWindowsで対象外のPOSIX symlink testである。全体testの今回の成功は確認したが、Slice 1で記録したflakyの恒久解消を示すものではない。Settingsの実component入力・応答消失後の再保存・成功後のrevision更新は自動testで確認し、Electron分離起動によるGUI目視は未実行である。
+
+同じコミットのclean snapshotを、開始コミットから現行`review-test-value`のGit modeへ渡した。独立native CLIによるLuna metadata／alignmentとrequired Sol、保持根拠、過去の削除・置換義務を含む最終generation `g000005`は45件すべてPASS、全体PASS、未解決0となった。途中のmetadataと観測範囲の不一致は修正し、不正なworker出力・実行失敗は非成功として残した。審査対象snapshotは`sha256:38740bbab453de6745eb1254fe8ca41cb3190efc1bfdbdc9593dd37ed37a9ba6`であり、この完了記録だけを追記する後続commitではsource・test・契約を変更しない。
+
 ### Slice 1 の budget 段階導入
 
 2026-09-05 のユーザー承認により、Slice 1 は principal、grant、decision、revision、history の切り替えを行い、root budget の ledger、reserve、reconcile、admission は Slice 2 で接続する。Slice 1 では既存の操作別上限を維持し、budget が未実装であることを runtime catalog に明示する。既存上限を root budget の保証と扱わず、無制限の値、評価成功を返す代用品、架空の allocation reference を作らない。
