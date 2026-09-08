@@ -22,6 +22,7 @@ import {
   SessionExecutionStateConflictError,
   SessionExecutionStorageV6,
 } from "../../src-electron/session-execution-storage-v6.js";
+import { ResourceBudgetError, ResourceBudgetStorage } from "../../src-electron/resource-budget-storage.js";
 
 const CREATED_AT = "2026-08-10T00:00:00.000Z";
 
@@ -67,6 +68,7 @@ async function createFixture(options: {
     executionId: string;
     hasDurableIntent: boolean;
   }) => void;
+  prepareBudgetAdmission?: (sessionId: string) => Promise<void> | void;
 } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-execution-service-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
@@ -155,6 +157,7 @@ async function createFixture(options: {
       }
       return options.normalizeRequest?.(request) ?? request;
     },
+    prepareBudgetAdmission: options.prepareBudgetAdmission,
     dispatchTurn(sessionId, executionId) {
       activeSessions.add(sessionId);
       dispatchEvents.push({ executionId, persistedState: storage.get(executionId)?.state });
@@ -239,6 +242,169 @@ function createInput(index: number, sessionId = "session-1") {
 }
 
 describe("SessionExecutionService", () => {
+  // @test-value v2
+  // kind = "regression"
+  // claim = "root予算不足やdeadlineでdispatch準備が拒否されたqueued Turnはterminalへ変えず、root queue再開後に同じexecutionを実行する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Admission-と-settlement" }
+  // fault = "予算待ちを一時的なadmission障害として再試行し、上限回数後にqueued executionをfailedへ確定する"
+  // observable = "予算待ち中とresumeRootQueues後の同一execution state、dispatch数"
+  // observation_boundary = "component-behavior"
+  // scope = "session-execution-budget-deferral"
+  // lifecycle = "permanent"
+  // distinction = "同一executionにhard limit拒否とdeadline拒否を順に注入し、各保留時のqueued維持と拒否解除後のdispatchを観測する"
+  // @end-test-value
+  it("budget admission待ちはqueuedを維持しroot-wide wakeで再開する", async () => {
+    let budgetDeferral: "BUDGET_HARD_LIMIT_EXCEEDED" | "BUDGET_DEADLINE_EXCEEDED" | null = "BUDGET_HARD_LIMIT_EXCEEDED";
+    const fixture = await createFixture({
+      prepareBudgetAdmission() {
+        if (budgetDeferral) {
+          throw new ResourceBudgetError(budgetDeferral, "root budget admission is deferred");
+        }
+      },
+    });
+    try {
+      const queued = await fixture.service.enqueue(createInput(100));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(fixture.storage.get(queued.id)?.state, "queued");
+      assert.equal(fixture.dispatchEvents.length, 0);
+
+      budgetDeferral = "BUDGET_DEADLINE_EXCEEDED";
+      await fixture.service.resumeRootQueues("session-1");
+      assert.equal(fixture.storage.get(queued.id)?.state, "queued");
+      assert.equal(fixture.dispatchEvents.length, 0);
+
+      budgetDeferral = null;
+      await fixture.service.resumeRootQueues("session-1");
+      assert.equal(fixture.storage.get(queued.id)?.state, "running");
+      assert.equal(fixture.dispatchEvents.length, 1);
+
+      fixture.dispatches.get(queued.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", queued.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "child allocation期限切れエラーを受けたqueued Turnは再評価を繰り返してもfailedへ確定せず、エラー解除後に同じexecutionを実行する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Admission-と-settlement" }
+  // fault = "child allocation期限切れのBUDGET_AUTHORITY_REQUIREDを通常のauthority拒否として扱い、QUEUE_ADMISSION_FAILUREへ収束させる"
+  // observable = "期限切れエラー保留中のqueued state、dispatch数、エラー解除後の同一execution dispatch"
+  // observation_boundary = "component-behavior"
+  // scope = "session-execution-child-allocation-expiry"
+  // lifecycle = "permanent"
+  // distinction = "allocation_expired detail付きauthority errorを保留対象として扱い、解除後に同じexecutionを再開する"
+  // @end-test-value
+  it("期限切れchild allocationのadmission待ちはretry exhaustionでfailedにしない", async () => {
+    let allocationExpired = true;
+    const fixture = await createFixture({
+      queueRetryDelayMs: 1,
+      prepareBudgetAdmission() {
+        if (allocationExpired) {
+          throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "child allocation expired", {
+            reason: "allocation_expired",
+            expiresAt: "2026-08-10T00:00:00.000Z",
+          });
+        }
+      },
+    });
+    try {
+      const queued = await fixture.service.enqueue(createInput(102));
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        await fixture.service.resumeRootQueues("session-1");
+      }
+      assert.equal(fixture.storage.get(queued.id)?.state, "queued");
+      assert.equal(fixture.storage.get(queued.id)?.errorCode, "");
+      assert.equal(fixture.dispatchEvents.length, 0);
+
+      allocationExpired = false;
+      await fixture.service.resumeRootQueues("session-1");
+      assert.equal(fixture.storage.get(queued.id)?.state, "running");
+      assert.deepEqual(fixture.dispatchEvents.map((event) => event.executionId), [queued.id]);
+
+      fixture.dispatches.get(queued.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", queued.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "期限切れ以外のBUDGET_AUTHORITY_REQUIREDはqueue保留へ昇格せず、既存のadmission failureへ収束する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Admission-と-settlement" }
+  // fault = "authority不足をallocation expiryと同じdispatch deferralとして扱い、権限のないqueued Turnを無期限保留する"
+  // observable = "同一executionのfailed state、QUEUE_ADMISSION_FAILURE errorCode、queue_admission_exhausted reason"
+  // observation_boundary = "component-behavior"
+  // scope = "session-execution-authority-admission-failure"
+  // lifecycle = "permanent"
+  // distinction = "detailsにallocation_expiredがないBUDGET_AUTHORITY_REQUIREDは通常のadmission failureとして確定する"
+  // @end-test-value
+  it("期限切れでないauthority拒否はqueue admission failureへ収束する", async () => {
+    const fixture = await createFixture({
+      queueRetryDelayMs: 1,
+      prepareBudgetAdmission() {
+        throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "authority is missing");
+      },
+    });
+    try {
+      const queued = await fixture.service.enqueue(createInput(103));
+      await waitFor(() => fixture.storage.get(queued.id)?.state === "failed");
+      assert.equal(fixture.storage.get(queued.id)?.errorCode, "QUEUE_ADMISSION_FAILURE");
+      assert.equal(fixture.storage.get(queued.id)?.reason, "queue_admission_exhausted");
+      assert.equal(fixture.dispatchEvents.length, 0);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "cancel terminal後もproviderが生存するexecutionはroot concurrent Turn予約を保持し、実終了時だけ解放する"
+  // oracle = { type = "contract", ref = "docs/adr/030-root-resource-budget.md#決定" }
+  // fault = "cancel graceでexecutionをterminalにした時点でrunning Turn予約を解放する"
+  // observable = "budget.getが返すconcurrentTurns.reservedのterminal直後とprovider実終了後の値"
+  // observation_boundary = "component-behavior"
+  // scope = "session-execution-provider-termination-reservation"
+  // lifecycle = "permanent"
+  // distinction = "通常のterminal settlementではなく、providerTerminationPendingを伴うcancelだけをreconciliation_requiredとして保持する"
+  // @end-test-value
+  it("provider終了待ちのcancel executionはconcurrent Turn予約を保持する", async () => {
+    const fixture = await createFixture();
+    const budgetDb = new DatabaseSync(fixture.dbPath);
+    const budget = new ResourceBudgetStorage(budgetDb);
+    try {
+      const running = await fixture.service.run(createInput(101));
+      await waitFor(() => fixture.dispatches.has(running.id));
+      fixture.dispatches.get(running.id)?.resolve({
+        state: "canceled",
+        result: null,
+        reason: "user_requested",
+        providerTerminationPending: true,
+      });
+      const terminal = await fixture.service.waitForTerminal("session-1", running.id);
+
+      assert.equal(terminal.state, "canceled");
+      assert.equal(budget.get("session-1").dimensions.concurrentTurns.reserved, 1);
+
+      budget.settleTurn({
+        sessionId: "session-1",
+        executionId: running.id,
+        outcome: "canceled",
+        settledAt: "2026-08-10T00:01:00.000Z",
+      });
+      assert.equal(budget.get("session-1").dimensions.concurrentTurns.reserved, 0);
+    } finally {
+      budgetDb.close();
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("EXT-ATTACH-10: admissionで正規化した内部requestを永続化してdispatchへ渡す", async () => {
     const fixture = await createFixture({
       normalizeRequest: (request) => ({
@@ -266,6 +432,17 @@ describe("SessionExecutionService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "compatibility"
+  // claim = "runとenqueueの返却executionに対応するoutbound projectionはorigin fieldsと受付時刻を保持する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // fault = "outbound projectionが返却executionと異なるorigin fieldsまたはcreatedAtを公開する"
+  // observable = "execution createdAtとoutbound record createdAt、origin fields"
+  // observation_boundary = "component-behavior"
+  // scope = "session-execution-outbound-origin-projection"
+  // lifecycle = "permanent"
+  // distinction = "transaction原子性ではなく、返却されたcanonical executionとoutbound projectionの公開値一致を観測する"
+  // @end-test-value
   it("ORCH-OUTBOUND-01: runとenqueueはacceptanceと同じstorage境界へorigin snapshotを渡す", async () => {
     const fixture = await createFixture();
     try {
@@ -287,7 +464,7 @@ describe("SessionExecutionService", () => {
         targetSessionTitle: "Session 1 snapshot",
         targetSessionRole: "executor",
         userMessage: "message-1",
-        createdAt: "2026-08-10T00:00:01.000Z",
+        createdAt: running.createdAt,
       }]);
 
       const runningTerminal = fixture.service.waitForTerminal("session-1", running.id);
@@ -312,7 +489,7 @@ describe("SessionExecutionService", () => {
         targetSessionTitle: "Session 2 snapshot",
         targetSessionRole: "executor",
         userMessage: "message-2",
-        createdAt: "2026-08-10T00:00:04.000Z",
+        createdAt: queued.createdAt,
       }]);
     } finally {
       fixture.storage.close();

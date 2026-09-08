@@ -83,6 +83,47 @@ function binding(sessionId: string, generation = "generation-1"): ResolvedAgentR
 }
 
 describe("Session authority", () => {
+  // @test-value v2
+  // kind = "security"
+  // claim = "Budget権限は自己Sessionに限定され、元grantのrevoke後に再起動しても復活しない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md" }
+  // fault = "Budget用補助grantが元grantから独立して認可される、またはstartupで再発行される"
+  // observable = "認可結果、再起動後の認可エラー、保存済みgrant件数"
+  // observation_boundary = "component-behavior"
+  // scope = "resource-budget-authority"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("Budgetの自己scopeとissuer revokeを再起動後も維持する", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-budget-authority-"));
+    const dbPath = path.join(directory, "db.sqlite");
+    const storage = new SessionStorageV6(dbPath);
+    const root = makeRoot("root-a");
+    storage.insertSession(root);
+    storage.insertSession(makeChild("child-a", root, "executor"));
+    let service = new SessionAuthorityService({ databasePath: dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    const db = new DatabaseSync(dbPath);
+    try {
+      const proof = service.authorize(binding("child-a"), "budget.configure", { sessionId: "child-a" }).proof;
+      assert.equal(proof.resolvedScope.ownerId, "child-a");
+      assert.throws(() => service.authorize(binding("child-a"), "budget.configure", { sessionId: "root-a" }), SessionAuthorityError);
+      const issuer = db.prepare("SELECT issuer_grant_id FROM session_authority_grants_v6 WHERE grant_id = ?")
+        .get(proof.grantId) as { issuer_grant_id: string };
+      revokeSessionAuthorityGrant(db, { grantId: issuer.issuer_grant_id, expectedRevision: 1,
+        principal: { kind: "user", receiptId: "revoke-budget-source" }, revokedAt: NOW });
+      const count = db.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6").get();
+      service.close();
+      service = new SessionAuthorityService({ databasePath: dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+      assert.throws(() => service.authorize(binding("child-a"), "budget.configure", { sessionId: "child-a" }), SessionAuthorityError);
+      assert.deepEqual(db.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6").get(), count);
+    } finally {
+      service.close();
+      db.close();
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   // @test-value v1
   // kind = "security"
   // claim = "Session tombstone後は削除前に発行したagent proofと新しいruntime認可の両方を拒否する"

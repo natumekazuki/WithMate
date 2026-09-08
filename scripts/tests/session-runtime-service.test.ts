@@ -2228,12 +2228,28 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(availableSessionIds, [session.id]);
   });
 
+  // @test-value v2
+  // kind = "regression"
+  // claim = "cancel grace後も生存するproviderの実終了まで実行を保持し、late final usageだけをgeneration callbackへ渡す"
+  // oracle = { type = "contract", ref = "docs/adr/030-root-resource-budget.md#決定" }
+  // fault = "grace時点のlive partial usageをsettled callbackへ渡し、同confidenceで値が異なるlate final usageと競合させる"
+  // observable = "terminal resultのpending flag、usageを含むgeneration callback全列、termination callback、isRunInFlight"
+  // observation_boundary = "component-behavior"
+  // scope = "session-runtime-provider-cancel-grace-late-settlement"
+  // lifecycle = "permanent"
+  // distinction = "ledger投影ではなく、異なるpartial/final usageを持つprovider promiseのcallback境界を観測する"
+  // @end-test-value
   it("provider が cancel 後も生存する間は terminal session への再送を拒否する", async () => {
     const session = createSession();
     const approvalResolutions: Array<{ sessionId: string; decision: LiveApprovalDecision }> = [];
     let observedAbortSignal: AbortSignal | undefined;
     let observedAbort = false;
     let resolveProvider: ((result: RunSessionTurnResult) => void) | null = null;
+    let liveState: LiveSessionRunState | null = null;
+    const partialUsage = { inputTokens: 3, cachedInputTokens: 0, outputTokens: 1 };
+    const lateUsage = { inputTokens: 8, cachedInputTokens: 0, outputTokens: 5, totalTokens: 13 };
+    const providerGenerations: Parameters<NonNullable<SessionRuntimeServiceDeps["recordProviderGeneration"]>>[0][] = [];
+    const settledExecutions: Parameters<NonNullable<SessionRuntimeServiceDeps["settleTerminatingProviderExecution"]>>[0][] = [];
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -2249,7 +2265,7 @@ describe("SessionRuntimeService", () => {
       },
       invalidateSessionThread() {},
       invalidateAllSessionThreads() {},
-      runSessionTurn(input) {
+      async runSessionTurn(input, onProgress) {
         observedAbortSignal = input.signal;
         if (!input.signal) {
           throw new Error("AbortSignal が渡されていないよ。");
@@ -2259,6 +2275,10 @@ describe("SessionRuntimeService", () => {
         signal.addEventListener("abort", () => {
           observedAbort = true;
         }, { once: true });
+        await onProgress?.(createLiveRunState({
+          sessionId: session.id,
+          usage: partialUsage,
+        }));
         return new Promise<RunSessionTurnResult>((resolve) => {
           resolveProvider = resolve;
         });
@@ -2297,9 +2317,11 @@ describe("SessionRuntimeService", () => {
         return createAuditLogBase(input);
       },
       updateAuditLog() {},
-      setLiveSessionRun() {},
+      setLiveSessionRun(_sessionId, state) {
+        liveState = state;
+      },
       getLiveSessionRun() {
-        return null;
+        return liveState;
       },
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
         return "approve";
@@ -2319,9 +2341,19 @@ describe("SessionRuntimeService", () => {
       resolvePendingElicitationRequest() {},
       currentTimestampLabel,
       providerCancelGraceMs: 5,
+      recordProviderGeneration(input) {
+        providerGenerations.push(input);
+      },
+      settleTerminatingProviderExecution(input) {
+        settledExecutions.push(input);
+      },
     });
 
-    const promise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const promise = service.runQueuedGuiSessionTurn(
+      session.id,
+      { userMessage: "お願いします" },
+      "execution-cancel-grace",
+    );
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (!observedAbortSignal) {
       throw new Error("provider setup が開始されていないよ。");
@@ -2333,8 +2365,23 @@ describe("SessionRuntimeService", () => {
       throw new Error("abort signal が観測できていないよ。");
     }
     assert.equal(observedAbort, true);
-    assert.equal(result.runState, "idle");
+    assert.equal(result.session.runState, "idle");
+    assert.equal(result.providerTerminationPending, true);
     assert.equal(service.hasInFlightRuns(), true);
+    assert.deepEqual(providerGenerations.map(({ providerGenerationId, phase, usage, confidence }) => ({
+      providerGenerationId,
+      phase,
+      usage,
+      confidence,
+    })), [
+      {
+        providerGenerationId: "execution-cancel-grace:provider-generation:1",
+        phase: "started",
+        usage: null,
+        confidence: "unknown",
+      },
+    ]);
+    assert.deepEqual(settledExecutions, []);
     await assert.rejects(
       service.runSessionTurn(session.id, { userMessage: "再送" }),
       /まだ実行中/,
@@ -2342,9 +2389,29 @@ describe("SessionRuntimeService", () => {
     if (!resolveProvider) {
       throw new Error("provider resolve が取得できていないよ。");
     }
-    resolveProvider(createPartialResult());
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveProvider(createPartialResult({ usage: lateUsage }));
+    await waitForCondition(() => settledExecutions.length === 1, "late provider終了がexecutionへ反映されること");
     assert.equal(service.hasInFlightRuns(), false);
+    assert.deepEqual(providerGenerations.map(({ providerGenerationId, phase, usage, confidence }) => ({
+      providerGenerationId,
+      phase,
+      usage,
+      confidence,
+    })), [
+      {
+        providerGenerationId: "execution-cancel-grace:provider-generation:1",
+        phase: "started",
+        usage: null,
+        confidence: "unknown",
+      },
+      {
+        providerGenerationId: "execution-cancel-grace:provider-generation:1",
+        phase: "settled",
+        usage: lateUsage,
+        confidence: "estimated",
+      },
+    ]);
+    assert.equal(settledExecutions[0]?.executionId, "execution-cancel-grace");
     assert.deepEqual(approvalResolutions, [
       { sessionId: session.id, decision: "deny" },
       { sessionId: session.id, decision: "deny" },
@@ -2680,13 +2747,16 @@ describe("SessionRuntimeService", () => {
     assert.equal(notificationCount, 0);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "regression"
-  // claim = "内部stale retryが成功したturnは一つのcompleted terminal通知だけを依頼する"
-  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
-  // failure_mode = "内部retryの各attemptを別turnとして通知し、同一turnで重複通知する"
+  // claim = "内部stale retryは二つのprovider generationへ開始・精算callbackを各一回、retry callbackを一回発行し、terminal通知を一つに保つ"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Deadline-と-retry" }
+  // fault = "内部retryのcallbackを欠落・重複させる、provider generationを同一視する、または各attemptを別turnとしてterminal通知する"
+  // observable = "retry callback入力と回数、generation start・settled callback列、completed terminal通知数"
+  // observation_boundary = "component-behavior"
   // scope = "session-runtime-stale-retry-terminal-notification"
   // lifecycle = "permanent"
+  // distinction = "ledger投影ではなくSessionRuntimeServiceが発行するunusable thread retryとgeneration callbackの境界を観測する"
   // @end-test-value
   it("stale thread / session error で meaningful partial が無い時だけ thread reset 後に 1 回 retry する", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
@@ -2713,6 +2783,16 @@ describe("SessionRuntimeService", () => {
     const runtimeTurnHandles: object[] = [];
     const endedRuntimeTurnHandles: unknown[] = [];
     const seenTurnCapabilities: Array<string | undefined> = [];
+    const providerGenerations: Array<{
+      providerGenerationId: string;
+      phase: "started" | "settled";
+      confidence: "unknown" | "estimated" | "reported";
+    }> = [];
+    const automaticRetries: Array<{
+      providerGenerationId: string;
+      retryAttempt: number;
+      retryKind: "runtime_unusable_thread" | "copilot_stale_connection";
+    }> = [];
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
@@ -2841,9 +2921,33 @@ describe("SessionRuntimeService", () => {
         currentDateCount += 1;
         return fixedObservedAt;
       },
+      recordProviderGeneration(input) {
+        providerGenerations.push({
+          providerGenerationId: input.providerGenerationId,
+          phase: input.phase,
+          confidence: input.confidence,
+        });
+      },
+      consumeAutomaticRetry(input) {
+        automaticRetries.push({
+          providerGenerationId: input.providerGenerationId,
+          retryAttempt: input.retryAttempt,
+          retryKind: input.retryKind,
+        });
+      },
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const externalResult = await service.runExternalSessionTurn(
+      session.id,
+      1,
+      {
+        userMessage: "お願いします",
+        model: session.model,
+        reasoningEffort: session.reasoningEffort,
+      },
+      "execution-budget-retry",
+    );
+    const result = externalResult.session;
     await waitForCondition(() => auditUpdates.length === 2, "retry成功auditがbackgroundで完了すること");
 
     assert.equal(result.runState, "idle");
@@ -2869,6 +2973,17 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(timingContexts, [timingContext, timingContext, timingContext]);
     assert.equal(timingContexts[0], timingContexts[1]);
     assert.equal(timingContexts[1], timingContexts[2]);
+    assert.deepEqual(providerGenerations, [
+      { providerGenerationId: "execution-budget-retry:provider-generation:1", phase: "started", confidence: "unknown" },
+      { providerGenerationId: "execution-budget-retry:provider-generation:1", phase: "settled", confidence: "unknown" },
+      { providerGenerationId: "execution-budget-retry:provider-generation:2", phase: "started", confidence: "unknown" },
+      { providerGenerationId: "execution-budget-retry:provider-generation:2", phase: "settled", confidence: "unknown" },
+    ]);
+    assert.deepEqual(automaticRetries, [{
+      providerGenerationId: "execution-budget-retry:provider-generation:1",
+      retryAttempt: 1,
+      retryKind: "runtime_unusable_thread",
+    }]);
   });
 
   it("stale retry 後の running audit log は前回 progress の断片を引き継がない", async () => {

@@ -1,5 +1,6 @@
 import {
   currentTimestampLabel as defaultCurrentTimestampLabel,
+  type AuditLogUsage,
   type AuditLogEntry,
   type ComposerPreview,
   type LiveApprovalDecision,
@@ -42,6 +43,7 @@ import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-bind
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
 import type { PendingCoordinationResponse } from "../src/coordination-event.js";
+import type { ResourceBudgetAlert } from "../src/resource-budget.js";
 import { SessionTurnValidationError } from "./session-turn-validation-error.js";
 import type { PublicTranscriptAttachmentV1, PublicTranscriptTurnOptionsV1 } from "../src/session-transcript.js";
 import {
@@ -53,6 +55,7 @@ import {
   resolveWorkspaceDirectoryValidationMessage,
   type WorkspaceDirectoryValidationResult,
 } from "../src/workspace-directory-validation.js";
+import { getProviderTokenUsageConfidence, type ProviderTokenUsageConfidence } from "./provider-token-usage.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -65,6 +68,7 @@ const AUDIT_ENRICHMENT_TIMEOUT = Symbol("audit-enrichment-timeout");
 export type ExternalSessionTurnResult = {
   session: Session;
   terminalState: "completed" | "canceled" | "failed";
+  providerTerminationPending?: boolean;
 };
 
 function applyTurnRuntimeOptions(session: Session, request: RunSessionTurnRequest): Session {
@@ -158,6 +162,7 @@ export type SessionRuntimeServiceDeps = {
   resolvePendingCoordinationResponses?: (
     session: Session,
   ) => Awaitable<PendingCoordinationResponse[]>;
+  resolveResourceBudgetAlerts?: (session: Session) => Awaitable<readonly ResourceBudgetAlert[]>;
   queueCompletedTurnAppraisal?: (input: {
     session: Session;
     correlationId: string;
@@ -219,6 +224,28 @@ export type SessionRuntimeServiceDeps = {
   notifySessionTurnTerminal?: (notification: SessionTurnTerminalNotification) => Awaitable<void>;
   currentTimestampLabel?: () => string;
   currentDate?: () => Date;
+  recordProviderGeneration?: (input: {
+    sessionId: string;
+    executionId: string;
+    providerGenerationId: string;
+    phase: "started" | "settled";
+    usage: AuditLogUsage | null;
+    confidence: ProviderTokenUsageConfidence | "unknown";
+    observedAt: string;
+  }) => Awaitable<void>;
+  consumeAutomaticRetry?: (input: {
+    sessionId: string;
+    executionId: string;
+    providerGenerationId: string;
+    retryAttempt: number;
+    retryKind: "runtime_unusable_thread" | "copilot_stale_connection";
+    consumedAt: string;
+  }) => Awaitable<void>;
+  settleTerminatingProviderExecution?: (input: {
+    sessionId: string;
+    executionId: string;
+    settledAt: string;
+  }) => Awaitable<void>;
   providerCancelGraceMs?: number;
   auditEnrichmentGraceMs?: number;
   appraisalReadyRetryMs?: number;
@@ -935,16 +962,20 @@ export class SessionRuntimeService {
       ) {
         this.sessionRunControllers.delete(sessionId);
         this.pendingSessionRunCancels.delete(sessionId);
-        try {
-          void Promise.resolve(this.deps.onSessionRunAvailable?.(sessionId)).catch((error) => {
-            console.warn("Session run availability callback failed", error);
-          });
-        } catch (error) {
-          console.warn("Session run availability callback failed", error);
-        }
+        this.notifySessionRunAvailableBestEffort(sessionId);
       }
     };
     promise.then(release, release);
+  }
+
+  private notifySessionRunAvailableBestEffort(sessionId: string): void {
+    try {
+      void Promise.resolve(this.deps.onSessionRunAvailable?.(sessionId)).catch((error) => {
+        console.warn("Session run availability callback failed", error);
+      });
+    } catch (error) {
+      console.warn("Session run availability callback failed", error);
+    }
   }
 
   private resolvePendingInteractionsBestEffort(sessionId: string): void {
@@ -1054,6 +1085,7 @@ export class SessionRuntimeService {
       if (!this.inFlightSessionRuns.has(sessionId) && !this.terminatingSessionRuns.has(sessionId)) {
         this.sessionRunControllers.delete(sessionId);
         this.pendingSessionRunCancels.delete(sessionId);
+        this.notifySessionRunAvailableBestEffort(sessionId);
       }
     }
   }
@@ -1320,6 +1352,9 @@ export class SessionRuntimeService {
         this.deps.resolvePendingCoordinationResponses?.(session) ?? [],
       )
       : [];
+    const resourceBudgetAlerts = await Promise.resolve(
+      this.deps.resolveResourceBudgetAlerts?.(session) ?? [],
+    );
     throwIfRunCanceled(runAbortController.signal);
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
 
@@ -1344,6 +1379,7 @@ export class SessionRuntimeService {
         conversationTimingContext: conversationTimingContext ?? undefined,
         characterContext: characterContext ?? undefined,
         pendingCoordinationResponses,
+        resourceBudgetAlerts,
         agentRuntimeBinding,
         sessionRoleBinding: includeSessionRoleContext ? session.roleBinding : null,
       });
@@ -1520,8 +1556,53 @@ export class SessionRuntimeService {
       await enqueueAuditWrite(nextRunningAuditEntry, nextSignature);
     };
     await syncRunningAuditFromLiveState(initialLiveState);
+    let providerGenerationSequence = 0;
+    let automaticRetryAttempt = 0;
+    let lastProviderGenerationId: string | null = null;
+    let providerTerminationPending = false;
+    let providerGenerationRecordTail = Promise.resolve();
+    const nextProviderGenerationId = () => {
+      providerGenerationSequence += 1;
+      return `${externalExecutionId}:provider-generation:${providerGenerationSequence}`;
+    };
+    const recordProviderGeneration = async (
+      providerGenerationId: string,
+      phase: "started" | "settled",
+      usage: AuditLogUsage | null,
+    ) => {
+      if (!externalExecutionId || !this.deps.recordProviderGeneration) return;
+      const operation = providerGenerationRecordTail.then(() => this.deps.recordProviderGeneration!({
+        sessionId,
+        executionId: externalExecutionId,
+        providerGenerationId,
+        phase,
+        usage,
+        confidence: getProviderTokenUsageConfidence(usage) ?? "unknown",
+        observedAt: this.deps.currentTimestampLabel?.() ?? new Date().toISOString(),
+      })).then(() => undefined);
+      providerGenerationRecordTail = operation.catch(() => undefined);
+      await operation;
+    };
+    const consumeAutomaticRetry = async (
+      providerGenerationId: string,
+      retryKind: "runtime_unusable_thread" | "copilot_stale_connection",
+    ) => {
+      if (!externalExecutionId || !this.deps.consumeAutomaticRetry) return;
+      const retryAttempt = automaticRetryAttempt + 1;
+      await this.deps.consumeAutomaticRetry({
+        sessionId,
+        executionId: externalExecutionId,
+        providerGenerationId,
+        retryAttempt,
+        retryKind,
+        consumedAt: this.deps.currentTimestampLabel?.() ?? new Date().toISOString(),
+      });
+      automaticRetryAttempt = retryAttempt;
+    };
     const runProviderTurn = async (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
+      let providerGenerationId = nextProviderGenerationId();
+      lastProviderGenerationId = providerGenerationId;
       const runtimeOptionSession = applyTurnRuntimeOptions(turnSession, request);
       const effectiveTurnSession = this.deps.resolveProviderSession?.(runtimeOptionSession) ?? runtimeOptionSession;
       if (!externalTurnContextPersisted && externalExecutionId && this.deps.persistExternalTurnContext) {
@@ -1576,6 +1657,7 @@ export class SessionRuntimeService {
           throw error;
         }
       }
+      await recordProviderGeneration(providerGenerationId, "started", null);
       const providerTurnPromise = Promise.resolve().then(() => providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
         sessionFolderPath: this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
@@ -1588,6 +1670,7 @@ export class SessionRuntimeService {
         conversationTimingContext: conversationTimingContext ?? undefined,
         characterContext: characterContext ?? undefined,
         pendingCoordinationResponses,
+        resourceBudgetAlerts,
         agentRuntimeBinding,
         signal: runAbortController.signal,
         onApprovalRequest: (approvalRequest) => {
@@ -1634,6 +1717,14 @@ export class SessionRuntimeService {
         onSessionContextTelemetry: (telemetry) => {
           this.deps.setSessionContextTelemetry(telemetry);
         },
+        providerGenerationId,
+        onAutomaticRetry: async ({ usage }) => {
+          await recordProviderGeneration(providerGenerationId, "settled", usage);
+          await consumeAutomaticRetry(providerGenerationId, "copilot_stale_connection");
+          providerGenerationId = nextProviderGenerationId();
+          lastProviderGenerationId = providerGenerationId;
+          await recordProviderGeneration(providerGenerationId, "started", null);
+        },
       }, (state) => {
         if (terminalAuditSettled || progressGeneration !== liveProgressGeneration) {
           return;
@@ -1661,13 +1752,65 @@ export class SessionRuntimeService {
         providerTurnPromise,
         attachmentSnapshot ? () => attachmentSnapshot.dispose() : null,
       );
-      return waitForProviderTurnWithCancelDeadline(
-        providerPromise,
-        runAbortController.signal,
-        this.deps.providerCancelGraceMs ?? DEFAULT_PROVIDER_CANCEL_GRACE_MS,
-        () => buildCanceledPartialResult(this.deps.getLiveSessionRun(sessionId), promptForAudit),
-        (promise) => this.trackTerminatingSessionRun(sessionId, promise),
-      );
+      try {
+        const result = await waitForProviderTurnWithCancelDeadline(
+          providerPromise,
+          runAbortController.signal,
+          this.deps.providerCancelGraceMs ?? DEFAULT_PROVIDER_CANCEL_GRACE_MS,
+          () => buildCanceledPartialResult(this.deps.getLiveSessionRun(sessionId), promptForAudit),
+          (promise) => {
+            providerTerminationPending = true;
+            const terminatingProviderGenerationId = providerGenerationId;
+            const terminationObserver = promise.then(
+              async (lateResult) => {
+                try {
+                  await recordProviderGeneration(
+                    terminatingProviderGenerationId,
+                    "settled",
+                    lateResult.usage,
+                  );
+                } catch (error) {
+                  console.warn("Late provider usage persistence failed", error);
+                }
+              },
+              async (lateError: unknown) => {
+                try {
+                  await recordProviderGeneration(
+                    terminatingProviderGenerationId,
+                    "settled",
+                    lateError instanceof ProviderTurnError ? lateError.partialResult.usage : null,
+                  );
+                } catch (error) {
+                  console.warn("Late provider usage persistence failed", error);
+                }
+              },
+            ).finally(async () => {
+              if (!externalExecutionId || !this.deps.settleTerminatingProviderExecution) return;
+              try {
+                await this.deps.settleTerminatingProviderExecution({
+                  sessionId,
+                  executionId: externalExecutionId,
+                  settledAt: this.deps.currentTimestampLabel?.() ?? new Date().toISOString(),
+                });
+              } catch (error) {
+                console.warn("Terminating provider execution settlement failed", error);
+              }
+            });
+            this.trackTerminatingSessionRun(sessionId, terminationObserver);
+          },
+        );
+        await recordProviderGeneration(providerGenerationId, "settled", result.usage);
+        return result;
+      } catch (error) {
+        if (!providerTerminationPending) {
+          await recordProviderGeneration(
+            providerGenerationId,
+            "settled",
+            error instanceof ProviderTurnError ? error.partialResult.usage : null,
+          );
+        }
+        throw error;
+      }
     };
 
     let providerAgentRuntimeTurnHandle: unknown;
@@ -1709,6 +1852,9 @@ export class SessionRuntimeService {
             throw error;
           }
 
+          if (lastProviderGenerationId) {
+            await consumeAutomaticRetry(lastProviderGenerationId, "runtime_unusable_thread");
+          }
           didInternalRetry = true;
           liveProgressGeneration += 1;
           if (this.deps.resetProviderSessionThread) {
@@ -2126,6 +2272,7 @@ export class SessionRuntimeService {
       return {
         session: storedFailedSession,
         terminalState: canceled ? "canceled" : "failed",
+        providerTerminationPending,
       };
     } finally {
       if (providerAgentRuntimeTurnHandle !== undefined) {

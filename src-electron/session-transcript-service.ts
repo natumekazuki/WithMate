@@ -32,6 +32,11 @@ import {
   exportIdentityBoundTranscript,
   IdentityBoundTranscriptExportError,
 } from "./identity-bound-transcript-export.js";
+import type {
+  SessionFolderResourceBudget,
+  SessionFolderResourceBudgetLease,
+} from "./resource-budget-files.js";
+import { ResourceBudgetError } from "./resource-budget-storage.js";
 
 const EXPORT_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 const EXPORT_TEMP_PREFIX = ".withmate-transcript-export-";
@@ -54,6 +59,10 @@ export type SessionTranscriptServiceDeps = {
     | "rejectExport"
   >;
   resolveSessionFilesDirectory(sessionId: string): string;
+  resourceBudget?: Pick<
+    SessionFolderResourceBudget,
+    "reserve" | "settleApplied" | "release" | "reconcileRequired"
+  >;
   projectionSource?: SessionTranscriptProjectionSource;
   now?(): Date;
   createTempName?(): string;
@@ -168,10 +177,29 @@ export class SessionTranscriptService {
     if (prepared.kind === "rejected") throw normalizeStoredError(prepared.error);
 
     const root = await authorizeRoot(this.deps.resolveSessionFilesDirectory(input.sessionId));
+    let reservation: SessionFolderResourceBudgetLease | undefined;
+    try {
+      if (this.deps.resourceBudget) {
+        const reservedBytes = prepared.resumed && prepared.byteLength !== null
+          ? prepared.byteLength
+          : input.maxBytes;
+        reservation = await this.deps.resourceBudget.reserve(
+          input.sessionId,
+          reservedBytes,
+          prepared.operationId,
+          prepared.resumed,
+          prepared.byteLength ?? 0,
+        );
+      }
+    } catch (error) {
+      await root.handle.close();
+      throw normalizeBudgetError(error);
+    }
     let cleanupParent: AuthorizedParent | undefined;
     let cleanupTempPath: string | undefined;
     let stagedIdentity: { dev: string; ino: string } | undefined;
     let cleanupOnFailure = false;
+    let budgetLeaseFinished = false;
     try {
       const parent = await authorizeDestinationParent(root, relativePath);
       cleanupParent = parent;
@@ -267,6 +295,14 @@ export class SessionTranscriptService {
           sha256: outputSha256,
         },
       };
+      try {
+        if (this.deps.resourceBudget && reservation) {
+          budgetLeaseFinished = true;
+          await this.deps.resourceBudget.settleApplied(input.sessionId, reservation, byteLength);
+        }
+      } catch (error) {
+        throw normalizeBudgetError(error, "indeterminate");
+      }
       const completedAt = this.now();
       const canonical = normalizeFolderResult(this.deps.storage.completeExport({
         proof,
@@ -295,6 +331,14 @@ export class SessionTranscriptService {
       });
       return canonical;
     } catch (error) {
+      const effect = error instanceof SessionTranscriptServiceError ? error.effect : "indeterminate";
+      if (!budgetLeaseFinished && effect === "not_applied") {
+        if (this.deps.resourceBudget && reservation) this.deps.resourceBudget.release(reservation);
+      } else if (!budgetLeaseFinished) {
+        if (this.deps.resourceBudget && reservation) {
+          await this.deps.resourceBudget.reconcileRequired(input.sessionId, reservation).catch(() => undefined);
+        }
+      }
       cleanupOnFailure = error instanceof SessionTranscriptServiceError
         && (error.code === "PATH_OUTSIDE_SESSION_FOLDER"
           || (error.code === "EXPORT_FAILED" && error.message.includes("identity")));
@@ -393,6 +437,22 @@ export class SessionTranscriptService {
     }
     return `${EXPORT_TEMP_PREFIX}${suffix}.tmp`;
   }
+}
+
+function normalizeBudgetError(
+  error: unknown,
+  effect: "not_applied" | "applied" | "indeterminate" = "not_applied",
+): unknown {
+  if (!(error instanceof ResourceBudgetError)) return error;
+  const exceeded = error.code === "BUDGET_HARD_LIMIT_EXCEEDED"
+    || error.code === "BUDGET_DEADLINE_EXCEEDED";
+  return new SessionTranscriptServiceError(
+    exceeded ? "LIMIT_EXCEEDED" : "EXPORT_FAILED",
+    error.message,
+    false,
+    error.details,
+    effect,
+  );
 }
 
 type AuthorizedRoot = {

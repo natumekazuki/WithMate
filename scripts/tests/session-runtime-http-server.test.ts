@@ -95,6 +95,12 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
     sessionId: "session-1", relativePath: "brief.md", content: "brief", replace: false,
     idempotencyKey: "write-key",
   },
+  "budget.get": { sessionId: "session-1" },
+  "budget.list": { sessionId: "session-1", limit: 50 },
+  "budget.configure": {
+    sessionId: "session-1", accountId: "budget-1", expectedRevision: 1,
+    softLimits: { totalTurns: 500 }, idempotencyKey: "budget-configure-key",
+  },
   "work.create": {
     expectedContainerRevision: 1, targetSessionId: "session-1", goal: "goal", scope: "scope", completionCriteria: "done",
     authority: "local", sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
@@ -165,11 +171,13 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   },
 };
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "全application operationは有効なruntime bindingから解決したactor Sessionだけをhandler contextへ渡す"
 // oracle = { type = "contract", ref = "ADR-023 Selection and binding" }
-// failure_mode = "application operationが未検証または別bindingのactor identityでhandlerへ到達する"
+// fault = "application operationを未検証または別bindingのactor identityでhandlerへ到達させる"
+// observable = "handlerが受け取ったoperationとactorSessionId、および各HTTP status"
+// observation_boundary = "public-boundary"
 // scope = "Session Runtime HTTP actor binding admission"
 // lifecycle = "permanent"
 // distinction = "単一operationの入力schemaではなく公開application operation集合を同じidentity boundaryで検証する"
@@ -207,6 +215,17 @@ test("ID-01: 全application operationはvalid bindingのtrusted actor contextだ
   }
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "bindingがないrequestは全application operationでhandler前に拒否される"
+// oracle = { type = "contract", ref = "ADR-023 Selection and binding" }
+// fault = "bindingがないapplication operationをhandlerへ到達させる"
+// observable = "各HTTP statusとerror code、およびhandler呼び出し回数"
+// observation_boundary = "public-boundary"
+// scope = "Session Runtime HTTP actor binding admission"
+// lifecycle = "permanent"
+// distinction = "valid bindingのactor投影ではなくbinding欠落時の全operation共通拒否を検証する"
+// @end-test-value
 test("ID-01: binding missingは全application operationをhandler前に拒否する", async () => {
   let calls = 0;
   const server = createSessionRuntimeHttpServer({

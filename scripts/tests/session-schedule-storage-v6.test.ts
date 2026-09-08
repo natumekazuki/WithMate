@@ -38,9 +38,9 @@ async function fixture() {
     null,
     "",
     0,
-    "now",
-    "now",
-    "now",
+    "2026-01-01T00:00:00.000Z",
+    "2026-01-01T00:00:00.000Z",
+    "2026-01-01T00:00:00.000Z",
   );
   db.close();
   return { dir, path };

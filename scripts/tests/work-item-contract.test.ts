@@ -10,6 +10,7 @@ import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
+import { ResourceBudgetStorage } from "../../src-electron/resource-budget-storage.js";
 import {
   backfillBaselineSessionAuthority,
   revokeSessionAuthorityGrant,
@@ -117,6 +118,15 @@ describe("Work Item contract", () => {
   let authorityService: SessionAuthorityService;
   let nextId: number;
   let currentNow: string;
+
+  function committedWorkItemCount(sessionId = "root"): number {
+    const budgetStorage = new ResourceBudgetStorage(dbPath);
+    try {
+      return budgetStorage.get(sessionId).dimensions.workItems.committed;
+    } finally {
+      budgetStorage.close();
+    }
+  }
   let createContainerRevisions: Map<string, number>;
 
   function makeService(targetStorage: WorkItemStorageV6): WorkItemService {
@@ -284,14 +294,16 @@ describe("Work Item contract", () => {
     assert.equal(page[0]?.decision?.decision, "accepted");
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "regression"
-  // claim = "retry decisionとreplacementは同じidempotency keyの再送とprocess restart後の再送で同じ永続結果へ収束する"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Migration と repair" }
-  // failure_mode = "response lossかprocess restart後のretry再送がreplacementを重複作成する、decisionとの対応を失う、または同じkeyの異なるpayloadを受理する"
-  // scope = "WorkItemStorageV6 aggregation retry transaction and idempotency"
+  // claim = "aggregation retryの再送とstorage再生成後の再送は同じreplacementへ収束し、累積Work Item数を二重消費せず取消後も枠を返却しない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md; docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md" }
+  // fault = "retry再送がreplacementまたは累積Work Item消費を重複させる、異なるpayloadを受理する、またはreplacement取消で累積消費を減らす"
+  // observable = "retry decisionのreplacement ID、aggregation revision、root budgetのworkItems.committed"
+  // observation_boundary = "component-behavior"
+  // scope = "Work Item aggregation retry replayと累積resource count"
   // lifecycle = "permanent"
-  // distinction = "同一connection内の即時再送に加え、replacementをterminalにした後でstorage connectionを再生成してledger replayを観測する"
+  // distinction = "即時再送とstorage再生成後の再送でreplacement IDと累積countを比較し、replacement取消の前後でもcountを比較する"
   // @end-test-value
   it("AGG-RETRY-03: retry decisionとreplacementをatomicかつ再送可能に保存する", () => {
     const parent = createRootWork("retry-parent");
@@ -302,8 +314,12 @@ describe("Work Item contract", () => {
       goal: "retry", scope: "retry scope", completionCriteria: "done", authority: "local", sourceIdentity,
       expectedAggregateRevision: 1, idempotencyKey: "retry-request",
     } as const;
+    const countBeforeRetry = committedWorkItemCount();
     const first = service.retryAggregation(request, binding("task"));
+    const countAfterRetry = committedWorkItemCount();
+    assert.equal(countAfterRetry, countBeforeRetry + 1);
     const replay = service.retryAggregation(request, binding("task"));
+    assert.equal(committedWorkItemCount(), countAfterRetry);
     assert.equal(replay.replacement.id, first.replacement.id);
     assert.equal(first.decision.replacementWorkItemId, first.replacement.id);
     assert.equal(storage.get(child.id)?.state, "canceled");
@@ -313,10 +329,12 @@ describe("Work Item contract", () => {
       expectedRevision: first.replacement.revision,
       idempotencyKey: "cancel-replacement-before-replay",
     }, binding("task"));
+    assert.equal(committedWorkItemCount(), countAfterRetry);
     storage.close();
     storage = new WorkItemStorageV6(dbPath);
     service = makeService(storage);
     assert.equal(service.retryAggregation(request, binding("task")).replacement.id, first.replacement.id);
+    assert.equal(committedWorkItemCount(), countAfterRetry);
     assert.throws(() => service.retryAggregation({ ...request, goal: "different" }, binding("task")), WorkItemIdempotencyConflictError);
   });
 

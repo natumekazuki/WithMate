@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createMainBootstrapDeps } from "../../src-electron/main-bootstrap-deps.js";
+import type { MainIpcRegistrationDeps } from "../../src-electron/main-ipc-registration.js";
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
-// claim = "test declaration at line 6 preserves its observable contract"
-// oracle = { type = "contract", ref = "-6" }
-// failure_mode = "line 6 violates its expected output or boundary behavior"
+// claim = "bootstrapはResource budget設定を含むgrouped IPC依存をMain IPC登録へ渡す"
+// oracle = { type = "contract", ref = "src-electron/main-bootstrap-deps.ts createMainBootstrapDeps" }
+// fault = "Resource budget settings依存を含むIPC registration dependency groupがbootstrapで欠落する"
+// observable = "registerMainIpcHandlersが受け取るregistrationDepsとbootstrap呼び出し記録"
+// observation_boundary = "component-behavior"
 // scope = "main-bootstrap-deps.test"
 // lifecycle = "permanent"
 // @end-test-value
@@ -85,6 +88,20 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
           ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
         updateAppSettings: (settings) => settings,
         updateChatLayoutPreference: () => ({}) as never,
+        getResourceBudget: (input) => {
+          calls.push(`budgetGet:${input.sessionId}`);
+          return { accountId: "budget-root-1" } as never;
+        },
+        listResourceBudgets: (input) => {
+          calls.push(`budgetList:${input.sessionId}:${input.limit}:${input.cursor ?? ""}`);
+          return { items: [], nextCursor: "budget-root-2" };
+        },
+        configureResourceBudgetAsTrustedUser: (input) => {
+          calls.push(
+            `budgetConfigure:${input.sessionId}:${input.accountId}:${input.expectedRevision}:${input.idempotencyKey}`,
+          );
+          return { accountId: input.accountId, revision: input.expectedRevision + 1 } as never;
+        },
         getAppDatabaseDiagnostics: () => ({}) as never,
         getMemoryV6Diagnostics: () => ({}) as never,
         installMemoryV6CliShim: () => ({}) as never,
@@ -201,9 +218,34 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
 
   const snapshot = await deps.initializePersistentStores();
   deps.registerIpcHandlers();
+  const registrationDeps = receivedDeps as MainIpcRegistrationDeps;
+  const budget = await registrationDeps.getResourceBudget({ sessionId: "root-1" });
+  const budgetPage = await registrationDeps.listResourceBudgets({
+    sessionId: "root-1",
+    limit: 25,
+    cursor: "budget-root-1",
+  });
+  const configuredBudget = await registrationDeps.configureResourceBudgetAsTrustedUser({
+    sessionId: "root-1",
+    accountId: "budget-root-1",
+    expectedRevision: 4,
+    retryPerExecutionLimit: 5,
+    idempotencyKey: "settings-1",
+  });
   await deps.createHomeWindow();
   deps.broadcastModelCatalog(snapshot);
 
-  assert.equal((receivedDeps as { openHomeWindow(): Promise<void> }).openHomeWindow instanceof Function, true);
-  assert.deepEqual(calls, ["initialize", "registerIpcHandlers", "openHome", "broadcast:1"]);
+  assert.equal(registrationDeps.openHomeWindow instanceof Function, true);
+  assert.deepEqual(budget, { accountId: "budget-root-1" });
+  assert.deepEqual(budgetPage, { items: [], nextCursor: "budget-root-2" });
+  assert.deepEqual(configuredBudget, { accountId: "budget-root-1", revision: 5 });
+  assert.deepEqual(calls, [
+    "initialize",
+    "registerIpcHandlers",
+    "budgetGet:root-1",
+    "budgetList:root-1:25:budget-root-1",
+    "budgetConfigure:root-1:budget-root-1:4:settings-1",
+    "openHome",
+    "broadcast:1",
+  ]);
 });

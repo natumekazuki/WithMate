@@ -12,12 +12,14 @@ import {
   SessionExecutionStateConflictError,
   type SessionExecutionStorageV6,
 } from "./session-execution-storage-v6.js";
+import { ResourceBudgetError } from "./resource-budget-storage.js";
 
 export type SessionExecutionDispatchResult = {
   state: "completed" | "failed" | "canceled";
   result: unknown | null;
   errorCode?: string;
   reason?: string;
+  providerTerminationPending?: boolean;
 };
 
 export type CreateSessionExecutionInput = {
@@ -62,12 +64,15 @@ export type SessionExecutionServiceDeps = {
     | "listSessionExecutionsPage"
     | "iterateSessionExecutionsPage"
     | "listQueuedSessionIds"
+    | "listQueuedSessionIdsForRoot"
+    | "getRootSessionId"
     | "listTerminalFailureNotificationCandidates"
     | "resolveIdempotency"
     | "recordIdempotency"
     | "startImmediate"
   >;
   validateTurn(sessionId: string, request: unknown): Promise<unknown> | unknown;
+  prepareBudgetAdmission?(sessionId: string): Promise<void> | void;
   dispatchTurn(
     sessionId: string,
     executionId: string,
@@ -169,7 +174,7 @@ export class SessionExecutionService {
       return replay;
     }
     const validatedRequest = await this.deps.validateTurn(input.sessionId, input.request);
-    return this.withSessionLock(input.sessionId, () => {
+    return this.withSessionLock(input.sessionId, async () => {
       this.requireDispatchAdmission();
       const replay = this.deps.storage.resolveIdempotency(
         "turn.run",
@@ -183,6 +188,7 @@ export class SessionExecutionService {
       if (this.deps.isSessionRunInFlight(input.sessionId)) {
         throw new SessionExecutionBusyError(input.sessionId);
       }
+      await this.deps.prepareBudgetAdmission?.(input.sessionId);
 
       const createdAt = this.deps.currentTimestamp();
       const started = this.deps.storage.startImmediate({
@@ -383,6 +389,13 @@ export class SessionExecutionService {
     return this.requestDrain(sessionId);
   }
 
+  async resumeRootQueues(rootSessionId?: string): Promise<void> {
+    const sessionIds = rootSessionId
+      ? this.deps.storage.listQueuedSessionIdsForRoot(rootSessionId)
+      : this.deps.storage.listQueuedSessionIds();
+    await Promise.all(sessionIds.map((sessionId) => this.requestDrain(sessionId)));
+  }
+
   cleanupExpiredIdempotency(): number {
     this.requirePersistenceAvailable();
     return this.deps.storage.cleanupExpiredIdempotency(this.deps.currentTimestamp());
@@ -450,6 +463,7 @@ export class SessionExecutionService {
         reason: outcome.reason ?? "",
         completedAt,
         expiresAt: this.deps.resolveIdempotencyExpiresAt(completedAt),
+        uncertain: outcome.providerTerminationPending,
       });
     });
     this.notifyTerminal(
@@ -457,7 +471,7 @@ export class SessionExecutionService {
       completed.state === "canceled" ? "execution_canceled" : "execution_terminal",
       completed.completedAt ?? completed.updatedAt,
     );
-    void this.requestDrain(execution.sessionId);
+    this.resumeRootQueuesBestEffort(execution.sessionId);
     this.notifyChanged(completed.id);
     return toPublicExecution(completed);
   }
@@ -469,7 +483,11 @@ export class SessionExecutionService {
     }
     let drainNextAfterCleanup = false;
     const attempt = this.drainSession(sessionId)
-      .catch(() => {
+      .catch((error: unknown) => {
+        if (isResourceBudgetDispatchDeferral(error)) {
+          this.drainFailureCounts.delete(sessionId);
+          return;
+        }
         if (allowRetry) {
           const failures = (this.drainFailureCounts.get(sessionId) ?? 0) + 1;
           this.drainFailureCounts.set(sessionId, failures);
@@ -515,13 +533,14 @@ export class SessionExecutionService {
   }
 
   private async drainSession(sessionId: string): Promise<void> {
-    await this.withSessionLock(sessionId, () => {
+    await this.withSessionLock(sessionId, async () => {
       if (!this.acceptingDispatches || this.persistenceFenced) {
         return;
       }
       if (this.deps.isSessionRunInFlight(sessionId)) {
         return;
       }
+      await this.deps.prepareBudgetAdmission?.(sessionId);
       const admitted = this.deps.storage.admitNextQueued(sessionId, this.deps.currentTimestamp());
       if (admitted) {
         this.drainFailureCounts.delete(sessionId);
@@ -632,6 +651,16 @@ export class SessionExecutionService {
     }
   }
 
+  private resumeRootQueuesBestEffort(sessionId: string): void {
+    try {
+      const rootSessionId = this.deps.storage.getRootSessionId(sessionId);
+      void this.resumeRootQueues(rootSessionId).catch(() => undefined);
+    } catch {
+      // The terminal execution is already committed. A later enqueue, configure,
+      // or startup reconciliation will retry the durable root queue.
+    }
+  }
+
   private notifyTerminal(
     executionId: string,
     reason: "execution_canceled" | "execution_terminal",
@@ -670,6 +699,16 @@ export class SessionExecutionService {
     });
     return next;
   }
+}
+
+function isResourceBudgetDispatchDeferral(error: unknown): boolean {
+  return error instanceof ResourceBudgetError
+    && (
+      error.code === "BUDGET_HARD_LIMIT_EXCEEDED"
+      || error.code === "BUDGET_DEADLINE_EXCEEDED"
+      || (error.code === "BUDGET_AUTHORITY_REQUIRED" && error.details.reason === "allocation_expired")
+      || error.code === "BUDGET_STORAGE_UNKNOWN"
+    );
 }
 
 export class SessionExecutionShuttingDownError extends Error {

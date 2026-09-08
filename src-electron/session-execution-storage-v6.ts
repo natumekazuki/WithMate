@@ -17,6 +17,7 @@ import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { appendSessionExecutionEvent, claimSessionContainerRevision, getSessionResourceRevision } from "./resource-history-schema.js";
 import { assertGrantProofCurrent } from "./session-authority-storage.js";
+import { ResourceBudgetStorage } from "./resource-budget-storage.js";
 
 type SessionExecutionRow = {
   sequence: number;
@@ -71,6 +72,7 @@ export type CompleteSessionExecutionInput = {
   reason: string;
   completedAt: string;
   expiresAt: string;
+  uncertain?: boolean;
 };
 
 export class SessionExecutionQueueFullError extends Error {
@@ -151,6 +153,13 @@ export class SessionExecutionStorageV6 {
       if (queuedCount.count >= SESSION_EXECUTION_QUEUE_LIMIT) {
         throw new SessionExecutionQueueFullError(input.sessionId);
       }
+
+      new ResourceBudgetStorage(this.db).reserveQueuedTurn({
+        sessionId: input.sessionId,
+        executionId: input.id,
+        idempotencyKey: `turn.enqueue:${mutationPrincipalIdentity(input.proof).kind}:${mutationPrincipalIdentity(input.proof).id}:${input.idempotencyKey}`,
+        createdAt: input.createdAt,
+      });
 
       this.db.prepare(`
         INSERT INTO session_executions_v6 (
@@ -243,6 +252,13 @@ export class SessionExecutionStorageV6 {
       if (occupied) {
         throw new SessionExecutionBusyError(input.sessionId);
       }
+
+      new ResourceBudgetStorage(this.db).reserveImmediateTurn({
+        sessionId: input.sessionId,
+        executionId: input.id,
+        idempotencyKey: `turn.run:${mutationPrincipalIdentity(input.proof).kind}:${mutationPrincipalIdentity(input.proof).id}:${input.idempotencyKey}`,
+        createdAt: input.createdAt,
+      });
 
       this.db.prepare(`
         INSERT INTO session_executions_v6 (
@@ -391,6 +407,28 @@ export class SessionExecutionStorageV6 {
     return rows.map((row) => row.session_id);
   }
 
+  listQueuedSessionIdsForRoot(rootSessionId: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT execution.session_id
+      FROM session_executions_v6 AS execution
+      INNER JOIN session_role_bindings_v6 AS binding ON binding.session_id = execution.session_id
+      WHERE execution.state = 'queued' AND binding.root_session_id = ?
+      GROUP BY execution.session_id
+      ORDER BY MIN(execution.sequence) ASC
+    `).all(rootSessionId) as Array<{ session_id: string }>;
+    return rows.map((row) => row.session_id);
+  }
+
+  getRootSessionId(sessionId: string): string {
+    const row = this.db.prepare(`
+      SELECT root_session_id
+      FROM session_role_bindings_v6
+      WHERE session_id = ?
+    `).get(sessionId) as { root_session_id: string } | undefined;
+    if (!row) throw new Error(`Session role binding was not found: ${sessionId}`);
+    return row.root_session_id;
+  }
+
   listTerminalFailureNotificationCandidates(limit: number): SessionExecutionStorageRecord[] {
     if (!Number.isSafeInteger(limit) || limit <= 0) {
       throw new TypeError("Terminal failure notification candidate limit must be a positive integer.");
@@ -532,6 +570,12 @@ export class SessionExecutionStorageV6 {
         return null;
       }
 
+      new ResourceBudgetStorage(this.db).startQueuedTurn({
+        sessionId,
+        executionId: next.id,
+        startedAt: admittedAt,
+      });
+
       const updated = this.db.prepare(`
         UPDATE session_executions_v6
         SET state = 'running', admitted_at = ?, updated_at = ?, revision = revision + 1
@@ -576,6 +620,12 @@ export class SessionExecutionStorageV6 {
       }
       this.updateIdempotencyExpiry(next.id, expiresAt);
       this.appendStoredExecutionEvent(next.id, "failed", failedAt);
+      new ResourceBudgetStorage(this.db).settleTurn({
+        sessionId,
+        executionId: next.id,
+        outcome: "failed",
+        settledAt: failedAt,
+      });
       return this.getRequired(next.id);
     });
   }
@@ -610,6 +660,13 @@ export class SessionExecutionStorageV6 {
       );
       this.updateIdempotencyExpiry(input.executionId, input.expiresAt);
       this.appendStoredExecutionEvent(input.executionId, input.state, input.completedAt);
+      new ResourceBudgetStorage(this.db).settleTurn({
+        sessionId: execution.sessionId,
+        executionId: input.executionId,
+        outcome: input.state,
+        settledAt: input.completedAt,
+        uncertain: input.uncertain,
+      });
       return this.getRequired(input.executionId);
     });
   }
@@ -631,6 +688,12 @@ export class SessionExecutionStorageV6 {
       `).run(canceledAt, canceledAt, executionId);
       this.updateIdempotencyExpiry(executionId, expiresAt);
       this.appendStoredExecutionEvent(executionId, "canceled", canceledAt);
+      new ResourceBudgetStorage(this.db).settleTurn({
+        sessionId: execution.sessionId,
+        executionId,
+        outcome: "canceled",
+        settledAt: canceledAt,
+      });
       return this.getRequired(executionId);
     });
   }
@@ -682,6 +745,12 @@ export class SessionExecutionStorageV6 {
         executionOperationId("turn.cancel", input.proof, input.idempotencyKey, input.requestFingerprint),
         input.idempotencyKey,
       );
+      new ResourceBudgetStorage(this.db).settleTurn({
+        sessionId: execution.sessionId,
+        executionId: input.executionId,
+        outcome: "canceled",
+        settledAt: input.canceledAt,
+      });
       return this.getRequired(input.executionId);
     });
   }
@@ -774,6 +843,13 @@ export class SessionExecutionStorageV6 {
       for (const { id } of runningIds) {
         this.updateIdempotencyExpiry(id, expiresAt);
         this.appendStoredExecutionEvent(id, "interrupted", interruptedAt);
+        const execution = this.getRequired(id);
+        new ResourceBudgetStorage(this.db).settleTurn({
+          sessionId: execution.sessionId,
+          executionId: id,
+          outcome: "interrupted",
+          settledAt: interruptedAt,
+        });
       }
       return runningIds.map(({ id }) => this.getRequired(id));
     });

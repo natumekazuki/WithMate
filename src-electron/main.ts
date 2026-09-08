@@ -253,6 +253,9 @@ import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { WindowEntryLoader } from "./window-entry-loader.js";
 import { AuxWindowService } from "./aux-window-service.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
+import { ResourceBudgetStorage, ResourceBudgetError } from "./resource-budget-storage.js";
+import type { ResourceBudgetConfigureInput } from "../src/resource-budget.js";
+import { SessionFolderResourceBudget } from "./resource-budget-files.js";
 import {
   PersistentStoreLifecycleService,
   type AuditLogStorageRead,
@@ -552,6 +555,8 @@ let sessionFileService: SessionFileService | null = null;
 let sessionAuthorityService: SessionAuthorityService | null = null;
 let sessionExternalApplicationService: SessionExternalApplicationService | null = null;
 let workItemStorage: WorkItemStorageV6 | null = null;
+let resourceBudgetStorage: ResourceBudgetStorage | null = null;
+let sessionFolderResourceBudget: SessionFolderResourceBudget | null = null;
 let workItemService: WorkItemService | null = null;
 let sessionExternalRuntime: SessionExternalRuntimeHandle | null = null;
 let sessionExternalRuntimeShuttingDown = false;
@@ -1807,6 +1812,18 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 exportModelCatalogToFile: async (revision, targetWindow) => exportModelCatalogToFile(revision, targetWindow),
               },
               settings: {
+                getResourceBudget: (input) => {
+                  try { return requireResourceBudgetStorage().get(input.sessionId); }
+                  catch (error) {
+                    if (error instanceof ResourceBudgetError && error.code === "BUDGET_NOT_FOUND") return null;
+                    throw error;
+                  }
+                },
+                listResourceBudgets: (input) => {
+                  const account = requireResourceBudgetStorage().get(input.sessionId);
+                  return requireResourceBudgetStorage().list(account.rootSessionId, input.limit, input.cursor);
+                },
+                configureResourceBudgetAsTrustedUser,
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 updateChatLayoutPreference,
@@ -2945,6 +2962,32 @@ function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     sessionRuntimeService = new SessionRuntimeService({
       includeNormalSessionRoleContext: true,
+      resolveResourceBudgetAlerts: (session) => requireResourceBudgetStorage().get(session.id).alerts,
+      settleTerminatingProviderExecution: (input) => requireResourceBudgetStorage().settleTurn({
+        ...input,
+        outcome: "canceled",
+      }),
+      consumeAutomaticRetry: (input) => requireResourceBudgetStorage().consumeRetry({
+        sessionId: input.sessionId, executionId: input.executionId, retryAttempt: input.retryAttempt,
+        idempotencyKey: `${input.retryKind}:${input.providerGenerationId}`, consumedAt: input.consumedAt,
+      }),
+      recordProviderGeneration: (input) => {
+        const budget = requireResourceBudgetStorage();
+        budget.recordMeteredUsage({
+          sessionId: input.sessionId, executionId: input.executionId,
+          providerGenerationId: input.providerGenerationId, unit: "tokens",
+          amount: input.usage ? (input.usage.totalTokens ?? input.usage.inputTokens + input.usage.outputTokens) : null,
+          confidence: input.confidence,
+          idempotencyKey: `provider-generation:${input.providerGenerationId}`,
+          observedAt: input.observedAt,
+        });
+        budget.recordMeteredUsage({
+          sessionId: input.sessionId, executionId: input.executionId,
+          providerGenerationId: input.providerGenerationId, unit: "monetary_cost", amount: null,
+          confidence: "unknown", idempotencyKey: `provider-generation:${input.providerGenerationId}`,
+          observedAt: input.observedAt,
+        });
+      },
       getSession: getRuntimeSession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
       persistRunningTurnStart: (session, expectedMessageCount) =>
@@ -3185,7 +3228,9 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       notifySessionTurnTerminal: (notification) => {
         requireSessionTurnNotificationService().notifyTurnTerminal(notification);
       },
-      onSessionRunAvailable: (sessionId) => sessionExecutionService?.resumeQueue(sessionId),
+      onSessionRunAvailable: (sessionId) => sessionExecutionService?.resumeRootQueues(
+        requireSessionExecutionStorage().getRootSessionId(sessionId),
+      ),
       currentTimestampLabel,
     });
   }
@@ -3466,6 +3511,7 @@ function requireSessionExecutionService(): SessionExecutionService {
         (targetSessionId, turn) => requireSessionRuntimeService().validateSessionTurn(targetSessionId, turn),
       ),
       dispatchTurn: dispatchSessionExecutionTurn,
+      prepareBudgetAdmission: (sessionId) => createSessionFolderResourceBudget().reconcile(sessionId),
       cancelRunningTurn: (sessionId, executionId) => {
         cancelSessionRunFromAnySurface(sessionId, executionId);
       },
@@ -3513,6 +3559,7 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
   if (!sessionExternalApplicationService) {
     sessionExternalApplicationService = new SessionExternalApplicationService({
       authorityService: requireSessionAuthorityService(),
+      budgetStorage: requireResourceBudgetStorage(),
       executionService: requireSessionExecutionService(),
       crudService: requireSessionCrudService(),
       getTurnAuthoritySession: (sessionId) => requireSessionStorageV6().getSessionTurnAuthority(sessionId),
@@ -3561,6 +3608,42 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
     }
   }
   return sessionExternalApplicationService;
+}
+
+function requireResourceBudgetStorage(): ResourceBudgetStorage {
+  if (!resourceBudgetStorage) {
+    if (!dbPath) throw new Error("Resource budget requires the initialized database.");
+    resourceBudgetStorage = new ResourceBudgetStorage(dbPath);
+  }
+  return resourceBudgetStorage;
+}
+
+function createSessionFolderResourceBudget(): SessionFolderResourceBudget {
+  sessionFolderResourceBudget ??= new SessionFolderResourceBudget({
+    storage: requireResourceBudgetStorage(),
+    resolveSessionFilesDirectory: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
+    listRootSessionIds: (sessionId) => requireSessionStorageV6().listRootMemberSessionIds(sessionId),
+  });
+  return sessionFolderResourceBudget;
+}
+
+async function configureResourceBudgetAsTrustedUser(input: ResourceBudgetConfigureInput) {
+  const current = requireResourceBudgetStorage().get(input.sessionId);
+  const changedAt = new Date().toISOString();
+  const updated = requireResourceBudgetStorage().configure(input, {
+    principal: { kind: "user", receiptId: "settings-window:resource-budget" },
+    operation: "budget.configure",
+    action: "budget.configure",
+    mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    resolvedScope: { resourceKind: "budget", resourceId: input.sessionId,
+      rootSessionId: current.rootSessionId, ownerKind: "session", ownerId: input.sessionId, relation: "self" },
+    effectClass: "local_mutation",
+    grantId: null,
+    grantRevision: null,
+    evaluatedAt: changedAt,
+  }, changedAt);
+  await requireSessionExecutionService().resumeRootQueues(current.rootSessionId);
+  return updated;
 }
 
 function requireWorkItemService(): WorkItemService {
@@ -3692,6 +3775,7 @@ function appendRootWorkItemHistory(
 function requireSessionFileService(): SessionFileService {
   if (!sessionFileService) {
     sessionFileService = new SessionFileService({
+      resourceBudget: createSessionFolderResourceBudget(),
       storage: requireSessionStorageV6(),
       resolveSessionFilesDirectory: (sessionId) =>
         resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
@@ -4487,6 +4571,9 @@ function closeSessionExecutionRuntime(): void {
   sessionScheduleService = null;
   sessionExecutionStorage?.close();
   workItemStorage?.close();
+  resourceBudgetStorage?.close();
+  resourceBudgetStorage = null;
+  sessionFolderResourceBudget = null;
   sessionInteractionStorage?.close();
   coordinationEventInvalidationPublisher?.dispose();
   coordinationEventStorage?.close();
@@ -4569,6 +4656,7 @@ function requireSessionTranscriptStorage(): SessionTranscriptStorageV6 {
 function requireSessionTranscriptService(): SessionTranscriptService {
   if (!sessionTranscriptService) {
     sessionTranscriptService = new SessionTranscriptService({
+      resourceBudget: createSessionFolderResourceBudget(),
       storage: requireSessionTranscriptStorage(),
       resolveSessionFilesDirectory: (sessionId) =>
         resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
@@ -5262,6 +5350,15 @@ async function recoverInterruptedSessions(): Promise<void> {
 }
 
 async function startSessionExecutionRuntime(): Promise<void> {
+  for (const rootSessionId of requireSessionStorageV6().listRootSessionIds()) {
+    try {
+      await createSessionFolderResourceBudget().reconcileAfterRestart(rootSessionId);
+    } catch (error) {
+      writeAppLog({ level: "warn", kind: "resource-budget.storage-reconciliation", process: "main",
+        message: "SessionFolder budget reconciliation blocked new dispatch for a root.",
+        error: appLogService.errorToLogError(error) });
+    }
+  }
   await requireSessionExecutionService().reconcileAfterRestart();
   await requireSessionTerminalFailureNotificationService().start();
   await requireSessionScheduleService().start();
@@ -5294,7 +5391,12 @@ async function copyFilesToSessionFiles(
   sessionId: string,
   sourcePaths: string[],
 ): Promise<string[]> {
-  return copyFilesToSessionFilesStorage(app.getPath("userData"), sessionId, sourcePaths);
+  return copyFilesToSessionFilesStorage(
+    app.getPath("userData"),
+    sessionId,
+    sourcePaths,
+    await resolveSessionFolderResourceBudget(sessionId),
+  );
 }
 
 async function pickSessionFiles(targetWindow: BrowserWindow | null, sessionId: string): Promise<string[]> {
@@ -5320,7 +5422,14 @@ async function savePastedSessionFile(request: SavePastedSessionFileRequest): Pro
     sessionId: request.sessionId,
     fileName: request.fileName,
     data: new Uint8Array(request.data),
-  });
+  }, await resolveSessionFolderResourceBudget(request.sessionId));
+}
+
+async function resolveSessionFolderResourceBudget(sessionId: string): Promise<SessionFolderResourceBudget | null> {
+  if (await requireCompanionStorage().getSession(sessionId)) {
+    return null;
+  }
+  return createSessionFolderResourceBudget();
 }
 
 function ensureSessionFilesDirectory(sessionId: string): string {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { z } from "zod";
 
 import {
   SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES,
@@ -9,6 +10,11 @@ import {
   parseSessionRuntimeRequestEnvelope,
   projectSessionExecution,
 } from "../../src/session-external-runtime-contract.js";
+import {
+  createSessionRuntimeAdvertisedInputSchema,
+  createSessionRuntimeInputSchema,
+  parseSessionRuntimeResultEnvelope,
+} from "../../src/session-external-runtime-schema.js";
 import {
   SESSION_TRANSCRIPT_FOLDER_DEFAULT_MAX_BYTES,
   SESSION_TRANSCRIPT_INLINE_DEFAULT_MAX_BYTES,
@@ -40,6 +46,347 @@ test("RUNTIME-CATALOG-01: runtime.catalog accepts only an explicit empty input",
     }),
     (error) => error instanceof SessionRuntimeValidationError && error.details.field === "input.revision",
   );
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "budget公開操作はUTC正規化timestampとroot共有storageを二重配分しないstrictな子配分、およびroot管理dimensionを明示するstrict responseだけを受理する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#公開操作候補" }
+// fault = "空limitや変更なし、childとpolicy併用、timezoneなしtimestamp、子へのstorage数値、spoof field、または不正responseを受理・広告する"
+// observable = "canonical parserとruntime schemaの受理結果、およびadvertised JSON SchemaのminProperties・anyOf・not構造"
+// observation_boundary = "public-boundary"
+// scope = "Session runtime resource budget request contract"
+// lifecycle = "permanent"
+// @end-test-value
+test("RESOURCE-BUDGET-PUBLIC-01: budget requestをstrictに検証する", () => {
+  const get = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "budget.get",
+    input: { sessionId: "root-session" },
+  });
+  assert.deepEqual(get.input, { sessionId: "root-session" });
+
+  const configure = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "budget.configure",
+    input: {
+      sessionId: "root-session",
+      accountId: "root-session",
+      expectedRevision: 1,
+      retryPerExecutionLimit: 2,
+      idempotencyKey: "budget-configure-retry-limit-1",
+    },
+  });
+  assert.deepEqual(configure.input, {
+    sessionId: "root-session",
+    accountId: "root-session",
+    expectedRevision: 1,
+    retryPerExecutionLimit: 2,
+    idempotencyKey: "budget-configure-retry-limit-1",
+  });
+
+  const childHardLimits = {
+    concurrentTurns: 1,
+    queuedTurns: 10,
+    totalTurns: 100,
+    retries: 10,
+    sessions: 5,
+    workItems: 20,
+    delegations: 20,
+    storageBytes: 0,
+  };
+  const childAllocation = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "budget.configure",
+    input: {
+      sessionId: "root-session",
+      accountId: "root-account",
+      expectedRevision: 2,
+      childAllocation: {
+        accountId: "child-account",
+        childSessionId: "child-session",
+        hardLimits: childHardLimits,
+        softLimits: { totalTurns: 80 },
+        expiresAt: "2026-10-01T00:00:00.000Z",
+      },
+      idempotencyKey: "budget-child-allocation-1",
+    },
+  });
+  assert.deepEqual(childAllocation.input.childAllocation, {
+    accountId: "child-account",
+    childSessionId: "child-session",
+    hardLimits: childHardLimits,
+    softLimits: { totalTurns: 80 },
+    expiresAt: "2026-10-01T00:00:00.000Z",
+  });
+  const normalizedTimestamp = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "budget.configure",
+    input: {
+      sessionId: "root-session",
+      accountId: "root-account",
+      expectedRevision: 2,
+      deadlineAt: "2026-10-01T09:00:00+09:00",
+      idempotencyKey: "budget-deadline-offset",
+    },
+  });
+  assert.equal(normalizedTimestamp.input.deadlineAt, "2026-10-01T00:00:00.000Z");
+  const configureInputSchema = createSessionRuntimeInputSchema("budget.configure");
+  assert.equal(configureInputSchema.safeParse(childAllocation.input).success, true);
+  const configureBase = {
+    sessionId: "root-session",
+    accountId: "root-account",
+    expectedRevision: 2,
+    idempotencyKey: "budget-configure-schema-parity",
+  };
+  for (const invalidInput of [
+    configureBase,
+    { ...configureBase, hardLimits: {} },
+    { ...configureBase, softLimits: {} },
+    { ...configureBase, hardLimits: undefined },
+    { ...childAllocation.input, softLimits: { totalTurns: 90 } },
+    {
+      ...childAllocation.input,
+      childAllocation: {
+        ...childAllocation.input.childAllocation,
+        softLimits: { storageBytes: 0 },
+      },
+    },
+    {
+      ...childAllocation.input,
+      childAllocation: {
+        ...childAllocation.input.childAllocation,
+        softLimits: { storageBytes: 1 },
+      },
+    },
+  ]) {
+    assert.equal(configureInputSchema.safeParse(invalidInput).success, false);
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "budget.configure",
+      input: invalidInput,
+    }));
+  }
+  assert.equal(configureInputSchema.safeParse({
+    ...childAllocation.input,
+    childAllocation: {
+      ...childAllocation.input.childAllocation,
+      softLimits: { storageBytes: null },
+    },
+  }).success, true);
+  assert.equal(configureInputSchema.safeParse({
+    sessionId: "root-session",
+    accountId: "root-account",
+    expectedRevision: 2,
+    deadlineAt: "2026-10-01T09:00:00",
+    idempotencyKey: "budget-deadline-without-timezone",
+  }).success, false);
+  assert.equal(configureInputSchema.safeParse({
+    ...childAllocation.input,
+    childAllocation: {
+      accountId: "child-account",
+      childSessionId: "child-session",
+      hardLimits: {
+        concurrentTurns: 1,
+        queuedTurns: 10,
+        totalTurns: 100,
+        retries: 10,
+        sessions: 5,
+        workItems: 20,
+        delegations: 20,
+      },
+    },
+  }).success, false);
+  const advertisedConfigureSchema = z.toJSONSchema(
+    createSessionRuntimeAdvertisedInputSchema("budget.configure"),
+  ) as Record<string, any>;
+  assert.equal(advertisedConfigureSchema.properties.hardLimits.minProperties, 1);
+  assert.equal(advertisedConfigureSchema.properties.softLimits.minProperties, 1);
+  assert.equal(advertisedConfigureSchema.properties.childAllocation.properties.softLimits.minProperties, 1);
+  assert.deepEqual(
+    advertisedConfigureSchema.properties.childAllocation.properties.softLimits.properties.storageBytes,
+    { type: "null" },
+  );
+  assert.deepEqual(advertisedConfigureSchema.anyOf, [
+    {
+      required: ["childAllocation"],
+      not: {
+        anyOf: ["hardLimits", "softLimits", "deadlineAt", "expiresAt", "revoked", "retryPerExecutionLimit"]
+          .map((field) => ({ required: [field] })),
+      },
+    },
+    {
+      not: { required: ["childAllocation"] },
+      anyOf: ["hardLimits", "softLimits", "deadlineAt", "expiresAt", "revoked", "retryPerExecutionLimit"]
+        .map((field) => ({ required: [field] })),
+    },
+  ]);
+  assert.equal(configureInputSchema.safeParse({
+    ...childAllocation.input,
+    childAllocation: {
+      ...childAllocation.input.childAllocation,
+      hardLimits: { ...childHardLimits, storageBytes: 1024 },
+    },
+  }).success, false);
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "budget.configure",
+    input: {
+      ...childAllocation.input,
+      childAllocation: {
+        ...childAllocation.input.childAllocation,
+        hardLimits: { ...childHardLimits, storageBytes: 1024 },
+      },
+    },
+  }), /childAllocation\.hardLimits\.storageBytes must be 0/);
+  assert.equal(configureInputSchema.safeParse({
+    ...childAllocation.input,
+    childAllocation: {
+      ...childAllocation.input.childAllocation,
+      authorityGrantId: "spoofed",
+    },
+  }).success, false);
+  for (const spoofedField of ["ownerSessionId", "amounts", "authorityGrantId"] as const) {
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "budget.configure",
+      input: {
+        sessionId: "root-session",
+        accountId: "root-account",
+        expectedRevision: 2,
+        childAllocation: {
+          accountId: "child-account",
+          childSessionId: "child-session",
+          hardLimits: childHardLimits,
+          [spoofedField]: "spoofed",
+        },
+        idempotencyKey: `budget-child-spoof-${spoofedField}`,
+      },
+    }), new RegExp(`childAllocation contains unexpected fields: ${spoofedField}`));
+  }
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "budget.configure",
+    input: {
+      sessionId: "root-session",
+      accountId: "root-account",
+      expectedRevision: 2,
+      softLimits: { totalTurns: 900 },
+      childAllocation: {
+        accountId: "child-account",
+        childSessionId: "child-session",
+        hardLimits: childHardLimits,
+      },
+      idempotencyKey: "budget-child-policy-combination",
+    },
+  }), /childAllocation cannot be combined with account policy changes/);
+
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "budget.list",
+    input: { sessionId: "root-session", limit: 501 },
+  }), /limit must be at most 500/);
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "budget.configure",
+    input: {
+      sessionId: "root-session",
+      accountId: "root-session",
+      expectedRevision: 1,
+      idempotencyKey: "budget-configure-1",
+      unexpected: true,
+    },
+  }), /unexpected fields: unexpected/);
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "budget.configure",
+    input: {
+      sessionId: "root-session",
+      accountId: "root-session",
+      expectedRevision: 1,
+      idempotencyKey: "budget-configure-1",
+    },
+  }), /must contain a change/);
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "budget.configure",
+    input: {
+      sessionId: "root-session",
+      accountId: "root-session",
+      expectedRevision: 1,
+      retryPerExecutionLimit: -1,
+      idempotencyKey: "budget-configure-retry-limit-invalid",
+    },
+  }), /retryPerExecutionLimit must be a non-negative safe integer/);
+
+  const dimension = {
+    hardLimit: 10,
+    softLimit: null,
+    committed: 1,
+    reserved: 0,
+    allocatedToChildren: 0,
+    available: 9,
+    softLimitExceeded: false,
+    measurement: "known",
+    unknownSince: null,
+  };
+  const dimensions = Object.fromEntries([
+    "concurrentTurns", "queuedTurns", "totalTurns", "retries",
+    "sessions", "workItems", "delegations", "storageBytes",
+  ].map((key) => [key, dimension]));
+  const result = {
+    contractRevision: 1,
+    accountId: "root-session",
+    accountKind: "root",
+    rootSessionId: "root-session",
+    ownerSessionId: "root-session",
+    appliesToSessionId: "child-session",
+    allocationSource: "root_shared",
+    rootManagedDimensions: ["storageBytes"],
+    parentAccountId: null,
+    authorityGrantId: null,
+    authorityGrantRevision: null,
+    expiresAt: null,
+    revokedAt: null,
+    deadlineAt: "2026-10-01T00:00:00.000Z",
+    retryPerExecutionLimit: 3,
+    revision: 2,
+    dimensions,
+    alerts: [],
+    meteredUsage: [],
+    meteredUsageTruncated: true,
+    meteredUsageSummary: {
+      knownTokens: 123,
+      knownProviderUsage: 4,
+      monetaryCostByCurrency: { USD: 1.25 },
+      unknownRecords: { tokens: 1, monetary_cost: 2, provider_usage: 3 },
+    },
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-02T00:00:00.000Z",
+  };
+  const parsedResult = parseSessionRuntimeResultEnvelope("budget.get", {
+    schemaVersion: "withmate-session-result-v2",
+    operation: "budget.get",
+    result,
+  });
+  assert.equal(parsedResult.result.allocationSource, "root_shared");
+  assert.deepEqual(parsedResult.result.rootManagedDimensions, ["storageBytes"]);
+  assert.equal(parsedResult.result.dimensions.storageBytes.measurement, "known");
+  assert.equal(parsedResult.result.meteredUsageTruncated, true);
+  assert.deepEqual(parsedResult.result.meteredUsageSummary.unknownRecords,
+    { tokens: 1, monetary_cost: 2, provider_usage: 3 });
+  const missingRootManagedDimensions: Record<string, unknown> = { ...result };
+  delete missingRootManagedDimensions.rootManagedDimensions;
+  assert.throws(() => parseSessionRuntimeResultEnvelope("budget.get", {
+    schemaVersion: "withmate-session-result-v2",
+    operation: "budget.get",
+    result: missingRootManagedDimensions,
+  }));
+  assert.throws(() => parseSessionRuntimeResultEnvelope("budget.get", {
+    schemaVersion: "withmate-session-result-v2",
+    operation: "budget.get",
+    result: { ...result, privateState: "hidden" },
+  }));
 });
 
 test("SESSION-SELF-01: session.selfはcaller指定のSession targetを受け付けない", () => {

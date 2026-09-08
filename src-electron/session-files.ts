@@ -1,6 +1,9 @@
-import { constants, type Dirent } from "node:fs";
-import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import type { Dirent } from "node:fs";
+import { mkdir, open, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+import type { SessionFolderResourceBudget } from "./resource-budget-files.js";
 
 export type SaveSessionFileInput = {
   sessionId: string;
@@ -97,17 +100,48 @@ async function writeUniqueFile(directoryPath: string, requestedFileName: string,
   throw new Error("保存先ファイル名を決められなかったよ。");
 }
 
-async function copyUniqueFile(directoryPath: string, sourcePath: string): Promise<string> {
+async function copyUniqueFileBounded(
+  directoryPath: string,
+  sourcePath: string,
+  maxBytes: number,
+  onTargetCreated: () => void,
+): Promise<{ path: string; bytes: number }> {
   for (let index = 1; index < 10000; index += 1) {
     const candidate = buildDestinationCandidate(directoryPath, path.basename(sourcePath), index);
+    let destination;
     try {
-      await copyFile(sourcePath, candidate, constants.COPYFILE_EXCL);
-      return candidate;
+      destination = await open(candidate, "wx");
+      onTargetCreated();
     } catch (error) {
       const code = error && typeof error === "object" ? (error as { code?: unknown }).code : null;
-      if (code !== "EEXIST") {
-        throw error;
+      if (code === "EEXIST") continue;
+      throw error;
+    }
+
+    const source = await open(sourcePath, "r");
+    try {
+      const buffer = Buffer.allocUnsafe(64 * 1024);
+      let bytes = 0;
+      while (bytes < maxBytes) {
+        const requested = Math.min(buffer.byteLength, maxBytes - bytes);
+        const read = await source.read(buffer, 0, requested, bytes);
+        if (read.bytesRead === 0) break;
+        let written = 0;
+        while (written < read.bytesRead) {
+          const result = await destination.write(buffer, written, read.bytesRead - written, bytes + written);
+          if (result.bytesWritten === 0) throw new Error("The SessionFolder copy made no write progress.");
+          written += result.bytesWritten;
+        }
+        bytes += read.bytesRead;
       }
+      const overflow = Buffer.allocUnsafe(1);
+      if ((await source.read(overflow, 0, 1, bytes)).bytesRead > 0) {
+        throw new Error("A source file grew beyond its reserved SessionFolder storage.");
+      }
+      await destination.sync();
+      return { path: candidate, bytes };
+    } finally {
+      await Promise.allSettled([source.close(), destination.close()]);
     }
   }
 
@@ -118,26 +152,97 @@ export async function copyFilesToSessionFiles(
   userDataPath: string,
   sessionId: string,
   sourcePaths: readonly string[],
+  resourceBudget: SessionFolderResourceBudget | null,
 ): Promise<string[]> {
-  const directoryPath = resolveSessionFilesDirectory(userDataPath, sessionId);
-  await mkdir(directoryPath, { recursive: true });
-
-  const savedPaths: string[] = [];
+  const sources: Array<{ path: string; reservedBytes: number }> = [];
+  let reservedBytes = 0;
   for (const sourcePath of sourcePaths) {
     const trimmedPath = sourcePath.trim();
-    if (!trimmedPath) {
-      continue;
-    }
-    savedPaths.push(await copyUniqueFile(directoryPath, trimmedPath));
+    if (!trimmedPath) continue;
+    const sourceStats = await stat(trimmedPath);
+    if (!sourceStats.isFile()) throw new Error("SessionFolder へコピーできるのはファイルだけです。");
+    reservedBytes = addSafeBytes(reservedBytes, sourceStats.size);
+    sources.push({ path: trimmedPath, reservedBytes: sourceStats.size });
   }
+  const reservation = resourceBudget
+    ? await resourceBudget.reserve(
+      sessionId,
+      reservedBytes,
+      `session-files.copy:${randomOperationId()}`,
+    )
+    : null;
+  const directoryPath = resolveSessionFilesDirectory(userDataPath, sessionId);
+  let effectApplied = false;
+  let budgetLeaseFinished = false;
+  try {
+    await mkdir(directoryPath, { recursive: true });
 
-  return savedPaths;
+    const savedPaths: string[] = [];
+    let actualBytes = 0;
+    for (const source of sources) {
+      const saved = await copyUniqueFileBounded(directoryPath, source.path, source.reservedBytes, () => {
+        effectApplied = true;
+      });
+      savedPaths.push(saved.path);
+      actualBytes = addSafeBytes(actualBytes, saved.bytes);
+    }
+    budgetLeaseFinished = true;
+    if (resourceBudget && reservation) {
+      await resourceBudget.settleApplied(sessionId, reservation, actualBytes);
+    }
+    return savedPaths;
+  } catch (error) {
+    if (resourceBudget && reservation && !budgetLeaseFinished && effectApplied) {
+      await resourceBudget.reconcileRequired(sessionId, reservation).catch(() => undefined);
+    } else if (resourceBudget && reservation && !budgetLeaseFinished) {
+      resourceBudget.release(reservation);
+    }
+    throw error;
+  }
 }
 
-export async function saveSessionFile(userDataPath: string, input: SaveSessionFileInput): Promise<string> {
+export async function saveSessionFile(
+  userDataPath: string,
+  input: SaveSessionFileInput,
+  resourceBudget: SessionFolderResourceBudget | null,
+): Promise<string> {
+  const reservation = resourceBudget
+    ? await resourceBudget.reserve(
+      input.sessionId,
+      input.data.byteLength,
+      `session-files.paste:${randomOperationId()}`,
+    )
+    : null;
   const directoryPath = resolveSessionFilesDirectory(userDataPath, input.sessionId);
-  await mkdir(directoryPath, { recursive: true });
-  return writeUniqueFile(directoryPath, input.fileName, input.data);
+  let effectApplied = false;
+  let budgetLeaseFinished = false;
+  try {
+    await mkdir(directoryPath, { recursive: true });
+    const savedPath = await writeUniqueFile(directoryPath, input.fileName, input.data);
+    effectApplied = true;
+    budgetLeaseFinished = true;
+    if (resourceBudget && reservation) {
+      await resourceBudget.settleApplied(input.sessionId, reservation, input.data.byteLength);
+    }
+    return savedPath;
+  } catch (error) {
+    if (resourceBudget && reservation && !budgetLeaseFinished && effectApplied) {
+      await resourceBudget.reconcileRequired(input.sessionId, reservation).catch(() => undefined);
+    } else if (resourceBudget && reservation && !budgetLeaseFinished) {
+      resourceBudget.release(reservation);
+    }
+    throw error;
+  }
+}
+
+function randomOperationId(): string {
+  return `${Date.now()}:${randomUUID()}`;
+}
+
+function addSafeBytes(left: number, right: number): number {
+  const total = left + right;
+  if (!Number.isSafeInteger(total)) throw new Error("SessionFolder storage size exceeds the supported range.");
+  return total;
 }
 
 export async function deleteSessionFilesDirectory(userDataPath: string, sessionId: string): Promise<void> {

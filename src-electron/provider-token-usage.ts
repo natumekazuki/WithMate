@@ -1,5 +1,9 @@
 import type { AuditLogUsage } from "../src/app-state.js";
 
+export type ProviderTokenUsageConfidence = "estimated" | "reported";
+
+const normalizedUsageConfidence = new WeakMap<AuditLogUsage, ProviderTokenUsageConfidence>();
+
 export type CodexTokenUsageLike = {
   input_tokens?: unknown;
   cached_input_tokens?: unknown;
@@ -50,8 +54,19 @@ function normalizeTokenUsage(input: {
 
   const totalTokens = finiteNumber(input.totalTokens);
   normalized.totalTokens = totalTokens ?? normalized.inputTokens + normalized.outputTokens;
+  normalizedUsageConfidence.set(
+    normalized,
+    totalTokens !== null ? "reported" : "estimated",
+  );
 
   return normalized;
+}
+
+export function getProviderTokenUsageConfidence(
+  usage: AuditLogUsage | null | undefined,
+): ProviderTokenUsageConfidence | null {
+  if (!usage) return null;
+  return normalizedUsageConfidence.get(usage) ?? "estimated";
 }
 
 export function normalizeCodexTokenUsage(usage: CodexTokenUsageLike | null | undefined): AuditLogUsage | null {

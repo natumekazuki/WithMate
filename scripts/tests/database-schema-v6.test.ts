@@ -2488,6 +2488,17 @@ describe("database-schema-v6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "compatibility"
+  // claim = "通常Session Role migrationは既存default Sessionだけをstandalone rootへ一度だけbackfillし、既存source schema revisionを正しく更新する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Baseline migration と authority cutover" }
+  // fault = "migrationが対象外SessionへRoleを付与する、既存Roleを二重backfillする、またはsource schema revisionを誤って更新する"
+  // observable = "session_role_bindings_v6の全行とsessions_v6 runtime policyのsourceSchemaVersion"
+  // observation_boundary = "component-behavior"
+  // scope = "ensureV6Schema normal Session Role migration"
+  // lifecycle = "permanent"
+  // distinction = "empty DBと複数schema revisionを含むpopulated DBで二回migrationし、Role binding集合とruntime revisionを直接比較する"
+  // @end-test-value
   it("通常Session Role migrationはempty/populated DBへ一度だけstandalone rootをbackfillする", () => {
     for (const populated of [false, true]) {
       const db = new DatabaseSync(":memory:");
@@ -2501,11 +2512,11 @@ describe("database-schema-v6", () => {
               model_id, approval_mode, runtime_policy_json, created_at, updated_at, last_active_at
             ) VALUES
               ('normal-session', 'Normal', 'active', 'default', 'codex', 1,
-                'gpt-5', 'on-request', '{"sourceSchemaVersion":5}', 'now', 'now', 'now'),
+                'gpt-5', 'on-request', '{"sourceSchemaVersion":5}', '2026-08-24T12:00:00.000Z', '2026-08-24T12:00:00.000Z', '2026-08-24T12:00:00.000Z'),
               ('authoring-session', 'Authoring', 'active', 'character-authoring', 'codex', 1,
-                'gpt-5', 'on-request', '{"sourceSchemaVersion":5}', 'now', 'now', 'now'),
+                'gpt-5', 'on-request', '{"sourceSchemaVersion":5}', '2026-08-24T12:00:00.000Z', '2026-08-24T12:00:00.000Z', '2026-08-24T12:00:00.000Z'),
               ('legacy-session', 'Legacy', 'active', 'default', 'codex', 1,
-                'gpt-5', 'on-request', '{"sourceSchemaVersion":4}', 'now', 'now', 'now');
+                'gpt-5', 'on-request', '{"sourceSchemaVersion":4}', '2026-08-24T12:00:00.000Z', '2026-08-24T12:00:00.000Z', '2026-08-24T12:00:00.000Z');
           `);
         }
 

@@ -29,6 +29,7 @@ import type { CharacterContextResponse } from "../src/character-context/characte
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { SessionRoleBinding } from "../src/session-role-binding.js";
 import type { PendingCoordinationResponse } from "../src/coordination-event.js";
+import type { ResourceBudgetAlert } from "../src/resource-budget.js";
 
 export type ProviderPromptComposition = {
   systemBodyText: string;
@@ -52,6 +53,7 @@ export type RunSessionTurnInput = {
   conversationTimingContext?: ConversationTimingContext;
   characterContext?: CharacterContextResponse;
   pendingCoordinationResponses?: PendingCoordinationResponse[];
+  resourceBudgetAlerts?: readonly ResourceBudgetAlert[];
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
   sessionRoleBinding?: SessionRoleBinding | null;
   signal?: AbortSignal;
@@ -59,6 +61,8 @@ export type RunSessionTurnInput = {
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;
   onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;
   onSessionContextTelemetry?: RunSessionTurnSessionContextTelemetryHandler;
+  providerGenerationId?: string;
+  onAutomaticRetry?: RunSessionTurnAutomaticRetryHandler;
 };
 
 export function resolveRunWorkspacePath(input: Pick<RunSessionTurnInput, "session" | "executionWorkspacePath">): string {
@@ -83,6 +87,11 @@ export type RunSessionTurnProviderQuotaTelemetryHandler = (
 export type RunSessionTurnSessionContextTelemetryHandler = (
   telemetry: SessionContextTelemetry,
 ) => Promise<void> | void;
+
+export type RunSessionTurnAutomaticRetryHandler = (input: {
+  providerGenerationId: string;
+  usage: AuditLogUsage | null;
+}) => Promise<void> | void;
 
 export type GetProviderQuotaTelemetryInput = {
   providerId: string;

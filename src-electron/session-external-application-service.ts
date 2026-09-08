@@ -2,6 +2,19 @@ import { createHash } from "node:crypto";
 import { SessionAuthorityError, SESSION_AUTHORITY_MAPPING_REVISION, SESSION_AUTHORITY_OPERATION_DEFINITIONS, type MutationAdmissionProof } from "../src/session-authority.js";
 import type { SessionAuthorityService } from "./session-authority-service.js";
 import { SessionResourceRevisionConflictError } from "./resource-history-schema.js";
+import {
+  RESOURCE_BUDGET_CONTRACT_REVISION,
+  RESOURCE_BUDGET_DEFAULT_DURATION_MS,
+  RESOURCE_BUDGET_DEFAULT_HARD_LIMITS,
+  RESOURCE_BUDGET_DEFAULT_LIST_LIMIT,
+  RESOURCE_BUDGET_DIMENSIONS,
+  RESOURCE_BUDGET_MAX_LIST_LIMIT,
+  RESOURCE_BUDGET_RETRY_PER_EXECUTION_LIMIT,
+  type ResourceBudgetConfigureInput,
+  type ResourceBudgetGetInput,
+  type ResourceBudgetListInput,
+} from "../src/resource-budget.js";
+import { ResourceBudgetError, type ResourceBudgetStorage } from "./resource-budget-storage.js";
 
 import { approvalModeOptions } from "../src/approval-mode.js";
 import { codexSandboxModeOptions } from "../src/codex-sandbox-mode.js";
@@ -171,7 +184,7 @@ export type SessionExternalApplicationServiceDeps = {
   executionService: Pick<
     SessionExecutionService,
     "beginShutdown" | "run" | "enqueue" | "get" | "listPage" | "cancel" | "waitForTerminal" | "resolveReplay"
-  > & Partial<Pick<SessionExecutionService, "getRecord">>;
+  > & Pick<SessionExecutionService, "resumeRootQueues"> & Partial<Pick<SessionExecutionService, "getRecord">>;
   interactionService?: Pick<
     SessionInteractionService,
     "getPendingForExecution" | "listSessionInteractionsPage" | "respond" | "subscribeExecution"
@@ -184,6 +197,7 @@ export type SessionExternalApplicationServiceDeps = {
   >;
   crudService: Pick<SessionCrudService, "create" | "list" | "get" | "rename">;
   fileService?: Pick<SessionFileService, "list" | "readText" | "writeText">;
+  budgetStorage?: Pick<ResourceBudgetStorage, "get" | "listVisible" | "configure">;
   currentModelCatalog(): ModelCatalogSnapshot | null;
   isProviderEnabled(providerId: string): boolean;
   isProviderSupported(providerId: string): boolean;
@@ -277,6 +291,28 @@ export class SessionExternalApplicationService {
         this.deps.isProviderEnabled,
         (providerId) => this.isProviderSupported(providerId),
       );
+    }
+    if (operation === "budget.get") {
+      return this.requireBudgetStorage().get((input as ResourceBudgetGetInput).sessionId);
+    }
+    if (operation === "budget.list") {
+      const request = input as ResourceBudgetListInput;
+      const session = await this.deps.crudService.get(request.sessionId);
+      return this.requireBudgetStorage().listVisible(
+        agentRuntimeBinding.actorSessionId,
+        session.rootSessionId,
+        request.limit,
+        request.cursor,
+      );
+    }
+    if (operation === "budget.configure") {
+      const updated = this.requireBudgetStorage().configure(
+        input as ResourceBudgetConfigureInput,
+        proof,
+        new Date().toISOString(),
+      );
+      await this.deps.executionService.resumeRootQueues(updated.rootSessionId);
+      return updated;
     }
     if (operation === "session.self") {
       const session = await this.deps.crudService.get(agentRuntimeBinding.actorSessionId);
@@ -969,6 +1005,17 @@ export class SessionExternalApplicationService {
     return this.deps.fileService;
   }
 
+  private requireBudgetStorage(): NonNullable<SessionExternalApplicationServiceDeps["budgetStorage"]> {
+    if (!this.deps.budgetStorage) {
+      throw new SessionRuntimeValidationError(
+        "Resource budget operations are unavailable.",
+        {},
+        "RUNTIME_UNAVAILABLE",
+      );
+    }
+    return this.deps.budgetStorage;
+  }
+
   private requireTranscriptService(): Pick<SessionTranscriptService, "export"> {
     if (!this.deps.transcriptService) {
       throw new SessionRuntimeValidationError(
@@ -1013,10 +1060,27 @@ function projectRuntimeCatalog(
     authority: {
       mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
       operations: Object.values(SESSION_AUTHORITY_OPERATION_DEFINITIONS),
-      budget: "not_implemented_slice_2",
+      budget: {
+        contractRevision: RESOURCE_BUDGET_CONTRACT_REVISION,
+        operations: ["get", "list", "configure"],
+        dimensions: RESOURCE_BUDGET_DIMENSIONS,
+        defaultHardLimits: RESOURCE_BUDGET_DEFAULT_HARD_LIMITS,
+        retryPerExecutionLimit: RESOURCE_BUDGET_RETRY_PER_EXECUTION_LIMIT,
+        defaultDurationMs: RESOURCE_BUDGET_DEFAULT_DURATION_MS,
+        defaultListLimit: RESOURCE_BUDGET_DEFAULT_LIST_LIMIT,
+        maxListLimit: RESOURCE_BUDGET_MAX_LIST_LIMIT,
+        meteredUsage: ["tokens", "monetary_cost", "provider_usage"],
+        constraints: [
+          "Token, monetary cost and provider usage are metered observations, not hard-limit dimensions.",
+          "Increasing a root hard limit or the per-execution retry limit requires trusted user or issuer authority.",
+          "Delegation budget enforcement is introduced with the later delegation capability slice.",
+          "Child allocations must set storageBytes to zero; storage is enforced only by the shared root account.",
+          "Provider paths without a canonical executionId, including auxiliary and companion executions, are outside the root Turn, retry and generation ledger.",
+          "Direct SessionFolder writes bypass pre-reservation; storage is reconciled before dispatch, and unknown or exceeded usage blocks new dispatch.",
+        ],
+      },
       validationGaps: [
-        "Root budget ledger, reservation and admission are not implemented until Slice 2; existing operation limits remain in force.",
-        "Provider-native shell, Git and external tools can bypass the Session Runtime API; grants do not enforce those paths. Provider approval and sandbox policies remain separate boundaries.",
+        "Provider-native shell, Git and external tools can bypass the Session Runtime API; grants and resource budgets do not enforce those paths. Provider approval and sandbox policies remain separate boundaries.",
       ],
     },
     sessionRoleContractRevision: SESSION_ROLE_CONTRACT_REVISION,
@@ -1334,6 +1398,15 @@ function isTerminalOrPending(execution: SessionExecution, pending: unknown): boo
 }
 
 function mapApplicationError(error: unknown, operation: SessionRuntimeOperation | string, input?: unknown): SessionRuntimeError {
+  if (error instanceof ResourceBudgetError) {
+    return createSessionRuntimeError({
+      code: error.code,
+      message: error.message,
+      retryable: error.code === "BUDGET_REVISION_CONFLICT" || error.code === "BUDGET_STORAGE_UNKNOWN",
+      effect: "not_applied",
+      details: { ...error.details },
+    });
+  }
   if (error instanceof SessionExecutionIdempotencyResponseUnavailableError
     || error instanceof SessionCrudIdempotencyResponseUnavailableError
     || error instanceof SessionFileWriteIdempotencyResponseUnavailableError
@@ -1559,7 +1632,8 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
 }
 
 function isMutationOperation(operation: SessionRuntimeOperation | string, input?: unknown): boolean {
-  return operation === "session.create"
+  return operation === "budget.configure"
+    || operation === "session.create"
     || operation === "session.rename"
     || operation === "turn.run"
     || operation === "turn.enqueue"

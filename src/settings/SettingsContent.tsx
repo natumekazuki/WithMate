@@ -39,6 +39,7 @@ import {
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
 } from "./settings-ui.js";
 import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
+import { ResourceBudgetSettings } from "./ResourceBudgetSettings.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -491,6 +492,8 @@ export function HomeSettingsContent({
               </label>
             </div>
           </section>
+
+          <ResourceBudgetSettings />
 
           <KeyboardShortcutsHelpSection
             settings={settingsDraft.keyboardShortcuts}

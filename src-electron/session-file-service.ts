@@ -34,6 +34,11 @@ import {
   type SessionFileWritePreparedProof,
   type SessionStorageV6,
 } from "./session-storage-v6.js";
+import type {
+  SessionFolderResourceBudget,
+  SessionFolderResourceBudgetLease,
+} from "./resource-budget-files.js";
+import { ResourceBudgetError } from "./resource-budget-storage.js";
 
 const SESSION_FILE_WRITE_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 const SESSION_FILE_LIST_CURSOR_VERSION = 1;
@@ -74,6 +79,10 @@ export type SessionFileServiceDeps = {
     | "rejectSessionFileWrite"
   >;
   resolveSessionFilesDirectory(sessionId: string): string;
+  resourceBudget?: Pick<
+    SessionFolderResourceBudget,
+    "reserve" | "settleApplied" | "release" | "reconcileRequired"
+  >;
   now?(): Date;
   createTempName?(): string;
   onWriteIdentityBound?(): void;
@@ -225,6 +234,22 @@ export class SessionFileService {
     if (!root) {
       throw new SessionFileServiceError("RUNTIME_UNAVAILABLE", "The SessionFolder could not be created.", true);
     }
+    let reservation: SessionFolderResourceBudgetLease | undefined;
+    try {
+      if (this.deps.resourceBudget) {
+        reservation = await this.deps.resourceBudget.reserve(
+          input.sessionId,
+          contentBytes.byteLength,
+          prepared.operationId,
+          prepared.resumed,
+          prepared.prepared?.byteLength ?? 0,
+        );
+      }
+    } catch (error) {
+      await closeAuthorizedRoot(root);
+      throw normalizeBudgetError(error);
+    }
+    let budgetLeaseFinished = false;
     try {
       const contentDigest = sha256(contentBytes);
       let durableProof = prepared.prepared;
@@ -304,6 +329,14 @@ export class SessionFileService {
         }
         throw error;
       }
+      try {
+        if (this.deps.resourceBudget && reservation) {
+          budgetLeaseFinished = true;
+          await this.deps.resourceBudget.settleApplied(input.sessionId, reservation, written.byteLength);
+        }
+      } catch (error) {
+        throw normalizeBudgetError(error, "indeterminate");
+      }
       const result = this.completeWrite(proof, input.idempotencyKey, requestFingerprint, written, {
         file: {
           sessionId: input.sessionId,
@@ -314,6 +347,16 @@ export class SessionFileService {
       });
       await this.cleanupWriteTempBestEffort(input.sessionId, relativePath, prepared.tempName, written, root);
       return result;
+    } catch (error) {
+      const effect = error instanceof SessionFileServiceError ? error.effect : "indeterminate";
+      if (!budgetLeaseFinished && effect === "not_applied") {
+        if (this.deps.resourceBudget && reservation) this.deps.resourceBudget.release(reservation);
+      } else if (!budgetLeaseFinished) {
+        if (this.deps.resourceBudget && reservation) {
+          await this.deps.resourceBudget.reconcileRequired(input.sessionId, reservation).catch(() => undefined);
+        }
+      }
+      throw error;
     } finally {
       await closeAuthorizedRoot(root);
     }
@@ -494,6 +537,22 @@ export class SessionFileService {
     }
     return `${SESSION_FILE_WRITE_TEMP_PREFIX}${suffix}.tmp`;
   }
+}
+
+function normalizeBudgetError(
+  error: unknown,
+  effect: SessionRuntimeEffect = "not_applied",
+): unknown {
+  if (!(error instanceof ResourceBudgetError)) return error;
+  const exceeded = error.code === "BUDGET_HARD_LIMIT_EXCEEDED"
+    || error.code === "BUDGET_DEADLINE_EXCEEDED";
+  return new SessionFileServiceError(
+    exceeded ? "LIMIT_EXCEEDED" : "RUNTIME_UNAVAILABLE",
+    error.message,
+    false,
+    error.details,
+    effect,
+  );
 }
 
 type AuthorizedRoot = {

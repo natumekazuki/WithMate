@@ -25,6 +25,13 @@ import type {
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type { RelatedSessionSummary } from "../src/related-session-details.js";
 import type {
+  ResourceBudget,
+  ResourceBudgetConfigureInput,
+  ResourceBudgetGetInput,
+  ResourceBudgetListInput,
+  ResourceBudgetListResult,
+} from "../src/resource-budget.js";
+import type {
   CoordinationEvent,
   CoordinationEventCancelInput,
   CoordinationEventTrustedResolveInput,
@@ -262,6 +269,9 @@ export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
+  getResourceBudget(input: ResourceBudgetGetInput): Awaitable<ResourceBudget | null>;
+  listResourceBudgets(input: ResourceBudgetListInput): Awaitable<ResourceBudgetListResult>;
+  configureResourceBudgetAsTrustedUser(input: ResourceBudgetConfigureInput): Awaitable<ResourceBudget>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   getSessionIntegrationDiagnostics(): Awaitable<SessionIntegrationDiagnostics>;
@@ -581,6 +591,9 @@ export function createMainIpcRegistrationDeps(
     getAppSettings: args.settings.getAppSettings,
     updateAppSettings: args.settings.updateAppSettings,
     updateChatLayoutPreference: args.settings.updateChatLayoutPreference,
+    getResourceBudget: args.settings.getResourceBudget,
+    listResourceBudgets: args.settings.listResourceBudgets,
+    configureResourceBudgetAsTrustedUser: args.settings.configureResourceBudgetAsTrustedUser,
     getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
     getSessionIntegrationDiagnostics: args.settings.getSessionIntegrationDiagnostics,

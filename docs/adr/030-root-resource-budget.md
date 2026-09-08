@@ -1,0 +1,25 @@
+# ADR 030: Root 単位の資源予算
+
+## 決定
+
+Session Runtime の有限資源は、canonical な `session_role_bindings_v6.root_session_id` に属する budget ledger で管理する。初期 policy は2026-09-07のユーザー指定を由来とし、値と対象は `src/resource-budget.ts` を正本とする。tokenと費用は計測のみで、上限値を持たせない。
+
+execution、Session、Work Item の admission は、それぞれの既存SQLite transactionと同じ接続で予算を予約・消費する。response loss後の同一要求は既存idempotency結果へ収束させる。queue登録数、実行中数、累積Turn数を別dimensionにし、実行枠不足やdeadlineでdispatchできない既存queueは保留する。terminal結果を新しい実行へ戻さない。
+
+キャンセルの待機期限後もProvider処理が生存する場合は、executionのterminal結果とは別に実行枠の予約を保持する。実処理の終了時に予約を解放し、遅延した使用量を元のexecutionとProvider generationへ記録する。
+
+待機期限到達時のlive partial usageはgenerationの確定値として保存しない。ledgerでは開始時のunknownを維持し、Providerの実終了時に得られたusageを一度だけ確定する。途中usageは既存の実行結果・auditに残し、同じconfidenceの途中値が最終値のidempotent settlementを妨げないようにする。
+
+root hard limitおよびdeadlineの増加は、trusted Settings経路のuser principalで行う。Agentは既存grantの範囲内でsoft limitや子への配分を変更する。新しいbudget操作の補助grantは既存Session権限のissuer chainへ結び付け、既存grantのrevokeを再発行で取り消さない。移行の完了とactive authorityを区別する。
+
+累積作成数は削除によって返却しない。占有資源はrelease・reconciliationの対象とする。既存rootへの移行は保存済み実数をbaselineへ記録し、上限超過や期限切れをデータ破損として起動不能にしない。ユーザーは同じrootの設定を変更して以後の新規受付を再開できる。
+
+## 保存容量と使用量の境界
+
+容量の対象はroot配下のSessionFolderであり、WorkspaceとMemoryは含めない。WithMateが仲介する書き込みは容量を予約し、実ファイルと精算する。Provider、terminal、外部editorによる直接編集は予約を経由しないため、rootの実使用量を観測・再精算し、不明または超過した状態で新規dispatchを開始しない。この仕組みはOSのdisk quotaを提供するものではない。
+
+Provider使用量はexecutionとattempt generationへ帰属させる。未知の使用量を0へ置き換えず、推定・報告・精算の状態を区別する。自動retryも独立したattemptとして計上し、同一要求のreplayとは区別する。
+
+## 後続の接続点
+
+delegation resource、Session move、root transfer、artifact transferは対応Sliceで接続する。移動時はallocationとgrantのownerを同時に再評価する。未実装経路の保証をruntime catalogへ実装済みとして投影しない。

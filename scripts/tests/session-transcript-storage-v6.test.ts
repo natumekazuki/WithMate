@@ -200,16 +200,18 @@ describe("SessionTranscriptStorageV6", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
-  // claim = "transcript exportはprepared proofとterminal resultをidempotency ledgerとresource eventへ一致して保存し、startupで改変ledgerを拒否する"
+  // claim = "transcript exportの再送は操作ID・prepared proof・applied結果を保持し、異なるfingerprintとstartup時の結果改変を拒否する"
   // oracle = { type = "contract", ref = "AUTONOMY-HISTORY-04/AUTONOMY-MUTATION-05" }
-  // failure_mode = "出力identityの異なる完了を受理するか、eventと異なるresult_jsonをretry結果として返せる"
+  // fault = "再送で操作IDや出力証跡が変わる、異なるfingerprintを受理する、またはeventと異なるresult_jsonをstartupが受理する"
+  // observable = "実SQLite storageのpending/replay返却値とoperationId、fingerprint競合例外、result_json改変後のstartup例外"
+  // observation_boundary = "component-behavior"
   // scope = "SessionTranscriptStorageV6 export idempotency replay"
   // lifecycle = "permanent"
   // distinction = "prepared outputの一致、正常retry、fingerprint conflictに加え、terminal eventを保ったままledger resultだけを改変してstartup拒否を観測する"
   // @end-test-value
-  it("EXT-EXPORT-14: pending output hashを固定しapplied/rejected replayとconflictを表す", async () => {
+  it("EXT-EXPORT-14: pending outputと操作IDを固定しapplied replayとconflictを表す", async () => {
     const f = await fixture();
     try {
       const prepared = f.storage.prepareExport({
@@ -222,6 +224,7 @@ describe("SessionTranscriptStorageV6", () => {
         expiresAt: EXPIRES,
       });
       assert.equal(prepared.kind, "pending");
+      assert.ok(prepared.operationId.length > 0);
       f.storage.recordPreparedOutput({
         idempotencyKey: "export-1",
         requestFingerprint: "fingerprint-1",
@@ -242,6 +245,7 @@ describe("SessionTranscriptStorageV6", () => {
       });
       assert.deepEqual(resumed, {
         kind: "pending",
+        operationId: prepared.operationId,
         sessionId: "session-1",
         relativePath: "transcript.json",
         tempName: ".transcript.tmp",
@@ -275,6 +279,7 @@ describe("SessionTranscriptStorageV6", () => {
         expiresAt: EXPIRES,
       }), {
         kind: "replay",
+        operationId: prepared.operationId,
         sessionId: "session-1",
         relativePath: "transcript.json",
         tempName: ".transcript.tmp",

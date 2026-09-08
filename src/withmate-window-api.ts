@@ -35,6 +35,13 @@ import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionI
 import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
 import type { RelatedSessionSummary } from "./related-session-details.js";
 import type {
+  ResourceBudget,
+  ResourceBudgetConfigureInput,
+  ResourceBudgetGetInput,
+  ResourceBudgetListInput,
+  ResourceBudgetListResult,
+} from "./resource-budget.js";
+import type {
   CreatePromptTemplateInput,
   PromptTemplate,
   UpdatePromptTemplateInput,
@@ -391,6 +398,9 @@ export type WithMateWindowSettingsApi = {
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<AppSettings>;
+  getResourceBudget(input: ResourceBudgetGetInput): Promise<ResourceBudget | null>;
+  listResourceBudgets(input: ResourceBudgetListInput): Promise<ResourceBudgetListResult>;
+  configureResourceBudget(input: ResourceBudgetConfigureInput): Promise<ResourceBudget>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
   getSessionIntegrationDiagnostics(): Promise<SessionIntegrationDiagnostics>;

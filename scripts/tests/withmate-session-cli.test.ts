@@ -446,6 +446,53 @@ describe("withmate-session CLI", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "CLI budget configureはstrict inputをcanonical dotted operationへ変換しversioned resultを返す"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-public-api-migration-and-review.md#public-surface-parity" }
+  // fault = "CLIがbudget configureを未登録にするかinputまたはoperation discriminatorを変更してdispatchする"
+  // observable = "runtime clientへ渡るrequest envelopeとCLI JSON output"
+  // observation_boundary = "public-boundary"
+  // scope = "withmate-session CLI resource budget adapter"
+  // lifecycle = "permanent"
+  // @end-test-value
+  test("RESOURCE-BUDGET-PUBLIC-03: budget configureを共通operationへdispatchする", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const input = {
+      sessionId: "session-actor",
+      accountId: "session-actor",
+      expectedRevision: 1,
+      softLimits: { totalTurns: 800 },
+      idempotencyKey: "budget-configure-1",
+    };
+    const exitCode = await runWithMateSessionCli([
+      "budget",
+      "configure",
+      "--json",
+      JSON.stringify(input),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("budget.configure", {} as never),
+        };
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "budget.configure",
+      input,
+    }]);
+    assert.equal(stdout.json().result.operation, "budget.configure");
+  });
+
   test("SESSION-SELF-02: session selfはinput sourceなしで共通operationへdispatchする", async () => {
     const stdout = capture();
     const requests: unknown[] = [];

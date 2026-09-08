@@ -37,9 +37,10 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 38 operations:
+The CLI and MCP expose the same 41 operations:
 
 - Runtime: `runtime.catalog`
+- Budget: `budget.get`, `budget.list`, `budget.configure`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.rename`
 - SessionFolder: `session.files.list`, `session.files.read_text`, `session.files.write_text`
 - Work Item: `work.create`, `work.list`, `work.get`, `work.revise`, `work.history.append`, `work.history.list`, `work.transition`, `work.result`, `work.cancel`, `work.aggregation.get`, `work.aggregation.list`, `work.aggregation.decide`, `work.aggregation.retry`
@@ -50,6 +51,18 @@ The CLI and MCP expose the same 38 operations:
 
 CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`.
 Coordination commands use `coordination event <verb>`.
+
+## Resource budgets
+
+Use `budget.get` for the allocation applied to an explicit Session and `budget.list` for visible accounts in that Session's root. `allocationSource` distinguishes an owned account from the shared root projection used by a Session without a child allocation. `rootManagedDimensions` identifies values projected from the current root account; it is empty for the root and contains `storageBytes` for child snapshots. Each dimension reports its hard and soft limits, committed and reserved usage, child allocations, available capacity, measurement confidence, and whether the soft limit is exceeded. Token, monetary cost, and provider usage remain metered observations with `unknown`, `estimated`, `reported`, or `settled` confidence; they are not represented as enforceable hard limits. `meteredUsage` contains at most the latest 100 observations, `meteredUsageTruncated` reports omitted older observations, and `meteredUsageSummary` retains aggregate known and unknown totals.
+
+`budget.configure` requires `sessionId`, `accountId`, the current `expectedRevision`, and a caller-owned `idempotencyKey`. To create a direct child allocation, set top-level `accountId` to the parent account and pass `childAllocation` with a new `accountId`, the canonical `childSessionId`, and all eight `hardLimits`; `storageBytes` must be `0`, while optional child fields are `softLimits` and `expiresAt`. Storage is measured and enforced only against the shared root account, so child storage is not separately allocated. Do not combine `childAllocation` with parent policy changes or send owner, authority grant, or derived hierarchy fields. An Agent may adjust soft limits, lower its retry limit, and allocate existing capacity to a child account. A root hard-limit increase, per-execution retry-limit increase, deadline extension, expiry extension, or restoration of a revoked account requires trusted user or issuer authority; an Agent rejection cannot be bypassed or retried with invented authority. Reducing a hard limit below committed usage, reservations, or child allocations is rejected without changing the account.
+
+Session Runtime file writes and transcript exports reserve the shared root storage budget before publication. Direct provider or user writes to a SessionFolder can bypass that reservation, so the runtime reconciles storage before dispatch and blocks new dispatch when usage is unknown or already exceeds the hard limit. Reads, cancellation, and result collection remain available.
+
+The root Turn, retry, and generation ledger covers main Session `turn.run` and `turn.enqueue` executions with a canonical execution ID. Direct auxiliary or companion provider paths without that ID are outside this ledger.
+
+After `BUDGET_REVISION_CONFLICT`, read the budget again before deciding whether the intended change still applies. After `BUDGET_HARD_LIMIT_EXCEEDED` or `BUDGET_DEADLINE_EXCEEDED`, do not dispatch a new effect; reads, cancellation, and result collection remain available. Replaying an unchanged configure request uses the original idempotency key.
 
 ## Work Items
 

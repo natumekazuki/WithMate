@@ -352,6 +352,42 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 ## Validation gap
 
+### Slice 2 の実装・検証対象
+
+Root ledger、原子的な予約と精算、Session／Work Item作成数、実行queue、Provider retry／使用量、SessionFolderの仲介書き込み、Settingsからの上限・期限延長を接続した。初期policyは2026-09-07のユーザー指定を採用し、token・費用は計測のみとする。設計の採用方針とADR 030を正本とする。
+
+| Direct validation | 実在する検証入口 |
+| --- | --- |
+| 同時予約・exact limit・子配分 | `scripts/tests/resource-budget.test.ts` の独立process競合と配分／親予約 |
+| replay・crash・late usage・deadline延長 | budget storageと`session-execution-service.test.ts`、`session-runtime-service.test.ts` |
+| grant revoke・migration保持 | `session-authority.test.ts`、budget ledger verifier |
+| Session／Work Item累積数 | `session-crud-service.test.ts`、`work-item-contract.test.ts` |
+| 仲介書き込み・実容量・不明時停止 | `resource-budget-files.test.ts`、既存file／transcript tests |
+| public parity・trusted Settings | runtime contract/application/HTTP/CLI/MCP tests、IPC sender test |
+| soft alert通知 | `provider-prompt.test.ts` の次Turn system context |
+
+容量はRoot共有枠とし、子別容量配分は提供しない。Providerや利用者によるSessionFolderの直接編集は事前予約外で、観測時に不明・超過なら新規dispatchを止める。canonical execution IDを経由しないauxiliary／companionの直接Provider実行は、Turn・retry・generation使用量ledgerの保証外とする。delegation resource、move、transfer、artifactの接続は後続Sliceで扱う。
+
+ledgerとtombstoneはreplay・遅延精算のため保持し、通常削除や設定延長で消去しない。公開使用量明細は最大100件と集約値を返す。長期Rootの自動交代・履歴圧縮はこのSliceで追加しない。
+
+### Slice 2 の完了記録
+
+2026-09-07、開始コミット`d5917a9cc455be879afa9e7f78bec3d8cc4a41ec`からの実装を`1025e2980bd01800dd592796e79a6871dc4be68c`へ固定した。Settingsで上限または期限を延長すると、同じRootの消費済み使用量・履歴・terminal結果を保持して保留queueを再開する。token・費用は上限管理に含めず、観測できない値をunknownとして扱う。
+
+clean detached worktreeでの独立complete-diff reviewは、cancel grace後の途中usageが遅延した最終usageと競合する問題と、`budget.configure`のruntime入力制約と公開JSON Schemaの不一致をblockingとして採用した。修正コミット`c10e3468163aaa1eb4449a538ac69ff892317302`では、Provider実終了待ちの間はgenerationをunknownのまま保持し、late observerだけが最終usageを確定する。設定入力の空map・変更なし・子配分とpolicy変更の併用・子storageの数値指定は、runtimeと公開schemaの両方で拒否する。同じ2件のfinding familyに限定したtargeted closureは両件closed、新たな回帰なしとなった。review worktreeは終了時のHEAD・cleanlinessを確認して削除した。
+
+`c10e3468163aaa1eb4449a538ac69ff892317302`上で`npm test`（3490件、3489 pass、1 skip、0 fail）、`npm run typecheck`、`npm run build`、`git diff --check`が成功した。skipはWindowsで対象外のPOSIX symlink testである。全体testの今回の成功は確認したが、Slice 1で記録したflakyの恒久解消を示すものではない。Settingsの実component入力・応答消失後の再保存・成功後のrevision更新は自動testで確認し、Electron分離起動によるGUI目視は未実行である。
+
+同じコミットのclean snapshotを、開始コミットから現行`review-test-value`のGit modeへ渡した。独立native CLIによるLuna metadata／alignmentとrequired Sol、保持根拠、過去の削除・置換義務を含む最終generation `g000005`は45件すべてPASS、全体PASS、未解決0となった。途中のmetadataと観測範囲の不一致は修正し、不正なworker出力・実行失敗は非成功として残した。審査対象snapshotは`sha256:38740bbab453de6745eb1254fe8ca41cb3190efc1bfdbdc9593dd37ed37a9ba6`であり、この完了記録だけを追記する後続commitではsource・test・契約を変更しない。
+
+2026-09-08の追加指摘2件を`eab243f6ab64bd000b4829c4f261a1bc7fc0b370`で修正した。file writeとtranscript exportの保存容量予約には、保存処理が既に永続化しているSaga operation IDを使用する。別principalの同じidempotency keyと、terminal期限後の新規受付を別予約にし、同一操作の再送は同じIDを維持する。共通copy／pasteはCompanionStorageに実在するSessionだけ予算対象外として保存し、通常Sessionと未知のIDには従来の予算チェックを適用する。
+
+関連49 test、型検査、build、`git diff --check`が成功した。実SQLite・実ファイルで、5 bytes上限へ別principalが3 bytesずつ書く場合に2件目がファイル作成前に拒否されることと、transcript exportの同じ境界を確認した。固定commitのtargeted closureは両指摘closed、同familyの追加不具合なしとなった。今回の開始commit `d7b35d0887ba39e4a9ec09f040933e0c1817fe0e`から現行`review-test-value`で抽出した4 recordは通常のread-only `general_luna`で審査し、operation IDの存在・rejected replay時の保持に関するassertion不足と、null予算testのmetadataを補正した。変更したstorage test 3件の再実行と指摘解消の確認が完了し、未解決項目はない。全suiteとGUI目視は今回再実行していない。
+
+同日のqueue再開に関する追加指摘2件を`985d6e1a482cfd5137fe3ad1033dfb3adb5c8f70`で修正した。公開`budget.configure`は保存結果のRootに対して`resumeRootQueues`を待機し、設定変更後に保留queueを再評価する。子allocationの期限切れはaccount・grant chain全体を確認して専用reasonを返し、そのreasonだけをdispatch保留にする。revoke、無効grant、親account欠落を期限切れと誤分類しない。
+
+同commitのproduction sourceで全体testは3495件中3494 pass、1 skip、0 fail、型検査・build・`git diff --check`も成功した。全体testで発見した前回のtranscript storage返却値へのoperation ID追加に対する期待値追随漏れも補正した。固定commitの独立targeted closureは両指摘closed、同familyの追加不具合なし。開始commit `ca4eab8682051ed0184d7c74b38c99387c4ed28f`から抽出したtestは通常のread-only `general_luna`で審査し、型外入力を除去、非expiry authority errorの失敗確定、configure結果のRootと呼出順を補強した。補強後の関連92 testと型検査は成功し、production sourceは変更していない。最終抽出は5 record、diagnostic 0で、指摘とmetadataの観測範囲を修正して未解決項目を解消した。GUI目視は未実行である。
+
 ### Slice 1 の budget 段階導入
 
 2026-09-05 のユーザー承認により、Slice 1 は principal、grant、decision、revision、history の切り替えを行い、root budget の ledger、reserve、reconcile、admission は Slice 2 で接続する。Slice 1 では既存の操作別上限を維持し、budget が未実装であることを runtime catalog に明示する。既存上限を root budget の保証と扱わず、無制限の値、評価成功を返す代用品、架空の allocation reference を作らない。

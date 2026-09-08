@@ -30,6 +30,19 @@ current model catalogを確認する。入力JSONは不要である。
 withmate-session runtime catalog
 ```
 
+## Resource budget操作
+
+対象Sessionのbudgetを取得する。root配下の可視account一覧は`budget list`で取得する。
+
+```powershell
+withmate-session budget get --json '{"sessionId":"<session-id>"}'
+withmate-session budget list --json '{"sessionId":"<session-id>","limit":50}'
+```
+
+`budget configure`は`sessionId`、`accountId`、current `expectedRevision`、caller-owned `idempotencyKey`を必須とする。direct childへの配分作成ではtop-level `accountId`に親accountを指定し、`childAllocation`へ新しい`accountId`、canonical `childSessionId`、8項目すべての`hardLimits`を渡す。`storageBytes`は`0`に固定し、storageはroot共有accountだけで実使用量を計測・制限する。child snapshotではrootのcurrent storage投影を返し、`rootManagedDimensions`の`storageBytes`でその意味を示す。`childAllocation`と親accountのpolicy変更は併用せず、owner、authority grant、派生hierarchy fieldは入力しない。Agentは既存allocation内のsoft limitと子accountへの配分を変更し、per-execution retry limitを引き下げられる。root hard limitまたはretry limitの増加、deadline延長、expiry延長、revoked accountの復元にはtrusted userまたはissuer authorityが必要であり、Agent runtime bindingから権限を作ることはできない。
+
+hard limit到達後またはdeadline後は新規effectを開始せず、read、cancel、result回収を続ける。token、費用、provider usageは`unknown`、`estimated`、`reported`、`settled`を区別して計測するが、hard limitとしては扱わない。rootのTurn、retry、generation ledgerが対象にするのはcanonical execution IDを持つmain Sessionの`turn.run`と`turn.enqueue`であり、そのIDを通らないauxiliaryまたはcompanionの直接provider経路は対象外である。Session Runtime経由のfile writeとtranscript exportはroot共有のstorage枠を事前reserveする。providerまたはユーザーによるSessionFolderへの直接writeは事前reserveを迂回できるため、dispatch前の再計測がunknownまたは超過なら新規dispatchを停止する。
+
 CLIは次のTurn commandを公開する。
 
 - `turn options`
@@ -160,7 +173,7 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは計38操作で、Root WorkItemの`work.revise`、`work.history.append`、`work.history.list`と、Work Item集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`を含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは計41操作で、`budget.get`、`budget.list`、`budget.configure`、Root WorkItemの`work.revise`、`work.history.append`、`work.history.list`と、Work Item集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`を含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
 
 ## Coordination event
 

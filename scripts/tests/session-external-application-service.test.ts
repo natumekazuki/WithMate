@@ -5,6 +5,7 @@ import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { SessionExecution } from "../../src/session-execution.js";
 import type { SessionInteraction } from "../../src/session-interaction.js";
 import type { WorkItem } from "../../src/work-item.js";
+import type { ResourceBudget } from "../../src/resource-budget.js";
 import {
   SESSION_AUTHORITY_MAPPING_REVISION,
   SESSION_AUTHORITY_OPERATION_DEFINITIONS,
@@ -27,6 +28,7 @@ import { SessionInteractionContinuationSettlementError } from "../../src-electro
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
 import { CoordinationEventPublicationError } from "../../src-electron/coordination-event-service.js";
 import { SessionExecutionIdempotencyConflictError } from "../../src-electron/session-execution-storage-v6.js";
+import { ResourceBudgetError } from "../../src-electron/resource-budget-storage.js";
 
 const execution: SessionExecution = {
   id: "execution-1",
@@ -40,6 +42,52 @@ const execution: SessionExecution = {
   admittedAt: "2026-08-11T00:00:00.000Z",
   completedAt: null,
   updatedAt: "2026-08-11T00:00:00.000Z",
+};
+
+const budgetDimensions = Object.fromEntries([
+  "concurrentTurns", "queuedTurns", "totalTurns", "retries",
+  "sessions", "workItems", "delegations", "storageBytes",
+].map((dimension) => [dimension, {
+  hardLimit: 10,
+  softLimit: null,
+  committed: 0,
+  reserved: 0,
+  allocatedToChildren: 0,
+  available: 10,
+  softLimitExceeded: false,
+  measurement: "known",
+  unknownSince: null,
+}])) as ResourceBudget["dimensions"];
+
+const resourceBudget: ResourceBudget = {
+  contractRevision: 1,
+  accountId: "session-actor",
+  accountKind: "root",
+  rootSessionId: "session-actor",
+  ownerSessionId: "session-actor",
+  appliesToSessionId: "session-actor",
+  allocationSource: "owned",
+  rootManagedDimensions: [],
+  parentAccountId: null,
+  authorityGrantId: null,
+  authorityGrantRevision: null,
+  expiresAt: null,
+  revokedAt: null,
+  deadlineAt: "2026-09-30T00:00:00.000Z",
+  retryPerExecutionLimit: 3,
+  revision: 1,
+  dimensions: budgetDimensions,
+  alerts: [],
+  meteredUsage: [],
+  meteredUsageTruncated: false,
+  meteredUsageSummary: {
+    knownTokens: 0,
+    knownProviderUsage: 0,
+    monetaryCostByCurrency: {},
+    unknownRecords: { tokens: 0, monetary_cost: 0, provider_usage: 0 },
+  },
+  createdAt: "2026-09-01T00:00:00.000Z",
+  updatedAt: "2026-09-01T00:00:00.000Z",
 };
 
 const mutationInput = {
@@ -722,14 +770,147 @@ test("READ-EFFECT-01: read-only operationの予期しない例外はnot_applied�
   assert.equal("error" in response && response.error.effect, "not_applied");
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "runtime catalogはauthority mapping、Slice 2 budget未実装、既存limit維持のvalidation gapを含むcurrent capabilityを返しexecution副作用を起こさない"
-// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// failure_mode = "public consumerがauthority分類やbudget未実装をdiscoverできない、無制限stubを成功扱いする、またはreadでexecutionを起動する"
+// claim = "budget get、list、configureとdirect child配分は共通application serviceからactor可視範囲とauthority operationを保持してstorageへdispatchされ、configure成功後は対象Rootのqueueを再開する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-public-api-migration-and-review.md#public-surface-parity" }
+// fault = "budget adapterがroot全件を無条件公開する、子配分payloadまたはconfigure authority operationを落とす、configure成功後に対象Root queueを再評価しない、またはdomain errorをtransport固有の成功へ変換する"
+// observable = "budgetStorage呼出引数、configure後のresumeRootQueues root引数、versioned operation result、BUDGET_AUTHORITY_REQUIRED error envelope"
+// observation_boundary = "public-boundary"
+// scope = "SessionExternalApplicationService resource budget dispatch"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("RESOURCE-BUDGET-PUBLIC-02: budget操作を可視範囲とauthority proof付きでdispatchする", async () => {
+  const calls: Array<{ operation: string; args: unknown[] }> = [];
+  const resumedRootQueues: string[] = [];
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    isProviderEnabled: () => true,
+    isProviderSupported: () => true,
+    discoverSessionCustomAgents: async () => [],
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("unused"); },
+      async get() { return communicationSession("session-actor", "overall-coordinator", "session-actor", null, 0); },
+      async rename() { throw new Error("unused"); },
+    },
+    budgetStorage: {
+      get(sessionId) {
+        calls.push({ operation: "get", args: [sessionId] });
+        return resourceBudget;
+      },
+      listVisible(actorSessionId, rootSessionId, limit, cursor) {
+        calls.push({ operation: "list", args: [actorSessionId, rootSessionId, limit, cursor] });
+        return { items: [resourceBudget] };
+      },
+      configure(input, proof, changedAt) {
+        calls.push({ operation: "configure", args: [input, proof.operation, changedAt] });
+        if (input.hardLimits) {
+          throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "Increasing a root hard limit requires trusted user authority.");
+        }
+        return { ...resourceBudget, rootSessionId: "configured-root", revision: 2 };
+      },
+    },
+    executionService: {
+      beginShutdown() {},
+      async run() { throw new Error("unused"); },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { throw new Error("unused"); },
+      get() { throw new Error("unused"); },
+      listPage() { throw new Error("unused"); },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+      async resumeRootQueues(rootSessionId) {
+        resumedRootQueues.push(rootSessionId ?? "all");
+        calls.push({ operation: "resumeRootQueues", args: [rootSessionId] });
+      },
+    },
+  });
+
+  const get = await executeBound(service, "budget.get", { sessionId: "session-actor" });
+  const list = await executeBound(service, "budget.list", { sessionId: "session-actor", limit: 50 });
+  const configure = await executeBound(service, "budget.configure", {
+    sessionId: "session-actor",
+    accountId: "session-actor",
+    expectedRevision: 1,
+    softLimits: { totalTurns: 8 },
+    retryPerExecutionLimit: 2,
+    idempotencyKey: "budget-soft-limit-1",
+  });
+  const childHardLimits = {
+    concurrentTurns: 1,
+    queuedTurns: 10,
+    totalTurns: 100,
+    retries: 10,
+    sessions: 5,
+    workItems: 20,
+    delegations: 20,
+    storageBytes: 0,
+  };
+  const childAllocation = await executeBound(service, "budget.configure", {
+    sessionId: "session-actor",
+    accountId: "session-actor",
+    expectedRevision: 2,
+    childAllocation: {
+      accountId: "budget-child",
+      childSessionId: "session-child",
+      hardLimits: childHardLimits,
+    },
+    idempotencyKey: "budget-child-allocation-1",
+  });
+  const denied = await executeBound(service, "budget.configure", {
+    sessionId: "session-actor",
+    accountId: "session-actor",
+    expectedRevision: 2,
+    hardLimits: { totalTurns: 20 },
+    idempotencyKey: "budget-hard-limit-1",
+  });
+
+  assert.equal("operation" in get && get.operation, "budget.get");
+  assert.equal("operation" in list && list.operation, "budget.list");
+  assert.equal("operation" in configure && configure.operation, "budget.configure");
+  assert.equal("operation" in childAllocation && childAllocation.operation, "budget.configure");
+  assert.deepEqual(calls.slice(0, 2), [
+    { operation: "get", args: ["session-actor"] },
+    { operation: "list", args: ["session-actor", "session-actor", 50, undefined] },
+  ]);
+  assert.deepEqual(calls.map((call) => call.operation), [
+    "get", "list", "configure", "resumeRootQueues", "configure", "resumeRootQueues", "configure",
+  ]);
+  assert.equal(calls[2]?.args[1], "budget.configure");
+  assert.match(String(calls[2]?.args[2]), /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(calls[3]?.args, ["configured-root"]);
+  assert.deepEqual(calls[4]?.args[0], {
+    sessionId: "session-actor",
+    accountId: "session-actor",
+    expectedRevision: 2,
+    childAllocation: {
+      accountId: "budget-child",
+      childSessionId: "session-child",
+      hardLimits: childHardLimits,
+    },
+    idempotencyKey: "budget-child-allocation-1",
+  });
+  assert.equal(calls[4]?.args[1], "budget.configure");
+  assert.match(String(calls[4]?.args[2]), /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(calls[5]?.args, ["configured-root"]);
+  assert.deepEqual(resumedRootQueues, ["configured-root", "configured-root"]);
+  assert.equal("error" in denied && denied.error.code, "BUDGET_AUTHORITY_REQUIRED");
+  assert.equal("error" in denied && denied.error.effect, "not_applied");
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "runtime catalogはauthority mappingと有限resource budget契約を含むcurrent capabilityを返しexecution副作用を起こさない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md" }
+// fault = "public consumerがbudget dimension、初期hard limit、計測のみのusage、または迂回経路の制約をdiscoverできない"
+// observable = "runtime.catalog成功responseのauthority budget projection、validationGaps、executionInvoked"
+// observation_boundary = "public-boundary"
 // scope = "SessionExternalApplicationService runtime.catalog projection"
 // lifecycle = "permanent"
-// distinction = "authority operation集合とbudget実装状態を既存のresource limitを含む一つのcatalog snapshotで固定する"
+// distinction = "authority operation集合とbudgetの強制対象、計測対象、既知の迂回経路を一つのcatalog snapshotで固定する"
 // @end-test-value
 test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecutionへ触れない", async () => {
   let executionInvoked = false;
@@ -802,10 +983,36 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
       authority: {
         mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
         operations: Object.values(SESSION_AUTHORITY_OPERATION_DEFINITIONS),
-        budget: "not_implemented_slice_2",
+        budget: {
+          contractRevision: 1,
+          operations: ["get", "list", "configure"],
+          dimensions: ["concurrentTurns", "queuedTurns", "totalTurns", "retries", "sessions", "workItems", "delegations", "storageBytes"],
+          defaultHardLimits: {
+            concurrentTurns: 4,
+            queuedTurns: 100,
+            totalTurns: 1000,
+            retries: 100,
+            sessions: 100,
+            workItems: 500,
+            delegations: 500,
+            storageBytes: 1073741824,
+          },
+          retryPerExecutionLimit: 3,
+          defaultDurationMs: 2592000000,
+          defaultListLimit: 50,
+          maxListLimit: 500,
+          meteredUsage: ["tokens", "monetary_cost", "provider_usage"],
+          constraints: [
+            "Token, monetary cost and provider usage are metered observations, not hard-limit dimensions.",
+            "Increasing a root hard limit or the per-execution retry limit requires trusted user or issuer authority.",
+            "Delegation budget enforcement is introduced with the later delegation capability slice.",
+            "Child allocations must set storageBytes to zero; storage is enforced only by the shared root account.",
+            "Provider paths without a canonical executionId, including auxiliary and companion executions, are outside the root Turn, retry and generation ledger.",
+            "Direct SessionFolder writes bypass pre-reservation; storage is reconciled before dispatch, and unknown or exceeded usage blocks new dispatch.",
+          ],
+        },
         validationGaps: [
-          "Root budget ledger, reservation and admission are not implemented until Slice 2; existing operation limits remain in force.",
-          "Provider-native shell, Git and external tools can bypass the Session Runtime API; grants do not enforce those paths. Provider approval and sandbox policies remain separate boundaries.",
+          "Provider-native shell, Git and external tools can bypass the Session Runtime API; grants and resource budgets do not enforce those paths. Provider approval and sandbox policies remain separate boundaries.",
         ],
       },
       sessionRoleContractRevision: 1,

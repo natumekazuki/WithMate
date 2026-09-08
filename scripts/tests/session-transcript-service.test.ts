@@ -11,8 +11,11 @@ import { SESSION_AUTHORITY_MAPPING_REVISION, type MutationAuthorityProof } from 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import {
   SessionTranscriptService,
+  type SessionTranscriptServiceDeps,
   SessionTranscriptServiceError,
 } from "../../src-electron/session-transcript-service.js";
+import { SessionFolderResourceBudget } from "../../src-electron/resource-budget-files.js";
+import { ResourceBudgetStorage } from "../../src-electron/resource-budget-storage.js";
 import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
 import { SessionTranscriptStorageV6 } from "../../src-electron/session-transcript-storage-v6.js";
 import {
@@ -21,9 +24,9 @@ import {
   SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES,
 } from "../../src/session-transcript.js";
 
-function trustedTranscriptProof(sessionId: string): MutationAuthorityProof {
+function trustedTranscriptProof(sessionId: string, service = "session-transcript-service-test"): MutationAuthorityProof {
   return {
-    principal: { kind: "system", service: "session-transcript-service-test" },
+    principal: { kind: "system", service },
     operation: "transcript.export",
     mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
     action: "transcript.export",
@@ -56,6 +59,7 @@ async function createFixture(options: {
   onAfterReplaceTargetClaim?(): void;
   onAfterReplaceRename?(): void;
   onAfterPublish?(): void;
+  resourceBudget?: SessionTranscriptServiceDeps["resourceBudget"];
 } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-transcript-"));
   const sessionFolder = path.join(directory, "session-files", "session-1");
@@ -430,6 +434,116 @@ describe("SessionTranscriptService", () => {
       assert.equal(recovered.destination, "session_folder");
       assert.equal(recoveredIdentity.ino, firstIdentity.ino);
       assert.equal((await readdir(path.dirname(targetPath))).some((name) => name.includes("test-temp")), true);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "同じrootで別principalが同じidempotency keyを使っても、transcript exportのstorage予約を流用せず副作用前にhard limitで拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#admission-と-settlement" }
+  // fault = "principalを含まない予約keyが先行exportのreservationを再利用し、同じrootへ二重にtranscriptを書き込む"
+  // observable = "実SQLiteのstorageBytes projection、実SessionFolderのexport存在、budget拒否"
+  // observation_boundary = "component-behavior"
+  // scope = "session-transcript-service-resource-budget-operation-identity"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("EXT-BUDGET-01: 同root別principal同keyのtranscript予約を混同せず副作用前に拒否する", async () => {
+    const fixture = await createFixture();
+    const budgetStorage = new ResourceBudgetStorage(fixture.dbPath);
+    const budget = new SessionFolderResourceBudget({
+      storage: budgetStorage,
+      resolveSessionFilesDirectory: () => fixture.sessionFolder,
+      listRootSessionIds: () => ["session-1"],
+    });
+    const service = new SessionTranscriptService({
+      storage: fixture.storage,
+      resolveSessionFilesDirectory: () => fixture.sessionFolder,
+      now: () => new Date(CREATED_AT),
+      createTempName: () => "budget-temp",
+      resourceBudget: budget,
+    });
+    try {
+      budgetStorage.bootstrapRootBudget({
+        rootSessionId: "session-1",
+        rootCreatedAt: CREATED_AT,
+        createdAt: CREATED_AT,
+      });
+      const inline = await service.export(inlineInput("json"));
+      assert.equal(inline.destination, "inline");
+      if (inline.destination !== "inline") return;
+      const input = folderInput({
+        relativePath: "exports/first.json",
+        idempotencyKey: "same-principal-independent-key",
+        maxBytes: inline.byteLength,
+      });
+      const db = new DatabaseSync(fixture.dbPath);
+      db.prepare(`UPDATE resource_budget_dimensions_v6 SET hard_limit = ?
+        WHERE account_id = 'session-1' AND dimension = 'storageBytes'`).run(inline.byteLength);
+      db.close();
+      await service.export(input, trustedTranscriptProof("session-1", "principal-a"));
+      await assert.rejects(
+        service.export({
+          ...input,
+          destination: { ...input.destination, relativePath: "exports/second.json" },
+        }, trustedTranscriptProof("session-1", "principal-b")),
+        (error) => error instanceof SessionTranscriptServiceError && error.code === "LIMIT_EXCEEDED",
+      );
+      assert.equal((await stat(path.join(fixture.sessionFolder, "exports", "first.json"))).size, inline.byteLength);
+      await assert.rejects(stat(path.join(fixture.sessionFolder, "exports", "second.json")), /ENOENT/);
+      assert.equal(budgetStorage.get("session-1").dimensions.storageBytes.committed, inline.byteLength);
+      assert.equal(budgetStorage.get("session-1").dimensions.storageBytes.reserved, 0);
+    } finally {
+      budgetStorage.close();
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "prepared transcriptの再開は元requestのmaxBytesではなく確定済みoutput byteLengthだけを予約対象にする"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#admission-と-settlement" }
+  // fault = "小さいprepared outputの回復に大きいmaxBytesを再予約し、exact storage limitから再開できない"
+  // observable = "response loss前後にresource budgetへ渡されたbytesとalreadyCommittedBytes"
+  // observation_boundary = "component-behavior"
+  // scope = "session-transcript-storage-budget-recovery"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("prepared outputの実byte長だけを使ってstorage reservationを再開する", async () => {
+    const reservations: Array<{ bytes: number; resumed: boolean; alreadyCommittedBytes: number }> = [];
+    const resourceBudget = {
+      reserve: async (_sessionId: string, bytes: number, _operationId: string, resumed = false, alreadyCommittedBytes = 0) => {
+        reservations.push({ bytes, resumed, alreadyCommittedBytes });
+        return { reservation: null, alreadyCommittedBytes, releaseLock: () => undefined };
+      },
+      settleApplied: async () => undefined,
+      release: () => undefined,
+      reconcileRequired: async () => undefined,
+    } satisfies NonNullable<SessionTranscriptServiceDeps["resourceBudget"]>;
+    let failAfterPublish = true;
+    const fixture = await createFixture({
+      resourceBudget,
+      onAfterPublish: () => {
+        if (failAfterPublish) {
+          failAfterPublish = false;
+          throw new Error("simulated response loss");
+        }
+      },
+    });
+    const input = folderInput({ idempotencyKey: "budget-response-loss", maxBytes: 1024 * 1024 });
+    try {
+      await assert.rejects(fixture.service.export(input), /simulated response loss/);
+      const targetPath = path.join(fixture.sessionFolder, "exports", "transcript.json");
+      const outputBytes = (await stat(targetPath)).size;
+      await fixture.service.export(input);
+
+      assert.deepEqual(reservations, [
+        { bytes: input.maxBytes, resumed: false, alreadyCommittedBytes: 0 },
+        { bytes: outputBytes, resumed: true, alreadyCommittedBytes: outputBytes },
+      ]);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

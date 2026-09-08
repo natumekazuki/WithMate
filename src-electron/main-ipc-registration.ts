@@ -13,6 +13,16 @@ import {
   parseCoordinationEventTrustedListInput,
 } from "../src/coordination-event.js";
 import { parseSessionRuntimeOperationInput } from "../src/session-external-runtime-contract.js";
+import {
+  parseResourceBudgetConfigureInput,
+  parseResourceBudgetGetInput,
+  parseResourceBudgetListInput,
+  type ResourceBudget,
+  type ResourceBudgetConfigureInput,
+  type ResourceBudgetGetInput,
+  type ResourceBudgetListInput,
+  type ResourceBudgetListResult,
+} from "../src/resource-budget.js";
 import { normalizeSessionTurnCorrelation } from "../src/runtime-state.js";
 import type {
   MarkdownLinkContextMenuRequest,
@@ -212,6 +222,7 @@ import {
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_RESOURCE_BUDGET_CHANNEL,
   WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_SESSION_INTEGRATION_DIAGNOSTICS_CHANNEL,
   WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL,
@@ -358,6 +369,8 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_LIST_RESOURCE_BUDGETS_CHANNEL,
+  WITHMATE_CONFIGURE_RESOURCE_BUDGET_CHANNEL,
   WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
@@ -475,6 +488,9 @@ export type MainIpcRegistrationDeps = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
+  getResourceBudget(input: ResourceBudgetGetInput): Awaitable<ResourceBudget | null>;
+  listResourceBudgets(input: ResourceBudgetListInput): Awaitable<ResourceBudgetListResult>;
+  configureResourceBudgetAsTrustedUser(input: ResourceBudgetConfigureInput): Awaitable<ResourceBudget>;
   listPromptTemplates(): Awaitable<PromptTemplate[]>;
   createPromptTemplate(input: CreatePromptTemplateInput): Awaitable<PromptTemplate[]>;
   updatePromptTemplate(input: UpdatePromptTemplateInput): Awaitable<PromptTemplate[]>;
@@ -713,6 +729,9 @@ type MainIpcSettingsDeps = Pick<
   | "getAppSettings"
   | "updateAppSettings"
   | "updateChatLayoutPreference"
+  | "getResourceBudget"
+  | "listResourceBudgets"
+  | "configureResourceBudgetAsTrustedUser"
   | "getAppDatabaseDiagnostics"
   | "getMemoryV6Diagnostics"
   | "getSessionIntegrationDiagnostics"
@@ -1696,6 +1715,18 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
       throw new TypeError("chat layout preference の更新内容が不正です。");
     }
     return deps.updateChatLayoutPreference(update);
+  });
+  ipcMain.handle(WITHMATE_GET_RESOURCE_BUDGET_CHANNEL, (event, input: unknown) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.getResourceBudget(parseResourceBudgetGetInput(input));
+  });
+  ipcMain.handle(WITHMATE_LIST_RESOURCE_BUDGETS_CHANNEL, (event, input: unknown) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.listResourceBudgets(parseResourceBudgetListInput(input));
+  });
+  ipcMain.handle(WITHMATE_CONFIGURE_RESOURCE_BUDGET_CHANNEL, (event, input: unknown) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.configureResourceBudgetAsTrustedUser(parseResourceBudgetConfigureInput(input));
   });
   ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
   ipcMain.handle(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL, () => deps.getMemoryV6Diagnostics());

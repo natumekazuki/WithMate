@@ -9,6 +9,22 @@
 
 ## Budget model
 
+### Slice 2 の採用方針（2026-09-07）
+
+ユーザー指定により、root の初期 hard limit は同時実行 Turn 4、queued Turn 100、累積 Turn 1,000、自動 retry は失敗した実行ごとに3回かつ root 累計100回、Session 累積作成数100（rootを含む）、Work Item累積作成数500、delegation累積作成数500、管理対象ファイル容量1 GiB、root作成から30日とする。初期値の由来は既存の個別操作上限ではなく、このユーザー指定である。
+
+同時実行、queue、保存容量は現在の占有量を管理する。作成数とTurn数は累積であり、削除や終了で枠を戻さない。同一要求のreplayは追加消費せず、自動retryの実行は累積Turnにも含める。既存Session単位の上限も維持する。
+
+tokenと費用は今回の上限管理から除外し、取得可能な使用量を記録する。ゼロや無制限の架空の上限を保存しない。取得不能はunknownとして保持する。以降のtoken／費用reserveやhard capに関する記述より、この決定を優先する。
+
+ユーザーは後からroot上限とdeadlineを設定変更できる。期限切れや予算不足で保留中のqueueは、設定変更後に再評価する。terminal executionを再実行したり、過去の消費量・結果をリセットしたりしない。Agentによる配分変更からroot上限や期限を増やすauthorityは得られない。
+
+保存容量はroot配下のSessionFolderを対象とし、WorkspaceとMemoryを含めない。Providerや利用者がSessionFolderを直接編集する経路はWithMateの予約を経由しないため、厳密な事前hard capの保証外である。仲介する書き込みの予約と、実ファイルの観測・再精算を区別し、不明または超過時は新規dispatchを止める。
+
+保存容量はRoot共有枠を使用し、子accountへの独立した容量配分は提供しない。`childAllocation.hardLimits.storageBytes` は0のみ受理する。実ファイル総量と子への予約枠を二重計上せず、Rootの容量上限を適用する。
+
+delegation resource、Session move、root transfer、artifact transferは後続Sliceの接続対象とし、このSliceで実装済みとは扱わない。
+
 Slice 1 は 2026-09-05 のユーザー承認に基づき、budget 未実装を runtime catalog へ明示し、既存操作別の上限だけを維持する。本 slice で ledger と admission を接続し、その validation gap を解消する。Slice 1 の grant migration に架空の allocation や無制限値は置かず、ここで実際の root policy と既存上限から budget を生成する。
 
 budgetはAgent能力を固定Roleで封鎖せず、自律実行を有限資源へ収めるためのledgerである。soft limitとhard limitを区別する。

@@ -29,6 +29,7 @@ import type { MutationAuthorityProof } from "../src/session-authority.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { appendWorkItemAggregationEvent, appendWorkItemEventHeader, claimSessionContainerRevision } from "./resource-history-schema.js";
+import { ResourceBudgetStorage } from "./resource-budget-storage.js";
 import { assertGrantProofCurrent } from "./session-authority-storage.js";
 
 export type WorkItemMutationOperation =
@@ -160,10 +161,12 @@ export class WorkItemAggregationConflictError extends Error {
 
 export class WorkItemStorageV6 {
   private readonly db: DatabaseSync;
+  private readonly resourceBudgetStorage: ResourceBudgetStorage;
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
     ensureV6Schema(this.db);
+    this.resourceBudgetStorage = new ResourceBudgetStorage(this.db);
   }
 
   resolveIdempotency(
@@ -240,6 +243,12 @@ export class WorkItemStorageV6 {
           );
         }
       }
+      this.resourceBudgetStorage.consumeCount({
+        sessionId: input.principalSessionId,
+        dimension: "workItems",
+        idempotencyKey: `work.create:${input.id}`,
+        consumedAt: input.createdAt,
+      });
       this.db.prepare(`
         INSERT INTO work_items_v6 (
           id, contract_revision, kind, root_session_id, creator_session_id, target_session_id,
@@ -831,6 +840,12 @@ export class WorkItemStorageV6 {
           { parentWorkItemId: parent.id },
         );
       }
+      this.resourceBudgetStorage.consumeCount({
+        sessionId: input.actorSessionId,
+        dimension: "workItems",
+        idempotencyKey: `work.aggregation.retry:${input.replacementId}`,
+        consumedAt: input.decidedAt,
+      });
       this.db.prepare(`INSERT INTO work_items_v6 (
         id, contract_revision, kind, root_session_id, creator_session_id, target_session_id, parent_work_item_id,
         goal, scope, completion_criteria, authority, source_identity_json, state, revision,
