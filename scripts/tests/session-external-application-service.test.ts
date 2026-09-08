@@ -772,10 +772,10 @@ test("READ-EFFECT-01: read-only operationの予期しない例外はnot_applied�
 
 // @test-value v2
 // kind = "contract"
-// claim = "budget get、list、configureとdirect child配分は共通application serviceからactor可視範囲とauthority proofを保持してstorageへdispatchされる"
+// claim = "budget get、list、configureとdirect child配分は共通application serviceからactor可視範囲とauthority proofを保持してstorageへdispatchされ、configure成功後は対象Rootのqueueを再開する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-public-api-migration-and-review.md#public-surface-parity" }
-// fault = "budget adapterがroot全件を無条件公開する、子配分payloadまたはconfigure proofを落とす、またはdomain errorをtransport固有の成功へ変換する"
-// observable = "budgetStorage呼出引数、versioned operation result、BUDGET_AUTHORITY_REQUIRED error envelope"
+// fault = "budget adapterがroot全件を無条件公開する、子配分payloadまたはconfigure proofを落とす、configure成功後に対象Root queueを再評価しない、またはdomain errorをtransport固有の成功へ変換する"
+// observable = "budgetStorage呼出引数、configure後のresumeRootQueues root引数、versioned operation result、BUDGET_AUTHORITY_REQUIRED error envelope"
 // observation_boundary = "public-boundary"
 // scope = "SessionExternalApplicationService resource budget dispatch"
 // lifecycle = "permanent"
@@ -783,6 +783,7 @@ test("READ-EFFECT-01: read-only operationの予期しない例外はnot_applied�
 // @end-test-value
 test("RESOURCE-BUDGET-PUBLIC-02: budget操作を可視範囲とauthority proof付きでdispatchする", async () => {
   const calls: Array<{ operation: string; args: unknown[] }> = [];
+  const resumedRootQueues: string[] = [];
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
@@ -821,6 +822,7 @@ test("RESOURCE-BUDGET-PUBLIC-02: budget操作を可視範囲とauthority proof�
       listPage() { throw new Error("unused"); },
       async cancel() { throw new Error("unused"); },
       async waitForTerminal() { throw new Error("unused"); },
+      async resumeRootQueues(rootSessionId) { resumedRootQueues.push(rootSessionId ?? "all"); },
     },
   });
 
@@ -885,6 +887,7 @@ test("RESOURCE-BUDGET-PUBLIC-02: budget操作を可視範囲とauthority proof�
     idempotencyKey: "budget-child-allocation-1",
   });
   assert.equal(calls[3]?.args[1], "budget.configure");
+  assert.deepEqual(resumedRootQueues, ["session-actor", "session-actor"]);
   assert.equal("error" in denied && denied.error.code, "BUDGET_AUTHORITY_REQUIRED");
   assert.equal("error" in denied && denied.error.effect, "not_applied");
 });

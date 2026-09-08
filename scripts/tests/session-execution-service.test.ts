@@ -288,6 +288,52 @@ describe("SessionExecutionService", () => {
 
   // @test-value v2
   // kind = "regression"
+  // claim = "期限切れのchild allocationで拒否されたqueued Turnはadmission retryを使い切ってfailedへ確定せず、allocation延長後に同じexecutionを実行する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Admission-と-settlement" }
+  // fault = "child allocation期限切れのBUDGET_AUTHORITY_REQUIREDを通常のauthority拒否として扱い、QUEUE_ADMISSION_FAILUREへ収束させる"
+  // observable = "期限切れ保留中のqueued state、dispatch数、延長後の同一execution dispatch"
+  // observation_boundary = "component-behavior"
+  // scope = "session-execution-child-allocation-expiry"
+  // lifecycle = "permanent"
+  // distinction = "allocation_expired detail付きauthority errorを保留対象として扱う"
+  // @end-test-value
+  it("期限切れchild allocationのadmission待ちはretry exhaustionでfailedにしない", async () => {
+    let allocationExpired = true;
+    const fixture = await createFixture({
+      queueRetryDelayMs: 1,
+      prepareBudgetAdmission() {
+        if (allocationExpired) {
+          throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "child allocation expired", {
+            reason: "allocation_expired",
+            expiresAt: "2026-08-10T00:00:00.000Z",
+          });
+        }
+      },
+    });
+    try {
+      const queued = await fixture.service.enqueue(createInput(102));
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        await fixture.service.resumeRootQueues("session-1");
+      }
+      assert.equal(fixture.storage.get(queued.id)?.state, "queued");
+      assert.equal(fixture.storage.get(queued.id)?.errorCode, "");
+      assert.equal(fixture.dispatchEvents.length, 0);
+
+      allocationExpired = false;
+      await fixture.service.resumeRootQueues("session-1");
+      assert.equal(fixture.storage.get(queued.id)?.state, "running");
+      assert.deepEqual(fixture.dispatchEvents.map((event) => event.executionId), [queued.id]);
+
+      fixture.dispatches.get(queued.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", queued.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
   // claim = "cancel terminal後もproviderが生存するexecutionはroot concurrent Turn予約を保持し、実終了時だけ解放する"
   // oracle = { type = "contract", ref = "docs/adr/030-root-resource-budget.md#決定" }
   // fault = "cancel graceでexecutionをterminalにした時点でrunning Turn予約を解放する"

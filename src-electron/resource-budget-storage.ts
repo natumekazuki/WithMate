@@ -1379,8 +1379,30 @@ function assertChildResizeCapacity(db: DatabaseSync, parentAccountId: string, ch
 
 function assertAllocationActive(db: DatabaseSync, account: AccountRow, timestamp: string): void {
   if (!isAccountChainActive(db, account, timestamp)) {
-    throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "The resource budget allocation or its authority chain is no longer active.");
+    const expiresAt = findExpiredAllocationInChain(db, account, timestamp);
+    throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "The resource budget allocation or its authority chain is no longer active.",
+      expiresAt === null ? {} : { reason: "allocation_expired", expiresAt });
   }
+}
+
+function findExpiredAllocationInChain(db: DatabaseSync, account: AccountRow, timestamp: string): string | null {
+  let current: AccountRow | undefined = account;
+  let expiredAt: string | null = null;
+  const visited = new Set<string>();
+  while (current) {
+    if (visited.has(current.account_id) || current.revoked_at !== null) return null;
+    visited.add(current.account_id);
+    if (current.authority_grant_id !== null
+      && !isGrantChainActive(db, current.authority_grant_id, current.authority_grant_revision ?? -1, timestamp)) return null;
+    if (expiredAt === null && current.expires_at !== null && current.expires_at <= timestamp) {
+      expiredAt = current.expires_at;
+    }
+    if (!current.parent_account_id) break;
+    current = db.prepare("SELECT * FROM resource_budget_accounts_v6 WHERE account_id = ?")
+      .get(current.parent_account_id) as AccountRow | undefined;
+    if (!current) return null;
+  }
+  return expiredAt;
 }
 
 function assertDeadlineOpen(db: DatabaseSync, account: AccountRow, timestamp: string): void {
@@ -1402,9 +1424,13 @@ function isAccountChainActive(db: DatabaseSync, account: AccountRow, timestamp: 
     if (current.revoked_at !== null || (current.expires_at !== null && current.expires_at <= timestamp)) return false;
     if (current.authority_grant_id !== null
       && !isGrantChainActive(db, current.authority_grant_id, current.authority_grant_revision ?? -1, timestamp)) return false;
-    current = current.parent_account_id
-      ? db.prepare("SELECT * FROM resource_budget_accounts_v6 WHERE account_id = ?").get(current.parent_account_id) as AccountRow | undefined
-      : undefined;
+    if (!current.parent_account_id) {
+      current = undefined;
+      continue;
+    }
+    current = db.prepare("SELECT * FROM resource_budget_accounts_v6 WHERE account_id = ?")
+      .get(current.parent_account_id) as AccountRow | undefined;
+    if (!current) return false;
   }
   return true;
 }

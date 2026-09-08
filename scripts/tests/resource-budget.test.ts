@@ -623,6 +623,90 @@ describe("Resource budget", () => {
   });
 
   // @test-value v2
+  // kind = "regression"
+  // claim = "child allocationのexpiresAt到達は期限切れとして識別でき、revokeは期限切れ保留へ誤分類しない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Allocation-と-authority" }
+  // fault = "allocation chainの非active状態を一律BUDGET_AUTHORITY_REQUIREDとして返し、queueが期限延長後に再開できない、またはrevokeを保留する"
+  // observable = "期限切れauthority errorのdetails.reason/expiresAtと、revoke後authority errorのdetails"
+  // observation_boundary = "component-behavior"
+  // scope = "resource-budget-child-allocation-expiry-classification"
+  // lifecycle = "permanent"
+  // distinction = "直接allocation expiryだけがallocation_expired detailを持ち、revoked accountは空detailsで拒否される"
+  // @end-test-value
+  it("child allocationの期限切れとrevokeを別の拒否理由として識別する", async () => {
+    const fixture = await createFixture("withmate-budget-child-expiry-classification-");
+    const child = makeChild("child-a", fixture.root);
+    fixture.sessionStorage.insertSession(child);
+    const authority = new SessionAuthorityService({
+      databasePath: fixture.dbPath,
+      getExecutionGeneration: () => "generation-1",
+      now: () => new Date(NOW),
+    });
+    const budget = new ResourceBudgetStorage(fixture.dbPath);
+    try {
+      const proof = authority.authorize(binding(fixture.root.id), "budget.configure", {
+        sessionId: fixture.root.id,
+      }).proof;
+      const childBudget = budget.allocateChild({
+        accountId: "budget-child-expiry",
+        accountKind: "session",
+        rootSessionId: fixture.root.id,
+        ownerSessionId: child.id,
+        parentAccountId: fixture.root.id,
+        hardLimits: { ...childLimits(1), totalTurns: 2 },
+        authorityGrantId: proof.grantId!,
+        authorityGrantRevision: proof.grantRevision!,
+        expiresAt: LATER,
+        deadlineAt: "2026-10-01T00:00:00.000Z",
+        idempotencyKey: "allocate-child-expiry-classification",
+        proof,
+        createdAt: NOW,
+      });
+      let expired: ResourceBudgetError | null = null;
+      try {
+        budget.reserveImmediateTurn({
+          sessionId: child.id,
+          accountId: childBudget.accountId,
+          executionId: "expired-child-execution",
+          idempotencyKey: "expired-child-execution",
+          createdAt: "2026-09-05T02:00:00.000Z",
+        });
+      } catch (error) {
+        expired = error as ResourceBudgetError;
+      }
+      assert.ok(expired && isBudgetError("BUDGET_AUTHORITY_REQUIRED")(expired));
+      assert.deepEqual(expired!.details, { reason: "allocation_expired", expiresAt: LATER });
+
+      const revoked = budget.configure({
+        sessionId: fixture.root.id,
+        accountId: childBudget.accountId,
+        expectedRevision: childBudget.revision,
+        revoked: true,
+        idempotencyKey: "revoke-child-expiry-classification",
+      }, userBudgetProof(fixture.root.id, "user-revoke-child-expiry-classification"), "2026-09-05T02:00:00.000Z");
+      let revokedError: ResourceBudgetError | null = null;
+      try {
+        budget.reserveImmediateTurn({
+          sessionId: child.id,
+          accountId: revoked.accountId,
+          executionId: "revoked-child-execution",
+          idempotencyKey: "revoked-child-execution",
+          createdAt: "2026-09-05T02:00:00.000Z",
+        });
+      } catch (error) {
+        revokedError = error as ResourceBudgetError;
+      }
+      assert.ok(revokedError && isBudgetError("BUDGET_AUTHORITY_REQUIRED")(revokedError));
+      assert.deepEqual(revokedError!.details, {});
+    } finally {
+      budget.close();
+      authority.close();
+      fixture.sessionStorage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "execution受付後にchild allocationを作成またはrevokeしてもstart・retry・settleは受付時のaccount reservationへ帰属する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Admission-と-settlement" }

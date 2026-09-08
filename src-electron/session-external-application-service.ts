@@ -184,7 +184,7 @@ export type SessionExternalApplicationServiceDeps = {
   executionService: Pick<
     SessionExecutionService,
     "beginShutdown" | "run" | "enqueue" | "get" | "listPage" | "cancel" | "waitForTerminal" | "resolveReplay"
-  > & Partial<Pick<SessionExecutionService, "getRecord">>;
+  > & Pick<SessionExecutionService, "resumeRootQueues"> & Partial<Pick<SessionExecutionService, "getRecord">>;
   interactionService?: Pick<
     SessionInteractionService,
     "getPendingForExecution" | "listSessionInteractionsPage" | "respond" | "subscribeExecution"
@@ -306,11 +306,13 @@ export class SessionExternalApplicationService {
       );
     }
     if (operation === "budget.configure") {
-      return this.requireBudgetStorage().configure(
+      const updated = this.requireBudgetStorage().configure(
         input as ResourceBudgetConfigureInput,
         proof,
         new Date().toISOString(),
       );
+      await this.deps.executionService.resumeRootQueues(updated.rootSessionId);
+      return updated;
     }
     if (operation === "session.self") {
       const session = await this.deps.crudService.get(agentRuntimeBinding.actorSessionId);

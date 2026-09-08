@@ -706,6 +706,7 @@ function isResourceBudgetDispatchDeferral(error: unknown): boolean {
     && (
       error.code === "BUDGET_HARD_LIMIT_EXCEEDED"
       || error.code === "BUDGET_DEADLINE_EXCEEDED"
+      || (error.code === "BUDGET_AUTHORITY_REQUIRED" && error.details.reason === "allocation_expired")
       || error.code === "BUDGET_STORAGE_UNKNOWN"
     );
 }
