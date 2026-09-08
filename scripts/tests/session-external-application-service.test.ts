@@ -772,9 +772,9 @@ test("READ-EFFECT-01: read-only operationの予期しない例外はnot_applied�
 
 // @test-value v2
 // kind = "contract"
-// claim = "budget get、list、configureとdirect child配分は共通application serviceからactor可視範囲とauthority proofを保持してstorageへdispatchされ、configure成功後は対象Rootのqueueを再開する"
+// claim = "budget get、list、configureとdirect child配分は共通application serviceからactor可視範囲とauthority operationを保持してstorageへdispatchされ、configure成功後は対象Rootのqueueを再開する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-public-api-migration-and-review.md#public-surface-parity" }
-// fault = "budget adapterがroot全件を無条件公開する、子配分payloadまたはconfigure proofを落とす、configure成功後に対象Root queueを再評価しない、またはdomain errorをtransport固有の成功へ変換する"
+// fault = "budget adapterがroot全件を無条件公開する、子配分payloadまたはconfigure authority operationを落とす、configure成功後に対象Root queueを再評価しない、またはdomain errorをtransport固有の成功へ変換する"
 // observable = "budgetStorage呼出引数、configure後のresumeRootQueues root引数、versioned operation result、BUDGET_AUTHORITY_REQUIRED error envelope"
 // observation_boundary = "public-boundary"
 // scope = "SessionExternalApplicationService resource budget dispatch"
@@ -810,7 +810,7 @@ test("RESOURCE-BUDGET-PUBLIC-02: budget操作を可視範囲とauthority proof�
         if (input.hardLimits) {
           throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "Increasing a root hard limit requires trusted user authority.");
         }
-        return { ...resourceBudget, revision: 2 };
+        return { ...resourceBudget, rootSessionId: "configured-root", revision: 2 };
       },
     },
     executionService: {
@@ -822,7 +822,10 @@ test("RESOURCE-BUDGET-PUBLIC-02: budget操作を可視範囲とauthority proof�
       listPage() { throw new Error("unused"); },
       async cancel() { throw new Error("unused"); },
       async waitForTerminal() { throw new Error("unused"); },
-      async resumeRootQueues(rootSessionId) { resumedRootQueues.push(rootSessionId ?? "all"); },
+      async resumeRootQueues(rootSessionId) {
+        resumedRootQueues.push(rootSessionId ?? "all");
+        calls.push({ operation: "resumeRootQueues", args: [rootSessionId] });
+      },
     },
   });
 
@@ -873,9 +876,13 @@ test("RESOURCE-BUDGET-PUBLIC-02: budget操作を可視範囲とauthority proof�
     { operation: "get", args: ["session-actor"] },
     { operation: "list", args: ["session-actor", "session-actor", 50, undefined] },
   ]);
+  assert.deepEqual(calls.map((call) => call.operation), [
+    "get", "list", "configure", "resumeRootQueues", "configure", "resumeRootQueues", "configure",
+  ]);
   assert.equal(calls[2]?.args[1], "budget.configure");
   assert.match(String(calls[2]?.args[2]), /^\d{4}-\d{2}-\d{2}T/);
-  assert.deepEqual(calls[3]?.args[0], {
+  assert.deepEqual(calls[3]?.args, ["configured-root"]);
+  assert.deepEqual(calls[4]?.args[0], {
     sessionId: "session-actor",
     accountId: "session-actor",
     expectedRevision: 2,
@@ -886,8 +893,10 @@ test("RESOURCE-BUDGET-PUBLIC-02: budget操作を可視範囲とauthority proof�
     },
     idempotencyKey: "budget-child-allocation-1",
   });
-  assert.equal(calls[3]?.args[1], "budget.configure");
-  assert.deepEqual(resumedRootQueues, ["session-actor", "session-actor"]);
+  assert.equal(calls[4]?.args[1], "budget.configure");
+  assert.match(String(calls[4]?.args[2]), /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(calls[5]?.args, ["configured-root"]);
+  assert.deepEqual(resumedRootQueues, ["configured-root", "configured-root"]);
   assert.equal("error" in denied && denied.error.code, "BUDGET_AUTHORITY_REQUIRED");
   assert.equal("error" in denied && denied.error.effect, "not_applied");
 });

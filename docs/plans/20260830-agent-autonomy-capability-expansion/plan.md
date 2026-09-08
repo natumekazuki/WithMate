@@ -384,6 +384,10 @@ clean detached worktreeでの独立complete-diff reviewは、cancel grace後の�
 
 関連49 test、型検査、build、`git diff --check`が成功した。実SQLite・実ファイルで、5 bytes上限へ別principalが3 bytesずつ書く場合に2件目がファイル作成前に拒否されることと、transcript exportの同じ境界を確認した。固定commitのtargeted closureは両指摘closed、同familyの追加不具合なしとなった。今回の開始commit `d7b35d0887ba39e4a9ec09f040933e0c1817fe0e`から現行`review-test-value`で抽出した4 recordは通常のread-only `general_luna`で審査し、operation IDの存在・rejected replay時の保持に関するassertion不足と、null予算testのmetadataを補正した。変更したstorage test 3件の再実行と指摘解消の確認が完了し、未解決項目はない。全suiteとGUI目視は今回再実行していない。
 
+同日のqueue再開に関する追加指摘2件を`985d6e1a482cfd5137fe3ad1033dfb3adb5c8f70`で修正した。公開`budget.configure`は保存結果のRootに対して`resumeRootQueues`を待機し、設定変更後に保留queueを再評価する。子allocationの期限切れはaccount・grant chain全体を確認して専用reasonを返し、そのreasonだけをdispatch保留にする。revoke、無効grant、親account欠落を期限切れと誤分類しない。
+
+同commitのproduction sourceで全体testは3495件中3494 pass、1 skip、0 fail、型検査・build・`git diff --check`も成功した。全体testで発見した前回のtranscript storage返却値へのoperation ID追加に対する期待値追随漏れも補正した。固定commitの独立targeted closureは両指摘closed、同familyの追加不具合なし。開始commit `ca4eab8682051ed0184d7c74b38c99387c4ed28f`から抽出したtestは通常のread-only `general_luna`で審査し、型外入力を除去、非expiry authority errorの失敗確定、configure結果のRootと呼出順を補強した。補強後の関連92 testと型検査は成功し、production sourceは変更していない。最終抽出は5 record、diagnostic 0で、指摘とmetadataの観測範囲を修正して未解決項目を解消した。GUI目視は未実行である。
+
 ### Slice 1 の budget 段階導入
 
 2026-09-05 のユーザー承認により、Slice 1 は principal、grant、decision、revision、history の切り替えを行い、root budget の ledger、reserve、reconcile、admission は Slice 2 で接続する。Slice 1 では既存の操作別上限を維持し、budget が未実装であることを runtime catalog に明示する。既存上限を root budget の保証と扱わず、無制限の値、評価成功を返す代用品、架空の allocation reference を作らない。

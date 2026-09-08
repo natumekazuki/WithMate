@@ -288,14 +288,14 @@ describe("SessionExecutionService", () => {
 
   // @test-value v2
   // kind = "regression"
-  // claim = "期限切れのchild allocationで拒否されたqueued Turnはadmission retryを使い切ってfailedへ確定せず、allocation延長後に同じexecutionを実行する"
+  // claim = "child allocation期限切れエラーを受けたqueued Turnは再評価を繰り返してもfailedへ確定せず、エラー解除後に同じexecutionを実行する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Admission-と-settlement" }
   // fault = "child allocation期限切れのBUDGET_AUTHORITY_REQUIREDを通常のauthority拒否として扱い、QUEUE_ADMISSION_FAILUREへ収束させる"
-  // observable = "期限切れ保留中のqueued state、dispatch数、延長後の同一execution dispatch"
+  // observable = "期限切れエラー保留中のqueued state、dispatch数、エラー解除後の同一execution dispatch"
   // observation_boundary = "component-behavior"
   // scope = "session-execution-child-allocation-expiry"
   // lifecycle = "permanent"
-  // distinction = "allocation_expired detail付きauthority errorを保留対象として扱う"
+  // distinction = "allocation_expired detail付きauthority errorを保留対象として扱い、解除後に同じexecutionを再開する"
   // @end-test-value
   it("期限切れchild allocationのadmission待ちはretry exhaustionでfailedにしない", async () => {
     let allocationExpired = true;
@@ -326,6 +326,36 @@ describe("SessionExecutionService", () => {
 
       fixture.dispatches.get(queued.id)?.resolve({ state: "completed", result: null });
       await fixture.service.waitForTerminal("session-1", queued.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "期限切れ以外のBUDGET_AUTHORITY_REQUIREDはqueue保留へ昇格せず、既存のadmission failureへ収束する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Admission-と-settlement" }
+  // fault = "authority不足をallocation expiryと同じdispatch deferralとして扱い、権限のないqueued Turnを無期限保留する"
+  // observable = "同一executionのfailed state、QUEUE_ADMISSION_FAILURE errorCode、queue_admission_exhausted reason"
+  // observation_boundary = "component-behavior"
+  // scope = "session-execution-authority-admission-failure"
+  // lifecycle = "permanent"
+  // distinction = "detailsにallocation_expiredがないBUDGET_AUTHORITY_REQUIREDは通常のadmission failureとして確定する"
+  // @end-test-value
+  it("期限切れでないauthority拒否はqueue admission failureへ収束する", async () => {
+    const fixture = await createFixture({
+      queueRetryDelayMs: 1,
+      prepareBudgetAdmission() {
+        throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "authority is missing");
+      },
+    });
+    try {
+      const queued = await fixture.service.enqueue(createInput(103));
+      await waitFor(() => fixture.storage.get(queued.id)?.state === "failed");
+      assert.equal(fixture.storage.get(queued.id)?.errorCode, "QUEUE_ADMISSION_FAILURE");
+      assert.equal(fixture.storage.get(queued.id)?.reason, "queue_admission_exhausted");
+      assert.equal(fixture.dispatchEvents.length, 0);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

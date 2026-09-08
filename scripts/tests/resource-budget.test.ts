@@ -626,7 +626,7 @@ describe("Resource budget", () => {
   // kind = "regression"
   // claim = "child allocationのexpiresAt到達は期限切れとして識別でき、revokeは期限切れ保留へ誤分類しない"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Allocation-と-authority" }
-  // fault = "allocation chainの非active状態を一律BUDGET_AUTHORITY_REQUIREDとして返し、queueが期限延長後に再開できない、またはrevokeを保留する"
+  // fault = "allocation chainの非active状態を一律BUDGET_AUTHORITY_REQUIREDとして返し、期限切れとrevokeの拒否理由を区別できない"
   // observable = "期限切れauthority errorのdetails.reason/expiresAtと、revoke後authority errorのdetails"
   // observation_boundary = "component-behavior"
   // scope = "resource-budget-child-allocation-expiry-classification"
@@ -666,7 +666,6 @@ describe("Resource budget", () => {
       try {
         budget.reserveImmediateTurn({
           sessionId: child.id,
-          accountId: childBudget.accountId,
           executionId: "expired-child-execution",
           idempotencyKey: "expired-child-execution",
           createdAt: "2026-09-05T02:00:00.000Z",
@@ -677,7 +676,7 @@ describe("Resource budget", () => {
       assert.ok(expired && isBudgetError("BUDGET_AUTHORITY_REQUIRED")(expired));
       assert.deepEqual(expired!.details, { reason: "allocation_expired", expiresAt: LATER });
 
-      const revoked = budget.configure({
+      budget.configure({
         sessionId: fixture.root.id,
         accountId: childBudget.accountId,
         expectedRevision: childBudget.revision,
@@ -688,7 +687,6 @@ describe("Resource budget", () => {
       try {
         budget.reserveImmediateTurn({
           sessionId: child.id,
-          accountId: revoked.accountId,
           executionId: "revoked-child-execution",
           idempotencyKey: "revoked-child-execution",
           createdAt: "2026-09-05T02:00:00.000Z",
