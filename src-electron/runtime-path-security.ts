@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
+import { constants } from "node:os";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -135,6 +136,7 @@ export async function secureWindowsRuntimePath(
     "v1.0",
     "powershell.exe",
   );
+  const startedAt = performance.now();
   try {
     await execFileAsync(powershellPath, [
       "-NoLogo",
@@ -153,9 +155,19 @@ export async function secureWindowsRuntimePath(
       timeout: 15_000,
       windowsHide: true,
     });
-  } catch {
+  } catch (error) {
     // Do not attach execFile's error as a cause: stderr can contain the
     // target path (or inherited environment data) and must not be surfaced.
-    throw new Error(`Unable to secure runtime ${targetKind} Windows ACL.`);
+    const failure = error as { code?: unknown; signal?: unknown; killed?: unknown } | null;
+    const code = typeof failure?.code === "number" && Number.isSafeInteger(failure.code)
+      ? failure.code
+      : typeof failure?.code === "string" && ["ENOENT", "EACCES", "EPERM", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"].includes(failure.code)
+        ? failure.code
+        : "unknown";
+    const signal = typeof failure?.signal === "string" && Object.hasOwn(constants.signals, failure.signal)
+      ? failure.signal
+      : "unknown";
+    const killed = typeof failure?.killed === "boolean" ? failure.killed : "unknown";
+    throw new Error(`Unable to secure runtime ${targetKind} Windows ACL. code=${code}, signal=${signal}, killed=${killed}, elapsedMs=${Math.round(performance.now() - startedAt)}, timeoutMs=15000`);
   }
 }
