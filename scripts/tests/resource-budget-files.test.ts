@@ -43,9 +43,9 @@ function reservation(): ResourceBudgetReservation {
 describe("SessionFolder resource budget", () => {
   // @test-value v2
   // kind = "regression"
-  // claim = "予算対象外と判定済みの添付は、null予算を受ける共通のcopy/paste経路でSessionFolderへ保存できる"
+  // claim = "resourceBudget=nullを受ける共通のcopy/paste処理はSessionFolderへファイルを保存できる"
   // oracle = { type = "contract", ref = "src-electron/session-files.ts#copyFilesToSessionFiles,saveSessionFile" }
-  // fault = "予算対象外と判定済みの添付を共通処理がBUDGET_NOT_FOUNDで拒否する、または保存を完了しない"
+  // fault = "共通copy/paste処理がnullの予算を参照して失敗する、またはファイル保存を完了しない"
   // observable = "resourceBudget=nullでcopyとpasteが完了し、SessionFolderへ保存された実体の内容"
   // observation_boundary = "component-behavior"
   // scope = "resource-budget-storage-files"

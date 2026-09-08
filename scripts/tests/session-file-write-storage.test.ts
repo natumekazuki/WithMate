@@ -215,6 +215,7 @@ describe("Session file write idempotency storage", () => {
         expiresAt: "2026-08-14T00:01:00.000Z",
       });
       assert.equal(freshOperation.kind, "pending");
+      assert.ok(freshOperation.operationId.length > 0);
       assert.notEqual(freshOperation.operationId, prepared.operationId);
       assert.throws(
         () => storage.prepareSessionFileWrite({
@@ -229,7 +230,7 @@ describe("Session file write idempotency storage", () => {
         SessionFileWriteIdempotencyConflictError,
       );
 
-      storage.prepareSessionFileWrite({
+      const rejectedPrepared = storage.prepareSessionFileWrite({
         idempotencyKey: "write-rejected",
         requestFingerprint: "fingerprint-rejected",
         sessionId: "session-a",
@@ -263,7 +264,7 @@ describe("Session file write idempotency storage", () => {
       });
       assert.deepEqual(rejectedReplay, {
         kind: "rejected",
-        operationId: rejectedReplay.operationId,
+        operationId: rejectedPrepared.operationId,
         sessionId: "session-a",
         relativePath: "existing.md",
         tempName: ".withmate-write-rejected",

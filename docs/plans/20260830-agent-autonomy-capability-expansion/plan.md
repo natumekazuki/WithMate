@@ -380,6 +380,10 @@ clean detached worktreeでの独立complete-diff reviewは、cancel grace後の�
 
 同じコミットのclean snapshotを、開始コミットから現行`review-test-value`のGit modeへ渡した。独立native CLIによるLuna metadata／alignmentとrequired Sol、保持根拠、過去の削除・置換義務を含む最終generation `g000005`は45件すべてPASS、全体PASS、未解決0となった。途中のmetadataと観測範囲の不一致は修正し、不正なworker出力・実行失敗は非成功として残した。審査対象snapshotは`sha256:38740bbab453de6745eb1254fe8ca41cb3190efc1bfdbdc9593dd37ed37a9ba6`であり、この完了記録だけを追記する後続commitではsource・test・契約を変更しない。
 
+2026-09-08の追加指摘2件を`eab243f6ab64bd000b4829c4f261a1bc7fc0b370`で修正した。file writeとtranscript exportの保存容量予約には、保存処理が既に永続化しているSaga operation IDを使用する。別principalの同じidempotency keyと、terminal期限後の新規受付を別予約にし、同一操作の再送は同じIDを維持する。共通copy／pasteはCompanionStorageに実在するSessionだけ予算対象外として保存し、通常Sessionと未知のIDには従来の予算チェックを適用する。
+
+関連49 test、型検査、build、`git diff --check`が成功した。実SQLite・実ファイルで、5 bytes上限へ別principalが3 bytesずつ書く場合に2件目がファイル作成前に拒否されることと、transcript exportの同じ境界を確認した。固定commitのtargeted closureは両指摘closed、同familyの追加不具合なしとなった。今回の開始commit `d7b35d0887ba39e4a9ec09f040933e0c1817fe0e`から現行`review-test-value`で抽出した4 recordは通常のread-only `general_luna`で審査し、operation IDの存在・rejected replay時の保持に関するassertion不足と、null予算testのmetadataを補正した。変更したstorage test 3件の再実行と指摘解消の確認が完了し、未解決項目はない。全suiteとGUI目視は今回再実行していない。
+
 ### Slice 1 の budget 段階導入
 
 2026-09-05 のユーザー承認により、Slice 1 は principal、grant、decision、revision、history の切り替えを行い、root budget の ledger、reserve、reconcile、admission は Slice 2 で接続する。Slice 1 では既存の操作別上限を維持し、budget が未実装であることを runtime catalog に明示する。既存上限を root budget の保証と扱わず、無制限の値、評価成功を返す代用品、架空の allocation reference を作らない。
