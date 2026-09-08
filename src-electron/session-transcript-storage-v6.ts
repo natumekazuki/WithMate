@@ -88,6 +88,7 @@ export type UpsertSessionTurnPublicContextInput = {
 export type SessionTranscriptExportReplay =
   | {
     kind: "pending";
+    operationId: string;
     sessionId: string;
     relativePath: string;
     tempName: string;
@@ -100,6 +101,7 @@ export type SessionTranscriptExportReplay =
   }
   | {
     kind: "replay";
+    operationId: string;
     result: unknown;
     sessionId: string;
     relativePath: string;
@@ -110,7 +112,7 @@ export type SessionTranscriptExportReplay =
     outputInode: string;
     targetPrecondition: TranscriptTargetPrecondition;
   }
-  | { kind: "rejected"; error: unknown };
+  | { kind: "rejected"; operationId: string; error: unknown };
 
 export type TranscriptTargetPrecondition =
   | { kind: "absent" }
@@ -478,6 +480,7 @@ export class SessionTranscriptStorageV6 {
       });
       return {
         kind: "pending",
+        operationId,
         sessionId: input.sessionId,
         relativePath: input.relativePath,
         tempName: input.tempName,
@@ -704,6 +707,7 @@ function resolveExport(
     }
     return {
       kind: "replay",
+      operationId: row.operation_id,
       result: JSON.parse(row.result_json) as unknown,
       sessionId: row.session_id,
       relativePath: row.relative_path,
@@ -717,10 +721,11 @@ function resolveExport(
   }
   if (row.state === "rejected") {
     if (!row.result_json) throw new Error("Rejected transcript export is missing its canonical error.");
-    return { kind: "rejected", error: JSON.parse(row.result_json) as unknown };
+    return { kind: "rejected", operationId: row.operation_id, error: JSON.parse(row.result_json) as unknown };
   }
   return {
     kind: "pending",
+    operationId: row.operation_id,
     sessionId: row.session_id,
     relativePath: row.relative_path,
     tempName: row.temp_name,

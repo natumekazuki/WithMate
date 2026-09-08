@@ -42,6 +42,36 @@ function reservation(): ResourceBudgetReservation {
 
 describe("SessionFolder resource budget", () => {
   // @test-value v2
+  // kind = "regression"
+  // claim = "予算対象外と判定済みの添付は、null予算を受ける共通のcopy/paste経路でSessionFolderへ保存できる"
+  // oracle = { type = "contract", ref = "src-electron/session-files.ts#copyFilesToSessionFiles,saveSessionFile" }
+  // fault = "予算対象外と判定済みの添付を共通処理がBUDGET_NOT_FOUNDで拒否する、または保存を完了しない"
+  // observable = "resourceBudget=nullでcopyとpasteが完了し、SessionFolderへ保存された実体の内容"
+  // observation_boundary = "component-behavior"
+  // scope = "resource-budget-storage-files"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("予算対象外と判定した添付をcopyとpasteで保存する", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-files-"));
+    const userDataPath = path.join(directory, "user-data");
+    const sourcePath = path.join(directory, "source.txt");
+    await writeFile(sourcePath, "copy");
+    try {
+      const copied = await copyFilesToSessionFiles(userDataPath, "companion-1", [sourcePath], null);
+      assert.equal((await readFile(copied[0])).toString(), "copy");
+
+      const pasted = await saveSessionFile(userDataPath, {
+        sessionId: "companion-1",
+        fileName: "pasted.txt",
+        data: Buffer.from("paste"),
+      }, null);
+      assert.equal((await readFile(pasted)).toString(), "paste");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "GUI pasteは実ledgerのroot storage hard limitを副作用前に拒否し、exact limitを保存して実容量へ精算する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#admission-と-settlement" }

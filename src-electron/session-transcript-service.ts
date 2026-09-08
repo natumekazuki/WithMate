@@ -186,7 +186,7 @@ export class SessionTranscriptService {
         reservation = await this.deps.resourceBudget.reserve(
           input.sessionId,
           reservedBytes,
-          `transcript.export:${input.destination.idempotencyKey}`,
+          prepared.operationId,
           prepared.resumed,
           prepared.byteLength ?? 0,
         );

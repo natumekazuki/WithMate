@@ -14,11 +14,13 @@ import {
   SessionFileService,
   SessionFileServiceError,
 } from "../../src-electron/session-file-service.js";
+import { SessionFolderResourceBudget } from "../../src-electron/resource-budget-files.js";
+import { ResourceBudgetStorage } from "../../src-electron/resource-budget-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
-function trustedFileWriteProof(sessionId: string): MutationAuthorityProof {
+function trustedFileWriteProof(sessionId: string, service = "session-file-service-test"): MutationAuthorityProof {
   return {
-    principal: { kind: "system", service: "session-file-service-test" },
+    principal: { kind: "system", service },
     operation: "session.files.write_text",
     mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
     action: "session.files.write_text",
@@ -401,6 +403,67 @@ describe("SessionFileService", () => {
       );
       assert.equal(await readFile(path.join(fixture.sessionFolder, "notes", "brief.md"), "utf8"), "first");
     } finally {
+      fixture.storage.close();
+      await rm(fixture.tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "同じrootで別principalが同じidempotency keyを使っても、Session fileのstorage予約を流用せず副作用前にhard limitで拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#admission-と-settlement" }
+  // fault = "principalを含まない予約keyが先行操作のreservationを再利用し、root hard limitを超える実fileを書き込む"
+  // observable = "実SQLiteのstorageBytes projection、実SessionFolderのfile存在とbyteLength、budget拒否"
+  // observation_boundary = "component-behavior"
+  // scope = "session-file-service-resource-budget-operation-identity"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("SF-BUDGET-01: 同root別principal同keyのfile予約を混同せず副作用前に拒否する", async () => {
+    const fixture = await createFixture();
+    const budgetStorage = new ResourceBudgetStorage(path.join(fixture.tempDirectory, "withmate-v6.db"));
+    const db = new DatabaseSync(path.join(fixture.tempDirectory, "withmate-v6.db"));
+    const budget = new SessionFolderResourceBudget({
+      storage: budgetStorage,
+      resolveSessionFilesDirectory: () => fixture.sessionFolder,
+      listRootSessionIds: () => ["session-a"],
+    });
+    const service = new SessionFileService({
+      storage: fixture.storage,
+      resourceBudget: budget,
+      resolveSessionFilesDirectory: () => fixture.sessionFolder,
+      now: () => new Date("2026-08-12T00:00:00.000Z"),
+      createTempName: () => "budget-temp",
+    });
+    try {
+      db.prepare(`UPDATE resource_budget_dimensions_v6 SET hard_limit = 5
+        WHERE account_id = 'session-a' AND dimension = 'storageBytes'`).run();
+      const sharedKey = "same-principal-independent-key";
+      await service.writeText({
+        sessionId: "session-a",
+        relativePath: "first.txt",
+        content: "abc",
+        maxBytes: 1024,
+        replace: false,
+        idempotencyKey: sharedKey,
+      }, trustedFileWriteProof("session-a", "principal-a"));
+      await assert.rejects(
+        service.writeText({
+          sessionId: "session-a",
+          relativePath: "second.txt",
+          content: "def",
+          maxBytes: 1024,
+          replace: false,
+          idempotencyKey: sharedKey,
+        }, trustedFileWriteProof("session-a", "principal-b")),
+        (error) => error instanceof SessionFileServiceError && error.code === "LIMIT_EXCEEDED",
+      );
+      assert.equal(await readFile(path.join(fixture.sessionFolder, "first.txt"), "utf8"), "abc");
+      await assert.rejects(readFile(path.join(fixture.sessionFolder, "second.txt"), "utf8"), /ENOENT/);
+      assert.equal(budgetStorage.get("session-a").dimensions.storageBytes.committed, 3);
+      assert.equal(budgetStorage.get("session-a").dimensions.storageBytes.reserved, 0);
+    } finally {
+      db.close();
+      budgetStorage.close();
       fixture.storage.close();
       await rm(fixture.tempDirectory, { recursive: true, force: true });
     }

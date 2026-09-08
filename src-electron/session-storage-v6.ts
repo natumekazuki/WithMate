@@ -355,6 +355,7 @@ export class SessionCrudIdempotencyResponseUnavailableError extends Error {
 export type SessionFileWriteReplayResult =
   | {
     kind: "pending";
+    operationId: string;
     sessionId: string;
     relativePath: string;
     tempName: string;
@@ -363,6 +364,7 @@ export type SessionFileWriteReplayResult =
   }
   | {
     kind: "replay";
+    operationId: string;
     sessionId: string;
     relativePath: string;
     tempName: string;
@@ -371,6 +373,7 @@ export type SessionFileWriteReplayResult =
   }
   | {
     kind: "rejected";
+    operationId: string;
     sessionId: string;
     relativePath: string;
     tempName: string;
@@ -1111,6 +1114,7 @@ export class SessionStorageV6 {
       this.db.exec("COMMIT");
       return {
         kind: "pending",
+        operationId,
         sessionId: input.sessionId,
         relativePath: input.relativePath,
         tempName: input.tempName,
@@ -2415,6 +2419,7 @@ function resolveSessionFileWriteIdempotency(
     }
     return {
       kind: "replay",
+      operationId: row.operation_id,
       sessionId: row.session_id,
       relativePath: row.relative_path,
       tempName: row.temp_name,
@@ -2428,6 +2433,7 @@ function resolveSessionFileWriteIdempotency(
     }
     return {
       kind: "rejected",
+      operationId: row.operation_id,
       sessionId: row.session_id,
       relativePath: row.relative_path,
       tempName: row.temp_name,
@@ -2437,6 +2443,7 @@ function resolveSessionFileWriteIdempotency(
   }
   return {
     kind: "pending",
+    operationId: row.operation_id,
     sessionId: row.session_id,
     relativePath: row.relative_path,
     tempName: row.temp_name,

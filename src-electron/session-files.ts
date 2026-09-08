@@ -152,7 +152,7 @@ export async function copyFilesToSessionFiles(
   userDataPath: string,
   sessionId: string,
   sourcePaths: readonly string[],
-  resourceBudget: SessionFolderResourceBudget,
+  resourceBudget: SessionFolderResourceBudget | null,
 ): Promise<string[]> {
   const sources: Array<{ path: string; reservedBytes: number }> = [];
   let reservedBytes = 0;
@@ -164,11 +164,13 @@ export async function copyFilesToSessionFiles(
     reservedBytes = addSafeBytes(reservedBytes, sourceStats.size);
     sources.push({ path: trimmedPath, reservedBytes: sourceStats.size });
   }
-  const reservation = await resourceBudget.reserve(
-    sessionId,
-    reservedBytes,
-    `session-files.copy:${randomOperationId()}`,
-  );
+  const reservation = resourceBudget
+    ? await resourceBudget.reserve(
+      sessionId,
+      reservedBytes,
+      `session-files.copy:${randomOperationId()}`,
+    )
+    : null;
   const directoryPath = resolveSessionFilesDirectory(userDataPath, sessionId);
   let effectApplied = false;
   let budgetLeaseFinished = false;
@@ -185,12 +187,14 @@ export async function copyFilesToSessionFiles(
       actualBytes = addSafeBytes(actualBytes, saved.bytes);
     }
     budgetLeaseFinished = true;
-    await resourceBudget.settleApplied(sessionId, reservation, actualBytes);
+    if (resourceBudget && reservation) {
+      await resourceBudget.settleApplied(sessionId, reservation, actualBytes);
+    }
     return savedPaths;
   } catch (error) {
-    if (!budgetLeaseFinished && effectApplied) {
+    if (resourceBudget && reservation && !budgetLeaseFinished && effectApplied) {
       await resourceBudget.reconcileRequired(sessionId, reservation).catch(() => undefined);
-    } else if (!budgetLeaseFinished) {
+    } else if (resourceBudget && reservation && !budgetLeaseFinished) {
       resourceBudget.release(reservation);
     }
     throw error;
@@ -200,13 +204,15 @@ export async function copyFilesToSessionFiles(
 export async function saveSessionFile(
   userDataPath: string,
   input: SaveSessionFileInput,
-  resourceBudget: SessionFolderResourceBudget,
+  resourceBudget: SessionFolderResourceBudget | null,
 ): Promise<string> {
-  const reservation = await resourceBudget.reserve(
-    input.sessionId,
-    input.data.byteLength,
-    `session-files.paste:${randomOperationId()}`,
-  );
+  const reservation = resourceBudget
+    ? await resourceBudget.reserve(
+      input.sessionId,
+      input.data.byteLength,
+      `session-files.paste:${randomOperationId()}`,
+    )
+    : null;
   const directoryPath = resolveSessionFilesDirectory(userDataPath, input.sessionId);
   let effectApplied = false;
   let budgetLeaseFinished = false;
@@ -215,12 +221,14 @@ export async function saveSessionFile(
     const savedPath = await writeUniqueFile(directoryPath, input.fileName, input.data);
     effectApplied = true;
     budgetLeaseFinished = true;
-    await resourceBudget.settleApplied(input.sessionId, reservation, input.data.byteLength);
+    if (resourceBudget && reservation) {
+      await resourceBudget.settleApplied(input.sessionId, reservation, input.data.byteLength);
+    }
     return savedPath;
   } catch (error) {
-    if (!budgetLeaseFinished && effectApplied) {
+    if (resourceBudget && reservation && !budgetLeaseFinished && effectApplied) {
       await resourceBudget.reconcileRequired(input.sessionId, reservation).catch(() => undefined);
-    } else if (!budgetLeaseFinished) {
+    } else if (resourceBudget && reservation && !budgetLeaseFinished) {
       resourceBudget.release(reservation);
     }
     throw error;

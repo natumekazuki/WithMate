@@ -240,7 +240,7 @@ export class SessionFileService {
         reservation = await this.deps.resourceBudget.reserve(
           input.sessionId,
           contentBytes.byteLength,
-          `session.files.write_text:${input.idempotencyKey}`,
+          prepared.operationId,
           prepared.resumed,
           prepared.prepared?.byteLength ?? 0,
         );

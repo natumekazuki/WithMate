@@ -5391,7 +5391,12 @@ async function copyFilesToSessionFiles(
   sessionId: string,
   sourcePaths: string[],
 ): Promise<string[]> {
-  return copyFilesToSessionFilesStorage(app.getPath("userData"), sessionId, sourcePaths, createSessionFolderResourceBudget());
+  return copyFilesToSessionFilesStorage(
+    app.getPath("userData"),
+    sessionId,
+    sourcePaths,
+    await resolveSessionFolderResourceBudget(sessionId),
+  );
 }
 
 async function pickSessionFiles(targetWindow: BrowserWindow | null, sessionId: string): Promise<string[]> {
@@ -5417,7 +5422,14 @@ async function savePastedSessionFile(request: SavePastedSessionFileRequest): Pro
     sessionId: request.sessionId,
     fileName: request.fileName,
     data: new Uint8Array(request.data),
-  }, createSessionFolderResourceBudget());
+  }, await resolveSessionFolderResourceBudget(request.sessionId));
+}
+
+async function resolveSessionFolderResourceBudget(sessionId: string): Promise<SessionFolderResourceBudget | null> {
+  if (await requireCompanionStorage().getSession(sessionId)) {
+    return null;
+  }
+  return createSessionFolderResourceBudget();
 }
 
 function ensureSessionFilesDirectory(sessionId: string): string {
