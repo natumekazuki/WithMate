@@ -406,6 +406,8 @@ PR #711の初回CI（run 34708930101）は7 testが失敗した。開始base `07
 
 関連105 test、UTC設定でのfacade 34 test、型検査、差分checkが成功した。開始baseから6 tests／6 SURVIVED transitionsをdiagnostic 0で抽出し、read-only general_lunaのtest-value審査を完了した。宣言外のroot construction fixture変更も独立確認し、契約の弱体化や未解消指摘はない。CIの全shard再実行結果はPR #711のChecksを正本とし、この記録時点では実行中。今回build・GUIは未実行。
 
+CI run 34709814244ではshard 1／2と型検査が成功し、shard 3のWORK-EXEC-05だけが残った。Session作成後のworkspace更新では既に捕捉されたbindingを変更できないため、一時Git repositoryをfixtureの初期Session INSERTから渡すよう修正した。関連34 testは通常環境とdetached HEADをcwdにした環境の両方で成功し、型検査・差分check、更新抽出6 recordsの当該finding限定test-value closureも完了した。検証用worktreeはpath・HEAD・cleanliness確認後に削除した。最終CI結果はPRのChecksで追跡する。
+
 ### Slice 2 の実装・検証対象
 
 Root ledger、原子的な予約と精算、Session／Work Item作成数、実行queue、Provider retry／使用量、SessionFolderの仲介書き込み、Settingsからの上限・期限延長を接続した。初期policyは2026-09-07のユーザー指定を採用し、token・費用は計測のみとする。設計の採用方針とADR 030を正本とする。

@@ -58,6 +58,7 @@ type DeferredDispatch = {
 };
 
 async function createFixture(options: {
+  workspacePath?: string;
   admissionFailures?: number;
   exhaustionWriteFailures?: number;
   queueRetryDelayMs?: number;
@@ -91,8 +92,8 @@ async function createFixture(options: {
         last_active_at
       ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?, ?)
     `);
-    insert.run("session-1", "Session 1", process.cwd(), CREATED_AT, CREATED_AT, CREATED_AT);
-    insert.run("session-2", "Session 2", process.cwd(), CREATED_AT, CREATED_AT, CREATED_AT);
+    insert.run("session-1", "Session 1", options.workspacePath ?? process.cwd(), CREATED_AT, CREATED_AT, CREATED_AT);
+    insert.run("session-2", "Session 2", options.workspacePath ?? process.cwd(), CREATED_AT, CREATED_AT, CREATED_AT);
     insertStandaloneRoleBindingsForSessions(db);
   } finally {
     db.close();
@@ -511,12 +512,12 @@ describe("SessionExecutionService", () => {
   // observation_boundary = "component-behavior"
   // @end-test-value
   it("WORK-EXEC-05: runとenqueueは検証済みWork Item associationをexecutionと同時保存する", async () => {
-    const fixture = await createFixture();
+    const repository = await mkdtemp(path.join(tmpdir(), "withmate-execution-source-"));
+    execFileSync("git", ["init", "--initial-branch", "main"], { cwd: repository, stdio: "ignore", windowsHide: true });
+    execFileSync("git", ["-c", "user.name=WithMate Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial"], { cwd: repository, stdio: "ignore", windowsHide: true });
+    const fixture = await createFixture({ workspacePath: repository });
     const db = new DatabaseSync(fixture.dbPath);
     try {
-      execFileSync("git", ["init", "--initial-branch", "main"], { cwd: fixture.directory, stdio: "ignore", windowsHide: true });
-      execFileSync("git", ["-c", "user.name=WithMate Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial"], { cwd: fixture.directory, stdio: "ignore", windowsHide: true });
-      db.prepare("UPDATE sessions_v6 SET workspace_path = ? WHERE id IN ('session-1', 'session-2')").run(fixture.directory);
       const insertWorkItem = db.prepare(`
         INSERT INTO work_items_v6 (
           id, kind, contract_revision, root_session_id, creator_session_id, target_session_id,
@@ -567,6 +568,7 @@ describe("SessionExecutionService", () => {
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
+      await rm(repository, { recursive: true, force: true });
     }
   });
 
