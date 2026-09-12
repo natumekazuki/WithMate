@@ -2636,6 +2636,7 @@ export class SessionStorageV6 {
       )
         AND (
           item.state IN ('pending', 'in_progress', 'waiting')
+          OR EXISTS (SELECT 1 FROM work_item_aggregations_v6 AS pending_result WHERE pending_result.parent_work_item_id = item.id AND pending_result.stale = 1)
           OR (
             item.kind = 'delegated'
             AND item.parent_work_item_id IS NULL
@@ -2648,6 +2649,7 @@ export class SessionStorageV6 {
                 WHERE root_item.kind = 'root'
                   AND root_item.root_session_id = item.root_session_id
                   AND root_item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
+                  AND NOT EXISTS (SELECT 1 FROM work_item_aggregations_v6 AS root_aggregate WHERE root_aggregate.parent_work_item_id = root_item.id AND root_aggregate.stale = 1)
               )
             )
           )
@@ -2659,6 +2661,11 @@ export class SessionStorageV6 {
               FROM work_item_aggregation_decisions_v6 AS decision
               WHERE decision.child_work_item_id = item.id
                 AND ${workItemDecisionRevisionMatchesSql("item")}
+                AND (decision.decision_type <> 'accepted' OR NOT EXISTS (
+                  SELECT 1 FROM work_item_aggregations_v6 AS parent_aggregate
+                  WHERE parent_aggregate.parent_work_item_id = decision.parent_work_item_id
+                    AND parent_aggregate.stale = 1
+                ))
             )
           )
         )

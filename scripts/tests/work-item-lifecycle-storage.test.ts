@@ -70,6 +70,14 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     return storage.create({ id, binding: binding(parent, creator, target), principalSessionId: "root", idempotencyKey: key, requestFingerprint: key + "-fp", expectedContainerRevision: containerRevision, createdAt: NOW, expiresAt: EXPIRES, proof: proof("work.create") });
   }
 
+  function createRoot(key: string): WorkItem {
+    const existing = sql<{ id: string }>("SELECT id FROM work_items_v6 WHERE kind='root' AND root_session_id='root' LIMIT 1")[0];
+    if (existing) return storage.get(existing.id)!;
+    const id = `root-wi-${nextId++}`;
+    const containerRevision = Number(sql<{ resource_revision: number }>("SELECT resource_revision FROM sessions_v6 WHERE id='root'")[0].resource_revision);
+    return storage.create({ id, binding: { ...binding(null, "root", "root", "root"), kind: "root" }, principalSessionId: "root", idempotencyKey: key, requestFingerprint: key + "-fp", expectedContainerRevision: containerRevision, createdAt: NOW, expiresAt: EXPIRES, proof: proof("work.create") });
+  }
+
   function settle(item: WorkItem, expectedAggregateRevision?: number): WorkItem {
     const active = storage.mutate({ operation: "work.transition", workItemId: item.id, principalSessionId: "root", idempotencyKey: item.id + "-start", requestFingerprint: item.id + "-start-fp", expectedRevision: item.revision, state: "in_progress", result: null, updatedAt: NOW, expiresAt: EXPIRES, proof: proof("work.transition") });
     return storage.mutate({ operation: "work.result", expectedAggregateRevision, workItemId: item.id, principalSessionId: "root", idempotencyKey: item.id + "-result", requestFingerprint: item.id + "-result-fp", expectedRevision: active.revision, state: "completed", result: { outcome: "completed", summary: "done", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [], reportingSessionId: item.targetSessionId, reportedAt: LATER }, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result") });
@@ -402,6 +410,56 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     } finally { db.close(); sessions.close(); }
     storage.close(); storage = new WorkItemStorageV6(dbPath);
     for (const child of children) assert.deepEqual(storage.get(child.id)?.result, child.result);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "採用済みresultの訂正で直接parentまたはRootがstaleな間は担当Sessionを削除できず、decision更新と親result再確定後だけ削除できる"
+  // fault = "terminal Work Itemだけを回収済みと判断し、訂正結果を親またはRootへ再確定する前に担当Sessionを削除する"
+  // observable = "parent/Root aggregation stale、manifest blockers、SessionStorageV6.deleteSessionの拒否と再確定後の成功"
+  // observation_boundary = "component-behavior"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
+  // scope = "Session deletion guard for corrected accepted Work Item results"
+  // lifecycle = "permanent"
+  // distinction = "nested childの直接parent staleとtop-level delegated childのRoot staleを実DBで再確定前後に比較する"
+  // @end-test-value
+  it("訂正待ちのparentまたはRootがstaleな間は担当Sessionを削除できない", () => {
+    const sessions = new SessionStorageV6(dbPath);
+    const db = new DatabaseSync(dbPath);
+    try {
+      const parent = create(null, "root", "task", "stale-delete-parent");
+      const child = settle(create(parent.id, "task", "executor", "stale-delete-child"));
+      storage.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, idempotencyKey: "stale-delete-child-accept", requestFingerprint: "stale-delete-child-accept-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+      const finalizedParent = settle(parent, storage.getAggregationSummary(parent.id).aggregateRevision);
+      const correctedChild = storage.correctResult({ workItemId: child.id, expectedRevision: child.revision, expectedResultRevision: 1, result: { ...child.result!, summary: "corrected child" }, correctionReason: "new evidence", principalSessionId: "root", idempotencyKey: "stale-delete-child-correct", requestFingerprint: "stale-delete-child-correct-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result.correct") });
+      assert.equal(storage.getAggregationSummary(parent.id).stale, true);
+      assert.ok(buildSessionLifecycleManifest(db, child.targetSessionId).blockers.includes("work_items_present"));
+      assert.throws(() => sessions.deleteSession(child.targetSessionId), /WORK_ITEM_SESSION_PROTECTED/);
+      storage.correctAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, expectedChildResultRevision: correctedChild.resultRevision, correction: { kind: "revise", decision: "accepted", reason: "corrected result accepted" }, actorSessionId: "task", idempotencyKey: "stale-delete-child-reaccept", requestFingerprint: "stale-delete-child-reaccept-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.correct") });
+      assert.equal(storage.getAggregationSummary(parent.id).stale, true);
+      assert.ok(buildSessionLifecycleManifest(db, child.targetSessionId).blockers.includes("work_items_present"));
+      assert.throws(() => sessions.deleteSession(child.targetSessionId), /WORK_ITEM_SESSION_PROTECTED/);
+      const correctedParent = storage.correctResult({ workItemId: parent.id, expectedRevision: finalizedParent.revision, expectedResultRevision: 1, result: { ...finalizedParent.result!, summary: "corrected parent" }, correctionReason: "child correction incorporated", principalSessionId: "root", idempotencyKey: "stale-delete-parent-correct", requestFingerprint: "stale-delete-parent-correct-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result.correct") });
+      storage.mutate({ operation: "work.result", workItemId: parent.id, principalSessionId: "root", idempotencyKey: "stale-delete-parent-refinalize", requestFingerprint: "stale-delete-parent-refinalize-fp", expectedRevision: correctedParent.workItem.revision, expectedResultRevision: correctedParent.resultRevision, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, state: "completed", result: correctedParent.workItem.result, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result") });
+      assert.equal(storage.getAggregationSummary(parent.id).stale, false);
+      assert.deepEqual(buildSessionLifecycleManifest(db, child.targetSessionId).blockers, []);
+      sessions.deleteSession(child.targetSessionId);
+      assert.equal(sessions.getSession(child.targetSessionId), null);
+
+      const root = createRoot("stale-delete-root");
+      const topLevel = settle(create(null, "root", "task-2", "stale-delete-top-level"));
+      const finalizedRoot = settle(root);
+      storage.correctResult({ workItemId: topLevel.id, expectedRevision: topLevel.revision, expectedResultRevision: 1, result: { ...topLevel.result!, summary: "corrected top-level" }, correctionReason: "root review", principalSessionId: "root", idempotencyKey: "stale-delete-top-level-correct", requestFingerprint: "stale-delete-top-level-correct-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result.correct") });
+      assert.equal(storage.get(root.id)?.stale, true);
+      assert.ok(buildSessionLifecycleManifest(db, topLevel.targetSessionId).blockers.includes("work_items_present"));
+      assert.throws(() => sessions.deleteSession(topLevel.targetSessionId), /WORK_ITEM_SESSION_PROTECTED/);
+      const correctedRoot = storage.correctResult({ workItemId: root.id, expectedRevision: finalizedRoot.revision, expectedResultRevision: 1, result: { ...finalizedRoot.result!, summary: "corrected root" }, correctionReason: "top-level correction incorporated", principalSessionId: "root", idempotencyKey: "stale-delete-root-correct", requestFingerprint: "stale-delete-root-correct-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result.correct") });
+      storage.mutate({ operation: "work.result", workItemId: root.id, principalSessionId: "root", idempotencyKey: "stale-delete-root-refinalize", requestFingerprint: "stale-delete-root-refinalize-fp", expectedRevision: correctedRoot.workItem.revision, expectedResultRevision: correctedRoot.resultRevision, state: "completed", result: correctedRoot.workItem.result, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result") });
+      assert.equal(storage.get(root.id)?.stale, false);
+      assert.deepEqual(buildSessionLifecycleManifest(db, topLevel.targetSessionId).blockers, []);
+      sessions.deleteSession(topLevel.targetSessionId);
+      assert.equal(sessions.getSession(topLevel.targetSessionId), null);
+    } finally { db.close(); sessions.close(); }
   });
 
 });

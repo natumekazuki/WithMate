@@ -372,6 +372,8 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 固定task baseから現行`review-test-value`のGit modeで最終差分を抽出し、30 tests／30 transitions（22 ADDED、8 SURVIVED）、diagnostic 0を確認した。通常のread-only `general_luna`へpublic 10件、storage等20件を渡し、metadata、本文、production経路の三観点で全件審査した。履歴・予算・再送・authority・field projectionの観測不足を補強し、実測していない範囲のmetadataは明示的に限定した。追加したexcluded／retry依存境界を含め、全recordと指摘のclosureが完了し、未解決のレビュー項目はない。
 
+2026-09-13の追加指摘2件を修正した。集約を持たないterminal Work Itemの訂正結果に対する再finalizeを拒否し、不要なrevision増加による親decisionとの不整合を防ぐ。Session削除とdelete manifestは、自身のstale集約、top-level結果の回収先Rootのstale、accepted decisionの直接の親集約のstaleを未回収として扱う。関連24件と既存関連80件、型検査、build、差分checkが成功した。今回の全suiteとGUI目視は未実施。開始base `78aab77a7fac53591633a70c4dfd2217e7b1746a`から変更test 2件／2 transitionsをdiagnostic 0で抽出し、価値審査と追加指摘のtargeted closureを進める。
+
 ### Slice 4 の承認済み実装境界（2026-09-12）
 
 開始baseは`ab7b4e25709086a0f1859e1345ea87e83956fa07`。ユーザー承認により、moveに必要な旧decisionのsupersede、旧parentからの離脱、新parentへのadoptionと、その原子的保存・履歴再生・migration・直接検証をSlice 5から前倒しする。adoptionは所属の引受だけを表し、成果を自動採用しない。

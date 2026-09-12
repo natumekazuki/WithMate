@@ -138,6 +138,60 @@ describe("Work Item result and aggregation correction", () => {
 
   // @test-value v2
   // kind = "invariant"
+  // claim = "子を持たないterminal Work Itemは訂正自体でresult revisionが確定し、親の再判断・再確定後も別keyのwork.result再確定を拒否してrevision対応を維持する"
+  // fault = "集約行がないWork ItemのfinalizedResultRevisionを0扱いし、同じ訂正済みresultでwork.resultを繰り返してWork Item revisionだけを進める"
+  // observable = "child Work Item/result revision、親decision/aggregation projection、work event/idempotency rows、correction replay response"
+  // observation_boundary = "component-behavior"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
+  // scope = "leaf result correction and terminal work.result replay boundary"
+  // lifecycle = "permanent"
+  // distinction = "parentにaccepted済みの子なしWork Itemを訂正し、異なる2 keyの再確定拒否と同一correction keyのcanonical replayを実DBで比較する"
+  // @end-test-value
+  it("子なしWork Itemの訂正済みresultを別keyで再確定できない", () => {
+    const parent = create(null, "root", "task", "leaf-refinalize-parent");
+    const child = settle(create(parent.id, "task", "executor", "leaf-refinalize-child"));
+    storage.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, idempotencyKey: "leaf-refinalize-accept", requestFingerprint: "leaf-refinalize-accept-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+    const finalizedParent = settle(parent, "leaf-refinalize-parent-result");
+    const correctionInput = {
+      workItemId: child.id, expectedRevision: child.revision, expectedResultRevision: 1,
+      result: result(child, "leaf corrected"), correctionReason: "new evidence",
+      principalSessionId: "root", idempotencyKey: "leaf-refinalize-correction", requestFingerprint: "leaf-refinalize-correction-fp",
+      updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result.correct" as keyof typeof SESSION_AUTHORITY_OPERATION_DEFINITIONS),
+    };
+    const corrected = storage.correctResult(correctionInput);
+    assert.equal(corrected.resultRevision, 2);
+    assert.equal(storage.getAggregationSummary(parent.id).stale, true);
+    storage.correctAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, expectedChildResultRevision: corrected.resultRevision, correction: { kind: "revise", decision: "accepted", reason: "corrected result accepted" }, actorSessionId: "task", idempotencyKey: "leaf-refinalize-reaccept", requestFingerprint: "leaf-refinalize-reaccept-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.correct") });
+    const correctedParent = storage.correctResult({ workItemId: parent.id, expectedRevision: finalizedParent.revision, expectedResultRevision: 1, result: result(parent, "parent corrected"), correctionReason: "child correction incorporated", principalSessionId: "root", idempotencyKey: "leaf-refinalize-parent-correction", requestFingerprint: "leaf-refinalize-parent-correction-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result.correct") });
+    storage.mutate({ operation: "work.result", workItemId: parent.id, principalSessionId: "root", idempotencyKey: "leaf-refinalize-parent-final", requestFingerprint: "leaf-refinalize-parent-final-fp", expectedRevision: correctedParent.workItem.revision, expectedResultRevision: correctedParent.resultRevision, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, state: "completed", result: correctedParent.workItem.result, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result") });
+    assert.equal(storage.getAggregationSummary(parent.id).stale, false);
+    assert.equal(storage.get(child.id)?.resultCurrent, true);
+    assert.equal(sql<{ child_revision: number }>("SELECT child_revision FROM work_item_aggregation_decisions_v6 WHERE parent_work_item_id=? AND child_work_item_id=?", parent.id, child.id)[0].child_revision, corrected.workItem.revision);
+    const projection = () => ({
+      child: storage.get(child.id),
+      parent: storage.get(parent.id),
+      decision: sql("SELECT * FROM work_item_aggregation_decisions_v6 WHERE parent_work_item_id=? AND child_work_item_id=?", parent.id, child.id),
+      aggregate: sql("SELECT * FROM work_item_aggregations_v6 WHERE parent_work_item_id=?", parent.id),
+      events: sql("SELECT * FROM work_item_events_v6 WHERE work_item_id=? ORDER BY revision", child.id),
+      idempotency: sql("SELECT * FROM work_item_idempotency_v6 WHERE work_item_id=? ORDER BY operation,idempotency_key", child.id),
+    });
+    const stableProjection = projection();
+    for (const suffix of ["first", "second"]) {
+      assert.throws(() => storage.mutate({
+        operation: "work.result", workItemId: child.id, principalSessionId: "root",
+        idempotencyKey: `leaf-refinalize-${suffix}`, requestFingerprint: `leaf-refinalize-${suffix}-fp`,
+        expectedRevision: corrected.workItem.revision, expectedResultRevision: corrected.resultRevision,
+        state: "completed", result: corrected.workItem.result, updatedAt: LATER, expiresAt: EXPIRES,
+        proof: proof("work.result"),
+      }), { code: "WORK_ITEM_RESULT_REVISION_CONFLICT" });
+      assert.deepEqual(projection(), stableProjection);
+    }
+    assert.deepEqual(storage.correctResult(correctionInput), corrected);
+    assert.deepEqual(projection(), stableProjection);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "旧child result revisionを参照したaggregation correctionはcommitされず、active decisionとaggregate projectionを変更しない"
   // fault = "stale child revisionの訂正がdecision chainへ入り、旧結果をacceptedした判断をcurrentとして再利用する"
   // observable = "work_item_aggregation_decisions_v6, work_item_aggregation_events_v6, WorkItemAggregationSummary"

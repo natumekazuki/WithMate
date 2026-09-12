@@ -612,11 +612,12 @@ export class WorkItemStorageV6 {
             throw new WorkItemAggregationConflictError("WORK_ITEM_RESULT_REVISION_CONFLICT", "The result revision is stale.", { expectedRevision: input.expectedResultRevision, actualRevision: currentResultRevision });
           }
           if (repeatTerminalResult) {
+            const aggregate = this.getInternalAggregationState(current.id);
             const latestResult = this.db.prepare("SELECT result_json, correction_reason FROM work_item_result_revisions_v6 WHERE work_item_id = ? AND result_revision = ?")
               .get(input.workItemId, input.expectedResultRevision) as { result_json: string; correction_reason: string | null } | undefined;
-            if (!latestResult || latestResult.correction_reason === null
+            if (aggregate.aggregateRevision === 0 || !latestResult || latestResult.correction_reason === null
               || !isDeepStrictEqual(JSON.parse(latestResult.result_json), input.result)
-              || (this.getInternalAggregationState(current.id).finalizedResultRevision ?? 0) >= input.expectedResultRevision) {
+              || (aggregate.finalizedResultRevision ?? 0) >= input.expectedResultRevision) {
               throw new WorkItemAggregationConflictError("WORK_ITEM_RESULT_REVISION_CONFLICT", "Re-finalization must use the current corrected result payload.");
             }
           }
