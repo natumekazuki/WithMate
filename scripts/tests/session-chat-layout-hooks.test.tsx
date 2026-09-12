@@ -22,9 +22,9 @@ import type { SessionSidePane } from "../../src/session-side-pane.js";
 
 // @test-value v2
 // kind = "invariant"
-// claim = "高さclamp helperは、呼び出し側が指定した比率上限と中央領域の最小高を優先する"
+// claim = "高さclamp helperは、呼び出し側の比率上限と中央領域5%を残す残余高の小さい方を優先する"
 // oracle = { type = "contract", ref = "ActionDock layout height bounds" }
-// fault = "比率上限または中央領域上限の低い方を使わず、要求値をそのまま返す"
+// fault = "比率上限または中央領域5%・Header・splitterを残す上限を使わず、要求値をそのまま返す"
 // observable = "clampSessionVerticalDockHeightが返すActionDock高さ"
 // observation_boundary = "component-behavior"
 // scope = "session-action-dock-height-clamp-helper"
@@ -41,12 +41,12 @@ test("vertical dock height は比率上限と中央領域の最小高を優先�
     oppositeDockHeight: 64,
   }), 1600);
   assert.equal(clampSessionVerticalDockHeight({
-    requestedHeight: 180,
+    requestedHeight: 500,
     layoutHeight: 420,
     minHeight: 180,
-    maxHeightRatio: 0.8,
+    maxHeightRatio: 0.95,
     oppositeDockHeight: 64,
-  }), 36);
+  }), 295);
 });
 
 // @test-value v2
@@ -59,7 +59,7 @@ test("vertical dock height は比率上限と中央領域の最小高を優先�
 // scope = "session-action-dock-layout-bounds"
 // lifecycle = "permanent"
 // impact = "Window resizeや小さいWindowでdockと中央surfaceの境界がずれる"
-// distinction = "80%上限とは分離して、実DOMのbox model計測値をclampへ渡す境界を検証する"
+// distinction = "95%上限とは分離して、実DOMのbox model計測値をclampへ渡す境界を検証する"
 // @end-test-value
 test("vertical dock layout は border-box から padding と border を除いた高さを使う", () => {
   const previousWindow = globalThis.window;
@@ -90,9 +90,9 @@ test("vertical dock layout は border-box から padding と border を除いた
       requestedHeight: 600,
       layoutHeight: bounds.height,
       minHeight: 180,
-      maxHeightRatio: 1,
+      maxHeightRatio: 0.5,
       oppositeDockHeight: 64,
-    }), 191);
+    }), 287.5);
   } finally {
     dom.window.close();
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
@@ -241,7 +241,7 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
 
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 500));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 31));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "1580px");
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "1772.25px");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 1800));
     assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "260px");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 1800));

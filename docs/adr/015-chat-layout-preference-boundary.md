@@ -26,7 +26,7 @@
 - narrow layout では priority による全長配置を適用せず、active side pane と中央 surface の縦 stack を維持する
 - Header は1行分の固定高とし、高さ変更は受け付けない
 - ActionDock は完全には非表示にせず、compact state でも draft、添付数、run 状態、末尾移動、Send / Cancel に必要な最小情報を残す
-- ActionDock の高さは layout 高の80%を上限とし、中央の chat / preview surface の最小高を優先する。expanded 時は上部操作列と下部設定・送信列を固定し、中央の textarea 領域だけを伸縮させる
+- ActionDock の高さは layout 高の95%を上限とし、中央の chat / preview surface を layout 高の5%程度残す。expanded 時は上部操作列と下部設定・送信列を固定し、中央の textarea 領域だけを伸縮させる
 
 ## Alternatives
 
