@@ -22,24 +22,17 @@ import type { SessionSidePane } from "../../src/session-side-pane.js";
 
 // @test-value v2
 // kind = "invariant"
-// claim = "高さclamp helperは、呼び出し側の比率上限と中央領域5%を残す残余高の小さい方を優先する"
+// claim = "高さclamp helperは、中央領域5%とHeader・splitterを残す残余高を上限にする"
 // oracle = { type = "contract", ref = "ActionDock layout height bounds" }
-// fault = "比率上限または中央領域5%・Header・splitterを残す上限を使わず、要求値をそのまま返す"
+// fault = "中央領域5%・Header・splitterを残す残余高上限を使わず、要求値をそのまま返す"
 // observable = "clampSessionVerticalDockHeightが返すActionDock高さ"
 // observation_boundary = "component-behavior"
 // scope = "session-action-dock-height-clamp-helper"
 // lifecycle = "permanent"
 // impact = "高さ計算が上限を越え、中央surfaceまたはsplitterの操作領域を圧迫する"
-// distinction = "ActionDockの実設定値ではなく、clamp helperへ渡された境界値の組み合わせを直接検証する"
+// distinction = "CSS宣言やpointer経路とは分け、helperへHeader・splitterを含む中央5%残余境界を渡して直接検証する"
 // @end-test-value
-test("vertical dock height は比率上限と中央領域の最小高を優先する", () => {
-  assert.equal(clampSessionVerticalDockHeight({
-    requestedHeight: 1800,
-    layoutHeight: 2000,
-    minHeight: 180,
-    maxHeightRatio: 0.8,
-    oppositeDockHeight: 64,
-  }), 1600);
+test("vertical dock height は中央領域5%と Header・splitter の高さを残す", () => {
   assert.equal(clampSessionVerticalDockHeight({
     requestedHeight: 500,
     layoutHeight: 420,
@@ -54,12 +47,12 @@ test("vertical dock height は比率上限と中央領域の最小高を優先�
 // claim = "ActionDockの利用可能高はlayoutのpaddingとborderを除いたcontent高から計算する"
 // oracle = { type = "contract", ref = "ActionDock content layout bounds" }
 // fault = "border-box全体をlayout高として扱い、paddingやborderの分だけActionDockが画面外へ出るか中央領域を圧迫する"
-// observable = "measureSessionVerticalDockLayoutBoundsとclampSessionVerticalDockHeightの返却値"
+// observable = "measureSessionVerticalDockLayoutBoundsの返却値"
 // observation_boundary = "component-behavior"
 // scope = "session-action-dock-layout-bounds"
 // lifecycle = "permanent"
 // impact = "Window resizeや小さいWindowでdockと中央surfaceの境界がずれる"
-// distinction = "95%上限とは分離して、実DOMのbox model計測値をclampへ渡す境界を検証する"
+// distinction = "高さclamp helperの上限計算とは分け、実DOMのbox modelからcontent高を測定する境界だけを検証する"
 // @end-test-value
 test("vertical dock layout は border-box から padding と border を除いた高さを使う", () => {
   const previousWindow = globalThis.window;
@@ -86,13 +79,6 @@ test("vertical dock layout は border-box から padding と border を除いた
 
     const bounds = measureSessionVerticalDockLayoutBounds(layout);
     assert.deepEqual(bounds, { top: 31, bottom: 606, height: 575 });
-    assert.equal(clampSessionVerticalDockHeight({
-      requestedHeight: 600,
-      layoutHeight: bounds.height,
-      minHeight: 180,
-      maxHeightRatio: 0.5,
-      oppositeDockHeight: 64,
-    }), 287.5);
   } finally {
     dom.window.close();
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
