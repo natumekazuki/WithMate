@@ -33,21 +33,16 @@ export type AuxiliaryWorkspace = {
   detailLoading: boolean;
   detailError: Error | null;
   target: AuxiliaryWorkspaceTarget;
-  isExpanded: boolean;
   widthRatio: number;
   setWidthRatio(ratio: number): void;
   selectSession(id: string | null): void;
   setTarget(target: AuxiliaryWorkspaceTarget): void;
-  collapse(): void;
-  expand(): void;
   addSession(saved: AuxiliarySession): void;
   refreshSummaries(): Promise<void>;
   getBinding(id: string | null): AuxiliarySessionBinding;
 };
 
-const DEFAULT_WIDTH_RATIO = 0.5;
-export const MIN_AUXILIARY_WIDTH_RATIO = 0.05;
-const MAX_WIDTH_RATIO = 0.8;
+const DEFAULT_WIDTH_RATIO = 0;
 const PREFS_KEY_PREFIX = "withmate:auxiliary-workspace:";
 
 type WorkspacePrefs = { selectedId: string | null; widthRatio: number };
@@ -85,7 +80,7 @@ function sortByCreation(summaries: AuxiliarySessionSummary[]): AuxiliarySessionS
 
 export function clampAuxiliaryWidthRatio(ratio: number): number {
   if (!Number.isFinite(ratio)) return DEFAULT_WIDTH_RATIO;
-  return Math.min(MAX_WIDTH_RATIO, Math.max(MIN_AUXILIARY_WIDTH_RATIO, ratio));
+  return Math.min(1, Math.max(0, ratio));
 }
 
 export function useAuxiliaryWorkspace(input: {
@@ -104,7 +99,6 @@ export function useAuxiliaryWorkspace(input: {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<Error | null>(null);
   const [target, setTargetState] = useState<AuxiliaryWorkspaceTarget>("main");
-  const [isExpanded, setIsExpanded] = useState(false);
   const prefsRef = useRef<WorkspacePrefs>(parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO });
   const widthRatioRef = useRef(prefsRef.current.widthRatio);
   const [widthRatio, setWidthRatioState] = useState(widthRatioRef.current);
@@ -179,7 +173,6 @@ export function useAuxiliaryWorkspace(input: {
     summariesRef.current = [];
     setSummaries([]);
     setTargetState("main");
-    setIsExpanded(false);
     detailsRef.current.clear();
     bindingsRef.current.clear();
     detailMutationEpochRef.current.clear();
@@ -310,19 +303,6 @@ export function useAuxiliaryWorkspace(input: {
 
   const setTarget = useCallback((next: AuxiliaryWorkspaceTarget) => {
     setTargetState(next);
-    if (next === "auxiliary" && summaries.length > 0) {
-      setIsExpanded(true);
-      if (!selectedIdRef.current) selectSession(summaries[0].id);
-    }
-  }, [selectSession, summaries]);
-
-  const collapse = useCallback(() => {
-    setIsExpanded(false);
-    setTargetState("main");
-  }, []);
-
-  const expand = useCallback(() => {
-    setIsExpanded(true);
   }, []);
 
   const addSession = useCallback((saved: AuxiliarySession) => {
@@ -339,8 +319,6 @@ export function useAuxiliaryWorkspace(input: {
     selectedIdRef.current = saved.id;
     setSelectedId(saved.id);
     setSelectedSession(saved);
-    setTargetState("auxiliary");
-    setIsExpanded(true);
     persistPrefs({ selectedId: saved.id });
   }, [persistPrefs]);
 
@@ -400,15 +378,12 @@ export function useAuxiliaryWorkspace(input: {
     detailLoading,
     detailError,
     target,
-    isExpanded,
     widthRatio,
     setWidthRatio,
     selectSession,
     setTarget,
-    collapse,
-    expand,
     addSession,
     refreshSummaries,
     getBinding,
-  }), [addSession, collapse, detailError, detailLoading, error, expand, getBinding, isExpanded, loading, refreshSummaries, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, widthRatio]);
+  }), [addSession, detailError, detailLoading, error, getBinding, loading, refreshSummaries, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, widthRatio]);
 }

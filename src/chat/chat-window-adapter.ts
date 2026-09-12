@@ -271,6 +271,7 @@ export type LiveSessionSplitterProps = {
   isContextRailResizing: boolean;
   isContextRailVisible: boolean;
   onStartContextRailResize?: PointerEventHandler<HTMLButtonElement>;
+  onKeyDownContextRailResize?: import("react").KeyboardEventHandler<HTMLButtonElement>;
   onToggleContextRailVisibility: MouseEventHandler<HTMLButtonElement>;
 };
 
@@ -410,12 +411,18 @@ export function buildLiveSessionSplitterProps(
   isActive: boolean;
   isPanelExpanded: boolean;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  onKeyDown?: import("react").KeyboardEventHandler<HTMLButtonElement>;
+  title: string;
+  ariaLabel: string;
   onTogglePanel: MouseEventHandler<HTMLButtonElement>;
 } {
   return {
     isActive: input.isContextRailResizing,
     isPanelExpanded: input.isContextRailVisible,
     onPointerDown: input.onStartContextRailResize,
+    onKeyDown: input.onKeyDownContextRailResize,
+    title: "クリックで右ペインを折りたたみ、ドラッグまたは矢印キーでサイズを調整",
+    ariaLabel: input.isContextRailVisible ? "右ペインを折りたたむ" : "右ペインのサイズを調整",
     onTogglePanel: input.onToggleContextRailVisibility,
   };
 }

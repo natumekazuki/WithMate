@@ -197,6 +197,7 @@ export type CompanionChatProjectionInput = {
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
+  onKeyDownContextRailResize?: import("react").KeyboardEventHandler<HTMLButtonElement>;
   onStartActionDockResize: PointerEventHandler<HTMLButtonElement>;
   onToggleActionDock: () => void;
   onToggleContextRailVisibility: () => void;
@@ -370,6 +371,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isContextRailResizing: input.isContextRailResizing,
       isContextRailVisible: input.isContextRailVisible,
       onStartContextRailResize: input.onStartContextRailResize,
+      onKeyDownContextRailResize: input.onKeyDownContextRailResize,
       onToggleContextRailVisibility: input.onToggleContextRailVisibility,
     },
   });

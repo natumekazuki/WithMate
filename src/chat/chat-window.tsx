@@ -7,13 +7,14 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type KeyboardEventHandler,
   type MouseEventHandler,
   type PointerEventHandler,
   type ReactNode,
   type SetStateAction,
 } from "react";
 
-import { MIN_AUXILIARY_WIDTH_RATIO, clampAuxiliaryWidthRatio } from "./use-auxiliary-workspace.js";
+import { clampAuxiliaryWidthRatio } from "./use-auxiliary-workspace.js";
 
 import type { MessageViewMode } from "../MessageRichText.js";
 import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
@@ -108,75 +109,66 @@ export type ConcurrentChatWindowProps = {
   selectedAuxiliaryId: string | null;
   auxiliaryItems: readonly SessionSwitcherOption[];
   target: "main" | "auxiliary";
-  isExpanded: boolean;
   widthRatio: number;
   scrollToLatestOnSend?: boolean;
   onSelectAuxiliary: (id: string) => void;
   onTargetChange: (target: "main" | "auxiliary") => void;
-  onCollapse: () => void;
-  onExpand: () => void;
   onWidthRatioChange: (ratio: number) => void;
   loading?: boolean;
   error?: string | null;
 };
 
-const COLLAPSED_AUXILIARY_WIDTH_RATIO = MIN_AUXILIARY_WIDTH_RATIO;
-
 export function ConcurrentChatSplitter({
-  isExpanded,
   widthRatio,
-  onCollapse,
-  onExpand,
   onWidthRatioChange,
-}: Pick<ConcurrentChatWindowProps, "isExpanded" | "widthRatio" | "onCollapse" | "onExpand" | "onWidthRatioChange">) {
-  const draggedRef = useRef(false);
-  const startRef = useRef<{ x: number; width: number; widthRatio: number; isExpanded: boolean } | null>(null);
+}: Pick<ConcurrentChatWindowProps, "widthRatio" | "onWidthRatioChange">) {
+  const cleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => cleanupRef.current?.(), []);
   const handlePointerDown: PointerEventHandler<HTMLButtonElement> = (event) => {
     if (event.button !== 0) return;
     const parent = event.currentTarget.parentElement;
     if (!parent) return;
-    startRef.current = {
-      x: event.clientX,
-      width: parent.getBoundingClientRect().width,
-      widthRatio: isExpanded ? widthRatio : COLLAPSED_AUXILIARY_WIDTH_RATIO,
-      isExpanded,
-    };
-    draggedRef.current = false;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    cleanupRef.current?.();
+    const width = parent.getBoundingClientRect().width - event.currentTarget.getBoundingClientRect().width;
+    const startX = event.clientX;
+    const pointerId = event.pointerId;
+    let dragged = false;
     const handleMove = (moveEvent: PointerEvent) => {
-      const start = startRef.current;
-      if (!start || start.width <= 0) return;
-      const delta = moveEvent.clientX - start.x;
-      if (Math.abs(delta) > 4) draggedRef.current = true;
-      if (!start.isExpanded && draggedRef.current) {
-        onExpand();
-        start.isExpanded = true;
-      }
-      onWidthRatioChange(clampAuxiliaryWidthRatio(start.widthRatio - delta / start.width));
+      if (moveEvent.pointerId !== pointerId || width <= 0) return;
+      const delta = moveEvent.clientX - startX;
+      if (Math.abs(delta) > 4) dragged = true;
+      if (dragged) onWidthRatioChange(clampAuxiliaryWidthRatio(widthRatio - delta / width));
     };
-    const handleUp = () => {
-      startRef.current = null;
+    const cleanup = () => {
       window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointerup", handleEnd);
+      window.removeEventListener("pointercancel", handleEnd);
+      cleanupRef.current = null;
     };
+    const handleEnd = (endEvent: PointerEvent) => {
+      if (endEvent.pointerId === pointerId) cleanup();
+    };
+    cleanupRef.current = cleanup;
     window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp, { once: true });
-  };
-  const handleTogglePanel: MouseEventHandler<HTMLButtonElement> = () => {
-    if (!draggedRef.current) onCollapse();
-    draggedRef.current = false;
+    window.addEventListener("pointerup", handleEnd);
+    window.addEventListener("pointercancel", handleEnd);
   };
 
   return (
     <ChatDockSplitter
       edge="right"
       className="concurrent-chat-splitter"
-      isPanelExpanded={isExpanded}
+      isPanelExpanded={widthRatio > 0}
       onPointerDown={handlePointerDown}
-      onTogglePanel={handleTogglePanel}
-      ariaLabel={isExpanded ? "Auxiliaryを折りたたむ" : "Auxiliaryの幅を調整"}
+      onTogglePanel={() => onWidthRatioChange(0)}
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        onWidthRatioChange(clampAuxiliaryWidthRatio(widthRatio + (event.key === "ArrowLeft" ? 0.02 : -0.02)));
+      }}
+      ariaLabel={widthRatio > 0 ? "Auxiliaryを折りたたむ" : "Auxiliaryの幅を調整"}
       ariaControls="session-auxiliary-chat-pane"
-      title={isExpanded ? "クリックでAuxiliaryを折りたたみ、ドラッグでサイズを調整" : "Auxiliaryの幅をドラッグで調整"}
+      title="クリックでAuxiliaryを折りたたみ、ドラッグでサイズを調整"
     />
   );
 }
@@ -219,6 +211,7 @@ export type ChatDockSplitterProps = {
   canCollapse?: boolean;
   onActivate?: () => void;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  onKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
   onTogglePanel?: MouseEventHandler<HTMLButtonElement>;
   ariaLabel?: string;
   ariaControls?: string;
@@ -624,7 +617,7 @@ export function ChatWindow({
                   && concurrentChats.target === "main",
                 messageViewMode,
               }}
-              enabled={concurrentChats.isExpanded || concurrentChats.target === "main"}
+              enabled={concurrentChats.widthRatio < 1 || concurrentChats.target === "main"}
               api={concurrentChats.api}
               liveRun={concurrentChats.mainLiveRun}
               stateCache={conversationStateCacheRef.current}
@@ -646,7 +639,7 @@ export function ChatWindow({
           {concurrentChats.auxiliaryItems.length > 0 ? (
             <SessionSwitcher
               ariaLabel="Auxiliary会話切り替え"
-              className={`concurrent-chat-session-switcher${concurrentChats.isExpanded ? "" : " is-collapsed"}`}
+              className="concurrent-chat-session-switcher"
               options={concurrentChats.auxiliaryItems}
               selectedId={concurrentChats.selectedAuxiliaryId ?? ""}
               searchable
@@ -676,7 +669,7 @@ export function ChatWindow({
                       && concurrentChats.target === "auxiliary",
                     messageViewMode,
                   }}
-                  enabled={concurrentChats.isExpanded || concurrentChats.target === "auxiliary"}
+                  enabled={concurrentChats.widthRatio > 0 || concurrentChats.target === "auxiliary"}
                   api={concurrentChats.api}
                   liveRun={concurrentChats.auxiliaryLiveRun}
                   stateCache={conversationStateCacheRef.current}
@@ -694,16 +687,13 @@ export function ChatWindow({
       ) : null}
       auxiliarySplitter={concurrentChats ? (
         <ConcurrentChatSplitter
-          isExpanded={concurrentChats.isExpanded}
           widthRatio={concurrentChats.widthRatio}
-          onCollapse={concurrentChats.onCollapse}
-          onExpand={concurrentChats.onExpand}
           onWidthRatioChange={concurrentChats.onWidthRatioChange}
         />
       ) : null}
       isAuxiliaryVisible={Boolean(concurrentChats)}
       auxiliaryWidthRatio={concurrentChats
-        ? (concurrentChats.isExpanded ? concurrentChats.widthRatio : COLLAPSED_AUXILIARY_WIDTH_RATIO)
+        ? concurrentChats.widthRatio
         : undefined}
       concurrentTarget={concurrentChats?.target}
       actionDock={(
@@ -773,6 +763,7 @@ export function ChatDockSplitter({
   canCollapse = true,
   onActivate,
   onPointerDown,
+  onKeyDown,
   onTogglePanel,
   ariaLabel,
   ariaControls,
@@ -846,9 +837,7 @@ export function ChatDockSplitter({
     if (!start) {
       return;
     }
-    const distance = edge === "left" || edge === "right"
-      ? Math.abs(event.clientX - start.x)
-      : Math.abs(event.clientY - start.y);
+    const distance = Math.max(Math.abs(event.clientX - start.x), Math.abs(event.clientY - start.y));
     if (distance > 4) {
       draggedRef.current = true;
     }
@@ -880,6 +869,10 @@ export function ChatDockSplitter({
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerCancel}
       onClick={handleClick}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (event.defaultPrevented) onActivate?.();
+      }}
       aria-label={resolvedAriaLabel}
       aria-controls={effectiveTogglePanel ? (ariaControls ?? controlledId) : undefined}
       aria-expanded={effectiveTogglePanel ? isPanelExpanded : undefined}

@@ -753,9 +753,9 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "閉じた左右ペインをドラッグして開くと、開始位置からの移動量に応じて幅が連続し、次の微小ドラッグでも現在の小さい幅を維持する"
+// claim = "左右ペインは排他せず、幅0まで縮小した後も開始位置からの移動量で連続的に再展開できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session dock layout" }
-// fault = "閉じたペインの初回ドラッグを絶対座標と固定最小幅で計算して、最小幅へ瞬間移動する"
+// fault = "閉じたペインの初回ドラッグを絶対座標または固定最小幅で計算して、最小幅へ瞬間移動するか、反対側ペインを閉じる"
 // observable = "session workbenchのside pane width styleとactive pane"
 // observation_boundary = "component-behavior"
 // scope = "useSessionSidePanes"
@@ -763,7 +763,7 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
 // impact = "微小なドラッグでも意図しない大幅展開を避け、ペイン操作の連続性を保つ"
 // distinction = "typecheckや既存の開いたペインのresize検証では、閉じた状態からの開始幅と次回ドラッグのclampを観測できない"
 // @end-test-value
-test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右ペインを排他的に切り替える", async () => {
+test("useSessionSidePanes は左右ペインを独立して縮小・再展開する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -795,8 +795,8 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
       handleStartContextRailResize,
       handleStartFilesPaneResize,
       handleShowContextRail,
-      handleToggleContextRailVisibility,
-      handleToggleFilesPaneVisibility,
+      handleCollapseContextRail,
+      handleCollapseFilesPane,
     } = useSessionSidePanes({
       ownerKey: "session-1",
       initialSidePane,
@@ -815,7 +815,7 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
         {
           type: "button",
           onPointerDown: handleStartContextRailResize,
-          onClick: handleToggleContextRailVisibility,
+          onClick: handleCollapseContextRail,
           "data-testid": "splitter",
         },
         "toggle",
@@ -824,7 +824,6 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
         "button",
         {
           type: "button",
-          onClick: handleToggleFilesPaneVisibility,
           "data-testid": "files-toggle",
         },
         "files",
@@ -834,7 +833,7 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
         {
           type: "button",
           onPointerDown: handleStartFilesPaneResize,
-          onClick: handleToggleFilesPaneVisibility,
+          onClick: handleCollapseFilesPane,
           "data-testid": "files-splitter",
         },
         "files splitter",
@@ -914,9 +913,7 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     assert.equal(visibility.textContent, "hidden");
 
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1180));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1180));
-    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    await act(async () => showContext.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     assert.equal(visibility.textContent, "visible");
 
     await act(async () => {
@@ -924,18 +921,15 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     });
     assert.equal(visibility.textContent, "visible");
 
-    await act(async () => filesToggle.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(activePane.textContent, "files");
-    assert.equal(visibility.textContent, "hidden");
     await act(async () => dispatchPointerEvent(dom, filesSplitter, "pointerdown", 320));
     assert.equal(resizing.textContent, "files");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 700));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 700));
     await act(async () => filesSplitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(activePane.textContent, "files");
-    assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "700px");
+    assert.equal(activePane.textContent, "both");
+    assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "380px");
     await act(async () => showContext.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(activePane.textContent, "context");
+    assert.equal(activePane.textContent, "both");
     assert.equal(visibility.textContent, "visible");
 
     viewportWidth = 1200;
@@ -944,19 +938,20 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     await act(async () => {
       narrowPointerDown = dispatchPointerEvent(dom, splitter, "pointerdown", 780);
     });
-    assert.equal(resizing.textContent, "idle");
-    assert.equal(narrowPointerDown.defaultPrevented, false);
-    assert.equal(dom.window.document.body.style.cursor, "");
-    assert.equal(dom.window.document.body.style.userSelect, "");
+    assert.equal(resizing.textContent, "context");
+    assert.equal(narrowPointerDown.defaultPrevented, true);
+    assert.equal(dom.window.document.body.style.cursor, "row-resize");
+    assert.equal(dom.window.document.body.style.userSelect, "none");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 740));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 740));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     assert.equal(visibility.textContent, "hidden");
 
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 780));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 780));
-    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(visibility.textContent, "visible");
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 740));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 740));
+    assert.equal(activePane.textContent, "both");
 
     viewportWidth = 1400;
     workbenchWidth = 1376;
@@ -972,7 +967,7 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 916));
     await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     assert.equal(visibility.textContent, "visible");
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "460px");
+    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "80px");
 
     viewportWidth = 1600;
     workbenchWidth = 1600;
@@ -983,21 +978,21 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
 
     assert.equal(visibility.textContent, "visible");
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "460px");
+    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "120px");
 
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1140));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 200));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 200));
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "800px");
+    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "1060px");
 
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1500));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1500));
     await new Promise((resolve) => setTimeout(resolve, 120));
     await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(activePane.textContent, "none");
+    assert.equal(activePane.textContent, "files");
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1500));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 1490));
-    assert.equal(activePane.textContent, "context");
+    assert.equal(activePane.textContent, "both");
     assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "10px");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1490));
 
@@ -1006,7 +1001,7 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "10px");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1491));
 
-    assert.deepEqual(sidePaneChanges, ["none", "context", "files", "context", "none", "context", "none", "context"]);
+    assert.deepEqual(sidePaneChanges, ["none", "context", "both", "files", "both", "files", "both"]);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

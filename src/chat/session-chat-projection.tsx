@@ -218,7 +218,9 @@ export type AgentSessionChatProjectionInput = {
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
+  onKeyDownContextRailResize?: import("react").KeyboardEventHandler<HTMLButtonElement>;
   onStartFilesPaneResize: PointerEventHandler<HTMLButtonElement>;
+  onKeyDownFilesPaneResize?: import("react").KeyboardEventHandler<HTMLButtonElement>;
   onStartActionDockResize: PointerEventHandler<HTMLButtonElement>;
   onToggleActionDock: () => void;
   onToggleContextRailVisibility: () => void;
@@ -401,6 +403,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isContextRailResizing: input.isContextRailResizing,
       isContextRailVisible: input.isContextRailVisible,
       onStartContextRailResize: input.onStartContextRailResize,
+      onKeyDownContextRailResize: input.onKeyDownContextRailResize,
       onToggleContextRailVisibility: input.onToggleContextRailVisibility,
     },
   });
@@ -506,9 +509,10 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isActive: input.isFilesPaneResizing,
       isPanelExpanded: input.isFilesPaneVisible,
       onPointerDown: input.onStartFilesPaneResize,
+      onKeyDown: input.onKeyDownFilesPaneResize,
       onTogglePanel: input.onToggleFilesPaneVisibility,
-      ariaLabel: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
-      title: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
+      ariaLabel: input.isFilesPaneVisible ? "File Explorer を折りたたむ" : "File Explorer のサイズを調整",
+      title: "クリックでFile Explorerを折りたたみ、ドラッグまたは矢印キーでサイズを調整",
     },
     isLeftPaneVisible: input.isFilesPaneVisible,
     isRightPaneVisible: input.isContextRailVisible,

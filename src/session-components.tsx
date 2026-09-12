@@ -1005,11 +1005,11 @@ export function SessionChatScreen({
           {isAuxiliaryVisible ? (
             <div
               className="session-concurrent-chat-columns"
-              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0.05, 1 - auxiliaryWidthRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0.05, auxiliaryWidthRatio)}fr)` }}
+              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - auxiliaryWidthRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0, auxiliaryWidthRatio)}fr)` }}
             >
-              <div className="session-concurrent-chat-column session-concurrent-chat-main">{messageColumn}</div>
+              <div className={`session-concurrent-chat-column session-concurrent-chat-main${auxiliaryWidthRatio >= 1 ? " is-zero-width" : ""}`}>{messageColumn}</div>
               {auxiliarySplitter}
-              <div className="session-concurrent-chat-column session-concurrent-chat-auxiliary">{auxiliaryMessageColumn}</div>
+              <div className={`session-concurrent-chat-column session-concurrent-chat-auxiliary${auxiliaryWidthRatio <= 0 ? " is-zero-width" : ""}`}>{auxiliaryMessageColumn}</div>
             </div>
           ) : messageColumn}
         </div>

@@ -82,6 +82,18 @@ test("selection action overlay は Session layout の stacking context 内で su
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "左右ペインは独立したサイズtrackを使い、狭い画面では同じサイズを縦stackと縦dragの導線へ反映する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+// fault = "narrow CSSが固定高でhookのサイズを無視する、または縦drag用の操作領域が失われる"
+// observable = "左右track、hidden内容の可視性、narrow grid配置とrow-resize cursorのCSS宣言"
+// observation_boundary = "declaration"
+// scope = "session-side-pane-responsive-layout"
+// lifecycle = "permanent"
+// impact = "幅0からの操作でペインを復元できない、または左右を同時表示できない"
+// distinction = "hookのpointer testでは評価しないCSS gridへのサイズ反映を確認する。実機の操作感は別途確認する"
+// @end-test-value
 test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉する", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
@@ -95,7 +107,7 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
   );
   assert.match(
     stylesSource,
-    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-dock-splitter\.edge-left,[\s\S]*?\.session-dock-splitter\.edge-right\s*{[\s\S]*?display:\s*block;[\s\S]*?cursor:\s*pointer;[\s\S]*?}/,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-dock-splitter\.edge-left,[\s\S]*?\.session-dock-splitter\.edge-right\s*{[\s\S]*?display:\s*block;[\s\S]*?cursor:\s*row-resize;[\s\S]*?}/,
   );
   assert.match(
     stylesSource,
@@ -107,11 +119,7 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
   );
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.layout-priority-side-pane\.is-left-pane-visible,[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-pane"\s*"left-split"\s*"main"\s*"right-split"\s*"right-pane"\s*"bottom-split"\s*"action-dock";/,
-  );
-  assert.match(
-    stylesSource,
-    /\.session-chat-layout\.layout-priority-side-pane\.is-right-pane-visible,[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-pane"\s*"left-split"\s*"main"\s*"right-split"\s*"right-pane"\s*"bottom-split"\s*"action-dock";/,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?grid-template-rows:\s*auto auto var\(--session-left-pane-track-width\) var\(--session-dock-splitter-size\) minmax\(0, 1fr\)\s*var\(--session-dock-splitter-size\) var\(--session-right-pane-track-width\)/,
   );
 });
 

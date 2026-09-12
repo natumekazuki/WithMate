@@ -1,4 +1,4 @@
-export const SESSION_SIDE_PANES = ["files", "context", "none"] as const;
+export const SESSION_SIDE_PANES = ["files", "context", "both", "none"] as const;
 
 export type SessionSidePane = (typeof SESSION_SIDE_PANES)[number];
 

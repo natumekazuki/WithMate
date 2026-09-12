@@ -196,20 +196,19 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - 既定では左右 pane と splitter を Window 上端から下端まで通し、Header と ActionDock は中央列を占有する
   - 上下 splitter を操作した後は full-width Header / ActionDock を優先し、左右 splitter を操作すると左右 pane 優先へ戻す
   - ActionDock を expanded から閉じた時は、優先度を左右 pane 優先へ戻す
-  - File Explorer と Context pane は左右を同時には表示しない
-  - Header、ActionDock、左右 pane は対応する splitter の click で切り替える。左右 pane と ActionDock は最小化中も drag でき、表示中のサイズから移動量に応じて連続的に広げる。最小化からの drag で既定の最小サイズへ跳ねない
+  - HeaderとActionDockのclickによる開閉とサイズ制約は維持する。左右paneは独立して同時表示でき、clickは対象サイズを0にする。左右paneのdragは開始時のサイズに移動量を加減し、0からも連続的に広げる。固定pxの最小幅と割合上限は設けず、反対側のpaneとsplitterを除いた利用可能領域で止める
   - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
   - Header、ActionDock、side pane、layout priority の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
   - title 編集などの強制表示は保存済み preference を変更しない
   - wide layout では中央 surface を layout 高の5%程度残し、ActionDock の高さは layout 高の95%までとする。narrow layout ではこの95%／5%計算を使わず、active side pane と work surface の縦 stack を維持する
   - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
-  - splitter の click で対応する pane を切り替える。wide layout では左右 splitter の drag による幅調整も受け付ける
+  - 左右splitterのclickは縮小専用とし、dragと矢印キーでサイズを調整する。幅0でもsplitterの操作領域を残す
   - pane を隠した時も splitter は再表示 affordance として残す
-  - side pane の表示状態は `files | context | none` の単一値として app 共通設定へ保存し、初期値は `none` とする。新しく開く Window は利用可能な永続値を初期値として使う
+  - side pane の表示状態は `files | context | both | none` の値として app 共通設定へ保存し、初期値は `none` とする。新しく開く Window は利用可能な永続値を初期値として使う
   - 開いている Window の表示状態は renderer local state とし、別 Window での切り替えには追従させない
   - `side-pane-first` では side pane が Header と ActionDock の外側を縦断し、`dock-first` では side pane が Header と ActionDock の間で中央 surface と並ぶ
-  - viewport が `1400px` 未満の narrow width では active side pane と work surface を縦 stack にし、splitter の click 操作だけを維持する。`1400px` 以上では左右 pane の drag と各 splitter の click を使う
+  - viewport が `1400px` 未満では表示中の左右paneとwork surfaceを縦stackにし、左右splitterは縦方向のdragと上下矢印キーで高さを調整する。`1400px` 以上では横方向のdragと左右矢印キーで幅を調整する。サイズはWindow内で保持し、利用可能領域を超えた場合だけ補正する
   - current minimum は split-screen を考慮し、`900px` 台の window 幅でも縦 stack のまま到達性を維持する
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする

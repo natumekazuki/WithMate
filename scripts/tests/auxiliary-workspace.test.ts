@@ -176,30 +176,40 @@ test("stale summary responseはaddSessionを巻き戻さない", async () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Main対象への切替と折りたたみはAuxiliary選択と幅を保持し、明示的な展開で戻せる"
-// oracle = { type = "contract", ref = "issue-710-collapse-restore" }
-// fault = "Mainへ戻す操作で選択IDまたは再展開可能な状態を失う、または折りたたみ操作が暗黙に再展開する"
-// observable = "hookのtarget、isExpanded、selectedId、widthRatio"
+// claim = "Main/Auxiliary対象の切替とAuxiliary追加は選択中の幅を変更せず、幅0は同一親の再マウントでも復元する"
+// oracle = { type = "contract", ref = "issue-710-auxiliary-width-target-separation" }
+// fault = "対象切替や新規追加で幅が暗黙に変わる、幅0から対象切替だけで再展開する、または親セッション再マウントで幅0を失う"
+// observable = "hookのtarget、selectedId、widthRatioと親セッション切替後のwidthRatio"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-workspace-layout"
 // lifecycle = "permanent"
 // @end-test-value
-test("Main targetとcollapseは選択・幅を保ったまま明示的に再展開できる", async () => {
+test("対象切替は選択・幅を変更せず、Auxiliaryの幅0を保持する", async () => {
   const a = session("a", "2026-01-01");
+  const b = session("b", "2026-01-02");
   const api: AuxiliaryWorkspaceApi = {
-    listAuxiliarySessions: async () => [a],
+    listAuxiliarySessions: async (parentSessionId) => parentSessionId === "parent-1" ? [a] : [],
     getAuxiliarySession: async () => a,
   };
   const view = setup(api);
   await view.render();
   await act(async () => { view.current.selectSession("a"); view.current.setWidthRatio(0.65); view.current.setTarget("auxiliary"); });
-  await act(async () => { view.current.setTarget("main"); view.current.collapse(); });
+  await act(async () => { view.current.setTarget("main"); });
   assert.equal(view.current.selectedId, "a");
   assert.equal(view.current.target, "main");
-  assert.equal(view.current.isExpanded, false);
-  await act(async () => { view.current.expand(); });
-  assert.equal(view.current.isExpanded, true);
   assert.equal(view.current.widthRatio, 0.65);
+  await act(async () => { view.current.setWidthRatio(0); view.current.setTarget("auxiliary"); });
+  assert.equal(view.current.target, "auxiliary");
+  assert.equal(view.current.widthRatio, 0);
+  await act(async () => { view.current.setTarget("main"); });
+  assert.equal(view.current.widthRatio, 0);
+  await act(async () => { view.current.addSession(b); });
+  assert.equal(view.current.selectedId, "b");
+  assert.equal(view.current.target, "main");
+  assert.equal(view.current.widthRatio, 0);
+  await view.render("parent-2");
+  await view.render("parent-1");
+  assert.equal(view.current.widthRatio, 0);
   await view.unmount();
 });
 

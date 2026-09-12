@@ -4457,6 +4457,12 @@ button:disabled {
   overflow: hidden;
 }
 
+@media (min-width: 901px) {
+  .session-concurrent-chat-column.is-zero-width {
+    visibility: hidden;
+  }
+}
+
 .concurrent-chat-column-content {
   position: relative;
   display: grid;
@@ -4544,10 +4550,6 @@ button:disabled {
 .concurrent-chat-session-switcher {
   gap: 20px;
   padding: 10px 16px;
-}
-
-.concurrent-chat-session-switcher.is-collapsed {
-  display: none;
 }
 
 .session-switcher-button {
@@ -13127,8 +13129,8 @@ button:disabled {
   .session-chat-layout.layout-priority-dock {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows:
-      auto auto 0px var(--session-dock-splitter-size) minmax(220px, 1fr)
-      var(--session-dock-splitter-size) 0px auto auto;
+      auto auto var(--session-left-pane-track-width) var(--session-dock-splitter-size) minmax(0, 1fr)
+      var(--session-dock-splitter-size) var(--session-right-pane-track-width) auto auto;
     grid-template-areas:
       "header"
       "top-split"
@@ -13144,64 +13146,10 @@ button:disabled {
     scrollbar-gutter: stable;
   }
 
-  .session-chat-layout.layout-priority-side-pane.is-left-pane-visible,
-  .session-chat-layout.layout-priority-dock.is-left-pane-visible {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows:
-      auto auto minmax(300px, 42vh) var(--session-dock-splitter-size) minmax(220px, 1fr)
-      var(--session-dock-splitter-size) 0px auto auto;
-    grid-template-areas:
-      "header"
-      "top-split"
-      "left-pane"
-      "left-split"
-      "main"
-      "right-split"
-      "right-pane"
-      "bottom-split"
-      "action-dock";
-  }
-
-  .session-chat-layout.layout-priority-side-pane.is-right-pane-visible,
-  .session-chat-layout.layout-priority-dock.is-right-pane-visible {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows:
-      auto auto 0px var(--session-dock-splitter-size) minmax(220px, 1fr)
-      var(--session-dock-splitter-size) minmax(300px, 42vh) auto auto;
-    grid-template-areas:
-      "header"
-      "top-split"
-      "left-pane"
-      "left-split"
-      "main"
-      "right-split"
-      "right-pane"
-      "bottom-split"
-      "action-dock";
-  }
-
-  .session-chat-layout.layout-priority-side-pane.is-left-pane-visible.is-right-pane-visible,
-  .session-chat-layout.layout-priority-dock.is-left-pane-visible.is-right-pane-visible {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows:
-      auto auto minmax(300px, 42vh) var(--session-dock-splitter-size) minmax(220px, 1fr)
-      var(--session-dock-splitter-size) minmax(300px, 42vh) auto auto;
-    grid-template-areas:
-      "header"
-      "top-split"
-      "left-pane"
-      "left-split"
-      "main"
-      "right-split"
-      "right-pane"
-      "bottom-split"
-      "action-dock";
-  }
-
   .session-left-pane-slot,
   .session-right-pane-slot {
-    height: min(42vh, 460px);
-    max-height: min(42vh, 460px);
+    height: 100%;
+    max-height: 100%;
     transition:
       max-height var(--session-dock-motion-duration) var(--session-dock-motion-easing),
       opacity var(--session-dock-motion-duration) var(--session-dock-motion-easing),
@@ -13217,7 +13165,7 @@ button:disabled {
   }
 
   .session-message-stack {
-    min-height: min(58vh, 640px);
+    min-height: 0;
   }
 
   .session-left-pane-slot,
@@ -13230,7 +13178,7 @@ button:disabled {
     display: block;
     width: 100%;
     min-height: var(--session-dock-splitter-size);
-    cursor: pointer;
+    cursor: row-resize;
   }
 
   .session-dock-splitter.edge-left.is-static,
@@ -13250,8 +13198,8 @@ button:disabled {
 
   .session-context-pane {
     grid-template-rows: auto minmax(0, 1fr) auto;
-    height: min(42vh, 460px);
-    min-height: min(38vh, 420px);
+    height: 100%;
+    min-height: 0;
   }
 
   .session-context-pane.session-context-pane-header-expanded {

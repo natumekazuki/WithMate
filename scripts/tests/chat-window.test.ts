@@ -1011,12 +1011,9 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
             { id: "aux-b", label: "B", preview: "second preview", icon: "✧" },
           ],
           target: "auxiliary",
-          isExpanded: true,
           widthRatio: 0.45,
           onSelectAuxiliary() {},
           onTargetChange: (target) => targetChanges.push(target),
-          onCollapse() {},
-          onExpand() {},
           onWidthRatioChange() {},
         },
       }));
@@ -1117,12 +1114,9 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
     selectedAuxiliaryId: null,
     auxiliaryItems: [],
     target: "main" as const,
-    isExpanded: true,
     widthRatio: 0.45,
     onSelectAuxiliary() {},
     onTargetChange() {},
-    onCollapse() {},
-    onExpand() {},
     onWidthRatioChange() {},
   });
 
@@ -1179,15 +1173,15 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Concurrent chat shell は折りたたみ後もAuxiliaryを最小幅で表示し、splitterの再展開導線を残す"
-// oracle = { type = "contract", ref = "issue-710-collapsed-auxiliary-visibility" }
-// fault = "Auxiliaryを閉じると列と再表示導線が消え、ActionDockの対象切替なしでは戻せない"
-// observable = "最小幅のgrid templateとsplitterのaria-expanded"
+// claim = "Auxiliaryの幅0でも列とsplitterを残し、ドラッグによる再展開導線を維持する"
+// oracle = { type = "contract", ref = "issue-710-zero-width-auxiliary" }
+// fault = "Auxiliaryを幅0にすると列またはsplitterが消え、ドラッグだけでは再展開できない"
+// observable = "0frのgrid templateとsplitterのaria-expanded"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
 // @end-test-value
-test("ChatWindow はAuxiliaryを最小幅で残しsplitterの再展開導線を表示する", () => {
+test("ChatWindow はAuxiliaryを幅0で残しsplitterの再展開導線を表示する", () => {
   const props = createChatWindowProps();
   const html = renderToStaticMarkup(React.createElement(ChatWindow, {
     ...props,
@@ -1197,17 +1191,14 @@ test("ChatWindow はAuxiliaryを最小幅で残しsplitterの再展開導線を�
       selectedAuxiliaryId: "aux-a",
       auxiliaryItems: [{ id: "aux-a", label: "A" }],
       target: "main",
-      isExpanded: false,
-      widthRatio: 0.45,
+      widthRatio: 0,
       onSelectAuxiliary() {},
       onTargetChange() {},
-      onCollapse() {},
-      onExpand() {},
       onWidthRatioChange() {},
     },
   }));
 
-  assert.match(html, /0\.05fr/);
+  assert.match(html, /0fr/);
   assert.match(html, /aria-label="Auxiliaryの幅を調整"/);
   assert.match(html, /aria-expanded="false"/);
 });
@@ -1260,13 +1251,10 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
             { id: "aux-b", label: "B", preview: "second" },
           ],
           target: "main",
-          isExpanded: true,
           widthRatio: 0.5,
           error: "Auxiliary detail failed",
           onSelectAuxiliary: (id) => selected.push(id),
           onTargetChange() {},
-          onCollapse() {},
-          onExpand() {},
           onWidthRatioChange() {},
         },
       }));
@@ -1366,13 +1354,10 @@ test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示�
           selectedAuxiliaryId: "aux",
           auxiliaryItems: [{ id: "aux", label: "Auxiliary", preview: "Auxiliary" }],
           target: "main",
-          isExpanded: true,
           widthRatio: 0.5,
           scrollToLatestOnSend: true,
           onSelectAuxiliary() {},
           onTargetChange() {},
-          onCollapse() {},
-          onExpand() {},
           onWidthRatioChange() {},
         },
       }));
@@ -1426,10 +1411,10 @@ test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Concurrent splitter のドラッグは幅変更だけを行い、移動後のpointerupをAuxiliary折りたたみクリックへ誤変換しない"
+// claim = "Concurrent splitter のクリックは幅0への縮小だけを行い、ドラッグは幅変更だけを行う"
 // oracle = { type = "contract", ref = "issue-710-ui-shell" }
-// fault = "splitterをドラッグして幅を変えた直後にAuxiliaryが折りたたまれる"
-// observable = "onWidthRatioChangeの値とonCollapseの呼び出し回数"
+// fault = "splitterをドラッグして幅を変えた直後に幅0へ縮小される、またはクリックで幅0にならない"
+// observable = "onWidthRatioChangeの値"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -1452,16 +1437,12 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
   Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
   Object.defineProperty(dom.window.HTMLElement.prototype, "setPointerCapture", { configurable: true, value() {} });
   let root: Root | null = null;
-  let collapseCount = 0;
   const ratios: number[] = [];
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement("div", { style: { width: "1000px" } }, React.createElement(ConcurrentChatSplitter, {
-        isExpanded: true,
         widthRatio: 0.3,
-        onCollapse: () => { collapseCount += 1; },
-        onExpand() {},
         onWidthRatioChange: (ratio: number) => ratios.push(ratio),
       })));
     });
@@ -1484,11 +1465,15 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
       splitter.dispatchEvent(pointerEvent("pointerdown", 500));
       dom.window.dispatchEvent(pointerEvent("pointermove", 510));
       dom.window.dispatchEvent(pointerEvent("pointerup", 510));
-      splitter.click();
     });
     assert.ok(ratios.length > 0);
     assert.ok(Math.abs((ratios.at(-1) ?? 0) - 0.29) < 0.000001);
-    assert.equal(collapseCount, 0);
+    await act(async () => {
+      splitter.dispatchEvent(pointerEvent("pointerdown", 510));
+      dom.window.dispatchEvent(pointerEvent("pointerup", 510));
+      splitter.click();
+    });
+    assert.equal(ratios.at(-1), 0);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -1503,15 +1488,15 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
 
 // @test-value v2
 // kind = "contract"
-// claim = "折りたたみ中のConcurrent splitterはクリックを要求せず、pointer dragだけでAuxiliaryの展開と幅変更を開始する"
-// oracle = { type = "contract", ref = "issue-710-collapsed-splitter-drag" }
-// fault = "最小化されたAuxiliaryのsplitterをドラッグしても幅変更が始まらず、先にクリックで再展開する必要がある"
-// observable = "onExpandの呼び出し、onWidthRatioChangeの比率、onCollapseの呼び出し回数"
+// claim = "幅0のConcurrent splitterはクリックを要求せず、pointer dragとArrowLeftで再表示し、ArrowRightで0へ戻せる"
+// oracle = { type = "contract", ref = "issue-710-zero-width-splitter-drag" }
+// fault = "幅0のAuxiliaryをドラッグまたはArrowLeftで再表示できない、またはArrowRightで下限0を守れない"
+// observable = "onWidthRatioChangeのpointer drag／keyboard操作による比率"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
 // @end-test-value
-test("ConcurrentChatSplitter は折りたたみ中の drag で展開を開始する", async () => {
+test("ConcurrentChatSplitter は幅0の drag で再展開を開始する", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
@@ -1526,17 +1511,12 @@ test("ConcurrentChatSplitter は折りたたみ中の drag で展開を開始す
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
   Object.defineProperty(dom.window.HTMLElement.prototype, "setPointerCapture", { configurable: true, value() {} });
   let root: Root | null = null;
-  let collapseCount = 0;
-  let expandCount = 0;
   const ratios: number[] = [];
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement("div", { style: { width: "1000px" } }, React.createElement(ConcurrentChatSplitter, {
-        isExpanded: false,
-        widthRatio: 0.5,
-        onCollapse: () => { collapseCount += 1; },
-        onExpand: () => { expandCount += 1; },
+        widthRatio: 0,
         onWidthRatioChange: (ratio: number) => ratios.push(ratio),
       })));
     });
@@ -1555,15 +1535,16 @@ test("ConcurrentChatSplitter は折りたたみ中の drag で展開を開始す
       });
       return event;
     };
+    await act(async () => splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })));
+    assert.equal(ratios.at(-1), 0.02);
+    await act(async () => splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true })));
+    assert.equal(ratios.at(-1), 0);
     await act(async () => {
       splitter.dispatchEvent(pointerEvent("pointerdown", 500));
       dom.window.dispatchEvent(pointerEvent("pointermove", 480));
       dom.window.dispatchEvent(pointerEvent("pointerup", 480));
-      splitter.click();
     });
-    assert.equal(expandCount, 1);
-    assert.ok(Math.abs((ratios.at(-1) ?? 0) - 0.07) < 0.000001);
-    assert.equal(collapseCount, 0);
+    assert.ok(Math.abs((ratios.at(-1) ?? 0) - 0.02) < 0.000001);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
