@@ -4489,7 +4489,7 @@ button:disabled {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: rgba(5, 8, 14, 0.22);
+  background: rgba(5, 8, 14, 0.35);
   pointer-events: none;
 }
 
