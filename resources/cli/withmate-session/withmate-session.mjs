@@ -713,17 +713,6 @@ function parseSessionPlacement(value) {
 }
 function parseSessionProvider(value, resetOnly = false) {
 	const record = requireObject(value, "provider");
-	assertKeys(record, [
-		"id",
-		"catalogRevision",
-		"model",
-		"reasoningEffort",
-		"threadContinuity",
-		"approvalMode",
-		"codexSandboxMode",
-		"allowedAdditionalDirectories",
-		"customAgentName"
-	], "provider");
 	const threadContinuity = requireEnum(record.threadContinuity, ["continue", "reset"], "provider.threadContinuity");
 	if (resetOnly && threadContinuity !== "reset") throw invalid("provider.threadContinuity", "New Sessions require reset thread continuity.");
 	const common = {
@@ -735,6 +724,16 @@ function parseSessionProvider(value, resetOnly = false) {
 	};
 	const approvalMode = requireEnum(record.approvalMode, APPROVAL_MODE_VALUES, "provider.approvalMode");
 	if (common.id === "codex") {
+		assertKeys(record, [
+			"id",
+			"catalogRevision",
+			"model",
+			"reasoningEffort",
+			"threadContinuity",
+			"approvalMode",
+			"codexSandboxMode",
+			"allowedAdditionalDirectories"
+		], "provider");
 		if (!Array.isArray(record.allowedAdditionalDirectories) || !record.allowedAdditionalDirectories.every((item) => typeof item === "string" && item.length > 0)) throw invalid("provider.allowedAdditionalDirectories", "allowedAdditionalDirectories must be a string array.");
 		return {
 			...common,
@@ -744,6 +743,15 @@ function parseSessionProvider(value, resetOnly = false) {
 			allowedAdditionalDirectories: record.allowedAdditionalDirectories
 		};
 	}
+	assertKeys(record, [
+		"id",
+		"catalogRevision",
+		"model",
+		"reasoningEffort",
+		"threadContinuity",
+		"approvalMode",
+		"customAgentName"
+	], "provider");
 	return {
 		...common,
 		id: "copilot",
@@ -848,18 +856,6 @@ function parseSessionRenameInput(value) {
 }
 function parseSessionConfigureInput(value) {
 	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"expectedRevision",
-		"idempotencyKey",
-		"kind",
-		"title",
-		"provider",
-		"character",
-		"threadContinuity",
-		"workspace",
-		"sessionRole"
-	], "input");
 	const base = {
 		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
 		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
@@ -872,17 +868,43 @@ function parseSessionConfigureInput(value) {
 		"workspace",
 		"role"
 	], "kind");
-	if (kind === "title") return {
-		...base,
-		kind,
-		title: requireNonEmptyString(record.title, "title")
-	};
-	if (kind === "runtime") return {
-		...base,
-		kind,
-		provider: parseSessionProvider(record.provider)
-	};
+	if (kind === "title") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"idempotencyKey",
+			"kind",
+			"title"
+		], "input");
+		return {
+			...base,
+			kind,
+			title: requireNonEmptyString(record.title, "title")
+		};
+	}
+	if (kind === "runtime") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"idempotencyKey",
+			"kind",
+			"provider"
+		], "input");
+		return {
+			...base,
+			kind,
+			provider: parseSessionProvider(record.provider)
+		};
+	}
 	if (kind === "character") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"idempotencyKey",
+			"kind",
+			"character",
+			"threadContinuity"
+		], "input");
 		const character = requireObject(record.character, "character");
 		assertKeys(character, ["characterId", "expectedDefinitionSha256"], "character");
 		return {
@@ -896,6 +918,14 @@ function parseSessionConfigureInput(value) {
 		};
 	}
 	if (kind === "workspace") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"idempotencyKey",
+			"kind",
+			"workspace",
+			"threadContinuity"
+		], "input");
 		const workspace = parseSessionCreateWorkspace(record.workspace);
 		return {
 			...base,
@@ -904,6 +934,13 @@ function parseSessionConfigureInput(value) {
 			threadContinuity: requireEnum(record.threadContinuity, ["continue", "reset"], "threadContinuity")
 		};
 	}
+	assertKeys(record, [
+		"sessionId",
+		"expectedRevision",
+		"idempotencyKey",
+		"kind",
+		"sessionRole"
+	], "input");
 	return {
 		...base,
 		kind,
@@ -917,17 +954,6 @@ function parseSessionConfigureInput(value) {
 }
 function parseSessionMoveInput(value) {
 	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"expectedRevision",
-		"idempotencyKey",
-		"kind",
-		"destinationParentSessionId",
-		"destinationRootSessionId",
-		"destinationExpectedRevision",
-		"transferManifestRevision",
-		"transferPolicy"
-	], "input");
 	const base = {
 		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
 		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
@@ -936,12 +962,22 @@ function parseSessionMoveInput(value) {
 	const kind = requireEnum(record.kind, ["same_root", "cross_root"], "kind");
 	const destinationExpectedRevision = requireInteger(record.destinationExpectedRevision, "destinationExpectedRevision", 1, Number.MAX_SAFE_INTEGER);
 	const destinationParentSessionId = record.destinationParentSessionId === null ? null : requireNonEmptyString(record.destinationParentSessionId, "destinationParentSessionId");
-	if (kind === "same_root") return {
-		...base,
-		kind,
-		destinationParentSessionId,
-		destinationExpectedRevision
-	};
+	if (kind === "same_root") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"idempotencyKey",
+			"kind",
+			"destinationParentSessionId",
+			"destinationExpectedRevision"
+		], "input");
+		return {
+			...base,
+			kind,
+			destinationParentSessionId,
+			destinationExpectedRevision
+		};
+	}
 	assertKeys(record, [
 		"sessionId",
 		"expectedRevision",
@@ -988,15 +1024,6 @@ function parseSessionCloneInput(value) {
 }
 function parseSessionRestoreInput(value) {
 	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"expectedRevision",
-		"kind",
-		"purpose",
-		"provider",
-		"budget",
-		"idempotencyKey"
-	], "input");
 	const kind = requireEnum(record.kind, ["root", "child"], "kind");
 	const base = {
 		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
@@ -1005,11 +1032,31 @@ function parseSessionRestoreInput(value) {
 		provider: parseSessionProvider(record.provider),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
-	return kind === "root" ? {
-		...base,
-		kind,
-		budget: parseSessionInitialBudget(record.budget)
-	} : {
+	if (kind === "root") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"kind",
+			"purpose",
+			"provider",
+			"budget",
+			"idempotencyKey"
+		], "input");
+		return {
+			...base,
+			kind,
+			budget: parseSessionInitialBudget(record.budget)
+		};
+	}
+	assertKeys(record, [
+		"sessionId",
+		"expectedRevision",
+		"kind",
+		"purpose",
+		"provider",
+		"idempotencyKey"
+	], "input");
+	return {
 		...base,
 		kind
 	};

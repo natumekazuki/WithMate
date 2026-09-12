@@ -20,6 +20,7 @@ import { verifyResourceHistoryProjections } from "../../src-electron/resource-hi
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { SessionTranscriptStorageV6 } from "../../src-electron/session-transcript-storage-v6.js";
+import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import {
   WorkItemAuthorityError,
   WorkItemExecutionAssociationError,
@@ -481,6 +482,7 @@ describe("Root WorkItem contract", () => {
         workspacePath: "C:/workspace",
         branch: "main",
       } as const;
+      const restoreProof = trustedProof("session.restore", "root");
       const restoreDb = new DatabaseSync(harness.dbPath);
       let successor: WorkItem;
       try {
@@ -489,7 +491,7 @@ describe("Root WorkItem contract", () => {
           restoreDb,
           restoreSession,
           restorePurpose,
-          trustedProof("session.restore", "root"),
+          restoreProof,
           "session-operation:restore:root-restore-fingerprint",
           NOW,
         );
@@ -517,7 +519,7 @@ describe("Root WorkItem contract", () => {
           replayDb,
           restoreSession,
           restorePurpose,
-          trustedProof("session.restore", "root"),
+          restoreProof,
           "session-operation:restore:root-restore-fingerprint",
           NOW,
         );
@@ -532,6 +534,7 @@ describe("Root WorkItem contract", () => {
       const migrationDb = new DatabaseSync(harness.dbPath);
       try {
         ensureV6Schema(migrationDb);
+        verifyResourceHistoryProjections(migrationDb);
       } finally {
         migrationDb.close();
       }
@@ -549,6 +552,64 @@ describe("Root WorkItem contract", () => {
       assert.equal(successorHistory[0].payload.predecessorWorkItemId, terminal.id);
       assert.equal(tableCount(harness.dbPath, "work_items_v6", "kind = 'root' AND root_session_id = 'root'"), 2);
     } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "restore helperがagent proofを受けた場合、WorkItem eventとresource headerのactorはproofの実actor Sessionへ直列化される"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "helperが常にrestore対象rootをactorとして保存し、agent proofの実actorと監査履歴が不一致になる"
+  // observable = "work_item_events_v6.actor_session_idとresource_event_headers_v6.actor_session_id"
+  // observation_boundary = "component-behavior"
+  // scope = "restoreRootWorkItemWithinTransaction actor serialization"
+  // lifecycle = "permanent"
+  // distinction = "authorization issuanceとstartup migrationを主張せず、helperのagent actor serializationだけを検証する"
+  // @end-test-value
+  it("restore helperはagent proofのactual actorをevent/headerへ保存する", async () => {
+    const harness = await createHarness();
+    const authority = new SessionAuthorityService({ databasePath: harness.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    try {
+      const root = insertRootSession(harness, "root-actor", "overall-coordinator", "Initial goal");
+      insertChildSession(harness, "agent-actor", root, "executor");
+      const predecessor = getRootWorkItem(harness, root.id);
+      const running = harness.service.transition({ workItemId: predecessor.id, state: "in_progress",
+        expectedRevision: predecessor.revision, idempotencyKey: "actor-restore-start" }, runtimeBinding(root.id));
+      const terminal = harness.service.reportResult({ workItemId: predecessor.id, state: "completed",
+        expectedRevision: running.revision, result: resultInput("completed"), idempotencyKey: "actor-restore-result" }, runtimeBinding(root.id));
+      const agentProof = authority.authorizeSessionAct("agent-actor", "session.self", { sessionId: "agent-actor" }).proof;
+      const restoreDb = new DatabaseSync(harness.dbPath);
+      let successor: WorkItem;
+      try {
+        restoreDb.exec("BEGIN IMMEDIATE TRANSACTION");
+        successor = restoreRootWorkItemWithinTransaction(restoreDb, {
+          id: root.id, taskTitle: root.taskTitle, workspacePath: root.workspacePath, branch: root.branch,
+        }, {
+          predecessorWorkItemId: terminal.id, goal: "Restored goal", scope: "scope", completionCriteria: "complete",
+          authority: "authority", sourceIdentity: SOURCE_IDENTITY, idempotencyKey: "actor-restore",
+          requestFingerprint: "actor-restore-fingerprint",
+        }, agentProof, "session-operation:actor-restore", NOW);
+        restoreDb.exec("COMMIT");
+      } catch (error) {
+        restoreDb.exec("ROLLBACK");
+        throw error;
+      } finally {
+        restoreDb.close();
+      }
+      const db = new DatabaseSync(harness.dbPath, { readOnly: true });
+      try {
+        const event = db.prepare("SELECT actor_session_id FROM work_item_events_v6 WHERE work_item_id = ? AND revision = 1")
+          .get(successor.id) as { actor_session_id: string | null };
+        const header = db.prepare("SELECT actor_session_id FROM resource_event_headers_v6 WHERE resource_kind = 'work_item' AND resource_id = ? AND resource_revision = 1")
+          .get(successor.id) as { actor_session_id: string | null };
+        assert.equal(event.actor_session_id, "agent-actor");
+        assert.equal(header.actor_session_id, "agent-actor");
+      } finally {
+        db.close();
+      }
+    } finally {
+      authority.close();
       await closeHarness(harness);
     }
   });

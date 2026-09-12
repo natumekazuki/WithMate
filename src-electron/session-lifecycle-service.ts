@@ -33,6 +33,10 @@ export type SessionLifecycleServiceStorage = {
     operationId: string; expectedOperationRevision: number; proof: MutationAuthorityProof;
     now: string; projectResult(session: Session): SessionRuntimeSessionDetail;
   }): SessionLifecycleOperationRecord;
+  recordLifecycleStep(input: {
+    operationId: string; expectedRevision: number; step: string; effect: "none" | "committed" | "unknown";
+    payload?: Record<string, unknown>; occurredAt: string;
+  }): SessionLifecycleOperationRecord;
   completeLifecycleMutation(operationId: string, expectedRevision: number, now: string): SessionLifecycleOperationRecord;
   rejectLifecycleMutation(operationId: string, expectedRevision: number, error: unknown, now: string): void;
   markRecoveryRequiredLifecycleMutation(operationId: string, expectedRevision: number, error: unknown, now: string): void;
@@ -238,10 +242,17 @@ export class SessionLifecycleService {
         if (record.operation === "session.delete" && record.targetSessionId && this.deps.isDeletionRunInFlight?.(record.targetSessionId)) {
           throw new SessionCrudError("SESSION_STATE_CONFLICT", "An active runtime prevents Session deletion.");
         }
-        const next = record.manifest.nextSession as Session | undefined;
-        if (next && next.workspacePath === this.deps.resolveSessionFilesDirectory(next.id)) {
-          await this.deps.createSessionFilesDirectory(next.id);
+        if (this.requiresFolderCompensation(record) && record.effects.filesystem !== "committed") {
+          await this.deps.createSessionFilesDirectory(record.targetSessionId!);
           folderCreated = true;
+          record = this.deps.storage.recordLifecycleStep({
+            operationId: record.operationId,
+            expectedRevision: record.revision,
+            step: "filesystem",
+            effect: "committed",
+            payload: { sessionFolder: record.targetSessionId },
+            occurredAt: this.now(),
+          });
         }
         record = this.deps.storage.commitLifecycleMutation({
           operationId: record.operationId, expectedOperationRevision: record.revision, proof, now: this.now(),
@@ -269,7 +280,7 @@ export class SessionLifecycleService {
       return record.result as SessionRuntimeSessionDetail;
     } catch (error) {
       if (isLifecycleRejection(error) && record.effects.database !== "committed") {
-        if (folderCreated && this.requiresFolderCompensation(record)) {
+        if ((folderCreated || record.effects.filesystem === "committed") && this.requiresFolderCompensation(record)) {
           try {
             await this.deps.cleanupSessionFilesDirectory(record.targetSessionId!);
             this.deps.storage.rejectLifecycleMutation(record.operationId, record.revision, { code: error.code, message: error.message }, this.now());

@@ -115,6 +115,40 @@ describe("Session lifecycle move", () => {
   });
 
   // @test-value v2
+  // kind = "security"
+  // claim = "same-root moveはdestination parentのrole contractに従い、executor配下へのchild配置をmutation前に拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "executorを親にした不許可roleのmoveを受理してbindingとrevisionを部分更新する"
+  // observable = "SESSION_STATE_CONFLICT、source/destination binding、両Session revision"
+  // observation_boundary = "component-behavior"
+  // scope = "session-lifecycle-move role parent admission"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("executor parentへの不許可role moveを拒否する", async () => {
+    const ctx = await setup();
+    const service = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    try {
+      const provisioningDb = new DatabaseSync(ctx.dbPath); const grant = provisionMoveGrant(provisioningDb, ctx.sourceRoot.id)[0]; provisioningDb.close();
+      const input = { sessionId: ctx.destinationParent.id, expectedRevision: 1, kind: "same_root" as const,
+        destinationParentSessionId: ctx.target.id, destinationExpectedRevision: 1 };
+      const proof = moveProof(ctx.sourceRoot.id, grant);
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        assert.throws(() => applySessionMove(db, input, proof, NOW, "move-forbidden-parent"), (error) => error instanceof SessionCrudError && error.code === "SESSION_STATE_CONFLICT");
+        const sourceBinding = db.prepare("SELECT parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.destinationParent.id) as { parent_session_id: string | null; delegation_depth: number };
+        const parentBinding = db.prepare("SELECT parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id) as { parent_session_id: string | null; delegation_depth: number };
+        assert.equal(sourceBinding.parent_session_id, ctx.sourceRoot.id);
+        assert.equal(sourceBinding.delegation_depth, 1);
+        assert.equal(parentBinding.parent_session_id, ctx.sourceRoot.id);
+        assert.equal(parentBinding.delegation_depth, 1);
+        assert.equal((db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?").get(ctx.destinationParent.id) as { resource_revision: number }).resource_revision, 1);
+        assert.equal((db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?").get(ctx.target.id) as { resource_revision: number }).resource_revision, 1);
+      } finally { db.close(); }
+    } finally { service.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "destination revisionがstaleなsame-root moveはprojectionを変更せず拒否する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }

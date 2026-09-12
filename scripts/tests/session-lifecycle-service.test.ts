@@ -147,18 +147,22 @@ function completeRootWorkItem(dbPath: string, sessionId: string): void {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "GUI Session update persists codex speed/reviewer settings in the stored runtime policy while preserving archive and root restore state in the real V6 database."
+// claim = "SessionLifecycleService configure/archive/restore persists runtime settings while preserving an existing SessionFolder in the real V6 database."
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Direct validation" }
 // fault = "Lifecycle operations update an in-memory projection without atomically persisting the Session state."
 // observable = "SessionStorageV6 lifecycle Session rows, stored runtime policy settings, and resource revisions"
-// observation_boundary = "public-boundary"
-// scope = "SessionLifecycleService create configure archive restore"
+// observation_boundary = "component-behavior"
+// scope = "SessionLifecycleService create configure archive restore with existing SessionFolder"
 // lifecycle = "permanent"
 // @end-test-value
 test("SessionLifecycleService は実DBで create→configure(title/runtime)→archive→restore を保持する", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-lifecycle-"));
+  await mkdir(path.join(root, "session-files"));
   let removedPublications = 0;
-  const { service, storage, close } = await makeService(path.join(root, "app.db"), { publishRemoved: async () => { removedPublications += 1; if (removedPublications === 1) throw new Error("archive response lost"); } });
+  const { service, storage, close } = await makeService(path.join(root, "app.db"), {
+    createFolder: async (sessionId) => { await mkdir(path.join(root, "session-files", sessionId)); },
+    publishRemoved: async () => { removedPublications += 1; if (removedPublications === 1) throw new Error("archive response lost"); },
+  });
   try {
     const created = await service.create(createInput("create-key"), proof("session.create", "session-created"));
     assert.equal(created.title, "Initial title");
@@ -340,6 +344,85 @@ test("SessionLifecycleService はSessionFolder失敗後に同じcreateをreplay�
     committedDb.close();
     assert.equal(committedRecord.operation_id, pendingRecord.operation_id);
     assert.deepEqual({ state: committedRecord.state, current_step: committedRecord.current_step }, { state: "committed", current_step: "terminal" });
+  } finally {
+    close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "A transient database failure after SessionFolder creation replays the same lifecycle operation without recreating the folder or duplicating owned records."
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Failure timing" }
+// fault = "Retrying a prepared filesystem effect recreates the strict SessionFolder or applies Session, grant, or budget persistence more than once."
+// observable = "Strict mkdir call count, lifecycle effect state, pending operations, Session rows, authority grants, and budget accounts"
+// observation_boundary = "component-behavior"
+// scope = "SessionLifecycleService create filesystem effect replay"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionLifecycleService はDB一時失敗後にfilesystem effectを記録して同じcreateを再実行する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-lifecycle-filesystem-effect-"));
+  const dbPath = path.join(root, "app.db");
+  await mkdir(path.join(root, "session-files"));
+  let mkdirCalls = 0;
+  const { service, storage, close } = await makeService(dbPath, {
+    createFolder: async (sessionId) => {
+      mkdirCalls += 1;
+      await mkdir(path.join(root, "session-files", sessionId));
+    },
+  });
+  const input = createInput("filesystem-effect-replay-key");
+  const userProof = proof("session.create", "session-created");
+  const originalCommit = storage.commitLifecycleMutation.bind(storage);
+  let databaseFailures = 1;
+  storage.commitLifecycleMutation = ((mutation) => {
+    if (databaseFailures > 0) {
+      databaseFailures -= 1;
+      throw new Error("transient database failure");
+    }
+    return originalCommit(mutation);
+  }) as typeof storage.commitLifecycleMutation;
+  try {
+    await assert.rejects(service.create(input, userProof), (error) => error instanceof SessionLifecycleRecoveryError);
+    assert.equal(mkdirCalls, 1);
+    const pendingDb = new DatabaseSync(dbPath);
+    const pending = pendingDb.prepare("SELECT operation_id, state, current_step, effects_json FROM session_lifecycle_operations_v6 WHERE idempotency_key = ?").get(input.idempotencyKey) as { operation_id: string; state: string; current_step: string; effects_json: string };
+    const pendingCounts = {
+      sessions: (pendingDb.prepare("SELECT COUNT(*) AS count FROM sessions_v6 WHERE id = ?").get("session-created") as { count: number }).count,
+      grants: (pendingDb.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE grantee_session_id = ?").get("session-created") as { count: number }).count,
+      budgets: (pendingDb.prepare("SELECT COUNT(*) AS count FROM resource_budget_accounts_v6 WHERE owner_session_id = ?").get("session-created") as { count: number }).count,
+    };
+    pendingDb.close();
+    assert.deepEqual({ state: pending.state, current_step: pending.current_step }, { state: "running", current_step: "filesystem" });
+    assert.equal(JSON.parse(pending.effects_json).filesystem, "committed");
+    assert.deepEqual(pendingCounts, { sessions: 0, grants: 0, budgets: 0 });
+    assert.equal(storage.listPendingLifecycleOperations().length, 1);
+
+    await service.create(input, userProof);
+    assert.equal(mkdirCalls, 1);
+    assert.equal(storage.listPendingLifecycleOperations().length, 0);
+    assert.ok(storage.getLifecycleSession("session-created"));
+    const committedDb = new DatabaseSync(dbPath);
+    const committed = committedDb.prepare("SELECT operation_id, state, current_step FROM session_lifecycle_operations_v6 WHERE idempotency_key = ?").get(input.idempotencyKey) as { operation_id: string; state: string; current_step: string };
+    const committedCounts = {
+      sessions: (committedDb.prepare("SELECT COUNT(*) AS count FROM sessions_v6 WHERE id = ?").get("session-created") as { count: number }).count,
+      grants: (committedDb.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE grantee_session_id = ?").get("session-created") as { count: number }).count,
+      budgets: (committedDb.prepare("SELECT COUNT(*) AS count FROM resource_budget_accounts_v6 WHERE owner_session_id = ?").get("session-created") as { count: number }).count,
+    };
+    committedDb.close();
+    assert.equal(committed.operation_id, pending.operation_id);
+    assert.deepEqual({ state: committed.state, current_step: committed.current_step }, { state: "committed", current_step: "terminal" });
+    assert.equal(committedCounts.sessions, 1);
+    assert.ok(committedCounts.grants > 0);
+    assert.ok(committedCounts.budgets > 0);
+    await service.create(input, userProof);
+    const replayDb = new DatabaseSync(dbPath);
+    assert.deepEqual({
+      sessions: (replayDb.prepare("SELECT COUNT(*) AS count FROM sessions_v6 WHERE id = ?").get("session-created") as { count: number }).count,
+      grants: (replayDb.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE grantee_session_id = ?").get("session-created") as { count: number }).count,
+      budgets: (replayDb.prepare("SELECT COUNT(*) AS count FROM resource_budget_accounts_v6 WHERE owner_session_id = ?").get("session-created") as { count: number }).count,
+    }, committedCounts);
+    replayDb.close();
   } finally {
     close();
     await rm(root, { recursive: true, force: true });

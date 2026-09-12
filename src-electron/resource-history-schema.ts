@@ -300,6 +300,7 @@ type ExpectedHeaderRow = {
 };
 
 type StoredHeaderRow = ExpectedHeaderRow & {
+  sequence: number;
   owner_kind: string;
   grant_id: string | null;
   grant_revision: number | null;
@@ -309,11 +310,7 @@ type StoredHeaderRow = ExpectedHeaderRow & {
 function verifyResourceEventHeaders(db: DatabaseSync): void {
   const expected = db.prepare(`
     SELECT event.event_id, 'session' AS resource_kind, event.session_id AS resource_id,
-      CASE WHEN json_extract(event.payload_json, '$.sourceRootSessionId') IS NOT NULL
-             AND event.revision < COALESCE((SELECT MIN(move.revision) FROM session_resource_events_v6 AS move
-               WHERE move.session_id = event.session_id AND move.event_kind = 'move'), 2147483647)
-           THEN json_extract(event.payload_json, '$.sourceRootSessionId')
-           ELSE COALESCE(binding.root_session_id, event.session_id) END AS root_id, event.session_id AS owner_id,
+      COALESCE(binding.root_session_id, event.session_id) AS root_id, event.session_id AS owner_id,
       event.event_kind, event.revision AS resource_revision, NULL AS principal_kind,
       NULL AS actor_session_id, NULL AS supersedes_event_id, 2 AS payload_schema_revision,
       'committed' AS effect
@@ -420,7 +417,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     INNER JOIN coordination_events_v6 AS event ON event.id = action.event_id
   `).all() as ExpectedHeaderRow[];
   const actual = db.prepare(`
-    SELECT event_id, resource_kind, resource_id, root_id, owner_kind, owner_id,
+    SELECT sequence, event_id, resource_kind, resource_id, root_id, owner_kind, owner_id,
       event_kind, resource_revision, principal_kind, actor_session_id, grant_id,
       grant_revision, operation_id, supersedes_event_id, payload_schema_revision, effect
     FROM resource_event_headers_v6
@@ -428,12 +425,32 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
       'transcript', 'interaction', 'coordination_event')
   `).all() as StoredHeaderRow[];
   const actualById = new Map(actual.map((row) => [row.event_id, row]));
+  const movesBySession = new Map<string, Array<{ sequence: number; source_root: string }>>();
+  const moves = db.prepare(`
+    SELECT event.session_id, header.sequence,
+      json_extract(event.payload_json, '$.sourceRootSessionId') AS source_root
+    FROM session_resource_events_v6 AS event
+    INNER JOIN resource_event_headers_v6 AS header ON header.event_id = event.event_id
+    WHERE event.event_kind = 'move'
+      AND json_type(event.payload_json, '$.sourceRootSessionId') = 'text'
+    ORDER BY header.sequence
+  `).all() as Array<{ session_id: string; sequence: number; source_root: string }>;
+  for (const move of moves) {
+    const history = movesBySession.get(move.session_id) ?? [];
+    history.push(move);
+    movesBySession.set(move.session_id, history);
+  }
   if (actualById.size !== expected.length || actual.length !== expected.length) {
     throw new Error("Resource event header coverage does not match the typed event history.");
   }
   for (const row of expected) {
     const header = actualById.get(row.event_id);
     if (!header) throw new Error(`Resource event header is missing: ${row.event_id}`);
+    // These resources retain the root in effect when each event was committed.
+    // A later move's source root identifies that interval without rewriting history.
+    const nextMove = ["session", "session_files", "transcript", "interaction"].includes(row.resource_kind)
+      ? movesBySession.get(row.owner_id)?.find((move) => move.sequence > header.sequence)
+      : undefined;
     const comparable = {
       resourceKind: header.resource_kind,
       resourceId: header.resource_id,
@@ -449,7 +466,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     const expectedComparable = {
       resourceKind: row.resource_kind,
       resourceId: row.resource_id,
-      rootId: row.root_id,
+      rootId: nextMove?.source_root ?? row.root_id,
       ownerKind: "session",
       ownerId: row.owner_id,
       eventKind: row.event_kind,
@@ -462,14 +479,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
       const differingField = Object.keys(expectedComparable).find((key) =>
         stableJson(comparable[key as keyof typeof comparable])
           !== stableJson(expectedComparable[key as keyof typeof expectedComparable]));
-      const transfer = row.resource_kind === "session" ? (db.prepare(`
-        SELECT json_extract(payload_json, '$.sourceRootSessionId') AS source_root
-        FROM session_resource_events_v6
-        WHERE session_id = ? AND event_kind = 'move' ORDER BY revision LIMIT 1
-      `).get(row.resource_id) as { source_root?: string } | undefined) : undefined;
-      if (!(differingField === "rootId" && row.resource_kind === "session" && header.root_id === transfer?.source_root)) {
-        throw new Error(`Resource event header ${differingField ?? "fields"} does not match its typed event: ${row.event_id}`);
-      }
+      throw new Error(`Resource event header ${differingField ?? "fields"} does not match its typed event: ${row.event_id}`);
     }
     if (row.principal_kind !== null
       && (header.principal_kind !== row.principal_kind || header.actor_session_id !== row.actor_session_id)) {

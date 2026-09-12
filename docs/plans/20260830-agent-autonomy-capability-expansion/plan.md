@@ -412,7 +412,7 @@ Provider自身のshell、Git、外部service toolはSession Runtime APIを経由
 - typecheck、全 test、build、必要な smoke／visual check が最終統合 commit で成功する。
 
 
-### Slice 3 の作業状況（2026-09-12、独立レビュー前）
+### Slice 3 の作業状況（2026-09-12、レビュー修正中）
 
 開始コミットは `7c30c31922dbdd71f77b36da716bd363482c4163`。Session lifecycle に必要な回復記録の拡張と、Root WorkItem successor・cross-root transfer の内部処理の前倒しはユーザー承認済みである。後続 Slice の公開 WorkItem lifecycle、delegation transaction、grant routing 全体は追加していない。
 
@@ -429,3 +429,11 @@ Provider自身のshell、Git、外部service toolはSession Runtime APIを経由
 test-value初回審査の指摘に基づき、旧facade cleanup 3件と旧CRUD cleanup 2件を共通owner routing・実DB補償testへ整理した。metadata追加と宣言名変更が同じhunkにある場合のextractor境界判定を作業用コピーで修正し、既存87 testとPython／TypeScriptの追加回帰を通した。開始baseや対象recordの手動変更はせず、Git差分から67 tests／67 transitionsをdiagnostic 0で抽出した。通常のread-only general_lunaによる全recordの最終審査を進めている。
 
 追加審査で、一括削除の通常Session／Character作成用Sessionのowner振り分けを修正した。通常Sessionはlifecycle、Character作成用Sessionは既存persistenceへ渡し、最終利用日時によるcanonical候補IDを保持する。facade34件、persistence25件、binding5件、authority15件、move6件、creation5件、clone1件、lifecycle service/storage13件、CRUD5件の関連検証と型検査・buildが成功した。
+
+固定コミット `69618de69f457ae500a421ba0a9b66e549e4401d` のclean detached worktreeで、全差分をlifecycle／GUI、authority／transfer、binding／publicの3範囲に分けて独立レビューした。SessionFolderの二重作成、moveの親子Role制約、公開parserのvariant外field受理、複数回moveおよびfile／transcript／interaction履歴のroot照合をblockingとして修正する。root successorのagent actor帰属も同時に修正する。予算移管の順序に関する候補は、target先頭と合法depth制約により再現できずinvalidとした。
+
+同コミットの全testは3539件中3536 pass、2 fail、1 skipで、前述のGlossary待ち時間とtranscript固定期限の2件が再発した。source/testを固定したGit抽出67件は、審査済みrecordと一致し、通常のread-only general_lunaで全件の指摘解消を確認した。
+
+SessionFolderのmkdir成功からfilesystem effect保存までの停止は、自動回復保証外の可用性上のrisk-candidateとして残す。既存directoryの所有を推測して採用・削除せず、回復recordと同じretry identityを保持してrecovery-requiredを返す。effect保存後のDB一時失敗とDB commit後のpublication失敗は同じkeyで回復する。新しい所有markerや独自storeは導入しない。
+
+上記review修正後の関連179 test、型検査、build、Git差分checkは成功した。開始baseから77 tests／77 transitionsをdiagnostic 0で再抽出し、追加・意味変更したrecordのtargeted test-value closureを進めている。次の固定修正commitで同じfinding familyの独立targeted closureを行い、全差分レビューは繰り返さない。

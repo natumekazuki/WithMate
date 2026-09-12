@@ -81,6 +81,10 @@ Agentは自分が作成した未使用childを、delegation compensationから�
 - existing GUI update／deleteとAgent APIが共有するapplication service
 - runtime catalogのSession capability projection
 
+## Recovery boundary
+
+SessionFolderの新規作成はlifecycle ownerへ集約し、作成成功を既存の回復recordのfilesystem effectへ記録する。記録済みの同一operationはフォルダーを再作成せずDB処理を再開する。mkdir成功からeffect記録までの間に停止した場合は自動回復保証外とし、既存directoryを自動採用・削除せずrecovery-requiredとretry identityを保持する。
+
 ## Migration
 
 既存Sessionには現在のbindingを`migration_baseline`として一件追加する。既存rootとparent関係、Character runtime identity、Provider thread、Workspaceを変更しない。既存Roleに対応するbaseline active grantはshared authority cutoverで作成済みであることを前提とし、本sliceでgrantを再生成または拡張しない。

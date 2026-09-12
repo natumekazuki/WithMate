@@ -1034,6 +1034,17 @@ export class SessionStorageV6 {
     this.lifecycleStorage.reject(operationId, expectedRevision, error, now);
   }
 
+  recordLifecycleStep(input: {
+    operationId: string;
+    expectedRevision: number;
+    step: string;
+    effect: "none" | "committed" | "unknown";
+    payload?: Record<string, unknown>;
+    occurredAt: string;
+  }): SessionLifecycleOperationRecord {
+    return this.lifecycleStorage.recordStep(input);
+  }
+
   markRecoveryRequiredLifecycleMutation(operationId: string, expectedRevision: number, error: unknown, now: string): void {
     this.lifecycleStorage.markRecoveryRequired(operationId, expectedRevision, error, now);
   }

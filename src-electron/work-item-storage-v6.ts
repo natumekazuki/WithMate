@@ -193,7 +193,9 @@ export function restoreRootWorkItemWithinTransaction(
   operationId: string,
   now: string,
 ): WorkItem {
-  const principalSessionId = session.id;
+  const principalSessionId = proof.principal.kind === "agent"
+    ? proof.principal.actorSessionId
+    : session.id;
   const principalKey = workItemPrincipalKey(proof);
   const existingIdempotency = db.prepare(`
     SELECT request_fingerprint, work_item_id, response_json

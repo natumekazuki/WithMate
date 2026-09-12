@@ -547,10 +547,10 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session lifecycleの公開operationはplacement、tuple、manifest revisionをstrictに検証する"
+// claim = "Session lifecycleの公開operationはplacement、provider tuple、branch専用field、manifest revisionをstrictに検証する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
-// fault = "cross-root transferや物理deleteがmanifestなしで受理される、またはprovider tupleの一部更新が公開境界を通過する"
-// observable = "strict lifecycle input parser result"
+// fault = "provider branch専用fieldやsame-root/child branchの余剰fieldが黙って捨てられ、strict union境界を通過する"
+// observable = "canonical parserと対応Zod schemaのvalidation error"
 // observation_boundary = "public-boundary"
 // scope = "Session Runtime lifecycle input and schema parity"
 // lifecycle = "permanent"
@@ -609,6 +609,29 @@ test("SESSION-LIFECYCLE-CONTRACT-01: lifecycle operations preserve strict unions
     provider: { id: "codex", catalogRevision: 1, model: "model-1", reasoningEffort: "medium", threadContinuity: "continue", approvalMode: "on-request", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] },
     workspace: { kind: "session_folder" }, initialGrant: { kind: "inherit" }, budget: { kind: "inherit" }, idempotencyKey: "create-1",
   }));
+
+  const codexProvider = { id: "codex", catalogRevision: 1, model: "model-1", reasoningEffort: "medium", threadContinuity: "reset", approvalMode: "on-request", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] };
+  const copilotProvider = { id: "copilot", catalogRevision: 1, model: "model-1", reasoningEffort: "medium", threadContinuity: "reset", approvalMode: "on-request", customAgentName: "" };
+  for (const provider of [
+    { ...codexProvider, customAgentName: "must-reject" },
+    { ...copilotProvider, codexSandboxMode: "workspace-write" },
+  ]) {
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "session.create", input: {
+      expectedContainerRevision: 1, placement: { kind: "root", rootKind: "standalone" }, title: "root", character: { characterId: "character-1", expectedDefinitionSha256: "definition-sha256" }, provider, workspace: { kind: "session_folder" }, initialGrant: { kind: "inherit" }, budget: { kind: "inherit" }, idempotencyKey: "provider-extra",
+    } }), SessionRuntimeValidationError);
+    assert.equal(createSessionRuntimeInputSchema("session.create").safeParse({
+      expectedContainerRevision: 1, placement: { kind: "root", rootKind: "standalone" }, title: "root", character: { characterId: "character-1", expectedDefinitionSha256: "definition-sha256" }, provider, workspace: { kind: "session_folder" }, initialGrant: { kind: "inherit" }, budget: { kind: "inherit" }, idempotencyKey: "provider-extra",
+    }).success, false);
+  }
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "session.move", input: { ...base, kind: "same_root", destinationParentSessionId: null, destinationExpectedRevision: 4, destinationRootSessionId: "must-reject" } }), SessionRuntimeValidationError);
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "session.restore", input: { ...base, kind: "child", purpose: "resume", provider: codexProvider, idempotencyKey: "restore-extra", budget: { kind: "inherit" } } }), SessionRuntimeValidationError);
+  for (const input of [
+    { ...base, kind: "title", title: "Configured", provider: codexProvider },
+    { ...base, kind: "runtime", provider: codexProvider, title: "must-reject" },
+    { ...base, kind: "character", character: { characterId: "character-1", expectedDefinitionSha256: "definition-sha256" }, threadContinuity: "reset", budget: { kind: "inherit" } },
+    { ...base, kind: "workspace", workspace: { kind: "session_folder" }, threadContinuity: "reset", sessionRole: "executor" },
+    { ...base, kind: "role", sessionRole: "executor", title: "must-reject" },
+  ]) assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "session.configure", input }), SessionRuntimeValidationError);
 });
 
 // @test-value v1

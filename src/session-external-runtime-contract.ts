@@ -1084,15 +1084,16 @@ function parseSessionPlacement(value: unknown): SessionRuntimeSessionPlacement {
 
 function parseSessionProvider(value: unknown, resetOnly = false): SessionRuntimeProviderTuple {
   const record = requireObject(value, "provider");
-  assertKeys(record, ["id", "catalogRevision", "model", "reasoningEffort", "threadContinuity", "approvalMode", "codexSandboxMode", "allowedAdditionalDirectories", "customAgentName"], "provider");
   const threadContinuity = requireEnum(record.threadContinuity, ["continue", "reset"] as const, "provider.threadContinuity");
   if (resetOnly && threadContinuity !== "reset") throw invalid("provider.threadContinuity", "New Sessions require reset thread continuity.");
   const common = { id: requireEnum(record.id, SESSION_RUNTIME_PROVIDER_IDS, "provider.id"), catalogRevision: requireInteger(record.catalogRevision, "provider.catalogRevision", 1, Number.MAX_SAFE_INTEGER), model: requireNonEmptyString(record.model, "provider.model"), reasoningEffort: requireModelReasoningEffort(record.reasoningEffort), threadContinuity };
   const approvalMode = requireEnum(record.approvalMode, APPROVAL_MODE_VALUES, "provider.approvalMode");
   if (common.id === "codex") {
+    assertKeys(record, ["id", "catalogRevision", "model", "reasoningEffort", "threadContinuity", "approvalMode", "codexSandboxMode", "allowedAdditionalDirectories"], "provider");
     if (!Array.isArray(record.allowedAdditionalDirectories) || !record.allowedAdditionalDirectories.every((item) => typeof item === "string" && item.length > 0)) throw invalid("provider.allowedAdditionalDirectories", "allowedAdditionalDirectories must be a string array.");
     return { ...common, id: "codex", approvalMode, codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "provider.codexSandboxMode"), allowedAdditionalDirectories: record.allowedAdditionalDirectories as string[] };
   }
+  assertKeys(record, ["id", "catalogRevision", "model", "reasoningEffort", "threadContinuity", "approvalMode", "customAgentName"], "provider");
   return { ...common, id: "copilot", approvalMode, customAgentName: requireString(record.customAgentName, "provider.customAgentName").trim() };
 }
 
@@ -1168,31 +1169,32 @@ function parseSessionRenameInput(value: unknown): SessionRuntimeRenameInput {
 
 function parseSessionConfigureInput(value: unknown): SessionRuntimeConfigureInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "title", "provider", "character", "threadContinuity", "workspace", "sessionRole"], "input");
   const base = { sessionId: requireNonEmptyString(record.sessionId, "sessionId"), expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
   const kind = requireEnum(record.kind, ["title", "runtime", "character", "workspace", "role"] as const, "kind");
-  if (kind === "title") return { ...base, kind, title: requireNonEmptyString(record.title, "title") };
-  if (kind === "runtime") return { ...base, kind, provider: parseSessionProvider(record.provider) };
+  if (kind === "title") { assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "title"], "input"); return { ...base, kind, title: requireNonEmptyString(record.title, "title") }; }
+  if (kind === "runtime") { assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "provider"], "input"); return { ...base, kind, provider: parseSessionProvider(record.provider) }; }
   if (kind === "character") {
+    assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "character", "threadContinuity"], "input");
     const character = requireObject(record.character, "character");
     assertKeys(character, ["characterId", "expectedDefinitionSha256"], "character");
     return { ...base, kind, character: { characterId: requireNonEmptyString(character.characterId, "character.characterId"), expectedDefinitionSha256: requireNonEmptyString(character.expectedDefinitionSha256, "character.expectedDefinitionSha256") }, threadContinuity: requireEnum(record.threadContinuity, ["continue", "reset"] as const, "threadContinuity") };
   }
   if (kind === "workspace") {
+    assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "workspace", "threadContinuity"], "input");
     const workspace = parseSessionCreateWorkspace(record.workspace);
     return { ...base, kind, workspace, threadContinuity: requireEnum(record.threadContinuity, ["continue", "reset"] as const, "threadContinuity") };
   }
+  assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "sessionRole"], "input");
   return { ...base, kind, sessionRole: requireEnum(record.sessionRole, ["standalone", "overall-coordinator", "task-coordinator", "executor"] as const, "sessionRole") };
 }
 
 function parseSessionMoveInput(value: unknown): SessionRuntimeMoveInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "destinationParentSessionId", "destinationRootSessionId", "destinationExpectedRevision", "transferManifestRevision", "transferPolicy"], "input");
   const base = { sessionId: requireNonEmptyString(record.sessionId, "sessionId"), expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
   const kind = requireEnum(record.kind, ["same_root", "cross_root"] as const, "kind");
   const destinationExpectedRevision = requireInteger(record.destinationExpectedRevision, "destinationExpectedRevision", 1, Number.MAX_SAFE_INTEGER);
   const destinationParentSessionId = record.destinationParentSessionId === null ? null : requireNonEmptyString(record.destinationParentSessionId, "destinationParentSessionId");
-  if (kind === "same_root") return { ...base, kind, destinationParentSessionId, destinationExpectedRevision };
+  if (kind === "same_root") { assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "destinationParentSessionId", "destinationExpectedRevision"], "input"); return { ...base, kind, destinationParentSessionId, destinationExpectedRevision }; }
   assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "destinationParentSessionId", "destinationRootSessionId", "destinationExpectedRevision", "transferManifestRevision", "transferPolicy"], "input");
   return { ...base, kind, destinationParentSessionId, destinationRootSessionId: requireNonEmptyString(record.destinationRootSessionId, "destinationRootSessionId"), destinationExpectedRevision, transferManifestRevision: requireInteger(record.transferManifestRevision, "transferManifestRevision", 1, Number.MAX_SAFE_INTEGER), transferPolicy: "full" };
 }
@@ -1205,10 +1207,11 @@ function parseSessionCloneInput(value: unknown): SessionRuntimeCloneInput {
 
 function parseSessionRestoreInput(value: unknown): SessionRuntimeRestoreInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["sessionId", "expectedRevision", "kind", "purpose", "provider", "budget", "idempotencyKey"], "input");
   const kind = requireEnum(record.kind, ["root", "child"] as const, "kind");
   const base = { sessionId: requireNonEmptyString(record.sessionId, "sessionId"), expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), purpose: requireNonEmptyString(record.purpose, "purpose"), provider: parseSessionProvider(record.provider), idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
-  return kind === "root" ? { ...base, kind, budget: parseSessionInitialBudget(record.budget) } : { ...base, kind };
+  if (kind === "root") { assertKeys(record, ["sessionId", "expectedRevision", "kind", "purpose", "provider", "budget", "idempotencyKey"], "input"); return { ...base, kind, budget: parseSessionInitialBudget(record.budget) }; }
+  assertKeys(record, ["sessionId", "expectedRevision", "kind", "purpose", "provider", "idempotencyKey"], "input");
+  return { ...base, kind };
 }
 
 function parseSessionArchiveInput(value: unknown): SessionRuntimeArchiveInput {

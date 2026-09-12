@@ -5,7 +5,7 @@ import { assertGrantProofCurrent, transferSessionAuthority } from "./session-aut
 import { ResourceBudgetStorage } from "./resource-budget-storage.js";
 import { appendSessionResourceEvent, getSessionResourceRevision } from "./resource-history-schema.js";
 import { SessionCrudError } from "./session-crud-service.js";
-import { requireSessionRoleBinding } from "../src/session-role-binding.js";
+import { requireChildSessionRoleAllowed, requireSessionRoleBinding, SessionRoleBindingError } from "../src/session-role-binding.js";
 
 export type SessionMoveManifestEntry = Readonly<{ sessionId: string; revision: number }>;
 
@@ -143,7 +143,20 @@ export function applySessionMove(
   }
   if (!parent && (source.session_role === "task-coordinator" || source.session_role === "executor")) fail("A child Session cannot become an orphan.");
   if (source.session_role === "standalone" && (parent || destinationRoot !== input.sessionId)) fail("A standalone Session cannot become a child.");
-  if (parent && parent.delegation_depth + 1 > 2) fail("The moved Session subtree exceeds the delegation depth limit.");
+  if (parent) {
+    try {
+      requireChildSessionRoleAllowed({
+        sessionRole: parent.session_role,
+        roleContractRevision: 1,
+        rootSessionId: parent.root_session_id,
+        parentSessionId: parent.parent_session_id,
+        delegationDepth: parent.delegation_depth,
+      }, source.session_role as "task-coordinator" | "executor");
+    } catch (error) {
+      if (error instanceof SessionRoleBindingError) fail(error.message);
+      throw error;
+    }
+  }
 
   if (input.kind === "cross_root") {
     if (!input.destinationProof) fail("Cross-root move requires a destination authority proof.");

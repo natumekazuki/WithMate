@@ -49,7 +49,7 @@ function createLaunchSelection(
   };
 }
 
-function createSessionRequest(workspace: Record<string, unknown>): Record<string, unknown> {
+function createSessionRequest(workspace: Record<string, unknown>, sessionKind?: "default" | "character-authoring"): Record<string, unknown> {
   return {
     rootSessionRole: "overall-coordinator",
     provider: "codex",
@@ -63,6 +63,7 @@ function createSessionRequest(workspace: Record<string, unknown>): Record<string
       sub: "#445566",
     },
     approvalMode: "untrusted",
+    ...(sessionKind ? { sessionKind } : {}),
   };
 }
 
@@ -103,6 +104,7 @@ function createMainSessionCommandFacade(
     cancelSessionRun: (sessionId) => deps.getSessionRuntimeService().cancelRun(sessionId),
     validateWorkspaceDirectory: async () => ({ valid: true }),
     ...deps,
+    resolveSessionFilesDirectory: deps.resolveSessionFilesDirectory ?? ((sessionId) => `C:/session-files/${sessionId}`),
     getSessionLifecycleMutationCallbacks: () => lifecycleCallbacks,
     getSessionExecutionService: () => {
       const service = resolveExecutionService();
@@ -249,6 +251,16 @@ test("MainSessionCommandFacade は Session 削除失敗時に通知を撤去し�
   assert.deepEqual(calls, ["delete:s-1"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "通常SessionのSessionFolder workspaceはfacadeがmkdirせず、解決済みpathをlifecycle ownerへ渡す"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+// fault = "facadeが通常SessionのFolderを二重作成するか旧persistenceへ迂回する"
+// observable = "resolver・lifecycle ownerの呼出し列と保存inputのworkspacePath"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionCommandFacade normal session-folder creation routing"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID の session を永続化する", async () => {
   const calls: string[] = [];
   let persistedInput: Record<string, unknown> | null = null;
@@ -270,11 +282,18 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
     getSessionPersistenceService: () =>
       ({
         createSession(input) {
-          calls.push(`persist:${input.id}`);
+          calls.push(`persist-authoring:${input.id}`);
           persistedInput = input as unknown as Record<string, unknown>;
           return input as never;
         },
       }) as never,
+    getSessionLifecycleMutationCallbacks: () => ({
+      createSession(input) {
+        calls.push(`lifecycle:${input.id}`);
+        persistedInput = input as unknown as Record<string, unknown>;
+        return input as never;
+      },
+    }) as never,
     getSessionRuntimeService: () => ({} as never),
     getProviderQuotaTelemetry: () => null,
     isProviderQuotaTelemetryStale: () => false,
@@ -283,8 +302,9 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
       calls.push("issue-id");
       return "launch-managed";
     },
-    createSessionFilesDirectory: (sessionId) => {
-      calls.push(`mkdir:${sessionId}`);
+    createSessionFilesDirectory: () => { throw new Error("normal Session must not mkdir"); },
+    resolveSessionFilesDirectory: (sessionId) => {
+      calls.push(`resolve-folder:${sessionId}`);
       return "C:/WithMate/session-files/launch-managed";
     },
     isSessionFilesWorkspace: () => false,
@@ -295,8 +315,8 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
   assert.deepEqual(calls, [
     "resolve:codex",
     "issue-id",
-    "mkdir:launch-managed",
-    "persist:launch-managed",
+    "resolve-folder:launch-managed",
+    "lifecycle:launch-managed",
   ]);
   assert.deepEqual(
     {
@@ -472,6 +492,16 @@ test("MainSessionCommandFacade は Character ID と runtime snapshot owner の�
   assert.deepEqual(calls, []);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "通常Sessionのlifecycle createがruntime選択境界を保持し、その完了までSettings更新を待機させる"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+// fault = "GUI createとSettings更新が同時に進み、runtime選択中の設定が競合する"
+// observable = "selection・lifecycle create・Settings更新の順序"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionCommandFacade runtime selection serialization"
+// lifecycle = "permanent"
+// @end-test-value
 test("Session 作成中は Settings 更新を同じ runtime 選択境界の完了まで待機させる", async () => {
   const coordinator = new ProviderRuntimeOperationCoordinator();
   const runExclusive: RunProviderRuntimeOperationExclusive =
@@ -511,18 +541,22 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
           return input as never;
         },
       }) as never,
+    getSessionLifecycleMutationCallbacks: () => ({
+      async createSession(input) {
+        events.push("lifecycle:start");
+        folderEntered.resolve();
+        await releaseFolder.promise;
+        events.push("lifecycle:end");
+        return input as never;
+      },
+    }) as never,
     getSessionRuntimeService: () => ({} as never),
     getProviderQuotaTelemetry: () => null,
     isProviderQuotaTelemetryStale: () => false,
     refreshProviderQuotaTelemetry: async () => null,
     createSessionId: () => "launch-serialized",
-    createSessionFilesDirectory: async () => {
-      events.push("folder:start");
-      folderEntered.resolve();
-      await releaseFolder.promise;
-      events.push("folder:end");
-      return "C:/WithMate/session-files/launch-serialized";
-    },
+    createSessionFilesDirectory: () => { throw new Error("normal Session must not mkdir"); },
+    resolveSessionFilesDirectory: () => "C:/WithMate/session-files/launch-serialized",
     isSessionFilesWorkspace: () => false,
   });
 
@@ -538,7 +572,7 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
   await Promise.resolve();
   assert.deepEqual(events, [
     "selection:resolve",
-    "folder:start",
+    "lifecycle:start",
   ]);
 
   releaseFolder.resolve();
@@ -546,9 +580,8 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
 
   assert.deepEqual(events, [
     "selection:resolve",
-    "folder:start",
-    "folder:end",
-    "session:persist",
+    "lifecycle:start",
+    "lifecycle:end",
     "settings:update",
     "settings:broadcast",
   ]);
@@ -695,6 +728,16 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
   );
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "起動設定の取得に失敗した場合、Session ID発行・Folder解決・Session保存を開始しない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+// fault = "launch selection失敗後に作成または永続化の副作用が残る"
+// observable = "記録された副作用呼出し列"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionCommandFacade session-folder admission failure"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は起動設定の取得失敗時に ID 発行・SessionFolder 作成・永続化を行わない", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
@@ -729,12 +772,22 @@ test("MainSessionCommandFacade は起動設定の取得失敗時に ID 発行・
   });
 
   await assert.rejects(
-    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
+    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }, "character-authoring") as never),
     /latest selection read failed/,
   );
   assert.deepEqual(calls, ["resolve"]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "character-authoring SessionのSessionFolder作成失敗時は保存を開始しない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+// fault = "Folder作成失敗を握り潰してSession保存へ進む"
+// observable = "作成失敗と保存回数"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionCommandFacade character-authoring folder creation failure"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を永続化しない", async () => {
   let persistCount = 0;
   const facade = createMainSessionCommandFacade({
@@ -762,12 +815,22 @@ test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を�
   });
 
   await assert.rejects(
-    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
+    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }, "character-authoring") as never),
     /mkdir failed/,
   );
   assert.equal(persistCount, 0);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "character-authoring保存失敗後は作成済みSessionFolderをstrict cleanupへ渡す"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+// fault = "保存失敗後の作成済みFolderが残るかcleanup経路がbest-effortへ漏れる"
+// observable = "ID発行・mkdir・保存・strict cleanupの順序"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionCommandFacade character-authoring folder compensation"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は DB commit前の失敗後に作成済み SessionFolder をcleanupする", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
@@ -805,12 +868,22 @@ test("MainSessionCommandFacade は DB commit前の失敗後に作成済み Sessi
   });
 
   await assert.rejects(
-    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
+    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }, "character-authoring") as never),
     /persist failed before commit/,
   );
   assert.deepEqual(calls, ["issue-id", "mkdir", "persist", "strict-create-cleanup"]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "未commit character-authoring SessionFolderのcleanup失敗はrecoverable owner errorとして返す"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+// fault = "cleanup失敗を元の保存エラーへ変換して回復対象情報を失う"
+// observable = "エラー型・code・sessionId"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionCommandFacade folder cleanup recovery"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は未commit SessionFolderのcleanup失敗をrecoverable owner付きで返す", async () => {
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
@@ -837,7 +910,7 @@ test("MainSessionCommandFacade は未commit SessionFolderのcleanup失敗をreco
   });
 
   await assert.rejects(
-    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
+    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }, "character-authoring") as never),
     (error) =>
       error instanceof MainSessionFolderCleanupRequiredError
       && error.code === "SESSION_FOLDER_CLEANUP_REQUIRED"

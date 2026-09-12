@@ -2297,6 +2297,8 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       createSessionId: () => `launch-${crypto.randomUUID()}`,
       createSessionFilesDirectory: (sessionId) =>
         createSessionFilesDirectory(app.getPath("userData"), sessionId),
+      resolveSessionFilesDirectory: (sessionId) =>
+        resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
       isSessionFilesWorkspace: (session) =>
         areDirectoryPathsEquivalent(
           session.workspacePath,

@@ -70,6 +70,7 @@ type MainSessionCommandFacadeDeps = {
   refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
   createSessionId(): string;
   createSessionFilesDirectory(sessionId: string): Promise<string> | string;
+  resolveSessionFilesDirectory(sessionId: string): string;
   isSessionFilesWorkspace(session: Pick<Session, "id" | "workspacePath">): boolean;
   dismissSessionTurnNotification(sessionId: string): void;
   cleanupSessionFilesDirectory?(sessionId: string): Promise<void>;
@@ -134,9 +135,22 @@ export class MainSessionCommandFacade {
     }
 
     const sessionId = this.issueSessionId();
-    const workspacePath = await this.deps.createSessionFilesDirectory(sessionId);
+    const isCharacterAuthoring = sessionInput.sessionKind === "character-authoring";
+    const workspacePath = isCharacterAuthoring
+      ? await this.deps.createSessionFilesDirectory(sessionId)
+      : this.deps.resolveSessionFilesDirectory(sessionId);
     if (!workspacePath.trim()) {
       throw new Error("SessionFolder を作成できなかったよ。");
+    }
+
+    if (!isCharacterAuthoring) {
+      return this.persistCreatedSession({
+        ...sessionInput,
+        id: sessionId,
+        workspaceLabel: "SessionFolder",
+        workspacePath,
+        branch: "",
+      });
     }
 
     try {
