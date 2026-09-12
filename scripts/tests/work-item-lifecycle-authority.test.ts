@@ -199,6 +199,8 @@ describe("Work Item lifecycle authority capability", () => {
     const resultProof = authority!.authorize(agentBinding("executor"), "work.result.correct", correctionInput).proof;
     const corrected = service!.correctResult(correctionInput, agentBinding("executor"), resultProof);
     assert.equal(corrected.resultRevision, 2);
+    assert.equal(corrected.supersededResultRevision, 1);
+    assert.equal(corrected.workItem.result?.summary, "corrected");
     const db = new DatabaseSync(dbPath);
     let grantId: string;
     try {
@@ -207,6 +209,7 @@ describe("Work Item lifecycle authority capability", () => {
       revokeSessionAuthorityGrant(db, { grantId, expectedRevision: row.revision, principal: { kind: "system", service: "work-item-lifecycle-authority-test" }, revokedAt: NOW });
     } finally { db.close(); }
     assert.throws(() => authority!.authorize(agentBinding("executor"), "work.result.correct", { ...correctionInput, idempotencyKey: "service-correction-after-revoke" }), SessionAuthorityError);
+    assert.throws(() => service!.correctResult({ ...correctionInput, expectedRevision: corrected.workItem.revision, expectedResultRevision: corrected.resultRevision, correctionReason: "revoked proof", idempotencyKey: "service-correction-after-revoke" }, agentBinding("executor"), resultProof), SessionAuthorityError);
 
     const dbForChild = new DatabaseSync(dbPath);
     let expectedContainerRevision: number;
@@ -222,5 +225,8 @@ describe("Work Item lifecycle authority capability", () => {
     const aggregationProof = authority!.authorize(agentBinding("task"), "work.aggregation.correct", aggregationInput).proof;
     const aggregationCorrection = service!.correctAggregation(aggregationInput, agentBinding("task"), aggregationProof);
     assert.equal(aggregationCorrection.aggregateRevision, storage!.getAggregationSummary(destination.id).aggregateRevision);
+    assert.equal(aggregationCorrection.decision?.decision, "accepted");
+    assert.equal(aggregationCorrection.decision?.reason, "reconfirmed");
+    assert.equal(aggregationCorrection.supersededDecisionRevision, 2);
   });
 });

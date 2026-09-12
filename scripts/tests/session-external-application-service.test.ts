@@ -2361,6 +2361,7 @@ test("AGG-ADAPTER-01: aggregation operationはshared Work Item serviceへdispatc
   });
   const response = await executeBound(service, "work.aggregation.get", { parentWorkItemId: "work-parent" });
   assert.ok("result" in response);
+  assert.equal((response.result as { contractRevision: number }).contractRevision, 2);
   assert.deepEqual(calls, [{ input: { parentWorkItemId: "work-parent" }, actorSessionId: "session-actor" }]);
 });
 

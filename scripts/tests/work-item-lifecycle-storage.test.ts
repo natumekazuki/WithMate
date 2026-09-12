@@ -323,12 +323,12 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
   // kind = "invariant"
   // claim = "確定済みparentからのchild moveは旧結果を保持し、旧集約をstale、新所属を未判断として原子的に保存する"
   // fault = "確定済みparentの集約結果を訂正せずchild所属だけを移動し、旧結果と新集約が同時に有効になる"
-  // observable = "work_items_v6, work_item_aggregations_v6, work_item_events_v6, work_item_aggregation_events_v6"
+  // observable = "work_items_v6のresult/current state、work_item_result_revisions_v6、work_item_aggregations_v6、decision projectionとdecision_superseded event"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
   // scope = "WorkItemStorageV6.move finalized parent correction"
   // lifecycle = "permanent"
-  // distinction = "子resultの事前訂正なしに確定済み親から移動し、再open後の所属、旧結果保持とstaleを観測する"
+  // distinction = "子resultの事前訂正なしに確定済み親から移動し、storage再open後の所属、旧result revision保持とstaleを観測する"
   // @end-test-value
   it("確定済みparentからのmoveは旧結果を保持し集約をstaleにする", () => {
     const oldParent = create(null, "root", "task", "finalized-parent");

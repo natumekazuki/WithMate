@@ -797,6 +797,12 @@ export class WorkItemStorageV6 {
         throw new WorkItemAggregationConflictError("WORK_ITEM_RESULT_REVISION_CONFLICT", "The result revision is stale.", { expectedRevision: input.expectedResultRevision, actualRevision: supersededResultRevision });
       }
       const resultRevision = supersededResultRevision + 1;
+      const supersededEvent = this.db.prepare(`SELECT revision FROM work_item_events_v6
+        WHERE work_item_id=? AND event_type IN ('result_reported','migration_baseline')
+          AND json_type(payload_json,'$.result')='object'
+          AND COALESCE(json_extract(payload_json,'$.resultRevision'),1)=?
+        ORDER BY revision LIMIT 1`).get(current.id, supersededResultRevision) as { revision: number } | undefined;
+      if (!supersededEvent) throw new Error(`Superseded result event is missing: ${current.id}`);
       const association = this.db.prepare(`
         SELECT association.work_item_revision, association.actual_source_json, association.planned_source_json,
           execution.revision AS execution_revision
@@ -830,12 +836,13 @@ export class WorkItemStorageV6 {
           sourceRevision,
           executionRevision: association?.execution_revision ?? null,
         },
+        supersedesEventId: `work-item:${current.id}:revision:${supersededEvent.revision}`,
         createdAt: input.updatedAt,
         proof: input.proof,
         operationId: workItemOperationId("work.result.correct", input.proof, input.requestFingerprint),
         idempotencyKey: input.idempotencyKey,
       });
-      const staleParentWorkItemIds = this.markAncestorAggregationsStale(current.id, input.correctionReason, input.proof, input.requestFingerprint, input.idempotencyKey, input.updatedAt);
+      const staleParentWorkItemIds = this.markResultConsumersStale(current.id, input.correctionReason, input.proof, input.requestFingerprint, input.idempotencyKey, input.updatedAt, "work.result.correct");
       const response = { workItem: this.getRequired(current.id), resultRevision, supersededResultRevision, stale: staleParentWorkItemIds.length > 0, staleParentWorkItemIds };
       this.insertIdempotency("work.result.correct", input.proof, input.idempotencyKey, input.requestFingerprint, current.id, input.updatedAt, input.expiresAt, response);
       return response;
@@ -2062,7 +2069,8 @@ export class WorkItemStorageV6 {
           const cycle = this.db.prepare(`WITH RECURSIVE chain(id) AS (
             SELECT ? UNION SELECT decision.replacement_work_item_id FROM work_item_aggregation_decisions_v6 decision JOIN chain ON decision.child_work_item_id = chain.id WHERE decision.replacement_work_item_id IS NOT NULL
           ) SELECT 1 FROM chain WHERE id = ?`).get(replacementWorkItemId, current.id);
-          if (replacement.parentWorkItemId !== parent.id || replacement.rootSessionId !== parent.rootSessionId || replacement.archivedAt || replacement.deletedAt || cycle) throw new WorkItemAggregationConflictError("WORK_ITEM_REPLACEMENT_INVALID", "The replacement must be a live same-parent Work Item without a replacement cycle.");
+          const used = this.db.prepare("SELECT 1 FROM work_item_aggregation_decisions_v6 WHERE replacement_work_item_id=? AND child_work_item_id<>?").get(replacementWorkItemId, current.id);
+          if (replacement.parentWorkItemId !== parent.id || replacement.rootSessionId !== parent.rootSessionId || replacement.archivedAt || replacement.deletedAt || cycle || used) throw new WorkItemAggregationConflictError("WORK_ITEM_REPLACEMENT_INVALID", "The replacement must be an unused live same-parent Work Item without a replacement cycle.");
         }
         this.validateDecision(current, nextDecision, reason ?? decision.reason);
         this.db.prepare(`UPDATE work_item_aggregation_decisions_v6 SET decision_revision = ?, child_revision = ?, decision_type = ?, reason = ?, replacement_work_item_id = ?, decided_at = ? WHERE child_work_item_id = ?`)
@@ -2075,22 +2083,23 @@ export class WorkItemStorageV6 {
         childWorkItemId: current.id,
         aggregateRevision: input.expectedAggregateRevision + 1,
         eventKind: "decision_corrected",
+        supersedesEventId: `work-item-aggregation:${parent.id}:revision:${decision.revision}`,
         proof: input.proof,
         operationId: workItemOperationId("work.aggregation.correct", input.proof, input.requestFingerprint),
         idempotencyKey: input.idempotencyKey,
         occurredAt: input.decidedAt,
         payload: { correction: input.correction.kind, supersededDecisionRevision: decision.revision, childRevision: current.revision, decision: result?.decision ?? null, reason, replacementWorkItemId: result?.replacementWorkItemId ?? null },
       });
-      const staleParentWorkItemIds = this.markAncestorAggregationsStale(parent.id, `aggregation:${input.correction.kind}`, input.proof, input.requestFingerprint, input.idempotencyKey, input.decidedAt, "work.aggregation.correct");
-      const aggregateRevision = this.getAggregationSummary(parent.id).aggregateRevision;
+      const staleParentWorkItemIds = this.markResultConsumersStale(parent.id, `aggregation:${input.correction.kind}`, input.proof, input.requestFingerprint, input.idempotencyKey, input.decidedAt, "work.aggregation.correct");
+      const { aggregateRevision, stale } = this.getAggregationSummary(parent.id);
       this.insertAggregationCorrectionIdempotency(input, current.id, result?.replacementWorkItemId ?? null, {
         decision: result,
         supersededDecisionRevision: decision.revision,
         aggregateRevision,
-        stale: true,
+        stale,
         staleParentWorkItemIds,
       });
-      return { decision: result, supersededDecisionRevision: decision.revision, aggregateRevision, stale: true, staleParentWorkItemIds };
+      return { decision: result, supersededDecisionRevision: decision.revision, aggregateRevision, stale, staleParentWorkItemIds };
     });
   }
 
@@ -2233,8 +2242,8 @@ export class WorkItemStorageV6 {
         `
       SELECT 1 FROM work_items_v6 AS child
       INNER JOIN work_item_aggregation_decisions_v6 AS decision ON decision.child_work_item_id = child.id
-      WHERE child.parent_work_item_id = ? AND (NOT ${workItemDecisionRevisionMatchesSql("child")}
-        OR (decision.decision_type = 'accepted' AND EXISTS (SELECT 1 FROM work_item_aggregations_v6 nested WHERE nested.parent_work_item_id = child.id AND nested.stale = 1))) LIMIT 1
+      WHERE child.parent_work_item_id = ? AND decision.decision_type = 'accepted' AND (NOT ${workItemDecisionRevisionMatchesSql("child")}
+        OR EXISTS (SELECT 1 FROM work_item_aggregations_v6 nested WHERE nested.parent_work_item_id = child.id AND nested.stale = 1)) LIMIT 1
     `,
       )
       .get(parentWorkItemId);
@@ -2245,7 +2254,31 @@ export class WorkItemStorageV6 {
       );
   }
 
-  private markAncestorAggregationsStale(workItemId: string, reason: string, proof: MutationAuthorityProof, requestFingerprint: string, idempotencyKey: string, occurredAt: string, operation: WorkItemMutationOperation | WorkItemAggregationMutationOperation = "work.result.correct", finalizedOnly = false, rootsOnly = false): string[] {
+  private markResultConsumersStale(workItemId: string, reason: string, proof: MutationAuthorityProof, requestFingerprint: string, idempotencyKey: string, occurredAt: string, operation: "work.result.correct" | "work.aggregation.correct"): string[] {
+    const affected: string[] = [];
+    const mark = (id: string) => {
+      if (this.getRequired(id).result === null) return;
+      this.markAggregationStaleWithEvent(id, workItemId, reason, proof, requestFingerprint, idempotencyKey, occurredAt, operation);
+      affected.push(id);
+    };
+    let item = this.getRequired(workItemId);
+    if (item.kind === "root" || this.db.prepare("SELECT 1 FROM work_item_aggregations_v6 WHERE parent_work_item_id=?").get(item.id)) mark(item.id);
+    while (item.parentWorkItemId !== null) {
+      if (this.getDecision(item.id)?.decision !== "accepted") return affected;
+      item = this.getRequired(item.parentWorkItemId);
+      mark(item.id);
+    }
+    if (item.kind === "root") return affected;
+    const roots = this.db.prepare(`SELECT DISTINCT root.id FROM work_items_v6 root
+      JOIN work_item_events_v6 result ON result.work_item_id=root.id AND result.event_type='result_reported'
+      WHERE root.kind='root' AND root.root_session_id=? AND EXISTS (
+        SELECT 1 FROM work_item_events_v6 created WHERE created.work_item_id=? AND created.revision=1 AND created.sequence<result.sequence
+      )`).all(item.rootSessionId, item.id) as Array<{ id: string }>;
+    for (const root of roots) mark(root.id);
+    return affected;
+  }
+
+  private markAncestorAggregationsStale(workItemId: string, reason: string, proof: MutationAuthorityProof, requestFingerprint: string, idempotencyKey: string, occurredAt: string, operation: WorkItemMutationOperation | WorkItemAggregationMutationOperation, finalizedOnly = false, rootsOnly = false): string[] {
     const ancestors = this.db.prepare(`
       WITH RECURSIVE ancestors(id) AS (
         SELECT id FROM work_items_v6 WHERE id = ?
@@ -2314,12 +2347,14 @@ export class WorkItemStorageV6 {
         { parentWorkItemId: root.id },
       );
     }
+    const consumedDescendants = `WITH RECURSIVE consumed(id) AS (
+      SELECT id FROM work_items_v6 WHERE root_session_id=? AND kind='delegated' AND parent_work_item_id IS NULL
+      UNION SELECT decision.child_work_item_id FROM work_item_aggregation_decisions_v6 decision
+        JOIN consumed ON decision.parent_work_item_id=consumed.id WHERE decision.decision_type='accepted'
+    ) SELECT id FROM consumed`;
     const staleAggregate = this.db.prepare(`
       SELECT parent_work_item_id FROM work_item_aggregations_v6
-      WHERE stale = 1 AND parent_work_item_id IN (
-        SELECT id FROM work_items_v6 WHERE root_session_id = ?
-          AND kind = 'delegated'
-      ) LIMIT 1
+      WHERE stale = 1 AND parent_work_item_id IN (${consumedDescendants}) LIMIT 1
     `).get(root.rootSessionId) as { parent_work_item_id: string } | undefined;
     if (staleAggregate) throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_STALE", "A descendant aggregation requires re-finalization.", { parentWorkItemId: staleAggregate.parent_work_item_id });
     const incomplete = this.db
@@ -2338,13 +2373,14 @@ export class WorkItemStorageV6 {
           AND child.result_json IS NULL
         )
         OR (child.parent_work_item_id IS NOT NULL AND decision.child_work_item_id IS NULL)
-        OR (decision.child_revision IS NOT NULL AND NOT ${workItemDecisionRevisionMatchesSql("child")})
+        OR (decision.child_revision IS NOT NULL AND decision.decision_type='accepted'
+          AND child.id IN (${consumedDescendants}) AND NOT ${workItemDecisionRevisionMatchesSql("child")})
       )
       ORDER BY child.sequence ASC
       LIMIT 1
     `,
       )
-      .get(root.rootSessionId, root.id) as
+      .get(root.rootSessionId, root.id, root.rootSessionId) as
       | {
       id: string;
       parent_work_item_id: string | null;
@@ -2407,6 +2443,7 @@ export class WorkItemStorageV6 {
     proof: MutationAuthorityProof;
     operationId: string;
     idempotencyKey: string | null;
+    supersedesEventId?: string;
   }): void {
     assertWorkItemEventPayloadWithinLimit(input.type, input.payload);
     const payloadJson = serializeJson(input.payload, "Work Item event payload");
@@ -2435,6 +2472,7 @@ export class WorkItemStorageV6 {
       operationId: input.operationId,
       idempotencyKey: input.idempotencyKey,
       occurredAt: input.createdAt,
+      supersedesEventId: input.supersedesEventId,
     });
   }
 

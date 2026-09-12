@@ -6,8 +6,11 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
+import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
+import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import { backfillBaselineSessionAuthority } from "../../src-electron/session-authority-storage.js";
 import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
+import { WorkItemService } from "../../src-electron/work-item-service.js";
 import { SESSION_AUTHORITY_MAPPING_REVISION, SESSION_AUTHORITY_OPERATION_DEFINITIONS, type MutationAuthorityProof } from "../../src/session-authority.js";
 import type { DelegatedWorkItemBinding, WorkItem, WorkItemResult } from "../../src/work-item.js";
 
@@ -29,6 +32,10 @@ function proof(operation: keyof typeof SESSION_AUTHORITY_OPERATION_DEFINITIONS, 
 function binding(parentWorkItemId: string | null, creatorSessionId: string, targetSessionId: string, goal = "goal"): DelegatedWorkItemBinding {
   return { kind: "delegated", rootSessionId: "root", creatorSessionId, targetSessionId, parentWorkItemId,
     goal, scope: "scope", completionCriteria: "complete", authority: "local", sourceIdentity: SOURCE };
+}
+
+function agentBinding(sessionId: string): ResolvedAgentRuntimeBinding {
+  return { bindingId: `binding-${sessionId}`, bindingIdHash: `binding-hash-${sessionId}`, actorSessionId: sessionId, providerId: "codex", executionGeneration: "generation-1", authoritySnapshot: {}, operationGrants: ["session.runtime.invoke"], createdAt: NOW, expiresAt: null };
 }
 
 describe("Work Item result and aggregation correction", () => {
@@ -88,12 +95,12 @@ describe("Work Item result and aggregation correction", () => {
 
   function settle(item: WorkItem, key = `${item.id}-result`): WorkItem {
     const active = storage.mutate({ operation: "work.transition", workItemId: item.id, principalSessionId: "root", idempotencyKey: `${key}-start`, requestFingerprint: `${key}-start-fp`, expectedRevision: item.revision, state: "in_progress", result: null, updatedAt: NOW, expiresAt: EXPIRES, proof: proof("work.transition") });
-    return storage.mutate({ operation: "work.result", workItemId: item.id, principalSessionId: "root", idempotencyKey: key, requestFingerprint: `${key}-fp`, expectedRevision: active.revision, state: "completed", result: result(item, "original"), updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result") });
+    return storage.mutate({ operation: "work.result", workItemId: item.id, principalSessionId: "root", idempotencyKey: key, requestFingerprint: `${key}-fp`, expectedRevision: active.revision, ...(item.kind === "delegated" && storage.getAggregationSummary(item.id).aggregateRevision > 0 ? { expectedAggregateRevision: storage.getAggregationSummary(item.id).aggregateRevision } : {}), state: "completed", result: result(item, "original"), updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result") });
   }
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "terminal result correctionは旧resultを保持したままcurrent projectionとresult_corrected eventを新revisionへ向ける"
+  // claim = "terminal result correctionは旧resultを保持したままcurrent projectionとresult_reported eventを新revisionへ向ける"
   // fault = "訂正がwork_items_v6のresultだけを上書きし、旧result、source/execution provenance、訂正理由を失う"
   // observable = "work_items_v6.result_json, work_item_result_revisions_v6, work_item_events_v6"
   // observation_boundary = "component-behavior"
@@ -119,8 +126,14 @@ describe("Work Item result and aggregation correction", () => {
     assert.equal(revisions.at(-1)?.correction_reason, "verification update");
     assert.equal(revisions.at(-1)?.source_revision, child.revision);
     assert.equal(revisions.at(-1)?.execution_revision, null);
-    assert.deepEqual(sql<{ event_type: string }>("SELECT event_type FROM work_item_events_v6 WHERE work_item_id=? ORDER BY revision", child.id).map((row) => row.event_type).slice(-1), ["result_reported"]);
-    assert.equal(JSON.parse(sql<{ result_json: string }>("SELECT result_json FROM work_item_result_revisions_v6 WHERE work_item_id=? ORDER BY result_revision LIMIT 1", child.id)[0].result_json).summary, "original");
+    assert.equal(JSON.parse(revisions[0].result_json).summary, "original");
+    assert.equal(JSON.parse(revisions[1].result_json).summary, "corrected");
+    const correctionEvent = sql<{ revision: number; event_type: string; payload_json: string; supersedes_event_id: string | null }>(`SELECT event.revision,event.event_type,event.payload_json,header.supersedes_event_id
+      FROM work_item_events_v6 AS event INNER JOIN resource_event_headers_v6 AS header ON header.event_id='work-item:' || event.work_item_id || ':revision:' || event.revision
+      WHERE event.work_item_id=? ORDER BY event.revision DESC LIMIT 1`, child.id)[0];
+    assert.equal(correctionEvent.event_type, "result_reported");
+    assert.equal(correctionEvent.supersedes_event_id, `work-item:${child.id}:revision:${child.revision}`);
+    assert.deepEqual(JSON.parse(correctionEvent.payload_json), { from: "completed", to: "completed", result: correctedResult, resultRevision: 2, supersededResultRevision: 1, correctionReason: "verification update", sourceRevision: child.revision, executionRevision: null });
   });
 
   // @test-value v2
@@ -146,6 +159,8 @@ describe("Work Item result and aggregation correction", () => {
     });
     const beforeRejectSummary = storage.getAggregationSummary(parent.id);
     const beforeRejectDecisions = sql("SELECT * FROM work_item_aggregation_decisions_v6 WHERE parent_work_item_id=?", parent.id);
+    const beforeRejectEvents = sql("SELECT * FROM work_item_aggregation_events_v6 WHERE parent_work_item_id=? ORDER BY aggregate_revision", parent.id);
+    const beforeRejectIdempotency = sql("SELECT * FROM work_item_aggregation_idempotency_v6 WHERE child_work_item_id=? ORDER BY operation,idempotency_key", child.id);
     assert.throws(() => storage.correctAggregation({
       parentWorkItemId: parent.id, childWorkItemId: child.id, correction: { kind: "revise", decision: "excluded", reason: "stale attempt" },
       expectedAggregateRevision: beforeRejectSummary.aggregateRevision, expectedChildResultRevision: 1, actorSessionId: "task",
@@ -153,6 +168,8 @@ describe("Work Item result and aggregation correction", () => {
     }));
     assert.deepEqual(storage.getAggregationSummary(parent.id), beforeRejectSummary);
     assert.deepEqual(sql("SELECT * FROM work_item_aggregation_decisions_v6 WHERE parent_work_item_id=?", parent.id), beforeRejectDecisions);
+    assert.deepEqual(sql("SELECT * FROM work_item_aggregation_events_v6 WHERE parent_work_item_id=? ORDER BY aggregate_revision", parent.id), beforeRejectEvents);
+    assert.deepEqual(sql("SELECT * FROM work_item_aggregation_idempotency_v6 WHERE child_work_item_id=? ORDER BY operation,idempotency_key", child.id), beforeRejectIdempotency);
   });
 
   // @test-value v2
@@ -171,11 +188,12 @@ describe("Work Item result and aggregation correction", () => {
     const child = settle(create(parent.id, "task", "executor"));
     const initial = storage.getAggregationSummary(parent.id);
     storage.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: initial.aggregateRevision, idempotencyKey: "accept-withdraw", requestFingerprint: "accept-withdraw-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+    settle(parent);
     const accepted = storage.getAggregationSummary(parent.id);
     const withdrawn = storage.correctAggregation({
       parentWorkItemId: parent.id, childWorkItemId: child.id, correction: { kind: "withdraw", reason: "reopen review" },
       expectedAggregateRevision: accepted.aggregateRevision, expectedChildResultRevision: 1, actorSessionId: "task",
-      idempotencyKey: "withdraw", requestFingerprint: "withdraw-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide"),
+      idempotencyKey: "withdraw", requestFingerprint: "withdraw-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.correct"),
     });
     assert.equal(withdrawn?.decision, null);
     assert.equal(withdrawn?.supersededDecisionRevision, 2);
@@ -183,17 +201,66 @@ describe("Work Item result and aggregation correction", () => {
     assert.equal(summary.acceptedCount, 0);
     assert.equal(summary.undecidedTerminalCount, 1);
     assert.equal(summary.stale, true);
-    assert.equal(summary.finalizedRevision, null);
+    assert.equal(summary.finalizedRevision, accepted.finalizedRevision);
+    const correctionEvent = sql<{ event_id: string; aggregate_revision: number; supersedes_event_id: string | null }>(`SELECT event.event_id,event.aggregate_revision,header.supersedes_event_id FROM work_item_aggregation_events_v6 AS event
+      INNER JOIN resource_event_headers_v6 AS header ON header.event_id=event.event_id WHERE event.parent_work_item_id=? AND event.event_kind='decision_corrected' ORDER BY event.aggregate_revision DESC LIMIT 1`, parent.id)[0];
+    assert.equal(correctionEvent.supersedes_event_id, `work-item-aggregation:${parent.id}:revision:2`);
   });
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "同じcorrection/finalize requestの再送はrevisionとresult/eventを重複生成せず、response loss後にread-back可能である"
+  // claim = "結果訂正はaccepted依存のみをstaleにし、excludedまたはretry_requestedで隔てられた確定済み親とRootの有効結果を保持する"
+  // fault = "不採用結果の訂正が無関係な確定結果を失効させる、またはRoot再確定が不採用branchのstaleに阻害される"
+  // observable = "direct excluded/retryとnested excludedの親・Root全projection保持、accepted中間親のstale、Root明示再確定の成功"
+  // observation_boundary = "component-behavior"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
+  // scope = "result correction consumer dependency boundary"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("excludedとretryの境界は上位の有効結果を保持する", () => {
+    const decide = (parent: WorkItem, child: WorkItem, decision: "accepted" | "excluded") => storage.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, actorSessionId: parent.targetSessionId, decision, reason: decision === "excluded" ? "outside adopted result" : null, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, idempotencyKey: `${child.id}-decision`, requestFingerprint: `${child.id}-decision`, decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+    const cases: Array<{ parent: WorkItem; leaf: WorkItem; mid?: WorkItem }> = [];
+    for (const boundary of ["excluded", "retry_requested", "nested-excluded"]) {
+      const parent = create(null, "root", "task");
+      const child = create(parent.id, "task", "executor");
+      let leaf: WorkItem;
+      if (boundary === "nested-excluded") {
+        leaf = settle(create(child.id, "executor", "task-2"));
+        decide(child, leaf, "accepted");
+        settle(child);
+        decide(parent, storage.get(child.id)!, "excluded");
+      } else {
+        leaf = settle(child);
+        if (boundary === "excluded") decide(parent, leaf, "excluded");
+        else {
+          const retried = storage.retryAggregation({ parentWorkItemId: parent.id, childWorkItemId: leaf.id, actorSessionId: "task", expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, idempotencyKey: `${child.id}-retry`, requestFingerprint: `${child.id}-retry`, replacementId: `${child.id}-replacement`, replacementBinding: binding(parent.id, "task", "executor"), decidedAt: LATER, expiresAt: EXPIRES, reason: "replacement owns result", proof: proof("work.aggregation.retry") });
+          decide(parent, settle(retried.replacement), "accepted");
+        }
+      }
+      cases.push({ parent: settle(parent), leaf, ...(boundary === "nested-excluded" ? { mid: child } : {}) });
+    }
+    const root = settle(createRoot());
+    for (const { parent, leaf, mid } of cases) {
+      const summary = storage.getAggregationSummary(parent.id);
+      const corrected = storage.correctResult({ workItemId: leaf.id, expectedRevision: leaf.revision, expectedResultRevision: 1, result: result(leaf, "new excluded evidence"), correctionReason: "recheck", principalSessionId: "root", idempotencyKey: `${leaf.id}-correct`, requestFingerprint: `${leaf.id}-correct`, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result.correct") });
+      assert.deepEqual(storage.get(parent.id), parent);
+      assert.deepEqual(storage.getAggregationSummary(parent.id), summary);
+      assert.deepEqual(storage.get(root.id), root);
+      assert.deepEqual(corrected.staleParentWorkItemIds, mid ? [mid.id] : []);
+    }
+    const corrected = storage.correctResult({ workItemId: root.id, expectedRevision: root.revision, expectedResultRevision: 1, result: result(root, "root reviewed"), correctionReason: "root review", principalSessionId: "root", idempotencyKey: "excluded-root-correct", requestFingerprint: "excluded-root-correct", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result.correct") });
+    const finalized = storage.mutate({ operation: "work.result", workItemId: root.id, principalSessionId: "root", idempotencyKey: "excluded-root-finalize", requestFingerprint: "excluded-root-finalize", expectedRevision: corrected.workItem.revision, expectedResultRevision: 2, state: "completed", result: corrected.workItem.result!, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result") });
+    assert.equal(finalized.resultCurrent, true);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "同じcorrection requestの再送はrevisionとresult/eventを重複生成せず、後続訂正後も保存済みresponseをread-backできる"
   // fault = "effect-bearing correctionの再送が別revisionを生成し、旧decisionと新decisionのprovenanceを二重化する"
   // observable = "result revision count, aggregation decision event count, idempotency response, current projection"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
-  // scope = "WorkItemStorageV6 correction replay"
+  // scope = "WorkItemStorageV6 result correction replay"
   // lifecycle = "permanent"
   // distinction = "同一idempotency keyのreplayを保存行数とcurrent projectionで検証する"
   // @end-test-value
@@ -234,6 +301,9 @@ describe("Work Item result and aggregation correction", () => {
       replacementBinding: binding(parent.id, "task", "executor", "replacement"), decidedAt: LATER, expiresAt: EXPIRES, reason: "retry evidence", proof: proof("work.aggregation.retry"),
     };
     const first = storage.retryAggregation(input);
+    const budgetRows = () => sql("SELECT d.* FROM resource_budget_dimensions_v6 AS d INNER JOIN resource_budget_accounts_v6 AS a ON a.account_id=d.account_id WHERE a.owner_session_id='root' ORDER BY d.dimension");
+    const beforeReplayBudget = budgetRows();
+    const beforeReplayEvents = sql("SELECT * FROM work_item_aggregation_events_v6 WHERE parent_work_item_id=? ORDER BY aggregate_revision", parent.id);
     const second = storage.retryAggregation(input);
     assert.equal(first.replacement.id, second.replacement.id);
     assert.equal(first.decision.decision, "retry_requested");
@@ -246,6 +316,8 @@ describe("Work Item result and aggregation correction", () => {
     assert.ok(retryEvents.some((event) => event.event_kind === "child_added" && event.child_work_item_id === first.replacement.id && JSON.parse(event.payload_json).childWorkItemId === first.replacement.id));
     assert.ok(retryEvents.some((event) => event.event_kind === "retry_requested" && event.child_work_item_id === child.id && JSON.parse(event.payload_json).replacementWorkItemId === first.replacement.id));
     assert.equal(sql("SELECT COUNT(*) AS n FROM resource_budget_reservations_v6 WHERE idempotency_key=?", `work.aggregation.retry:${first.replacement.id}`)[0].n, 1);
+    assert.deepEqual(budgetRows(), beforeReplayBudget);
+    assert.deepEqual(sql("SELECT * FROM work_item_aggregation_events_v6 WHERE parent_work_item_id=? ORDER BY aggregate_revision", parent.id), beforeReplayEvents);
   });
 
   // @test-value v2
@@ -359,10 +431,20 @@ describe("Work Item result and aggregation correction", () => {
     assert.equal(moved.parentWorkItemId, newParent.id);
     assert.equal(storage.getAggregationSummary(oldParent.id).directChildCount, 0);
     assert.equal(storage.getAggregationSummary(newParent.id).directChildCount, 1);
+    assert.equal(storage.get(oldParent.id)?.state, "completed");
+    assert.equal(storage.get(oldParent.id)?.resultCurrent, false);
+    assert.deepEqual(sql("SELECT * FROM work_item_aggregation_decisions_v6 WHERE parent_work_item_id=? AND child_work_item_id=?", oldParent.id, child.id), []);
+    const retainedDecisionEvents = sql<{ event_kind: string; payload_json: string }>("SELECT event_kind,payload_json FROM work_item_aggregation_events_v6 WHERE parent_work_item_id=? AND child_work_item_id=? AND event_kind IN ('decided','decision_corrected') ORDER BY aggregate_revision", oldParent.id, child.id);
+    assert.ok(retainedDecisionEvents.some((event) => event.event_kind === "decided" && JSON.parse(event.payload_json).decision === "accepted"));
+    assert.ok(retainedDecisionEvents.some((event) => event.event_kind === "decision_corrected" && JSON.parse(event.payload_json).reason === "reconfirmed"));
+    const parentChange = sql<{ payload_json: string }>("SELECT payload_json FROM work_item_events_v6 WHERE work_item_id=? AND event_type='parent_changed' ORDER BY revision DESC LIMIT 1", child.id)[0];
+    assert.deepEqual(JSON.parse(parentChange.payload_json), { beforeParentWorkItemId: oldParent.id, afterParentWorkItemId: newParent.id, beforeCreatorSessionId: "task", afterCreatorSessionId: "task-2", supersededDecision: true });
     const reopened = storage.reopen({ workItemId: moved.id, expectedRevision: moved.revision, principalSessionId: "root", idempotencyKey: "same-root-reopen", requestFingerprint: "same-root-reopen-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reopen"), targetSessionId: "executor", parentWorkItemId: newParent.id, goal: "reopened", scope: moved.scope, completionCriteria: moved.completionCriteria, authority: moved.authority, sourceIdentity: moved.sourceIdentity, expectedContainerRevision: Number(sql<{ resource_revision: number }>("SELECT resource_revision FROM sessions_v6 WHERE id='executor'")[0].resource_revision) });
     assert.equal(reopened.parentWorkItemId, newParent.id);
     assert.equal(reopened.predecessorWorkItemId, moved.id);
     assert.equal(JSON.parse(sql<{ payload_json: string }>("SELECT payload_json FROM work_item_events_v6 WHERE work_item_id=? AND event_type='created'", reopened.id)[0].payload_json).sourceWorkItemId, moved.id);
+    assert.equal(storage.get(oldParent.id)?.resultCurrent, false);
+    assert.deepEqual(sql<{ event_kind: string; payload_json: string }>("SELECT event_kind,payload_json FROM work_item_aggregation_events_v6 WHERE parent_work_item_id=? AND child_work_item_id=? AND event_kind IN ('decided','decision_corrected') ORDER BY aggregate_revision", oldParent.id, child.id), retainedDecisionEvents);
   });
 
   // @test-value v2
@@ -379,26 +461,38 @@ describe("Work Item result and aggregation correction", () => {
   it("flattenはbounded readでmutation authorityを拡張しない", () => {
     const parent = create(null, "root", "task", "flatten-parent");
     const child = create(parent.id, "task", "executor", "flatten-child");
-    const grandchild = create(child.id, "executor", "task-2", "flatten-grandchild");
+    const grandchildren = [settle(create(child.id, "executor", "task-2", "flatten-grandchild-1")), settle(create(child.id, "executor", "task-2", "flatten-grandchild-2"))];
+    storage.decideAggregation({ parentWorkItemId: child.id, childWorkItemId: grandchildren[0].id, actorSessionId: "executor", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(child.id).aggregateRevision, idempotencyKey: "flatten-grandchild-decision", requestFingerprint: "flatten-grandchild-decision-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
     const direct = storage.listAggregationItems({ parentWorkItemId: parent.id, depth: 1, fields: ["summary"], afterSequence: null, limit: 1 });
     assert.equal(direct.length, 1);
-    const flattened = storage.listAggregationItems({ parentWorkItemId: parent.id, depth: 8, fields: ["summary", "decision", "provenance"], afterSequence: null, limit: 10 });
-    assert.ok(flattened.some((item) => item.child.id === child.id));
-    assert.ok(flattened.some((item) => item.child.id === grandchild.id));
-    assert.ok(flattened.length <= 10);
-    const flattenedGrandchild = flattened.find((item) => item.child.id === grandchild.id)!;
-    assert.equal(flattenedGrandchild.resultRevision, 0);
-    assert.equal(flattenedGrandchild.resultCurrent, false);
-    assert.equal(flattenedGrandchild.stale, false);
+    const firstPage = storage.listAggregationItems({ parentWorkItemId: parent.id, depth: 8, fields: ["summary", "decision", "provenance"], afterSequence: null, limit: 2 });
+    const secondPage = storage.listAggregationItems({ parentWorkItemId: parent.id, depth: 8, fields: ["summary", "decision", "provenance"], afterSequence: firstPage.at(-1)!.child.sequence, limit: 2 });
+    const flattened = [...firstPage, ...secondPage];
+    assert.equal(firstPage.length, 2);
+    assert.equal(secondPage.length, 1);
+    assert.deepEqual(new Set(flattened.map((item) => item.child.id)), new Set([child.id, ...grandchildren.map(({ id }) => id)]));
+    const flattenedGrandchild = flattened.find((item) => item.child.id === grandchildren[0].id)!;
+    assert.equal(flattenedGrandchild.resultRevision, 1);
+    assert.equal(flattenedGrandchild.resultCurrent, true);
+    assert.equal(flattenedGrandchild.decision?.decision, "accepted");
     assert.equal(flattenedGrandchild.provenance?.parentWorkItemId, child.id);
-    assert.throws(() => storage.correctAggregation({ parentWorkItemId: parent.id, childWorkItemId: grandchild.id, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, expectedChildResultRevision: 1, correction: { kind: "withdraw", reason: "must be rejected" }, actorSessionId: "task", idempotencyKey: "flatten-authority", requestFingerprint: "flatten-authority-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.correct" as keyof typeof SESSION_AUTHORITY_OPERATION_DEFINITIONS) }));
+    const service = new WorkItemService({ storage, getTurnAuthoritySession(sessionId) { const row = sql<Record<string, unknown>>(`SELECT session.id AS session_id, session.title, role.* FROM sessions_v6 AS session INNER JOIN session_role_bindings_v6 AS role ON role.session_id=session.id WHERE session.id=?`, sessionId)[0]; return row ? { sessionId: row.session_id, title: row.title, sessionRole: row.session_role, roleContractRevision: row.role_contract_revision, rootSessionId: row.root_session_id, parentSessionId: row.parent_session_id, delegationDepth: row.delegation_depth } as never : null; }, createWorkItemId: () => "unused", currentTimestamp: () => LATER });
+    const authority = new SessionAuthorityService({ databasePath: dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(LATER) });
+    try {
+      const listInput = { parentWorkItemId: parent.id, depth: 8, fields: ["summary", "decision", "provenance"] as const, afterSequence: null, limit: 10 };
+      assert.equal(service.listAggregation(listInput, agentBinding("root")).length, 3);
+      const readProof = authority.authorize(agentBinding("root"), "work.get", { workItemId: grandchildren[0].id }).proof;
+      assert.equal(readProof.resolvedScope.relation, "root_member");
+      assert.equal(service.get(grandchildren[0].id, agentBinding("root"), readProof).id, grandchildren[0].id);
+      assert.throws(() => service.correctAggregation({ parentWorkItemId: child.id, childWorkItemId: grandchildren[0].id, expectedAggregateRevision: storage.getAggregationSummary(child.id).aggregateRevision, expectedChildResultRevision: 1, correction: { kind: "withdraw", reason: "read proof is not mutation authority" }, idempotencyKey: "flatten-authority" }, agentBinding("root"), readProof));
+    } finally { authority.close(); }
   });
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "3階層のterminal parentでchild correctionが発生するとstaleが中間parentと上位parentへ伝播し、stale aggregateの新規採用を拒否する"
+  // claim = "3階層のterminal parentでchild correctionが発生すると中間parentと上位parentのstale projectionが立ち、再判断と再確定で解消する"
   // fault = "stale propagationが一段で止まる、上位parentが旧final resultをcurrent採用する、または訂正前decisionを再利用する"
-  // observable = "three WorkItemAggregationSummary stale flags/reasons, parent result correction conflict, decision revisions"
+  // observable = "中間・上位WorkItemAggregationSummaryのstale/finalized projectionとstale revision拒否"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
   // scope = "nested stale propagation and re-decision"
@@ -471,11 +565,13 @@ describe("Work Item result and aggregation correction", () => {
     const rootCorrected = storage.correctResult({ workItemId: root.id, expectedRevision: storage.get(root.id)!.revision, expectedResultRevision: 1, result: result(root, "root corrected"), correctionReason: "descendant rechecked", principalSessionId: "root", idempotencyKey: "root-correction", requestFingerprint: "root-correction-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result.correct" as keyof typeof SESSION_AUTHORITY_OPERATION_DEFINITIONS) });
     assert.equal(rootCorrected.workItem.resultCurrent, false);
     const rootFinal = storage.mutate({ operation: "work.result", workItemId: root.id, principalSessionId: "root", idempotencyKey: "root-refinalize", requestFingerprint: "root-refinalize-fp", expectedRevision: rootCorrected.workItem.revision, expectedResultRevision: 2, state: "completed", result: rootCorrected.workItem.result!, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result") });
+    const rootRevisionRows = sql("SELECT * FROM work_item_result_revisions_v6 WHERE work_item_id=? ORDER BY result_revision", root.id);
     assert.equal(rootFinal.result?.summary, rootCorrected.workItem.result?.summary);
     assert.equal(rootFinal.resultCurrent, true);
     assert.equal(rootFinal.stale, false);
     storage.close(); storage = new WorkItemStorageV6(dbPath);
     assert.deepEqual(storage.get(root.id), rootFinal);
+    assert.deepEqual(sql("SELECT * FROM work_item_result_revisions_v6 WHERE work_item_id=? ORDER BY result_revision", root.id), rootRevisionRows);
   });
 
   // @test-value v2
@@ -506,6 +602,13 @@ describe("Work Item result and aggregation correction", () => {
     const otherParent = create(null, "root", "task-2", "replace-other-parent");
     const otherReplacement = create(otherParent.id, "task-2", "executor", "replace-cross-parent");
     assert.throws(() => storage.correctAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, expectedChildResultRevision: 1, correction: { kind: "replace", decision: "accepted", reason: "cross parent replacement is invalid", replacementWorkItemId: otherReplacement.id }, actorSessionId: "task", idempotencyKey: "replace-cross-parent", requestFingerprint: "replace-cross-parent-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.correct" as keyof typeof SESSION_AUTHORITY_OPERATION_DEFINITIONS) }), { code: "WORK_ITEM_REPLACEMENT_INVALID" });
+    storage.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: replacement.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, idempotencyKey: "replace-chain-decision", requestFingerprint: "replace-chain-decision-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+    assert.throws(() => storage.correctAggregation({ parentWorkItemId: parent.id, childWorkItemId: replacement.id, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, expectedChildResultRevision: 1, correction: { kind: "replace", decision: "accepted", reason: "cycle", replacementWorkItemId: child.id }, actorSessionId: "task", idempotencyKey: "replace-cycle", requestFingerprint: "replace-cycle-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.correct") }), { code: "WORK_ITEM_REPLACEMENT_INVALID" });
+    const secondChild = settle(create(parent.id, "task", "executor", "replace-second-child"));
+    storage.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: secondChild.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, idempotencyKey: "replace-second-decision", requestFingerprint: "replace-second-decision-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+    assert.throws(() => storage.correctAggregation({ parentWorkItemId: parent.id, childWorkItemId: secondChild.id, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, expectedChildResultRevision: 1, correction: { kind: "replace", decision: "accepted", reason: "already used", replacementWorkItemId: replacement.id }, actorSessionId: "task", idempotencyKey: "replace-used", requestFingerprint: "replace-used-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.correct") }), { code: "WORK_ITEM_REPLACEMENT_INVALID" });
+    const replacementCorrectionEvent = sql<{ event_id: string; aggregate_revision: number; supersedes_event_id: string | null }>(`SELECT event.event_id,event.aggregate_revision,header.supersedes_event_id FROM work_item_aggregation_events_v6 AS event INNER JOIN resource_event_headers_v6 AS header ON header.event_id=event.event_id WHERE event.parent_work_item_id=? AND event.event_kind='decision_corrected' ORDER BY event.aggregate_revision LIMIT 1`, parent.id)[0];
+    assert.equal(replacementCorrectionEvent.supersedes_event_id, `work-item-aggregation:${parent.id}:revision:2`);
   });
 
   // @test-value v2
@@ -526,7 +629,13 @@ describe("Work Item result and aggregation correction", () => {
     const input = { parentWorkItemId: parent.id, childWorkItemId: child.id, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, expectedChildResultRevision: 1, correction: { kind: "withdraw" as const, reason: "new review" }, actorSessionId: "task", idempotencyKey: "withdraw-replay", requestFingerprint: "withdraw-replay-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.correct" as keyof typeof SESSION_AUTHORITY_OPERATION_DEFINITIONS) };
     const withdrawn = storage.correctAggregation(input);
     storage.close(); storage = new WorkItemStorageV6(dbPath);
+    const beforeReplaySummary = storage.getAggregationSummary(parent.id);
+    const beforeReplayDecisions = sql("SELECT * FROM work_item_aggregation_decisions_v6 WHERE parent_work_item_id=? ORDER BY decision_revision", parent.id);
+    const beforeReplayEvents = sql("SELECT * FROM work_item_aggregation_events_v6 WHERE parent_work_item_id=? ORDER BY aggregate_revision", parent.id);
     assert.deepEqual(storage.correctAggregation(input), withdrawn);
+    assert.deepEqual(storage.getAggregationSummary(parent.id), beforeReplaySummary);
+    assert.deepEqual(sql("SELECT * FROM work_item_aggregation_decisions_v6 WHERE parent_work_item_id=? ORDER BY decision_revision", parent.id), beforeReplayDecisions);
+    assert.deepEqual(sql("SELECT * FROM work_item_aggregation_events_v6 WHERE parent_work_item_id=? ORDER BY aggregate_revision", parent.id), beforeReplayEvents);
     assert.equal(storage.getAggregationSummary(parent.id).undecidedTerminalCount, 1);
     const successor = storage.reopen({ workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: "withdraw-reopen", requestFingerprint: "withdraw-reopen-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reopen"), targetSessionId: "executor", parentWorkItemId: parent.id, goal: "reopened", scope: child.scope, completionCriteria: child.completionCriteria, authority: child.authority, sourceIdentity: child.sourceIdentity, expectedContainerRevision: Number(sql<{ resource_revision: number }>("SELECT resource_revision FROM sessions_v6 WHERE id='executor'")[0].resource_revision) });
     assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_aggregation_decisions_v6 WHERE child_work_item_id=?", successor.id)[0].n, 0);
@@ -536,4 +645,3 @@ describe("Work Item result and aggregation correction", () => {
     assert.equal(storage.getAggregationSummary(parent.id).undecidedTerminalCount, 1);
   });
 });
-

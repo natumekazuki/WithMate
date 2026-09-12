@@ -419,7 +419,14 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
       event.event_type, event.revision,
       event.principal_kind,
       CASE WHEN event.principal_kind = 'agent' THEN event.actor_session_id ELSE NULL END,
-      NULL, 1, 'committed'
+      CASE WHEN json_type(event.payload_json, '$.supersededResultRevision') = 'integer' THEN
+        (SELECT 'work-item:' || prior.work_item_id || ':revision:' || prior.revision
+          FROM work_item_events_v6 prior WHERE prior.work_item_id = event.work_item_id
+          AND prior.event_type IN ('result_reported', 'migration_baseline')
+          AND json_type(prior.payload_json, '$.result') = 'object'
+          AND COALESCE(json_extract(prior.payload_json, '$.resultRevision'), 1) = json_extract(event.payload_json, '$.supersededResultRevision')
+          AND prior.revision < event.revision ORDER BY prior.revision LIMIT 1)
+        ELSE NULL END, 1, 'committed'
     FROM work_item_events_v6 AS event
     INNER JOIN (${retainedWorkItemRowsSql}) AS item ON item.id = event.work_item_id
     UNION ALL
@@ -432,7 +439,10 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
         WHERE assignment.work_item_id = item.id AND assignment.event_type = 'assignment_changed'
           AND assignment_header.sequence > (SELECT sequence FROM resource_event_headers_v6 WHERE event_id = event.event_id)
         ORDER BY assignment.revision LIMIT 1), item.target_session_id), event.event_kind,
-      event.aggregate_revision, NULL, NULL, NULL, 1, 'committed'
+      event.aggregate_revision, NULL, NULL,
+      CASE WHEN event.event_kind = 'decision_corrected' THEN
+        'work-item-aggregation:' || event.parent_work_item_id || ':revision:' || json_extract(event.payload_json, '$.supersededDecisionRevision')
+        ELSE NULL END, 1, 'committed'
     FROM work_item_aggregation_events_v6 AS event
     INNER JOIN work_items_v6 AS item ON item.id = event.parent_work_item_id
     UNION ALL
@@ -716,21 +726,34 @@ function verifyWorkItemResultRevisions(db: DatabaseSync): void {
     superseded_result_revision: number | null; result_json: string; correction_reason: string | null;
     reporting_session_id: string; source_revision: number; execution_revision: number | null; created_at: string;
   }>;
-  const events = db.prepare(`SELECT work_item_id, revision, payload_json FROM work_item_events_v6
-    WHERE event_type IN ('result_reported', 'migration_baseline') ORDER BY work_item_id, revision`).all() as Array<{
-    work_item_id: string; revision: number; payload_json: string;
+  const events = db.prepare(`SELECT event.work_item_id, event.revision, event.payload_json, header.supersedes_event_id
+    FROM work_item_events_v6 event JOIN resource_event_headers_v6 header
+      ON header.event_id='work-item:' || event.work_item_id || ':revision:' || event.revision
+    WHERE event.event_type IN ('result_reported', 'migration_baseline') ORDER BY event.work_item_id, event.revision`).all() as Array<{
+    work_item_id: string; revision: number; payload_json: string; supersedes_event_id: string | null;
   }>;
   const expected = new Map<string, Record<string, unknown>>();
+  const resultEventIds = new Map<string, string>();
   for (const event of events) {
     const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
     if (payload.result === null || payload.result === undefined) continue;
     const revision = payload.resultRevision ?? 1;
     const identity = `${event.work_item_id}:result:${revision}`;
+    if (payload.supersededResultRevision !== undefined) {
+      const superseded = `${event.work_item_id}:result:${payload.supersededResultRevision}`;
+      if (typeof revision !== "number" || payload.supersededResultRevision !== revision - 1
+        || !resultEventIds.has(superseded) || event.supersedes_event_id !== resultEventIds.get(superseded)) {
+        throw new Error(`Work Item result correction supersede link is invalid: ${identity}`);
+      }
+    }
     const previous = expected.get(identity);
     if (previous && stableJson(previous.result) !== stableJson(payload.result)) {
       throw new Error(`Work Item result revision was overwritten by an event: ${identity}`);
     }
-    if (!previous) expected.set(identity, payload);
+    if (!previous) {
+      expected.set(identity, payload);
+      resultEventIds.set(identity, `work-item:${event.work_item_id}:revision:${event.revision}`);
+    }
   }
   const lastRevision = new Map<string, number>();
   for (const result of results) {
@@ -763,7 +786,7 @@ function verifyWorkItemAggregationReplay(db: DatabaseSync): void {
   }>;
   const readEvents = db.prepare(`
     SELECT event.child_work_item_id, event.aggregate_revision, event.event_kind,
-      event.payload_json, header.occurred_at
+      event.payload_json, header.occurred_at, header.supersedes_event_id
     FROM work_item_aggregation_events_v6 AS event
     INNER JOIN resource_event_headers_v6 AS header ON header.event_id = event.event_id
     WHERE event.parent_work_item_id = ?
@@ -776,6 +799,7 @@ function verifyWorkItemAggregationReplay(db: DatabaseSync): void {
       event_kind: string;
       payload_json: string;
       occurred_at: string;
+      supersedes_event_id: string | null;
     }>;
     if (events.length !== aggregation.aggregate_revision
       || events.at(-1)?.occurred_at !== aggregation.updated_at) {
@@ -783,6 +807,7 @@ function verifyWorkItemAggregationReplay(db: DatabaseSync): void {
     }
     const childAdditions = new Set<string>();
     const decisions = new Map<string, Record<string, unknown>>();
+    const decisionRevisions = new Map<string, number>();
     let aggregateState: unknown;
     for (const event of events) {
       const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
@@ -791,10 +816,21 @@ function verifyWorkItemAggregationReplay(db: DatabaseSync): void {
       }
       if (event.event_kind === "child_added" || event.event_kind === "child_adopted") childAdditions.add(event.child_work_item_id);
       if (event.event_kind === "child_removed") childAdditions.delete(event.child_work_item_id);
+      if (event.event_kind === "decision_corrected") {
+        const previousRevision = decisionRevisions.get(event.child_work_item_id);
+        if (previousRevision === undefined || payload.supersededDecisionRevision !== previousRevision
+          || event.supersedes_event_id !== `work-item-aggregation:${aggregation.parent_work_item_id}:revision:${previousRevision}`) {
+          throw new Error(`Work Item decision correction supersede link is invalid: ${aggregation.parent_work_item_id}`);
+        }
+      }
       if (event.event_kind === "decided" || event.event_kind === "retry_requested" || event.event_kind === "decision_corrected") {
         decisions.set(event.child_work_item_id, payload);
+        decisionRevisions.set(event.child_work_item_id, event.aggregate_revision);
       }
-      if (event.event_kind === "decision_superseded" || (event.event_kind === "decision_corrected" && payload.decision === null)) decisions.delete(event.child_work_item_id);
+      if (event.event_kind === "decision_superseded" || (event.event_kind === "decision_corrected" && payload.decision === null)) {
+        decisions.delete(event.child_work_item_id);
+        decisionRevisions.delete(event.child_work_item_id);
+      }
       if (payload.aggregateState !== undefined) aggregateState = payload.aggregateState;
       if ((event.event_kind === "stale" || event.event_kind === "finalized") && payload.aggregateState === undefined) {
         throw new Error(`Work Item aggregation status event has no projection: ${aggregation.parent_work_item_id}`);
@@ -1207,6 +1243,7 @@ export function appendWorkItemEventHeader(db: DatabaseSync, input: {
   operationId: string;
   idempotencyKey: string | null;
   occurredAt: string;
+  supersedesEventId?: string;
 }): void {
   const row = db.prepare("SELECT root_session_id, target_session_id FROM work_items_v6 WHERE id = ?")
     .get(input.workItemId) as { root_session_id: string; target_session_id: string } | undefined;
@@ -1223,6 +1260,7 @@ export function appendWorkItemEventHeader(db: DatabaseSync, input: {
     operationId: input.operationId,
     idempotencyKey: input.idempotencyKey,
     occurredAt: input.occurredAt,
+    supersedesEventId: input.supersedesEventId,
   }));
 }
 
@@ -1236,6 +1274,7 @@ export function appendWorkItemAggregationEvent(db: DatabaseSync, input: {
   idempotencyKey: string;
   occurredAt: string;
   payload: Readonly<Record<string, unknown>>;
+  supersedesEventId?: string;
 }): void {
   const row = db.prepare("SELECT root_session_id, target_session_id FROM work_items_v6 WHERE id = ?")
     .get(input.parentWorkItemId) as { root_session_id: string; target_session_id: string } | undefined;
@@ -1258,6 +1297,7 @@ export function appendWorkItemAggregationEvent(db: DatabaseSync, input: {
     operationId: input.operationId,
     idempotencyKey: input.idempotencyKey,
     occurredAt: input.occurredAt,
+    supersedesEventId: input.supersedesEventId,
   }));
 }
 
@@ -1337,6 +1377,7 @@ function createHeader(input: {
   operationId: string;
   idempotencyKey: string | null;
   occurredAt: string;
+  supersedesEventId?: string;
 }): ResourceEventHeader {
   return {
     eventId: input.eventId,
@@ -1357,7 +1398,7 @@ function createHeader(input: {
       : createHash("sha256").update(input.idempotencyKey).digest("hex"),
     occurredAt: input.occurredAt,
     committedAt: input.occurredAt,
-    supersedesEventId: null,
+    supersedesEventId: input.supersedesEventId ?? null,
     payloadSchemaRevision: input.resourceKind === "session" || input.resourceKind === "execution" ? 2 : 1,
     effect: "committed",
   };

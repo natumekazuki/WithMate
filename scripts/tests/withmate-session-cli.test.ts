@@ -619,6 +619,17 @@ describe("withmate-session CLI", () => {
       assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
       assert.deepEqual(requests.at(-1), { schemaVersion: "withmate-session-request-v2", operation, input });
     }
+    for (const [args, operation] of [
+      [["work", "result", "correct", "--json", JSON.stringify(resultInput)], "work.result.correct"],
+      [["work", "aggregation", "correct", "--json", JSON.stringify(aggregationInput)], "work.aggregation.correct"],
+    ] as const) {
+      const exitCode = await runWithMateSessionCli(args, {
+        stdout: stdout.stream,
+        discover: async () => connection,
+        call: async () => { throw new SessionRuntimeClientError(`response lost: ${operation}`, true); },
+      });
+      assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate);
+    }
   });
 
   test("AGG-ADAPTER-01: work aggregation retryはshared strict inputへdispatchする", async () => {

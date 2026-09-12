@@ -49,9 +49,9 @@ function result(item: WorkItem, summary: string) {
 describe("work item correction populated migration", () => {
   // @test-value v2
   // kind = "compatibility"
-  // claim = "実storageで生成したresult/decision/retry replacement/reopen successor/archive delete/grant/budget populated DBを旧Slice 4相当DDLへ降格しても、ensureV6Schemaがcurrent projectionとbaseline result revisionを再構築し、二回目のopenで同一状態を保つ"
+  // claim = "実storageで生成したresult/decision/retry replacement/reopen successor/archive delete/grant/budget populated DBを旧Slice 4相当DDLへ降格しても、ensureV6Schemaがcurrent projectionとbaseline result revisionを再構築し、二回目のschema ensureで同一状態を保つ"
   // fault = "migrationが旧decision/replacement、successor、削除済みresult、header、grant、budget、idempotencyを失う、または移行済みresult revisionの欠損を修復して隠す"
-  // observable = "current/history/provenance全行の移行前後比較、result revision baseline、terminal parentのfinalized状態、二回目openの同一状態、移行済みresult行欠損の拒否"
+  // observable = "snapshotで列挙したcurrent/history/provenance表の全行比較、result revision baseline、terminal parentのfinalized状態、二回目schema ensureの同一状態、移行済みresult行欠損の拒否"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
   // scope = "populated correction schema migration"
@@ -117,7 +117,7 @@ describe("work item correction populated migration", () => {
           db.exec(`CREATE TEMP TABLE correction_migration_copy AS SELECT * FROM ${table}; DROP TABLE ${table}; ${legacy}; INSERT INTO ${table} SELECT * FROM correction_migration_copy; DROP TABLE correction_migration_copy;`);
         }
       } finally { db.close(); }
-      const tables = ["work_items_v6", "work_item_events_v6", "work_item_aggregation_decisions_v6", "work_item_aggregation_events_v6", "work_item_idempotency_v6", "work_item_aggregation_idempotency_v6", "work_item_tombstones_v6", "resource_event_headers_v6", "session_authority_grants_v6", "resource_budget_dimensions_v6", "resource_budget_events_v6"];
+      const tables = ["work_items_v6", "work_item_events_v6", "work_item_aggregation_decisions_v6", "work_item_aggregation_events_v6", "work_item_idempotency_v6", "work_item_aggregation_idempotency_v6", "work_item_tombstones_v6", "resource_event_headers_v6", "session_authority_grants_v6", "session_authority_grant_events_v6", "resource_budget_accounts_v6", "resource_budget_reservations_v6", "resource_budget_dimensions_v6", "resource_budget_events_v6"];
       const snapshot = () => Object.fromEntries(tables.map(table => [table, sql(dbPath, `SELECT * FROM ${table} ORDER BY rowid`)]));
       const before = snapshot();
       assert.ok(before.session_authority_grants_v6.length > 0);
@@ -135,7 +135,8 @@ describe("work item correction populated migration", () => {
       const afterSecond = Object.fromEntries(Object.keys(before).map((table) => [table, sql(dbPath, `SELECT * FROM ${table} ORDER BY rowid`)]));
       assert.deepEqual(afterSecond, afterFirst);
       const missing = new DatabaseSync(dbPath); try { missing.exec("DROP TRIGGER work_item_result_revisions_no_delete_v6; DELETE FROM work_item_result_revisions_v6 WHERE work_item_id='migration-child'"); } finally { missing.close(); }
-      assert.throws(() => { const invalid = new DatabaseSync(dbPath); try { ensureV6Schema(invalid); } finally { invalid.close(); } }, /baseline|result|schema/i);
+      assert.throws(() => { const invalid = new DatabaseSync(dbPath); try { ensureV6Schema(invalid); } finally { invalid.close(); } }, /Work Item result history has no matching result revision/);
+      assert.equal(sql(dbPath, "SELECT result_revision FROM work_item_result_revisions_v6 WHERE work_item_id='migration-child'").length, 0);
     } finally { storage.close(); await rm(directory, { recursive: true, force: true }); }
   });
 });

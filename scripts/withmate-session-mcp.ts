@@ -131,7 +131,7 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "work.result.correct", title: "Correct Work Item result", description: "Append a corrected terminal result revision and propagate stale state.", readOnly: false, destructive: false },
   { name: "work.cancel", title: "Cancel Work Item", description: "Cancel an active Work Item created by the bound Session.", readOnly: false, destructive: true },
   { name: "work.aggregation.get", title: "Get Work Item aggregation", description: "Get bounded aggregation counts for one parent Work Item.", readOnly: true, destructive: false },
-  { name: "work.aggregation.list", title: "List Work Item aggregation", description: "List direct child summaries and immutable decisions using a bounded cursor.", readOnly: true, destructive: false },
+  { name: "work.aggregation.list", title: "List Work Item aggregation", description: "List descendant summaries and decisions using bounded depth, filters, and a cursor.", readOnly: true, destructive: false },
   { name: "work.aggregation.decide", title: "Decide Work Item result", description: "Accept or exclude one terminal direct child result.", readOnly: false, destructive: false },
   { name: "work.aggregation.retry", title: "Retry Work Item result", description: "Atomically record a retry decision and create its replacement Work Item.", readOnly: false, destructive: false },
   { name: "work.aggregation.correct", title: "Correct Work Item aggregation", description: "Correct an immutable child decision with an explicit current result revision.", readOnly: false, destructive: false },

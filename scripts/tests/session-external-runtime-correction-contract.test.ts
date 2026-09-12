@@ -7,7 +7,7 @@ import {
   parseSessionRuntimeOperationInput,
   sessionRuntimeOperationMayHaveEffect,
 } from "../../src/session-external-runtime-contract.js";
-import { parseSessionRuntimeResultEnvelope } from "../../src/session-external-runtime-schema.js";
+import { createSessionRuntimeInputSchema, parseSessionRuntimeResultEnvelope } from "../../src/session-external-runtime-schema.js";
 
 const workItem = {
   id: "root-work",
@@ -59,21 +59,43 @@ describe("Session external runtime correction contract", () => {
   // distinction = "storage testはtransactionを確認し、ここではadapter共通のstrict input boundaryを確認する"
   // @end-test-value
   it("work.aggregation.correctはresult revision 0とstrict unionを受理する", () => {
-    const parsed = parseSessionRuntimeOperationInput("work.aggregation.correct", {
+    const base = {
       parentWorkItemId: "parent",
       childWorkItemId: "child",
       expectedAggregateRevision: 1,
       expectedChildResultRevision: 0,
-      correction: { kind: "withdraw", reason: "obsolete result" },
       idempotencyKey: "correction-1",
-    });
+    };
+    const corrections = [
+      { kind: "withdraw", reason: "obsolete result" },
+      { kind: "revise", reason: "recheck" },
+      { kind: "revise", decision: "accepted", reason: "recheck" },
+      { kind: "revise", decision: "excluded", reason: "recheck" },
+      { kind: "replace", replacementWorkItemId: "replacement", reason: "new work" },
+    ];
+    for (const correction of corrections) {
+      const input = { ...base, correction, idempotencyKey: `correction-${correction.kind}` };
+      const parsed = parseSessionRuntimeOperationInput("work.aggregation.correct", input);
+      createSessionRuntimeInputSchema("work.aggregation.correct").parse(input);
+      assert.deepEqual((parsed as { correction: unknown }).correction, correction);
+      const unknownField = { ...input, correction: { ...correction, unexpected: true } };
+      assert.throws(() => parseSessionRuntimeOperationInput("work.aggregation.correct", unknownField), { code: "INVALID_INPUT" });
+      assert.throws(() => createSessionRuntimeInputSchema("work.aggregation.correct").parse(unknownField));
+    }
+    const parsed = parseSessionRuntimeOperationInput("work.aggregation.correct", { ...base, correction: corrections[0] });
     assert.equal((parsed as { expectedChildResultRevision: number }).expectedChildResultRevision, 0);
+    const invalid = {
+      ...base,
+      correction: { kind: "withdraw", reason: "obsolete result", unexpected: true },
+    };
+    assert.throws(() => parseSessionRuntimeOperationInput("work.aggregation.correct", invalid), { code: "INVALID_INPUT" });
+    assert.throws(() => createSessionRuntimeInputSchema("work.aggregation.correct").parse(invalid));
     assert.throws(() => parseSessionRuntimeOperationInput("work.aggregation.correct", {
       parentWorkItemId: "parent",
       childWorkItemId: "child",
       expectedAggregateRevision: 1,
       expectedChildResultRevision: 0,
-      correction: { kind: "withdraw", unexpected: true },
+      correction: { kind: "replace", reason: "missing id" },
       idempotencyKey: "correction-2",
     }));
   });
@@ -98,8 +120,19 @@ describe("Session external runtime correction contract", () => {
       staleParentWorkItemIds: ["parent"],
     });
     const parsed = parseSessionRuntimeResultEnvelope("work.result.correct", result);
+    assert.deepEqual(parsed.result, result.result);
     assert.equal(parsed.result.resultRevision, 2);
+    assert.equal(parsed.result.supersededResultRevision, 1);
+    assert.equal(parsed.result.stale, true);
     assert.deepEqual(parsed.result.staleParentWorkItemIds, ["parent"]);
+    const aggregation = createSessionRuntimeResult("work.aggregation.correct", {
+      decision: null, supersededDecisionRevision: 3, aggregateRevision: 4, stale: true, staleParentWorkItemIds: ["root"],
+    });
+    const parsedAggregation = parseSessionRuntimeResultEnvelope("work.aggregation.correct", aggregation);
+    assert.deepEqual(parsedAggregation.result, aggregation.result);
+    assert.equal(parsedAggregation.result.supersededDecisionRevision, 3);
+    assert.equal(parsedAggregation.result.aggregateRevision, 4);
+    assert.deepEqual(parsedAggregation.result.staleParentWorkItemIds, ["root"]);
     assert.equal(sessionRuntimeOperationMayHaveEffect("work.result.correct"), true);
     assert.equal(sessionRuntimeOperationMayHaveEffect("work.aggregation.correct"), true);
   });
@@ -116,8 +149,10 @@ describe("Session external runtime correction contract", () => {
   // distinction = "registry mappingの存在とは別に、baseline grant issuanceが不変であることを検証する"
   // @end-test-value
   it("correction operationはbaseline permissionへ暗黙追加されない", () => {
-    const baseline = baselineSessionAuthorityPermissions("task-coordinator").map((item) => item.action);
-    assert.equal(baseline.includes("work.result.correct"), false);
-    assert.equal(baseline.includes("work.aggregation.correct"), false);
+    for (const role of ["standalone", "overall-coordinator", "task-coordinator", "executor"] as const) {
+      const baseline = baselineSessionAuthorityPermissions(role).map((item) => item.action);
+      assert.equal(baseline.includes("work.result.correct"), false);
+      assert.equal(baseline.includes("work.aggregation.correct"), false);
+    }
   });
 });

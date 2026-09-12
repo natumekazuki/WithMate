@@ -10410,7 +10410,7 @@ var workItemAggregationCorrectionInputSchema = object$1({
 	correction: discriminatedUnion("kind", [
 		object$1({
 			kind: literal("revise"),
-			decision: _enum(WORK_ITEM_AGGREGATION_DECISIONS),
+			decision: _enum(["accepted", "excluded"]).optional(),
 			reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH)
 		}).strict(),
 		object$1({
@@ -11208,7 +11208,7 @@ var resultSchemas = {
 			maxMigrationBaselinePayloadBytes: literal(WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES),
 			maxResultBytes: literal(WORK_ITEM_MAX_RESULT_BYTES),
 			aggregation: object$1({
-				contractRevision: literal(1),
+				contractRevision: literal(2),
 				decisions: tuple([
 					literal("accepted"),
 					literal("excluded"),
@@ -27802,7 +27802,7 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "work.aggregation.list",
 		title: "List Work Item aggregation",
-		description: "List direct child summaries and immutable decisions using a bounded cursor.",
+		description: "List descendant summaries and decisions using bounded depth, filters, and a cursor.",
 		readOnly: true,
 		destructive: false
 	},
@@ -28549,7 +28549,7 @@ async function parseArgs(args, deps) {
 	const workHistoryCommand = args[0] === "work" && args[1] === "history";
 	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "budget" || args[0] === "session" || args[0] === "work" || args[0] === "interaction" || args[0] === "transcript";
 	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand || workAggregationCommand || workHistoryCommand || workResultCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|budget get|list|configure|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work aggregation get|list|decide|retry|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|budget get|list|configure|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work result correct|work aggregation get|list|decide|retry|correct|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
 	const optionStart = fileCommand || coordinationCommand || workAggregationCommand || workHistoryCommand || workResultCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;

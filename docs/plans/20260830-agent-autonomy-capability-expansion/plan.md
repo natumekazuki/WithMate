@@ -360,7 +360,11 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 結果revisionを既存result eventと共通provenance headerへ結び付け、判断訂正・stale・finalizedを既存aggregation event streamへ保存した。訂正と再確定は既存transaction／idempotency内で行い、Rootのstaleも永続化する。同一rootのmove／reopenは旧結果・所属・replacement／successor履歴を保持して上位へstaleを伝播する。公開contract、HTTP、CLI、MCP、catalog、managed Skillとrunbookを更新し、訂正grantは既存trusted issuerの明示発行だけで取得する。
 
-直接検証と公開adapter検証、`npm run typecheck`、`npm test`（3597件、3596成功、1 skip、0失敗）、`npm run build`、`git diff --check`が成功した。初回全体testでは編集中の公開fixture／schema不一致と旧schema移行の不備を検出して修正した。対象外のGlossary queueと画像previewのtimeoutは直接再実行で成功し、最終全体testでも再発しなかった。populated migrationでは旧result、判断、replacement、successor、削除snapshot、header、grant、budget、idempotencyを比較し、二回目openと移行済みresult行欠損の拒否を確認した。変更testの独立価値審査とcommit-bound complete-diff reviewは進行中。GUI変更とfilesystem interactionの追加はなく、GUI目視は未実施。
+初回実装を`900b9575ed24068727359d80f1554e0167e11d78`へ固定した。直接検証と公開adapter検証、`npm run typecheck`、`npm test`（3597件、3596成功、1 skip、0失敗）、`npm run build`が成功した。初回全体testでは編集中の公開fixture／schema不一致と旧schema移行の不備を検出して修正した。対象外のGlossary queueと画像previewのtimeoutは直接再実行で成功し、次の全体testでも再発しなかった。populated migrationでは旧result、判断、replacement、successor、削除snapshot、header、grant、budget、idempotencyを比較し、二回目のschema ensureと移行済みresult行欠損の拒否を確認した。GUI変更とfilesystem interactionの追加はなく、GUI目視は未実施。
+
+同commitのclean detached worktreeで全30 filesの独立complete-diff reviewを実施した。revise入力の公開schema不一致、accepted以外にも伝播していたstale、共通headerのsupersede link欠落をblockingとして採用した。使用済みreplacementの明示拒否と、確定済みbranchのsame-root moveに関する文書不一致も修正対象とした。既存runtime契約がreplay時にもcurrent bindingとactive grant評価を要求するため、失効grantでも再送成功すべきという候補は不採用とした。初回のworking tree差分checkは新規fileを含まず、commit差分ではtest末尾空行が検出されたため、最終checkは固定baseからの全差分を対象にする。変更testの価値審査とfinding familyに限定したtargeted closureは進行中。
+
+修正後はacceptedの依存関係だけでstaleを伝播し、未確定parentをstaleにしない。訂正eventの共通headerを旧結果・旧判断へ結び、再生時にも参照先を検証する。使用済みreplacementは既存の明示エラーで拒否し、公開schema／catalogと配布CLIを更新した。関連25件、公開・履歴・migrationの関連79件、型検査、build、固定baseからの差分checkが成功した。修正後の全体testは3598件中3596成功、1失敗、1 skipで、変更外のGlossary queue解放testがtimeoutした。同file単独の24件は成功し、timeoutの恒久解消は今回の対象に含めない。
 
 ### Slice 4 の承認済み実装境界（2026-09-12）
 

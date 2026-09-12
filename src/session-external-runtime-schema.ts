@@ -458,7 +458,7 @@ const workItemAggregationCorrectionInputSchema = z.object({
   expectedAggregateRevision: z.number().int().min(1),
   expectedChildResultRevision: z.number().int().min(0),
   correction: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("revise"), decision: z.enum(WORK_ITEM_AGGREGATION_DECISIONS), reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH) }).strict(),
+    z.object({ kind: z.literal("revise"), decision: z.enum(["accepted", "excluded"]).optional(), reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH) }).strict(),
     z.object({ kind: z.literal("withdraw"), reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH) }).strict(),
     z.object({ kind: z.literal("replace"), replacementWorkItemId: nonEmptyStringSchema, reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH) }).strict(),
   ]),
@@ -1032,7 +1032,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       maxMigrationBaselinePayloadBytes: z.literal(WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES),
       maxResultBytes: z.literal(WORK_ITEM_MAX_RESULT_BYTES),
       aggregation: z.object({
-        contractRevision: z.literal(1),
+        contractRevision: z.literal(WORK_ITEM_AGGREGATION_CONTRACT_REVISION),
         decisions: z.tuple([z.literal("accepted"), z.literal("excluded"), z.literal("retry_requested")]),
         operations: z.tuple([z.literal("get"), z.literal("list"), z.literal("decide"), z.literal("retry"), z.literal("correct")]),
         defaultListLimit: z.literal(WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT),
