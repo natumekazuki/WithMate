@@ -547,9 +547,9 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session lifecycleの公開operationはplacement、provider tuple、branch専用field、manifest revisionをstrictに検証する"
+// claim = "Session lifecycleの公開operationはplacement、provider tuple、branch専用field、manifest revisionと必須のfull移動方針をstrictに検証する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
-// fault = "provider branch専用fieldやsame-root/child branchの余剰fieldが黙って捨てられ、strict union境界を通過する"
+// fault = "provider branch専用fieldやsame-root/child branchの余剰fieldが黙って捨てられ、strict union境界を通過する、または省略・不正な移動方針をfullへ補完する"
 // observable = "canonical parserと対応Zod schemaのvalidation error"
 // observation_boundary = "public-boundary"
 // scope = "Session Runtime lifecycle input and schema parity"
@@ -601,6 +601,16 @@ test("SESSION-LIFECYCLE-CONTRACT-01: lifecycle operations preserve strict unions
     operation: "session.move",
     input: { ...base, kind: "cross_root", destinationRootSessionId: "root-2", destinationParentSessionId: null, destinationExpectedRevision: 4, transferPolicy: "full" },
   }), SessionRuntimeValidationError);
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "session.move",
+    input: { ...base, kind: "cross_root", destinationRootSessionId: "root-2", destinationParentSessionId: null, destinationExpectedRevision: 4, transferManifestRevision: 3 },
+  }), (error) => error instanceof SessionRuntimeValidationError && error.details.field === "transferPolicy");
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "session.move",
+    input: { ...base, kind: "cross_root", destinationRootSessionId: "root-2", destinationParentSessionId: null, destinationExpectedRevision: 4, transferManifestRevision: 3, transferPolicy: "retain" },
+  }), (error) => error instanceof SessionRuntimeValidationError && error.details.field === "transferPolicy");
   assert.throws(() => createSessionRuntimeInputSchema("session.create").parse({
     expectedContainerRevision: 1,
     placement: { kind: "root", rootKind: "standalone" },

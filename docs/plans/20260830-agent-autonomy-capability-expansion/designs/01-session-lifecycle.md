@@ -20,7 +20,7 @@
 | archive | `session.archive` | reason、descendant policy |
 | 削除 | `session.delete` | expected revision、deletion manifest。Slice 3ではtombstoneへ遷移する |
 
-`session.configure` は title だけでなく、実行設定、Workspace、Character、Provider、Role templateを扱う。generic patchではなくstrict discriminated unionを使い、依存tupleの一部だけを変更しない。Provider、model、reasoning、catalog revision、thread continuity、Character runtime identity、Workspace grantsは組として解決する。
+`session.configure` は title だけでなく、実行設定、Workspace、Character、Provider、Role templateを扱う。generic patchではなくstrict discriminated unionを使い、依存tupleの一部だけを変更しない。Provider、model、reasoning、catalog revision、thread continuity、Character runtime identity、Workspace grantsは組として解決する。GUIでProvider／model／reasoningを変更しない設定更新は、最新catalog revisionで既存の選択tupleの有効性を確認する。選択tupleを変更するGUI要求と公開APIでは、要求に指定されたcatalog revisionの一致を要求する。
 
 ## Session identity と変更可能性
 
@@ -44,7 +44,7 @@ Agentによるroot作成は、現在のrootから独立した作業領域を作�
 
 ## Move、adopt、reuse
 
-`session.move` は同じroot内のparent変更と、rootまたはowner境界を越える移管をstrict unionで扱う。cross-root variantだけがsourceとdestination双方のgrant、transfer manifest、drainingを要求する。
+`session.move` は同じroot内のparent変更と、rootまたはowner境界を越える移管をstrict unionで扱う。cross-root variantだけがsourceとdestination双方のgrant、transfer manifest、drainingを要求する。現行のcross-root入力はtransferPolicyへの`"full"`明示指定を必須とし、省略や`"retain"`などの値を全量移動へ補完しない。
 
 moveは次を原子的に再評価する。
 

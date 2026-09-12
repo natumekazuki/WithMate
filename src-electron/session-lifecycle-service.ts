@@ -130,7 +130,8 @@ export class SessionLifecycleService {
       return this.requireSession(current.id);
     }
     const provider = this.providerTuple(request, current.provider === request.provider && current.threadId === request.threadId ? "continue" : "reset");
-    const resolvedProvider = this.deps.resolver.provider(provider, current);
+    const resolvedProvider = this.deps.resolver.providerForGui(provider, current);
+    provider.catalogRevision = resolvedProvider.catalogRevision;
     const workspace = await this.deps.resolver.workspace(current.id,
       request.workspacePath === this.deps.resolveSessionFilesDirectory(current.id)
         ? { kind: "session_folder" } : { kind: "directory", path: request.workspacePath });

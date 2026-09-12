@@ -996,7 +996,7 @@ function parseSessionMoveInput(value) {
 		destinationRootSessionId: requireNonEmptyString(record.destinationRootSessionId, "destinationRootSessionId"),
 		destinationExpectedRevision,
 		transferManifestRevision: requireInteger(record.transferManifestRevision, "transferManifestRevision", 1, Number.MAX_SAFE_INTEGER),
-		transferPolicy: "full"
+		transferPolicy: requireEnum(record.transferPolicy, ["full"], "transferPolicy")
 	};
 }
 function parseSessionCloneInput(value) {

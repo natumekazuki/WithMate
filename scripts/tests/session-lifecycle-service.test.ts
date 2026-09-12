@@ -231,12 +231,12 @@ test("SessionLifecycleService は実DBで create→configure(title/runtime)→ar
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Session のタイトルだけを更新するGUI要求は、catalog revision が更新済みでも既存 configure(title) 経路で保存できる。"
-// oracle = { type = "contract", ref = "src-electron/session-lifecycle-service.ts#updateSession" }
-// fault = "タイトル変更でもProvider tupleを再検証し、catalog revision staleとして保存を拒否する。"
-// observable = "SessionLifecycleService の返却SessionとDB-backed lifecycle SessionのtaskTitle"
+// claim = "GUIのタイトル・モデル選択を維持した設定変更はcatalog更新後も保存でき、選択変更や公開APIの古いrevisionは拒否する。"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+// fault = "保存済みcatalog revisionをGUIの設定変更に流用して拒否する、または選択変更や公開APIのrevision検証を迂回する。"
+// observable = "返却SessionとDBのタイトル・承認モード・Speed、および選択変更と公開configureの拒否結果"
 // observation_boundary = "component-behavior"
-// scope = "SessionLifecycleService.updateSession title-only request with stale catalog"
+// scope = "SessionLifecycleService.updateSession GUI settings and public configure with stale catalog"
 // lifecycle = "permanent"
 // @end-test-value
 test("SessionLifecycleService はcatalog更新後もタイトルだけのGUI更新を保存する", async () => {
@@ -250,8 +250,22 @@ test("SessionLifecycleService はcatalog更新後もタイトルだけのGUI更�
     const updated = await service.updateSession({ ...current, taskTitle: "Renamed after catalog update" });
     assert.equal(updated.taskTitle, "Renamed after catalog update");
     assert.equal(storage.getLifecycleSession("session-created")?.taskTitle, "Renamed after catalog update");
+    const configured = await service.updateSession({ ...updated, approvalMode: "on-request", codexSpeed: "fast" });
+    assert.equal(configured.approvalMode, "on-request");
+    assert.equal(configured.codexSpeed, "fast");
+    assert.equal(configured.catalogRevision, 8);
+    assert.equal(configured.model, current.model);
+    assert.equal(configured.reasoningEffort, current.reasoningEffort);
+    assert.equal(configured.threadId, current.threadId);
+    assert.equal(storage.getLifecycleSession(current.id)?.approvalMode, "on-request");
+    assert.equal(storage.getLifecycleSession(current.id)?.codexSpeed, "fast");
     await assert.rejects(
-      service.updateSession({ ...current, codexSpeed: "fast" }),
+      service.updateSession({ ...configured, catalogRevision: 7, reasoningEffort: "high" }),
+      (error) => error instanceof SessionCrudError && error.code === "CATALOG_REVISION_STALE",
+    );
+    await assert.rejects(
+      service.configure({ sessionId: current.id, expectedRevision: storage.getSessionResourceRevision(current.id)!,
+        kind: "runtime", provider: provider("continue"), idempotencyKey: "stale-public-configure" }, proof("session.configure", current.id)),
       (error) => error instanceof SessionCrudError && error.code === "CATALOG_REVISION_STALE",
     );
   } finally {

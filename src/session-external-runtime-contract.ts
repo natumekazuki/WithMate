@@ -1196,7 +1196,7 @@ function parseSessionMoveInput(value: unknown): SessionRuntimeMoveInput {
   const destinationParentSessionId = record.destinationParentSessionId === null ? null : requireNonEmptyString(record.destinationParentSessionId, "destinationParentSessionId");
   if (kind === "same_root") { assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "destinationParentSessionId", "destinationExpectedRevision"], "input"); return { ...base, kind, destinationParentSessionId, destinationExpectedRevision }; }
   assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "destinationParentSessionId", "destinationRootSessionId", "destinationExpectedRevision", "transferManifestRevision", "transferPolicy"], "input");
-  return { ...base, kind, destinationParentSessionId, destinationRootSessionId: requireNonEmptyString(record.destinationRootSessionId, "destinationRootSessionId"), destinationExpectedRevision, transferManifestRevision: requireInteger(record.transferManifestRevision, "transferManifestRevision", 1, Number.MAX_SAFE_INTEGER), transferPolicy: "full" };
+  return { ...base, kind, destinationParentSessionId, destinationRootSessionId: requireNonEmptyString(record.destinationRootSessionId, "destinationRootSessionId"), destinationExpectedRevision, transferManifestRevision: requireInteger(record.transferManifestRevision, "transferManifestRevision", 1, Number.MAX_SAFE_INTEGER), transferPolicy: requireEnum(record.transferPolicy, ["full"] as const, "transferPolicy") };
 }
 
 function parseSessionCloneInput(value: unknown): SessionRuntimeCloneInput {

@@ -52,6 +52,14 @@ export class SessionLifecycleResolver {
     };
   }
 
+  providerForGui(input: LifecycleProviderTuple, current: Session): ReturnType<SessionLifecycleResolver["provider"]> {
+    const selectionUnchanged = input.id === current.provider
+      && input.model === current.model && input.reasoningEffort === current.reasoningEffort;
+    return this.provider(selectionUnchanged
+      ? { ...input, catalogRevision: this.deps.currentModelCatalog()?.revision ?? input.catalogRevision }
+      : input, current);
+  }
+
   character(characterId: string, expectedDefinitionSha256?: string): Pick<Session,
     "characterId" | "character" | "characterIconPath" | "characterThemeColors" | "characterRuntimeSnapshot"
   > {
