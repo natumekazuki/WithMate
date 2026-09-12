@@ -1060,7 +1060,7 @@ describe("withmate-session CLI", () => {
   // kind = "contract"
   // claim = "response lossはreadでnot_applied、revision付きmutationでindeterminateとして公開される"
   // oracle = { type = "contract", ref = "docs/runbooks/session-cli.md#Exit codes" }
-  // fault = "renameやcancelの適用可能性を未適用と誤報し安全でないretryを促す"
+  // fault = "Session lifecycleやcancelの適用可能性を未適用と誤報し安全でないretryを促す"
   // observable = "CLI exit codeとerror.effect"
   // observation_boundary = "public-boundary"
   // scope = "withmate-session CLI transport effect mapping"
@@ -1125,6 +1125,35 @@ describe("withmate-session CLI", () => {
       call: async () => { throw new SessionRuntimeClientError("lost", true); },
     }), WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate);
     assert.equal(renameFailure.json().error.effect, "indeterminate");
+
+    const base = { sessionId: "session-1", expectedRevision: 1, idempotencyKey: "lifecycle-response-loss" };
+    const provider = { id: "codex", catalogRevision: 4, model: "gpt-5.4", reasoningEffort: "high", threadContinuity: "continue", approvalMode: "on-request", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] };
+    const lifecycleInputs = [
+      ["configure", { ...base, kind: "title", title: "Configured" }],
+      ["move", { ...base, kind: "same_root", destinationParentSessionId: "parent", destinationExpectedRevision: 1 }],
+      ["clone", { sourceSessionId: base.sessionId, expectedSourceRevision: 1, expectedContainerRevision: 1, placement: { kind: "child", parentSessionId: "parent", sessionRole: "executor" }, title: "Clone", initialGrant: { kind: "inherit" }, budget: { kind: "inherit" }, idempotencyKey: base.idempotencyKey }],
+      ["restore", { ...base, kind: "child", purpose: "Restore", provider }],
+      ["archive", { ...base, reason: "done", descendantPolicy: "retain" }],
+      ["delete", { ...base, manifestRevision: 1 }],
+    ] as const;
+    for (const [operation, input] of lifecycleInputs) {
+      for (const dispatched of [false, true]) {
+        const output = capture();
+        let calls = 0;
+        assert.equal(await runWithMateSessionCli(["session", operation, "--json", JSON.stringify(input)], {
+          stdout: output.stream,
+          discover: async () => connection,
+          call: async (_connection, envelope) => {
+            calls += 1;
+            assert.equal(envelope.operation, `session.${operation}`);
+            throw new SessionRuntimeClientError("lost", dispatched);
+          },
+        }), dispatched ? WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate : WITHMATE_SESSION_CLI_EXIT_CODES.runtimeUnavailable);
+        assert.equal(calls, 1);
+        assert.equal(output.json().error.effect, dispatched ? "indeterminate" : "not_applied", operation);
+      }
+    }
+
 
   });
 

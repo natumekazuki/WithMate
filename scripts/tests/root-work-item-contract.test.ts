@@ -558,6 +558,100 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v2
   // kind = "invariant"
+  // claim = "root WorkItemの選択は最初の200件だけで打ち切らず、ページ外のactiveを選び、activeがなければ最新terminalへfallbackし、active重複を拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+  // fault = "200件目より後ろのactive successorが見落とされる、terminal rootを誤って古い候補へ戻す、または壊れた複数active状態を黙って選択する"
+  // observable = "WorkItemService.getRootWorkItemの返却idと複数active時の例外"
+  // observation_boundary = "component-behavior"
+  // scope = "WorkItemService root WorkItem pagination and selection"
+  // lifecycle = "permanent"
+  // distinction = "実SQLiteのwork_items_v6を200件超に構成し、serviceのproduction list paginationを通して選択結果を観測する"
+  // @end-test-value
+  it("RW-ROOT-LOOKUP: 200件を超えるroot候補からactiveと最新terminalを選びactive重複を拒否する", async () => {
+    const harness = await createHarness();
+    try {
+      insertRootSession(harness, "root", "standalone", "Paged root");
+      const initial = getRootWorkItem(harness, "root");
+      const canceled = harness.service.cancel({
+        workItemId: initial.id,
+        expectedRevision: initial.revision,
+        idempotencyKey: "paged-root-cancel-initial",
+      }, runtimeBinding("root"));
+
+      const db = new DatabaseSync(harness.dbPath);
+      try {
+        const clone = db.prepare(`
+          INSERT INTO work_items_v6 (
+            id, kind, contract_revision, root_session_id, creator_session_id,
+            target_session_id, parent_work_item_id, predecessor_work_item_id,
+            goal, scope, completion_criteria, authority, source_identity_json,
+            state, revision, progress_summary, blockers_json, next_action,
+            result_json, created_at, updated_at
+          )
+          SELECT ?, kind, contract_revision, root_session_id, creator_session_id,
+            target_session_id, parent_work_item_id, predecessor_work_item_id,
+            goal, scope, completion_criteria, authority, source_identity_json,
+            ?, revision, progress_summary, blockers_json, next_action,
+            NULL, created_at, updated_at
+          FROM work_items_v6 WHERE id = ?
+        `);
+        for (let index = 0; index < 200; index += 1) {
+          clone.run(`paged-root-terminal-${index}`, "canceled", canceled.id);
+        }
+        clone.run("paged-root-active", "pending", canceled.id);
+      } finally {
+        db.close();
+      }
+
+      const active = harness.service.getRootWorkItem("root", runtimeBinding("root"));
+      assert.equal(active?.id, "paged-root-active");
+
+      const canceledActive = harness.service.cancel({
+        workItemId: active!.id,
+        expectedRevision: active!.revision,
+        idempotencyKey: "paged-root-cancel-active",
+      }, runtimeBinding("root"));
+      const latestTerminal = harness.service.getRootWorkItem("root", runtimeBinding("root"));
+      assert.equal(latestTerminal?.id, canceledActive.id);
+
+      const duplicateDb = new DatabaseSync(harness.dbPath);
+      try {
+        duplicateDb.exec("DROP INDEX idx_v6_work_items_one_root_per_session");
+        duplicateDb.exec("BEGIN IMMEDIATE TRANSACTION");
+        const duplicate = duplicateDb.prepare(`
+          INSERT INTO work_items_v6 (
+            id, kind, contract_revision, root_session_id, creator_session_id,
+            target_session_id, parent_work_item_id, predecessor_work_item_id,
+            goal, scope, completion_criteria, authority, source_identity_json,
+            state, revision, progress_summary, blockers_json, next_action,
+            result_json, created_at, updated_at
+          )
+            SELECT ?, kind, contract_revision, root_session_id,
+            creator_session_id, target_session_id, parent_work_item_id,
+            predecessor_work_item_id, goal, scope, completion_criteria, authority,
+            source_identity_json, 'pending', revision, progress_summary,
+            blockers_json, next_action, NULL, created_at, updated_at
+          FROM work_items_v6 WHERE id = ?
+        `);
+        duplicate.run("paged-root-active-duplicate-a", "paged-root-active");
+        duplicate.run("paged-root-active-duplicate-b", "paged-root-active");
+        duplicateDb.exec("COMMIT");
+        assert.equal(Number(duplicateDb.prepare("SELECT COUNT(*) AS count FROM work_items_v6 WHERE root_session_id = 'root' AND state = 'pending'").get().count), 2);
+      } finally {
+        try { duplicateDb.exec("ROLLBACK"); } catch { /* transaction already committed */ }
+        duplicateDb.close();
+      }
+      assert.throws(
+        () => harness.service.getRootWorkItem("root", runtimeBinding("root")),
+        /exactly one self-owned Root WorkItem/,
+      );
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "restore helperがagent proofを受けた場合、WorkItem eventとresource headerのactorはproofの実actor Sessionへ直列化される"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
   // fault = "helperが常にrestore対象rootをactorとして保存し、agent proofの実actorと監査履歴が不一致になる"

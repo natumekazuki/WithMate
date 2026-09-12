@@ -764,6 +764,7 @@ const workItemIdentityShape = {
   creatorSessionId: z.string(),
   targetSessionId: z.string(),
   parentWorkItemId: z.string().nullable(),
+  predecessorWorkItemId: z.string().nullable().optional(),
   goal: z.string(),
   scope: z.string(),
   completionCriteria: z.string(),
@@ -778,13 +779,20 @@ const workItemIdentityShape = {
 };
 function validateWorkItemKind<T extends z.ZodObject>(schema: T) {
   return schema.superRefine((value, context) => {
-    const v = value as { kind: string; progressSummary?: string; blockers?: string[]; nextAction?: string };
+    const v = value as {
+      kind: string;
+      progressSummary?: string;
+      blockers?: string[];
+      nextAction?: string;
+      predecessorWorkItemId?: string | null;
+    };
     const b = value as { rootSessionId: string; creatorSessionId: string; targetSessionId: string; parentWorkItemId: string | null; goal: string; scope: string; completionCriteria: string; authority: string };
     if (v.kind === "root" && (b.rootSessionId !== b.creatorSessionId || b.creatorSessionId !== b.targetSessionId || b.parentWorkItemId !== null)) context.addIssue({ code: "custom", path: ["kind"], message: "Root Work Item binding is invalid." });
     if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || b.goal.length === 0 || b.scope.length === 0 || b.completionCriteria.length === 0 || b.authority.length === 0)) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Item binding is invalid." });
     const hasProgress = v.progressSummary !== undefined || v.blockers !== undefined || v.nextAction !== undefined;
     if (v.kind === "root" && (!hasProgress || v.progressSummary === undefined || v.blockers === undefined || v.nextAction === undefined)) context.addIssue({ code: "custom", path: ["kind"], message: "Root Work Items require progress fields." });
     if (v.kind === "delegated" && hasProgress) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Items cannot include root progress fields." });
+    if (v.kind === "delegated" && v.predecessorWorkItemId !== undefined) context.addIssue({ code: "custom", path: ["predecessorWorkItemId"], message: "Delegated Work Items cannot include root successor fields." });
   });
 }
 const activeWorkItemSchema = validateWorkItemKind(z.object({

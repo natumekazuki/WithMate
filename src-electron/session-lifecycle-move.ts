@@ -93,14 +93,20 @@ function assertInactiveResources(db: DatabaseSync, sourceRoot: string, sessionId
       AND (creator_session_id IN (${placeholders}) OR target_session_id IN (${placeholders})) LIMIT 1`)
     .get(sourceRoot, ...sessionIds, ...sessionIds) as { id: string } | undefined;
   if (activeWork) fail(`An active Work Item prevents moving the Session subtree: ${activeWork.id}.`);
-  const running = db.prepare(`SELECT 1 FROM session_turns_v6
+  const runningTurn = db.prepare(`SELECT 1 FROM session_turns_v6
     WHERE session_id IN (${placeholders}) AND phase IN ('queued', 'running') LIMIT 1`).get(...sessionIds);
-  if (running) fail("A queued or running Session turn prevents moving the Session subtree.");
+  if (runningTurn) fail("A queued or running Session turn prevents moving the Session subtree.");
+  const execution = db.prepare(`SELECT id FROM session_executions_v6
+    WHERE session_id IN (${placeholders}) AND state IN ('running', 'queued') LIMIT 1`)
+    .get(...sessionIds) as { id: string } | undefined;
+  if (execution) fail(`An active Session execution prevents moving the Session subtree: ${execution.id}.`);
   const openCoordination = db.prepare(`SELECT event.id FROM coordination_events_v6 AS event
-    WHERE event.root_session_id = ? AND NOT EXISTS (
+    WHERE (event.actor_session_id IN (${placeholders}) OR event.target_session_id IN (${placeholders}) OR event.parent_session_id IN (${placeholders}))
+      AND event.kind IN ('escalation', 'user_decision_required', 'blocker')
+      AND NOT EXISTS (
       SELECT 1 FROM coordination_event_actions_v6 AS action
-      WHERE action.event_id = event.id AND action.action_type IN ('resolved', 'cancelled', 'consumed')
-    ) LIMIT 1`).get(sourceRoot) as { id: string } | undefined;
+      WHERE action.event_id = event.id AND action.action_type IN ('resolved', 'cancelled', 'superseded')
+    ) LIMIT 1`).get(...sessionIds, ...sessionIds, ...sessionIds) as { id: string } | undefined;
   if (openCoordination) fail(`An open coordination event prevents moving the Session subtree: ${openCoordination.id}.`);
 }
 

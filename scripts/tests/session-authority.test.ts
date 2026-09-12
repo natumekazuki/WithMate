@@ -559,11 +559,13 @@ describe("Session authority", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
   // claim = "fresh task coordinatorはself操作を保持しつつconstructor ceiling外のsibling executor Turnを得ず、grant expiryは親を超えない"
-  // oracle = { type = "contract", ref = "AUTONOMY-AUTHORITY-CHILD-ATTENUATION" }
-  // failure_mode = "task coordinatorがsibling executorへのTurnなどconstructor ceiling外のauthorityを取得する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // fault = "session.createのplacementからchild roleを解決できない、または親のconstructor ceilingとexpiryを超えたchild権限を発行する"
+  // observable = "session.createのagent authority proofと、そのproofから導出されたchild grant"
+  // observation_boundary = "component-behavior"
   // scope = "session-authority-delegation"
   // lifecycle = "permanent"
   // @end-test-value
@@ -579,8 +581,14 @@ describe("Session authority", () => {
       now: () => new Date(NOW),
     });
     try {
+      assert.throws(
+        () => service.authorize(binding(root.id), "session.create", {
+          placement: { kind: "root", rootKind: "standalone" },
+        }),
+        (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_FORBIDDEN",
+      );
       const taskProof = service.authorize(binding(root.id), "session.create", {
-        sessionRole: "task-coordinator",
+        placement: { kind: "child", parentSessionId: root.id, sessionRole: "task-coordinator" },
       }).proof;
       const task = makeChild("task-a", root, "task-coordinator");
       storage.insertSession(task);
@@ -601,7 +609,9 @@ describe("Session authority", () => {
           .all(task.id) as Array<{ expires_at: string | null }>;
         assert.deepEqual(taskExpiryRows.map((row) => row.expires_at), ["2026-09-06T12:00:00.000Z"]);
 
-        const executorProof = service.authorize(binding(root.id), "session.create", { sessionRole: "executor" }).proof;
+        const executorProof = service.authorize(binding(root.id), "session.create", {
+          placement: { kind: "child", parentSessionId: root.id, sessionRole: "executor" },
+        }).proof;
         const executor = makeChild("executor-a", root, "executor");
         storage.insertSession(executor);
         db.prepare("DELETE FROM session_authority_grants_v6 WHERE grantee_session_id = ?").run(executor.id);
@@ -629,11 +639,13 @@ describe("Session authority", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "issuer grantをrevokeするとそのrevisionを根拠に発行されたchild proofは同transaction再検証で失効する"
-  // oracle = { type = "contract", ref = "AUTONOMY-AUTHORITY-REVOKE-CHAIN" }
-  // failure_mode = "親grant失効後も既発行child proofがmutation commitへ到達する"
+  // claim = "issuer grantをrevokeするとそのrevisionを根拠に発行されたchild proofの再検証が拒否される"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // fault = "親grant失効後もassertGrantProofCurrentが既発行child proofを有効として扱う"
+  // observable = "失効済みgrantを参照するchild proofの再検証結果"
+  // observation_boundary = "component-behavior"
   // scope = "session-authority-storage"
   // lifecycle = "permanent"
   // @end-test-value
@@ -649,7 +661,9 @@ describe("Session authority", () => {
       now: () => new Date(NOW),
     });
     try {
-      const constructorProof = service.authorize(binding(root.id), "session.create", { sessionRole: "executor" }).proof;
+      const constructorProof = service.authorize(binding(root.id), "session.create", {
+        placement: { kind: "child", parentSessionId: root.id, sessionRole: "executor" },
+      }).proof;
       const child = makeChild("executor-a", root, "executor");
       storage.insertSession(child);
       const db = new DatabaseSync(dbPath);

@@ -118,10 +118,11 @@ export class SessionLifecycleService {
 
   async updateSession(request: Session): Promise<Session> {
     const current = this.requireSession(request.id);
+    const expectedRevision = this.deps.storage.getSessionResourceRevision(current.id)!;
     if (isTitleOnlySessionUpdate(current, request)) {
       await this.mutate("session.configure", {
         sessionId: current.id,
-        expectedRevision: this.deps.storage.getSessionResourceRevision(current.id)!,
+        expectedRevision,
         kind: "title",
         title: request.taskTitle,
         idempotencyKey: randomUUID(),
@@ -142,7 +143,7 @@ export class SessionLifecycleService {
       codexSpeed: request.codexSpeed,
       codexReviewer: resolveCodexReviewerUpdate(current, request.codexReviewer),
       threadId: current.characterId !== request.characterId || current.workspacePath !== workspace.workspacePath ? "" : resolvedProvider.threadId };
-    const input: SessionRuntimeConfigureInput = { sessionId: current.id, expectedRevision: this.deps.storage.getSessionResourceRevision(current.id)!,
+    const input: SessionRuntimeConfigureInput = { sessionId: current.id, expectedRevision,
       kind: "runtime", provider, idempotencyKey: randomUUID() };
     await this.mutate("session.configure", input, this.userProof(current, "session.configure"), next);
     return this.requireSession(current.id);

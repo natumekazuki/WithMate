@@ -11,6 +11,7 @@ import type { SessionRuntimeProviderTuple } from "../../src/session-external-run
 import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { SessionLifecycleResolver } from "../../src-electron/session-lifecycle-resolver.js";
 import { SessionLifecycleRecoveryError, SessionLifecycleService } from "../../src-electron/session-lifecycle-service.js";
+import { SessionResourceRevisionConflictError } from "../../src-electron/resource-history-schema.js";
 import { SessionCrudError } from "../../src-electron/session-crud-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { WorkItemService } from "../../src-electron/work-item-service.js";
@@ -60,6 +61,7 @@ async function makeService(dbPath: string, overrides: {
   publish?: (session: import("../../src/session-state.js").Session) => void;
   publishRemoved?: (sessionId: string) => Promise<void>;
   createSessionId?: () => string;
+  workspace?: SessionLifecycleResolver["workspace"];
 } = {}): Promise<{ service: SessionLifecycleService; storage: SessionStorageV6; close(): void }> {
   const storage = new SessionStorageV6(dbPath);
   const db = new DatabaseSync(dbPath);
@@ -73,6 +75,7 @@ async function makeService(dbPath: string, overrides: {
     createCharacterRuntimeSnapshot: () => snapshot,
     resolveSessionFilesDirectory: (id) => path.join(path.dirname(dbPath), "session-files", id),
   });
+  if (overrides.workspace) resolver.workspace = overrides.workspace;
   const service = new SessionLifecycleService({
     storage, resolver,
     createSessionFilesDirectory: overrides.createFolder ?? (async () => undefined),
@@ -253,6 +256,57 @@ test("SessionLifecycleService はcatalog更新後もタイトルだけのGUI更�
     );
   } finally {
     catalog.revision = 7;
+    close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "SessionLifecycleServiceのGUI runtime更新は、非同期workspace解決中に先行したSession変更をstale revisionとして拒否する"
+// oracle = { type = "contract", ref = "src-electron/session-lifecycle-service.ts#updateSession" }
+// fault = "workspace解決前のSessionと解決後に再取得したrevisionを組み合わせ、先行したtitle更新をruntime更新で上書きする"
+// observable = "先行titleの保持、runtime更新のrevision conflict、Sessionの最終revision"
+// observation_boundary = "component-behavior"
+// scope = "SessionLifecycleService.updateSession deferred workspace conflict"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionLifecycleService は非同期workspace解決中の先行Session変更を上書きしない", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-lifecycle-update-conflict-"));
+  let enterWorkspace!: () => void;
+  let releaseWorkspace!: () => void;
+  let deferWorkspace = false;
+  const workspaceEntered = new Promise<void>((resolve) => { enterWorkspace = resolve; });
+  const workspaceRelease = new Promise<void>((resolve) => { releaseWorkspace = resolve; });
+  const { service, storage, close } = await makeService(path.join(root, "app.db"), {
+    workspace: async (sessionId, input) => {
+      if (deferWorkspace) {
+        enterWorkspace();
+        await workspaceRelease;
+      }
+      return input.kind === "session_folder"
+        ? { workspacePath: path.join(root, "session-files", sessionId), workspaceLabel: "SessionFolder", branch: "" }
+        : { workspacePath: input.path, workspaceLabel: path.basename(input.path), branch: "" };
+    },
+  });
+  try {
+    await service.create(createInput("update-conflict-create"), proof("session.create", "session-created"));
+    deferWorkspace = true;
+    const current = storage.getLifecycleSession("session-created")!;
+    const pendingRuntimeUpdate = service.updateSession({ ...current, codexSpeed: "fast" });
+    await workspaceEntered;
+
+    const titleUpdate = await service.updateSession({ ...current, taskTitle: "Concurrent title" });
+    assert.equal(titleUpdate.taskTitle, "Concurrent title");
+    const titleRevision = storage.getSessionResourceRevision("session-created");
+    releaseWorkspace();
+    await assert.rejects(pendingRuntimeUpdate, (error) => error instanceof SessionResourceRevisionConflictError);
+
+    const finalSession = storage.getLifecycleSession("session-created")!;
+    assert.equal(finalSession.taskTitle, "Concurrent title");
+    assert.equal(finalSession.codexSpeed, current.codexSpeed);
+    assert.equal(storage.getSessionResourceRevision("session-created"), titleRevision);
+  } finally {
     close();
     await rm(root, { recursive: true, force: true });
   }

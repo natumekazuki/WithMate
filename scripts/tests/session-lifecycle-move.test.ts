@@ -252,6 +252,97 @@ describe("Session lifecycle move", () => {
   });
 
   // @test-value v2
+  // kind = "invariant"
+  // claim = "canonical session executionがqueued/runningのsubtreeは移動できない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "session_turns_v6に存在しないcanonical executionを見落としてSessionをreparentする"
+  // observable = "applySessionMoveの拒否結果とtarget binding/revision"
+  // observation_boundary = "component-behavior"
+  // scope = "session-lifecycle-move canonical execution guard"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("queued executionを拒否する", async () => {
+    const ctx = await setup();
+    const service = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    try {
+      const provisioningDb = new DatabaseSync(ctx.dbPath); const grant = provisionMoveGrant(provisioningDb, ctx.sourceRoot.id)[0]; provisioningDb.close();
+      const input = { sessionId: ctx.target.id, expectedRevision: 1, kind: "same_root" as const,
+        destinationParentSessionId: ctx.destinationParent.id, destinationExpectedRevision: 1 };
+      const proof = moveProof(ctx.sourceRoot.id, grant);
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        for (const state of ["queued", "running"] as const) {
+          const executionId = `execution-${state}`;
+          db.prepare(`INSERT INTO session_executions_v6
+            (id, session_id, operation, state, request_json, created_at, updated_at)
+            VALUES (?, ?, 'turn.enqueue', ?, '{}', ?, ?)`)
+            .run(executionId, ctx.target.id, state, NOW, NOW);
+          assert.throws(() => applySessionMove(db, input, proof, NOW, `move-${state}`), (error) => error instanceof SessionCrudError && error.code === "SESSION_STATE_CONFLICT");
+          assert.equal((db.prepare("SELECT parent_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id) as { parent_session_id: string }).parent_session_id, ctx.sourceRoot.id, state);
+          assert.equal((db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?").get(ctx.target.id) as { resource_revision: number }).resource_revision, 1, state);
+          db.prepare("DELETE FROM session_executions_v6 WHERE id = ?").run(executionId);
+        }
+      } finally { db.close(); }
+    } finally { service.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "移動対象Sessionのblockerは返答をconsumedにしても未解決ならmoveを拒否し、同rootの無関係Sessionのeventは移動を妨げない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "coordination eventをroot全体で誤検知する、またはconsumedをresolvedと誤認してmoveを許可する"
+  // observable = "対象eventのmove拒否、sibling eventを追加したmove成功後のbindingとrevision"
+  // observation_boundary = "component-behavior"
+  // scope = "session-lifecycle-move coordination subtree"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("coordination eventは対象subtreeだけを判定しconsumedを解決扱いしない", async () => {
+    const ctx = await setup();
+    const service = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    try {
+      const provisioningDb = new DatabaseSync(ctx.dbPath); const grant = provisionMoveGrant(provisioningDb, ctx.sourceRoot.id)[0]; provisioningDb.close();
+      const proof = moveProof(ctx.sourceRoot.id, grant);
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        db.prepare(`INSERT INTO coordination_events_v6
+          (id, actor_session_id, session_role, role_contract_revision, root_session_id, parent_session_id, delegation_depth,
+           kind, summary, payload_json, options_json, created_at)
+          VALUES (?, ?, 'executor', 1, ?, ?, 1, 'blocker', 'blocked', '{}', '[]', ?)`)
+          .run("event-target", ctx.target.id, ctx.sourceRoot.id, ctx.sourceRoot.id, NOW);
+        // Blocker responses remain open until the agent explicitly resolves them.
+        db.prepare(`INSERT INTO coordination_event_actions_v6
+          (id, event_id, action_type, actor_type, principal_kind, actor_session_id, option_id, note, related_event_id, created_at)
+          VALUES (?, ?, 'responded', 'trusted_gui', 'user', NULL, NULL, 'Try again', NULL, ?)`)
+          .run("action-target-responded", "event-target", NOW);
+        db.prepare(`INSERT INTO coordination_event_actions_v6
+          (id, event_id, action_type, actor_type, principal_kind, actor_session_id, option_id, note, related_event_id, created_at)
+          VALUES (?, ?, 'consumed', 'session', 'agent', ?, NULL, NULL, NULL, ?)`)
+          .run("action-target-consumed", "event-target", ctx.target.id, NOW);
+        assert.throws(() => applySessionMove(db, {
+          sessionId: ctx.target.id, expectedRevision: 1, kind: "same_root" as const,
+          destinationParentSessionId: ctx.destinationParent.id, destinationExpectedRevision: 1,
+        }, proof, NOW, "move-consumed-event"), (error) => error instanceof SessionCrudError && error.code === "SESSION_STATE_CONFLICT");
+        assert.equal((db.prepare("SELECT parent_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id) as { parent_session_id: string }).parent_session_id, ctx.sourceRoot.id);
+        db.prepare(`INSERT INTO coordination_events_v6
+          (id, actor_session_id, session_role, role_contract_revision, root_session_id, parent_session_id, delegation_depth,
+           kind, summary, payload_json, options_json, created_at)
+          VALUES (?, ?, 'executor', 1, ?, ?, 1, 'blocker', 'blocked', '{}', '[]', ?)`)
+          .run("event-sibling", ctx.destinationParent.id, ctx.sourceRoot.id, ctx.sourceRoot.id, NOW);
+        db.prepare("INSERT INTO coordination_event_actions_v6 (id, event_id, action_type, actor_type, actor_session_id, option_id, note, related_event_id, created_at) VALUES (?, ?, 'resolved', 'session', ?, NULL, NULL, NULL, ?)")
+          .run("action-target-resolved", "event-target", ctx.target.id, NOW);
+        const result = applySessionMove(db, {
+          sessionId: ctx.target.id, expectedRevision: 1, kind: "same_root" as const,
+          destinationParentSessionId: ctx.destinationParent.id, destinationExpectedRevision: 1,
+        }, proof, NOW, "move-sibling-event");
+        assert.equal(result.revisions[ctx.target.id], 2);
+        assert.equal((db.prepare("SELECT parent_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id) as { parent_session_id: string }).parent_session_id, ctx.destinationParent.id);
+      } finally { db.close(); }
+    } finally { service.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
+  });
+
+  // @test-value v2
   // kind = "security"
   // claim = "cross-root moveはdestination proofなしで許可されない"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }

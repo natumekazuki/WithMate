@@ -374,7 +374,6 @@ import type {
 } from "../src/withmate-window-api.js";
 import {
   WORK_ITEM_MAX_LIST_LIMIT,
-  isWorkItemActive,
   isRootWorkItem,
   type RootWorkItem,
   type WorkItemEvent,
@@ -3694,24 +3693,7 @@ function createRendererRootWorkItemBinding(sessionId: string): ResolvedAgentRunt
 
 function getRootWorkItem(sessionId: string): RootWorkItem | null {
   const binding = createRendererRootWorkItemBinding(sessionId);
-  const candidates = requireWorkItemService().list({
-    creatorSessionId: sessionId,
-    targetSessionId: sessionId,
-    afterSequence: null,
-    limit: WORK_ITEM_MAX_LIST_LIMIT,
-  }, binding).filter((item): item is RootWorkItem =>
-    isRootWorkItem(item)
-    && item.rootSessionId === sessionId
-    && item.creatorSessionId === sessionId
-    && item.targetSessionId === sessionId
-    && item.parentWorkItemId === null,
-  );
-  if (candidates.length === 0) return null;
-  const activeCandidates = candidates.filter((item) => isWorkItemActive(item.state));
-  if (activeCandidates.length > 1) {
-    throw new Error("A root Session must have exactly one self-owned Root WorkItem.");
-  }
-  const selected = activeCandidates[0] ?? candidates[candidates.length - 1];
+  const selected = requireWorkItemService().getRootWorkItem(sessionId, binding);
   if (!selected) return null;
   const item = requireWorkItemService().get(selected.id, binding);
   if (

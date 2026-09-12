@@ -223,7 +223,12 @@ function resolveScopes(
   const record = objectInput(input);
   if (definition.scopeSource === "actor") {
     if (operation === "session.create") {
-      const targetRole = requiredSessionRole(record.sessionRole);
+      const placement = objectInput(record.placement);
+      const targetRole = placement.kind === "root"
+        ? requiredRootSessionRole(placement.rootKind)
+        : placement.kind === "child"
+          ? requiredChildSessionRole(placement.sessionRole)
+          : requiredSessionPlacementKind();
       return [scope(actor, "session_namespace", actor.sessionId, actor.sessionId, "self", targetRole)];
     }
     if (operation === "session.list") {
@@ -462,9 +467,16 @@ function requiredString(value: unknown, field: string): string {
   return value.trim();
 }
 
-function requiredSessionRole(value: unknown): SessionRole {
-  if (value === "standalone" || value === "overall-coordinator" || value === "task-coordinator" || value === "executor") {
-    return value;
-  }
-  throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The child Session Role is invalid.", { field: "sessionRole" });
+function requiredRootSessionRole(value: unknown): SessionRole {
+  if (value === "standalone" || value === "overall-coordinator") return value;
+  throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The root Session Role is invalid.", { field: "placement.rootKind" });
+}
+
+function requiredChildSessionRole(value: unknown): SessionRole {
+  if (value === "task-coordinator" || value === "executor") return value;
+  throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The child Session Role is invalid.", { field: "placement.sessionRole" });
+}
+
+function requiredSessionPlacementKind(): never {
+  throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The Session placement is invalid.", { field: "placement.kind" });
 }

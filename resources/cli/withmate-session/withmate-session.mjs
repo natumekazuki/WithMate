@@ -10427,6 +10427,7 @@ var workItemIdentityShape = {
 	creatorSessionId: string(),
 	targetSessionId: string(),
 	parentWorkItemId: string().nullable(),
+	predecessorWorkItemId: string().nullable().optional(),
 	goal: string(),
 	scope: string(),
 	completionCriteria: string(),
@@ -10463,6 +10464,11 @@ function validateWorkItemKind(schema) {
 			code: "custom",
 			path: ["kind"],
 			message: "Delegated Work Items cannot include root progress fields."
+		});
+		if (v.kind === "delegated" && v.predecessorWorkItemId !== void 0) context.addIssue({
+			code: "custom",
+			path: ["predecessorWorkItemId"],
+			message: "Delegated Work Items cannot include root successor fields."
 		});
 	});
 }
@@ -27899,7 +27905,8 @@ async function runWithMateSessionCli(args, deps = {}) {
 	}
 }
 function isMutationCommand(command, input) {
-	return command === "budget configure" || command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "work create" || command === "work transition" || command === "work revise" || command === "work history append" || command === "work result" || command === "work cancel" || command === "work aggregation decide" || command === "work aggregation retry" || command === "interaction respond" || command === "coordination event create" || command === "coordination event resolve" || command === "coordination event consume" || command === "coordination event cancel" || command === "coordination event correct" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
+	const operation = commandMap.get(command);
+	return operation !== void 0 && (operation === "budget.configure" || sessionRuntimeOperationMayHaveEffect(operation, input));
 }
 async function parseArgs(args, deps) {
 	const fileCommand = args[0] === "session" && args[1] === "files";
