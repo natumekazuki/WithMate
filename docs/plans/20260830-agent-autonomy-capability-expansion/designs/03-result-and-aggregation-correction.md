@@ -59,7 +59,7 @@ finalizationは既存の`work.result`へ収束させる。集約を持つ親の`
 
 子を持たないWork Itemは`work.result`を維持できる。公開操作を統一する場合は、application service内部で同じfinalization ownerへ収束させる。
 
-集約を持たないWork Itemは、`work.result.correct`で訂正した結果がそのままcurrentとなり、terminal状態からの再finalizeは行わない。再finalizeは集約を持つWork Itemの新しい訂正result revisionに限り、一度だけ保存する。terminal後のmove等で初めて集約を持った場合もこの経路で確定できる。同じrequestの再送は保存済みresponseを返す。
+集約を持たないdelegated Work Itemは、`work.result.correct`で訂正した結果がそのままcurrentとなり、terminal状態からの再finalizeは行わない。Rootの訂正はstaleを解消する再finalizeを必要とする。再finalizeは集約を持つWork Itemの新しい訂正result revisionに限り、一度だけ保存する。terminal後のmove等で初めて集約を持った場合もこの経路で確定できる。同じrequestの再送は保存済みresponseを返す。
 
 ## 訂正後の状態
 
