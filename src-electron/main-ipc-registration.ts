@@ -1091,6 +1091,25 @@ function assertValidGitHistoryCursor(cursor: unknown): asserts cursor is string 
   }
 }
 
+function assertValidGitHistoryBranch(branch: unknown): asserts branch is string | null {
+  if (branch === null) {
+    return;
+  }
+  if (
+    typeof branch !== "string"
+    || !branch
+    || branch.trim() !== branch
+    || /[\u0000-\u001f\u007f]/u.test(branch)
+  ) {
+    throw new TypeError("Git history branch is invalid.");
+  }
+}
+
+function assertValidGitHistoryCommitsRequest(input: unknown): asserts input is FileRootGitHistoryCommitsRequest {
+  assertValidGitHistoryRequest(input);
+  assertValidGitHistoryBranch((input as { branch?: unknown }).branch);
+}
+
 function assertValidGitHistoryRelativePath(relativePath: unknown): asserts relativePath is string | null | undefined {
   if (relativePath === undefined || relativePath === null) {
     return;
@@ -1957,7 +1976,7 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   ipcMain.handle(
     WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
     async (event, request: FileRootGitHistoryCommitsRequest) => {
-      assertValidGitHistoryRequest(request);
+      assertValidGitHistoryCommitsRequest(request);
       assertValidGitHistoryCursor(request.cursor);
       await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
       return deps.listFileRootGitHistoryCommits(request);

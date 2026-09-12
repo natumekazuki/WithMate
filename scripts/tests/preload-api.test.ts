@@ -371,13 +371,21 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
     rootId: "workspace",
   };
+  const historyCommitsRequest = {
+    ...historyRequest,
+    branch: "main",
+  };
   assert.deepEqual(await api.listFileRootGitHistoryRepositories({ sessionId: "session-1" }), {
     channel: "withmate:list-file-root-git-history-repositories",
     args: [{ sessionId: "session-1" }],
   });
-  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyRequest, cursor: "100" }), {
+  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyCommitsRequest, cursor: "100" }), {
     channel: "withmate:list-file-root-git-history-commits",
-    args: [{ ...historyRequest, cursor: "100" }],
+    args: [{ ...historyCommitsRequest, cursor: "100" }],
+  });
+  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyRequest, branch: null, cursor: null }), {
+    channel: "withmate:list-file-root-git-history-commits",
+    args: [{ ...historyRequest, branch: null, cursor: null }],
   });
   const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
   assert.deepEqual(await api.getFileRootGitHistoryCommitDetail(historyDetailRequest), {

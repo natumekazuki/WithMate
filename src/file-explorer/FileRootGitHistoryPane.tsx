@@ -52,6 +52,7 @@ const HISTORY_REF_KIND_LABELS = {
 type HistoryPageIdentity = {
   generation: number;
   repositoryId: string;
+  branch: string;
   cursor: string | null;
 };
 
@@ -120,6 +121,8 @@ export function FileRootGitHistoryPane({
   const generationRef = useRef(0);
   const selectedRepositoryRef = useRef<FileRootGitHistoryRepository | null>(null);
   const selectedRepositorySessionIdRef = useRef<string | null>(null);
+  const selectedBranchRef = useRef<string | null>(null);
+  const lastRootsRevisionRef = useRef(rootsRevision);
   const pageRequestRef = useRef<HistoryPageIdentity | null>(null);
   const cursorRef = useRef<string | null>(null);
   const hasMoreRef = useRef(false);
@@ -131,6 +134,7 @@ export function FileRootGitHistoryPane({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [repositories, setRepositories] = useState<FileRootGitHistoryRepository[]>([]);
   const [selectedRepository, setSelectedRepository] = useState<FileRootGitHistoryRepository | null>(null);
+  const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [commits, setCommits] = useState<FileRootGitHistoryCommit[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loadingRepositories, setLoadingRepositories] = useState(false);
@@ -156,6 +160,7 @@ export function FileRootGitHistoryPane({
 
   const loadPage = useCallback(async (
     repository: FileRootGitHistoryRepository,
+    branch: string,
     generation: number,
     requestedCursor: string | null,
     replace: boolean,
@@ -168,11 +173,12 @@ export function FileRootGitHistoryPane({
       currentRequest
       && currentRequest.generation === generation
       && currentRequest.repositoryId === repository.repositoryId
+      && currentRequest.branch === branch
       && currentRequest.cursor === requestedCursor
     ) {
       return;
     }
-    pageRequestRef.current = { generation, repositoryId: repository.repositoryId, cursor: requestedCursor };
+    pageRequestRef.current = { generation, repositoryId: repository.repositoryId, branch, cursor: requestedCursor };
     if (replace) {
       setLoadingCommits(true);
     } else {
@@ -183,6 +189,7 @@ export function FileRootGitHistoryPane({
         sessionId,
         repositoryId: repository.repositoryId,
         rootId: repository.rootId,
+        branch,
         cursor: requestedCursor,
       });
       if (!isCurrentRepository(generation, repository)) {
@@ -214,6 +221,7 @@ export function FileRootGitHistoryPane({
     } finally {
       if (pageRequestRef.current?.generation === generation
         && pageRequestRef.current.repositoryId === repository.repositoryId
+        && pageRequestRef.current.branch === branch
         && pageRequestRef.current.cursor === requestedCursor
       ) {
         pageRequestRef.current = null;
@@ -225,18 +233,24 @@ export function FileRootGitHistoryPane({
     }
   }, [api, enabled, isCurrentRepository, sessionId]);
 
-  const chooseRepository = useCallback((repository: FileRootGitHistoryRepository | null, generation?: number) => {
+  const chooseRepository = useCallback((
+    repository: FileRootGitHistoryRepository | null,
+    generation?: number,
+    branch: string | null = repository?.currentBranch ?? null,
+  ) => {
     const nextGeneration = generation ?? generationRef.current + 1;
     generationRef.current = nextGeneration;
     pageRequestRef.current = null;
     selectedRepositoryRef.current = repository;
     selectedRepositorySessionIdRef.current = sessionId;
+    selectedBranchRef.current = branch;
     cursorRef.current = null;
     hasMoreRef.current = false;
     selectedCommitIdRef.current = null;
     detailRequestRef.current += 1;
     diffRequestRef.current += 1;
     setSelectedRepository(repository);
+    setSelectedBranch(branch);
     setCommits([]);
     setHasMore(false);
     setSelectedCommitId(null);
@@ -246,27 +260,49 @@ export function FileRootGitHistoryPane({
     setLoadingDetail(false);
     setDetailMessage("");
     setListMessage("");
+    setLoadingCommits(false);
+    setLoadingMore(false);
     setCollapsedDirectories({});
     setLoadingDiffKey("");
     setSelectedEntryPath(null);
     onRepositoryChange?.(repository?.repositoryId ?? null);
-    if (repository) {
-      void loadPage(repository, nextGeneration, null, true);
+    if (!repository) {
+      return;
     }
+    if (branch === null) {
+      setListMessage(repository.branches.length > 0
+        ? "Git HEAD is detached. Select a branch to view its history."
+        : "The Git repository has no committed branches.");
+      return;
+    }
+    void loadPage(repository, branch, nextGeneration, null, true);
   }, [loadPage, onRepositoryChange, sessionId]);
 
-  const reloadRepositories = useCallback(async () => {
+  const chooseBranch = useCallback((branch: string | null) => {
+    const repository = selectedRepositoryRef.current;
+    if (!repository) {
+      return;
+    }
+    chooseRepository(repository, undefined, branch);
+  }, [chooseRepository]);
+
+  const reloadRepositories = useCallback(async (preserveSelection: boolean) => {
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     pageRequestRef.current = null;
     detailRequestRef.current += 1;
-    const previousRepositoryId = selectedRepositorySessionIdRef.current === sessionId
-      ? selectedRepositoryRef.current?.repositoryId
+    const previousRepository = selectedRepositorySessionIdRef.current === sessionId
+      ? selectedRepositoryRef.current
       : null;
+    const previousRepositoryId = previousRepository?.repositoryId ?? null;
+    const previousRootId = previousRepository?.rootId ?? null;
+    const previousBranch = previousRepository ? selectedBranchRef.current : null;
     selectedRepositoryRef.current = null;
     selectedRepositorySessionIdRef.current = sessionId;
+    selectedBranchRef.current = null;
     onRepositoryChange?.(null);
     setSelectedRepository(null);
+    setSelectedBranch(null);
     setRepositories([]);
     setCommits([]);
     setSelectedCommitId(null);
@@ -294,10 +330,17 @@ export function FileRootGitHistoryPane({
         return;
       }
       setRepositories(result.repositories);
-      const nextRepository = result.repositories.find((repository) => repository.repositoryId === previousRepositoryId)
-        ?? result.repositories[0]
-        ?? null;
-      chooseRepository(nextRepository, generation);
+      const nextRepository = preserveSelection
+        ? result.repositories.find((repository) => repository.repositoryId === previousRepositoryId
+          && repository.rootId === previousRootId)
+        : null;
+      const resolvedRepository = nextRepository ?? result.repositories[0] ?? null;
+      const nextBranch = preserveSelection
+        && resolvedRepository?.repositoryId === previousRepositoryId
+        && resolvedRepository.rootId === previousRootId
+        ? previousBranch
+        : resolvedRepository?.currentBranch ?? null;
+      chooseRepository(resolvedRepository, generation, nextBranch);
     } catch (error) {
       if (generationRef.current === generation) {
         setListMessage(error instanceof Error ? error.message : "Git repositories could not be loaded.");
@@ -310,7 +353,9 @@ export function FileRootGitHistoryPane({
   }, [api, chooseRepository, enabled, onRepositoryChange, sessionId]);
 
   useEffect(() => {
-    void reloadRepositories();
+    const preserveSelection = lastRootsRevisionRef.current === rootsRevision;
+    lastRootsRevisionRef.current = rootsRevision;
+    void reloadRepositories(preserveSelection);
     return () => {
       generationRef.current += 1;
       pageRequestRef.current = null;
@@ -320,16 +365,18 @@ export function FileRootGitHistoryPane({
 
   const loadMore = useCallback(() => {
     const repository = selectedRepositoryRef.current;
+    const branch = selectedBranchRef.current;
     const requestedCursor = cursorRef.current;
     if (
       !repository
+      || !branch
       || !hasMoreRef.current
       || requestedCursor === null
       || pageRequestRef.current
     ) {
       return;
     }
-    void loadPage(repository, generationRef.current, requestedCursor, false);
+    void loadPage(repository, branch, generationRef.current, requestedCursor, false);
   }, [loadPage]);
 
   useEffect(() => {
@@ -515,6 +562,9 @@ export function FileRootGitHistoryPane({
     };
   }, [changedEntries, selectedRepository]);
 
+  const selectedBranchAvailable = selectedRepository
+    && selectedBranch !== null
+    && selectedRepository.branches.includes(selectedBranch);
   const selectedEntryKey = selectedEntryPath
     ? `${selectedRepository?.repositoryId ?? ""}:commit:${selectedEntryPath}`
     : null;
@@ -536,6 +586,27 @@ export function FileRootGitHistoryPane({
             {repositories.map((repository) => (
               <option key={repository.repositoryId} value={repository.repositoryId}>
                 {repository.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      {selectedRepository && (selectedRepository.branches.length > 0 || selectedBranch !== null) ? (
+        <label className="file-history-repository-selector">
+          <span>Branch</span>
+          <select
+            aria-label="History branch"
+            value={selectedBranch ?? ""}
+            onChange={(event) => chooseBranch(event.target.value || null)}
+          >
+            {selectedBranch === null ? (
+              <option value="" disabled>Detached HEAD — select a branch</option>
+            ) : !selectedBranchAvailable ? (
+              <option value={selectedBranch} disabled>{selectedBranch} (no longer available)</option>
+            ) : null}
+            {selectedRepository.branches.map((branch) => (
+              <option key={branch} value={branch}>
+                {branch}{branch === selectedRepository.currentBranch ? " (current)" : ""}
               </option>
             ))}
           </select>
