@@ -286,7 +286,7 @@ button:disabled {
     0px,
     min(
       var(--session-action-dock-height, 320px),
-      40dvh,
+      80dvh,
       calc(100dvh - var(--session-header-dock-row-height) - 342px)
     )
   );

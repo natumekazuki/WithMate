@@ -20,23 +20,47 @@ import type {
 } from "../../src/chat/chat-layout-preference.js";
 import type { SessionSidePane } from "../../src/session-side-pane.js";
 
+// @test-value v2
+// kind = "invariant"
+// claim = "高さclamp helperは、呼び出し側が指定した比率上限と中央領域の最小高を優先する"
+// oracle = { type = "contract", ref = "ActionDock layout height bounds" }
+// fault = "比率上限または中央領域上限の低い方を使わず、要求値をそのまま返す"
+// observable = "clampSessionVerticalDockHeightが返すActionDock高さ"
+// observation_boundary = "component-behavior"
+// scope = "session-action-dock-height-clamp-helper"
+// lifecycle = "permanent"
+// impact = "高さ計算が上限を越え、中央surfaceまたはsplitterの操作領域を圧迫する"
+// distinction = "ActionDockの実設定値ではなく、clamp helperへ渡された境界値の組み合わせを直接検証する"
+// @end-test-value
 test("vertical dock height は比率上限と中央領域の最小高を優先する", () => {
   assert.equal(clampSessionVerticalDockHeight({
-    requestedHeight: 600,
-    layoutHeight: 1000,
+    requestedHeight: 1800,
+    layoutHeight: 2000,
     minHeight: 180,
-    maxHeightRatio: 0.4,
+    maxHeightRatio: 0.8,
     oppositeDockHeight: 64,
-  }), 400);
+  }), 1600);
   assert.equal(clampSessionVerticalDockHeight({
     requestedHeight: 180,
     layoutHeight: 420,
     minHeight: 180,
-    maxHeightRatio: 0.4,
+    maxHeightRatio: 0.8,
     oppositeDockHeight: 64,
   }), 36);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "ActionDockの利用可能高はlayoutのpaddingとborderを除いたcontent高から計算する"
+// oracle = { type = "contract", ref = "ActionDock content layout bounds" }
+// fault = "border-box全体をlayout高として扱い、paddingやborderの分だけActionDockが画面外へ出るか中央領域を圧迫する"
+// observable = "measureSessionVerticalDockLayoutBoundsとclampSessionVerticalDockHeightの返却値"
+// observation_boundary = "component-behavior"
+// scope = "session-action-dock-layout-bounds"
+// lifecycle = "permanent"
+// impact = "Window resizeや小さいWindowでdockと中央surfaceの境界がずれる"
+// distinction = "80%上限とは分離して、実DOMのbox model計測値をclampへ渡す境界を検証する"
+// @end-test-value
 test("vertical dock layout は border-box から padding と border を除いた高さを使う", () => {
   const previousWindow = globalThis.window;
   const dom = new JSDOM("<!doctype html><html><body><div id=\"layout\"></div></body></html>");
@@ -66,7 +90,7 @@ test("vertical dock layout は border-box から padding と border を除いた
       requestedHeight: 600,
       layoutHeight: bounds.height,
       minHeight: 180,
-      maxHeightRatio: 0.4,
+      maxHeightRatio: 1,
       oppositeDockHeight: 64,
     }), 191);
   } finally {
@@ -128,6 +152,18 @@ function dispatchPointerEvent(
   return event;
 }
 
+// @test-value v2
+// kind = "invariant"
+// claim = "ActionDockのpointer resizeは設定された最大・最小高さを越えず、layoutのCSS custom propertyへclamp済みの高さを反映する"
+// oracle = { type = "contract", ref = "ActionDock drag resize contract" }
+// fault = "ドラッグ中に要求値をそのまま反映し、ActionDockが設定された最大高さを越えるか最小高さを下回る"
+// observable = "layoutの--session-action-dock-height CSS custom property"
+// observation_boundary = "component-behavior"
+// scope = "session-action-dock-pointer-resize"
+// lifecycle = "permanent"
+// impact = "expanded ActionDockが画面外へはみ出すか、縮小操作で操作可能な最小高さへ戻れない"
+// distinction = "pointer gestureからhookの高さ反映までの経路を、上下両方向のclampで検証する"
+// @end-test-value
 test("ActionDock resize は固定 Header と中央領域の高さを残す", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -193,10 +229,10 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
       y: 20,
       top: 20,
       right: 1000,
-      bottom: 1020,
+      bottom: 2020,
       left: 0,
       width: 1000,
-      height: 1000,
+      height: 2000,
       toJSON: () => ({}),
     });
 
@@ -205,10 +241,10 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
 
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 500));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 31));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "390px");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 800));
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "1580px");
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 1800));
     assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "260px");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 800));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 1800));
   } finally {
     if (root) {
       await act(async () => root?.unmount());

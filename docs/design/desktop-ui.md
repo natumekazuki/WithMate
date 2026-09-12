@@ -197,7 +197,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
   - Header、ActionDock、side pane、layout priority の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
   - title 編集などの強制表示は保存済み preference を変更しない
-  - 中央 surface の最小高を優先し、ActionDock の高さは layout 高の40%までとする
+  - 中央 surface の最小高を優先し、ActionDock の高さは layout 高の80%までとする
   - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
   - splitter の click で対応する pane を切り替える。wide layout では左右 splitter の drag による幅調整も受け付ける
