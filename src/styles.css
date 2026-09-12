@@ -247,34 +247,6 @@ button:disabled {
   pointer-events: none;
 }
 
-.session-chat-layout.layout-priority-side-pane {
-  grid-template-columns:
-    var(--session-left-pane-track-width)
-    var(--session-dock-splitter-size)
-    minmax(0, 1fr)
-    var(--session-dock-splitter-size)
-    var(--session-right-pane-track-width);
-  grid-template-areas:
-    "left-pane left-split header right-split right-pane"
-    "left-pane left-split top-split right-split right-pane"
-    "left-pane left-split main right-split right-pane"
-    "left-pane left-split bottom-split right-split right-pane"
-    "left-pane left-split action-dock right-split right-pane";
-}
-
-.session-chat-layout.layout-priority-side-pane.is-left-pane-visible {
-  --session-left-pane-track-width: var(--session-file-explorer-width, 320px);
-}
-
-.session-chat-layout.layout-priority-side-pane.is-right-pane-visible {
-  --session-right-pane-track-width: var(--session-context-rail-width, 420px);
-}
-
-.session-chat-layout.layout-priority-side-pane.is-left-pane-visible.is-right-pane-visible {
-  --session-left-pane-track-width: var(--session-file-explorer-width, 320px);
-  --session-right-pane-track-width: var(--session-context-rail-width, 420px);
-}
-
 .session-chat-layout.layout-priority-dock {
   grid-template-columns:
     var(--session-left-pane-track-width)
@@ -342,9 +314,7 @@ button:disabled {
 
 .session-action-dock-slot {
   grid-area: action-dock;
-  --session-region-min-height: 260px;
-  --session-preferred-min-width: 900px;
-  --session-preferred-min-height: 420px;
+  --session-region-min-height: 320px;
 }
 
 .session-chat-layout.is-header-visible {
@@ -7541,6 +7511,8 @@ button:disabled {
 }
 
 .session-message-list {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   display: grid;
   gap: 12px;
   min-height: 0;
@@ -7556,6 +7528,8 @@ button:disabled {
 }
 
 .session-message-list-window {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   display: grid;
   gap: 12px;
   min-height: 0;
@@ -7567,6 +7541,8 @@ button:disabled {
 }
 
 .session-message-virtual-row {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   position: absolute;
   top: 0;
   left: 0;
@@ -7721,6 +7697,8 @@ button:disabled {
 }
 
 .message-card {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   position: relative;
   display: grid;
   gap: 10px;
@@ -7910,6 +7888,8 @@ button:disabled {
 .message-body.rich-text,
 .session-file-markdown.rich-text {
   display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   line-height: 1.6;
 }
@@ -13138,7 +13118,6 @@ button:disabled {
 }
 
 @media (max-width: 1399.98px) {
-  .session-chat-layout.layout-priority-side-pane,
   .session-chat-layout.layout-priority-dock {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows:

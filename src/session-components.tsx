@@ -31,7 +31,6 @@ import {
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
-import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { CodexSpeed } from "./codex-speed.js";
 import { isCodexReviewerControlDisabled, type CodexReviewer } from "./codex-reviewer.js";
@@ -885,8 +884,6 @@ export type SessionChatScreenProps = {
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
   isActionDockExpanded: boolean;
-  layoutPriority: ChatLayoutPriority;
-  onRequireDockPriority?: () => void;
   leftPane?: ReactNode;
   leftSplitter?: ReactNode;
   rightPane: ReactNode;
@@ -938,8 +935,6 @@ export function SessionChatScreen({
   actionDock,
   actionDockSplitter,
   isActionDockExpanded,
-  layoutPriority,
-  onRequireDockPriority,
   leftPane = null,
   leftSplitter = null,
   rightPane,
@@ -992,25 +987,7 @@ export function SessionChatScreen({
     observer?.observe(layout);
     window.addEventListener("resize", measure);
     return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
-  }, [layoutStyle, isActionDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible, layoutPriority]);
-  useLayoutEffect(() => {
-    const dock = ownLayoutRef.current?.querySelector<HTMLElement>(".session-action-dock-slot");
-    if (!dock || !isActionDockExpanded || layoutPriority !== "side-pane-first" || !onRequireDockPriority) return;
-    const measure = () => {
-      const bounds = dock.getBoundingClientRect();
-      const css = dock.ownerDocument.defaultView!.getComputedStyle(dock);
-      const minimumWidth = Number.parseFloat(css.getPropertyValue("--session-preferred-min-width"));
-      const minimumHeight = Number.parseFloat(css.getPropertyValue("--session-preferred-min-height"));
-      if (bounds.width > 0 && bounds.height > 0 && bounds.width < minimumWidth && bounds.height < minimumHeight) {
-        onRequireDockPriority();
-      }
-    };
-    measure();
-    const Observer = dock.ownerDocument.defaultView?.ResizeObserver;
-    const observer = Observer ? new Observer(measure) : null;
-    observer?.observe(dock);
-    return () => observer?.disconnect();
-  }, [isActionDockExpanded, layoutPriority, layoutStyle, onRequireDockPriority]);
+  }, [layoutStyle, isActionDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible]);
   const columnsRef = useRef<HTMLDivElement | null>(null);
   const [columnSizes, setColumnSizes] = useState({ width: 0, main: 0, auxiliary: 0, splitter: 0 });
   useLayoutEffect(() => {
@@ -1035,10 +1012,10 @@ export function SessionChatScreen({
     observer?.observe(columns);
     return () => observer?.disconnect();
   }, [isAuxiliaryVisible, mainContent !== undefined]);
-  const singleChat = columnSizes.width > 0
+  const singleChat = auxiliaryWidthRatio > 0 && auxiliaryWidthRatio < 1 && columnSizes.width > 0
     && columnSizes.width < columnSizes.main + columnSizes.auxiliary + columnSizes.splitter;
   const contentWidth = columnSizes.width - columnSizes.splitter;
-  const effectiveRatio = auxiliaryWidthRatio <= 0 ? 0
+  const effectiveRatio = auxiliaryWidthRatio <= 0 ? 0 : auxiliaryWidthRatio >= 1 ? 1
     : contentWidth > 0 && !singleChat
       ? Math.max(columnSizes.auxiliary / contentWidth, Math.min(1 - columnSizes.main / contentWidth, auxiliaryWidthRatio))
       : auxiliaryWidthRatio;
@@ -1046,9 +1023,7 @@ export function SessionChatScreen({
   return (
     <div
       ref={setLayoutElementRefs}
-      className={`page-shell session-page session-chat-layout layout-priority-${
-        layoutPriority === "side-pane-first" ? "side-pane" : "dock"
-      }${isHeaderVisible ? " is-header-visible" : ""}${
+      className={`page-shell session-page session-chat-layout layout-priority-dock${isHeaderVisible ? " is-header-visible" : ""}${
         isActionDockExpanded ? " is-action-dock-expanded" : ""
       }${isLeftPaneVisible ? " is-left-pane-visible" : ""}${
         isRightPaneVisible ? " is-right-pane-visible" : ""
@@ -1083,8 +1058,8 @@ export function SessionChatScreen({
         aria-hidden={isCentralCollapsed}
         inert={isCentralCollapsed}
         className="chat-panel session-work-surface session-message-stack rise-3"
-        style={isAuxiliaryVisible && auxiliaryWidthRatio > 0 && mainContent === undefined && columnSizes.main > 0
-          ? { "--session-region-min-width": `${columnSizes.main + columnSizes.auxiliary + columnSizes.splitter}px` } as CSSProperties
+        style={isAuxiliaryVisible && mainContent === undefined && columnSizes.main > 0
+          ? { "--session-region-min-width": `${(auxiliaryWidthRatio <= 0 ? columnSizes.main : auxiliaryWidthRatio >= 1 ? columnSizes.auxiliary : columnSizes.main + columnSizes.auxiliary) + columnSizes.splitter}px` } as CSSProperties
           : undefined}
       >
         <div
@@ -1098,9 +1073,9 @@ export function SessionChatScreen({
               className={`session-concurrent-chat-columns${singleChat ? " is-single-chat" : ""}`}
               style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - effectiveRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0, effectiveRatio)}fr)` }}
             >
-              <div className="session-concurrent-chat-column session-concurrent-chat-main">{messageColumn}</div>
+              <div className={`session-concurrent-chat-column session-concurrent-chat-main${auxiliaryWidthRatio >= 1 ? " is-zero-width" : ""}`} inert={!singleChat && auxiliaryWidthRatio >= 1} aria-hidden={!singleChat && auxiliaryWidthRatio >= 1}>{messageColumn}</div>
               {auxiliarySplitter}
-              <div className={`session-concurrent-chat-column session-concurrent-chat-auxiliary${auxiliaryWidthRatio <= 0 ? " is-zero-width" : ""}`}>{auxiliaryMessageColumn}</div>
+              <div className={`session-concurrent-chat-column session-concurrent-chat-auxiliary${auxiliaryWidthRatio <= 0 ? " is-zero-width" : ""}`} inert={!singleChat && auxiliaryWidthRatio <= 0} aria-hidden={!singleChat && auxiliaryWidthRatio <= 0}>{auxiliaryMessageColumn}</div>
             </div>
           ) : messageColumn}
         </div>

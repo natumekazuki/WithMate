@@ -17,7 +17,6 @@ import type { CompanionSessionSummary } from "../../src/companion-state.js";
 import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
-import type { AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { MemoryV6Diagnostics } from "../../src/memory-v6/memory-diagnostics-state.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
@@ -967,35 +966,12 @@ describe("HomeMonitorContent", () => {
     latestMergeRun: null,
   });
 
-  const createMonitorAuxiliary = (id: string, parentSessionId: string): AuxiliarySessionSummary => ({
-    id,
-    parentSessionId,
-    status: "active",
-    runState: "running",
-    title: "Auxiliary",
-    provider: "codex",
-    catalogRevision: 1,
-    model: "gpt-5.4",
-    reasoningEffort: "high",
-    approvalMode: "untrusted",
-    codexSandboxMode: "danger-full-access",
-    codexSpeed: "standard",
-    codexReviewer: "none",
-    customAgentName: "",
-    allowedAdditionalDirectories: [],
-    threadId: "",
-    displayAfterMessageIndex: null,
-    createdAt: "2026-03-28T00:00:00.000Z",
-    updatedAt: "2026-03-30T00:00:00.000Z",
-    closedAt: "",
-  });
-
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorのagent/companion entryはAuxiliary有無にかかわらず基本mode/status表示を維持する"
+  // claim = "Home MonitorのAgent/Companion entryは種別、実行状態、キャラアイコンとセッション情報を表示する"
   // oracle = { type = "contract", ref = "home-monitor rendering" }
-  // fault = "Auxiliaryを持つMonitor entryがAuxiliaryラベルへ変わる、または基本表示が欠落する"
-  // observable = "HomeMonitorContentのrender済みHTMLにおけるAgent/Companion/status badge"
+  // fault = "Monitor entryの種別や実行状態が誤表示される、またはキャラアイコンやセッション情報が欠落する"
+  // observable = "HomeMonitorContentのrender済みHTMLにおけるAgent/Companion/status badge、avatarとセッション情報"
   // observation_boundary = "component-behavior"
   // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
@@ -1005,19 +981,16 @@ describe("HomeMonitorContent", () => {
       {
         kind: "agent",
         session: createMonitorSession("session-1", "Agent task"),
-        auxiliarySessions: [],
         state: { kind: "running", label: "実行中" },
       },
       {
         kind: "agent",
         session: createMonitorSession("session-2", "Auxiliary task"),
-        auxiliarySessions: [createMonitorAuxiliary("aux-1", "session-2")],
         state: { kind: "running", label: "実行中" },
       },
       {
         kind: "companion",
         session: createMonitorCompanion("companion-1", "Companion task"),
-        auxiliarySessions: [],
         isWindowOpen: true,
         state: { kind: "neutral", label: "待機" },
         groupLabel: "demo",
@@ -1025,7 +998,6 @@ describe("HomeMonitorContent", () => {
       {
         kind: "companion",
         session: createMonitorCompanion("companion-2", "Companion Auxiliary task"),
-        auxiliarySessions: [createMonitorAuxiliary("aux-companion", "companion-2")],
         isWindowOpen: true,
         state: { kind: "running", label: "実行中" },
         groupLabel: "demo",

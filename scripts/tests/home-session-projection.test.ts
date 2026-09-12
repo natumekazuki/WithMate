@@ -125,6 +125,18 @@ describe("home-session-projection", () => {
     assert.deepEqual(projection.nonRunningMonitorEntries.map(({ session }) => session.id), ["c"]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Home Monitorはopen Agentの配下で実行中のAuxiliaryを親のrunning stateへ反映する"
+  // oracle = { type = "contract", ref = "Home Session Monitor Auxiliary running state projection" }
+  // fault = "実行中のAuxiliaryを無視し、親Agentを停止扱いに分類する"
+  // observable = "runningMonitorEntries と nonRunningMonitorEntries の親session ID"
+  // observation_boundary = "implementation"
+  // scope = "buildHomeSessionProjection Agent Auxiliary state"
+  // lifecycle = "permanent"
+  // impact = "実行中会話のMonitor分類を正しく維持する"
+  // distinction = "公開entry fieldではなく、Monitor分類のstate contractを検証する"
+  // @end-test-value
   it("active Auxiliary が running の open session は running monitor に分類する", () => {
     const projection = buildHomeSessionProjection(
       [
@@ -147,10 +159,21 @@ describe("home-session-projection", () => {
 
     assert.deepEqual(projection.monitorEntries.map(({ session }) => session.id), ["main"]);
     assert.deepEqual(projection.runningMonitorEntries.map(({ session }) => session.id), ["main"]);
-    assert.equal(projection.runningMonitorEntries[0]?.activeAuxiliarySession?.id, "aux-main");
     assert.deepEqual(projection.nonRunningMonitorEntries.map(({ session }) => session.id), []);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Home Monitorはopen Companionの配下で実行中のAuxiliaryを親のrunning stateへ反映する"
+  // oracle = { type = "contract", ref = "Home Companion Monitor Auxiliary running state projection" }
+  // fault = "実行中のAuxiliaryを無視し、親Companionを停止扱いに分類する"
+  // observable = "runningMonitorEntries と nonRunningMonitorEntries の親session ID"
+  // observation_boundary = "implementation"
+  // scope = "buildHomeSessionProjection Companion Auxiliary state"
+  // lifecycle = "permanent"
+  // impact = "実行中Companion会話のMonitor分類を正しく維持する"
+  // distinction = "公開entry fieldではなく、Monitor分類のstate contractを検証する"
+  // @end-test-value
   it("active Auxiliary が running の open Companion は running monitor に分類する", () => {
     const projection = buildHomeSessionProjection(
       [],
@@ -179,7 +202,6 @@ describe("home-session-projection", () => {
 
     assert.deepEqual(projection.monitorEntries.map(({ session }) => session.id), ["companion"]);
     assert.deepEqual(projection.runningMonitorEntries.map(({ session }) => session.id), ["companion"]);
-    assert.equal(projection.runningMonitorEntries[0]?.activeAuxiliarySession?.id, "aux-companion");
     assert.deepEqual(projection.nonRunningMonitorEntries.map(({ session }) => session.id), []);
   });
 
@@ -355,15 +377,17 @@ describe("home-session-projection", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorは同じ親に属する全Auxiliaryを保持し、どれか一件でも実行中なら親を実行中へ分類する"
+  // claim = "Home Monitorは同じ親に属する複数Auxiliaryを集計し、いずれかが実行中なら親を実行中へ分類する"
   // oracle = { type = "contract", ref = "issue-710 acceptance F: all auxiliary lifecycle aggregation" }
-  // fault = "親配下の最後に列挙されたAuxiliaryだけを残し、非表示の実行中会話を停止扱いにする"
-  // observable = "monitorEntries[0].auxiliarySessions と state.kind"
-  // observation_boundary = "declaration"
-  // scope = "home-session-projection"
+  // fault = "親配下の複数Auxiliaryのうち一件だけを見て、実行中の兄弟を見落とす"
+  // observable = "monitorEntriesの親session state.kind"
+  // observation_boundary = "implementation"
+  // scope = "buildHomeSessionProjection Auxiliary state aggregation"
   // lifecycle = "permanent"
+  // impact = "非表示の実行中Auxiliaryを停止扱いにせずMonitorへ反映する"
+  // distinction = "Auxiliary一覧の公開有無ではなく、親stateへの集約結果を検証する"
   // @end-test-value
-  it("同一親の複数AuxiliaryをMonitor集計へ保持する", () => {
+  it("同一親の複数Auxiliaryのうち実行中があればMonitorをrunningに分類する", () => {
     const projection = buildHomeSessionProjection(
       [createSession({ id: "parent", taskTitle: "Parent" })],
       ["parent"],
@@ -376,9 +400,8 @@ describe("home-session-projection", () => {
       ],
     );
 
-    const entry = projection.monitorEntries[0];
-    assert.equal(entry?.auxiliarySessions.length, 2);
-    assert.deepEqual(entry?.auxiliarySessions.map((auxiliary) => auxiliary.id), ["aux-a", "aux-b"]);
-    assert.equal(entry?.state.kind, "running");
+    assert.equal(projection.monitorEntries[0]?.state.kind, "running");
+    assert.deepEqual(projection.nonRunningMonitorEntries, []);
   });
+
 });

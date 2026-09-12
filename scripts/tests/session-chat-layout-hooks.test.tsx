@@ -16,7 +16,6 @@ import {
 import type {
   ChatActionDockMode,
   ChatHeaderVisibility,
-  ChatLayoutPriority,
 } from "../../src/chat/chat-layout-preference.js";
 import type { SessionSidePane } from "../../src/session-side-pane.js";
 
@@ -757,6 +756,18 @@ test("useSessionSidePanes は左右ペインを排他表示し、閉じたペイ
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "HeaderとActionDockの先行操作は遅い初期設定で巻き戻らず、後続snapshotにも追従しない"
+// oracle = { type = "contract", ref = "session chat layout presentation" }
+// fault = "遅延した初期設定がユーザー操作済みのHeaderまたはActionDock状態を上書きする"
+// observable = "Header/ActionDock stateとchange callback"
+// observation_boundary = "component-behavior"
+// scope = "useChatLayoutPresentation"
+// lifecycle = "permanent"
+// impact = "チャットdockの表示状態がユーザー操作から意図せず変化する"
+// distinction = "priority配置は固定化され、このテストは表示状態の同期契約だけを検証する"
+// @end-test-value
 test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設定で巻き戻さず、後続snapshotへ追従しない", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -778,24 +789,19 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
   let root: Root | null = null;
   const headerChanges: ChatHeaderVisibility[] = [];
   const actionDockChanges: ChatActionDockMode[] = [];
-  const priorityChanges: ChatLayoutPriority[] = [];
 
   function Harness({
     initialHeader,
     initialActionDock,
-    initialPriority,
   }: {
     initialHeader: ChatHeaderVisibility | null;
     initialActionDock: ChatActionDockMode | null;
-    initialPriority: ChatLayoutPriority | null;
   }) {
     const state = useChatLayoutPresentation({
       initialHeader,
       initialActionDock,
-      initialPriority,
       onHeaderChange: (value) => headerChanges.push(value),
       onActionDockChange: (value) => actionDockChanges.push(value),
-      onPriorityChange: (value) => priorityChanges.push(value),
     });
     return React.createElement(
       "div",
@@ -804,11 +810,6 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
         type: "button",
         "data-testid": "header-toggle",
         onClick: () => state.setIsHeaderExpanded((current) => !current),
-      }),
-      React.createElement("button", {
-        type: "button",
-        "data-testid": "priority-toggle",
-        onClick: () => state.setLayoutPriority("dock-first"),
       }),
       React.createElement("button", {
         type: "button",
@@ -821,7 +822,6 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
         { "data-testid": "dock" },
         state.isActionDockPinnedExpanded ? "expanded" : "compact",
       ),
-      React.createElement("output", { "data-testid": "priority" }, state.layoutPriority),
     );
   }
 
@@ -831,25 +831,18 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
       root.render(React.createElement(Harness, {
         initialHeader: null,
         initialActionDock: null,
-        initialPriority: null,
       }));
     });
     const headerToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"header-toggle\"]");
     const dockToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"dock-toggle\"]");
-    const priorityToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"priority-toggle\"]");
     const header = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"header\"]");
     const dock = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"dock\"]");
-    const priority = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"priority\"]");
     assert.ok(headerToggle);
     assert.ok(dockToggle);
-    assert.ok(priorityToggle);
     assert.ok(header);
     assert.ok(dock);
-    assert.ok(priority);
 
-    assert.equal(priority.textContent, "side-pane-first");
-    await act(async () => priorityToggle.click());
-    assert.equal(priority.textContent, "dock-first");
+
 
     await act(async () => headerToggle.click());
     assert.equal(header.textContent, "visible");
@@ -858,7 +851,6 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
       root?.render(React.createElement(Harness, {
         initialHeader: "hidden",
         initialActionDock: "expanded",
-        initialPriority: "side-pane-first",
       }));
     });
     assert.equal(header.textContent, "visible");
@@ -868,19 +860,15 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
       root?.render(React.createElement(Harness, {
         initialHeader: "hidden",
         initialActionDock: "compact",
-        initialPriority: "side-pane-first",
       }));
     });
     assert.equal(header.textContent, "visible");
     assert.equal(dock.textContent, "expanded");
-    assert.equal(priority.textContent, "dock-first");
 
     await act(async () => dockToggle.click());
     assert.equal(dock.textContent, "compact");
-    assert.equal(priority.textContent, "side-pane-first");
     assert.deepEqual(headerChanges, ["visible"]);
     assert.deepEqual(actionDockChanges, ["compact"]);
-    assert.deepEqual(priorityChanges, ["dock-first", "side-pane-first"]);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -894,41 +882,4 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
   }
 });
 
-test("useChatLayoutPresentation は初期設定前の同値 priority 操作も一度だけ保存する", async () => {
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-
-  const priorityChanges: ChatLayoutPriority[] = [];
-  let latestState: ReturnType<typeof useChatLayoutPresentation> | null = null;
-  const Harness = ({ initialPriority }: { initialPriority: ChatLayoutPriority | null }) => {
-    latestState = useChatLayoutPresentation({
-      initialHeader: "hidden",
-      initialActionDock: "compact",
-      initialPriority,
-      onPriorityChange: (value) => priorityChanges.push(value),
-    });
-    return React.createElement("output", null, latestState.layoutPriority);
-  };
-  const root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-
-  try {
-    await act(async () => root.render(React.createElement(Harness, { initialPriority: null })));
-    await act(async () => latestState?.setLayoutPriority("side-pane-first"));
-    await act(async () => latestState?.setLayoutPriority("side-pane-first"));
-    await act(async () => root.render(React.createElement(Harness, { initialPriority: "dock-first" })));
-
-    assert.equal(latestState?.layoutPriority, "side-pane-first");
-    assert.deepEqual(priorityChanges, ["side-pane-first"]);
-  } finally {
-    await act(async () => root.unmount());
-    dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
-  }
-});
+/* removed: priority persistence is no longer a renderer concern */

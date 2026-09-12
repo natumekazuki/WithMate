@@ -16,16 +16,10 @@ import {
   buildEditableActiveAuxiliarySessionPatch,
   buildAuxiliarySessionRunningTransition,
   buildAuxiliaryPreview,
-  buildRunningAuxiliarySessionTurn,
-  loadClosedAuxiliarySessionDetails,
   removeAuxiliarySessionAdditionalDirectory,
-  resolveActiveAuxiliarySessionRefreshResult,
   resolveAuxiliarySessionDisplayAfterMessageIndex,
   resolveAuxiliarySessionSendPreflight,
   resolveAuxiliarySessionSendTarget,
-  resolveClosedAuxiliarySessionIds,
-  resolveClosedAuxiliarySessionsAfterReturn,
-  resolveClosedAuxiliarySessionsLoadResult,
   resolveEditableActiveAuxiliarySession,
   resolveAuxiliaryPreview,
   normalizeAuxiliarySession,
@@ -701,86 +695,6 @@ test("buildEditableActiveAuxiliarySessionPatch は保存対象 session に recip
   );
 });
 
-test("resolveActiveAuxiliarySessionRefreshResult は完了後 refresh の反映先を解決する", () => {
-  const currentSession = createAuxiliarySession({
-    runState: "running",
-    title: "optimistic",
-    messages: [{ role: "user", text: "sent" }],
-    updatedAt: "2026-01-02T00:00:00.000Z",
-  });
-  const savedIdleSession = createAuxiliarySession({
-    runState: "idle",
-    title: "saved",
-    messages: [
-      { role: "user", text: "sent" },
-      { role: "assistant", text: "done" },
-    ],
-    updatedAt: "2026-01-03T00:00:00.000Z",
-  });
-  const staleSavedIdleSession = createAuxiliarySession({
-    runState: "idle",
-    title: "stale saved",
-    messages: [],
-    updatedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const staleTimestampSavedIdleSession = createAuxiliarySession({
-    runState: "idle",
-    title: "stale timestamp",
-    messages: [{ role: "user", text: "sent" }],
-    updatedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const savedRunningSession = createAuxiliarySession({ runState: "running", title: "saved running" });
-
-  assert.equal(
-    resolveActiveAuxiliarySessionRefreshResult({
-      currentSession,
-      savedSession: savedRunningSession,
-      sessionId: currentSession.id,
-    }),
-    currentSession,
-  );
-  assert.equal(
-    resolveActiveAuxiliarySessionRefreshResult({
-      currentSession,
-      savedSession: savedIdleSession,
-      sessionId: currentSession.id,
-    }),
-    savedIdleSession,
-  );
-  assert.equal(
-    resolveActiveAuxiliarySessionRefreshResult({
-      currentSession,
-      savedSession: staleSavedIdleSession,
-      sessionId: currentSession.id,
-    }),
-    currentSession,
-  );
-  assert.equal(
-    resolveActiveAuxiliarySessionRefreshResult({
-      currentSession,
-      savedSession: staleTimestampSavedIdleSession,
-      sessionId: currentSession.id,
-    }),
-    currentSession,
-  );
-  assert.equal(
-    resolveActiveAuxiliarySessionRefreshResult({
-      currentSession,
-      savedSession: null,
-      sessionId: currentSession.id,
-    }),
-    null,
-  );
-  assert.equal(
-    resolveActiveAuxiliarySessionRefreshResult({
-      currentSession,
-      savedSession: savedIdleSession,
-      sessionId: "aux-other",
-    }),
-    currentSession,
-  );
-});
-
 test("resolveAuxiliarySessionDisplayAfterMessageIndex は初回 Auxiliary anchor を解決する", () => {
   assert.equal(
     resolveAuxiliarySessionDisplayAfterMessageIndex({
@@ -805,101 +719,6 @@ test("resolveAuxiliarySessionDisplayAfterMessageIndex は初回 Auxiliary anchor
       parentMessageCount: null,
     }),
     3,
-  );
-});
-
-test("resolveClosedAuxiliarySessionIds は closed summary を新しい順の id にする", () => {
-  assert.deepEqual(
-    resolveClosedAuxiliarySessionIds([
-      createAuxiliarySession({ id: "closed-1", status: "closed" }),
-      createAuxiliarySession({ id: "active-1", status: "active" }),
-      createAuxiliarySession({ id: "closed-2", status: "closed" }),
-    ]),
-    ["closed-2", "closed-1"],
-  );
-});
-
-test("resolveClosedAuxiliarySessionsLoadResult は null を除外する", () => {
-  const closedSession = createAuxiliarySession({ id: "closed-1", status: "closed" });
-
-  assert.deepEqual(
-    resolveClosedAuxiliarySessionsLoadResult([null, closedSession, null]),
-    [closedSession],
-  );
-});
-
-test("resolveClosedAuxiliarySessionsAfterReturn は重複を避けて closed session を末尾に置く", () => {
-  const oldClosedSession = createAuxiliarySession({ id: "aux-1", status: "closed", title: "old" });
-  const otherClosedSession = createAuxiliarySession({ id: "aux-2", status: "closed", title: "other" });
-  const returnedClosedSession = createAuxiliarySession({ id: "aux-1", status: "closed", title: "returned" });
-
-  assert.deepEqual(
-    resolveClosedAuxiliarySessionsAfterReturn(
-      [oldClosedSession, otherClosedSession],
-      returnedClosedSession,
-    ),
-    [otherClosedSession, returnedClosedSession],
-  );
-});
-
-test("loadClosedAuxiliarySessionDetails は closed session details を読み込む", async () => {
-  const closedSession1 = createAuxiliarySession({ id: "closed-1", status: "closed" });
-  const closedSession2 = createAuxiliarySession({ id: "closed-2", status: "closed" });
-  const requestedSessionIds: string[] = [];
-
-  assert.deepEqual(
-    await loadClosedAuxiliarySessionDetails({
-      parentSessionId: "parent-1",
-      listAuxiliarySessions: async (parentSessionId) => {
-        assert.equal(parentSessionId, "parent-1");
-        return [
-          closedSession1,
-          createAuxiliarySession({ id: "active-1", status: "active" }),
-          closedSession2,
-        ];
-      },
-      getAuxiliarySession: async (sessionId) => {
-        requestedSessionIds.push(sessionId);
-        if (sessionId === "closed-1") {
-          return closedSession1;
-        }
-        if (sessionId === "closed-2") {
-          return null;
-        }
-        return null;
-      },
-    }),
-    [closedSession1],
-  );
-  assert.deepEqual(requestedSessionIds, ["closed-2", "closed-1"]);
-});
-
-test("buildRunningAuxiliarySessionTurn は実行中 session state を組み立てる", () => {
-  const session = createAuxiliarySession({
-    composerDraft: "draft text",
-    displayAfterMessageIndex: 3,
-    messages: [{ role: "user", text: "previous" }],
-    updatedAt: "2026-05-30T00:00:00.000Z",
-  });
-
-  assert.deepEqual(
-    buildRunningAuxiliarySessionTurn({
-      session,
-      userMessage: "next message",
-      displayAfterMessageIndex: 8,
-      updatedAt: "2026-05-31T00:00:00.000Z",
-    }),
-    {
-      ...session,
-      runState: "running",
-      composerDraft: "",
-      displayAfterMessageIndex: 8,
-      updatedAt: "2026-05-31T00:00:00.000Z",
-      messages: [
-        { role: "user", text: "previous" },
-        { role: "user", text: "next message" },
-      ],
-    },
   );
 });
 

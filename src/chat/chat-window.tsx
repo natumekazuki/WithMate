@@ -122,8 +122,7 @@ export function ConcurrentChatSplitter({
   widthRatio,
   onWidthRatioChange,
 }: Pick<ConcurrentChatWindowProps, "widthRatio" | "onWidthRatioChange">) {
-  const cleanupRef = useRef<(() => void) | null>(null);
-  useEffect(() => () => cleanupRef.current?.(), []);
+  const dragRef = useRef<{ width: number; minRatio: number; maxRatio: number; startingRatio: number } | null>(null);
   const getRatioBounds = (splitter: HTMLButtonElement) => {
     const parent = splitter.parentElement;
     if (!parent) return null;
@@ -141,58 +140,41 @@ export function ConcurrentChatSplitter({
     return { width, minRatio, maxRatio };
   };
   const handlePointerDown: PointerEventHandler<HTMLButtonElement> = (event) => {
-    if (event.button !== 0) return;
-    const parent = event.currentTarget.parentElement;
-    if (!parent) return;
-    cleanupRef.current?.();
+    dragRef.current = null;
+    if (widthRatio <= 0 || widthRatio >= 1) return;
     const bounds = getRatioBounds(event.currentTarget);
-    if (!bounds || widthRatio <= 0) return;
-    const startingRatio = Math.min(bounds.maxRatio, Math.max(bounds.minRatio, widthRatio));
-    const startX = event.clientX;
-    const pointerId = event.pointerId;
-    let dragged = false;
-    const handleMove = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      const delta = moveEvent.clientX - startX;
-      if (Math.abs(delta) > 4) dragged = true;
-      if (dragged) {
-        const next = Math.min(bounds.maxRatio, Math.max(bounds.minRatio, startingRatio - delta / bounds.width));
-        onWidthRatioChange(next);
-      }
-    };
-    const cleanup = () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleEnd);
-      window.removeEventListener("pointercancel", handleEnd);
-      cleanupRef.current = null;
-    };
-    const handleEnd = (endEvent: PointerEvent) => {
-      if (endEvent.pointerId === pointerId) cleanup();
-    };
-    cleanupRef.current = cleanup;
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleEnd);
-    window.addEventListener("pointercancel", handleEnd);
+    if (!bounds) return;
+    dragRef.current = { ...bounds, startingRatio: Math.min(bounds.maxRatio, Math.max(bounds.minRatio, widthRatio)) };
   };
 
   return (
     <ChatDockSplitter
-      edge="right"
+      edge={widthRatio >= 1 ? "left" : "right"}
       className="concurrent-chat-splitter"
-      isPanelExpanded={widthRatio > 0}
+      isPanelExpanded={widthRatio > 0 && widthRatio < 1}
       onPointerDown={handlePointerDown}
-      onTogglePanel={() => onWidthRatioChange(widthRatio > 0 ? 0 : 0.5)}
+      onDrag={(_event, delta) => {
+        const bounds = dragRef.current;
+        if (!bounds) return;
+        const next = bounds.startingRatio - delta.x / bounds.width;
+        onWidthRatioChange(next < bounds.minRatio / 2 ? 0
+          : next > (1 + bounds.maxRatio) / 2 ? 1
+            : Math.min(bounds.maxRatio, Math.max(bounds.minRatio, next)));
+      }}
+      onTogglePanel={() => onWidthRatioChange(widthRatio > 0 && widthRatio < 1 ? 0 : 0.5)}
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-        if (widthRatio <= 0) return;
+        if (widthRatio <= 0 || widthRatio >= 1) return;
         event.preventDefault();
         const bounds = getRatioBounds(event.currentTarget);
         if (!bounds) return;
-        onWidthRatioChange(Math.min(bounds.maxRatio, Math.max(bounds.minRatio, widthRatio + (event.key === "ArrowLeft" ? 0.02 : -0.02))));
+        const current = Math.min(bounds.maxRatio, Math.max(bounds.minRatio, widthRatio));
+        const next = current + (event.key === "ArrowLeft" ? 0.02 : -0.02);
+        onWidthRatioChange(next < bounds.minRatio ? 0 : next > bounds.maxRatio ? 1 : next);
       }}
-      ariaLabel={widthRatio > 0 ? "Auxiliaryを折りたたむ" : "Auxiliaryを開く"}
-      ariaControls="session-auxiliary-chat-pane"
-      title="クリックでAuxiliaryを開閉し、展開中はドラッグまたは矢印キーでサイズを調整"
+      ariaLabel={widthRatio >= 1 ? "Mainを開く" : widthRatio > 0 ? "Auxiliaryを折りたたむ" : "Auxiliaryを開く"}
+      ariaControls={widthRatio >= 1 ? "session-main-chat-pane" : "session-auxiliary-chat-pane"}
+      title="クリックで開閉、ドラッグまたは矢印キーでサイズ調整。端まで寄せると片側を全幅表示"
     />
   );
 }
@@ -235,6 +217,7 @@ export type ChatDockSplitterProps = {
   canCollapse?: boolean;
   onActivate?: () => void;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  onDrag?: (event: React.PointerEvent<HTMLButtonElement>, delta: { x: number; y: number }) => void;
   onKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
   onTogglePanel?: MouseEventHandler<HTMLButtonElement>;
   ariaLabel?: string;
@@ -631,7 +614,7 @@ export function ChatWindow({
       ) : null}
       workSurfaceOverlay={skillPickerProps ? <ChatSkillPickerPanel {...skillPickerProps} /> : null}
       messageColumn={(
-        <div className="concurrent-chat-column-content">
+        <div id="session-main-chat-pane" className="concurrent-chat-column-content">
           {concurrentChats ? (
             <ConversationMessageColumn
               session={concurrentChats.mainSession ?? { id: resolvedMessageColumnProps.sessionId }}
@@ -787,16 +770,17 @@ export function ChatDockSplitter({
   canCollapse = true,
   onActivate,
   onPointerDown,
+  onDrag,
   onKeyDown,
   onTogglePanel,
   ariaLabel,
   ariaControls,
   title,
 }: ChatDockSplitterProps) {
-  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const draggedRef = useRef(false);
   const effectiveTogglePanel = isPanelExpanded && !canCollapse ? undefined : onTogglePanel;
-  if (!onPointerDown && !onTogglePanel && !onActivate) {
+  if (!onPointerDown && !onDrag && !onTogglePanel && !onActivate) {
     return (
       <div
         className={`session-dock-splitter edge-${edge} is-static${className ? ` ${className}` : ""}`}
@@ -850,7 +834,7 @@ export function ChatDockSplitter({
     if (event.button !== 0) {
       return;
     }
-    pointerStartRef.current = { x: event.clientX, y: event.clientY };
+    pointerStartRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
     draggedRef.current = false;
     event.currentTarget.setPointerCapture?.(event.pointerId);
     onActivate?.();
@@ -858,13 +842,14 @@ export function ChatDockSplitter({
   };
   const handlePointerMove: PointerEventHandler<HTMLButtonElement> = (event) => {
     const start = pointerStartRef.current;
-    if (!start) {
+    if (!start || start.pointerId !== event.pointerId) {
       return;
     }
     const distance = Math.max(Math.abs(event.clientX - start.x), Math.abs(event.clientY - start.y));
     if (distance > 4) {
       draggedRef.current = true;
     }
+    if (draggedRef.current) onDrag?.(event, { x: event.clientX - start.x, y: event.clientY - start.y });
   };
   const handlePointerEnd = () => {
     pointerStartRef.current = null;

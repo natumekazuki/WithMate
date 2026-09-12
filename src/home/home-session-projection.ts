@@ -11,17 +11,13 @@ export type HomeSessionState = {
 export type HomeAgentMonitorEntry = {
   kind: "agent";
   session: HomeSessionSummary;
-  auxiliarySessions: AuxiliarySessionSummary[];
-  activeAuxiliarySession?: AuxiliarySessionSummary | null;
   state: HomeSessionState;
 };
 
 export type HomeCompanionMonitorEntry = {
   kind: "companion";
   session: CompanionSessionSummary;
-  auxiliarySessions: AuxiliarySessionSummary[];
   isWindowOpen: boolean;
-  activeAuxiliarySession?: AuxiliarySessionSummary | null;
   state: HomeSessionState;
   groupLabel: string;
 };
@@ -205,9 +201,6 @@ export function buildHomeCompanionMonitorEntries(
         kind: "companion" as const,
         session,
         isWindowOpen: openCompanionIdSet.has(session.id),
-        auxiliarySessions,
-        // Kept for existing callers while the complete collection is exposed above.
-        activeAuxiliarySession: auxiliarySessions[0] ?? null,
         state: getHomeCompanionSessionState(session, auxiliarySessions),
         groupLabel: buildCompanionGroupLabel(session),
       };
@@ -260,8 +253,6 @@ export function buildHomeSessionProjection(
       return {
         kind: "agent" as const,
         session,
-        auxiliarySessions,
-        activeAuxiliarySession: auxiliarySessions[0] ?? null,
         state: getHomeSessionState(session, auxiliarySessions),
       };
     });
@@ -277,8 +268,10 @@ export function buildHomeSessionProjection(
     ...filteredSessionEntries.filter(({ session }) => openSessionWindowIdSet.has(session.id)),
     ...companionMonitorEntries,
   ].sort((left, right) => {
+    const getAuxiliarySessions = (entry: HomeMonitorEntry): readonly AuxiliarySessionSummary[] =>
+      auxiliarySessionsByParentId.get(entry.session.id) ?? [];
     const latestAuxiliaryUpdatedAt = (entry: HomeMonitorEntry): string =>
-      entry.auxiliarySessions.reduce(
+      getAuxiliarySessions(entry).reduce(
         (latest, auxiliary) => Date.parse(auxiliary.updatedAt) > Date.parse(latest) ? auxiliary.updatedAt : latest,
         entry.session.updatedAt,
       );

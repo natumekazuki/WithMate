@@ -13,7 +13,6 @@ import { normalizeSessionSidePane, type SessionSidePane } from "./session-side-p
 import type {
   ChatActionDockMode,
   ChatHeaderVisibility,
-  ChatLayoutPriority,
 } from "./chat/chat-layout-preference.js";
 
 const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
@@ -100,26 +99,19 @@ function measureSidePaneMinimums(layout: HTMLElement, sidePane: "files" | "conte
 export function useChatLayoutPresentation(input: {
   initialHeader: ChatHeaderVisibility | null;
   initialActionDock: ChatActionDockMode | null;
-  initialPriority: ChatLayoutPriority | null;
   onHeaderChange?: (value: ChatHeaderVisibility) => void;
   onActionDockChange?: (value: ChatActionDockMode) => void;
-  onPriorityChange?: (value: ChatLayoutPriority) => void;
 }) {
   const initialHeaderExpanded = input.initialHeader === "visible";
   const initialActionDockExpanded = input.initialActionDock === "expanded";
-  const initialPriority = input.initialPriority ?? "side-pane-first";
   const [isHeaderExpanded, setHeaderExpandedState] = useState(initialHeaderExpanded);
   const [isActionDockPinnedExpanded, setActionDockExpandedState] = useState(initialActionDockExpanded);
-  const [layoutPriority, setLayoutPriorityState] = useState<ChatLayoutPriority>(initialPriority);
   const headerExpandedRef = useRef(initialHeaderExpanded);
   const actionDockExpandedRef = useRef(initialActionDockExpanded);
-  const layoutPriorityRef = useRef(initialPriority);
   const headerInteractedRef = useRef(false);
   const actionDockInteractedRef = useRef(false);
-  const priorityInteractedRef = useRef(false);
   const headerInitializedRef = useRef(input.initialHeader !== null);
   const actionDockInitializedRef = useRef(input.initialActionDock !== null);
-  const priorityInitializedRef = useRef(input.initialPriority !== null);
 
   useEffect(() => {
     if (input.initialHeader === null || headerInitializedRef.current) {
@@ -147,18 +139,6 @@ export function useChatLayoutPresentation(input: {
     setActionDockExpandedState(expanded);
   }, [input.initialActionDock]);
 
-  useEffect(() => {
-    if (input.initialPriority === null || priorityInitializedRef.current) {
-      return;
-    }
-    priorityInitializedRef.current = true;
-    if (priorityInteractedRef.current) {
-      return;
-    }
-    layoutPriorityRef.current = input.initialPriority;
-    setLayoutPriorityState(input.initialPriority);
-  }, [input.initialPriority]);
-
   const setIsHeaderExpanded = useCallback((next: boolean | ((current: boolean) => boolean)) => {
     const resolved = typeof next === "function" ? next(headerExpandedRef.current) : next;
     headerInteractedRef.current = true;
@@ -170,21 +150,6 @@ export function useChatLayoutPresentation(input: {
     input.onHeaderChange?.(resolved ? "visible" : "hidden");
   }, [input.onHeaderChange]);
 
-  const setLayoutPriority = useCallback((next: ChatLayoutPriority) => {
-    const shouldPersistInitialSelection = !priorityInitializedRef.current;
-    priorityInteractedRef.current = true;
-    priorityInitializedRef.current = true;
-    if (layoutPriorityRef.current === next) {
-      if (shouldPersistInitialSelection) {
-        input.onPriorityChange?.(next);
-      }
-      return;
-    }
-    layoutPriorityRef.current = next;
-    setLayoutPriorityState(next);
-    input.onPriorityChange?.(next);
-  }, [input.onPriorityChange]);
-
   const setIsActionDockPinnedExpanded = useCallback((next: boolean | ((current: boolean) => boolean)) => {
     const resolved = typeof next === "function" ? next(actionDockExpandedRef.current) : next;
     actionDockInteractedRef.current = true;
@@ -194,18 +159,13 @@ export function useChatLayoutPresentation(input: {
     actionDockExpandedRef.current = resolved;
     setActionDockExpandedState(resolved);
     input.onActionDockChange?.(resolved ? "expanded" : "compact");
-    if (!resolved) {
-      setLayoutPriority("side-pane-first");
-    }
-  }, [input.onActionDockChange, setLayoutPriority]);
+  }, [input.onActionDockChange]);
 
   return {
     isHeaderExpanded,
     setIsHeaderExpanded,
     isActionDockPinnedExpanded,
     setIsActionDockPinnedExpanded,
-    layoutPriority,
-    setLayoutPriority,
   };
 }
 
@@ -918,9 +878,6 @@ export function useSessionSidePanes({
       }
 
       const isNarrow = isNarrowSessionLayoutViewport();
-      const oppositeWidth = resizingSidePane === "files"
-        ? 0
-        : 0;
       const usableSize = measureSidePaneAvailableSize(workbenchElement);
       const minimums = measureSidePaneMinimums(workbenchElement, resizingSidePane);
 
@@ -943,7 +900,7 @@ export function useSessionSidePanes({
       const nextWidth = clampSidePaneWidth(
         requestedWidth,
         usableSize,
-        oppositeWidth,
+        0,
         minimums.paneMinimum,
         minimums.centralMinimum,
       );
@@ -1042,14 +999,13 @@ export function useSessionSidePanes({
     if (!workbenchElement) {
       return;
     }
-    const oppositeWidth = 0;
     const availableSize = measureSidePaneAvailableSize(workbenchElement);
     const minimums = measureSidePaneMinimums(workbenchElement, "context");
     hasInteractedWithSidePaneRef.current = true;
     const nextWidth = clampSidePaneWidth(
       contextRailWidthRef.current + direction * 10,
       availableSize,
-      oppositeWidth,
+      0,
       minimums.paneMinimum,
       minimums.centralMinimum,
     );
@@ -1074,14 +1030,13 @@ export function useSessionSidePanes({
     if (!workbenchElement) {
       return;
     }
-    const oppositeWidth = 0;
     const availableSize = measureSidePaneAvailableSize(workbenchElement);
     const minimums = measureSidePaneMinimums(workbenchElement, "files");
     hasInteractedWithSidePaneRef.current = true;
     const nextWidth = clampSidePaneWidth(
       fileExplorerWidthRef.current + direction * 10,
       availableSize,
-      oppositeWidth,
+      0,
       minimums.paneMinimum,
       minimums.centralMinimum,
     );

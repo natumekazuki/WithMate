@@ -99,7 +99,7 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
 
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?grid-template-columns:[\s\S]*?var\(--session-left-pane-track-width\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-right-pane-track-width\)[\s\S]*?}/,
+    /\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?grid-template-columns:[\s\S]*?var\(--session-left-pane-track-width\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-right-pane-track-width\)[\s\S]*?}/,
   );
   assert.match(
     stylesSource,
@@ -115,7 +115,7 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
   );
   assert.match(
     stylesSource,
-    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-chat-layout\.layout-priority-side-pane,[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-pane"\s*"left-split"\s*"main"\s*"right-split"\s*"right-pane"\s*"bottom-split"\s*"action-dock";/,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-pane"\s*"left-split"\s*"main"\s*"right-split"\s*"right-pane"\s*"bottom-split"\s*"action-dock";/,
   );
   assert.match(
     stylesSource,
@@ -125,17 +125,17 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "wide layoutのsplitter priorityとexpanded ActionDock rowはHeader・splitter以外の残余領域を使い、中央最小高160pxを宣言する"
+// claim = "wide layoutはHeaderとActionDockを全幅に固定し、expanded ActionDock rowは残余領域を使う"
 // oracle = { type = "contract", ref = "ActionDock layout CSS bounds" }
-// fault = "wide layoutのpriority classまたはside-pane gridが崩れるか、ActionDock rowが旧固定値のまま残るか、中央最小高を失う"
-// observable = "wide layoutのlayout-priority class・side-pane grid、Header visibility boundary、expanded ActionDock rowのCSS宣言"
+// fault = "wide layoutのfull-width dock gridまたはActionDock rowが崩れるか、中央最小高を失う"
+// observable = "wide layoutのfull-width dock class・grid、Header visibility boundary、expanded ActionDock rowのCSS宣言"
 // observation_boundary = "declaration"
 // scope = "wide-session-chat-layout-priority-and-action-dock-css"
 // lifecycle = "permanent"
 // impact = "ドラッグ値と表示されるgrid rowがずれて、ActionDockまたは中央surfaceが画面外へはみ出す"
-// distinction = "hookの数値clampやpointer経路、narrow layoutの縦stack、full-width ActionDock内のcomposer制約とは分け、wide layoutのpriorityとexpanded rowのCSS境界を確認する"
+// distinction = "hookの数値clampやpointer経路、narrow layoutの縦stack、full-width ActionDock内のcomposer制約とは分け、wide layoutの固定dockとexpanded rowのCSS境界を確認する"
 // @end-test-value
-test("splitter が選んだ優先軸に応じて side pane または上下 dock を全長表示する", async () => {
+test("wide layout はHeaderとActionDockを全幅dockとして表示する", async () => {
   const [componentSource, sessionProjectionSource, companionProjectionSource, stylesSource] = await Promise.all([
     readFile("src/session-components.tsx", "utf8"),
     readFile("src/chat/session-chat-projection.tsx", "utf8"),
@@ -143,11 +143,11 @@ test("splitter が選んだ優先軸に応じて side pane または上下 dock 
     readFile("src/styles.css", "utf8"),
   ]);
 
-  assert.match(componentSource, /layout-priority-\$\{[\s\S]*?layoutPriority === "side-pane-first" \? "side-pane" : "dock"/);
+  assert.match(componentSource, /session-chat-layout layout-priority-dock/);
   assert.match(componentSource, /session-chat-layout[\s\S]*?is-left-pane-visible[\s\S]*?is-right-pane-visible/);
   assert.match(componentSource, /session-header-dock-slot.*?is-hidden[\s\S]*?aria-hidden={!isHeaderVisible}/);
   assert.doesNotMatch(componentSource, /className="session-header-dock-slot"\s+hidden=/);
-  assert.match(stylesSource, /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?"left-pane left-split header right-split right-pane"[\s\S]*?"left-pane left-split action-dock right-split right-pane"/);
+  assert.match(stylesSource, /\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?"header header header header header"[\s\S]*?"action-dock action-dock action-dock action-dock action-dock"/);
   assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
   assert.match(stylesSource, /--session-central-min-height:\s*160px;/);
   assert.match(
@@ -179,7 +179,7 @@ test("splitter の枠は各 track に収まり、modal より背面に残る", a
   );
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?grid-template-columns:[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-dock-splitter-size\);/,
+    /\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?grid-template-columns:[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?var\(--session-right-pane-track-width\);/,
   );
   assert.match(
     stylesSource,

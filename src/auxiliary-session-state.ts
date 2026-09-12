@@ -331,38 +331,6 @@ export function buildEditableActiveAuxiliarySessionPatch(input: {
   return input.recipe(currentSession);
 }
 
-export function resolveActiveAuxiliarySessionRefreshResult(input: {
-  currentSession: AuxiliarySession | null;
-  savedSession: AuxiliarySession | null;
-  sessionId: string;
-}): AuxiliarySession | null {
-  if (input.currentSession?.id !== input.sessionId) {
-    return input.currentSession;
-  }
-
-  if (
-    input.currentSession.runState === "running"
-    && input.savedSession
-    && input.savedSession.runState !== "running"
-    && (
-      input.savedSession.messages.length < input.currentSession.messages.length
-      || input.savedSession.updatedAt < input.currentSession.updatedAt
-    )
-  ) {
-    return input.currentSession;
-  }
-
-  if (
-    !input.savedSession
-    || input.savedSession.runState !== "running"
-    || input.currentSession.runState !== "running"
-  ) {
-    return input.savedSession;
-  }
-
-  return input.currentSession;
-}
-
 export function resolveAuxiliarySessionDisplayAfterMessageIndex(input: {
   auxiliaryMessageCount: number;
   currentDisplayAfterMessageIndex: number | null;
@@ -371,42 +339,6 @@ export function resolveAuxiliarySessionDisplayAfterMessageIndex(input: {
   return input.auxiliaryMessageCount === 0 && input.parentMessageCount !== null
     ? input.parentMessageCount - 1
     : input.currentDisplayAfterMessageIndex;
-}
-
-export function resolveClosedAuxiliarySessionIds(summaries: AuxiliarySessionSummary[]): string[] {
-  return summaries
-    .filter((summary) => summary.status === "closed")
-    .reverse()
-    .map((summary) => summary.id);
-}
-
-export function resolveClosedAuxiliarySessionsLoadResult(
-  sessions: Array<AuxiliarySession | null>,
-): AuxiliarySession[] {
-  return sessions.filter((session): session is AuxiliarySession => session !== null);
-}
-
-export function resolveClosedAuxiliarySessionsAfterReturn(
-  currentSessions: AuxiliarySession[],
-  closedSession: AuxiliarySession,
-): AuxiliarySession[] {
-  return [
-    ...currentSessions.filter((session) => session.id !== closedSession.id),
-    closedSession,
-  ];
-}
-
-export async function loadClosedAuxiliarySessionDetails(input: {
-  parentSessionId: string;
-  listAuxiliarySessions: (parentSessionId: string) => Promise<AuxiliarySessionSummary[]>;
-  getAuxiliarySession: (sessionId: string) => Promise<AuxiliarySession | null>;
-}): Promise<AuxiliarySession[]> {
-  const summaries = await input.listAuxiliarySessions(input.parentSessionId);
-  const closedSessionIds = resolveClosedAuxiliarySessionIds(summaries);
-  const sessions = await Promise.all(
-    closedSessionIds.map((sessionId) => input.getAuxiliarySession(sessionId)),
-  );
-  return resolveClosedAuxiliarySessionsLoadResult(sessions);
 }
 
 export function buildRunningAuxiliarySessionTurn(input: {

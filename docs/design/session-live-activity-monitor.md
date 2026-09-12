@@ -94,7 +94,7 @@ current UI では表示しない。legacy v1 では `character reflection cycle`
 ### Desktop Width
 
 - right pane の tab host を常設する
-- `Action Dock` は layout priority に従い、上下 dock 優先では full-width、左右 pane 優先では左右 pane の間に置く
+- `Action Dock` は常に全幅で表示し、right paneはHeaderとAction Dockの間に置く
 - splitter で会話面と right pane の幅を調整できる
 
 ### Narrow Width
