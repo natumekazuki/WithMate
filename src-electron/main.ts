@@ -353,6 +353,7 @@ const sessionFileTreeContextMenuService = new SessionFileTreeContextMenuService(
 const sessionMonitorContextMenuService = new SessionMonitorContextMenuService({
   requestCloseSessionWindow: (sessionId) => requireMainWindowFacade().requestCloseSessionWindow(sessionId),
   closeCompanionReviewWindow: (sessionId) => requireMainWindowFacade().closeCompanionReviewWindow(sessionId),
+  writeText: (value) => clipboard.writeText(value),
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
 const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({

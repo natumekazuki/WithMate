@@ -10,10 +10,12 @@ type SessionMonitorContextMenu = Pick<Menu, "popup">;
 export type SessionMonitorContextMenuServiceDeps = {
   requestCloseSessionWindow(sessionId: string): void;
   closeCompanionReviewWindow(sessionId: string): void;
+  writeText(value: string): void;
   buildMenu(template: MenuItemConstructorOptions[]): SessionMonitorContextMenu;
 };
 
 const MENU_FAILED_MESSAGE = "Session Monitorのメニューを開けませんでした。";
+const COPY_FAILED_MESSAGE = "Session IDをコピーできませんでした。";
 
 export class SessionMonitorContextMenuService {
   constructor(private readonly deps: SessionMonitorContextMenuServiceDeps) {}
@@ -43,6 +45,18 @@ export class SessionMonitorContextMenuService {
           this.deps.closeCompanionReviewWindow(request.sessionId);
         }
       };
+      const copySessionId = () => {
+        if (settled || selectionStarted) {
+          return;
+        }
+        selectionStarted = true;
+        try {
+          this.deps.writeText(request.sessionId);
+          settle({ status: "copied" });
+        } catch {
+          settle({ status: "failed", message: COPY_FAILED_MESSAGE });
+        }
+      };
       const template: MenuItemConstructorOptions[] = [{
         label: "閉じる",
         click: () => {
@@ -57,6 +71,9 @@ export class SessionMonitorContextMenuService {
             settle({ status: "failed", message: MENU_FAILED_MESSAGE });
           }
         },
+      }, { type: "separator" }, {
+        label: "Session IDをコピー",
+        click: copySessionId,
       }];
 
       try {

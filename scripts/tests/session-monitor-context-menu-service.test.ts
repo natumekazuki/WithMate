@@ -44,10 +44,10 @@ function invokeMenuItem(item: MenuItemConstructorOptions): void {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session Monitor context menu はAgentとCompanionを同じ閉じる項目でそれぞれのWindow管理へ送り、未選択時はdismissedで終了する"
+// claim = "Session Monitor context menu はAgentとCompanionへ閉じる項目をそれぞれのWindow管理へ送り、未選択時はdismissedで終了する"
 // oracle = { type = "contract", ref = "SessionMonitorContextMenuService close menu contract" }
-// fault = "menu itemが別種別のWindowを閉じる、座標を失う、またはmenu取消時にrequestが未解決のまま残る"
-// observable = "生成されたmenu label、popup座標、close delegateの呼出し、menu result"
+// fault = "閉じる項目が別種別のWindowを閉じる、popup座標を失う、またはmenu取消時にrequestが未解決のまま残る"
+// observable = "閉じる項目のlabel、popup座標、close delegateの呼出し、menu result"
 // observation_boundary = "public-boundary"
 // scope = "Session Monitor native context menu"
 // lifecycle = "permanent"
@@ -79,6 +79,7 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
       closeCompanionReviewWindow(sessionId) {
         closedTargets.push(`companion:${sessionId}`);
       },
+      writeText() {},
       buildMenu: harness.buildMenu,
     };
     const service = new SessionMonitorContextMenuService(deps);
@@ -102,6 +103,7 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
   const service = new SessionMonitorContextMenuService({
     requestCloseSessionWindow() {},
     closeCompanionReviewWindow() {},
+    writeText() {},
     buildMenu: harness.buildMenu,
   });
   const dismissedPromise = service.showContextMenu({} as BrowserWindow, {
@@ -111,6 +113,84 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
   });
   harness.getPopupOptions()?.callback?.();
   assert.deepEqual(await dismissedPromise, { status: "dismissed" } satisfies SessionMonitorContextMenuResult);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Session Monitor context menuのSession IDをコピーはAgentとCompanionのrequest.sessionIdだけをclipboard writerへ渡し、失敗を成功扱いしない"
+// oracle = { type = "contract", ref = "SessionMonitorContextMenuService Session ID copy contract" }
+// fault = "コピー項目が別の値をclipboardへ渡す、対象Windowを閉じる、またはclipboard writerの例外をcopiedとして返す"
+// observable = "clipboard writerへ渡された値、close delegateの呼出し、copy result"
+// observation_boundary = "public-boundary"
+// scope = "Session Monitor Session ID copy menu action"
+// lifecycle = "permanent"
+// impact = "Monitorから共有しやすいSession IDを安全に取得でき、コピー失敗を利用者に成功と誤認させない"
+// distinction = "閉じる項目のWindow dispatchやrendererのrow event mappingとは分離してclipboard actionのeffectを検証する"
+// @end-test-value
+test("Session Monitor context menuのSession IDをコピーは対象IDだけをclipboardへ渡す", async () => {
+  const requests: SessionMonitorContextMenuRequest[] = [
+    { kind: "agent", sessionId: "agent-copy", point: { x: 1, y: 2 } },
+    { kind: "companion", sessionId: "companion-copy", point: { x: 3, y: 4 } },
+  ];
+
+  for (const request of requests) {
+    const harness = createMenuHarness();
+    const copiedTexts: string[] = [];
+    const closedTargets: string[] = [];
+    const service = new SessionMonitorContextMenuService({
+      requestCloseSessionWindow(sessionId) {
+        closedTargets.push(`agent:${sessionId}`);
+      },
+      closeCompanionReviewWindow(sessionId) {
+        closedTargets.push(`companion:${sessionId}`);
+      },
+      writeText(value) {
+        copiedTexts.push(value);
+      },
+      buildMenu: harness.buildMenu,
+    });
+
+    const resultPromise = service.showContextMenu({} as BrowserWindow, request);
+    const copyItem = harness.getTemplate().find((item) => item.label === "Session IDをコピー");
+    assert.ok(copyItem);
+    invokeMenuItem(copyItem);
+    assert.deepEqual(await resultPromise, { status: "copied" } satisfies SessionMonitorContextMenuResult);
+    assert.deepEqual(copiedTexts, [request.sessionId]);
+    assert.deepEqual(closedTargets, []);
+  }
+
+  for (const kind of ["agent", "companion"] as const) {
+    const harness = createMenuHarness();
+    let copyAttempts = 0;
+    const closedTargets: string[] = [];
+    const service = new SessionMonitorContextMenuService({
+      requestCloseSessionWindow() {
+        closedTargets.push("agent");
+      },
+      closeCompanionReviewWindow() {
+        closedTargets.push("companion");
+      },
+      writeText() {
+        copyAttempts += 1;
+        throw new Error("clipboard unavailable");
+      },
+      buildMenu: harness.buildMenu,
+    });
+    const resultPromise = service.showContextMenu({} as BrowserWindow, {
+      kind,
+      sessionId: `${kind}-copy-failed`,
+      point: { x: 5, y: 6 },
+    });
+    const copyItem = harness.getTemplate().find((item) => item.label === "Session IDをコピー");
+    assert.ok(copyItem);
+    invokeMenuItem(copyItem);
+    assert.deepEqual(await resultPromise, {
+      status: "failed",
+      message: "Session IDをコピーできませんでした。",
+    } satisfies SessionMonitorContextMenuResult);
+    assert.equal(copyAttempts, 1);
+    assert.deepEqual(closedTargets, []);
+  }
 });
 
 function createAuxWindowStub() {

@@ -30,7 +30,7 @@ export type SessionMonitorContextMenuRequest = {
 };
 
 export type SessionMonitorContextMenuResult =
-  | { status: "closed" | "dismissed" }
+  | { status: "closed" | "copied" | "dismissed" }
   | { status: "failed"; message: string };
 
 export function parseSessionMonitorContextMenuRequest(value: unknown): SessionMonitorContextMenuRequest {
