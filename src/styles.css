@@ -231,7 +231,7 @@ button:disabled {
   grid-template-rows:
     var(--session-header-dock-row-height)
     var(--session-dock-splitter-size)
-    minmax(280px, 1fr)
+    minmax(5%, 1fr)
     var(--session-dock-splitter-size)
     var(--session-action-dock-row-height);
   transition:
@@ -347,8 +347,13 @@ button:disabled {
     0px,
     min(
       var(--session-action-dock-height, 320px),
-      40dvh,
-      calc(100dvh - var(--session-header-dock-row-height) - 342px)
+      95%,
+      calc(
+        95%
+        - var(--session-header-dock-row-height)
+        - var(--session-dock-splitter-size)
+        - var(--session-dock-splitter-size)
+      )
     )
   );
 }

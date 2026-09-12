@@ -23,10 +23,10 @@
 - 左右 splitter の pointer / click / keyboard 操作は `side-pane-first`、上下 splitter の操作は `dock-first` を選び、同じ操作で従来の開閉または resize も続行する
 - ActionDock が expanded から compact へ閉じた時は `side-pane-first` へ戻し、左右 pane が Window 全長を使える状態を保存する。初期設定の compact と、force reason が解消して compact になるだけの状態復帰はこの閉鎖操作に含めない
 - wide layout の `side-pane-first` では active side pane と左右 splitter を Window 上端から下端まで通し、Header と ActionDock は中央列を占有する。`dock-first` では Header と ActionDock を全幅に通し、side pane は両者の間を占有する
-- narrow layout では priority による全長配置を適用せず、active side pane と中央 surface の縦 stack を維持する
+- narrow layout では priority による全長配置を適用せず、wide layout の95%／5%高さ計算も使わず、active side pane と中央 surface の縦 stack を維持する
 - Header は1行分の固定高とし、高さ変更は受け付けない
 - ActionDock は完全には非表示にせず、compact state でも draft、添付数、run 状態、末尾移動、Send / Cancel に必要な最小情報を残す
-- ActionDock の高さは layout 高の40%を上限とし、中央の chat / preview surface の最小高を優先する。expanded 時は上部操作列と下部設定・送信列を固定し、中央の textarea 領域だけを伸縮させる
+- wide layout の ActionDock の高さは layout 高の95%を上限とし、中央の chat / preview surface を layout 高の5%程度残す。expanded 時は上部操作列と下部設定・送信列を固定し、中央の textarea 領域だけを伸縮させる
 
 ## Alternatives
 
