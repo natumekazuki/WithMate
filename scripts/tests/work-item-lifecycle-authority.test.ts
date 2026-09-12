@@ -92,10 +92,10 @@ describe("Work Item lifecycle authority capability", () => {
     return { dbPath, source, destination, create };
   }
 
-  function issue(dbPath: string, relationSelector: "created" | "assigned", roles: readonly ("task-coordinator" | "executor")[], operation: keyof typeof SESSION_AUTHORITY_OPERATION_DEFINITIONS = "work.move") {
+  function issue(dbPath: string, relationSelector: "created" | "assigned", roles: readonly ("task-coordinator" | "executor")[], operation: keyof typeof SESSION_AUTHORITY_OPERATION_DEFINITIONS = "work.move", granteeSessionId = "task") {
     const db = new DatabaseSync(dbPath);
     try {
-      return issueTrustedWorkItemLifecycleCapability(db, { rootSessionId: "root", granteeSessionId: "task", actions: [operation], relationSelector, targetSessionRoles: roles, principal: { kind: "system", service: "work-item-lifecycle-authority-test" }, proof: trustedProof(operation), expiresAt: null, issuedAt: NOW })[0]!;
+      return issueTrustedWorkItemLifecycleCapability(db, { rootSessionId: "root", granteeSessionId, actions: [operation], relationSelector, targetSessionRoles: roles, principal: { kind: "system", service: "work-item-lifecycle-authority-test" }, proof: trustedProof(operation), expiresAt: null, issuedAt: NOW })[0]!;
     } finally { db.close(); }
   }
 
@@ -170,5 +170,63 @@ describe("Work Item lifecycle authority capability", () => {
     assert.doesNotThrow(() => authority!.authorize(agentBinding("task"), "work.move", { workItemId: destination.id }));
     const after = (() => { const db = new DatabaseSync(dbPath); try { return { grants: db.prepare("SELECT * FROM session_authority_grants_v6 ORDER BY grant_id").all(), events: db.prepare("SELECT * FROM session_authority_grant_events_v6 ORDER BY grant_id, grant_revision, event_id").all() }; } finally { db.close(); } })();
     assert.deepEqual(after, before);
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "trusted lifecycle capabilityだけが明示的にresult/aggregation correctionを付与し、revoke後は実serviceで拒否される"
+  // fault = "correction operationをbaselineへ暗黙追加する、trusted issuanceから欠落する、またはrevoke済みgrantを使える"
+  // observable = "SessionAuthorityService authorizeとWorkItemService correctionの成功/拒否"
+  // observation_boundary = "public-boundary"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
+  // scope = "trusted correction capability issuance and revocation"
+  // lifecycle = "permanent"
+  // distinction = "baseline permission set remains unchanged while explicit trusted grants gate both correction services"
+  // @end-test-value
+  it("trusted correction capabilityを明示発行しrevoke後はserviceを拒否する", async () => {
+    const { dbPath, source, destination } = await fixture();
+    const result = {
+      outcome: "completed" as const,
+      summary: "original",
+      changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [],
+      reportingSessionId: "executor", reportedAt: NOW,
+    };
+    const running = storage!.mutate({ operation: "work.transition", workItemId: source.id, principalSessionId: "executor", idempotencyKey: "correction-start", requestFingerprint: "correction-start-fp", expectedRevision: source.revision, state: "in_progress", result: null, updatedAt: NOW, expiresAt: "2026-09-14T12:00:00.000Z", proof: trustedProof("work.transition") });
+    const terminal = storage!.mutate({ operation: "work.result", workItemId: source.id, principalSessionId: "executor", idempotencyKey: "correction-result", requestFingerprint: "correction-result-fp", expectedRevision: running.revision, expectedAggregateRevision: storage!.getAggregationSummary(source.id).aggregateRevision, state: "completed", result, updatedAt: NOW, expiresAt: "2026-09-14T12:00:00.000Z", proof: trustedProof("work.result") });
+    const correctionInput = { workItemId: source.id, expectedRevision: terminal.revision, expectedResultRevision: 1, correctionReason: "verified", result: { ...result, summary: "corrected" }, idempotencyKey: "service-correction" };
+    assert.throws(() => authority!.authorize(agentBinding("executor"), "work.result.correct", correctionInput), SessionAuthorityError);
+    issue(dbPath, "assigned", ["executor"], "work.result.correct", "executor");
+    const resultProof = authority!.authorize(agentBinding("executor"), "work.result.correct", correctionInput).proof;
+    const corrected = service!.correctResult(correctionInput, agentBinding("executor"), resultProof);
+    assert.equal(corrected.resultRevision, 2);
+    assert.equal(corrected.supersededResultRevision, 1);
+    assert.equal(corrected.workItem.result?.summary, "corrected");
+    const db = new DatabaseSync(dbPath);
+    let grantId: string;
+    try {
+      const row = db.prepare("SELECT grant_id, revision FROM session_authority_grants_v6 WHERE grantee_session_id = 'executor' AND json_extract(actions_json, '$[0]') = 'work.result.correct'").get() as { grant_id: string; revision: number };
+      grantId = row.grant_id;
+      revokeSessionAuthorityGrant(db, { grantId, expectedRevision: row.revision, principal: { kind: "system", service: "work-item-lifecycle-authority-test" }, revokedAt: NOW });
+    } finally { db.close(); }
+    assert.throws(() => authority!.authorize(agentBinding("executor"), "work.result.correct", { ...correctionInput, idempotencyKey: "service-correction-after-revoke" }), SessionAuthorityError);
+    assert.throws(() => service!.correctResult({ ...correctionInput, expectedRevision: corrected.workItem.revision, expectedResultRevision: corrected.resultRevision, correctionReason: "revoked proof", idempotencyKey: "service-correction-after-revoke" }, agentBinding("executor"), resultProof), SessionAuthorityError);
+
+    const dbForChild = new DatabaseSync(dbPath);
+    let expectedContainerRevision: number;
+    try { expectedContainerRevision = Number((dbForChild.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = 'executor'").get() as { resource_revision: number }).resource_revision); } finally { dbForChild.close(); }
+    const child = storage!.create({ id: "correction-child", binding: { kind: "delegated", rootSessionId: "root", creatorSessionId: "task", targetSessionId: "executor", parentWorkItemId: destination.id, goal: "child", scope: "scope", completionCriteria: "done", authority: "authority", sourceIdentity: SOURCE }, principalSessionId: "root", idempotencyKey: "create-correction-child", requestFingerprint: "create-correction-child-fp", expectedContainerRevision, createdAt: NOW, expiresAt: "2026-09-14T12:00:00.000Z", proof: trustedProof("work.create") });
+    const childRunning = storage!.mutate({ operation: "work.transition", workItemId: child.id, principalSessionId: "executor", idempotencyKey: "child-start", requestFingerprint: "child-start-fp", expectedRevision: child.revision, state: "in_progress", result: null, updatedAt: NOW, expiresAt: "2026-09-14T12:00:00.000Z", proof: trustedProof("work.transition") });
+    storage!.mutate({ operation: "work.result", workItemId: child.id, principalSessionId: "executor", idempotencyKey: "child-result", requestFingerprint: "child-result-fp", expectedRevision: childRunning.revision, state: "completed", result, updatedAt: NOW, expiresAt: "2026-09-14T12:00:00.000Z", proof: trustedProof("work.result") });
+    const aggregateRevision = storage!.getAggregationSummary(destination.id).aggregateRevision;
+    storage!.decideAggregation({ parentWorkItemId: destination.id, childWorkItemId: child.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: aggregateRevision, idempotencyKey: "child-decision", requestFingerprint: "child-decision-fp", decidedAt: NOW, expiresAt: "2026-09-14T12:00:00.000Z", proof: trustedProof("work.aggregation.decide") });
+    const aggregationInput = { parentWorkItemId: destination.id, childWorkItemId: child.id, expectedAggregateRevision: aggregateRevision + 1, expectedChildResultRevision: 1, correction: { kind: "revise" as const, decision: "accepted" as const, reason: "reconfirmed" }, idempotencyKey: "service-aggregation-correction" };
+    assert.throws(() => authority!.authorize(agentBinding("task"), "work.aggregation.correct", aggregationInput), SessionAuthorityError);
+    issue(dbPath, "assigned", ["task-coordinator"], "work.aggregation.correct", "task");
+    const aggregationProof = authority!.authorize(agentBinding("task"), "work.aggregation.correct", aggregationInput).proof;
+    const aggregationCorrection = service!.correctAggregation(aggregationInput, agentBinding("task"), aggregationProof);
+    assert.equal(aggregationCorrection.aggregateRevision, storage!.getAggregationSummary(destination.id).aggregateRevision);
+    assert.equal(aggregationCorrection.decision?.decision, "accepted");
+    assert.equal(aggregationCorrection.decision?.reason, "reconfirmed");
+    assert.equal(aggregationCorrection.supersededDecisionRevision, 2);
   });
 });

@@ -109,7 +109,8 @@ function main(): void {
     console.log(`- ${file.relativePath}`);
   }
 
-  const result = spawnSync(process.execPath, ["--import", "tsx", "--test", ...shardFiles.map((file) => file.relativePath)], {
+  // Keep parallelism between shards; Windows ACL subprocesses must not compete across test files.
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", ...shardFiles.map((file) => file.relativePath)], {
     cwd: rootDirectory,
     stdio: "inherit",
   });

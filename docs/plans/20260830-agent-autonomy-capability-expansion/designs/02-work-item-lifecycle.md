@@ -58,7 +58,7 @@ reparentはaggregation decision、root、creator、target、descendantとの関�
 
 2026-09-12のユーザー承認により、Slice 4へ前倒しする訂正境界は、moveに必要な旧decisionのsupersede、旧parentからの離脱、新parentへのadoptionと、その原子的保存・履歴再生・migration・直接検証に限定する。adoptionは所属の引受であり、成果の`accepted` decisionを自動生成しない。
 
-確定済み親結果や上位集約結果の訂正・stale伝播が必要な移動は、Slice 5接続まで明示的なconflictとする。successorを使用する場合も旧branchの結果・判断・所属履歴を変更しない。公開の汎用correction APIとflattenはSlice 5へ残す。
+Slice 5では確定済み親結果や上位集約結果に影響する同一rootの移動を、結果訂正とstale伝播へ接続する。旧decisionのsupersede、旧parentからの離脱、新parentへのadoptionを保存するtransactionで、依存する確定結果のstaleも保存する。successorを使用する場合も旧branchの結果・判断・所属履歴を変更せず、新しい成果の採用と再確定を明示的に行う。
 
 ## Split、merge、clone
 

@@ -266,13 +266,25 @@ describe("Work Item contract", () => {
     }, binding("executor"));
   }
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "直属terminal childの集約を親targetだけが判断でき、decideで既存判断を上書きせず一覧と件数へ反映する"
+  // fault = "root read権限で判断を変更する、decideで既存判断を上書きする、または集約一覧と件数が保存結果に一致しない"
+  // observable = "serviceの集約件数、authority/conflict error、子result summary、一覧decision"
+  // observation_boundary = "public-boundary"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
+  // scope = "WorkItemService direct aggregation admission and projection"
+  // lifecycle = "permanent"
+  // distinction = "schemaと型だけでは検証できないactor別認可と実SQLiteの保存結果を確認する"
+  // @end-test-value
   it("AGG-SCOPE-01/AGG-DECISION-02: 直属terminal childだけをimmutable decisionへ集約する", () => {
     const parent = createRootWork("agg-parent");
     const child = createChild(parent.id, "agg-child");
     completeChild(child.id, "agg-child");
     assert.deepEqual(service.getAggregation({ parentWorkItemId: parent.id }, binding("root")), {
-      contractRevision: 1, parentWorkItemId: parent.id, aggregateRevision: 1, directChildCount: 1,
+      contractRevision: 2, parentWorkItemId: parent.id, aggregateRevision: 1, directChildCount: 1,
       activeCount: 0, undecidedTerminalCount: 1, acceptedCount: 0, excludedCount: 0, retryRequestedCount: 0,
+      stale: false, staleReasons: [], finalizedRevision: null, finalizedResultRevision: null,
     });
     assert.throws(() => service.decideAggregation({
       parentWorkItemId: parent.id, childWorkItemId: child.id, decision: "accepted",

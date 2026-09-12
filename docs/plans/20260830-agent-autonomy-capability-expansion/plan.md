@@ -352,6 +352,30 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 ## Validation gap
 
+### Slice 5 の実装対象（2026-09-13）
+
+開始baseは`c40601695e1e32aae5bb2d40f38ca043a80432f4`、実装branchは`feat/v6.4.0-aggregation-correction`。結果訂正、判断のrevise／withdraw／replace、bounded flatten、`work.result`による原子的な確定・再確定、上位へのstale伝播と、Slice 4から延期した同一rootのmove／reopen接続を対象とする。既存履歴・grantを再baselineせず、既存revision、transaction、idempotency ownerを使用する。cross-root単体moveとdelegation transaction全体は後続Sliceへ残す。
+
+直接検証は旧resultと判断履歴の保持、競合拒否、未判断件数、replacement provenance、flattenの可視性と上限、finalizeのrollback、上位staleと新規採用拒否、再確定、再送、populated migration、確定済みbranchのmoveを観測する。`design-tests` Skillは利用可能なskillsとplugin cacheに見つからなかったため、`designs/09-public-api-migration-and-review.md`のfailure mode、consumer、canonical ownerに最も近い検証という基準を用いる。変更testは現行`review-test-value`によるGit差分抽出と独立審査を実施する。実装・検証・commit-bound reviewの完了記録は結果が確定してから追記する。
+
+結果revisionを既存result eventと共通provenance headerへ結び付け、判断訂正・stale・finalizedを既存aggregation event streamへ保存した。訂正と再確定は既存transaction／idempotency内で行い、Rootのstaleも永続化する。同一rootのmove／reopenは旧結果・所属・replacement／successor履歴を保持して上位へstaleを伝播する。公開contract、HTTP、CLI、MCP、catalog、managed Skillとrunbookを更新し、訂正grantは既存trusted issuerの明示発行だけで取得する。
+
+初回実装を`900b9575ed24068727359d80f1554e0167e11d78`へ固定した。直接検証と公開adapter検証、`npm run typecheck`、`npm test`（3597件、3596成功、1 skip、0失敗）、`npm run build`が成功した。初回全体testでは編集中の公開fixture／schema不一致と旧schema移行の不備を検出して修正した。対象外のGlossary queueと画像previewのtimeoutは直接再実行で成功し、次の全体testでも再発しなかった。populated migrationでは旧result、判断、replacement、successor、削除snapshot、header、grant、budget、idempotencyを比較し、二回目のschema ensureと移行済みresult行欠損の拒否を確認した。GUI変更とfilesystem interactionの追加はなく、GUI目視は未実施。
+
+同commitのclean detached worktreeで全30 filesの独立complete-diff reviewを実施した。revise入力の公開schema不一致、accepted以外にも伝播していたstale、共通headerのsupersede link欠落をblockingとして採用した。使用済みreplacementの明示拒否と、確定済みbranchのsame-root moveに関する文書不一致も修正対象とした。既存runtime契約がreplay時にもcurrent bindingとactive grant評価を要求するため、失効grantでも再送成功すべきという候補は不採用とした。初回のworking tree差分checkは新規fileを含まず、commit差分ではtest末尾空行が検出されたため、最終checkは固定baseからの全差分を対象にする。変更testの価値審査とfinding familyに限定したtargeted closureは進行中。
+
+修正後はacceptedの依存関係だけでstaleを伝播し、未確定parentをstaleにしない。訂正eventの共通headerを旧結果・旧判断へ結び、再生時にも参照先を検証する。使用済みreplacementは既存の明示エラーで拒否し、公開schema／catalogと配布CLIを更新した。関連25件、公開・履歴・migrationの関連79件、型検査、build、固定baseからの差分checkが成功した。修正後の全体testは3598件中3596成功、1失敗、1 skipで、変更外のGlossary queue解放testがtimeoutした。同file単独の24件は成功し、timeoutの恒久解消は今回の対象に含めない。
+
+修正commit `24e32fac80a260be2aad02cecacde0399596e0ac`のclean detached snapshotを対象としたtargeted closureは、採用した5件と同familyの確認が完了し、全件closed、新規findingなしとなった。全差分レビューは反復していない。review worktreeは最終HEAD・cleanliness・SessionFolder内の絶対pathを確認して削除した。
+
+その後の変更はtestのobservable表記、CLI応答喪失時の`error.effect`、flattenのsummary-only field projectionのassertion補強で、production sourceは変更していない。公開関連85件とstorage／migration関連16件、最終型検査が成功した。最終全体testは3598件中3596成功、1失敗、1 skipで、同じ変更外のGlossary queue timeoutのみが残った。flatten assertion補強後は関連testだけを再実行した。全suite成功とは扱わず、関連検証成功と区別する。skipはWindowsで対象外のPOSIX symlink testである。GUI目視、cross-root Work Item単体move、Slice 6のdelegation transaction、Slice 7の公開grant routingは未実施・未接続の境界として維持する。
+
+固定task baseから現行`review-test-value`のGit modeで最終差分を抽出し、30 tests／30 transitions（22 ADDED、8 SURVIVED）、diagnostic 0を確認した。通常のread-only `general_luna`へpublic 10件、storage等20件を渡し、metadata、本文、production経路の三観点で全件審査した。履歴・予算・再送・authority・field projectionの観測不足を補強し、実測していない範囲のmetadataは明示的に限定した。追加したexcluded／retry依存境界を含め、全recordと指摘のclosureが完了し、未解決のレビュー項目はない。
+
+2026-09-13の追加指摘2件を`25d44576146e5ceda301a93755dbf83ed31dda49`で修正した。集約を持たないterminal delegated Work Itemの訂正結果に対する再finalizeを拒否し、不要なrevision増加による親decisionとの不整合を防ぐ。Session削除とdelete manifestは、自身のstale集約、top-level結果の回収先Rootのstale、accepted decisionの直接の親集約のstaleを未回収として扱う。関連24件と既存関連80件、型検査、build、差分checkが成功した。今回の全suiteとGUI目視は未実施。開始base `78aab77a7fac53591633a70c4dfd2217e7b1746a`から変更test 2件／2 transitionsをdiagnostic 0で抽出し、通常のread-only `general_luna`による価値審査を完了した。固定commitの独立targeted closureは両指摘closed。設計文言のdelegated／Root区別も修正して確認を完了し、未解決のレビュー指摘はない。
+
+2026-09-13の重複実装レビューに対応した。move／reopenは影響する確定済み集約IDをSetへ統合してから、各集約のstale revision・event・reasonを一度だけ追加する。Rootとdelegatedのfinalizeは既存transaction内の同じhelperへ統合し、Root初期行の作成には既存のrevision更新を使用する。無効なrevision 0のinsert、未参照のsource JSON列、未使用のcorrection配列定数を削除し、managed Skillとdatabase設計のsame-root move説明を現行仕様へ揃えた。開始baseは`9be501505708f46e9033420293c59393e337d449`。訂正関連17件と既存関連47件、型検査、build、差分checkが成功した。新規testは共有ancestorを持つmoveとreopenのrevision・event・reason、再送と再openを実DBで比較する。Git差分抽出は2 tests／2 transitions（1 ADDED、1 SURVIVED）、diagnostic 0。固定commit `8cf4bc0651d99a41766cd20afbef6bcb67ef16c3`の独立targeted closureは6件すべてclosed、新規findingなしとなった。通常のread-only `general_luna`による全2 recordの価値審査も完了し、metadata・本文・production経路の不一致や未解決指摘はない。今回の全suiteとGUI目視は未実施。
+
 ### Slice 4 の承認済み実装境界（2026-09-12）
 
 開始baseは`ab7b4e25709086a0f1859e1345ea87e83956fa07`。ユーザー承認により、moveに必要な旧decisionのsupersede、旧parentからの離脱、新parentへのadoptionと、その原子的保存・履歴再生・migration・直接検証をSlice 5から前倒しする。adoptionは所属の引受だけを表し、成果を自動採用しない。

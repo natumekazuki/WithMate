@@ -59,6 +59,8 @@ finalizationは既存の`work.result`へ収束させる。集約を持つ親の`
 
 子を持たないWork Itemは`work.result`を維持できる。公開操作を統一する場合は、application service内部で同じfinalization ownerへ収束させる。
 
+集約を持たないdelegated Work Itemは、`work.result.correct`で訂正した結果がそのままcurrentとなり、terminal状態からの再finalizeは行わない。Rootの訂正はstaleを解消する再finalizeを必要とする。再finalizeは集約を持つWork Itemの新しい訂正result revisionに限り、一度だけ保存する。terminal後のmove等で初めて集約を持った場合もこの経路で確定できる。同じrequestの再送は保存済みresponseを返す。
+
 ## 訂正後の状態
 
 finalize後にresultまたはdecisionを訂正すると、親aggregateは`stale` projectionになる。旧finalized resultは履歴として残し、次を完了するまでcurrent final resultとして扱わない。
@@ -67,6 +69,8 @@ finalize後にresultまたはdecisionを訂正すると、親aggregateは`stale`
 2. 必要なdecisionを再確定する。
 3. 親resultをcorrectする。
 4. 新aggregate revisionをfinalizeする。
+
+Session削除では、terminal状態でもstaleな集約を未回収として保護する。top-levelの結果を回収したRoot、accepted decisionの直接の親集約についてもstaleの解消を要求し、delete manifestと保存時の削除ガードで同じ条件を用いる。
 
 stale中に親resultを下流へ新規採用させない。既に下流で採用済みの場合はstalenessを上位へ伝播し、最上位まで訂正可能にする。
 

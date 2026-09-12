@@ -8,7 +8,7 @@ Work Itemの再開は、新しいstable IDを持つsuccessorを作成する。Ro
 
 moveは旧parentからの離脱、新parentへのadoption、必要な旧decisionのsupersedeを既存aggregation ownerの同一transactionで保存する。旧decisionの内容と所属履歴はeventとして残す。adoptionは所属の引受であり、成果の採用ではない。新parentが結果を使用するには別の明示的decisionが必要である。
 
-2026-09-12のユーザー承認により、前倒しは上記moveに必要な内部処理、原子的保存、履歴再生、migration、直接検証に限定する。確定済み親結果または上位集約結果の訂正・stale伝播を要する移動はconflictとする。公開の汎用correction APIとflattenはSlice 5へ残す。successor分岐も旧branchの結果・判断・所属履歴を変えない場合に限る。
+Slice 4では、2026-09-12のユーザー承認により上記moveの内部処理だけを前倒しした。Slice 5では同一rootの確定済みbranchを訂正workflowへ接続する。移動前の結果・判断・所属履歴を保持し、所属変更により確定結果が依存する集約をstaleにする。新しい所属やsuccessorを新結果の採用として扱わず、必要な判断の再確認、結果訂正、明示的な再確定を要求する。cross-rootのWork Item単体moveはSession・grant・budget移管との後続接続対象として残す。
 
 ## 保存と認可の境界
 

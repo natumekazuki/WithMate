@@ -159,6 +159,10 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
     workItemId: "work-1", state: "completed", expectedRevision: 2, idempotencyKey: "work-result-key",
     result: { summary: "done", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
   },
+  "work.result.correct": {
+    workItemId: "work-1", expectedRevision: 3, expectedResultRevision: 1, correctionReason: "recheck", idempotencyKey: "work-result-correct-key",
+    result: { outcome: "completed", summary: "corrected", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
+  },
   "work.cancel": { workItemId: "work-1", expectedRevision: 1, idempotencyKey: "work-cancel-key" },
   "work.aggregation.get": { parentWorkItemId: "work-parent" },
   "work.aggregation.list": { parentWorkItemId: "work-parent" },
@@ -171,6 +175,10 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
     goal: "retry", scope: "scope", completionCriteria: "done", authority: "local",
     sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
     expectedAggregateRevision: 1, idempotencyKey: "work-aggregation-retry-key",
+  },
+  "work.aggregation.correct": {
+    parentWorkItemId: "work-parent", childWorkItemId: "work-child", expectedAggregateRevision: 2, expectedChildResultRevision: 0,
+    correction: { kind: "withdraw", reason: "recheck" }, idempotencyKey: "work-aggregation-correct-key",
   },
   "turn.options": { sessionId: "session-1" },
   "turn.run": {

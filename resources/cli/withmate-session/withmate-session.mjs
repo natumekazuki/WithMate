@@ -450,11 +450,13 @@ var SESSION_RUNTIME_OPERATIONS = [
 	"work.history.list",
 	"work.transition",
 	"work.result",
+	"work.result.correct",
 	"work.cancel",
 	"work.aggregation.get",
 	"work.aggregation.list",
 	"work.aggregation.decide",
 	"work.aggregation.retry",
+	"work.aggregation.correct",
 	"turn.options",
 	"turn.run",
 	"turn.enqueue",
@@ -475,7 +477,7 @@ var SESSION_RUNTIME_OPERATIONS = [
 var SESSION_RUNTIME_PROVIDER_IDS = ["codex", "copilot"];
 function sessionRuntimeOperationMayHaveEffect(operation, input) {
 	if (operation === "transcript.export") return input === void 0 || input.destination?.kind !== "inline";
-	return operation === "session.create" || operation === "session.rename" || operation === "session.configure" || operation === "session.move" || operation === "session.clone" || operation === "session.restore" || operation === "session.archive" || operation === "session.delete" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "work.create" || operation === "work.transition" || operation === "work.revise" || operation === "work.history.append" || operation === "work.reassign" || operation === "work.move" || operation === "work.clone" || operation === "work.reopen" || operation === "work.archive" || operation === "work.restore" || operation === "work.delete" || operation === "work.result" || operation === "work.cancel" || operation === "work.aggregation.decide" || operation === "work.aggregation.retry" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct";
+	return operation === "session.create" || operation === "session.rename" || operation === "session.configure" || operation === "session.move" || operation === "session.clone" || operation === "session.restore" || operation === "session.archive" || operation === "session.delete" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "work.create" || operation === "work.transition" || operation === "work.revise" || operation === "work.history.append" || operation === "work.reassign" || operation === "work.move" || operation === "work.clone" || operation === "work.reopen" || operation === "work.archive" || operation === "work.restore" || operation === "work.delete" || operation === "work.result" || operation === "work.result.correct" || operation === "work.cancel" || operation === "work.aggregation.decide" || operation === "work.aggregation.retry" || operation === "work.aggregation.correct" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct";
 }
 var SessionRuntimeValidationError = class extends Error {
 	code;
@@ -534,11 +536,13 @@ function parseSessionRuntimeOperationInput(operation, value) {
 	if (operation === "work.history.list") return parseWorkItemHistoryListInput(value);
 	if (operation === "work.transition") return parseWorkItemTransitionInput(value);
 	if (operation === "work.result") return parseWorkItemResultInput(value);
+	if (operation === "work.result.correct") return parseWorkItemResultCorrectionInput(value);
 	if (operation === "work.cancel") return parseWorkItemCancelInput(value);
 	if (operation === "work.aggregation.get") return parseWorkItemAggregationGetInput(value);
 	if (operation === "work.aggregation.list") return parseWorkItemAggregationListInput(value);
 	if (operation === "work.aggregation.decide") return parseWorkItemAggregationDecisionInput(value);
 	if (operation === "work.aggregation.retry") return parseWorkItemAggregationRetryInput(value);
+	if (operation === "work.aggregation.correct") return parseWorkItemAggregationCorrectionInput(value);
 	if (operation === "turn.options") return parseSessionInput(value);
 	if (operation === "turn.run") return parseTurnRunInput(value);
 	if (operation === "turn.enqueue") return parseTurnEnqueueInput(value);
@@ -1481,6 +1485,7 @@ function parseWorkItemResultInput(value) {
 		"state",
 		"expectedRevision",
 		"expectedAggregateRevision",
+		"expectedResultRevision",
 		"result",
 		"idempotencyKey"
 	], "input");
@@ -1524,7 +1529,56 @@ function parseWorkItemResultInput(value) {
 		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
 		result: parsedResult,
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
-		...record.expectedAggregateRevision === void 0 ? {} : { expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER) }
+		...record.expectedAggregateRevision === void 0 ? {} : { expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER) },
+		...record.expectedResultRevision === void 0 ? {} : { expectedResultRevision: requireInteger(record.expectedResultRevision, "expectedResultRevision", 1, Number.MAX_SAFE_INTEGER) }
+	};
+}
+function parseWorkItemResultCorrectionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"expectedRevision",
+		"expectedResultRevision",
+		"correctionReason",
+		"result",
+		"idempotencyKey"
+	], "input");
+	const result = requireObject(record.result, "result");
+	assertKeys(result, [
+		"outcome",
+		"summary",
+		"changes",
+		"verificationResults",
+		"findings",
+		"unverifiedItems",
+		"remainingWork"
+	], "result");
+	const parsedResult = {
+		outcome: requireEnum(result.outcome, [
+			"completed",
+			"partially_completed",
+			"failed"
+		], "result.outcome"),
+		summary: requireBoundedString(result.summary, "result.summary", WORK_ITEM_MAX_TEXT_LENGTH),
+		changes: parseWorkItemStringList(result.changes, "result.changes"),
+		verificationResults: parseWorkItemVerificationResults(result.verificationResults),
+		findings: parseWorkItemStringList(result.findings, "result.findings"),
+		unverifiedItems: parseWorkItemStringList(result.unverifiedItems, "result.unverifiedItems"),
+		remainingWork: parseWorkItemStringList(result.remainingWork, "result.remainingWork")
+	};
+	const actualBytes = Buffer.byteLength(JSON.stringify(parsedResult), "utf8");
+	if (actualBytes > 262144) throw new SessionRuntimeValidationError("Work Item result exceeds the byte limit.", {
+		field: "result",
+		actualBytes,
+		maxBytes: WORK_ITEM_MAX_RESULT_BYTES
+	}, "CONTENT_TOO_LARGE");
+	return {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		expectedResultRevision: requireInteger(record.expectedResultRevision, "expectedResultRevision", 1, Number.MAX_SAFE_INTEGER),
+		correctionReason: requireBoundedString(record.correctionReason, "correctionReason", WORK_ITEM_MAX_TEXT_LENGTH),
+		result: parsedResult,
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
 }
 function parseWorkItemAggregationGetInput(value) {
@@ -1537,14 +1591,74 @@ function parseWorkItemAggregationListInput(value) {
 	assertKeys(record, [
 		"parentWorkItemId",
 		"decision",
+		"state",
+		"depth",
+		"fields",
 		"limit",
 		"cursor"
 	], "input");
+	const fields = record.fields === void 0 ? void 0 : record.fields;
+	if (fields !== void 0 && (!Array.isArray(fields) || fields.length > 3 || new Set(fields).size !== fields.length)) throw invalid("fields", "fields must be a unique bounded array.");
 	return {
 		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
 		...record.decision === void 0 ? {} : { decision: requireEnum(record.decision, WORK_ITEM_AGGREGATION_DECISIONS, "decision") },
+		...record.state === void 0 ? {} : { state: requireEnum(record.state, WORK_ITEM_STATES, "state") },
+		...record.depth === void 0 ? {} : { depth: requireInteger(record.depth, "depth", 1, 8) },
+		...fields === void 0 ? {} : { fields: fields.map((field, index) => requireEnum(field, [
+			"summary",
+			"decision",
+			"provenance"
+		], `fields[${index}]`)) },
 		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200, "LIMIT_EXCEEDED"),
 		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseWorkItemAggregationCorrectionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"parentWorkItemId",
+		"childWorkItemId",
+		"expectedAggregateRevision",
+		"expectedChildResultRevision",
+		"correction",
+		"idempotencyKey"
+	], "input");
+	const correction = requireObject(record.correction, "correction");
+	if (Object.keys(correction).length === 0) throw invalid("correction", "correction is required.");
+	const kind = requireEnum(correction.kind, [
+		"revise",
+		"withdraw",
+		"replace"
+	], "correction.kind");
+	assertKeys(correction, kind === "revise" ? [
+		"kind",
+		"decision",
+		"reason"
+	] : kind === "withdraw" ? ["kind", "reason"] : [
+		"kind",
+		"replacementWorkItemId",
+		"reason"
+	], "correction");
+	const reason = requireBoundedString(correction.reason, "correction.reason", WORK_ITEM_MAX_TEXT_LENGTH);
+	const parsedCorrection = kind === "revise" ? {
+		kind,
+		...correction.decision === void 0 ? {} : { decision: requireEnum(correction.decision, ["accepted", "excluded"], "correction.decision") },
+		reason
+	} : kind === "withdraw" ? {
+		kind,
+		reason
+	} : {
+		kind,
+		replacementWorkItemId: requireNonEmptyString(correction.replacementWorkItemId, "correction.replacementWorkItemId"),
+		reason
+	};
+	return {
+		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+		childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"),
+		expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
+		expectedChildResultRevision: requireInteger(record.expectedChildResultRevision, "expectedChildResultRevision", 0, Number.MAX_SAFE_INTEGER),
+		correction: parsedCorrection,
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
 }
 function parseWorkItemAggregationDecisionInput(value) {
@@ -10145,7 +10259,12 @@ var workItemEventSchema = discriminatedUnion("type", [
 		payload: object$1({
 			from: _enum(WORK_ITEM_STATES),
 			to: _enum(WORK_ITEM_STATES),
-			result: workItemEventResultSchema
+			result: workItemEventResultSchema,
+			resultRevision: number().int().positive().optional(),
+			supersededResultRevision: number().int().positive().optional(),
+			correctionReason: string().optional(),
+			sourceRevision: number().int().positive().optional(),
+			executionRevision: number().int().positive().nullable().optional()
 		}).strict()
 	}).strict(),
 	object$1({
@@ -10226,13 +10345,33 @@ var workItemResultInputSchema = object$1({
 	]),
 	expectedRevision: number().int().min(1),
 	expectedAggregateRevision: number().int().min(0).optional(),
+	expectedResultRevision: number().int().min(1).optional(),
 	result: workItemResultBodySchema,
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
+var workItemResultCorrectionInputSchema = object$1({
+	workItemId: nonEmptyStringSchema,
+	expectedRevision: number().int().min(1),
+	expectedResultRevision: number().int().min(1),
+	correctionReason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+	result: workItemResultBodySchema.extend({ outcome: _enum([
+		"completed",
+		"partially_completed",
+		"failed"
+	]) }).strict(),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var workItemAggregationGetInputSchema = object$1({ parentWorkItemId: nonEmptyStringSchema }).strict();
 var workItemAggregationListInputSchema = object$1({
 	parentWorkItemId: nonEmptyStringSchema,
 	decision: _enum(WORK_ITEM_AGGREGATION_DECISIONS).optional(),
+	state: _enum(WORK_ITEM_STATES).optional(),
+	depth: number().int().min(1).max(8).optional(),
+	fields: array(_enum([
+		"summary",
+		"decision",
+		"provenance"
+	])).min(1).max(3).refine((value) => new Set(value).size === value.length).optional(),
 	limit: number().int().min(1).max(200).default(50),
 	cursor: nonEmptyStringSchema.optional()
 }).strict();
@@ -10261,6 +10400,29 @@ var workItemAggregationRetryInputSchema = object$1({
 	sourceIdentity: workItemSourceIdentitySchema,
 	reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH).optional(),
 	expectedAggregateRevision: number().int().min(1),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
+var workItemAggregationCorrectionInputSchema = object$1({
+	parentWorkItemId: nonEmptyStringSchema,
+	childWorkItemId: nonEmptyStringSchema,
+	expectedAggregateRevision: number().int().min(1),
+	expectedChildResultRevision: number().int().min(0),
+	correction: discriminatedUnion("kind", [
+		object$1({
+			kind: literal("revise"),
+			decision: _enum(["accepted", "excluded"]).optional(),
+			reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH)
+		}).strict(),
+		object$1({
+			kind: literal("withdraw"),
+			reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH)
+		}).strict(),
+		object$1({
+			kind: literal("replace"),
+			replacementWorkItemId: nonEmptyStringSchema,
+			reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH)
+		}).strict()
+	]),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var workItemCancelInputSchema = object$1({
@@ -10752,6 +10914,9 @@ var workItemIdentityShape = {
 	authority: string(),
 	sourceIdentity: workItemSourceIdentitySchema,
 	revision: number().int().positive(),
+	resultRevision: number().int().nonnegative().optional(),
+	resultCurrent: boolean().optional(),
+	stale: boolean().optional(),
 	createdAt: string(),
 	updatedAt: string(),
 	archivedAt: string().nullable().optional(),
@@ -10856,6 +11021,15 @@ var workItemAggregationItemSchema = object$1({
 		createdAt: string(),
 		updatedAt: string()
 	}).strict(),
+	depth: number().int().positive().max(8),
+	provenance: object$1({
+		creatorSessionId: string(),
+		targetSessionId: string(),
+		parentWorkItemId: string().nullable()
+	}).strict().optional(),
+	resultRevision: number().int().nonnegative(),
+	resultCurrent: boolean(),
+	stale: boolean(),
 	hasResult: boolean(),
 	resultSummary: string().nullable(),
 	decision: workItemAggregationDecisionSchema.nullable()
@@ -11004,6 +11178,7 @@ var resultSchemas = {
 				literal("delete"),
 				literal("transition"),
 				literal("result"),
+				literal("result.correct"),
 				literal("cancel"),
 				literal("history.append")
 			]),
@@ -11033,7 +11208,7 @@ var resultSchemas = {
 			maxMigrationBaselinePayloadBytes: literal(WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES),
 			maxResultBytes: literal(WORK_ITEM_MAX_RESULT_BYTES),
 			aggregation: object$1({
-				contractRevision: literal(1),
+				contractRevision: literal(2),
 				decisions: tuple([
 					literal("accepted"),
 					literal("excluded"),
@@ -11043,7 +11218,8 @@ var resultSchemas = {
 					literal("get"),
 					literal("list"),
 					literal("decide"),
-					literal("retry")
+					literal("retry"),
+					literal("correct")
 				]),
 				defaultListLimit: literal(50),
 				maxListLimit: literal(200)
@@ -11132,9 +11308,16 @@ var resultSchemas = {
 	}).strict(),
 	"work.transition": workItemSchema,
 	"work.result": resultWorkItemSchema,
+	"work.result.correct": object$1({
+		workItem: workItemSchema,
+		resultRevision: number().int().positive(),
+		supersededResultRevision: number().int().positive(),
+		stale: boolean(),
+		staleParentWorkItemIds: array(string())
+	}).strict(),
 	"work.cancel": canceledWorkItemSchema,
 	"work.aggregation.get": object$1({
-		contractRevision: literal(1),
+		contractRevision: literal(2),
 		parentWorkItemId: string(),
 		aggregateRevision: number().int().nonnegative(),
 		directChildCount: number().int().nonnegative(),
@@ -11142,7 +11325,11 @@ var resultSchemas = {
 		undecidedTerminalCount: number().int().nonnegative(),
 		acceptedCount: number().int().nonnegative(),
 		excludedCount: number().int().nonnegative(),
-		retryRequestedCount: number().int().nonnegative()
+		retryRequestedCount: number().int().nonnegative(),
+		stale: boolean().optional(),
+		staleReasons: array(string()).optional(),
+		finalizedRevision: number().int().positive().nullable().optional(),
+		finalizedResultRevision: number().int().positive().nullable().optional()
 	}).strict(),
 	"work.aggregation.list": object$1({
 		items: array(workItemAggregationItemSchema),
@@ -11152,6 +11339,13 @@ var resultSchemas = {
 	"work.aggregation.retry": object$1({
 		decision: workItemAggregationDecisionSchema,
 		replacement: workItemSchema
+	}).strict(),
+	"work.aggregation.correct": object$1({
+		decision: workItemAggregationDecisionSchema.nullable(),
+		supersededDecisionRevision: number().int().positive(),
+		aggregateRevision: number().int().nonnegative(),
+		stale: boolean(),
+		staleParentWorkItemIds: array(string())
 	}).strict(),
 	"turn.options": turnOptionsSchema,
 	"turn.run": runExecutionSchema,
@@ -11246,11 +11440,13 @@ var inputSchemas = {
 	"work.history.list": workItemHistoryListInputSchema,
 	"work.transition": workItemTransitionInputSchema,
 	"work.result": workItemResultInputSchema,
+	"work.result.correct": workItemResultCorrectionInputSchema,
 	"work.cancel": workItemCancelInputSchema,
 	"work.aggregation.get": workItemAggregationGetInputSchema,
 	"work.aggregation.list": workItemAggregationListInputSchema,
 	"work.aggregation.decide": workItemAggregationDecisionInputSchema,
 	"work.aggregation.retry": workItemAggregationRetryInputSchema,
+	"work.aggregation.correct": workItemAggregationCorrectionInputSchema,
 	"turn.options": sessionGetInputSchema,
 	"turn.run": runInputSchema,
 	"turn.enqueue": enqueueInputSchema,
@@ -27583,6 +27779,13 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		destructive: false
 	},
 	{
+		name: "work.result.correct",
+		title: "Correct Work Item result",
+		description: "Append a corrected terminal result revision and propagate stale state.",
+		readOnly: false,
+		destructive: false
+	},
+	{
 		name: "work.cancel",
 		title: "Cancel Work Item",
 		description: "Cancel an active Work Item created by the bound Session.",
@@ -27599,7 +27802,7 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "work.aggregation.list",
 		title: "List Work Item aggregation",
-		description: "List direct child summaries and immutable decisions using a bounded cursor.",
+		description: "List descendant summaries and decisions using bounded depth, filters, and a cursor.",
 		readOnly: true,
 		destructive: false
 	},
@@ -27614,6 +27817,13 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		name: "work.aggregation.retry",
 		title: "Retry Work Item result",
 		description: "Atomically record a retry decision and create its replacement Work Item.",
+		readOnly: false,
+		destructive: false
+	},
+	{
+		name: "work.aggregation.correct",
+		title: "Correct Work Item aggregation",
+		description: "Correct an immutable child decision with an explicit current result revision.",
 		readOnly: false,
 		destructive: false
 	},
@@ -28001,6 +28211,12 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: createSessionRuntimeAdvertisedInputSchema("work.result"),
 		outputSchema: createSessionRuntimeOutputSchema("work.result")
 	}, async (input) => executeOperation("work.result", input, deps));
+	server.registerTool("work.result.correct", {
+		...definitions.get("work.result.correct"),
+		annotations: annotations(definitions.get("work.result.correct")),
+		inputSchema: createSessionRuntimeAdvertisedInputSchema("work.result.correct"),
+		outputSchema: createSessionRuntimeOutputSchema("work.result.correct")
+	}, async (input) => executeOperation("work.result.correct", input, deps));
 	server.registerTool("work.cancel", {
 		...definitions.get("work.cancel"),
 		annotations: annotations(definitions.get("work.cancel")),
@@ -28031,6 +28247,12 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: createSessionRuntimeAdvertisedInputSchema("work.aggregation.retry"),
 		outputSchema: createSessionRuntimeOutputSchema("work.aggregation.retry")
 	}, async (input) => executeOperation("work.aggregation.retry", input, deps));
+	server.registerTool("work.aggregation.correct", {
+		...definitions.get("work.aggregation.correct"),
+		annotations: annotations(definitions.get("work.aggregation.correct")),
+		inputSchema: createSessionRuntimeAdvertisedInputSchema("work.aggregation.correct"),
+		outputSchema: createSessionRuntimeOutputSchema("work.aggregation.correct")
+	}, async (input) => executeOperation("work.aggregation.correct", input, deps));
 	server.registerTool("turn.options", {
 		...definitions.get("turn.options"),
 		annotations: annotations(definitions.get("turn.options")),
@@ -28181,11 +28403,13 @@ var commandMap = /* @__PURE__ */ new Map([
 	["work history list", "work.history.list"],
 	["work transition", "work.transition"],
 	["work result", "work.result"],
+	["work result correct", "work.result.correct"],
 	["work cancel", "work.cancel"],
 	["work aggregation get", "work.aggregation.get"],
 	["work aggregation list", "work.aggregation.list"],
 	["work aggregation decide", "work.aggregation.decide"],
 	["work aggregation retry", "work.aggregation.retry"],
+	["work aggregation correct", "work.aggregation.correct"],
 	["turn options", "turn.options"],
 	["turn run", "turn.run"],
 	["turn enqueue", "turn.enqueue"],
@@ -28321,11 +28545,12 @@ async function parseArgs(args, deps) {
 	const fileCommand = args[0] === "session" && args[1] === "files";
 	const coordinationCommand = args[0] === "coordination" && args[1] === "event";
 	const workAggregationCommand = args[0] === "work" && args[1] === "aggregation";
+	const workResultCommand = args[0] === "work" && args[1] === "result" && args[2] === "correct";
 	const workHistoryCommand = args[0] === "work" && args[1] === "history";
 	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "budget" || args[0] === "session" || args[0] === "work" || args[0] === "interaction" || args[0] === "transcript";
-	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand || workAggregationCommand || workHistoryCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|budget get|list|configure|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work aggregation get|list|decide|retry|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
-	const optionStart = fileCommand || coordinationCommand || workAggregationCommand || workHistoryCommand ? 3 : namespacedCommand ? 2 : 1;
+	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand || workAggregationCommand || workHistoryCommand || workResultCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|budget get|list|configure|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work result correct|work aggregation get|list|decide|retry|correct|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+	const optionStart = fileCommand || coordinationCommand || workAggregationCommand || workHistoryCommand || workResultCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;
 	let useStdin = false;
