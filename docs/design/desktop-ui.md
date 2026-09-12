@@ -106,7 +106,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - Agent Mode の workspace は既存 directory を選ぶ `Browse` と、WithMate 管理下の directory を開始時に作る `SessionFolder` から選ぶ
   - enabled provider の選択
   - Character selector は開くたびにランダムを初期選択する。明示選択したactive Characterはそのまま使い、Characterが0件の場合はneutral fallbackを使う。詳細はADR 004を参照する
-  - model / depth / approval / sandbox / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
+  - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
   - open 時は dialog 内の最初の主要入力へ focus し、`Escape` で閉じる
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
   - provider の single-select chip は矢印キーで選択を移動できる
