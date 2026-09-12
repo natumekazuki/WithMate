@@ -10,7 +10,6 @@ import {
 } from "react";
 
 import {
-  type ComposerPreview,
   currentTimestampLabel,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
@@ -72,6 +71,7 @@ import {
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
 import {
   approvalModeLabel,
+  CharacterAvatar,
 } from "./ui-utils.js";
 import {
   restoreComposerTextareaFocusAndCaret,
@@ -92,7 +92,6 @@ import {
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import {
   useMainAuxiliaryRuntimeSession,
-  useMessageListAuxiliarySessions,
 } from "./auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import { resolveSkillDiscoveryRequest } from "./skill-discovery-request.js";
@@ -100,6 +99,7 @@ import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "./c
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import {
   buildAuxiliaryLaunchProviderItems,
+  buildCreateAuxiliarySessionInput,
   createAuxiliaryLaunchDialogCloseHandler,
   createAuxiliaryLaunchDialogOpenHandler,
   createAuxiliaryLaunchProviderSelectHandler,
@@ -107,9 +107,10 @@ import {
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
+import { useAuxiliaryWorkspace } from "./chat/use-auxiliary-workspace.js";
+import { useConversationComposerState } from "./chat/use-conversation-composer-state.js";
 import {
   createAuxiliaryHeaderActions,
-  createMessageCollapseHeaderAction,
   resolveAuxiliaryHeaderActionState,
 } from "./chat/chat-header-actions.js";
 import {
@@ -144,7 +145,6 @@ import {
   applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
   buildOnDraftCompositionHandlers,
-  buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
 import {
   createEmptyComposerPreview,
@@ -244,13 +244,6 @@ import {
   runAuxiliarySandboxModeChangeOperation,
 } from "./auxiliary-runtime-option-operation.js";
 import {
-  clearAuxiliarySessionsLoadState,
-  createAuxiliaryLoadRevisionGuard,
-  runActiveAuxiliarySessionLoadAndApply,
-  runActiveAuxiliarySessionRefreshAndApply,
-  runClosedAuxiliarySessionsLoadAndApply,
-} from "./auxiliary-session-refresh-operation.js";
-import {
   createComposerPreviewRequest,
 } from "./chat/use-composer-preview-resolution.js";
 import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
@@ -298,21 +291,13 @@ import {
 import {
   createGuardedActiveAuxiliarySessionUpdater,
   enqueueAuxiliarySessionSaveWithQueue,
-  syncActiveAuxiliarySessionRef,
 } from "./auxiliary-session-update-operation.js";
 import {
   runAddAuxiliaryAdditionalDirectoryOperationWithApi,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
 import {
-  runGuardedAuxiliarySessionReturnToMainOperationWithApi,
-} from "./auxiliary-session-return-operation.js";
-import {
-  beginAuxiliarySessionStartOperation,
-  createActiveAuxiliarySessionStartResultApplier,
   createAuxiliarySessionStartErrorHandler,
-  finishAuxiliarySessionStartClosedLoadWithApi,
-  runSessionWindowAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
 import {
   createAuxiliarySessionPendingLiveRunClearer,
@@ -526,6 +511,8 @@ export default function AgentSessionWindowApp() {
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
+  const mainDraftRef = useRef(draft);
+  mainDraftRef.current = draft;
   const [pendingSubmitSessionId, setPendingSubmitSessionId] = useState<string | null>(null);
   const [workspaceAvailability, setWorkspaceAvailability] = useState(
     INITIAL_SESSION_WORKSPACE_AVAILABILITY,
@@ -580,11 +567,18 @@ export default function AgentSessionWindowApp() {
     message: string;
   } | null>(null);
   const inlinePathOperationRevisionRef = useRef(new StateMutationRevision());
-  const [liveRunState, setLiveRunStateBase] = useState<OwnedLiveSessionRunState>({ ownerSessionId: null, state: null });
+  const [liveRunStates, setLiveRunStates] = useState<Record<string, OwnedLiveSessionRunState>>({});
   const liveRunRevisionRef = useRef(0);
-  const setLiveRunState = useCallback((update: SetStateAction<OwnedLiveSessionRunState>) => {
+  const setLiveRunForSession = useCallback((sessionId: string | null, update: SetStateAction<OwnedLiveSessionRunState>) => {
+    if (!sessionId) {
+      return;
+    }
     liveRunRevisionRef.current += 1;
-    setLiveRunStateBase(update);
+    setLiveRunStates((current) => {
+      const previous = current[sessionId] ?? { ownerSessionId: sessionId, state: null };
+      const next = typeof update === "function" ? update(previous) : update;
+      return next.ownerSessionId === sessionId ? { ...current, [sessionId]: next } : current;
+    });
   }, []);
   const [liveAssistantBridge, setLiveAssistantBridge] = useState<LiveAssistantProjection | null>(null);
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
@@ -616,9 +610,8 @@ export default function AgentSessionWindowApp() {
   const glossarySearchRequestIdRef = useRef(0);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
-  const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
-  const [composerCaret, setComposerCaret] = useState(0);
+  const composerOwnerRef = useRef<string | null>(null);
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
   const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
@@ -659,8 +652,11 @@ export default function AgentSessionWindowApp() {
   });
   const handleActivateSidePanePriority = useCallback(() => setLayoutPriority("side-pane-first"), [setLayoutPriority]);
   const handleActivateDockPriority = useCallback(() => setLayoutPriority("dock-first"), [setLayoutPriority]);
-  const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
-  const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
+  const selectedId = useMemo(() => getSessionIdFromLocation(), []);
+  const auxiliaryWorkspace = useAuxiliaryWorkspace({ parentSessionId: selectedId, api: withmateApi });
+  const activeAuxiliarySession = auxiliaryWorkspace.target === "auxiliary" ? auxiliaryWorkspace.selectedSession : null;
+  const auxiliaryBinding = auxiliaryWorkspace.getBinding(auxiliaryWorkspace.selectedId);
+  const setActiveAuxiliarySession = auxiliaryBinding.setSession;
   const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
   const {
     auxiliaryLaunchDialogOpen,
@@ -676,18 +672,17 @@ export default function AgentSessionWindowApp() {
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activityMonitorSignatureRef = useRef("");
   const activityMonitorSessionIdRef = useRef<string | null>(null);
-  const activeAuxiliarySessionRef = useRef<AuxiliarySession | null>(null);
-  const auxiliarySessionMutationRevisionRef = useRef(0);
-  const auxiliaryDraftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const auxiliarySessionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const auxiliaryLoadRevisionRef = useRef(0);
+  const activeAuxiliarySessionRef = auxiliaryBinding.sessionRef;
+  const auxiliarySessionMutationRevisionRef = auxiliaryBinding.mutationRevision;
+  const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
+  const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
+  const auxiliaryCreatePendingRef = useRef(false);
   const mainComposerCaretRef = useRef(0);
   const promptTemplateSelectionRef = useRef({ start: 0, end: 0 });
   const fileRootDiffRequestRevisionRef = useRef(0);
   const fileRootGitHistoryDiffRequestRevisionRef = useRef(0);
   const sessionRefetchRevisionRef = useRef(new LatestRequestRevision());
   const sessionSubmitCoordinatorRef = useRef(new SessionSubmitCoordinator());
-  const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
   useEffect(() => {
     let active = true;
@@ -793,7 +788,8 @@ export default function AgentSessionWindowApp() {
     [selectedId, sessions],
   );
   const displayedSession = useMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession);
-  const isAuxiliaryMode = activeAuxiliarySession?.status === "active";
+  const selectedAuxiliaryRuntimeSession = useMainAuxiliaryRuntimeSession(selectedSession, auxiliaryWorkspace.selectedSession);
+  const isAuxiliaryMode = activeAuxiliarySession !== null;
   const selectedCompanionGroupMonitorEntries = useMemo(
     () => buildCompanionGroupMonitorEntries(
       companionSessions,
@@ -840,46 +836,6 @@ export default function AgentSessionWindowApp() {
   const handleSidePaneChange = useCallback((sidePane: SessionSidePane) => {
     void persistChatLayoutPreference(withmateApi, { target: "sidePane", value: sidePane });
   }, [withmateApi]);
-  useEffect(() => {
-    let active = true;
-    const loadRevision = auxiliaryLoadRevisionRef.current + 1;
-    auxiliaryLoadRevisionRef.current = loadRevision;
-    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
-      loadRevision: auxiliaryLoadRevisionRef,
-      expectedRevision: loadRevision,
-      isActive: () => active,
-    });
-
-    if (!withmateApi || !selectedSessionId) {
-      clearAuxiliarySessionsLoadState({
-        setActiveSession: setActiveAuxiliarySession,
-        setClosedSessions: setClosedAuxiliarySessions,
-      });
-      return () => {
-        active = false;
-      };
-    }
-
-    void runActiveAuxiliarySessionLoadAndApply({
-      parentSessionId: selectedSessionId,
-      getActiveAuxiliarySession: (sessionId) => withmateApi.getActiveAuxiliarySession(sessionId),
-      isActive: canApplyLoadResult,
-      setActiveSession: setActiveAuxiliarySession,
-    });
-
-    void runClosedAuxiliarySessionsLoadAndApply({
-      parentSessionId: selectedSessionId,
-      listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
-      getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
-      isActive: canApplyLoadResult,
-      setClosedSessions: setClosedAuxiliarySessions,
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [selectedSessionId, withmateApi]);
-
   const {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,
@@ -897,7 +853,29 @@ export default function AgentSessionWindowApp() {
     initialSidePane: isAppSettingsLoaded ? appSettings.chatLayoutPreference.sidePane : null,
     onSidePaneChange: handleSidePaneChange,
   });
-  const activeRunSessionId = activeAuxiliarySession?.id ?? selectedSessionId;
+  const activeRunSessionId = auxiliaryWorkspace.target === "auxiliary"
+    ? auxiliaryWorkspace.selectedId
+    : selectedSessionId;
+  composerOwnerRef.current = activeRunSessionId;
+  const composerDraft = auxiliaryWorkspace.target === "auxiliary" ? activeAuxiliarySession?.composerDraft ?? "" : draft;
+  const isAuxiliaryTargetUnavailable = auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession;
+  const composerState = useConversationComposerState(activeRunSessionId, composerDraft);
+  const { preview: composerPreview, setPreview: setComposerPreview } = composerState;
+  const composerCaret = composerState.selection.start;
+  const setComposerCaret = (caret: number) => {
+    composerState.setSelection({ start: caret, end: caret });
+  };
+  useLayoutEffect(() => {
+    const selection = composerState.selection;
+    composerTextareaRef.current?.setSelectionRange(selection.start, selection.end);
+    setIsAgentPickerOpen(false);
+    setIsSkillPickerOpen(false);
+    setIsAdditionalDirectoryListOpen(false);
+    setForceComposerBlockedFeedback(false);
+    setIsComposerImeComposing(false);
+  }, [activeRunSessionId]);
+  const liveRunState = liveRunStates[activeRunSessionId ?? ""] ?? { ownerSessionId: activeRunSessionId, state: null };
+  const setLiveRunState = (update: SetStateAction<OwnedLiveSessionRunState>) => setLiveRunForSession(activeRunSessionId, update);
   const activeRunMessageCount = activeAuxiliarySession?.messages.length ?? selectedSession?.messages.length ?? 0;
   const isCentralPreviewActive = selectedFilePreview !== null
     || fileRootDiffPreview !== null
@@ -1326,7 +1304,7 @@ export default function AgentSessionWindowApp() {
   );
   const selectedSessionRunState: Session["runState"] | null = resolveSelectedSessionRunState({
     runState: selectedSession?.runState,
-    hasLiveRun: !!selectedSessionLiveRun,
+    hasLiveRun: !!liveRunStates[selectedSessionId ?? ""]?.state,
   });
   const visibleSessionRunState: Session["runState"] | null = activeAuxiliarySession?.runState ?? selectedSessionRunState;
   const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
@@ -1338,20 +1316,20 @@ export default function AgentSessionWindowApp() {
 
   const selectedSessionCharacter = useMemo(
     () =>
-      selectedSession
+      displayedSession
         ? {
-            id: selectedSession.characterId,
-            name: selectedSession.character.trim() || DEFAULT_SESSION_RUNTIME_NAME,
-            iconPath: selectedSession.characterIconPath,
+            id: displayedSession.characterId,
+            name: displayedSession.character.trim() || DEFAULT_SESSION_RUNTIME_NAME,
+            iconPath: displayedSession.characterIconPath,
             description: "",
             roleMarkdown: "",
             notesMarkdown: "",
-            updatedAt: selectedSession.updatedAt,
-            themeColors: selectedSession.characterThemeColors,
+            updatedAt: displayedSession.updatedAt,
+            themeColors: displayedSession.characterThemeColors,
             sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
           }
         : null,
-    [selectedSession],
+    [displayedSession],
   );
   const isSelectedSessionReadOnly = selectedSession ? isReadOnlySession(selectedSession) : false;
   const sessionThemeStyle = useMemo(
@@ -1429,6 +1407,10 @@ export default function AgentSessionWindowApp() {
       return "This session is read-only. Create a new session to send messages.";
     }
 
+    if (auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession) {
+      return auxiliaryWorkspace.detailError?.message ?? auxiliaryWorkspace.error?.message ?? "Auxiliary の会話を読み込んでいます。";
+    }
+
     if (!isSelectedProviderEnabled) {
       return "Provider is disabled. Enable it in Settings.";
     }
@@ -1438,8 +1420,8 @@ export default function AgentSessionWindowApp() {
     }
 
     return "";
-  }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate]);
-  const composerBusyReason = pendingSubmitSessionId === selectedSession?.id
+  }, [activeAuxiliarySession, auxiliaryWorkspace.detailError, auxiliaryWorkspace.error, auxiliaryWorkspace.target, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate]);
+  const composerBusyReason = pendingSubmitSessionId !== null && pendingSubmitSessionId === activeRunSessionId
     ? "Message submission is in progress."
     : workspaceExecutionGate.isPending
       ? "Workspace availability is being checked."
@@ -1760,11 +1742,8 @@ export default function AgentSessionWindowApp() {
     });
   }, [withmateApi]);
 
-  const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
-  const projectedAuxiliarySessions = useMessageListAuxiliarySessions(
-    closedAuxiliarySessions,
-    activeAuxiliarySession,
-  );
+  const displayedMessages: Message[] = displayedSession?.messages ?? [];
+  const projectedAuxiliarySessions = useMemo(() => [], []);
   const liveAssistantMessageIndex = useMemo(
     () =>
       activeRunSessionId
@@ -1772,11 +1751,11 @@ export default function AgentSessionWindowApp() {
           displayedMessages,
           projectedAuxiliarySessions,
           activeRunSessionId,
-          selectedSession?.id,
+          activeRunSessionId ?? undefined,
           liveRunAssistantText,
         )
         : 0,
-    [activeRunSessionId, displayedMessages, liveRunAssistantText, projectedAuxiliarySessions, selectedSession?.id],
+    [activeRunSessionId, displayedMessages, liveRunAssistantText, projectedAuxiliarySessions, activeRunSessionId],
   );
   const hasPersistedLiveAssistantBridge = useMemo(
     () =>
@@ -1785,10 +1764,10 @@ export default function AgentSessionWindowApp() {
           displayedMessages,
           projectedAuxiliarySessions,
           liveAssistantBridge,
-          selectedSession?.id,
+          activeRunSessionId ?? undefined,
         )
         : false,
-    [displayedMessages, liveAssistantBridge, projectedAuxiliarySessions, selectedSession?.id],
+    [displayedMessages, liveAssistantBridge, projectedAuxiliarySessions, activeRunSessionId],
   );
   const isLiveAssistantBridgeSettling = selectedSessionLiveRun === null && !hasPersistedLiveAssistantBridge;
   const projectedLiveAssistant = useMemo<LiveAssistantProjection | null>(() => {
@@ -1832,10 +1811,10 @@ export default function AgentSessionWindowApp() {
   ]);
   const messageListProjection = useMemo(
     () =>
-      buildMessageListProjection(displayedMessages, projectedAuxiliarySessions, selectedSession?.id, {
+      buildMessageListProjection(displayedMessages, projectedAuxiliarySessions, activeRunSessionId ?? undefined, {
         liveAssistant: projectedLiveAssistant,
       }),
-    [displayedMessages, projectedAuxiliarySessions, projectedLiveAssistant, selectedSession?.id],
+    [displayedMessages, projectedAuxiliarySessions, projectedLiveAssistant, activeRunSessionId],
   );
   const messageListMessages = messageListProjection.messages;
   const messageListSources = messageListProjection.sources;
@@ -1854,10 +1833,10 @@ export default function AgentSessionWindowApp() {
     messageCollapseTargetsRef.current = messageCollapseTargets;
   }, [messageCollapseTargets]);
   const reconciledMessageCollapseState = useMemo(
-    () => messageCollapseWindowState.sessionId === selectedSessionId
+    () => messageCollapseWindowState.sessionId === activeRunSessionId
       ? reconcileMessageCollapseState(messageCollapseWindowState.entries, messageCollapseTargets)
       : new Map(),
-    [messageCollapseTargets, messageCollapseWindowState.entries, messageCollapseWindowState.sessionId, selectedSessionId],
+    [messageCollapseTargets, messageCollapseWindowState.entries, messageCollapseWindowState.sessionId, activeRunSessionId],
   );
   const collapsedMessageKeys = useMemo(
     () => new Set(reconciledMessageCollapseState.keys()),
@@ -1869,53 +1848,53 @@ export default function AgentSessionWindowApp() {
   );
   useEffect(() => {
     setMessageCollapseWindowState((current) => {
-      const nextEntries = current.sessionId === selectedSessionId
+      const nextEntries = current.sessionId === activeRunSessionId
         ? reconcileMessageCollapseState(current.entries, messageCollapseTargets)
         : new Map();
-      if (current.sessionId === selectedSessionId
+      if (current.sessionId === activeRunSessionId
         && current.entries.size === nextEntries.size
         && Array.from(nextEntries).every(([key, entry]) => current.entries.get(key) === entry)) {
         return current;
       }
-      return { sessionId: selectedSessionId, entries: nextEntries };
+      return { sessionId: activeRunSessionId, entries: nextEntries };
     });
-  }, [messageCollapseTargets, selectedSessionId]);
+  }, [messageCollapseTargets, activeRunSessionId]);
   useEffect(() => {
     setMessageJumpRequest(null);
-  }, [selectedSessionId]);
+  }, [activeRunSessionId]);
   const handleToggleMessageCollapse = useCallback((key: string) => {
     setMessageCollapseWindowState((current) => {
-      const state = current.sessionId === selectedSessionId
+      const state = current.sessionId === activeRunSessionId
         ? reconcileMessageCollapseState(current.entries, messageCollapseTargets)
         : new Map();
       const target = messageCollapseTargets.find((candidate) => candidate.key === key);
       return target
-        ? { sessionId: selectedSessionId, entries: toggleMessageCollapseState(state, target) }
-        : { sessionId: selectedSessionId, entries: state };
+        ? { sessionId: activeRunSessionId, entries: toggleMessageCollapseState(state, target) }
+        : { sessionId: activeRunSessionId, entries: state };
     });
-  }, [messageCollapseTargets, selectedSessionId]);
+  }, [messageCollapseTargets, activeRunSessionId]);
   const handleToggleAllMessageCollapse = useCallback(() => {
     setMessageCollapseWindowState((current) => {
-      const state = current.sessionId === selectedSessionId
+      const state = current.sessionId === activeRunSessionId
         ? reconcileMessageCollapseState(current.entries, messageCollapseTargets)
         : new Map();
       return {
-        sessionId: selectedSessionId,
+        sessionId: activeRunSessionId,
         entries: toggleAllMessageCollapseState(state, messageCollapseTargets),
       };
     });
-  }, [messageCollapseTargets, selectedSessionId]);
+  }, [messageCollapseTargets, activeRunSessionId]);
   const handleJumpToMessage = useCallback((key: string) => {
-    if (!selectedSessionId) {
+    if (!activeRunSessionId) {
       return;
     }
     messageJumpRequestIdRef.current += 1;
     setMessageJumpRequest({
-      sessionId: selectedSessionId,
+      sessionId: activeRunSessionId,
       key,
       requestId: messageJumpRequestIdRef.current,
     });
-  }, [selectedSessionId]);
+  }, [activeRunSessionId]);
   useEffect(() => {
     if (!activeRunSessionId || !liveRunAssistantText) {
       return;
@@ -2065,13 +2044,6 @@ export default function AgentSessionWindowApp() {
   });
 
   useEffect(() => {
-    syncActiveAuxiliarySessionRef({
-      activeSession: activeAuxiliarySession,
-      activeSessionRef: activeAuxiliarySessionRef,
-    });
-  }, [activeAuxiliarySession]);
-
-  useEffect(() => {
     applyComposerDraftClearCommand({
       setDraft,
       setComposerCaret,
@@ -2099,14 +2071,6 @@ export default function AgentSessionWindowApp() {
     setApprovalActionRequestId(null);
     setElicitationActionRequestId(null);
   }, [selectedSession?.provider, selectedSessionId]);
-
-  useEffect(() => {
-    setComposerPreview((current) => (
-      current.attachments.length === 0 && current.errors.length === 0
-        ? current
-        : createEmptyComposerPreview()
-    ));
-  }, [activeAuxiliarySession?.composerDraft, draft]);
 
   useEffect(() => {
     setApprovalActionRequestId(null);
@@ -2176,32 +2140,17 @@ export default function AgentSessionWindowApp() {
       };
     }
 
-    const activeAuxiliarySessionId = activeAuxiliarySession?.id ?? null;
-    const refreshCompletedAuxiliarySession = (sessionId: string) => {
-      void runActiveAuxiliarySessionRefreshAndApply({
-        sessionId,
-        activeSessionId: activeAuxiliarySessionId,
-        loadAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
-        isActive: () => active,
-        setActiveSession: setActiveAuxiliarySession,
-        activeSessionRef: activeAuxiliarySessionRef,
-      }).catch((error) => {
-        console.error(error);
-      });
-    };
-
     const unsubscribe = startLiveSessionRunSubscription({
       sessionId: activeRunSessionId,
       api: withmateApi,
       applyLiveRunState: setLiveRunState,
-      onSessionRunUpdated: refreshCompletedAuxiliarySession,
     });
 
     return () => {
       active = false;
       unsubscribe();
     };
-  }, [activeAuxiliarySession?.id, activeRunSessionId, selectedSession, withmateApi]);
+  }, [activeRunSessionId, selectedSessionId, withmateApi]);
 
   useEffect(() => {
     const providerId = displayedSession?.provider ?? null;
@@ -2839,6 +2788,10 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSend = async () => {
+    if (auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession) {
+      triggerComposerBlockedFeedback();
+      return;
+    }
     if (activeAuxiliarySession) {
       const auxiliaryDraft = activeAuxiliarySession.composerDraft;
       if (!auxiliaryDraft.trim() || activeAuxiliarySession.runState === "running") {
@@ -3327,7 +3280,9 @@ export default function AgentSessionWindowApp() {
         });
       },
       afterDraftUpdated: (nextState) => {
-        restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
+        if (composerOwnerRef.current === activeRunSessionId) {
+          restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
+        }
       },
     });
   };
@@ -3423,11 +3378,10 @@ export default function AgentSessionWindowApp() {
     setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
   });
 
-  const handleOpenInlinePath = async (target: string) => {
-    if (!withmateApi || !activeRunSessionId) {
+  const handleOpenInlinePath = async (target: string, ownerSessionId = activeRunSessionId) => {
+    if (!withmateApi || !ownerSessionId) {
       return;
     }
-    const ownerSessionId = activeRunSessionId;
     inlinePathOperationRevisionRef.current.advance();
     const operationRevision = inlinePathOperationRevisionRef.current.capture();
     try {
@@ -3482,7 +3436,7 @@ export default function AgentSessionWindowApp() {
   });
 
   const handleStartAuxiliarySession = async () => {
-    if (!withmateApi || !selectedSession || isAuxiliaryActionPending) {
+    if (!withmateApi || !selectedSession || auxiliaryCreatePendingRef.current || isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable) {
       return;
     }
     const setAuxiliaryStartError = createAuxiliarySessionStartErrorHandler({
@@ -3497,62 +3451,37 @@ export default function AgentSessionWindowApp() {
     }
     const launchProviderId = startProvider.providerId;
 
-    const loadRevision = beginAuxiliarySessionStartOperation({
-      loadRevision: auxiliaryLoadRevisionRef,
-      resetLaunchFeedback: resetAuxiliaryLaunchFeedback,
-      setActionPending: setIsAuxiliaryActionPending,
-    });
+    auxiliaryCreatePendingRef.current = true;
+    resetAuxiliaryLaunchFeedback();
+    setIsAuxiliaryActionPending(true);
     const parentSessionId = selectedSession.id;
-    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
-      loadRevision: auxiliaryLoadRevisionRef,
-      expectedRevision: loadRevision,
-    });
-
     try {
-      await runSessionWindowAuxiliarySessionStartOperation({
-        parentSessionId,
-        provider: launchProviderId,
-        createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
-        applyStartedSession: createActiveAuxiliarySessionStartResultApplier({
-          mutationRevision: auxiliarySessionMutationRevisionRef,
-          activeSessionRef: activeAuxiliarySessionRef,
-          setActiveSession: setActiveAuxiliarySession,
-          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-          setForceComposerBlockedFeedback,
-          closeLaunchDialog: closeAuxiliaryLaunchDialog,
+      const saved = await withmateApi.createAuxiliarySession({
+        ...buildCreateAuxiliarySessionInput({
+          parentSessionId,
+          provider: launchProviderId,
+          runtimeSelection: "latest-session",
         }),
+        clientRequestId: crypto.randomUUID(),
       });
+      auxiliaryWorkspace.addSession(saved);
+      setIsActionDockPinnedExpanded(true);
+      setForceComposerBlockedFeedback(false);
+      closeAuxiliaryLaunchDialog();
     } catch (error) {
       setAuxiliaryStartError(error);
     } finally {
-      finishAuxiliarySessionStartClosedLoadWithApi({
-        parentSessionId,
-        api: withmateApi,
-        isActive: canApplyLoadResult,
-        setClosedSessions: setClosedAuxiliarySessions,
-        setActionPending: setIsAuxiliaryActionPending,
-      });
+      auxiliaryCreatePendingRef.current = false;
+      setIsAuxiliaryActionPending(false);
     }
   };
 
-  const handleReturnToMainSession = async () => {
-    await runGuardedAuxiliarySessionReturnToMainOperationWithApi({
-      api: withmateApi,
-      activeSession: activeAuxiliarySession,
-      isActionPending: isAuxiliaryActionPending,
-      alertError: (message) => window.alert(message),
-      setActionPending: setIsAuxiliaryActionPending,
-      loadRevision: auxiliaryLoadRevisionRef,
-      setClosedSessions: setClosedAuxiliarySessions,
-      mutationRevision: auxiliarySessionMutationRevisionRef,
-      activeSessionRef: activeAuxiliarySessionRef,
-      setActiveSession: setActiveAuxiliarySession,
-      mainDraft: draft,
-      mainCaret: mainComposerCaretRef.current,
-      setComposerCaret,
-      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-      setForceComposerBlockedFeedback,
-    });
+  const handleChangeConversationTarget = (target: "main" | "auxiliary") => {
+    if (target === "auxiliary" && auxiliaryWorkspace.summaries.length === 0) {
+      if (!auxiliaryWorkspace.loading && !auxiliaryWorkspace.error) handleOpenAuxiliaryLaunchDialog();
+      return;
+    }
+    auxiliaryWorkspace.setTarget(target);
   };
 
   const handleAuxiliaryDraftChange = async (value: string, selectionStart: number) => {
@@ -3681,9 +3610,10 @@ export default function AgentSessionWindowApp() {
   });
 
   const insertReferencePaths = (selectedPaths: string[]) => {
-    const textarea = composerTextareaRef.current;
+    if (isAuxiliaryTargetUnavailable) return;
+    const textarea = composerOwnerRef.current === activeRunSessionId ? composerTextareaRef.current : null;
     const targetAuxiliarySession = activeAuxiliarySession;
-    const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
+    const currentDraft = targetAuxiliarySession ? auxiliaryBinding.getSession()?.composerDraft ?? targetAuxiliarySession.composerDraft : mainDraftRef.current;
     applySelectedPathReferenceInsertionCommand({
       draft: currentDraft,
       fallbackCaret: targetAuxiliarySession ? composerCaret : mainComposerCaretRef.current,
@@ -3716,9 +3646,10 @@ export default function AgentSessionWindowApp() {
   };
 
   const insertPastedAttachments = (references: ComposerReferenceInput[]) => {
-    const textarea = composerTextareaRef.current;
+    if (isAuxiliaryTargetUnavailable) return;
+    const textarea = composerOwnerRef.current === activeRunSessionId ? composerTextareaRef.current : null;
     const targetAuxiliarySession = activeAuxiliarySession;
-    const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
+    const currentDraft = targetAuxiliarySession ? auxiliaryBinding.getSession()?.composerDraft ?? targetAuxiliarySession.composerDraft : mainDraftRef.current;
     applyComposerReferenceInsertionCommand({
       draft: currentDraft,
       fallbackCaret: composerCaret,
@@ -3766,7 +3697,7 @@ export default function AgentSessionWindowApp() {
   });
 
   const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {
-    if (!withmateApi || isSelectedSessionReadOnly) {
+    if (!withmateApi || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
       return;
     }
 
@@ -3785,7 +3716,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleAddToSessionFiles = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly) {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
       return;
     }
 
@@ -3809,7 +3740,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handlePickSessionFiles = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly) {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
       return;
     }
 
@@ -3828,7 +3759,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handlePickSessionFolder = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly) {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
       return;
     }
 
@@ -3847,7 +3778,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handlePickSessionImage = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly) {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
       return;
     }
 
@@ -3871,6 +3802,7 @@ export default function AgentSessionWindowApp() {
       const targetAuxiliarySession = activeAuxiliarySession;
       return !!withmateApi &&
         !!selectedSession &&
+        !isAuxiliaryTargetUnavailable &&
         !isSelectedSessionReadOnly &&
         !(targetAuxiliarySession
           ? targetAuxiliarySession.runState === "running"
@@ -4124,7 +4056,7 @@ export default function AgentSessionWindowApp() {
   );
   const renderedSession = displayedSession;
   const renderedMessages = messageListMessages;
-  const renderedDraft = activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft;
+  const renderedDraft = composerDraft;
   const handleOpenPromptTemplates = () => {
     clearHistoryDiffPreview();
     if (isPromptTemplateWorkspaceOpen) {
@@ -4149,6 +4081,7 @@ export default function AgentSessionWindowApp() {
     setIsPromptTemplateWorkspaceOpen(true);
   };
   const handleInsertPromptTemplate = (prompt: string) => {
+    if (isAuxiliaryTargetUnavailable) return;
     const insertion = insertComposerTextAtSelection(
       renderedDraft,
       prompt,
@@ -4171,7 +4104,9 @@ export default function AgentSessionWindowApp() {
     }
     closeCentralPreview();
     window.requestAnimationFrame(() => {
-      restoreComposerTextareaFocusAndCaret(composerTextareaRef.current, insertion.caret);
+      if (composerOwnerRef.current === activeRunSessionId) {
+        restoreComposerTextareaFocusAndCaret(composerTextareaRef.current, insertion.caret);
+      }
     });
   };
   const renderedComposerSendability = activeAuxiliarySession ? auxiliaryComposerSendability : composerSendability;
@@ -4185,21 +4120,14 @@ export default function AgentSessionWindowApp() {
     ...resolveAuxiliaryHeaderActionState({
       isActive: !!activeAuxiliarySession,
       isActionPending: isAuxiliaryActionPending,
-      isStartBlocked: isSelectedSessionRunning || isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable,
+      isStartBlocked: isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable,
       activeRunState: activeAuxiliarySession?.runState,
     }),
     onStart: handleOpenAuxiliaryLaunchDialog,
-    onReturnToMain: () => void handleReturnToMainSession(),
+    onReturnToMain: () => auxiliaryWorkspace.setTarget("main"),
   });
   const sessionHeaderActions = (
     <>
-      {messageCollapseTargets.length > 0 ? (
-        createMessageCollapseHeaderAction({
-          allMessagesCollapsed: messageCollapseTargets.every((target) => collapsedMessageKeys.has(target.key)),
-          onToggle: handleToggleAllMessageCollapse,
-          keyboardShortcuts: appSettings.keyboardShortcuts,
-        })
-      ) : null}
       {auxiliaryHeaderActions}
     </>
   );
@@ -4382,11 +4310,7 @@ export default function AgentSessionWindowApp() {
     />
   ) : undefined;
 
-  return (
-    <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
-      <>
-      <ChatWindow
-      {...buildAgentSessionChatWindowProps({
+  const chatWindowProps = buildAgentSessionChatWindowProps({
         mainContent: filePreviewContent,
         leftPane: fileExplorerPane,
         isFilesPaneVisible,
@@ -4624,18 +4548,19 @@ export default function AgentSessionWindowApp() {
         },
         onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
-        onDraftSelect: buildOnDraftSelectHandler({
-          setComposerCaret,
-          syncMainComposerCaret: !activeAuxiliarySession
-            ? (selectionStart) => {
-                mainComposerCaretRef.current = selectionStart;
-              }
-            : undefined,
-        }),
+        onDraftSelect: (selectionStart) => {
+          if (!activeRunSessionId) return;
+          const selectionEnd = composerTextareaRef.current?.selectionEnd ?? selectionStart;
+          composerState.setSelection({ start: selectionStart, end: selectionEnd });
+          if (!activeAuxiliarySession) mainComposerCaretRef.current = selectionStart;
+        },
         ...buildOnDraftCompositionHandlers({
           setComposerCaret,
-          setIsComposerImeComposing,
-          getSelectionStart: () => composerTextareaRef.current?.selectionStart,
+          setIsComposerImeComposing: (value) => {
+            if (composerOwnerRef.current === activeRunSessionId) setIsComposerImeComposing(value);
+          },
+          getSelectionStart: () => composerOwnerRef.current === activeRunSessionId
+            ? composerTextareaRef.current?.selectionStart : composerCaret,
           getFallbackSelectionStart: () => renderedDraft.length,
           syncMainComposerCaret: !activeAuxiliarySession
             ? (selectionStart) => {
@@ -4644,7 +4569,7 @@ export default function AgentSessionWindowApp() {
             : undefined,
         }),
         onSendOrCancel: buildAuxiliaryAwareSendOrCancelHandler({
-          shouldSendAuxiliary: !!activeAuxiliarySession,
+          shouldSendAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           isAuxiliarySessionRunning: activeAuxiliarySession?.runState === "running",
           isSelectedSessionRunning,
           preferAuxiliarySendOverSelectedCancel: true,
@@ -4654,32 +4579,32 @@ export default function AgentSessionWindowApp() {
           onSendSelectedSession: handleSend,
         }),
         onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["approvalMode"]>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: handleChangeAuxiliaryApproval,
           onSelectedSessionChange: handleChangeApproval,
         }),
         onChangeCodexSandboxMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["codexSandboxMode"]>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: handleChangeAuxiliarySandboxMode,
           onSelectedSessionChange: handleChangeCodexSandboxMode,
         }),
         onChangeCodexSpeed: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["codexSpeed"]>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: handleChangeAuxiliaryCodexSpeed,
           onSelectedSessionChange: handleChangeCodexSpeed,
         }),
         onChangeCodexReviewer: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["codexReviewer"]>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: handleChangeAuxiliaryCodexReviewer,
           onSelectedSessionChange: handleChangeCodexReviewer,
         }),
         onChangeModel: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: handleChangeAuxiliaryModel,
           onSelectedSessionChange: handleChangeModel,
         }),
         onChangeReasoningEffort: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: (value) => handleChangeAuxiliaryReasoningEffort(value as Session["reasoningEffort"]),
           onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as Session["reasoningEffort"]),
         }),
@@ -4690,6 +4615,7 @@ export default function AgentSessionWindowApp() {
         onToggleContextRailVisibility: handleToggleContextRailVisibility,
         onToggleFilesPaneVisibility: handleToggleFilesPaneVisibility,
         onCycleContextPaneTab: handleCycleContextPaneTab,
+        onSelectContextPaneTab: setActiveContextPaneTab,
         onOpenCompanionReview: (sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId),
         onCloseDiff: () => setSelectedDiff(null),
         onOpenDiffWindow: (payload) => void handleOpenDiffWindow(payload),
@@ -4697,7 +4623,59 @@ export default function AgentSessionWindowApp() {
         onLoadAuditLogDetail: handleLoadAuditLogDetail,
         onLoadAuditLogOperationDetail: handleLoadAuditLogOperationDetail,
         onCloseAuditLog: () => setAuditLogsOpen(false),
-      })}
+      });
+
+  return (
+    <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
+      <>
+      <ChatWindow
+        {...chatWindowProps}
+        rightPane={isAuxiliaryTargetUnavailable
+          ? <div className="concurrent-chat-state" role="status">{sessionExecutionBlockedReason}</div>
+          : chatWindowProps.rightPane}
+        headerProps={{
+          ...chatWindowProps.headerProps,
+          taskTitle: selectedSession.taskTitle,
+          isRunning: isSelectedSessionRunning,
+          isReadOnly: isSelectedSessionReadOnly,
+          showRenameButton: true,
+          showDeleteButton: true,
+        }}
+        concurrentChats={{
+          mainSession: selectedSession,
+          auxiliarySession: auxiliaryWorkspace.selectedSession ? selectedAuxiliaryRuntimeSession : null,
+          api: withmateApi ?? undefined,
+          main: {
+            ...chatWindowProps.messageColumnProps,
+            sessionId: selectedSession.id,
+            messages: selectedSession.messages,
+            onLoadArtifactDetail: (index) => withmateApi?.getSessionMessageArtifact(selectedSession.id, index) ?? Promise.resolve(null),
+            onOpenPath: (target) => handleOpenInlinePath(target, selectedSession.id),
+          },
+          auxiliary: auxiliaryWorkspace.selectedSession ? {
+            ...chatWindowProps.messageColumnProps,
+            sessionId: auxiliaryWorkspace.selectedSession.id,
+            messages: auxiliaryWorkspace.selectedSession.messages,
+            onLoadArtifactDetail: (index) => Promise.resolve(auxiliaryWorkspace.selectedSession?.messages[index]?.artifact ?? null),
+            onOpenPath: (target) => handleOpenInlinePath(target, auxiliaryWorkspace.selectedId),
+          } : null,
+          selectedAuxiliaryId: auxiliaryWorkspace.selectedId,
+          auxiliaryItems: auxiliaryWorkspace.summaries.map((summary) => ({
+            id: summary.id,
+            label: summary.preview ?? "新しい会話",
+            searchText: summary.preview ?? "新しい会話",
+            icon: <CharacterAvatar key={summary.id} character={{ name: "", iconPath: summary.characterIconPath ?? "" }} size="tiny" />,
+          })),
+          target: auxiliaryWorkspace.target,
+          isExpanded: auxiliaryWorkspace.isExpanded,
+          widthRatio: auxiliaryWorkspace.widthRatio,
+          onSelectAuxiliary: auxiliaryWorkspace.selectSession,
+          onTargetChange: handleChangeConversationTarget,
+          onCollapse: auxiliaryWorkspace.collapse,
+          onWidthRatioChange: auxiliaryWorkspace.setWidthRatio,
+          loading: auxiliaryWorkspace.loading || auxiliaryWorkspace.detailLoading,
+          error: auxiliaryWorkspace.detailError?.message ?? auxiliaryWorkspace.error?.message,
+        }}
       />
       <AuxiliaryLaunchProviderDialog
         open={auxiliaryLaunchDialogOpen}

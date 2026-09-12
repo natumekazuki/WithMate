@@ -26,7 +26,7 @@ import {
   buildLiveSessionComposerDockProps,
   resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
-import type { ChatWindowProps } from "./chat-window.js";
+import type { ChatWindowProps, ConcurrentChatWindowProps } from "./chat-window.js";
 import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js";
 import { buildLiveSessionHeaderProps } from "./chat-header-actions.js";
 import { COMPANION_PENDING_RUN_INDICATOR_TEXT } from "./pending-run-indicator.js";
@@ -202,6 +202,7 @@ export type CompanionChatProjectionInput = {
   onToggleActionDock: () => void;
   onToggleContextRailVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onSelectContextPaneTab?: SessionContextPaneProps["onSelectContextPaneTab"];
   onOpenCompanionReview: (sessionId: string) => void;
   onCloseDiff: () => void;
   onOpenDiffWindow: (payload: DiffPreviewPayload) => void;
@@ -211,6 +212,10 @@ export type CompanionChatProjectionInput = {
   onCloseAuditLog: () => void;
   headerActions?: ReactNode;
   isAuxiliaryMode?: boolean;
+  concurrentChats?: Omit<ConcurrentChatWindowProps, "main" | "auxiliary"> & {
+    auxiliarySession?: ConcurrentChatWindowProps["auxiliarySession"];
+    auxiliaryProps?: Partial<SessionMessageColumnProps>;
+  };
 };
 
 export function buildCompanionChatWindowProps(input: CompanionChatProjectionInput): ChatWindowProps {
@@ -389,6 +394,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
     contextEmptyText: "context usage はまだありません。",
     onCycleContextPaneTab: input.onCycleContextPaneTab,
+    onSelectContextPaneTab: input.onSelectContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,
   });
 
@@ -453,5 +459,13 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       </ChatSessionModals>
     ),
     isAuxiliaryMode: input.isAuxiliaryMode,
+    concurrentChats: input.concurrentChats ? {
+      ...input.concurrentChats,
+      main: chatBodyProps.messageColumnProps,
+      auxiliary: input.concurrentChats.auxiliarySession ? {
+        ...chatBodyProps.messageColumnProps,
+        ...input.concurrentChats.auxiliaryProps,
+      } : null,
+    } : undefined,
   });
 }

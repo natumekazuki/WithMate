@@ -219,6 +219,16 @@ test("SessionHeader はmessage collapse actionをAuxiliaryの左隣へ描画す�
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "作成不可のHeaderではNew Auxiliary操作がdisabledになる"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 新規追加" }
+// fault = "作成が許可されない状態でも追加ボタンが有効になる"
+// observable = "New Auxiliaryボタンのdisabled属性"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-header"
+// lifecycle = "permanent"
+// @end-test-value
 test("createAuxiliaryHeaderActions は idle 時の Auxiliary start action を描画する", () => {
   const html = renderToStaticMarkup(createAuxiliaryHeaderActions({
     isActive: false,
@@ -229,10 +239,20 @@ test("createAuxiliaryHeaderActions は idle 時の Auxiliary start action を描
 
   assert.match(html, /aria-label="Auxiliary session actions"/);
   assert.doesNotMatch(html, /session-window-control-group-label/);
-  assert.match(html, />Auxiliary<\/button>/);
+  assert.match(html, />New Auxiliary<\/button>/);
   assert.match(html, /disabled=""/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "既存AuxiliaryがあるHeaderでもNew Auxiliary操作を有効表示する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 新規追加" }
+// fault = "既存Auxiliaryがある状態で新規追加操作をdisabled表示する"
+// observable = "active HeaderのNew Auxiliary buttonの表示とdisabled属性"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-header"
+// lifecycle = "permanent"
+// @end-test-value
 test("createAuxiliaryHeaderActions は active 時の Return action を描画する", () => {
   const html = renderToStaticMarkup(createAuxiliaryHeaderActions({
     isActive: true,
@@ -242,10 +262,21 @@ test("createAuxiliaryHeaderActions は active 時の Return action を描画す�
   }));
 
   assert.match(html, /<span class="session-window-control-group-label">Auxiliary<\/span>/);
-  assert.match(html, />Return to main<\/button>/);
-  assert.match(html, /disabled=""/);
+  assert.match(html, />New Auxiliary<\/button>/);
+  assert.doesNotMatch(html, /disabled=""/);
 });
 
+
+// @test-value v2
+// kind = "contract"
+// claim = "Headerのgroup label表示設定を新規追加操作にも反映する"
+// oracle = { type = "contract", ref = "AuxiliaryHeaderActionsOptions.showIdleLabel" }
+// fault = "idle labelを要求したmodeで操作groupの識別表示が欠落する"
+// observable = "Auxiliary group labelとNew Auxiliaryボタンの出力"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-header"
+// lifecycle = "permanent"
+// @end-test-value
 test("createAuxiliaryHeaderActions は idle label を任意に表示する", () => {
   const html = renderToStaticMarkup(createAuxiliaryHeaderActions({
     isActive: false,
@@ -255,7 +286,7 @@ test("createAuxiliaryHeaderActions は idle label を任意に表示する", () 
   }));
 
   assert.match(html, /<span class="session-window-control-group-label">Auxiliary<\/span>/);
-  assert.match(html, />Auxiliary<\/button>/);
+  assert.match(html, />New Auxiliary<\/button>/);
 });
 
 test("resolveAuxiliaryHeaderActionState は start/return disabled state を解決する", () => {

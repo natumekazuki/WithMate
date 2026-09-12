@@ -297,6 +297,16 @@ describe("home-session-projection", () => {
     assert.equal(entries[0]?.groupLabel, "WithMate");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "開いているCompanionの同一Groupに属するSiblingをrepoRoot一致なしでMonitorへ含める"
+  // oracle = { type = "contract", ref = "companion-group-monitor" }
+  // fault = "Session workspaceだけを比較してSiblingをMonitorから欠落させる"
+  // observable = "buildCompanionGroupMonitorEntriesの返却Session ID一覧"
+  // observation_boundary = "declaration"
+  // scope = "home-companion-monitor"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Session workspace に依存せず open group の sibling を返す", () => {
     const entries = buildCompanionGroupMonitorEntries(
       [
@@ -304,7 +314,7 @@ describe("home-session-projection", () => {
           id: "opened",
           groupId: "companion-group-1",
           taskTitle: "Opened",
-          repoRoot: "F:/workspace/WithMate",
+          repoRoot: "F:/workspace/OtherSibling",
         }),
         createCompanionSession({
           id: "sibling",
@@ -323,5 +333,34 @@ describe("home-session-projection", () => {
     );
 
     assert.deepEqual(entries.map((entry) => entry.session.id), ["opened", "sibling"]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Home Monitorは同じ親に属する全Auxiliaryを保持し、どれか一件でも実行中なら親を実行中へ分類する"
+  // oracle = { type = "contract", ref = "issue-710 acceptance F: all auxiliary lifecycle aggregation" }
+  // fault = "親配下の最後に列挙されたAuxiliaryだけを残し、非表示の実行中会話を停止扱いにする"
+  // observable = "monitorEntries[0].auxiliarySessions と state.kind"
+  // observation_boundary = "declaration"
+  // scope = "home-session-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("同一親の複数AuxiliaryをMonitor集計へ保持する", () => {
+    const projection = buildHomeSessionProjection(
+      [createSession({ id: "parent", taskTitle: "Parent" })],
+      ["parent"],
+      "",
+      [],
+      [],
+      [
+        createAuxiliarySession({ id: "aux-a", parentSessionId: "parent", updatedAt: "2026-03-28T00:00:00.000Z" }),
+        createAuxiliarySession({ id: "aux-b", parentSessionId: "parent", runState: "running", updatedAt: "2026-03-29T00:00:00.000Z" }),
+      ],
+    );
+
+    const entry = projection.monitorEntries[0];
+    assert.equal(entry?.auxiliarySessions.length, 2);
+    assert.deepEqual(entry?.auxiliarySessions.map((auxiliary) => auxiliary.id), ["aux-a", "aux-b"]);
+    assert.equal(entry?.state.kind, "running");
   });
 });

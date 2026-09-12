@@ -121,30 +121,17 @@ export function createAuxiliaryHeaderActions({
   onStart,
   onReturnToMain,
 }: AuxiliaryHeaderActionsOptions) {
-  const shouldShowLabel = isActive || showIdleLabel;
-
   return (
     <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
-      {shouldShowLabel ? <span className="session-window-control-group-label">Auxiliary</span> : null}
-      {isActive ? (
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={onReturnToMain}
-          disabled={returnDisabled}
-        >
-          Return to main
-        </button>
-      ) : (
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={onStart}
-          disabled={startDisabled}
-        >
-          Auxiliary
-        </button>
-      )}
+      {(isActive || showIdleLabel) ? <span className="session-window-control-group-label">Auxiliary</span> : null}
+      <button
+        className="drawer-toggle compact secondary"
+        type="button"
+        onClick={onStart}
+        disabled={startDisabled}
+      >
+        New Auxiliary
+      </button>
     </div>
   );
 }

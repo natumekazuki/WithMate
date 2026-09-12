@@ -94,7 +94,10 @@ import type {
 } from "../src/prompt-template.js";
 import { resolveAuxiliaryParentSession } from "./auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "./auxiliary-session-service.js";
-import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
+import {
+  AuxiliarySessionStorage,
+  resolveLegacyAuxiliaryPreviewFromAuditEntries,
+} from "./auxiliary-session-storage.js";
 import { CharacterService } from "./character-service.js";
 import { CharacterStorage } from "./character-storage.js";
 import {
@@ -1298,10 +1301,11 @@ function isSessionRunInFlight(sessionId: string): boolean {
     return false;
   }
 
-  const activeAuxiliarySession = requireAuxiliarySessionService().getActiveAuxiliarySession(sessionId);
-  return activeAuxiliarySession
-    ? requireAuxiliarySessionRuntimeService().isRunInFlight(activeAuxiliarySession.id)
-    : false;
+  // A parent can own more than one Auxiliary.  Run guards and deletion must
+  // inspect every child instead of whichever row happens to be newest.
+  return requireAuxiliarySessionService()
+    .listAuxiliarySessions(sessionId)
+    .some((auxiliary) => requireAuxiliarySessionRuntimeService().isRunInFlight(auxiliary.id));
 }
 
 function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly string[]): Set<string> {
@@ -1311,8 +1315,10 @@ function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly s
   }
 
   for (const parentSessionId of parentSessionIds) {
-    const activeAuxiliarySession = requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId);
-    if (activeAuxiliarySession && requireAuxiliarySessionRuntimeService().isRunInFlight(activeAuxiliarySession.id)) {
+    const hasRunningAuxiliary = requireAuxiliarySessionService()
+      .listAuxiliarySessions(parentSessionId)
+      .some((auxiliary) => requireAuxiliarySessionRuntimeService().isRunInFlight(auxiliary.id));
+    if (hasRunningAuxiliary) {
       runningParentSessionIds.add(parentSessionId);
     }
   }
@@ -1416,7 +1422,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createSessionMemoryStorage: (nextDbPath) => new SessionMemoryStorage(nextDbPath),
           createProjectMemoryStorage: (nextDbPath) => new ProjectMemoryStorage(nextDbPath),
           createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
-          createAuxiliarySessionStorage: (nextDbPath) => new AuxiliarySessionStorage(nextDbPath),
+          createAuxiliarySessionStorage: (nextDbPath) => new AuxiliarySessionStorage(
+            nextDbPath,
+            (auxiliarySessionId) => {
+              const entries = auditLogStorage?.listSessionAuditLogs(auxiliarySessionId);
+              return entries && !(entries instanceof Promise)
+                ? resolveLegacyAuxiliaryPreviewFromAuditEntries(entries)
+                : null;
+            },
+          ),
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
           createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
           ensureV2Schema: (nextDbPath) => {
@@ -2071,6 +2085,10 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
       getParentSession: getAuxiliaryParentSession,
       getStorage: () => requireAuxiliarySessionStorage(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
+      listActiveCharacters: () => requireCharacterService().listCharacters(),
+      createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
+      runCharacterAffectTurnOwnershipExclusive: (operation) =>
+        characterAffectTurnOwnershipCoordinator.runExclusive(operation),
       resolveSessionLaunchSelection: (providerId) =>
         requireSessionLaunchSelectionService().resolve(providerId),
       runProviderRuntimeOperationExclusive: (operation) =>
@@ -2837,9 +2855,9 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
   if (!auxiliarySessionRuntimeService) {
     auxiliarySessionRuntimeService = new SessionRuntimeService({
       getSession: (sessionId) => requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId),
-      upsertSession: async (session) => {
+      upsertSession: async (session, options) => {
         const auxiliaryService = requireAuxiliarySessionService();
-        auxiliaryService.upsertAuxiliaryRuntimeSession(session);
+        auxiliaryService.upsertAuxiliaryRuntimeSession(session, options);
         const storedSession = await auxiliaryService.getAuxiliaryRuntimeSession(session.id);
         if (!storedSession) {
           throw new Error("Auxiliary Session の保存結果を読み戻せなかったよ。");
@@ -2873,6 +2891,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       endProviderAgentRuntimeTurn: (handle) =>
         glossaryRuntimeService.endProviderTurn(handle as import("./glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
       resetProviderSessionThread,
+      isAuxiliarySession: (sessionId) => Boolean(requireAuxiliarySessionService().getAuxiliarySession(sessionId)),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,

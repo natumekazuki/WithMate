@@ -426,6 +426,8 @@ export type UseSessionMessageListFollowingArgs = {
   scrollSignature: string;
   enabled?: boolean;
   bottomTolerance?: number;
+  savedScrollState?: { scrollTop: number; isFollowing: boolean } | null;
+  onScrollStateChange?: (state: { scrollTop: number; isFollowing: boolean }) => void;
 };
 
 export function useSessionMessageListFollowing({
@@ -433,7 +435,13 @@ export function useSessionMessageListFollowing({
   scrollSignature,
   enabled = true,
   bottomTolerance = SESSION_MESSAGE_BOTTOM_EPSILON,
+  savedScrollState,
+  onScrollStateChange,
 }: UseSessionMessageListFollowingArgs) {
+  const scrollStateChangeRef = useRef(onScrollStateChange);
+  scrollStateChangeRef.current = onScrollStateChange;
+  const savedScrollStateRef = useRef(savedScrollState);
+  savedScrollStateRef.current = savedScrollState;
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const messageListSignatureRef = useRef("");
   const messageListOwnerKeyRef = useRef<string | null>(null);
@@ -583,6 +591,18 @@ export function useSessionMessageListFollowing({
       return;
     }
 
+    const restored = savedScrollStateRef.current;
+    if ((!wasEnabled || !wasSameOwner) && restored) {
+      shouldFollowMessageListAfterSendRef.current = false;
+      messageListOwnerKeyRef.current = ownerKey;
+      messageListSignatureRef.current = currentSignature;
+      isMessageListFollowingRef.current = restored.isFollowing;
+      setIsMessageListFollowing(restored.isFollowing);
+      if (restored.isFollowing) scrollMessageListToBottom();
+      else messageListElement.scrollTop = restored.scrollTop;
+      return;
+    }
+
     if (!wasEnabled) {
       shouldFollowMessageListAfterSendRef.current = false;
       messageListOwnerKeyRef.current = ownerKey;
@@ -652,7 +672,15 @@ export function useSessionMessageListFollowing({
     }
     isMessageListFollowingRef.current = nextFollowing;
     setIsMessageListFollowing((current) => current === nextFollowing ? current : nextFollowing);
+    scrollStateChangeRef.current?.({ scrollTop: currentScrollTop, isFollowing: nextFollowing });
   }, [bottomTolerance]);
+
+  useLayoutEffect(() => {
+    const element = messageListRef.current;
+    if (enabled && element) {
+      scrollStateChangeRef.current?.({ scrollTop: element.scrollTop, isFollowing: isMessageListFollowingRef.current });
+    }
+  }, [enabled, ownerKey, isMessageListFollowing, scrollSignature]);
 
   const handleJumpToMessageListBottom = followMessageListLatest;
   const handleMessageListSend = useCallback((scrollToLatestOnSend: boolean) => {

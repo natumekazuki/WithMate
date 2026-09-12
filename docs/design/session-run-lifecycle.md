@@ -1,5 +1,9 @@
 # Session Run Lifecycle
 
+## Auxiliary Session (Issue #710)
+
+AuxiliaryのrunはMainや兄弟Auxiliaryと独立し、非表示でも継続・terminal保存する。新規追加・表示切り替え・折りたたみはProvider turnを開始せず、同一会話内の二重実行だけを拒否する。Window close、親削除、設定変更では親配下の全Auxiliary runを列挙して扱う。正常terminalで確定した最終assistant本文は、必要な場合に一覧preview projectionを更新する。
+
 - 作成日: 2026-03-14
 - 対象: 実行中 session の run / cancel / close / relaunch 制御
 

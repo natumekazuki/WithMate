@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   ChatDockSplitter,
+  ConcurrentChatSplitter,
   ChatAdditionalDirectoryList,
   ChatSkillPickerPanel,
   ChatWindow,
@@ -22,8 +23,51 @@ import {
   createStaticTextConversationMessageColumnProps,
 } from "../../src/chat/chat-window-adapter.js";
 import { SessionActionDockCompactRow, SessionChatScreen } from "../../src/session-components.js";
+import { SessionSwitcher } from "../../src/chat/session-switcher.js";
+import { createAuxiliaryHeaderActions } from "../../src/chat/chat-header-actions.js";
 
 const noop = () => {};
+
+// @test-value v2
+// kind = "contract"
+// claim = "既存Auxiliaryがあっても新規追加ボタンは終了処理を呼ばず追加処理を呼ぶ"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 新規追加" }
+// fault = "既存会話の終了制約を新規追加のdisabled条件に流用する"
+// observable = "active時のNew Auxiliaryクリック後の追加／終了callback呼出し"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-header"
+// lifecycle = "permanent"
+// @end-test-value
+test("createAuxiliaryHeaderActions は active 時も新規追加を呼ぶ", async () => {
+  const dom = new JSDOM("<div id='root'></div>");
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window },
+    document: { configurable: true, value: dom.window.document },
+  });
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  const calls: string[] = [];
+  try {
+    await act(async () => root.render(createAuxiliaryHeaderActions({
+      isActive: true, returnDisabled: true,
+      onStart: () => calls.push("start"), onReturnToMain: () => calls.push("return"),
+    })));
+    const button = [...container.querySelectorAll("button")].find((entry) => entry.textContent === "New Auxiliary");
+    assert.ok(button);
+    assert.equal(button.disabled, false);
+    await act(async () => button.click());
+    assert.deepEqual(calls, ["start"]);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    Object.defineProperties(globalThis, {
+      window: { configurable: true, value: previousWindow },
+      document: { configurable: true, value: previousDocument },
+    });
+  }
+});
 
 function createChatWindowProps(
   overrides: Partial<ChatWindowProps["messageColumnProps"]> = {},
@@ -886,6 +930,16 @@ test("SessionChatScreen は dock 優先を layout class へ投影する", () => 
   assert.match(html, /layout-priority-dock/);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Compact ActionDock は通常時の通知を維持しつつ不要な下書き表示を出さない"
+// oracle = { type = "contract", ref = "chat-action-dock" }
+// fault = "通常通知が消えるか、非送信状態に下書き表示を誤って出す"
+// observable = "Compact ActionDockのrender済みHTML"
+// observation_boundary = "component-behavior"
+// scope = "chat-action-dock"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionActionDockCompactRow は通常時の chat notice を下書き表示なしで維持する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
@@ -902,4 +956,303 @@ test("SessionActionDockCompactRow は通常時の chat notice を下書き表示
   assert.match(html, /session-action-dock-compact-badge attention/);
   assert.match(html, />New messages<\/span>/);
   assert.doesNotMatch(html, /Draft|下書きなし|>Send<\/button>/);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Concurrent chat shell は Main/Auxiliary の操作対象、非対象overlay、Auxiliary一覧、独立splitterを同じWindowへ投影する"
+// oracle = { type = "contract", ref = "issue-710-ui-shell" }
+// fault = "Auxiliaryを表示しても対象切替や折りたたみ導線がActionDockと中央列へ接続されない"
+// observable = "renderされた操作対象ボタン、overlay、一覧trigger、splitterのARIA属性と会話列"
+// observation_boundary = "component-behavior"
+// scope = "concurrent-chat-shell"
+// lifecycle = "permanent"
+// @end-test-value
+test("ChatWindow は concurrent chat shell の操作対象と切り替え導線を描画する", () => {
+  const props = createChatWindowProps();
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, {
+    ...props,
+    concurrentChats: {
+      main: props.messageColumnProps,
+      auxiliary: props.messageColumnProps,
+      selectedAuxiliaryId: "aux-b",
+      auxiliaryItems: [
+        { id: "aux-a", label: "A", preview: "first preview", icon: "✦" },
+        { id: "aux-b", label: "B", preview: "second preview", icon: "✧" },
+      ],
+      target: "auxiliary",
+      isExpanded: true,
+      widthRatio: 0.45,
+      onSelectAuxiliary() {},
+      onTargetChange() {},
+      onCollapse() {},
+      onWidthRatioChange() {},
+    },
+  }));
+
+  assert.match(html, /操作対象チャット/);
+  assert.match(html, />Main<\/button>/);
+  assert.match(html, />Auxiliary<\/button>/);
+  assert.match(html, /concurrent-chat-target-overlay/);
+  assert.match(html, /Auxiliary会話切り替え/);
+  assert.match(html, /session-auxiliary-chat-pane/);
+  assert.match(html, /aria-controls="session-auxiliary-chat-pane"/);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryの読み込みエラー中もsummary switcherを保持し、Main targetから別Auxiliaryを選択できる"
+// oracle = { type = "contract", ref = "issue-710-auxiliary-switcher-error" }
+// fault = "Auxiliary detail errorがswitcherを消してしまい、Main表示中に別のAuxiliaryへ切り替えられない"
+// observable = "switcher trigger、error region、Main target buttonのrender済みDOM"
+// observation_boundary = "component-behavior"
+// scope = "concurrent-chat-shell"
+// lifecycle = "permanent"
+// @end-test-value
+test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する", async () => {
+  const props = createChatWindowProps();
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const previousResizeObserver = globalThis.ResizeObserver;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { configurable: true, value() {} });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  let root: Root | null = null;
+  const selected: string[] = [];
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(ChatWindow, {
+        ...props,
+        concurrentChats: {
+          main: props.messageColumnProps,
+          auxiliary: null,
+          selectedAuxiliaryId: "aux-a",
+          auxiliaryItems: [
+            { id: "aux-a", label: "A", preview: "first" },
+            { id: "aux-b", label: "B", preview: "second" },
+          ],
+          target: "main",
+          isExpanded: true,
+          widthRatio: 0.5,
+          error: "Auxiliary detail failed",
+          onSelectAuxiliary: (id) => selected.push(id),
+          onTargetChange() {},
+          onCollapse() {},
+          onWidthRatioChange() {},
+        },
+      }));
+    });
+
+    assert.ok(dom.window.document.querySelector("[aria-label='Auxiliary会話切り替え']"));
+    assert.match(dom.window.document.body.textContent ?? "", /Auxiliary detail failed/);
+    assert.ok([...dom.window.document.querySelectorAll<HTMLButtonElement>(".concurrent-chat-target-dock button")]
+      .some((button) => button.textContent === "Main"));
+    assert.equal(dom.window.document.querySelector(".concurrent-chat-state")?.textContent, "Auxiliary detail failed");
+    const trigger = dom.window.document.querySelector<HTMLButtonElement>(".session-switcher-current");
+    assert.ok(trigger);
+    await act(async () => trigger.click());
+    const optionB = [...dom.window.document.querySelectorAll<HTMLButtonElement>("[role='option']")]
+      .find((option) => option.textContent?.includes("B"));
+    assert.ok(optionB);
+    await act(async () => optionB.click());
+    assert.deepEqual(selected, ["aux-b"]);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
+    Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Concurrent splitter のドラッグは幅変更だけを行い、移動後のpointerupをAuxiliary折りたたみクリックへ誤変換しない"
+// oracle = { type = "contract", ref = "issue-710-ui-shell" }
+// fault = "splitterをドラッグして幅を変えた直後にAuxiliaryが折りたたまれる"
+// observable = "onWidthRatioChangeの値とonCollapseの呼び出し回数"
+// observation_boundary = "component-behavior"
+// scope = "concurrent-chat-shell"
+// lifecycle = "permanent"
+// @end-test-value
+test("ConcurrentChatSplitter は drag と collapse click を分離する", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "setPointerCapture", { configurable: true, value() {} });
+  let root: Root | null = null;
+  let collapseCount = 0;
+  const ratios: number[] = [];
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement("div", { style: { width: "1000px" } }, React.createElement(ConcurrentChatSplitter, {
+        isExpanded: true,
+        onCollapse: () => { collapseCount += 1; },
+        onWidthRatioChange: (ratio: number) => ratios.push(ratio),
+      })));
+    });
+    const splitter = dom.window.document.querySelector<HTMLButtonElement>(".concurrent-chat-splitter");
+    assert.ok(splitter);
+    Object.defineProperty(splitter.parentElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ width: 1000, height: 300, top: 0, left: 0, right: 1000, bottom: 300 }),
+    });
+    const pointerEvent = (type: string, clientX: number) => {
+      const event = new dom.window.Event(type, { bubbles: true });
+      Object.defineProperties(event, {
+        button: { value: 0 },
+        clientX: { value: clientX },
+        pointerId: { value: 1 },
+      });
+      return event;
+    };
+    await act(async () => {
+      splitter.dispatchEvent(pointerEvent("pointerdown", 500));
+      dom.window.dispatchEvent(pointerEvent("pointermove", 600));
+      dom.window.dispatchEvent(pointerEvent("pointerup", 600));
+      splitter.click();
+    });
+    assert.ok(ratios.length > 0);
+    assert.equal(collapseCount, 0);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "共通switcherは中央triggerから検索一覧を開き、検索中の矢印・IME入力を壊さず、候補確定・outside click・Escape後のfocus復帰を扱う"
+// oracle = { type = "contract", ref = "issue-710-switcher" }
+// fault = "検索中のArrowDownで候補を飛ばす、IMEのEscapeで一覧を閉じる、候補を選べない、または閉じた後にtriggerへfocusが戻らない"
+// observable = "候補一覧、選択callback、popoverの表示状態、document.activeElement"
+// observation_boundary = "component-behavior"
+// scope = "session-switcher"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const previousEvent = globalThis.Event;
+  const previousInputEvent = globalThis.InputEvent;
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div><div id=\"outside\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "Event", { configurable: true, value: dom.window.Event });
+  Object.defineProperty(globalThis, "InputEvent", { configurable: true, value: dom.window.InputEvent });
+  Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  let root: Root | null = null;
+  const selected: string[] = [];
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(SessionSwitcher, {
+        ariaLabel: "Auxiliary会話切り替え",
+        options: [
+          { id: "a", label: "Alpha", preview: "first" },
+          { id: "b", label: "Beta", preview: "second" },
+        ],
+        selectedId: "a",
+        searchable: true,
+        onMove() {},
+        onSelect: (id: string) => selected.push(id),
+      }));
+    });
+    const trigger = dom.window.document.querySelector<HTMLButtonElement>(".session-switcher-current");
+    assert.ok(trigger);
+    await act(async () => trigger.click());
+    const search = dom.window.document.querySelector<HTMLInputElement>(".session-switcher-search");
+    assert.ok(search);
+    assert.equal(dom.window.document.querySelectorAll('[role="option"]').length, 2);
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(search, "beta");
+      (search as HTMLInputElement & { _valueTracker?: { setValue(value: string): void } })._valueTracker?.setValue("");
+      search.dispatchEvent(new dom.window.InputEvent("input", { bubbles: true, inputType: "insertText", data: "beta" }));
+      search.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    });
+    const filteredOptions = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    assert.equal(filteredOptions.length, 1);
+    assert.equal(filteredOptions[0]?.querySelector(".session-switcher-option-label")?.textContent, "Beta");
+    await act(async () => search.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+    assert.equal(dom.window.document.activeElement, dom.window.document.querySelector('[role="option"]'));
+    await act(async () => trigger.click());
+    await act(async () => trigger.click());
+    await act(async () => dom.window.document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, isComposing: true })));
+    assert.ok(dom.window.document.querySelector('[role="listbox"]'));
+    await act(async () => dom.window.document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
+    await act(async () => trigger.click());
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[role="option"][aria-selected="false"]')?.click());
+    assert.deepEqual(selected, ["b"]);
+    assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
+    await act(async () => trigger.click());
+    await act(async () => dom.window.document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
+    assert.equal(dom.window.document.activeElement, trigger);
+    await act(async () => trigger.click());
+    await act(async () => dom.window.document.getElementById("outside")?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true })));
+    assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "Event", { configurable: true, value: previousEvent });
+    Object.defineProperty(globalThis, "InputEvent", { configurable: true, value: previousInputEvent });
+    Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
+  }
 });

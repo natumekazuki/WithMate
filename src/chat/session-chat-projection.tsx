@@ -225,6 +225,7 @@ export type AgentSessionChatProjectionInput = {
   onToggleContextRailVisibility: () => void;
   onToggleFilesPaneVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onSelectContextPaneTab?: SessionContextPaneProps["onSelectContextPaneTab"];
   onOpenCompanionReview: (sessionId: string) => void;
   onCloseDiff: () => void;
   onOpenDiffWindow: (payload: DiffPreviewPayload) => void;
@@ -429,6 +430,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     glossaryPaneProps: input.glossaryPaneProps,
     onJumpToMessage: input.onJumpToMessage,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
+    onSelectContextPaneTab: input.onSelectContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,
   });
 

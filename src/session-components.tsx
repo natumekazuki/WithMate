@@ -52,6 +52,7 @@ import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
 import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
 import { resolveSelectionActionOverlayPosition } from "./chat/selection-action-overlay.js";
+import { SessionSwitcher, type SessionSwitcherOption } from "./chat/session-switcher.js";
 import {
   isMessageRenderedSearchTextNode,
   projectMessageRenderedSearchText,
@@ -871,6 +872,11 @@ export type SessionChatScreenProps = {
   headerSplitter: ReactNode;
   isHeaderVisible: boolean;
   messageColumn: ReactNode;
+  auxiliaryMessageColumn?: ReactNode;
+  auxiliarySplitter?: ReactNode;
+  isAuxiliaryVisible?: boolean;
+  auxiliaryWidthRatio?: number;
+  concurrentTarget?: "main" | "auxiliary";
   mainContent?: ReactNode;
   workSurfaceOverlay?: ReactNode;
   supportingSurface?: ReactNode;
@@ -918,6 +924,11 @@ export function SessionChatScreen({
   headerSplitter,
   isHeaderVisible,
   messageColumn,
+  auxiliaryMessageColumn = null,
+  auxiliarySplitter = null,
+  isAuxiliaryVisible = false,
+  auxiliaryWidthRatio = 0.5,
+  concurrentTarget = "main",
   mainContent,
   workSurfaceOverlay = null,
   supportingSurface = null,
@@ -986,8 +997,21 @@ export function SessionChatScreen({
 
       {leftSplitter}
       <section className="chat-panel session-work-surface session-message-stack rise-3">
-        <div className="session-central-surface" hidden={mainContent !== undefined}>
-          {messageColumn}
+        <div
+          className={`session-central-surface${isAuxiliaryVisible ? ` has-concurrent-chats concurrent-target-${concurrentTarget}` : ""}`}
+          style={isAuxiliaryVisible ? { "--auxiliary-width-ratio": auxiliaryWidthRatio } as CSSProperties : undefined}
+          hidden={mainContent !== undefined}
+        >
+          {isAuxiliaryVisible ? (
+            <div
+              className="session-concurrent-chat-columns"
+              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0.1, 1 - auxiliaryWidthRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0.1, auxiliaryWidthRatio)}fr)` }}
+            >
+              <div className="session-concurrent-chat-column session-concurrent-chat-main">{messageColumn}</div>
+              {auxiliarySplitter}
+              <div className="session-concurrent-chat-column session-concurrent-chat-auxiliary">{auxiliaryMessageColumn}</div>
+            </div>
+          ) : messageColumn}
         </div>
         <div className="session-central-surface" hidden={mainContent === undefined}>
           {mainContent}
@@ -1651,6 +1675,7 @@ export type SessionContextPaneProps = {
   messageNavigatorCharacter?: CharacterProfile;
   glossaryPaneProps?: SessionGlossaryPaneProps;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onSelectContextPaneTab?: (tab: ContextPaneTabKey) => void;
   onJumpToMessage?: (key: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
 };
@@ -1772,6 +1797,7 @@ export function SessionContextPane({
   messageNavigatorCharacter,
   glossaryPaneProps,
   onCycleContextPaneTab,
+  onSelectContextPaneTab,
   onJumpToMessage,
   onOpenCompanionReview,
 }: SessionContextPaneProps) {
@@ -1779,8 +1805,6 @@ export function SessionContextPane({
   const messageNavigatorButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [messageNavigatorFocusIndex, setMessageNavigatorFocusIndex] = useState(0);
   const taskEntries = backgroundTasks ?? [];
-  const availableTabCount = availableContextPaneTabs.length;
-  const canCycleContextPaneTab = availableTabCount > 1;
   const glossaryContentSignature = [
     glossaryPaneProps?.projection?.scopeRevision ?? "",
     glossaryPaneProps?.projection?.state.revision ?? "",
@@ -1930,31 +1954,16 @@ export function SessionContextPane({
     <aside className="session-context-pane session-context-pane-header-expanded">
       <section className={`command-monitor-shell ${activeContextPaneTab}`} aria-label="右ペイン">
         <div className="command-monitor-head">
-          <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
-            <button
-              type="button"
-              className="command-monitor-switcher-button"
-              onClick={() => onCycleContextPaneTab(-1)}
-              disabled={!canCycleContextPaneTab}
-              aria-label="前の表示へ切り替え"
-            >
-              ‹
-            </button>
-            <div className={`command-monitor-switcher-current ${contextPaneProjection.toneClassName}`}>
-              <span className="command-monitor-switcher-label">
-                {contextPaneTabLabel(activeContextPaneTab)}
-              </span>
-            </div>
-            <button
-              type="button"
-              className="command-monitor-switcher-button"
-              onClick={() => onCycleContextPaneTab(1)}
-              disabled={!canCycleContextPaneTab}
-              aria-label="次の表示へ切り替え"
-            >
-              ›
-            </button>
-          </div>
+          <SessionSwitcher
+            ariaLabel="右ペイン表示切り替え"
+            options={availableContextPaneTabs.map((tab): SessionSwitcherOption => ({
+              id: tab,
+              label: contextPaneTabLabel(tab),
+            }))}
+            selectedId={activeContextPaneTab}
+            onMove={onCycleContextPaneTab}
+            onSelect={(tab) => onSelectContextPaneTab?.(tab as ContextPaneTabKey)}
+          />
         </div>
 
         <div ref={contentRef} className="command-monitor-content">

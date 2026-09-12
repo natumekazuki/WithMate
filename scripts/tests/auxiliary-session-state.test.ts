@@ -15,6 +15,7 @@ import {
   buildAuxiliaryDraftSaveRequest,
   buildEditableActiveAuxiliarySessionPatch,
   buildAuxiliarySessionRunningTransition,
+  buildAuxiliaryPreview,
   buildRunningAuxiliarySessionTurn,
   loadClosedAuxiliarySessionDetails,
   removeAuxiliarySessionAdditionalDirectory,
@@ -26,6 +27,8 @@ import {
   resolveClosedAuxiliarySessionsAfterReturn,
   resolveClosedAuxiliarySessionsLoadResult,
   resolveEditableActiveAuxiliarySession,
+  resolveAuxiliaryPreview,
+  normalizeAuxiliarySession,
   type AuxiliarySession,
 } from "../../src/auxiliary-session-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
@@ -74,6 +77,138 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
     ...overrides,
   };
 }
+
+// @test-value v2
+// kind = "invariant"
+// claim = "渡された確定assistant応答だけをMarkdown平文化し、previewをUnicode上限内へ投影する"
+// oracle = { type = "contract", ref = "issue-710-preview-final-response" }
+// fault = "中間／tool／失敗メッセージを確定応答として扱うか、Markdown記号や長文をそのまま一覧previewへ採用する"
+// observable = "buildAuxiliaryPreviewの返却文字列"
+// observation_boundary = "declaration"
+// scope = "auxiliary-preview"
+// lifecycle = "permanent"
+// @end-test-value
+test("buildAuxiliaryPreview は確定応答の冒頭をMarkdown平文化して使う", () => {
+  assert.equal(
+    buildAuxiliaryPreview([
+      { role: "user", text: "調べて" },
+      { role: "assistant", text: "途中のログ", accent: true },
+      { role: "assistant", text: "別の本文" },
+    ], "**設定の問題**は `config_file.ts` です。\n続き。"),
+    "設定の問題は config_file.ts です。 続き。",
+  );
+  const longUnicode = `🌙${"猫屋敷美紅".repeat(80)}`;
+  const limited = buildAuxiliaryPreview([{ role: "assistant", text: longUnicode }], longUnicode);
+  assert.equal(Array.from(limited).length, 240);
+  assert.equal(limited.startsWith("🌙猫屋敷美紅"), true);
+  assert.equal(buildAuxiliaryPreview([], "`__private_id__` と `a > b * 2`\n\n```ts\nconst _id = ~mask;\n```"), "__private_id__ と a > b * 2 const _id = ~mask;");
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "confirmed finalがないpreviewはassistant joinを採用せず最新user本文へ限定する"
+// oracle = { type = "contract", ref = "issue-710-preview-legacy-safe-fallback" }
+// fault = "旧Auxiliaryのassistant中間block結合値を最終応答として一覧へ表示する"
+// observable = "buildAuxiliaryPreviewの返却文字列"
+// observation_boundary = "declaration"
+// scope = "auxiliary-preview"
+// lifecycle = "permanent"
+// @end-test-value
+test("buildAuxiliaryPreview はconfirmed finalなしではuser previewへ戻す", () => {
+  assert.equal(
+    buildAuxiliaryPreview([
+      { role: "user", text: "元の依頼" },
+      { role: "assistant", text: "中間A" },
+      { role: "assistant", text: "中間B" },
+      { role: "user", text: "追加の依頼" },
+    ]),
+    "追加の依頼",
+  );
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "新しい確定応答がないstreaming／失敗では保存済みpreviewを維持する"
+// oracle = { type = "contract", ref = "issue-710-preview-stability" }
+// fault = "未確定の失敗通知やstreaming途中の本文で前回previewを巻き戻す"
+// observable = "resolveAuxiliaryPreviewの返却文字列"
+// observation_boundary = "declaration"
+// scope = "auxiliary-preview"
+// lifecycle = "permanent"
+// @end-test-value
+test("resolveAuxiliaryPreview は応答なしの失敗やstreamingで前回値を保つ", () => {
+  assert.equal(
+    resolveAuxiliaryPreview([
+      { role: "user", text: "次の依頼" },
+      { role: "assistant", text: "失敗しました", accent: true },
+    ], "前回の確定応答"),
+    "前回の確定応答",
+  );
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "normalizeAuxiliarySessionは不正な新形式Character snapshotを旧形式の欠落として扱わない"
+// oracle = { type = "contract", ref = "issue-710-character-snapshot-identity" }
+// fault = "不正snapshotをlegacy欠落として正規化し、後段のidentity検査を迂回する"
+// observable = "normalizeAuxiliarySessionのcharacterRuntimeSnapshotInvalid"
+// observation_boundary = "declaration"
+// scope = "auxiliary-session-state-normalization"
+// lifecycle = "permanent"
+// @end-test-value
+test("normalizeAuxiliarySession は不正な新形式snapshotを識別する", () => {
+  const session = normalizeAuxiliarySession({
+    id: "aux-invalid",
+    parentSessionId: "session-1",
+    characterRuntimeSnapshot: { characterId: "char-1", definitionMarkdown: 42 },
+  });
+  assert.equal(session?.characterRuntimeSnapshotInvalid, true);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "新形式AuxiliaryのcharacterIdとsnapshot.characterIdの不一致・片欠けはlegacy fallbackへ変換しない"
+// oracle = { type = "contract", ref = "issue-710 Character identity consistency" }
+// fault = "別Characterのsnapshotを親Characterへ黙って差し替える"
+// observable = "normalizeAuxiliarySessionのcharacterRuntimeSnapshotInvalid"
+// observation_boundary = "declaration"
+// scope = "auxiliary-character-migration"
+// lifecycle = "permanent"
+// @end-test-value
+test("normalizeAuxiliarySession は新形式Character identityの不一致と片欠けを識別する", () => {
+  const snapshot = {
+    characterId: "char-snapshot",
+    name: "Character",
+    description: "",
+    iconFilePath: "",
+    theme: { main: "#6f8cff", sub: "#6fb8c7" },
+    definitionMarkdown: "# Character",
+    definitionSha256: "sha",
+    definitionByteSize: 11,
+    snapshotAt: "2026-08-01T00:00:00.000Z",
+  };
+  const mismatch = normalizeAuxiliarySession({
+    id: "aux-mismatch",
+    parentSessionId: "session-1",
+    characterId: "char-other",
+    characterRuntimeSnapshot: snapshot,
+  });
+  const missingId = normalizeAuxiliarySession({
+    id: "aux-missing-id",
+    parentSessionId: "session-1",
+    characterRuntimeSnapshot: snapshot,
+  });
+  const missingSnapshot = normalizeAuxiliarySession({
+    id: "aux-legacy",
+    parentSessionId: "session-1",
+    characterId: "char-legacy",
+  });
+
+  assert.equal(mismatch?.characterRuntimeSnapshotInvalid, true);
+  assert.equal(missingId?.characterRuntimeSnapshotInvalid, true);
+  assert.equal(missingSnapshot?.characterRuntimeSnapshotInvalid, true);
+  assert.equal(normalizeAuxiliarySession({ id: "aux-legacy", parentSessionId: "session-1" })?.characterRuntimeSnapshotInvalid, false);
+});
 
 test("applyAuxiliarySessionPatch は指定 field と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession();

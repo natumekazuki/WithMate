@@ -1,282 +1,83 @@
 # Auxiliary Session
 
-- 作成日: 2026-05-24
-- 対象: Session Window 内で使う補助チャットと response 引用操作
+- 更新日: 2026-09-12
+- 対象: Main Sessionに紐づく複数の補助会話、保存、runtime identity、一覧投影
 
 ## Goal
 
-ユーザーがメイン Session の作業文脈を保ったまま、別の短い会話で調査、レビュー、検証、相談を行えるようにする。
-Auxiliary Session は provider context としてはメイン Session の transcript へ混ぜない。
-一方で UI 上はメイン Session のメッセージ欄に Auxiliary 枠として表示し、終了後も同じメッセージ欄から結果を見返せるようにする。
-必要な結果は Copy / Quote でメイン composer に持ち込む。
+AuxiliaryはMainと同じWindowで利用する独立した会話である。Main 1件とAuxiliary複数件を保持し、画面にはMainと選択中のAuxiliaryを表示する。非表示のAuxiliaryも会話、draft、Character、実行状態を保持し、後から同じ会話を継続できる。
 
-## Position
-
-- Auxiliary Session は用途固定の Review 機能ではなく、Session Window に紐づく汎用の補助セッションである。
-- UI は既存の Session Window / chat layout を使い、別 window や専用 review layout は作らない。
-- メイン Session の実行環境は引き継ぐが、会話履歴と live run state は分離する。
-- 元 Session を削除した場合、紐づく Auxiliary Session も削除する。
-- Window 構成の上位責務は `docs/design/window-architecture.md` を参照する。
-- 実行中 session の close / continuation 方針は `docs/design/session-run-lifecycle.md` を参照する。
-- Session local files の暗黙許可は `docs/design/session-local-files.md` を参照する。
+Auxiliaryは監査専用ではなく、通常のprovider chat/coding sessionとして扱う。Main・兄弟Auxiliaryとのtranscript、provider context、Memoryを自動同期しない。
 
 ## Scope
 
-- Session Header から Auxiliary Session を開始する導線。
-- Session Window 内でメイン Session を一時停止し、Auxiliary Session を表示する UI mode。
-- Auxiliary 用 ActionDock と composer。
-- Auxiliary transcript の保存とメイン Session message column 内での read-only 表示。
-- assistant response の共通 Copy / Quote action。
-- メイン Session と Auxiliary Session の context 継承境界。
+- Headerからの新規Auxiliary追加（既存会話を終了、置換、削除しない）。
+- 作成順の一覧、stable Session IDによる選択、左右矢印による前後移動。
+- Main左／選択Auxiliary右の共通chat shellと共有ActionDock。
+- Auxiliaryごとの会話、draft、runtime option、Character ID／snapshot、provider threadの保存。
+- 非AIの一覧preview。直近turnで確定した最終assistant応答ブロックの冒頭を機械的に平文化する。
 
 ## Out Of Scope
 
-- Codex / Copilot の専用 review command 統合。
-- Review 専用 prompt preset。
-- Auxiliary Session の resume / continue 機能。
-- Auxiliary 単体の独立削除 UI。
-- メイン Session と Auxiliary Session の同時操作。
-- raw Markdown の部分選択範囲抽出。
+- Auxiliary専用Window、横並びの多数tab、常設AUX rail。
+- 監査preset、固定reviewer role、handoff、自動結果転送、shared source競合管理。
+- AI要約、自動命名、preview用provider実行、AI backfill。
+- Auxiliary単独の削除／archive UI、手動Character picker、会話途中のCharacter変更。
 
 ## Runtime Model
 
-Auxiliary Session は parent Session に紐づく補助 conversation として保存する。
-同時に active にできる Auxiliary Session は parent Session ごとに 1 つまでとする。
-
-```mermaid
-stateDiagram-v2
-    [*] --> None
-    None --> Active: New auxiliary session
-    Active --> Closed: Return to main
-    Closed --> Active: New auxiliary session
-    Closed --> [*]: Parent session delete
-    Active --> [*]: Parent session delete
-```
-
-`Closed` はメイン Session の message column に read-only の Auxiliary 枠として表示し続ける。
-Closed Auxiliary を選択する History / 再開導線は持たない。
-続けたい場合は常に新しい Auxiliary Session を作る。
-
-Window を閉じて開き直した時点で `Active` の Auxiliary Session が残っている場合は、未終了状態の復元として Auxiliary mode のまま表示する。
-これは closed Auxiliary の resume 機能とは分けて扱う。
-
-## UI Flow
-
-### Normal Session
-
-Session Header に `Auxiliary` action を置く。
-
 ```text
-[Session title] ... [Auxiliary]
+Main ────────────────┐
+Auxiliary A/B/C ...  ├─ 同時実行可能。表示するAuxiliaryは1件
+Shared ActionDock ──┘
 ```
 
-`Auxiliary` button は新しい Auxiliary Session を開始する。
+「選択中」「継続利用可能」「実行中」は別状態である。新規追加、切り替え、turn完了で他会話をclosedにしない。Main送信中でもAuxiliaryを追加でき、非表示Auxiliaryのrunも継続する。
 
-### Button Placement
+既存の`closed`行は保存された会話として一覧・継続対象に含める。継続時は同じID、thread、messages、draft、Character identityを使い、勝手に新規turnを開始しない。親削除時は親配下の全Auxiliaryをruntime停止・保存削除の対象にする。
 
-追加するボタンは既存の Session Window の control group に合わせる。
+## Character identity
 
-- Session Header の `Auxiliary` button は、`workspaceActions` / `sessionFilesActions` の後、`Rename` / `Audit Log` / `Delete` の前に置く。
-- 実装上は `SessionHeader` の `actions` slot を使い、Workspace や Session Files の group には混ぜない。
-- `Auxiliary` button は parent Session に紐づく補助会話の入口であり、workspace 操作でも session files 操作でもないためである。
-- Active Auxiliary 中は同じ位置に `Return to main` を表示し、メイン送信はできない。
-- Auxiliary 実行中は `Return to main` を無効にし、必要ならまず `Cancel` で実行を止める。
-- `Return to main` は Session Header の通常操作群ではなく、Auxiliary 枠 header または Auxiliary ActionDock に置く。
-- response の `Copy` / `Quote` は ActionDock ではなく、assistant response 内の選択範囲に対する selection action として扱う。
+新規AuxiliaryはMain Processでactive Character候補からMainのstable Character IDを除外してweighted random選択する。他Auxiliaryと同じCharacterは許容する。候補が0件、snapshot生成失敗、catalog競合の場合は作成を失敗させ、Main／neutralへfallbackしない。
 
-response action は assistant response ごとの固定機能ではなく、ユーザーが assistant response text を選択したときだけ表示する。
-未選択時に message card 内へ常設しない。
-`Copy` / `Quote` の対象は選択範囲のみとし、response 全体を暗黙の fallback 対象にはしない。
-右クリックメニューは初期実装の主導線にしない。
+作成時に`characterId`と`CharacterRuntimeSnapshot`を保存し、provider prompt、表示、一覧icon、Memory owner、binding解決で同じidentityを使う。catalog編集・archive後も既存snapshotを再生成しない。snapshotがない旧形式行だけは親の保存済みidentityを互換fallbackに使い、不正な新形式snapshotは親へ差し替えず明示的に失敗させる。
 
-### Active Auxiliary
+## UI flow
 
-Auxiliary 使用中はメイン Session の操作を停止し、同じ Session Window の chat area に Auxiliary 枠を表示する。
-ActionDock も Auxiliary composer に置き換える。
-Home の Session Monitor では、open な親 Session に active Auxiliary が紐づいて実行中の場合、親 Session の monitor state を `実行中` として扱う。
+新規追加はHeaderの`New Auxiliary`から行う。作成中でも既存Auxiliaryの会話、draft、実行状態を変更しない。同じclientRequestIdの再送は同じ保存行を返し、明示的に別IDを発行した追加は別会話になる。
 
-```text
-──────────────── Auxiliary ────────────────
-Main session paused
+Companion modeは新規Auxiliary作成とprovider実行を退役させている。既存の保存済みAuxiliaryがある場合に限り、一覧の閲覧と切り替えを許可する。
 
-user ...
-assistant ...
+Auxiliary中央には、キャラiconと内容previewを持つ前後切替を置く。中央表示名のクリック、Enter、Spaceで一覧を開き、確定選択時だけ切り替える。一覧行はiconと会話内容previewだけを表示し、Character名、番号、provider、日時、status badgeを情報列として追加しない。preview検索は保存済みpreview文字列だけを対象にする。
 
-──────────────────────────────────────────
+折りたたみ時はAuxiliaryと内部スプリッターを完全に隠し、ActionDock対象をMainへ戻す。会話、draft、Character、runは保持する。非対象チャットのoverlayは装飾のみで、本文選択、Copy、リンク、switcher操作を遮らない。
 
-ActionDock: Auxiliary composer
-```
+## Context boundary
 
-上記の線は実体テキストではなく、CSS の border / label として描画する。
-transcript には UI ornament を保存しない。
+初期値としてworkspace/cwd、parentのsession files、作成時点のAdditional Directory許可、provider、model、reasoning、approval、sandbox、custom agentを受け継ぐ。作成後のMain／兄弟変更は追従しない。Auxiliaryで追加した許可は他会話へ伝播しない。
 
-Active Auxiliary で提供する主要操作は次の通り。
-
-- response ごとの `Copy`
-- response ごとの `Quote`
-- `Return to main`
-
-`Return to main` は Auxiliary を削除しない。
-Auxiliary を `Closed` にしてメイン Session 表示へ戻す。
-
-## Visual Design
-
-Auxiliary 枠は通常 chat と混ざらないことを優先し、過度な警告色や説明文は使わない。
-
-- 薄い border。
-- 通常 surface と少し違う背景色。
-- 上端の小さな `Auxiliary` label。
-- Closed Auxiliary transcript は message column 内で session ごとの色付き group 枠として表示する。
-- Active Auxiliary 中は ActionDock 内に `Auxiliary` badge を表示し、work surface 上へ label を重ねない。
-- Active / Closed の文字列は通常表示しない。状態差は枠と ActionDock badge で表す。
-- `Return to main` は ActionDock 側に置く。
-
-`---------- Auxiliary ----------` のような構造は視覚表現としては採用できるが、実体文字列ではなく CSS で表現する。
-
-## Context Inheritance
-
-Auxiliary Session は「同じ作業場にいる別会話」として扱う。
-そのため実行環境の文脈は引き継ぎ、会話状態は分離する。
-
-### Inherited
-
-- workspace / cwd。
-- parent Session で AddDirectory 済みの追加ディレクトリ。
-- session files directory。
-- provider の選択。
-- model / reasoning effort / approval mode / sandbox mode / custom agent の初期値。Session Window から開始する場合は、renderer から選択 provider と最新値を使う意図だけを送り、Main Process が認証済みの window 種別を確認して通常 Session storage の provider 別最新一件を直接取得する。Session Window からの explicit selection と runtime option の直接指定は拒否する。取得または検証に失敗した場合は作成を中止し、renderer の Session summary 一覧へ fallback しない。Companion から同じ provider で開始する場合は、現在の Companion の選択値を使う。approval mode / sandbox mode が未指定なら安全側の既定値を使い、値が存在する場合は現行 enum との完全一致を要求して不正値を拒否する。詳細は ADR 007 を参照する。
-- provider instruction / `AGENTS.md` などの runtime context。
-- path attachment の許可境界。
-- app settings と表示設定。
-
-### Isolated
-
-- メイン Session の messages。
-- メイン Session の composer draft。
-- live run state。
-- approval / elicitation の pending state。
-- latest command / reasoning / tasks の表示状態。
-- audit / progress UI の現在表示。
-
-Audit Log は表示中の mode に関係なく、親 Session に紐づく実行 log を開く。
-Auxiliary mode の audit log も親 Session の audit log に含め、親 Session id を owner として取得する。
-個々の Auxiliary 実行 log は保存上 Auxiliary Session id を持つが、Audit Log 画面では親 Session 配下の log として表示する。
-
-Auxiliary 作成時に parent の AddDirectory 状態を snapshot として引き継ぐ。
-Auxiliary 使用中に AddDirectory した場合は Auxiliary にだけ追加し、parent へは自動反映しない。
-必要なら将来、明示的な `Add to main session` 操作を検討する。
-
-Session files directory は parent Session の managed directory を共有する。
-これは Session local files が parent Session の作業用領域であり、Auxiliary から同じ `@path` reference を扱える方が自然なためである。
-
-## Response Actions
-
-`Copy` と `Quote` は Auxiliary 専用ではなく、assistant response に対する共通機能として実装する。
-Agent Session、Auxiliary、Companion、MateTalk など、共通 message column を使う画面では同じ action として扱う。
-
-### Copy
-
-- response 全体の場合は provider から返った raw Markdown / text を clipboard に入れる。
-- 選択範囲が同じ response 内にある場合は selected plain text を clipboard に入れる。
-
-### Quote
-
-- response 全体の場合は raw Markdown / text の各行に Markdown blockquote prefix を付け、現在の画面の writable composer に挿入する。
-- 選択範囲が同じ response 内にある場合は selected plain text を blockquote 化して現在の画面の writable composer に挿入する。
-- Active Auxiliary 中は Auxiliary composer の caret 位置へ挿入し、`Return to main` 後は通常 composer の caret 位置へ挿入する。
-- Auxiliary 由来であることを prompt 本文に特別な label として入れない。
-
-例:
-
-```markdown
-> 引用した内容
-> 複数行なら各行に `>` を付ける
-```
-
-raw Markdown の部分選択範囲を復元する処理は初期実装では行わない。
-rendered DOM と raw Markdown の位置対応が code fence、link、list、table、改行で複雑になるためである。
+MainとAuxiliaryはmessages、composer draft、live run、pending approval／elicitation、provider thread、実行結果を分離する。Mainのmessage listへAuxiliary全文を自動挿入せず、必要な引用は既存のCopy／Quote操作でユーザーが明示する。
 
 ## Persistence
 
-Auxiliary transcript は自動保存する。
-保存済み transcript はメイン Session message column に Auxiliary 枠として投影する。
-ただし、provider へ渡すメイン Session messages には自動追加しない。
+`auxiliary_sessions`は少なくとも次をpayloadへ保存する。
 
-保存する情報:
+- `id`, `parentSessionId`, `status`, `createdAt`, `updatedAt`, `closedAt`
+- provider / model / runtime option / allowed additional directories
+- `threadId`, `messages`, `composerDraft`, `displayAfterMessageIndex`
+- `characterId`, `characterRuntimeSnapshot`, `characterIconPath`
+- `preview`, `clientRequestId`
 
-- parent session id。
-- auxiliary session id。
-- status: `active` / `closed`。
-- provider / model / runtime options。
-- inherited context snapshot。
-- messages。
-- composer draft。
-- displayAfterMessageIndex。
-- createdAt / updatedAt。
+一覧用の`summary_json`はpayloadの派生projectionであり、messages、draft、Character定義本文を含めない。upsert時にpayloadと同時更新し、既存行は初回migrationで一度だけ補完する。Auxiliary一覧、active一覧、running一覧はsummary列だけを読み、全transcriptや定義本文を毎回走査しない。会話本文の取得とruntime復元だけがpayloadを読む。
 
-parent Session 削除時は紐づく Auxiliary Session も cascade cleanup する。
-Auxiliary 単体の明示削除 UI は初期実装では持たない。
+Auxiliaryは作成順（`createdAt ASC, id ASC`）で並べる。実行、draft、preview更新で順序を変えない。選択状態はindexではなくstable IDで保持する。
 
-## Database Version Impact
+## Preview contract
 
-Auxiliary 自体は V6 runtime DB の schema table として扱う。
-Auxiliary transcript は `withmate-v6.db` の `auxiliary_sessions` に保存する。
-この table は V6 foundation schema の一部として初期化し、V4 以前 / invalid DB path では legacy no-op storage を使う。
+previewはProvider呼び出しを行わず、確定した最終assistant応答ブロックの冒頭をMarkdown平文化し、空白を整理して長さを制限する。コード識別子、Unicode、表示本文を不必要に壊さない。streaming中、cancel、errorで新しい確定応答がない場合は前回値を保持する。
 
-理由:
+初回確定応答前は送信済みuser発言の冒頭、未送信は`新しい会話`を使う。draftはpreviewに使わない。一覧では最大2行、中央切替では同じ値を1行省略表示する。
 
-- Auxiliary は既存 parent Session に従属する補助データだが、V6 runtime では保存と audit log の参照先として schema に含める。
-- parent Session transcript へ混ぜないため、既存 `sessions` / message payload の責務は変えない。
-- `parent_session_id` で紐づけ、parent Session 削除時は service 側から同時削除する。
-- V2 / V3 / invalid named DB では table 作成を行わず、legacy 読み取りや migration diagnostics に影響させない。
-- active 復元と message column 内の closed transcript 表示に必要な情報は payload JSON で完結するため、初期実装では normalized message table までは不要である。
+## Validation boundary
 
-保存 table:
-
-- `auxiliary_sessions`
-  - `id`
-  - `parent_session_id`
-  - `status`: `active` / `closed`
-  - `created_at`
-  - `updated_at`
-  - `payload_json`
-
-`created_at` / `updated_at` は `database-schema.md` の共通 column convention に従う。
-`payload_json` には provider / model / runtime options、AddDirectory snapshot、thread id、composer draft、messages、displayAfterMessageIndex、createdAt / updatedAt / closedAt を保存する。
-
-Auxiliary Session の turn context は `session_turns_v6` に保存する。
-`sessions_v6` の行ではないため、`session_turns_v6.session_id` には入れず、`session_turns_v6.auxiliary_session_id` で `auxiliary_sessions.id` を参照する。
-turn detail は `session_turn_provider_outputs_v6` / `session_turn_interims_v6` へぶら下げ、旧 `audit_events_v6` は migration source としてだけ扱う。
-通常 Session の audit log は従来通り `session_id` で `sessions_v6.id` を参照する。
-AuditLog 読み取り API は親 Session id で、`session_id` が一致する log と、`auxiliary_sessions.parent_session_id` 経由で紐づく `auxiliary_session_id` の log を同じ一覧に含める。
-Auxiliary Session id を直接渡した場合は、その Auxiliary 自身の log を取得できる。
-
-`displayAfterMessageIndex` は Auxiliary 作成時点の parent Session message index を保存する。
-message column へ投影するときは、Auxiliary transcript をこの index の直後へ差し込む。
-同じ index に複数の Auxiliary がある場合は `created_at` 昇順で並べる。
-既存 payload などで `displayAfterMessageIndex` がない場合は、`created_at` 昇順で末尾に fallback 表示する。
-
-将来、Auxiliary transcript の検索、message 単位の pagination、artifact の遅延読み込みが必要になった場合は、次期 schema version で `auxiliary_messages` などへ正規化する。
-その段階では user_version 変更、diagnostics、migration を含めて扱う。
-
-## Provider Integration
-
-Provider SDK の review 専用 API は前提にしない。
-Auxiliary Session は通常の provider chat / coding session と同じ入力経路で prompt を送る。
-
-Codex / Copilot の review 的な用途も、自然言語 prompt と必要な context を送るだけに留める。
-結果の採用、修正、メイン Session への持ち込みは Copy / Quote でユーザーが明示する。
-
-## Validation
-
-- Auxiliary を開始すると Session Window 内で Auxiliary 枠と Auxiliary ActionDock に切り替わる。
-- Auxiliary 使用中はメイン Session に送信できない。
-- `Return to main` で Auxiliary が Closed になり、メイン Session 表示へ戻る。
-- Closed Auxiliary はメイン Session の message column 内に read-only 枠として残る。
-- Window を閉じて開き直しても Active Auxiliary は復元される。
-- parent Session 削除で Auxiliary も削除される。
-- parent の AddDirectory と session files directory が Auxiliary の attachment / provider runtime に渡る。
-- Auxiliary 内の AddDirectory は parent に自動反映されない。
-- response 全体の Copy は raw Markdown / text を clipboard に入れる。
-- selected text が response 内にある場合、Copy / Quote は selected plain text を対象にする。
-- Quote は Markdown blockquote として対象画面の composer に挿入される。
+実装で確認する対象は、複数Auxiliaryの保存・追加・切り替え、Main除外Character抽選、snapshot固定、同時run、親削除時の全会話cleanup、summary列の再読込、preview更新競合である。Electron GUI、Provider実機、cross-provider並行実行の未実施確認は、実施済みとして扱わない。

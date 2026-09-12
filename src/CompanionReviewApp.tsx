@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
   type KeyboardEventHandler,
   type PointerEvent as ReactPointerEvent,
+  type SetStateAction,
 } from "react";
 
 import {
@@ -39,15 +40,7 @@ import {
   runAuxiliaryReasoningEffortChangeOperation,
   runAuxiliarySandboxModeChangeOperation,
 } from "./auxiliary-runtime-option-operation.js";
-import {
-  clearAuxiliarySessionsLoadState,
-  createAuxiliaryLoadRevisionGuard,
-  runActiveAuxiliarySessionLoadAndApply,
-  runActiveAuxiliarySessionRefreshAndApply,
-  runClosedAuxiliarySessionsLoadAndApply,
-} from "./auxiliary-session-refresh-operation.js";
 import type {
-  ComposerPreview,
   DiffPreviewPayload,
   LiveApprovalRequest,
   LiveElicitationRequest,
@@ -61,7 +54,6 @@ import type { CompanionMergeRunSummary, CompanionSession, CompanionSessionSummar
 import { createCompanionSessionSummary } from "./companion-state.js";
 import {
   COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE,
-  shouldShowRetiredCompanionAuxiliaryHeaderActions,
 } from "./companion-retirement.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import {
@@ -102,19 +94,7 @@ import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/cha
 import { resolveSkillDiscoveryRequest } from "./skill-discovery-request.js";
 import { applySessionDocumentTitle, resolveCompanionDocumentTitle } from "./chat/window-title.js";
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
-import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
-import {
-  createAuxiliaryHeaderActions,
-  resolveAuxiliaryHeaderActionState,
-} from "./chat/chat-header-actions.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
-import {
-  beginAuxiliarySessionStartOperation,
-  createActiveAuxiliarySessionStartResultApplier,
-  createAuxiliarySessionStartErrorHandler,
-  finishAuxiliarySessionStartClosedLoadWithApi,
-  runAuxiliarySessionStartOperation,
-} from "./auxiliary-session-start-operation.js";
 import {
   createAuxiliarySessionPendingLiveRunClearer,
   createAuxiliarySessionRunningApplier,
@@ -150,14 +130,6 @@ import {
   shouldFocusComposerForActionDockExpand,
 } from "./action-dock-state.js";
 import {
-  buildAuxiliaryLaunchProviderItems,
-  createAuxiliaryLaunchDialogCloseHandler,
-  createAuxiliaryLaunchDialogOpenHandler,
-  createAuxiliaryLaunchProviderSelectHandler,
-  resolveAuxiliaryLaunchSessionDefaults,
-  resolveAuxiliaryLaunchStartProvider,
-} from "./chat/auxiliary-launch-state.js";
-import {
   buildAuxiliaryAwareSendOrCancelHandler,
   buildAuxiliarySessionCancelTarget,
   buildRunningSessionCancelTarget,
@@ -166,7 +138,6 @@ import {
   runRunningSessionCancelOperation,
 } from "./chat/send-or-cancel.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
-import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
@@ -238,16 +209,16 @@ import {
   useMessageListAuxiliarySessions,
 } from "./auxiliary-render-projections.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
-import { fileKindLabel } from "./ui-utils.js";
+import { CharacterAvatar, fileKindLabel } from "./ui-utils.js";
 import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
+import { useAuxiliaryWorkspace } from "./chat/use-auxiliary-workspace.js";
+import { useConversationComposerState } from "./chat/use-conversation-composer-state.js";
 import {
   applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
   buildOnDraftCompositionHandlers,
-  buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
 import {
-  createEmptyComposerPreview,
   resolveComposerPreviewDisplay,
 } from "./composer-preview-config.js";
 import {
@@ -261,15 +232,11 @@ import {
 import {
   createGuardedActiveAuxiliarySessionUpdater,
   enqueueAuxiliarySessionSaveWithQueue,
-  syncActiveAuxiliarySessionRef,
 } from "./auxiliary-session-update-operation.js";
 import {
   runAddAuxiliaryAdditionalDirectoryOperationWithApi,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
-import {
-  runGuardedAuxiliarySessionReturnToMainOperationWithApi,
-} from "./auxiliary-session-return-operation.js";
 import {
   applyComposerSubmitCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -465,7 +432,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [turnRunning, setTurnRunning] = useState(false);
   const [composerText, setComposerText] = useState("");
   const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] = useState(false);
-  const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
@@ -519,7 +485,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [isMergePaneResizing, setIsMergePaneResizing] = useState(false);
   const [isMergeStagePaneResizing, setIsMergeStagePaneResizing] = useState(false);
   const [collapsedMergeTreeDirectories, setCollapsedMergeTreeDirectories] = useState<Set<string>>(() => new Set());
-  const [composerCaret, setComposerCaret] = useState(0);
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
   const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
@@ -531,25 +496,21 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
-  const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
-  const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
+  const auxiliaryWorkspace = useAuxiliaryWorkspace({
+    parentSessionId: snapshot?.session.id ?? null,
+    api: withmateApi,
+  });
+  const isAuxiliaryTarget = auxiliaryWorkspace.target === "auxiliary";
+  const isAuxiliaryDetailLoading = isAuxiliaryTarget && auxiliaryWorkspace.detailLoading;
+  const activeAuxiliarySession = auxiliaryWorkspace.target === "auxiliary"
+    ? auxiliaryWorkspace.selectedSession
+    : null;
+  const auxiliaryBinding = auxiliaryWorkspace.getBinding(auxiliaryWorkspace.selectedId);
+  const setActiveAuxiliarySession = auxiliaryBinding.setSession;
   const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
-  const {
-    auxiliaryLaunchDialogOpen,
-    auxiliaryLaunchProviderId,
-    auxiliaryLaunchFeedback,
-    openAuxiliaryLaunchDialog,
-    closeAuxiliaryLaunchDialog,
-    selectAuxiliaryLaunchProvider,
-    resetAuxiliaryLaunchFeedback,
-    setAuxiliaryLaunchStartError,
-  } = useAuxiliaryLaunchDialogState();
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
-  const [liveRunState, setLiveRunState] = useState<OwnedLiveSessionRunState>({
-    ownerSessionId: null,
-    state: null,
-  });
+  const [liveRunStates, setLiveRunStates] = useState<Record<string, OwnedLiveSessionRunState>>({});
   const [liveAssistantBridge, setLiveAssistantBridge] = useState<LiveAssistantProjection | null>(null);
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] =
     useState<ProviderOwnedQuotaTelemetry>({ ownerProviderId: null, telemetry: null });
@@ -557,11 +518,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     useState<SessionOwnedContextTelemetry>({ ownerSessionId: null, telemetry: null });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const activeAuxiliarySessionRef = useRef<AuxiliarySession | null>(null);
-  const auxiliarySessionMutationRevisionRef = useRef(0);
-  const auxiliaryDraftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const auxiliarySessionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const auxiliaryLoadRevisionRef = useRef(0);
+  const activeAuxiliarySessionRef = auxiliaryBinding.sessionRef;
+  const auxiliarySessionMutationRevisionRef = auxiliaryBinding.mutationRevision;
+  const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
+  const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
   const mergeDiffLayoutRef = useRef<HTMLDivElement | null>(null);
   const mergeFileSelectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -620,66 +580,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setComposerCaret,
       nextCaret: 0,
     });
-    setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(snapshot?.session.worktreePath ?? "");
     setIsComposerImeComposing(false);
     setIsRetryDraftReplacePending(false);
   }, [snapshot?.session.id]);
-
-  useEffect(() => {
-    syncActiveAuxiliarySessionRef({
-      activeSession: activeAuxiliarySession,
-      activeSessionRef: activeAuxiliarySessionRef,
-    });
-  }, [activeAuxiliarySession]);
-
-  useEffect(() => {
-    setComposerPreview((current) => (
-      current.attachments.length === 0 && current.errors.length === 0
-        ? current
-        : createEmptyComposerPreview()
-    ));
-  }, [activeAuxiliarySession?.composerDraft, composerText]);
-
-  useEffect(() => {
-    let active = true;
-    const loadRevision = auxiliaryLoadRevisionRef.current + 1;
-    auxiliaryLoadRevisionRef.current = loadRevision;
-    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
-      loadRevision: auxiliaryLoadRevisionRef,
-      expectedRevision: loadRevision,
-      isActive: () => active,
-    });
-    const sessionId = snapshot?.session.id ?? null;
-    if (!withmateApi || !sessionId || isMergeView) {
-      clearAuxiliarySessionsLoadState({
-        setActiveSession: setActiveAuxiliarySession,
-        setClosedSessions: setClosedAuxiliarySessions,
-      });
-      return () => {
-        active = false;
-      };
-    }
-
-    void runActiveAuxiliarySessionLoadAndApply({
-      parentSessionId: sessionId,
-      getActiveAuxiliarySession: (parentSessionId) => withmateApi.getActiveAuxiliarySession(parentSessionId),
-      isActive: canApplyLoadResult,
-      setActiveSession: setActiveAuxiliarySession,
-    });
-
-    void runClosedAuxiliarySessionsLoadAndApply({
-      parentSessionId: sessionId,
-      listAuxiliarySessions: (parentSessionId) => withmateApi.listAuxiliarySessions(parentSessionId),
-      getAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
-      isActive: canApplyLoadResult,
-      setClosedSessions: setClosedAuxiliarySessions,
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [isMergeView, snapshot?.session.id, withmateApi]);
 
   useEffect(() => {
     const withmateApi = getWithMateApi();
@@ -728,44 +632,87 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }, [withmateApi]);
 
-  const activeRunSessionId = activeAuxiliarySession?.id ?? snapshot?.session.id ?? null;
+  const activeRunSessionId = auxiliaryWorkspace.target === "auxiliary"
+    ? auxiliaryWorkspace.selectedId
+    : snapshot?.session.id ?? null;
+  const composerOwnerRef = useRef<string | null>(null);
+  composerOwnerRef.current = activeRunSessionId;
+  const setLiveRunState = useCallback((update: SetStateAction<OwnedLiveSessionRunState>) => {
+    if (!activeRunSessionId) return;
+    setLiveRunStates((current) => ({
+      ...current,
+      [activeRunSessionId]: typeof update === "function"
+        ? update(current[activeRunSessionId] ?? { ownerSessionId: activeRunSessionId, state: null })
+        : update,
+    }));
+  }, [activeRunSessionId]);
   const displayedSession = useCompanionAuxiliaryRuntimeSession(
     snapshot?.session ?? null,
     activeAuxiliarySession,
   );
-  const isAuxiliaryMode = activeAuxiliarySession?.status === "active";
-  const activeComposerText = activeAuxiliarySession?.composerDraft ?? composerText;
-  const selectedSessionLiveRun =
-    activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null;
-  const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
-  const projectedAuxiliarySessions = useMessageListAuxiliarySessions(
-    closedAuxiliarySessions,
-    activeAuxiliarySession,
+  const selectedAuxiliaryRuntimeSession = useCompanionAuxiliaryRuntimeSession(
+    snapshot?.session ?? null,
+    auxiliaryWorkspace.selectedSession,
   );
+  const auxiliaryDisplayedSession = auxiliaryWorkspace.selectedSession ? selectedAuxiliaryRuntimeSession : null;
+  const isAuxiliaryMode = isAuxiliaryTarget && !!activeAuxiliarySession;
+  const activeComposerText = auxiliaryWorkspace.target === "auxiliary"
+    ? activeAuxiliarySession?.composerDraft ?? ""
+    : composerText;
+  const composerState = useConversationComposerState(activeRunSessionId, activeComposerText);
+  const composerPreview = composerState.preview;
+  const setComposerPreview = composerState.setPreview;
+  const composerCaret = composerState.selection.start;
+  const setComposerCaret = useCallback((caret: SetStateAction<number>) => {
+    composerState.setSelection((current) => {
+      const next = typeof caret === "function" ? caret(current.start) : caret;
+      return { start: next, end: next };
+    });
+  }, [composerState]);
+  useLayoutEffect(() => {
+    const textarea = composerTextareaRef.current;
+    if (!textarea) return;
+    textarea.setSelectionRange(composerState.selection.start, composerState.selection.end);
+    setIsComposerImeComposing(false);
+  }, [activeRunSessionId]);
+  const selectedSessionLiveRun =
+    activeRunSessionId !== null ? liveRunStates[activeRunSessionId]?.state ?? null : null;
+  const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
+  useEffect(() => {
+    if (!withmateApi || !activeRunSessionId || isMergeView) {
+      return;
+    }
+    return startLiveSessionRunSubscription({
+      sessionId: activeRunSessionId,
+      api: withmateApi,
+      applyLiveRunState: setLiveRunState,
+    });
+  }, [activeRunSessionId, isMergeView, setLiveRunState, withmateApi]);
+  const projectedAuxiliarySessions = useMessageListAuxiliarySessions([], null);
   const liveAssistantMessageIndex = useMemo(
     () =>
       activeRunSessionId
         ? resolveLiveAssistantMessageIndex(
-          snapshot?.session.messages ?? [],
+          displayedSession?.messages ?? [],
           projectedAuxiliarySessions,
           activeRunSessionId,
-          snapshot?.session.id,
+          activeRunSessionId ?? undefined,
           liveRunAssistantText,
         )
         : 0,
-    [activeRunSessionId, liveRunAssistantText, projectedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
+    [activeRunSessionId, liveRunAssistantText, projectedAuxiliarySessions, activeRunSessionId, displayedSession?.messages],
   );
   const hasPersistedLiveAssistantBridge = useMemo(
     () =>
       liveAssistantBridge
         ? hasPersistedLiveAssistantMessage(
-          snapshot?.session.messages ?? [],
+          displayedSession?.messages ?? [],
           projectedAuxiliarySessions,
           liveAssistantBridge,
-          snapshot?.session.id,
+          activeRunSessionId ?? undefined,
         )
         : false,
-    [liveAssistantBridge, projectedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
+    [liveAssistantBridge, projectedAuxiliarySessions, activeRunSessionId, displayedSession?.messages],
   );
   const isLiveAssistantBridgeSettling = selectedSessionLiveRun === null && !hasPersistedLiveAssistantBridge;
   const projectedLiveAssistant = useMemo<LiveAssistantProjection | null>(() => {
@@ -808,10 +755,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     selectedSessionLiveRun?.threadId,
   ]);
   const messageListProjection = useMemo(
-    () => buildMessageListProjection(snapshot?.session.messages ?? [], projectedAuxiliarySessions, snapshot?.session.id, {
+    () => buildMessageListProjection(displayedSession?.messages ?? [], projectedAuxiliarySessions, activeRunSessionId ?? undefined, {
       liveAssistant: projectedLiveAssistant,
     }),
-    [projectedAuxiliarySessions, projectedLiveAssistant, snapshot?.session.id, snapshot?.session.messages],
+    [projectedAuxiliarySessions, projectedLiveAssistant, activeRunSessionId, displayedSession?.messages],
   );
   const messageListMessages = messageListProjection.messages;
   const messageListSources = messageListProjection.sources;
@@ -902,45 +849,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       }
     };
   }, [hasPersistedLiveAssistantBridge, liveAssistantBridge]);
-
-  useEffect(() => {
-    let active = true;
-    const withmateApi = getWithMateApi();
-    const sessionId = activeRunSessionId;
-    const activeAuxiliarySessionId = activeAuxiliarySession?.id ?? null;
-    const refreshCompletedAuxiliarySession = (updatedSessionId: string) => {
-      if (!withmateApi) {
-        return;
-      }
-
-      void runActiveAuxiliarySessionRefreshAndApply({
-        sessionId: updatedSessionId,
-        activeSessionId: activeAuxiliarySessionId,
-        loadAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
-        isActive: () => active,
-        setActiveSession: setActiveAuxiliarySession,
-        activeSessionRef: activeAuxiliarySessionRef,
-      }).catch(() => undefined);
-    };
-    if (!withmateApi || !sessionId || isMergeView) {
-      setLiveRunState({ ownerSessionId: sessionId, state: null });
-      return () => {
-        active = false;
-      };
-    }
-
-    const unsubscribe = startLiveSessionRunSubscription({
-      sessionId,
-      api: withmateApi,
-      applyLiveRunState: setLiveRunState,
-      onSessionRunUpdated: refreshCompletedAuxiliarySession,
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [activeAuxiliarySession?.id, activeRunSessionId, isMergeView]);
 
   useEffect(() => {
     if (!isMergePaneResizing) {
@@ -1284,13 +1192,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     selectedProviderCatalog?.models[0] ??
     null;
   const reasoningEffortOptions = selectedModelEntry?.reasoningEfforts ?? [];
-  const auxiliaryLaunchProviderItems = useMemo(
-    () => buildAuxiliaryLaunchProviderItems(
-      modelCatalog?.providers ?? [],
-      (provider) => provider.models.length > 0,
-    ),
-    [modelCatalog],
-  );
   const {
     approvalChoiceOptions: approvalSelectOptions,
     sandboxChoiceOptions: sandboxSelectOptions,
@@ -1322,7 +1223,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       selectedRuntimeCodexReviewer,
     ],
   );
-  const companionComposerBlockedReason = COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE;
+  const companionComposerBlockedReason = isAuxiliaryDetailLoading
+    ? "Auxiliary Session を読み込み中だよ。"
+    : (auxiliaryWorkspace.error || auxiliaryWorkspace.detailError) && isAuxiliaryTarget
+      ? `Auxiliary Session の読み込みに失敗したよ: ${(auxiliaryWorkspace.detailError ?? auxiliaryWorkspace.error)?.message}`
+      : COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE;
   const retryBanner = useMemo<RetryBannerState | null>(() => {
     if (!snapshot || !shouldShowRetryBanner({
       hasActiveAuxiliarySession: !!activeAuxiliarySession,
@@ -2025,112 +1930,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     })(recipe);
   }
 
-  const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
-    canOpen: () => false,
-    providers: auxiliaryLaunchProviderItems,
-    getSelectedProviderId: () => snapshot?.session.provider,
-    openAuxiliaryLaunchDialog,
-  });
-
-  const handleCloseAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogCloseHandler({
-    canClose: () => !isAuxiliaryActionPending,
-    closeAuxiliaryLaunchDialog,
-  });
-
-  const handleSelectAuxiliaryLaunchProvider = createAuxiliaryLaunchProviderSelectHandler({
-    selectAuxiliaryLaunchProvider,
-  });
-
-  async function handleStartAuxiliarySession(): Promise<void> {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !snapshot || isAuxiliaryActionPending) {
-      return;
-    }
-    const setAuxiliaryStartError = createAuxiliarySessionStartErrorHandler({
-      setLaunchStartError: setAuxiliaryLaunchStartError,
-    });
-    const startProvider = resolveAuxiliaryLaunchStartProvider({
-      providerId: auxiliaryLaunchProviderId,
-      blockedFeedback: operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active"
-        ? "Companion が操作中のため Auxiliary Session を開始できないよ。"
-        : null,
-    });
-    if (startProvider.status === "blocked") {
-      setAuxiliaryStartError(startProvider.error);
-      return;
-    }
-    const launchProviderId = startProvider.providerId;
-
-    const loadRevision = beginAuxiliarySessionStartOperation({
-      loadRevision: auxiliaryLoadRevisionRef,
-      resetLaunchFeedback: resetAuxiliaryLaunchFeedback,
-      setActionPending: setIsAuxiliaryActionPending,
-    });
-    const parentSessionId = snapshot.session.id;
-    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
-      loadRevision: auxiliaryLoadRevisionRef,
-      expectedRevision: loadRevision,
-    });
-    try {
-      const launchDefaults = resolveAuxiliaryLaunchSessionDefaults({
-        providerId: launchProviderId,
-        defaultsProviderId: snapshot.session.provider,
-        defaults: {
-          model: selectedModel,
-          reasoningEffort: selectedReasoningEffort,
-          approvalMode: selectedApprovalMode,
-          codexSandboxMode: selectedCodexSandboxMode,
-          codexSpeed: selectedCodexSpeed,
-          customAgentName: snapshot.session.customAgentName,
-        },
-      });
-      await runAuxiliarySessionStartOperation({
-        parentSessionId,
-        provider: launchProviderId,
-        defaults: launchDefaults,
-        createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
-        applyStartedSession: createActiveAuxiliarySessionStartResultApplier({
-          mutationRevision: auxiliarySessionMutationRevisionRef,
-          activeSessionRef: activeAuxiliarySessionRef,
-          setActiveSession: setActiveAuxiliarySession,
-          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-          setForceComposerBlockedFeedback,
-          closeLaunchDialog: closeAuxiliaryLaunchDialog,
-        }),
-      });
-    } catch (error) {
-      setAuxiliaryStartError(error);
-    } finally {
-      finishAuxiliarySessionStartClosedLoadWithApi({
-        parentSessionId,
-        api: withmateApi,
-        isActive: canApplyLoadResult,
-        setClosedSessions: setClosedAuxiliarySessions,
-        setActionPending: setIsAuxiliaryActionPending,
-      });
-    }
-  }
-
-  async function handleReturnToMainSession(): Promise<void> {
-    const withmateApi = getWithMateApi();
-    await runGuardedAuxiliarySessionReturnToMainOperationWithApi({
-      api: withmateApi,
-      activeSession: activeAuxiliarySession,
-      isActionPending: isAuxiliaryActionPending,
-      alertError: (message) => window.alert(message),
-      setActionPending: setIsAuxiliaryActionPending,
-      loadRevision: auxiliaryLoadRevisionRef,
-      setClosedSessions: setClosedAuxiliarySessions,
-      mutationRevision: auxiliarySessionMutationRevisionRef,
-      activeSessionRef: activeAuxiliarySessionRef,
-      setActiveSession: setActiveAuxiliarySession,
-      mainDraft: composerText,
-      mainCaret: composerCaret,
-      setComposerCaret,
-      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-      setForceComposerBlockedFeedback,
-    });
-  }
 
   async function handleAuxiliaryDraftChange(value: string, selectionStart: number): Promise<void> {
     const withmateApi = getWithMateApi();
@@ -3044,22 +2843,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
-  const auxiliaryHeaderActions = shouldShowRetiredCompanionAuxiliaryHeaderActions({
-    hasSnapshot: !!snapshot,
-    hasActiveAuxiliarySession: !!activeAuxiliarySession,
-  }) && snapshot && activeAuxiliarySession
-    ? createAuxiliaryHeaderActions({
-        ...resolveAuxiliaryHeaderActionState({
-          isActive: !!activeAuxiliarySession,
-          showIdleLabel: true,
-          isActionPending: isAuxiliaryActionPending,
-          isStartBlocked: operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active",
-          activeRunState: activeAuxiliarySession?.runState,
-        }),
-        onStart: handleOpenAuxiliaryLaunchDialog,
-        onReturnToMain: () => void handleReturnToMainSession(),
-      })
-    : null;
 
   if (!desktopRuntime) {
     return isMergeView ? (
@@ -3091,7 +2874,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
         <>
         <ChatWindow {...buildCompanionChatWindowProps({
-        session: displayedSession ?? snapshot.session,
+        session: snapshot.session,
         character: companionCharacterProfile!,
         displayedMessages: messageListMessages,
         displayedMessageKeys: messageListKeys,
@@ -3194,8 +2977,36 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         auditLogsErrorMessage,
         toastMessage: errorMessage || operationMessage,
         toastTone: errorMessage ? "error" : "success",
-        headerActions: auxiliaryHeaderActions,
         isAuxiliaryMode,
+        concurrentChats: auxiliaryWorkspace.summaries.length > 0 ? {
+          mainSession: snapshot.session,
+          auxiliarySession: auxiliaryDisplayedSession,
+          auxiliaryProps: auxiliaryWorkspace.selectedSession ? {
+            onLoadArtifactDetail: async (messageIndex) => auxiliaryWorkspace.selectedSession?.messages[messageIndex]?.artifact ?? null,
+            onOpenPath: (target: string) => void openCompanionInlinePath(
+              getWithMateApi(),
+              target,
+              snapshot.session.worktreePath,
+            ).then(showOpenPathFeedback),
+          } : undefined,
+          selectedAuxiliaryId: auxiliaryWorkspace.selectedId,
+          auxiliaryItems: auxiliaryWorkspace.summaries.map((summary) => ({
+            id: summary.id,
+            label: summary.preview ?? "新しい会話",
+            searchText: summary.preview ?? "新しい会話",
+            icon: <CharacterAvatar key={summary.id} character={{ name: "", iconPath: summary.characterIconPath ?? "" }} size="tiny" />,
+          })),
+          target: auxiliaryWorkspace.target,
+          isExpanded: auxiliaryWorkspace.isExpanded,
+          widthRatio: auxiliaryWorkspace.widthRatio,
+          onSelectAuxiliary: auxiliaryWorkspace.selectSession,
+          onTargetChange: (target) => auxiliaryWorkspace.setTarget(target),
+          onCollapse: auxiliaryWorkspace.collapse,
+          onWidthRatioChange: auxiliaryWorkspace.setWidthRatio,
+          loading: auxiliaryWorkspace.loading || auxiliaryWorkspace.detailLoading,
+          error: auxiliaryWorkspace.error?.message ?? auxiliaryWorkspace.detailError?.message ?? null,
+          api: withmateApi ?? undefined,
+        } : undefined,
         onToggleHeaderSplitter: handleToggleHeaderSplitter,
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenTerminal: () => void openCompanionTerminal(),
@@ -3282,17 +3093,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         },
         onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
-        onDraftSelect: buildOnDraftSelectHandler({
-          setComposerCaret,
+        onDraftSelect: (start) => composerState.setSelection({
+          start, end: composerTextareaRef.current?.selectionEnd ?? start,
         }),
         ...buildOnDraftCompositionHandlers({
           setComposerCaret,
-          setIsComposerImeComposing,
-          getSelectionStart: () => composerTextareaRef.current?.selectionStart,
+          setIsComposerImeComposing: (value) => {
+            if (composerOwnerRef.current === activeRunSessionId) setIsComposerImeComposing(value);
+          },
+          getSelectionStart: () => composerOwnerRef.current === activeRunSessionId
+            ? composerTextareaRef.current?.selectionStart : composerCaret,
           getFallbackSelectionStart: () => activeComposerText.length,
         }),
         onSendOrCancel: buildAuxiliaryAwareSendOrCancelHandler({
-          shouldSendAuxiliary: !!activeAuxiliarySession,
+          shouldSendAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           isAuxiliarySessionRunning: activeAuxiliarySession?.runState === "running",
           isSelectedSessionRunning,
           onCancelAuxiliaryRun: cancelAuxiliaryRun,
@@ -3301,32 +3115,32 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           onSendSelectedSession: sendCompanionTurn,
         }),
         onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<ApprovalMode>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: handleChangeAuxiliaryApproval,
           onSelectedSessionChange: handleChangeApproval,
         }),
         onChangeCodexSandboxMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<CodexSandboxMode>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: handleChangeAuxiliarySandboxMode,
           onSelectedSessionChange: handleChangeCodexSandboxMode,
         }),
         onChangeCodexSpeed: buildAuxiliaryAwareRuntimeOptionChangeHandler<CodexSpeed>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: handleChangeAuxiliaryCodexSpeed,
           onSelectedSessionChange: handleChangeCodexSpeed,
         }),
         onChangeCodexReviewer: buildAuxiliaryAwareRuntimeOptionChangeHandler<CodexReviewer>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: handleChangeAuxiliaryCodexReviewer,
           onSelectedSessionChange: handleChangeCodexReviewer,
         }),
         onChangeModel: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: handleChangeAuxiliaryModel,
           onSelectedSessionChange: handleChangeSelectedModel,
         }),
         onChangeReasoningEffort: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
-          shouldUseAuxiliary: !!activeAuxiliarySession,
+          shouldUseAuxiliary: auxiliaryWorkspace.target === "auxiliary",
           onAuxiliaryChange: (value) => handleChangeAuxiliaryReasoningEffort(value as ModelReasoningEffort),
           onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as ModelReasoningEffort),
         }),
@@ -3343,16 +3157,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onLoadAuditLogOperationDetail: handleLoadAuditLogOperationDetail,
         onCloseAuditLog: () => setAuditLogsOpen(false),
         })} />
-        <AuxiliaryLaunchProviderDialog
-          open={auxiliaryLaunchDialogOpen}
-          providers={auxiliaryLaunchProviderItems}
-          selectedProviderId={auxiliaryLaunchProviderId}
-          feedback={auxiliaryLaunchFeedback}
-          starting={isAuxiliaryActionPending}
-          onClose={handleCloseAuxiliaryLaunchDialog}
-          onSelectProvider={handleSelectAuxiliaryLaunchProvider}
-          onStart={() => void handleStartAuxiliarySession()}
-        />
         </>
       </ShortcutSettingsProvider>
     );

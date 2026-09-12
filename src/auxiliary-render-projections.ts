@@ -61,6 +61,9 @@ function toAuxiliaryRuntimeProjectionInput(session: AuxiliarySession): Auxiliary
     threadId: session.threadId,
     messages: session.messages,
     updatedAt: session.updatedAt,
+    characterId: session.characterId ?? "",
+    characterRuntimeSnapshot: session.characterRuntimeSnapshot ?? null,
+    characterRuntimeSnapshotInvalid: session.characterRuntimeSnapshotInvalid,
   };
 }
 
@@ -87,6 +90,9 @@ function useRuntimeProjectionSession(
       activeSession?.runState,
       activeSession?.threadId,
       activeSession?.title,
+      activeSession?.characterId,
+      activeSession?.characterRuntimeSnapshot,
+      activeSession?.characterRuntimeSnapshotInvalid,
     ],
   );
 }

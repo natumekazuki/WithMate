@@ -14,6 +14,13 @@ import {
   type ModelReasoningEffort,
 } from "./model-catalog.js";
 import { normalizeMessage, type Message } from "./session-state.js";
+import {
+  normalizeCharacterRuntimeSnapshot,
+} from "./character/character-runtime-snapshot.js";
+import type { CharacterRuntimeSnapshot } from "./character/character-catalog.js";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmFromMarkdown } from "mdast-util-gfm";
+import { gfm } from "micromark-extension-gfm";
 
 export type AuxiliarySessionStatus = "active" | "closed";
 export type AuxiliaryRuntimeSelectionMode = "explicit" | "latest-session";
@@ -28,6 +35,8 @@ export type CreateAuxiliarySessionInput = {
   codexSandboxMode?: CodexSandboxMode;
   codexSpeed?: CodexSpeed;
   customAgentName?: string;
+  /** Stable key used to make a retried create operation return the same row. */
+  clientRequestId?: string;
 };
 
 export type AuxiliarySession = {
@@ -53,9 +62,21 @@ export type AuxiliarySession = {
   createdAt: string;
   updatedAt: string;
   closedAt: string;
+  /** Character identity is fixed when the Auxiliary is created. Legacy rows omit it. */
+  characterId?: string;
+  characterRuntimeSnapshot?: CharacterRuntimeSnapshot | null;
+  /** Internal migration marker: a present, malformed new snapshot must not fall back to parent identity. */
+  characterRuntimeSnapshotInvalid?: boolean;
+  characterIconPath?: string;
+  /** Deterministic, non-AI projection used by the lightweight list. */
+  preview?: string;
+  clientRequestId?: string;
 };
 
-export type AuxiliarySessionSummary = Omit<AuxiliarySession, "messages" | "composerDraft">;
+export type AuxiliarySessionSummary = Omit<
+  AuxiliarySession,
+  "messages" | "composerDraft" | "characterRuntimeSnapshot" | "characterRuntimeSnapshotInvalid"
+>;
 
 export function applyAuxiliarySessionPatch(
   session: AuxiliarySession,
@@ -445,6 +466,18 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
     return null;
   }
 
+  const hasStoredSnapshot = Object.prototype.hasOwnProperty.call(candidate, "characterRuntimeSnapshot");
+  const normalizedCharacterRuntimeSnapshot = normalizeCharacterRuntimeSnapshot(candidate.characterRuntimeSnapshot);
+  const normalizedCharacterId = typeof candidate.characterId === "string" ? candidate.characterId.trim() : undefined;
+  const characterRuntimeSnapshotInvalid = candidate.characterRuntimeSnapshotInvalid === true
+    || candidate.characterRuntimeSnapshot == null && Boolean(normalizedCharacterId)
+    || hasStoredSnapshot && (
+    (candidate.characterRuntimeSnapshot != null && (
+      !normalizedCharacterRuntimeSnapshot
+      || !normalizedCharacterId
+      || normalizedCharacterId !== normalizedCharacterRuntimeSnapshot.characterId
+    ))
+  );
   return {
     id: candidate.id.trim(),
     parentSessionId: candidate.parentSessionId.trim(),
@@ -482,10 +515,90 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : "",
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : "",
     closedAt: typeof candidate.closedAt === "string" ? candidate.closedAt : "",
+    characterId: normalizedCharacterId,
+    characterRuntimeSnapshot: normalizedCharacterRuntimeSnapshot,
+    characterRuntimeSnapshotInvalid,
+    characterIconPath: typeof candidate.characterIconPath === "string" ? candidate.characterIconPath : undefined,
+    preview: typeof candidate.preview === "string" ? candidate.preview : undefined,
+    clientRequestId: typeof candidate.clientRequestId === "string"
+      ? candidate.clientRequestId.trim()
+      : typeof (candidate as { requestId?: unknown }).requestId === "string"
+        ? (candidate as { requestId: string }).requestId.trim()
+        : undefined,
   };
 }
 
 export function projectAuxiliarySessionSummary(session: AuxiliarySession): AuxiliarySessionSummary {
-  const { messages: _messages, composerDraft: _composerDraft, ...summary } = session;
-  return summary;
+  const {
+    messages: _messages,
+    composerDraft: _composerDraft,
+    characterRuntimeSnapshot: _characterRuntimeSnapshot,
+    characterRuntimeSnapshotInvalid: _characterRuntimeSnapshotInvalid,
+    ...summary
+  } = session;
+  return {
+    ...summary,
+    characterIconPath: session.characterIconPath ?? session.characterRuntimeSnapshot?.iconFilePath ?? "",
+    preview: session.preview ?? buildAuxiliaryPreview(session.messages),
+  };
+}
+
+export const AUXILIARY_PREVIEW_DEFAULT = "新しい会話";
+export const AUXILIARY_PREVIEW_MAX_LENGTH = 240;
+
+function flattenAuxiliaryPreviewMarkdown(value: string): string {
+  const tree = fromMarkdown(value, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
+  type PreviewNode = { type: string; value?: string; alt?: string | null; children?: PreviewNode[] };
+  const plainText = (node: PreviewNode): string => {
+    if (node.type === "definition") return "";
+    if (node.type === "break") return " ";
+    if (node.type === "image") return node.alt ?? "";
+    if (typeof node.value === "string") return node.value;
+    const separator = ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(node.type) ? " " : "";
+    return node.children?.map(plainText).join(separator) ?? "";
+  };
+  return plainText(tree).replace(/\s+/g, " ").trim();
+}
+
+function clipAuxiliaryPreview(value: string): string {
+  const normalized = flattenAuxiliaryPreviewMarkdown(value);
+  if (!normalized) {
+    return "";
+  }
+  return Array.from(normalized).slice(0, AUXILIARY_PREVIEW_MAX_LENGTH).join("");
+}
+
+/**
+ * Builds the list projection without invoking a provider. Accent assistant messages
+ * are status/tool/error blocks in the current message contract and are excluded.
+ */
+export function buildAuxiliaryPreview(
+  messages: readonly Message[],
+  confirmedFinalAssistantText?: string | null,
+): string {
+  const confirmedPreview = confirmedFinalAssistantText == null
+    ? ""
+    : clipAuxiliaryPreview(confirmedFinalAssistantText);
+  if (confirmedPreview) {
+    return confirmedPreview;
+  }
+  const latestUser = [...messages]
+    .reverse()
+    .find((message) => message.role === "user" && clipAuxiliaryPreview(message.text));
+  return latestUser ? clipAuxiliaryPreview(latestUser.text) || AUXILIARY_PREVIEW_DEFAULT : AUXILIARY_PREVIEW_DEFAULT;
+}
+
+/** Preserve the last confirmed projection while a new turn is streaming or fails. */
+export function resolveAuxiliaryPreview(
+  messages: readonly Message[],
+  previousPreview?: string | null,
+  confirmedFinalAssistantText?: string | null,
+): string {
+  if (confirmedFinalAssistantText?.trim()) {
+    return buildAuxiliaryPreview(messages, confirmedFinalAssistantText);
+  }
+  if (previousPreview?.trim() && previousPreview !== AUXILIARY_PREVIEW_DEFAULT) {
+    return previousPreview;
+  }
+  return buildAuxiliaryPreview(messages);
 }

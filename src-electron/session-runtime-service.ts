@@ -55,10 +55,17 @@ function logSessionRunStuckInvestigation(
 
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
-  upsertSession(session: Session): Awaitable<Session>;
+  upsertSession(
+    session: Session,
+    options?: { confirmedFinalAssistantText?: string | null },
+  ): Awaitable<Session>;
   persistRunningTurnStart?(session: Session, expectedMessageCount: number): Awaitable<Session>;
   clearCharacterAuthoringRuntimeState?(session: Session): Awaitable<Session>;
-  upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
+  upsertTerminalSession?(
+    session: Session,
+    terminalCommit: SessionTurnTerminalCommit,
+    options?: { confirmedFinalAssistantText?: string | null },
+  ): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
@@ -122,6 +129,8 @@ export type SessionRuntimeServiceDeps = {
   setSessionContextTelemetry(telemetry: SessionContextTelemetry): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   resetProviderSessionThread?(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
+  /** Persisted Auxiliary threads must not be replaced silently after resume failure. */
+  isAuxiliarySession?(sessionId: string): boolean;
   getProviderAgentRuntimeBinding?(input: {
     session: Session;
     provider: ModelCatalogProvider;
@@ -776,8 +785,10 @@ export class SessionRuntimeService {
   private upsertTerminalSession(
     session: Session,
     terminalCommit: SessionTurnTerminalCommit,
+    options?: { confirmedFinalAssistantText?: string | null },
   ): Awaitable<Session> {
-    return this.deps.upsertTerminalSession?.(session, terminalCommit) ?? this.deps.upsertSession(session);
+    return this.deps.upsertTerminalSession?.(session, terminalCommit, options)
+      ?? this.deps.upsertSession(session, options);
   }
 
   hasInFlightRuns(): boolean {
@@ -1250,6 +1261,7 @@ export class SessionRuntimeService {
           const shouldRetry =
             !didInternalRetry &&
             !isCanceledRunError(error) &&
+            !this.deps.isAuxiliarySession?.(sessionId) &&
             shouldRetryUnusableThreadRun(error, providerTurnError?.partialResult);
 
           if (!shouldRetry) {
@@ -1345,6 +1357,8 @@ export class SessionRuntimeService {
         threadId: completedThreadId,
         errorMessage: "",
         completedAt,
+      }, {
+        confirmedFinalAssistantText: result.lastNonEmptyAssistantMessageText,
       });
       logSessionRunStuckInvestigation("runtime.completed-session-upsert.done", {
         sessionId,

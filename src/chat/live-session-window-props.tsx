@@ -39,6 +39,7 @@ type LiveSessionWindowShellPropsInput = {
   modals: ChatWindowProps["modals"];
   baseClassName?: string;
   isAuxiliaryMode?: boolean;
+  concurrentChats?: ChatWindowProps["concurrentChats"];
 };
 
 export function buildLiveSessionWindowShellProps(
@@ -87,5 +88,6 @@ export function buildLiveSessionWindowShellProps(
       </SessionPaneErrorBoundary>
     ),
     modals: input.modals,
+    concurrentChats: input.concurrentChats,
   };
 }
