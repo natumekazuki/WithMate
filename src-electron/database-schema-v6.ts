@@ -42,6 +42,7 @@ export const REQUIRED_V6_TABLES = [
   "work_item_aggregations_v6",
   "work_item_aggregation_decisions_v6",
   "work_item_aggregation_idempotency_v6",
+  "work_item_result_revisions_v6",
   "work_item_tombstones_v6",
   "session_execution_public_progress_v6",
   "session_turn_public_context_v6",
@@ -103,6 +104,7 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_work_item_idempotency_item",
   "idx_v6_work_item_idempotency_expiry",
   "idx_v6_work_item_execution_item",
+  "idx_v6_work_item_result_revisions_item",
   "idx_v6_session_turns_id_session",
   "idx_v6_session_turn_public_context_execution",
   "idx_v6_session_interactions_execution_sequence",
@@ -145,6 +147,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
   session_file_write_events_v6: ["event_id", "operation_id", "session_id", "revision", "event_kind", "payload_json"],
   session_transcript_export_events_v6: ["event_id", "operation_id", "session_id", "revision", "event_kind", "payload_json"],
   work_item_aggregation_events_v6: ["event_id", "parent_work_item_id", "child_work_item_id", "aggregate_revision", "event_kind", "payload_json"],
+  work_item_result_revisions_v6: ["result_revision_id", "work_item_id", "result_revision", "superseded_result_revision", "result_json", "correction_reason", "reporting_session_id", "source_revision", "execution_revision", "created_at"],
   session_interaction_events_v6: ["id", "interaction_id", "session_id", "execution_id", "interaction_revision", "event_kind", "decision_class", "principal_kind", "actor_session_id", "projection_json", "occurred_at", "committed_at"],
   coordination_event_decision_class_registry_v6: ["kind", "decision_class", "mapping_revision"],
   coordination_event_user_receipts_v6: ["receipt_id", "user_id", "event_id", "event_revision", "response_kind", "option_id", "note", "created_at"],
@@ -948,7 +951,8 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && workItemIdempotencySql.includes(`length(CAST(response_json AS BLOB)) <= ${WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES}`)
     && workItemAggregationDecisionSql.includes("decision_type IN ('accepted', 'excluded', 'retry_requested')")
     && workItemAggregationDecisionSql.includes("replacement_work_item_id IS NOT NULL")
-    && workItemAggregationIdempotencySql.includes("operation IN ('work.aggregation.decide', 'work.aggregation.retry')")
+    && (workItemAggregationIdempotencySql.includes("operation IN ('work.aggregation.decide', 'work.aggregation.retry')")
+      || workItemAggregationIdempotencySql.includes("operation IN ('work.aggregation.decide', 'work.aggregation.retry', 'work.aggregation.correct')"))
     && hasForeignKey(db, "work_item_aggregations_v6", "parent_work_item_id", "work_items_v6", "id")
     && hasForeignKey(db, "work_item_aggregation_decisions_v6", "parent_work_item_id", "work_items_v6", "id")
     && hasForeignKey(db, "work_item_aggregation_decisions_v6", "child_work_item_id", "work_items_v6", "id")
@@ -1774,7 +1778,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
       'work.create', 'work.revise', 'work.history.append',
       'work.transition', 'work.result', 'work.cancel', 'work.restore',
       'work.reassign', 'work.move', 'work.clone', 'work.reopen',
-      'work.archive', 'work.delete'
+      'work.archive', 'work.delete', 'work.result.correct'
     )),
     principal_session_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
@@ -1833,8 +1837,34 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_v6_work_item_aggregation_decisions_parent_sequence
     ON work_item_aggregation_decisions_v6(parent_work_item_id, sequence ASC);
 
+  CREATE TABLE IF NOT EXISTS work_item_result_revisions_v6 (
+    result_revision_id TEXT PRIMARY KEY,
+    work_item_id TEXT NOT NULL,
+    result_revision INTEGER NOT NULL CHECK (result_revision >= 1),
+    superseded_result_revision INTEGER CHECK (superseded_result_revision IS NULL OR superseded_result_revision >= 1),
+    result_json TEXT NOT NULL CHECK (json_valid(result_json) AND length(CAST(result_json AS BLOB)) <= 262144),
+    correction_reason TEXT,
+    reporting_session_id TEXT NOT NULL,
+    source_revision INTEGER NOT NULL CHECK (source_revision >= 1),
+    execution_revision INTEGER CHECK (execution_revision IS NULL OR execution_revision >= 1),
+    created_at TEXT NOT NULL,
+    UNIQUE (work_item_id, result_revision)
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_work_item_result_revisions_item
+    ON work_item_result_revisions_v6(work_item_id, result_revision ASC);
+
+
+  CREATE TRIGGER IF NOT EXISTS work_item_result_revisions_no_update_v6
+    BEFORE UPDATE ON work_item_result_revisions_v6 BEGIN
+      SELECT RAISE(ABORT, 'Work Item result revisions are append-only');
+    END;
+  CREATE TRIGGER IF NOT EXISTS work_item_result_revisions_no_delete_v6
+    BEFORE DELETE ON work_item_result_revisions_v6 BEGIN
+      SELECT RAISE(ABORT, 'Work Item result revisions are append-only');
+    END;
+
   CREATE TABLE IF NOT EXISTS work_item_aggregation_idempotency_v6 (
-    operation TEXT NOT NULL CHECK (operation IN ('work.aggregation.decide', 'work.aggregation.retry')),
+    operation TEXT NOT NULL CHECK (operation IN ('work.aggregation.decide', 'work.aggregation.retry', 'work.aggregation.correct')),
     principal_session_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     request_fingerprint TEXT NOT NULL,
@@ -3649,6 +3679,7 @@ export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
 function ensureV6SchemaUnsafe(db: DatabaseSync, options: { backfillLegacyHistory: boolean }): void {
   const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
   const sessionRoleBindingsExisted = tableExists(db, "session_role_bindings_v6");
+  const workItemAggregationsExisted = tableExists(db, "work_item_aggregations_v6");
   upgradeLegacyCoordinationEventActionSchema(db);
   upgradeCoordinationEventCreationPrincipal(db);
   if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
@@ -3678,6 +3709,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync, options: { backfillLegacyHistory
   ensureWorkItemHistoryRetentionSchema(db);
   ensureWorkItemAggregationIdempotencyResponseSchema(db);
   ensureWorkItemExecutionSourceSchema(db);
+  ensureWorkItemCorrectionSchema(db, { baselineLegacyAggregation: workItemAggregationsExisted });
   if (tableExists(db, "work_items_v6") && !tableColumnNames(db, "work_items_v6").has("archived_at")) {
     db.exec("ALTER TABLE work_items_v6 ADD COLUMN archived_at TEXT");
   }
@@ -3838,6 +3870,69 @@ function ensureV6SchemaUnsafe(db: DatabaseSync, options: { backfillLegacyHistory
     throw new Error("Session Role binding data is invalid.");
   }
 
+}
+
+function ensureWorkItemCorrectionSchema(db: DatabaseSync, options: { baselineLegacyAggregation: boolean }): void {
+  const workIdempotencySql = tableSql(db, "work_item_idempotency_v6");
+  if (workIdempotencySql && !workIdempotencySql.includes("work.result.correct")) {
+    db.exec(`
+      CREATE TEMP TABLE work_item_idempotency_v6_legacy_correction AS SELECT * FROM work_item_idempotency_v6;
+      DROP TABLE work_item_idempotency_v6;
+      CREATE TABLE work_item_idempotency_v6 (
+        operation TEXT NOT NULL CHECK (operation IN ('work.create', 'work.revise', 'work.history.append', 'work.transition', 'work.result', 'work.result.correct', 'work.cancel', 'work.restore', 'work.reassign', 'work.move', 'work.clone', 'work.reopen', 'work.archive', 'work.delete')),
+        principal_session_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_fingerprint TEXT NOT NULL,
+        work_item_id TEXT NOT NULL, response_json TEXT CHECK (response_json IS NULL OR (json_valid(response_json) AND length(CAST(response_json AS BLOB)) <= ${WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES})),
+        created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+        PRIMARY KEY (operation, principal_session_id, idempotency_key)
+      );
+      INSERT INTO work_item_idempotency_v6 (operation, principal_session_id, idempotency_key, request_fingerprint, work_item_id, response_json, created_at, expires_at)
+        SELECT operation, principal_session_id, idempotency_key, request_fingerprint, work_item_id, response_json, created_at, expires_at FROM work_item_idempotency_v6_legacy_correction;
+      DROP TABLE work_item_idempotency_v6_legacy_correction;
+      CREATE INDEX IF NOT EXISTS idx_v6_work_item_idempotency_item ON work_item_idempotency_v6(work_item_id);
+      CREATE INDEX IF NOT EXISTS idx_v6_work_item_idempotency_expiry ON work_item_idempotency_v6(expires_at);
+    `);
+  }
+  const aggregationIdempotencySql = tableSql(db, "work_item_aggregation_idempotency_v6");
+  if (aggregationIdempotencySql && !aggregationIdempotencySql.includes("work.aggregation.correct")) {
+    db.exec(`
+      CREATE TEMP TABLE work_item_aggregation_idempotency_v6_legacy_correction AS SELECT * FROM work_item_aggregation_idempotency_v6;
+      DROP TABLE work_item_aggregation_idempotency_v6;
+      CREATE TABLE work_item_aggregation_idempotency_v6 (
+        operation TEXT NOT NULL CHECK (operation IN ('work.aggregation.decide', 'work.aggregation.retry', 'work.aggregation.correct')),
+        principal_session_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_fingerprint TEXT NOT NULL,
+        child_work_item_id TEXT NOT NULL, replacement_work_item_id TEXT, response_json TEXT CHECK (response_json IS NULL OR json_valid(response_json)),
+        created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+        PRIMARY KEY (operation, principal_session_id, idempotency_key),
+        FOREIGN KEY (child_work_item_id) REFERENCES work_items_v6(id),
+        FOREIGN KEY (replacement_work_item_id) REFERENCES work_items_v6(id)
+      );
+      INSERT INTO work_item_aggregation_idempotency_v6 (operation, principal_session_id, idempotency_key, request_fingerprint, child_work_item_id, replacement_work_item_id, response_json, created_at, expires_at)
+        SELECT operation, principal_session_id, idempotency_key, request_fingerprint, child_work_item_id, replacement_work_item_id, response_json, created_at, expires_at FROM work_item_aggregation_idempotency_v6_legacy_correction;
+      DROP TABLE work_item_aggregation_idempotency_v6_legacy_correction;
+      CREATE INDEX IF NOT EXISTS idx_v6_work_item_aggregation_idempotency_expiry ON work_item_aggregation_idempotency_v6(expires_at);
+    `);
+  }
+  if (tableExists(db, "work_item_aggregations_v6")) {
+    const columns = tableColumnNames(db, "work_item_aggregations_v6");
+    const needsLegacyAggregationBaseline = !columns.has("stale") || !columns.has("stale_reasons_json")
+      || !columns.has("finalized_revision") || !columns.has("finalized_result_revision");
+    if (!columns.has("stale")) db.exec("ALTER TABLE work_item_aggregations_v6 ADD COLUMN stale INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1))");
+    if (!columns.has("stale_reasons_json")) db.exec("ALTER TABLE work_item_aggregations_v6 ADD COLUMN stale_reasons_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(stale_reasons_json) AND json_type(stale_reasons_json) = 'array')");
+    if (!columns.has("finalized_revision")) db.exec("ALTER TABLE work_item_aggregations_v6 ADD COLUMN finalized_revision INTEGER CHECK (finalized_revision IS NULL OR finalized_revision >= 1)");
+    if (!columns.has("finalized_result_revision")) db.exec("ALTER TABLE work_item_aggregations_v6 ADD COLUMN finalized_result_revision INTEGER CHECK (finalized_result_revision IS NULL OR finalized_result_revision >= 1)");
+    if (options.baselineLegacyAggregation && needsLegacyAggregationBaseline) db.exec(`
+      UPDATE work_item_aggregations_v6
+      SET stale = 0, stale_reasons_json = '[]',
+          finalized_revision = aggregate_revision,
+          finalized_result_revision = 1
+      WHERE finalized_revision IS NULL
+        AND EXISTS (
+          SELECT 1 FROM work_items_v6 AS parent
+          WHERE parent.id = work_item_aggregations_v6.parent_work_item_id
+            AND parent.result_json IS NOT NULL AND parent.state IN ('completed', 'partially_completed', 'failed')
+        )
+    `);
+  }
 }
 
 function ensureWorkItemAggregationIdempotencyResponseSchema(db: DatabaseSync): void {
@@ -4089,9 +4184,13 @@ export function ensureV6Schema(db: DatabaseSync): void {
       && db.prepare("SELECT 1 FROM app_settings WHERE setting_key = ?")
         .get(RESOURCE_HISTORY_MIGRATION_SETTING_KEY) !== undefined;
     const backfillLegacyHistory = !resourceHistoryMigrationCompleted;
+    const resultRevisionTableExisted = tableExists(db, "work_item_result_revisions_v6");
+    const legacyWorkItemSchema = tableExists(db, "work_items_v6")
+      && !tableColumnNames(db, "work_items_v6").has("kind");
     ensureV6SchemaUnsafe(db, { backfillLegacyHistory });
     backfillBaselineSessionAuthority(db, new Date().toISOString());
     ensureResourceHistorySchema(db, { backfillLegacyHistory });
+    if (!resultRevisionTableExisted || legacyWorkItemSchema) backfillWorkItemResultRevisions(db);
     ensureSessionInteractionAuthoritySchema(db, { backfillLegacyHistory });
     ensureCoordinationEventAuthoritySchema(db, { backfillLegacyHistory });
     ensureResourceBudgetSchema(db);
@@ -4115,6 +4214,51 @@ export function ensureV6Schema(db: DatabaseSync): void {
       `).run(RESOURCE_HISTORY_MIGRATION_SETTING_KEY);
     }
   });
+}
+
+function backfillWorkItemResultRevisions(db: DatabaseSync): void {
+  if (!tableExists(db, "work_item_result_revisions_v6") || !tableExists(db, "work_item_events_v6")) return;
+  const events = db.prepare(`
+    SELECT event.work_item_id, event.revision, event.payload_json, event.created_at
+    FROM work_item_events_v6 AS event
+    WHERE event.event_type IN ('result_reported', 'migration_baseline')
+      AND json_type(event.payload_json, '$.result') = 'object'
+      AND json_type(event.payload_json, '$.resultRevision') IS NULL
+    ORDER BY event.work_item_id, event.revision
+  `).all() as Array<{ work_item_id: string; revision: number; payload_json: string; created_at: string }>;
+  const insert = db.prepare(`INSERT OR IGNORE INTO work_item_result_revisions_v6 (
+    result_revision_id, work_item_id, result_revision, superseded_result_revision, result_json,
+    correction_reason, reporting_session_id, source_revision, execution_revision, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  for (const event of events) {
+    const payload = JSON.parse(event.payload_json) as {
+      result?: { reportingSessionId?: unknown };
+      resultRevision?: number;
+      sourceRevision?: number;
+      executionRevision?: number;
+      correctionReason?: string | null;
+    };
+    if (!payload.result) continue;
+    const resultRevision = typeof payload.resultRevision === "number" && payload.resultRevision >= 1 ? payload.resultRevision : 1;
+    if (typeof payload.result.reportingSessionId !== "string" || payload.result.reportingSessionId.length === 0) {
+      throw new Error(`Legacy Work Item result event is missing reportingSessionId: ${event.work_item_id}:${event.revision}`);
+    }
+    const reportingSessionId = payload.result.reportingSessionId;
+    const sourceRevision = typeof payload.sourceRevision === "number" && payload.sourceRevision >= 1 ? payload.sourceRevision : event.revision;
+    const executionRevision = typeof payload.executionRevision === "number" && payload.executionRevision >= 1 ? payload.executionRevision : null;
+    insert.run(
+      `${event.work_item_id}:result:${resultRevision}`,
+      event.work_item_id,
+      resultRevision,
+      resultRevision > 1 ? resultRevision - 1 : null,
+      JSON.stringify(payload.result),
+      payload.correctionReason ?? null,
+      reportingSessionId,
+      sourceRevision,
+      executionRevision,
+      event.created_at,
+    );
+  }
 }
 
 function upgradeCoordinationEventCreationPrincipal(db: DatabaseSync): void {

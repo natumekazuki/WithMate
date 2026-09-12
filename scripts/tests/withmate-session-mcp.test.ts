@@ -235,11 +235,13 @@ describe("WithMate Session MCP contract", () => {
       "work.history.list": { readOnlyHint: true, destructiveHint: false },
       "work.transition": { readOnlyHint: false, destructiveHint: false },
       "work.result": { readOnlyHint: false, destructiveHint: false },
+      "work.result.correct": { readOnlyHint: false, destructiveHint: false },
       "work.cancel": { readOnlyHint: false, destructiveHint: true },
       "work.aggregation.get": { readOnlyHint: true, destructiveHint: false },
       "work.aggregation.list": { readOnlyHint: true, destructiveHint: false },
       "work.aggregation.decide": { readOnlyHint: false, destructiveHint: false },
       "work.aggregation.retry": { readOnlyHint: false, destructiveHint: false },
+      "work.aggregation.correct": { readOnlyHint: false, destructiveHint: false },
       "turn.options": { readOnlyHint: true, destructiveHint: false },
       "turn.run": { readOnlyHint: false, destructiveHint: true },
       "turn.enqueue": { readOnlyHint: false, destructiveHint: true },
@@ -493,6 +495,17 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "MCP aggregation get fixtureはcontract revision 2の公開projectionを検証する"
+  // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md" }
+  // fault = "公開aggregation revisionを旧契約のまま返しadapter schemaと不一致になる"
+  // observable = "strict MCP result acceptance"
+  // observation_boundary = "public-boundary"
+  // scope = "withmate-session-mcp aggregation get"
+  // lifecycle = "permanent"
+  // distinction = "runtime catalog correction operationsとは別にaggregation result contractを検証する"
+  // @end-test-value
   it("AGG-ADAPTER-01: Work Item aggregation getをshared operationへdispatchする", async () => {
     const requests: any[] = [];
     await withClient(createWithMateSessionMcpServer({
@@ -500,7 +513,7 @@ describe("WithMate Session MCP contract", () => {
       call: async (_connection, envelope) => {
         requests.push(envelope);
         return { ok: true, status: 200, value: createSessionRuntimeResult("work.aggregation.get", {
-          contractRevision: 1, parentWorkItemId: "work-parent", aggregateRevision: 2,
+          contractRevision: 2, parentWorkItemId: "work-parent", aggregateRevision: 2,
           directChildCount: 1, activeCount: 0, undecidedTerminalCount: 0,
           acceptedCount: 1, excludedCount: 0, retryRequestedCount: 0,
         }) };
@@ -509,6 +522,39 @@ describe("WithMate Session MCP contract", () => {
       const result = await client.callTool({ name: "work.aggregation.get", arguments: { parentWorkItemId: "work-parent" } });
       assert.equal(result.isError, undefined);
       assert.deepEqual(requests.map((request) => request.operation), ["work.aggregation.get"]);
+    });
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "MCP correction toolsは各canonical operationへdispatchし、strict correction outputを公開する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
+  // fault = "MCPがcorrectionを通常mutationへ誤写像する、stale envelopeを落とす、またはunknown output fieldを受理する"
+  // observable = "tool request operationとstrict success output"
+  // observation_boundary = "public-boundary"
+  // scope = "withmate-session-mcp correction dispatch"
+  // lifecycle = "permanent"
+  // distinction = "CLI routingとは別にMCP tool boundaryとeffect-bearing responseを確認する"
+  // @end-test-value
+  it("WORK-CORRECTION-ADAPTER: MCP correction toolsをstrict outputでdispatchする", async () => {
+    const requests: any[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        const value = envelope.operation === "work.result.correct"
+          ? { workItem: publicWorkItem, resultRevision: 2, supersededResultRevision: 1, stale: true, staleParentWorkItemIds: ["parent"] }
+          : { decision: null, supersededDecisionRevision: 1, aggregateRevision: 3, stale: true, staleParentWorkItemIds: ["root"] };
+        return { ok: true, status: 200, value: createSessionRuntimeResult(envelope.operation, value as never) };
+      },
+    }), async (client) => {
+      const result = await client.callTool({ name: "work.result.correct", arguments: { workItemId: "work-1", expectedRevision: 2, expectedResultRevision: 1, correctionReason: "recheck", result: { outcome: "completed", summary: "corrected", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] }, idempotencyKey: "mcp-result-correction" } });
+      const aggregation = await client.callTool({ name: "work.aggregation.correct", arguments: { parentWorkItemId: "parent", childWorkItemId: "child", expectedAggregateRevision: 2, expectedChildResultRevision: 0, correction: { kind: "withdraw", reason: "recheck" }, idempotencyKey: "mcp-aggregation-correction" } });
+      assert.equal(result.isError, undefined);
+      assert.equal(aggregation.isError, undefined);
+      assert.deepEqual(requests.map((request) => request.operation), ["work.result.correct", "work.aggregation.correct"]);
+      assert.equal((result.structuredContent as any).result.resultRevision, 2);
+      assert.deepEqual((aggregation.structuredContent as any).result.staleParentWorkItemIds, ["root"]);
     });
   });
 
@@ -745,7 +791,7 @@ describe("WithMate Session MCP contract", () => {
             workItems: {
               contractRevision: 2,
               states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
-              mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "cancel", "history.append"],
+              mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "result.correct", "cancel", "history.append"],
               history: {
                 events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported", "assignment_changed", "parent_changed", "archived", "restored", "deleted"],
                 operations: ["append", "list"],
@@ -761,7 +807,7 @@ describe("WithMate Session MCP contract", () => {
               aggregation: {
                 contractRevision: 1,
                 decisions: ["accepted", "excluded", "retry_requested"],
-                operations: ["get", "list", "decide", "retry"],
+                operations: ["get", "list", "decide", "retry", "correct"],
                 defaultListLimit: 50,
                 maxListLimit: 200,
               },
@@ -812,7 +858,7 @@ describe("WithMate Session MCP contract", () => {
         workItems: {
           contractRevision: 2,
           states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
-          mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "cancel", "history.append"],
+          mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "result.correct", "cancel", "history.append"],
           history: {
             events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported", "assignment_changed", "parent_changed", "archived", "restored", "deleted"],
             operations: ["append", "list"],
@@ -828,7 +874,7 @@ describe("WithMate Session MCP contract", () => {
           aggregation: {
             contractRevision: 1,
             decisions: ["accepted", "excluded", "retry_requested"],
-            operations: ["get", "list", "decide", "retry"],
+            operations: ["get", "list", "decide", "retry", "correct"],
             defaultListLimit: 50,
             maxListLimit: 200,
           },

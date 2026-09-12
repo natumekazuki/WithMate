@@ -1,6 +1,7 @@
 import { workItemDecisionRevisionMatchesSql } from "./work-item-decision-revision-sql.js";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   WORK_ITEM_CONTRACT_REVISION,
@@ -19,6 +20,7 @@ import {
   type DelegatedWorkItemBinding,
   type WorkItemAggregationDecision,
   type WorkItemAggregationDecisionType,
+  type WorkItemAggregationCorrection,
   type WorkItemAggregationListItem,
   type WorkItemAggregationSummary,
   type WorkItemContractProjection,
@@ -26,6 +28,7 @@ import {
   type WorkItemEventType,
   type WorkItemProgressEventPayload,
   type WorkItemResult,
+  type RootWorkItemBinding,
   type WorkItemState,
 } from "../src/work-item.js";
 import type { MutationAuthorityProof } from "../src/session-authority.js";
@@ -43,8 +46,9 @@ export type WorkItemMutationOperation =
   | "work.history.append"
   | "work.transition"
   | "work.result"
+  | "work.result.correct"
   | "work.cancel";
-export type WorkItemAggregationMutationOperation = "work.aggregation.decide" | "work.aggregation.retry";
+export type WorkItemAggregationMutationOperation = "work.aggregation.decide" | "work.aggregation.retry" | "work.aggregation.correct";
 
 export type WorkItemLifecycleMutationInput = {
   workItemId: string;
@@ -397,7 +401,7 @@ export class WorkItemStorageV6 {
 
   create(input: {
     id: string;
-    binding: DelegatedWorkItemBinding;
+    binding: DelegatedWorkItemBinding | RootWorkItemBinding;
     principalSessionId: string;
     idempotencyKey: string;
     requestFingerprint: string;
@@ -431,7 +435,7 @@ export class WorkItemStorageV6 {
         parent.kind !== "delegated" ||
         parent.rootSessionId !== input.binding.rootSessionId ||
         parent.targetSessionId !== input.binding.creatorSessionId ||
-        !isWorkItemActive(parent.state) || parent.archivedAt || parent.deletedAt
+        ((operation !== "work.reopen") && !isWorkItemActive(parent.state)) || parent.state === "canceled" || parent.archivedAt || parent.deletedAt
       ) {
         throw new WorkItemAggregationConflictError(
           "WORK_ITEM_PARENT_INVALID",
@@ -449,17 +453,18 @@ export class WorkItemStorageV6 {
     this.db
       .prepare(
         `
-        INSERT INTO work_items_v6 (
+      INSERT INTO work_items_v6 (
           id, contract_revision, kind, root_session_id, creator_session_id, target_session_id,
         parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority,
           source_identity_json, state, revision, progress_summary, blockers_json, next_action,
           created_at, updated_at
-      ) VALUES (?, ?, 'delegated', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, '', '[]', '', ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, '', '[]', '', ?, ?)
     `,
       )
       .run(
         input.id,
         WORK_ITEM_CONTRACT_REVISION,
+        input.binding.kind,
         input.binding.rootSessionId,
         input.binding.creatorSessionId,
         input.binding.targetSessionId,
@@ -487,9 +492,12 @@ export class WorkItemStorageV6 {
           revision: 1,
           state: "pending",
           result: null,
+          progressSummary: "",
+          blockers: [],
+          nextAction: "",
           createdAt: input.createdAt,
           updatedAt: input.createdAt,
-        }),
+        } as WorkItem),
         ...(input.predecessorWorkItemId ? { predecessorWorkItemId: input.predecessorWorkItemId } : {}),
         ...(input.sourceWorkItemId ? { sourceWorkItemId: input.sourceWorkItemId } : {}),
       },
@@ -523,6 +531,10 @@ export class WorkItemStorageV6 {
         payload: { childWorkItemId: input.id, childRevision: 1 },
       });
     }
+    if (operation === "work.reopen" && input.sourceWorkItemId) {
+      this.markAncestorAggregationsStale(input.sourceWorkItemId, "work.reopen", input.proof, input.requestFingerprint, input.idempotencyKey, input.createdAt, operation, true, true);
+      if (input.binding.parentWorkItemId) this.markAncestorAggregationsStale(input.binding.parentWorkItemId, "work.reopen", input.proof, input.requestFingerprint, input.idempotencyKey, input.createdAt, operation, true);
+    }
     const created = this.getRequired(input.id);
     this.insertIdempotency(
       operation,
@@ -549,6 +561,7 @@ export class WorkItemStorageV6 {
     updatedAt: string;
     expiresAt: string;
     expectedAggregateRevision?: number;
+    expectedResultRevision?: number;
     proof: MutationAuthorityProof;
   }): WorkItem {
     if (
@@ -580,7 +593,11 @@ export class WorkItemStorageV6 {
       if (current.revision !== input.expectedRevision) {
         throw new WorkItemRevisionConflictError(input.workItemId, input.expectedRevision, current.revision);
       }
-      if (!canTransitionWorkItem(current.state, input.state)) {
+      const repeatTerminalResult = input.operation === "work.result"
+        && isWorkItemResultState(current.state)
+        && current.state === input.state
+        && input.expectedResultRevision !== undefined;
+      if (!canTransitionWorkItem(current.state, input.state) && !repeatTerminalResult) {
         throw new WorkItemStateConflictError(input.workItemId, current.state, input.state);
       }
       if (input.operation === "work.result") {
@@ -588,6 +605,21 @@ export class WorkItemStorageV6 {
           this.requireRootFinalizable(current, input.expectedAggregateRevision);
         } else {
           this.requireAggregationFinalizable(input.workItemId, input.expectedAggregateRevision);
+        }
+        if (input.expectedResultRevision !== undefined) {
+          const currentResultRevision = this.currentResultRevision(input.workItemId);
+          if (currentResultRevision !== input.expectedResultRevision) {
+            throw new WorkItemAggregationConflictError("WORK_ITEM_RESULT_REVISION_CONFLICT", "The result revision is stale.", { expectedRevision: input.expectedResultRevision, actualRevision: currentResultRevision });
+          }
+          if (repeatTerminalResult) {
+            const latestResult = this.db.prepare("SELECT result_json, correction_reason FROM work_item_result_revisions_v6 WHERE work_item_id = ? AND result_revision = ?")
+              .get(input.workItemId, input.expectedResultRevision) as { result_json: string; correction_reason: string | null } | undefined;
+            if (!latestResult || latestResult.correction_reason === null
+              || !isDeepStrictEqual(JSON.parse(latestResult.result_json), input.result)
+              || (this.getInternalAggregationState(current.id).finalizedResultRevision ?? 0) >= input.expectedResultRevision) {
+              throw new WorkItemAggregationConflictError("WORK_ITEM_RESULT_REVISION_CONFLICT", "Re-finalization must use the current corrected result payload.");
+            }
+          }
         }
       }
       const changed = this.db
@@ -603,7 +635,85 @@ export class WorkItemStorageV6 {
         const actual = this.getRequired(input.workItemId);
         throw new WorkItemRevisionConflictError(input.workItemId, input.expectedRevision, actual.revision);
       }
-      const updated = this.getRequired(input.workItemId);
+      let updated = this.getRequired(input.workItemId);
+      let resultRevision: number | undefined;
+      let executionRevision: number | null = null;
+      let sourceRevision: number | undefined;
+      if (input.operation === "work.result" && input.result !== null) {
+        resultRevision = current.result === null ? 1 : this.currentResultRevision(updated.id);
+        sourceRevision = current.revision;
+        const execution = this.db.prepare(`
+          SELECT execution.revision, association.work_item_revision FROM work_item_execution_associations_v6 AS association
+          LEFT JOIN session_executions_v6 AS execution ON execution.id = association.execution_id
+          WHERE association.work_item_id = ? ORDER BY association.created_at DESC LIMIT 1
+        `).get(updated.id) as { revision: number | null; work_item_revision: number | null } | undefined;
+        sourceRevision = execution?.work_item_revision ?? sourceRevision;
+        executionRevision = execution?.revision ?? null;
+        const existingResult = this.db.prepare("SELECT source_revision, execution_revision FROM work_item_result_revisions_v6 WHERE work_item_id = ? AND result_revision = ?").get(updated.id, resultRevision) as { source_revision: number; execution_revision: number | null } | undefined;
+        if (existingResult) {
+          sourceRevision = existingResult.source_revision;
+          executionRevision = existingResult.execution_revision;
+        } else {
+          this.db.prepare(`INSERT INTO work_item_result_revisions_v6 (
+            result_revision_id, work_item_id, result_revision, superseded_result_revision, result_json,
+            correction_reason, reporting_session_id, source_revision, execution_revision, created_at
+          ) VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?)`)
+            .run(`${updated.id}:result:${resultRevision}`, updated.id, resultRevision, resultJson, input.result.reportingSessionId, sourceRevision, executionRevision, input.updatedAt);
+        }
+      }
+      if (input.operation === "work.result" && updated.kind === "delegated") {
+        const aggregate = this.db.prepare("SELECT aggregate_revision FROM work_item_aggregations_v6 WHERE parent_work_item_id = ?").get(updated.id) as { aggregate_revision: number } | undefined;
+        if (aggregate) {
+          this.incrementAggregateRevision(updated.id, input.updatedAt);
+          const finalizedSummary = this.getAggregationSummary(updated.id);
+          appendWorkItemAggregationEvent(this.db, {
+            parentWorkItemId: updated.id,
+            childWorkItemId: updated.id,
+            aggregateRevision: finalizedSummary.aggregateRevision,
+            eventKind: "finalized",
+            proof: input.proof,
+            operationId: workItemOperationId("work.result", input.proof, input.requestFingerprint),
+            idempotencyKey: input.idempotencyKey,
+            occurredAt: input.updatedAt,
+            payload: {
+              aggregateState: {
+                stale: false,
+                staleReasons: [],
+                finalizedRevision: finalizedSummary.aggregateRevision,
+                finalizedResultRevision: resultRevision ?? 1,
+              },
+            },
+          });
+        }
+        this.db.prepare(`
+          UPDATE work_item_aggregations_v6
+          SET stale = 0, stale_reasons_json = '[]', finalized_revision = aggregate_revision,
+              finalized_result_revision = COALESCE((SELECT MAX(result_revision) FROM work_item_result_revisions_v6 WHERE work_item_id = ?), 1),
+              updated_at = ?
+          WHERE parent_work_item_id = ?
+        `).run(updated.id, input.updatedAt, updated.id);
+        updated = this.getRequired(input.workItemId);
+      }
+      if (input.operation === "work.result" && updated.kind === "root") {
+        this.db.prepare(`INSERT OR IGNORE INTO work_item_aggregations_v6 (parent_work_item_id, aggregate_revision, updated_at) VALUES (?, 0, ?)`)
+          .run(updated.id, input.updatedAt);
+        this.incrementAggregateRevision(updated.id, input.updatedAt);
+        const rootState = this.getInternalAggregationState(updated.id);
+        appendWorkItemAggregationEvent(this.db, {
+          parentWorkItemId: updated.id,
+          childWorkItemId: updated.id,
+          aggregateRevision: rootState.aggregateRevision,
+          eventKind: "finalized",
+          proof: input.proof,
+          operationId: workItemOperationId("work.result", input.proof, input.requestFingerprint),
+          idempotencyKey: input.idempotencyKey,
+          occurredAt: input.updatedAt,
+          payload: { aggregateState: { stale: false, staleReasons: [], finalizedRevision: rootState.aggregateRevision, finalizedResultRevision: resultRevision ?? 1 } },
+        });
+        this.db.prepare(`UPDATE work_item_aggregations_v6 SET stale=0, stale_reasons_json='[]', finalized_revision=aggregate_revision, finalized_result_revision=? WHERE parent_work_item_id=?`)
+          .run(resultRevision ?? 1, updated.id);
+        updated = this.getRequired(input.workItemId);
+      }
       this.insertEvent({
         workItemId: input.workItemId,
         revision: updated.revision,
@@ -611,7 +721,12 @@ export class WorkItemStorageV6 {
         actorSessionId: input.principalSessionId,
         payload:
           input.result !== null
-          ? { from: current.state, to: input.result.outcome, result: input.result }
+          ? {
+              from: current.state,
+              to: input.result.outcome,
+              result: input.result,
+              ...(resultRevision === undefined ? {} : { resultRevision, sourceRevision, executionRevision }),
+            }
           : { from: current.state, to: input.state },
         createdAt: input.updatedAt,
         proof: input.proof,
@@ -629,6 +744,101 @@ export class WorkItemStorageV6 {
         updated,
       );
       return updated;
+    });
+  }
+
+  correctResult(input: {
+    workItemId: string;
+    expectedRevision: number;
+    expectedResultRevision: number;
+    correctionReason: string;
+    result: WorkItemResult;
+    principalSessionId: string;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    updatedAt: string;
+    expiresAt: string;
+    proof: MutationAuthorityProof;
+  }): { workItem: WorkItem; resultRevision: number; supersededResultRevision: number; stale: boolean; staleParentWorkItemIds: string[] } {
+    if (!isWorkItemResultState(input.result.outcome)) throw new TypeError("A corrected result must be terminal.");
+    if (input.correctionReason.trim().length === 0 || input.correctionReason.length > WORK_ITEM_MAX_TEXT_LENGTH) {
+      throw new TypeError("A result correction reason is required and must be within the text limit.");
+    }
+    const resultJson = serializeJson(input.result, "Work Item result");
+    if (Buffer.byteLength(resultJson, "utf8") > WORK_ITEM_MAX_RESULT_BYTES) {
+      throw new WorkItemResultTooLargeError(Buffer.byteLength(resultJson, "utf8"));
+    }
+    return this.transaction(() => {
+      this.cleanupExpiredIdempotency(input.updatedAt);
+      const principalKey = workItemPrincipalKey(input.proof);
+      const replayRow = this.db.prepare(`SELECT request_fingerprint, response_json, work_item_id FROM work_item_idempotency_v6
+        WHERE operation = ? AND principal_session_id = ? AND idempotency_key = ?`)
+        .get("work.result.correct", principalKey, input.idempotencyKey) as { request_fingerprint: string; response_json: string | null; work_item_id: string } | undefined;
+      if (replayRow) {
+        if (replayRow.request_fingerprint !== input.requestFingerprint) throw new WorkItemIdempotencyConflictError("work.result.correct", input.idempotencyKey);
+        if (replayRow.response_json === null) throw new WorkItemIdempotencyResponseUnavailableError("work.result.correct", input.idempotencyKey, replayRow.work_item_id);
+        const stored = JSON.parse(replayRow.response_json) as { workItem?: WorkItem; resultRevision?: number; supersededResultRevision?: number; stale?: boolean; staleParentWorkItemIds?: string[] };
+        if (!stored.workItem || stored.resultRevision === undefined || stored.supersededResultRevision === undefined) {
+          throw new WorkItemIdempotencyResponseUnavailableError("work.result.correct", input.idempotencyKey, replayRow.work_item_id);
+        }
+        return stored as { workItem: WorkItem; resultRevision: number; supersededResultRevision: number; stale: boolean; staleParentWorkItemIds: string[] };
+      }
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.updatedAt));
+      const current = this.getRequired(input.workItemId);
+      if (current.archivedAt || current.deletedAt) throw new WorkItemAggregationConflictError("WORK_ITEM_ARCHIVED", "Restore the Work Item before correction.");
+      if (current.revision !== input.expectedRevision) throw new WorkItemRevisionConflictError(current.id, input.expectedRevision, current.revision);
+      if (!isWorkItemResultState(current.state) || current.result === null) {
+        throw new WorkItemAggregationConflictError("WORK_ITEM_RESULT_CORRECTION_INVALID", "Only an existing terminal result can be corrected.");
+      }
+      const latest = this.db.prepare(`SELECT MAX(result_revision) AS revision FROM work_item_result_revisions_v6 WHERE work_item_id = ?`).get(current.id) as { revision: number | null };
+      if (latest.revision === null) throw new Error(`Work Item result revision is missing: ${current.id}`);
+      const supersededResultRevision = latest.revision;
+      if (input.expectedResultRevision !== supersededResultRevision) {
+        throw new WorkItemAggregationConflictError("WORK_ITEM_RESULT_REVISION_CONFLICT", "The result revision is stale.", { expectedRevision: input.expectedResultRevision, actualRevision: supersededResultRevision });
+      }
+      const resultRevision = supersededResultRevision + 1;
+      const association = this.db.prepare(`
+        SELECT association.work_item_revision, association.actual_source_json, association.planned_source_json,
+          execution.revision AS execution_revision
+        FROM work_item_execution_associations_v6 AS association
+        LEFT JOIN session_executions_v6 AS execution ON execution.id = association.execution_id
+        WHERE association.work_item_id = ? ORDER BY association.created_at DESC LIMIT 1
+      `).get(current.id) as { work_item_revision: number | null; actual_source_json: string | null; planned_source_json: string | null; execution_revision: number | null } | undefined;
+      const sourceRevision = association?.work_item_revision ?? current.revision;
+      this.db.prepare(`INSERT INTO work_item_result_revisions_v6 (
+        result_revision_id, work_item_id, result_revision, superseded_result_revision, result_json,
+        correction_reason, reporting_session_id, source_revision, execution_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(`${current.id}:result:${resultRevision}`, current.id, resultRevision, supersededResultRevision, resultJson,
+          input.correctionReason, input.result.reportingSessionId, sourceRevision, association?.execution_revision ?? null, input.updatedAt);
+      const changed = this.db.prepare(`UPDATE work_items_v6 SET state = ?, revision = revision + 1, result_json = ?, updated_at = ? WHERE id = ? AND revision = ?`)
+        .run(input.result.outcome, resultJson, input.updatedAt, current.id, input.expectedRevision);
+      if (Number(changed.changes) !== 1) throw new WorkItemRevisionConflictError(current.id, input.expectedRevision, this.getRequired(current.id).revision);
+      const updated = this.getRequired(current.id);
+      this.insertEvent({
+        workItemId: current.id,
+        revision: updated.revision,
+        type: "result_reported",
+        actorSessionId: input.principalSessionId,
+        payload: {
+          from: current.state,
+          to: input.result.outcome,
+          result: input.result,
+          resultRevision,
+          supersededResultRevision,
+          correctionReason: input.correctionReason,
+          sourceRevision,
+          executionRevision: association?.execution_revision ?? null,
+        },
+        createdAt: input.updatedAt,
+        proof: input.proof,
+        operationId: workItemOperationId("work.result.correct", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+      });
+      const staleParentWorkItemIds = this.markAncestorAggregationsStale(current.id, input.correctionReason, input.proof, input.requestFingerprint, input.idempotencyKey, input.updatedAt);
+      const response = { workItem: this.getRequired(current.id), resultRevision, supersededResultRevision, stale: staleParentWorkItemIds.length > 0, staleParentWorkItemIds };
+      this.insertIdempotency("work.result.correct", input.proof, input.idempotencyKey, input.requestFingerprint, current.id, input.updatedAt, input.expiresAt, response);
+      return response;
     });
   }
 
@@ -717,58 +927,12 @@ export class WorkItemStorageV6 {
       for (const child of subtree) this.requireLifecycleIdle(this.getRequired(child.id), true);
       const oldParent = current.parentWorkItemId ? this.getRequired(current.parentWorkItemId) : null;
       const newParent = parentId ? this.getRequired(parentId) : null;
-      for (const parent of [oldParent, newParent]) {
-        if (parent && (!isWorkItemActive(parent.state) || parent.archivedAt)) {
-          throw new WorkItemAggregationConflictError(
-            "WORK_ITEM_PARENT_CORRECTION_REQUIRED",
-            "Moving this branch requires parent result correction in Slice 5.",
-            { parentWorkItemId: parent.id },
-          );
-        }
-      }
-      const finalizedAncestor = this.db
-        .prepare(
-          `WITH RECURSIVE ancestors(id, parent_work_item_id, state) AS (
-        SELECT id, parent_work_item_id, state FROM work_items_v6 WHERE id IN (?, ?)
-        UNION SELECT parent.id, parent.parent_work_item_id, parent.state FROM work_items_v6 parent
-          JOIN ancestors child ON child.parent_work_item_id = parent.id
-      ) SELECT id FROM ancestors WHERE state IN ('completed', 'partially_completed', 'failed', 'canceled') LIMIT 1`,
-        )
-        .get(current.parentWorkItemId, parentId);
-      const finalizedRootBranch = this.db
-        .prepare(
-          `SELECT root.id FROM work_items_v6 root
-        JOIN work_item_events_v6 result ON result.work_item_id = root.id AND result.event_type = 'result_reported'
-        WHERE root.kind = 'root' AND root.root_session_id = ? AND EXISTS (
-          SELECT 1 FROM work_item_events_v6 created WHERE created.work_item_id IN (?, ?)
-            AND created.revision = 1 AND created.sequence < result.sequence
-        ) LIMIT 1`,
-        )
-        .get(current.rootSessionId, current.id, parentId);
-      if (finalizedAncestor || finalizedRootBranch) {
-        throw new WorkItemAggregationConflictError(
-          "WORK_ITEM_PARENT_CORRECTION_REQUIRED",
-          "Moving a branch retained by a finalized ancestor requires Slice 5 correction.",
-        );
-      }
-      if (newParent && (newParent.kind !== "delegated" || newParent.rootSessionId !== current.rootSessionId)) {
+      if (newParent && (newParent.kind !== "delegated" || newParent.rootSessionId !== current.rootSessionId || newParent.archivedAt || newParent.deletedAt || newParent.state === "canceled")) {
         throw new WorkItemAggregationConflictError(
           "WORK_ITEM_PARENT_INVALID",
           "The destination must be a delegated parent in the same root. Cross-root Work Item transfer is not connected.",
         );
       }
-      const finalizedRoot = this.db
-        .prepare(
-          `SELECT id FROM work_items_v6 WHERE kind='root' AND root_session_id=?
-        AND state IN ('completed','partially_completed','failed','canceled')
-        AND NOT EXISTS (SELECT 1 FROM work_items_v6 active WHERE active.kind='root' AND active.root_session_id=? AND active.state IN ('pending','in_progress','waiting')) LIMIT 1`,
-        )
-        .get(current.rootSessionId, current.rootSessionId);
-      if (finalizedRoot)
-        throw new WorkItemAggregationConflictError(
-          "WORK_ITEM_PARENT_CORRECTION_REQUIRED",
-          "A finalized root requires an explicit successor branch before moving work.",
-        );
       if (oldParent) this.requireAggregateRevision(oldParent.id, input.expectedAggregateRevision);
       if (newParent) this.requireAggregateRevision(newParent.id, input.expectedDestinationAggregateRevision);
       const creatorSessionId = newParent?.targetSessionId ?? current.rootSessionId;
@@ -810,6 +974,10 @@ export class WorkItemStorageV6 {
           childWorkItemId: current.id,
           childRevision: current.revision + 1,
         });
+      for (const parent of [oldParent, newParent]) {
+        if (parent) this.markAncestorAggregationsStale(parent.id, "work.move", input.proof, input.requestFingerprint, input.idempotencyKey, input.updatedAt, "work.move", true);
+      }
+      this.markAncestorAggregationsStale(current.id, "work.move", input.proof, input.requestFingerprint, input.idempotencyKey, input.updatedAt, "work.move", true, true);
       return this.finishLifecycleEvent("work.move", input, current, "parent_changed", {
         beforeParentWorkItemId: current.parentWorkItemId,
         afterParentWorkItemId: parentId,
@@ -1069,10 +1237,10 @@ export class WorkItemStorageV6 {
   ): WorkItem {
     const parentId = contract.parentWorkItemId === undefined ? current.parentWorkItemId : contract.parentWorkItemId;
     const parent = parentId ? this.getRequired(parentId) : null;
-    if (parent && (!isWorkItemActive(parent.state) || parent.archivedAt || parent.deletedAt))
+    if (parent && (parent.archivedAt || parent.deletedAt))
       throw new WorkItemAggregationConflictError(
         "WORK_ITEM_PARENT_CORRECTION_REQUIRED",
-        "A successor needs an active parent branch.",
+        "A successor cannot use an archived or deleted parent branch.",
       );
     const creatorSessionId = parent?.targetSessionId ?? input.principalSessionId;
     this.requireLifecycleTarget(current.rootSessionId, creatorSessionId, contract.targetSessionId);
@@ -1399,12 +1567,12 @@ export class WorkItemStorageV6 {
 
   get(workItemId: string): WorkItem | null {
     const row = this.db.prepare("SELECT * FROM work_items_v6 WHERE id = ?").get(workItemId) as WorkItemRow | undefined;
-    if (row) return parseWorkItem(row);
+    if (row) return this.withResultProjection(parseWorkItem(row));
     const tombstone = this.db
       .prepare("SELECT snapshot_json,deleted_at FROM work_item_tombstones_v6 WHERE work_item_id=?")
       .get(workItemId) as { snapshot_json: string; deleted_at: string } | undefined;
     return tombstone
-      ? { ...parseWorkItem(JSON.parse(tombstone.snapshot_json) as WorkItemRow), deletedAt: tombstone.deleted_at }
+      ? { ...this.withResultProjection(parseWorkItem(JSON.parse(tombstone.snapshot_json) as WorkItemRow)), deletedAt: tombstone.deleted_at }
       : null;
   }
 
@@ -1464,8 +1632,15 @@ export class WorkItemStorageV6 {
       )
       .iterate(...parameters) as IterableIterator<WorkItemRow>;
     for (const row of rows) {
-      yield parseWorkItem(row);
+      yield this.withResultProjection(parseWorkItem(row));
     }
+  }
+
+  private withResultProjection(item: WorkItem): WorkItem {
+    const row = this.db.prepare("SELECT MAX(result_revision) AS revision FROM work_item_result_revisions_v6 WHERE work_item_id = ?")
+      .get(item.id) as { revision: number | null };
+    const stale = this.db.prepare("SELECT 1 FROM work_item_aggregations_v6 WHERE parent_work_item_id = ? AND stale = 1").get(item.id) !== undefined;
+    return { ...item, resultRevision: row.revision ?? 0, resultCurrent: item.result !== null && !stale, stale };
   }
 
   getExecutionWorkItemId(executionId: string): string | null {
@@ -1490,7 +1665,7 @@ export class WorkItemStorageV6 {
         COALESCE(SUM(CASE WHEN child.state IN ('completed', 'partially_completed', 'failed', 'canceled') AND decision.child_work_item_id IS NULL THEN 1 ELSE 0 END), 0) AS undecided_terminal_count,
         COALESCE(SUM(CASE WHEN decision.decision_type = 'accepted' THEN 1 ELSE 0 END), 0) AS accepted_count,
         COALESCE(SUM(CASE WHEN decision.decision_type = 'excluded' THEN 1 ELSE 0 END), 0) AS excluded_count,
-        COALESCE(SUM(CASE WHEN decision.decision_type = 'retry_requested' THEN 1 ELSE 0 END), 0) AS retry_requested_count
+      COALESCE(SUM(CASE WHEN decision.decision_type = 'retry_requested' THEN 1 ELSE 0 END), 0) AS retry_requested_count
       FROM work_items_v6 AS child
       LEFT JOIN work_item_aggregation_decisions_v6 AS decision ON decision.child_work_item_id = child.id
       WHERE child.parent_work_item_id = ?
@@ -1500,10 +1675,11 @@ export class WorkItemStorageV6 {
     const revision = this.db
       .prepare(
         `
-      SELECT aggregate_revision FROM work_item_aggregations_v6 WHERE parent_work_item_id = ?
+      SELECT aggregate_revision, stale, stale_reasons_json, finalized_revision, finalized_result_revision FROM work_item_aggregations_v6 WHERE parent_work_item_id = ?
     `,
       )
-      .get(parentWorkItemId) as { aggregate_revision: number } | undefined;
+      .get(parentWorkItemId) as { aggregate_revision: number; stale?: number; stale_reasons_json?: string; finalized_revision?: number | null; finalized_result_revision?: number | null } | undefined;
+    const staleReasons = revision?.stale_reasons_json ? JSON.parse(revision.stale_reasons_json) as unknown : [];
     return {
       contractRevision: WORK_ITEM_AGGREGATION_CONTRACT_REVISION,
       parentWorkItemId,
@@ -1514,6 +1690,10 @@ export class WorkItemStorageV6 {
       acceptedCount: Number(row.accepted_count),
       excludedCount: Number(row.excluded_count),
       retryRequestedCount: Number(row.retry_requested_count),
+      stale: revision?.stale === 1,
+      staleReasons: Array.isArray(staleReasons) ? staleReasons.filter((reason): reason is string => typeof reason === "string") : [],
+      finalizedRevision: revision?.finalized_revision ?? null,
+      finalizedResultRevision: revision?.finalized_result_revision ?? null,
     };
   }
 
@@ -1522,25 +1702,41 @@ export class WorkItemStorageV6 {
     afterSequence: number | null;
     limit: number;
     decision?: WorkItemAggregationDecisionType;
+    state?: WorkItemState;
+    depth?: number;
+    fields?: readonly ("summary" | "decision" | "provenance")[];
   }): WorkItemAggregationListItem[] {
     this.requireDelegatedAggregationParent(input.parentWorkItemId);
-    const parameters: Array<string | number> = [input.parentWorkItemId, input.afterSequence ?? 0];
+    const depth = Math.max(1, Math.min(input.depth ?? 1, 8));
+    const parameters: Array<string | number> = [input.parentWorkItemId, depth, input.afterSequence ?? 0];
     const decisionClause = input.decision === undefined ? "" : "AND decision.decision_type = ?";
+    const stateClause = input.state === undefined ? "" : "AND child.state = ?";
     if (input.decision !== undefined) parameters.push(input.decision);
+    if (input.state !== undefined) parameters.push(input.state);
     parameters.push(input.limit);
     const rows = this.db
       .prepare(
         `
+      WITH RECURSIVE descendants(id, depth) AS (
+        SELECT id, 1 FROM work_items_v6 WHERE parent_work_item_id = ?
+        UNION ALL
+        SELECT child.id, descendants.depth + 1 FROM work_items_v6 AS child
+        INNER JOIN descendants ON child.parent_work_item_id = descendants.id
+        WHERE descendants.depth < ?
+      )
       SELECT child.id, child.sequence, child.creator_session_id, child.target_session_id,
         child.parent_work_item_id, child.state, child.revision, child.created_at, child.updated_at,
+        descendants.depth,
         child.result_json IS NOT NULL AS has_result,
         CASE WHEN child.result_json IS NULL THEN NULL ELSE json_extract(child.result_json, '$.summary') END AS result_summary,
+        COALESCE((SELECT MAX(result_revision) FROM work_item_result_revisions_v6 AS result_revision WHERE result_revision.work_item_id = child.id), 0) AS result_revision,
+        EXISTS (SELECT 1 FROM work_item_aggregations_v6 AS stale_aggregation WHERE stale_aggregation.parent_work_item_id = child.id AND stale_aggregation.stale = 1) AS stale,
         decision.decision_revision, decision.child_revision, decision.actor_session_id,
         decision.decision_type, decision.reason AS decision_reason,
         decision.replacement_work_item_id, decision.decided_at
-      FROM work_items_v6 AS child
+      FROM descendants INNER JOIN work_items_v6 AS child ON child.id = descendants.id
       LEFT JOIN work_item_aggregation_decisions_v6 AS decision ON decision.child_work_item_id = child.id
-      WHERE child.parent_work_item_id = ? AND child.sequence > ? ${decisionClause}
+      WHERE child.sequence > ? ${decisionClause} ${stateClause}
       ORDER BY child.sequence ASC LIMIT ?
     `,
       )
@@ -1554,8 +1750,11 @@ export class WorkItemStorageV6 {
       revision: number;
       created_at: string;
       updated_at: string;
+      depth: number;
       has_result: number;
       result_summary: string | null;
+      result_revision: number;
+      stale: number;
       decision_revision: number | null;
       child_revision: number | null;
       actor_session_id: string | null;
@@ -1565,6 +1764,9 @@ export class WorkItemStorageV6 {
       decided_at: string | null;
     }>;
     return rows.map((row) => {
+      const includeSummary = input.fields === undefined || input.fields.includes("summary");
+      const includeDecision = input.fields === undefined || input.fields.includes("decision");
+      const includeProvenance = input.fields?.includes("provenance") === true;
       return {
         child: {
           id: row.id,
@@ -1577,13 +1779,18 @@ export class WorkItemStorageV6 {
           createdAt: row.created_at,
           updatedAt: row.updated_at,
         },
-        hasResult: row.has_result === 1,
-        resultSummary: row.result_summary,
+        depth: row.depth,
+        resultRevision: row.result_revision,
+        resultCurrent: row.result_revision > 0 && row.stale === 0,
+        stale: row.stale === 1,
+        ...(includeProvenance ? { provenance: { creatorSessionId: row.creator_session_id, targetSessionId: row.target_session_id, parentWorkItemId: row.parent_work_item_id } } : {}),
+        hasResult: includeSummary && row.has_result === 1,
+        resultSummary: includeSummary ? row.result_summary : null,
         decision:
-          row.decision_type === null
+          !includeDecision || row.decision_type === null
             ? null
             : {
-          parentWorkItemId: input.parentWorkItemId,
+          parentWorkItemId: row.parent_work_item_id ?? input.parentWorkItemId,
           childWorkItemId: row.id,
                 revision: row.decision_revision!,
                 childRevision: row.child_revision!,
@@ -1800,6 +2007,140 @@ export class WorkItemStorageV6 {
     return item;
   }
 
+  correctAggregation(input: {
+    parentWorkItemId: string;
+    childWorkItemId: string;
+    expectedAggregateRevision: number;
+    expectedChildResultRevision: number;
+    correction: {
+      kind: WorkItemAggregationCorrection;
+      decision?: WorkItemAggregationDecisionType;
+      reason?: string | null;
+      replacementWorkItemId?: string | null;
+    };
+    actorSessionId: string;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    decidedAt: string;
+    expiresAt: string;
+    proof: MutationAuthorityProof;
+  }): { decision: WorkItemAggregationDecision | null; supersededDecisionRevision: number; aggregateRevision: number; stale: boolean; staleParentWorkItemIds: string[] } {
+    return this.transaction(() => {
+      this.cleanupExpiredIdempotency(input.decidedAt);
+      const principalKey = workItemPrincipalKey(input.proof);
+      const replayRow = this.db.prepare(`SELECT request_fingerprint, response_json, child_work_item_id FROM work_item_aggregation_idempotency_v6
+        WHERE operation = ? AND principal_session_id = ? AND idempotency_key = ?`)
+        .get("work.aggregation.correct", principalKey, input.idempotencyKey) as { request_fingerprint: string; response_json: string | null; child_work_item_id: string } | undefined;
+      if (replayRow) {
+        if (replayRow.request_fingerprint !== input.requestFingerprint) throw new WorkItemIdempotencyConflictError("work.aggregation.correct", input.idempotencyKey);
+        if (replayRow.response_json === null) throw new WorkItemIdempotencyResponseUnavailableError("work.aggregation.correct", input.idempotencyKey, replayRow.child_work_item_id);
+        return JSON.parse(replayRow.response_json) as { decision: WorkItemAggregationDecision | null; supersededDecisionRevision: number; aggregateRevision: number; stale: boolean; staleParentWorkItemIds: string[] };
+      }
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.decidedAt));
+      const parent = this.requireDelegatedAggregationParent(input.parentWorkItemId);
+      if (parent.archivedAt || parent.deletedAt || parent.state === "canceled") throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_PARENT_INVALID", "The aggregation parent must be live.");
+      if (parent.targetSessionId !== input.actorSessionId) throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_FORBIDDEN", "Only the parent target Session can correct its aggregation.");
+      const current = this.getRequired(input.childWorkItemId);
+      const decision = this.getDecision(current.id);
+      if (!decision || decision.parentWorkItemId !== parent.id || current.parentWorkItemId !== parent.id || current.rootSessionId !== parent.rootSessionId) throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_DECISION_NOT_FOUND", "The child has no active aggregation decision.");
+      const currentResultRevision = this.currentResultRevision(current.id);
+      if (currentResultRevision !== input.expectedChildResultRevision) throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_CHILD_REVISION_CONFLICT", "The child result revision is stale.", { expectedRevision: input.expectedChildResultRevision, actualRevision: currentResultRevision });
+      const summary = this.getAggregationSummary(parent.id);
+      if (summary.aggregateRevision !== input.expectedAggregateRevision) throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_REVISION_CONFLICT", "The aggregate revision is stale.", { expectedRevision: input.expectedAggregateRevision, actualRevision: summary.aggregateRevision });
+      const reason = input.correction.reason ?? null;
+      if (!reason?.trim() || reason.length > WORK_ITEM_MAX_TEXT_LENGTH) throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_DECISION_INVALID", "A correction reason within the text limit is required.");
+      let result: WorkItemAggregationDecision | null;
+      if (input.correction.kind === "withdraw") {
+        this.db.prepare("DELETE FROM work_item_aggregation_decisions_v6 WHERE child_work_item_id = ?").run(current.id);
+        result = null;
+      } else {
+        const nextDecision = input.correction.kind === "replace" ? "retry_requested" : (input.correction.decision ?? decision.decision);
+        const replacementWorkItemId = input.correction.kind === "replace" ? (input.correction.replacementWorkItemId ?? null) : nextDecision === "retry_requested" ? decision.replacementWorkItemId : null;
+        if (nextDecision === "retry_requested" && replacementWorkItemId === null) throw new WorkItemAggregationConflictError("WORK_ITEM_REPLACEMENT_INVALID", "A replacement Work Item is required.");
+        if (replacementWorkItemId !== null) {
+          const replacement = this.getRequired(replacementWorkItemId);
+          const cycle = this.db.prepare(`WITH RECURSIVE chain(id) AS (
+            SELECT ? UNION SELECT decision.replacement_work_item_id FROM work_item_aggregation_decisions_v6 decision JOIN chain ON decision.child_work_item_id = chain.id WHERE decision.replacement_work_item_id IS NOT NULL
+          ) SELECT 1 FROM chain WHERE id = ?`).get(replacementWorkItemId, current.id);
+          if (replacement.parentWorkItemId !== parent.id || replacement.rootSessionId !== parent.rootSessionId || replacement.archivedAt || replacement.deletedAt || cycle) throw new WorkItemAggregationConflictError("WORK_ITEM_REPLACEMENT_INVALID", "The replacement must be a live same-parent Work Item without a replacement cycle.");
+        }
+        this.validateDecision(current, nextDecision, reason ?? decision.reason);
+        this.db.prepare(`UPDATE work_item_aggregation_decisions_v6 SET decision_revision = ?, child_revision = ?, decision_type = ?, reason = ?, replacement_work_item_id = ?, decided_at = ? WHERE child_work_item_id = ?`)
+          .run(input.expectedAggregateRevision + 1, current.revision, nextDecision, reason ?? decision.reason, replacementWorkItemId, input.decidedAt, current.id);
+        result = this.getDecision(current.id);
+      }
+      this.incrementAggregateRevision(parent.id, input.decidedAt);
+      appendWorkItemAggregationEvent(this.db, {
+        parentWorkItemId: parent.id,
+        childWorkItemId: current.id,
+        aggregateRevision: input.expectedAggregateRevision + 1,
+        eventKind: "decision_corrected",
+        proof: input.proof,
+        operationId: workItemOperationId("work.aggregation.correct", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+        occurredAt: input.decidedAt,
+        payload: { correction: input.correction.kind, supersededDecisionRevision: decision.revision, childRevision: current.revision, decision: result?.decision ?? null, reason, replacementWorkItemId: result?.replacementWorkItemId ?? null },
+      });
+      const staleParentWorkItemIds = this.markAncestorAggregationsStale(parent.id, `aggregation:${input.correction.kind}`, input.proof, input.requestFingerprint, input.idempotencyKey, input.decidedAt, "work.aggregation.correct");
+      const aggregateRevision = this.getAggregationSummary(parent.id).aggregateRevision;
+      this.insertAggregationCorrectionIdempotency(input, current.id, result?.replacementWorkItemId ?? null, {
+        decision: result,
+        supersededDecisionRevision: decision.revision,
+        aggregateRevision,
+        stale: true,
+        staleParentWorkItemIds,
+      });
+      return { decision: result, supersededDecisionRevision: decision.revision, aggregateRevision, stale: true, staleParentWorkItemIds };
+    });
+  }
+
+  private currentResultRevision(workItemId: string): number {
+    const row = this.db.prepare("SELECT result_json FROM work_items_v6 WHERE id = ?").get(workItemId) as { result_json: string | null } | undefined;
+    if (!row || row.result_json === null) return 0;
+    const revision = this.db.prepare("SELECT MAX(result_revision) AS revision FROM work_item_result_revisions_v6 WHERE work_item_id = ?")
+      .get(workItemId) as { revision: number | null };
+    if (revision.revision === null) throw new Error(`Work Item result revision is missing: ${workItemId}`);
+    return revision.revision;
+  }
+
+  private getInternalAggregationState(parentWorkItemId: string): {
+    aggregateRevision: number;
+    directChildCount: number;
+    activeCount: number;
+    undecidedTerminalCount: number;
+    stale: boolean;
+    staleReasons: string[];
+    finalizedRevision: number | null;
+    finalizedResultRevision: number | null;
+  } {
+    const row = this.db.prepare(`SELECT aggregate_revision, stale, stale_reasons_json, finalized_revision, finalized_result_revision,
+      (SELECT COUNT(*) FROM work_items_v6 WHERE parent_work_item_id = ?) AS direct_child_count,
+      (SELECT COUNT(*) FROM work_items_v6 WHERE parent_work_item_id = ? AND state IN ('pending', 'in_progress', 'waiting')) AS active_count,
+      (SELECT COUNT(*) FROM work_items_v6 AS child WHERE child.parent_work_item_id = ? AND child.state IN ('completed', 'partially_completed', 'failed', 'canceled') AND NOT EXISTS (SELECT 1 FROM work_item_aggregation_decisions_v6 AS decision WHERE decision.child_work_item_id = child.id)) AS undecided_terminal_count
+      FROM work_item_aggregations_v6 WHERE parent_work_item_id = ?`).get(parentWorkItemId, parentWorkItemId, parentWorkItemId, parentWorkItemId) as {
+      aggregate_revision: number; stale: number; stale_reasons_json: string; finalized_revision: number | null; finalized_result_revision: number | null;
+      direct_child_count: number; active_count: number; undecided_terminal_count: number;
+    } | undefined;
+    if (!row) return { aggregateRevision: 0, directChildCount: 0, activeCount: 0, undecidedTerminalCount: 0, stale: false, staleReasons: [], finalizedRevision: null, finalizedResultRevision: null };
+    const reasons = JSON.parse(row.stale_reasons_json) as unknown;
+    if (!Array.isArray(reasons) || reasons.some(reason => typeof reason !== "string")) throw new Error(`Invalid aggregation stale reasons: ${parentWorkItemId}`);
+    return { aggregateRevision: row.aggregate_revision, directChildCount: row.direct_child_count, activeCount: row.active_count, undecidedTerminalCount: row.undecided_terminal_count, stale: row.stale === 1, staleReasons: reasons, finalizedRevision: row.finalized_revision, finalizedResultRevision: row.finalized_result_revision };
+  }
+
+  private insertAggregationCorrectionIdempotency(
+    input: { proof: MutationAuthorityProof; idempotencyKey: string; requestFingerprint: string; decidedAt: string; expiresAt: string },
+    childId: string,
+    replacementId: string | null,
+    response: unknown,
+  ): void {
+    this.db.prepare(`INSERT INTO work_item_aggregation_idempotency_v6 (
+      operation, principal_session_id, idempotency_key, request_fingerprint, child_work_item_id,
+      replacement_work_item_id, response_json, created_at, expires_at
+    ) VALUES ('work.aggregation.correct', ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(workItemPrincipalKey(input.proof), input.idempotencyKey, input.requestFingerprint, childId, replacementId,
+        serializeJson(response, "Aggregation correction response"), input.decidedAt, input.expiresAt);
+  }
+
   private requireAggregationMutation(
     parent: WorkItem,
     childWorkItemId: string,
@@ -1812,7 +2153,7 @@ export class WorkItemStorageV6 {
         "WORK_ITEM_AGGREGATION_FORBIDDEN",
         "Only the parent target Session can mutate its aggregation.",
       );
-    if (!isWorkItemResultState(parent.state) && parent.state !== "canceled") {
+    if ((!isWorkItemResultState(parent.state) || this.getInternalAggregationState(parent.id).stale) && parent.state !== "canceled" && !parent.archivedAt && !parent.deletedAt) {
       const revision = this.getAggregationSummary(parent.id).aggregateRevision;
       if (revision !== expectedRevision)
         throw new WorkItemAggregationConflictError(
@@ -1850,6 +2191,12 @@ export class WorkItemStorageV6 {
         "WORK_ITEM_AGGREGATION_DECISION_INVALID",
         "A canceled child cannot be accepted.",
       );
+    if (decision === "accepted" && child.kind === "delegated") {
+      const staleAggregate = this.db.prepare("SELECT 1 FROM work_item_aggregations_v6 WHERE parent_work_item_id = ? AND stale = 1 LIMIT 1").get(child.id);
+      if (staleAggregate) {
+        throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_CHILD_REVISION_CONFLICT", "A child with a stale nested aggregation cannot be accepted.");
+      }
+    }
     if (decision === "excluded" && (!reason || reason.trim().length === 0))
       throw new WorkItemAggregationConflictError(
         "WORK_ITEM_AGGREGATION_REASON_REQUIRED",
@@ -1863,8 +2210,8 @@ export class WorkItemStorageV6 {
   }
 
   private requireAggregationFinalizable(parentWorkItemId: string, expectedAggregateRevision: number | undefined): void {
-    const summary = this.getAggregationSummary(parentWorkItemId);
-    if (summary.directChildCount === 0) return;
+    const summary = this.getInternalAggregationState(parentWorkItemId);
+    if (summary.aggregateRevision === 0) return;
     if (expectedAggregateRevision === undefined)
       throw new WorkItemAggregationConflictError(
         "WORK_ITEM_AGGREGATION_REVISION_REQUIRED",
@@ -1886,7 +2233,8 @@ export class WorkItemStorageV6 {
         `
       SELECT 1 FROM work_items_v6 AS child
       INNER JOIN work_item_aggregation_decisions_v6 AS decision ON decision.child_work_item_id = child.id
-      WHERE child.parent_work_item_id = ? AND NOT ${workItemDecisionRevisionMatchesSql("child")} LIMIT 1
+      WHERE child.parent_work_item_id = ? AND (NOT ${workItemDecisionRevisionMatchesSql("child")}
+        OR (decision.decision_type = 'accepted' AND EXISTS (SELECT 1 FROM work_item_aggregations_v6 nested WHERE nested.parent_work_item_id = child.id AND nested.stale = 1))) LIMIT 1
     `,
       )
       .get(parentWorkItemId);
@@ -1897,6 +2245,67 @@ export class WorkItemStorageV6 {
       );
   }
 
+  private markAncestorAggregationsStale(workItemId: string, reason: string, proof: MutationAuthorityProof, requestFingerprint: string, idempotencyKey: string, occurredAt: string, operation: WorkItemMutationOperation | WorkItemAggregationMutationOperation = "work.result.correct", finalizedOnly = false, rootsOnly = false): string[] {
+    const ancestors = this.db.prepare(`
+      WITH RECURSIVE ancestors(id) AS (
+        SELECT id FROM work_items_v6 WHERE id = ?
+        UNION
+        SELECT item.parent_work_item_id FROM work_items_v6 AS item
+        INNER JOIN ancestors ON item.id = ancestors.id
+        WHERE item.parent_work_item_id IS NOT NULL
+      ) SELECT id FROM ancestors WHERE id <> ? OR EXISTS (SELECT 1 FROM work_item_aggregations_v6 WHERE parent_work_item_id = ancestors.id)
+      UNION SELECT root.id FROM work_items_v6 root
+        JOIN work_item_events_v6 result ON result.work_item_id = root.id AND result.event_type = 'result_reported'
+        JOIN work_items_v6 descendant ON descendant.root_session_id = root.root_session_id
+        WHERE descendant.id = ? AND root.kind = 'root' AND (root.id = ? OR EXISTS (
+          SELECT 1 FROM work_item_events_v6 created WHERE created.work_item_id = descendant.id AND created.revision = 1 AND created.sequence < result.sequence
+        ))
+    `).all(workItemId, workItemId, workItemId, workItemId) as Array<{ id: string }>;
+    const affected = ancestors.filter(ancestor => {
+      const item = this.getRequired(ancestor.id);
+      return (!finalizedOnly || item.result !== null) && (!rootsOnly || item.kind === "root");
+    });
+    for (const ancestor of affected) {
+      this.markAggregationStaleWithEvent(ancestor.id, workItemId, reason, proof, requestFingerprint, idempotencyKey, occurredAt, operation);
+    }
+    return affected.map((ancestor) => ancestor.id);
+  }
+
+  private markAggregationStaleWithEvent(
+    parentWorkItemId: string,
+    childWorkItemId: string,
+    reason: string,
+    proof: MutationAuthorityProof,
+    requestFingerprint: string,
+    idempotencyKey: string,
+    occurredAt: string,
+    operation: WorkItemMutationOperation | WorkItemAggregationMutationOperation,
+  ): void {
+    this.incrementAggregateRevision(parentWorkItemId, occurredAt);
+    this.db.prepare("UPDATE work_item_aggregations_v6 SET stale = 1, stale_reasons_json = json_insert(stale_reasons_json, '$[#]', ?) WHERE parent_work_item_id = ?")
+      .run(reason, parentWorkItemId);
+    const summary = this.getInternalAggregationState(parentWorkItemId);
+    appendWorkItemAggregationEvent(this.db, {
+      parentWorkItemId,
+      childWorkItemId,
+      aggregateRevision: summary.aggregateRevision,
+      eventKind: "stale",
+      proof,
+      operationId: workItemOperationId(operation, proof, requestFingerprint),
+      idempotencyKey,
+      occurredAt,
+      payload: {
+        reason,
+        aggregateState: {
+          stale: summary.stale,
+          staleReasons: summary.staleReasons,
+          finalizedRevision: summary.finalizedRevision,
+          finalizedResultRevision: summary.finalizedResultRevision ?? null,
+        },
+      },
+    });
+  }
+
   private requireRootFinalizable(root: WorkItem, expectedAggregateRevision: number | undefined): void {
     if (expectedAggregateRevision !== undefined) {
       throw new WorkItemAggregationConflictError(
@@ -1905,6 +2314,14 @@ export class WorkItemStorageV6 {
         { parentWorkItemId: root.id },
       );
     }
+    const staleAggregate = this.db.prepare(`
+      SELECT parent_work_item_id FROM work_item_aggregations_v6
+      WHERE stale = 1 AND parent_work_item_id IN (
+        SELECT id FROM work_items_v6 WHERE root_session_id = ?
+          AND kind = 'delegated'
+      ) LIMIT 1
+    `).get(root.rootSessionId) as { parent_work_item_id: string } | undefined;
+    if (staleAggregate) throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_STALE", "A descendant aggregation requires re-finalization.", { parentWorkItemId: staleAggregate.parent_work_item_id });
     const incomplete = this.db
       .prepare(
         `
@@ -1913,7 +2330,7 @@ export class WorkItemStorageV6 {
       FROM work_items_v6 AS child
       LEFT JOIN work_item_aggregation_decisions_v6 AS decision
         ON decision.child_work_item_id = child.id
-      WHERE child.root_session_id = ? AND child.id <> ? AND (
+      WHERE child.root_session_id = ? AND child.id <> ? AND child.kind = 'delegated' AND (
         child.state IN ('pending', 'in_progress', 'waiting')
         OR (
           child.parent_work_item_id IS NULL
@@ -2148,7 +2565,7 @@ export class WorkItemStorageV6 {
     workItemId: string,
     createdAt: string,
     expiresAt: string,
-    response: WorkItem,
+    response: unknown,
   ): void {
     this.db
       .prepare(

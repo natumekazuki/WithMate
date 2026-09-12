@@ -588,6 +588,39 @@ describe("withmate-session CLI", () => {
     }]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "CLI correction commandsはcanonical operationとeffect-bearing inputへdispatchする"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
+  // fault = "CLIがcorrectionを通常resultへ誤写像する、expected child result revisionを落とす、またはeffect mappingをread扱いする"
+  // observable = "CLI request operation/inputとsuccess exit"
+  // observation_boundary = "public-boundary"
+  // scope = "withmate-session-cli correction dispatch"
+  // lifecycle = "permanent"
+  // distinction = "canonical parser testとは別にCLI command routingを確認する"
+  // @end-test-value
+  test("WORK-CORRECTION-ADAPTER: result/aggregation correctionをcanonical operationへdispatchする", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const resultInput = { workItemId: "work-1", expectedRevision: 3, expectedResultRevision: 1, correctionReason: "recheck", result: { outcome: "completed", summary: "corrected", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] }, idempotencyKey: "correct-result" };
+    const aggregationInput = { parentWorkItemId: "parent", childWorkItemId: "child", expectedAggregateRevision: 4, expectedChildResultRevision: 0, correction: { kind: "withdraw", reason: "recheck" }, idempotencyKey: "correct-aggregation" };
+    for (const [args, operation, input] of [
+      [["work", "result", "correct", "--json", JSON.stringify(resultInput)], "work.result.correct", resultInput],
+      [["work", "aggregation", "correct", "--json", JSON.stringify(aggregationInput)], "work.aggregation.correct", aggregationInput],
+    ] as const) {
+      const exitCode = await runWithMateSessionCli(args, {
+        stdout: stdout.stream,
+        discover: async () => connection,
+        call: async (_connection, envelope) => {
+          requests.push(envelope);
+          return { ok: true, status: 200, value: createSessionRuntimeResult(operation, {} as never) };
+        },
+      });
+      assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+      assert.deepEqual(requests.at(-1), { schemaVersion: "withmate-session-request-v2", operation, input });
+    }
+  });
+
   test("AGG-ADAPTER-01: work aggregation retryはshared strict inputへdispatchする", async () => {
     const stdout = capture();
     const requests: unknown[] = [];

@@ -3,10 +3,17 @@ import { createHash } from "node:crypto";
 import { requireSessionRoleBinding } from "../src/session-role-binding.js";
 import { isAgentMutationProof, type MutationAdmissionProof, type MutationAuthorityProof } from "../src/session-authority.js";
 import type { SessionTurnAuthoritySession } from "../src/session-turn-communication-authority.js";
+import type {
+  SessionRuntimeWorkItemResultCorrectionInput,
+  SessionRuntimeWorkItemResultCorrectionResult,
+  SessionRuntimeWorkItemAggregationCorrectionInput,
+  SessionRuntimeWorkItemAggregationCorrectionResult,
+} from "../src/session-external-runtime-contract.js";
 import {
   WORK_ITEM_IDEMPOTENCY_RETENTION_MS,
   WORK_ITEM_MAX_LIST_LIMIT,
   isWorkItemActive,
+  isWorkItemResultState,
   isRootWorkItem,
   type RootWorkItem,
   type WorkItem,
@@ -87,6 +94,7 @@ export type WorkItemResultInput = {
   result: Omit<WorkItemResult, "outcome" | "reportingSessionId" | "reportedAt">;
   idempotencyKey: string;
   expectedAggregateRevision?: number;
+  expectedResultRevision?: number;
 };
 
 export type WorkItemAggregationGetInput = {
@@ -96,6 +104,9 @@ export type WorkItemAggregationGetInput = {
 export type WorkItemAggregationListInput = {
   parentWorkItemId: string;
   decision?: WorkItemAggregationDecisionType;
+  state?: WorkItemState;
+  depth?: number;
+  fields?: Array<"summary" | "decision" | "provenance">;
   limit: number;
   afterSequence: number | null;
 };
@@ -193,7 +204,7 @@ export class WorkItemService {
       WorkItemStorageV6,
       "cleanupExpiredIdempotency" | "create" | "get" | "iteratePage" | "listPage" | "mutate" | "resolveIdempotency"
       | "reviseRoot" | "appendRootHistory" | "listHistory" | "listRecentHistory" | "iterateHistory" | "iterateRecentHistory"
-      | "getAggregationSummary" | "listAggregationItems" | "decideAggregation" | "retryAggregation"
+      | "getAggregationSummary" | "listAggregationItems" | "decideAggregation" | "retryAggregation" | "correctResult" | "correctAggregation"
       | "resolveAggregationIdempotency"
     > & WorkItemLifecycleStoragePort;
     getTurnAuthoritySession(sessionId: string): SessionTurnAuthoritySession | null;
@@ -321,7 +332,7 @@ export class WorkItemService {
     }
     if (input.destinationParentWorkItemId !== null) {
       const parent = this.requireVisibleItem(input.destinationParentWorkItemId, binding, true);
-      if (parent.kind !== "delegated" || !isWorkItemActive(parent.state)) throw new WorkItemParentError(parent.id);
+      if (parent.kind !== "delegated" || (!isWorkItemActive(parent.state) && !isWorkItemResultState(parent.state))) throw new WorkItemParentError(parent.id);
       this.requireDestinationProof(additionalProofs, parent, binding);
     } else if (binding.actorSessionId !== item.rootSessionId) {
       throw new WorkItemAuthorityError("Only the root owner can adopt a top-level Work Item.", { workItemId: item.id });
@@ -480,6 +491,7 @@ export class WorkItemService {
 
   reportResult(input: WorkItemResultInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
     const reportedAt = this.deps.currentTimestamp();
+    const current = input.expectedResultRevision === undefined ? null : this.deps.storage.get(input.workItemId);
     const result: WorkItemResult = {
       outcome: input.state,
       summary: input.result.summary,
@@ -489,9 +501,29 @@ export class WorkItemService {
       unverifiedItems: [...input.result.unverifiedItems],
       remainingWork: [...input.result.remainingWork],
       reportingSessionId: binding.actorSessionId,
-      reportedAt,
+      reportedAt: current?.result?.reportedAt ?? reportedAt,
     };
     return this.targetMutation("work.result", input, binding, proof, input.state, result, reportedAt);
+  }
+
+  correctResult(input: SessionRuntimeWorkItemResultCorrectionInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): SessionRuntimeWorkItemResultCorrectionResult {
+    const updatedAt = this.deps.currentTimestamp();
+    const item = this.requireVisibleItem(input.workItemId, binding, false, proof, "work.result.correct");
+    if (item.targetSessionId !== binding.actorSessionId) {
+      throw new WorkItemAuthorityError("Only the canonical target Session can correct its result.", {
+        workItemId: item.id,
+        actorSessionId: binding.actorSessionId,
+      });
+    }
+    return this.deps.storage.correctResult({
+      ...input,
+      result: { ...input.result, reportingSessionId: binding.actorSessionId, reportedAt: updatedAt },
+      principalSessionId: binding.actorSessionId,
+      requestFingerprint: fingerprintMutation(input, binding.actorSessionId),
+      updatedAt,
+      expiresAt: resolveIdempotencyExpiresAt(updatedAt),
+      proof,
+    });
   }
 
   cancel(input: WorkItemCancelInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
@@ -682,7 +714,31 @@ export class WorkItemService {
 
   listAggregation(input: WorkItemAggregationListInput, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItemAggregationListItem[] {
     this.requireAggregationParent(input.parentWorkItemId, binding, true, proof, "work.aggregation.list");
+    if ((input.depth ?? 1) > 1) {
+      const actor = this.requireSession(binding.actorSessionId);
+      if (actor.rootSessionId !== actor.sessionId || actor.parentSessionId !== null || actor.delegationDepth !== 0
+        || (proof && isAgentMutationProof(proof) && proof.resolvedScope.relation !== "root_member")) {
+        throw new WorkItemAuthorityError("Flattened descendant reads require root visibility.", {
+          parentWorkItemId: input.parentWorkItemId,
+          actorSessionId: binding.actorSessionId,
+        });
+      }
+    }
     return this.deps.storage.listAggregationItems(input);
+  }
+
+  correctAggregation(input: SessionRuntimeWorkItemAggregationCorrectionInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): SessionRuntimeWorkItemAggregationCorrectionResult {
+    this.requireVisibleItem(input.parentWorkItemId, binding, false, proof, "work.aggregation.correct");
+    this.requireAggregationActor(input.parentWorkItemId, binding);
+    const decidedAt = this.deps.currentTimestamp();
+    return this.deps.storage.correctAggregation({
+      ...input,
+      actorSessionId: binding.actorSessionId,
+      requestFingerprint: fingerprintMutation(input, binding.actorSessionId),
+      decidedAt,
+      expiresAt: resolveIdempotencyExpiresAt(decidedAt),
+      proof,
+    });
   }
 
   decideAggregation(input: WorkItemAggregationDecisionInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItemAggregationDecision {
@@ -802,6 +858,9 @@ export class WorkItemService {
       ...(operation === "work.result" && "expectedAggregateRevision" in input && input.expectedAggregateRevision !== undefined
         ? { expectedAggregateRevision: input.expectedAggregateRevision }
         : {}),
+      ...(operation === "work.result" && "expectedResultRevision" in input && input.expectedResultRevision !== undefined
+        ? { expectedResultRevision: input.expectedResultRevision }
+        : {}),
       proof,
     });
   }
@@ -861,7 +920,7 @@ export class WorkItemService {
     binding: ResolvedAgentRuntimeBinding,
     allowRootCoordinator: boolean,
     proof?: MutationAuthorityProof,
-    operation?: "work.get" | "work.history.list" | "work.aggregation.get" | "work.aggregation.list" | "work.revise" | "work.reassign" | "work.move" | "work.clone" | "work.reopen" | "work.archive" | "work.restore" | "work.delete",
+    operation?: "work.get" | "work.history.list" | "work.aggregation.get" | "work.aggregation.list" | "work.aggregation.correct" | "work.result.correct" | "work.revise" | "work.reassign" | "work.move" | "work.clone" | "work.reopen" | "work.archive" | "work.restore" | "work.delete",
   ): WorkItem {
     const item = this.deps.storage.get(workItemId);
     if (!item) throw new WorkItemNotFoundError(workItemId);
@@ -919,7 +978,7 @@ export class WorkItemService {
   private requireAgentProof(
     proof: MutationAdmissionProof,
     binding: ResolvedAgentRuntimeBinding,
-    operation?: "work.get" | "work.history.list" | "work.aggregation.get" | "work.aggregation.list" | "work.revise" | "work.reassign" | "work.move" | "work.clone" | "work.reopen" | "work.archive" | "work.restore" | "work.delete",
+    operation?: "work.get" | "work.history.list" | "work.aggregation.get" | "work.aggregation.list" | "work.aggregation.correct" | "work.result.correct" | "work.revise" | "work.reassign" | "work.move" | "work.clone" | "work.reopen" | "work.archive" | "work.restore" | "work.delete",
   ): void {
     if (
       proof.principal.actorSessionId !== binding.actorSessionId

@@ -321,16 +321,16 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "確定済みparentからのchild moveはSlice 5の訂正なしに拒否され、旧parent/child/newparentのprojectionと履歴を変更しない"
+  // claim = "確定済みparentからのchild moveは旧結果を保持し、旧集約をstale、新所属を未判断として原子的に保存する"
   // fault = "確定済みparentの集約結果を訂正せずchild所属だけを移動し、旧結果と新集約が同時に有効になる"
   // observable = "work_items_v6, work_item_aggregations_v6, work_item_events_v6, work_item_aggregation_events_v6"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
-  // scope = "WorkItemStorageV6.move finalized parent conflict"
+  // scope = "WorkItemStorageV6.move finalized parent correction"
   // lifecycle = "permanent"
-  // distinction = "parent自身を実mutationでterminal化した後のmove拒否をDB projectionとevent件数で観測する"
+  // distinction = "子resultの事前訂正なしに確定済み親から移動し、再open後の所属、旧結果保持とstaleを観測する"
   // @end-test-value
-  it("確定済みparentからのmoveを訂正未接続conflictとして拒否する", () => {
+  it("確定済みparentからのmoveは旧結果を保持し集約をstaleにする", () => {
     const oldParent = create(null, "root", "task", "finalized-parent");
     const child = settle(create(oldParent.id, "task", "executor", "finalized-child"));
     const beforeDecision = storage.getAggregationSummary(oldParent.id);
@@ -338,21 +338,22 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     const parentRunning = storage.mutate({ operation: "work.transition", workItemId: oldParent.id, principalSessionId: "root", idempotencyKey: "finalized-start", requestFingerprint: "finalized-start-fp", expectedRevision: oldParent.revision, state: "in_progress", result: null, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.transition") });
     const finalized = storage.mutate({ operation: "work.result", workItemId: oldParent.id, principalSessionId: "root", idempotencyKey: "finalized-result", requestFingerprint: "finalized-result-fp", expectedRevision: parentRunning.revision, state: "completed", result: { outcome: "completed", summary: "aggregate done", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [], reportingSessionId: oldParent.targetSessionId, reportedAt: LATER }, updatedAt: LATER, expiresAt: EXPIRES, expectedAggregateRevision: storage.getAggregationSummary(oldParent.id).aggregateRevision, proof: proof("work.result") });
     const newParent = create(null, "root", "task-2", "finalized-destination");
-    const beforeChild = storage.get(child.id)!;
     const beforeOld = storage.getAggregationSummary(oldParent.id);
     const beforeNew = storage.getAggregationSummary(newParent.id);
-    const beforeEvents = Number(sql("SELECT COUNT(*) AS n FROM work_item_events_v6 WHERE work_item_id=?", child.id)[0].n);
-    const retained = () => [sql("SELECT * FROM work_items_v6 ORDER BY sequence"), sql("SELECT * FROM work_item_events_v6 ORDER BY sequence"), sql("SELECT * FROM work_item_aggregation_events_v6 ORDER BY event_id")];
-    const beforeRetained = retained();
-    assert.equal(finalized.state, "completed");
-    let finalizedMoveError: unknown;
-    try { storage.move({ workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: "finalized-move", requestFingerprint: "finalized-move-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move"), destinationParentWorkItemId: newParent.id, expectedAggregateRevision: beforeOld.aggregateRevision, expectedDestinationAggregateRevision: beforeNew.aggregateRevision }); } catch (error) { finalizedMoveError = error; }
-    assert.equal((finalizedMoveError as { code?: string }).code, "WORK_ITEM_PARENT_CORRECTION_REQUIRED");
-    assert.deepEqual(retained(), beforeRetained);
-    assert.deepEqual(storage.get(child.id), beforeChild);
-    assert.deepEqual(storage.getAggregationSummary(oldParent.id), beforeOld);
-    assert.deepEqual(storage.getAggregationSummary(newParent.id), beforeNew);
-    assert.equal(Number(sql("SELECT COUNT(*) AS n FROM work_item_events_v6 WHERE work_item_id=?", child.id)[0].n), beforeEvents);
+    const originalResult = sql("SELECT * FROM work_item_result_revisions_v6 WHERE work_item_id=?", oldParent.id);
+    const moved = storage.move({ workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: "finalized-move", requestFingerprint: "finalized-move-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move"), destinationParentWorkItemId: newParent.id, expectedAggregateRevision: beforeOld.aggregateRevision, expectedDestinationAggregateRevision: beforeNew.aggregateRevision });
+    assert.equal(moved.parentWorkItemId, newParent.id);
+    assert.deepEqual(storage.get(oldParent.id)?.result, finalized.result);
+    assert.deepEqual(sql("SELECT * FROM work_item_result_revisions_v6 WHERE work_item_id=?", oldParent.id), originalResult);
+    assert.equal(storage.getAggregationSummary(oldParent.id).stale, true);
+    assert.equal(storage.getAggregationSummary(oldParent.id).directChildCount, 0);
+    assert.equal(storage.getAggregationSummary(newParent.id).undecidedTerminalCount, 1);
+    assert.equal(sql("SELECT * FROM work_item_aggregation_decisions_v6 WHERE child_work_item_id=?", child.id).length, 0);
+    assert.equal(sql("SELECT * FROM work_item_aggregation_events_v6 WHERE parent_work_item_id=? AND child_work_item_id=? AND event_kind='decision_superseded'", oldParent.id, child.id).length, 1);
+    storage.close(); storage = new WorkItemStorageV6(dbPath);
+    assert.equal(storage.get(child.id)?.parentWorkItemId, newParent.id);
+    assert.equal(storage.get(oldParent.id)?.resultCurrent, false);
+    assert.deepEqual(storage.get(oldParent.id)?.result, finalized.result);
   });
 
   // @test-value v2

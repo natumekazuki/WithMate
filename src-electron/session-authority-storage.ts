@@ -496,7 +496,7 @@ export function issueTrustedWorkItemLifecycleCapability(db: DatabaseSync, input:
   const allowedActions = new Set<SessionRuntimeOperation>([
     "work.create", "work.get", "work.revise", "work.reassign", "work.move",
     "work.clone", "work.reopen", "work.archive", "work.restore", "work.delete",
-    "work.history.append", "work.history.list",
+    "work.history.append", "work.history.list", "work.result.correct", "work.aggregation.correct",
   ]);
   if (input.actions.length === 0 || input.actions.some((action) => !allowedActions.has(action))) {
     throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The lifecycle capability contains an unsupported Work Item action.");

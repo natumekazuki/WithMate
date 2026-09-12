@@ -1053,7 +1053,7 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
       workItems: {
         contractRevision: 2,
         states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
-        mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "cancel", "history.append"],
+        mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "result.correct", "cancel", "history.append"],
         history: {
           events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported", "assignment_changed", "parent_changed", "archived", "restored", "deleted"],
           operations: ["append", "list"],
@@ -1067,9 +1067,9 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
         maxMigrationBaselinePayloadBytes: 2097152,
         maxResultBytes: 262144,
         aggregation: {
-          contractRevision: 1,
+          contractRevision: 2,
           decisions: ["accepted", "excluded", "retry_requested"],
-          operations: ["get", "list", "decide", "retry"],
+          operations: ["get", "list", "decide", "retry", "correct"],
           defaultListLimit: 50,
           maxListLimit: 200,
         },
@@ -2322,6 +2322,17 @@ test("WORK-EXEC-05: run/enqueue/get/listは同じWork Item associationを投影�
   assert.equal((list as any).result.items[0].workItemId, "work-1");
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "application serviceはcontract revision 2のaggregation projectionを公開する"
+// oracle = { type = "contract", ref = "docs/design/session-external-runtime.md" }
+// fault = "service adapterが旧aggregation revisionを返しstrict public schemaで拒否される"
+// observable = "runtime.catalog aggregation contract output"
+// observation_boundary = "public-boundary"
+// scope = "SessionExternalApplicationService aggregation adapter"
+// lifecycle = "permanent"
+// distinction = "公開adapterのprojection契約をstorage内部revisionから分離して確認する"
+// @end-test-value
 test("AGG-ADAPTER-01: aggregation operationはshared Work Item serviceへdispatchする", async () => {
   const calls: unknown[] = [];
   const service = new SessionExternalApplicationService({
@@ -2336,7 +2347,7 @@ test("AGG-ADAPTER-01: aggregation operationはshared Work Item serviceへdispatc
       getAggregation(input, binding) {
         calls.push({ input, actorSessionId: binding.actorSessionId });
         return {
-          contractRevision: 1, parentWorkItemId: input.parentWorkItemId, aggregateRevision: 2,
+          contractRevision: 2, parentWorkItemId: input.parentWorkItemId, aggregateRevision: 2,
           directChildCount: 1, activeCount: 0, undecidedTerminalCount: 0,
           acceptedCount: 1, excludedCount: 0, retryRequestedCount: 0,
         };

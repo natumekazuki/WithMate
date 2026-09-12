@@ -352,6 +352,16 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 ## Validation gap
 
+### Slice 5 の実装対象（2026-09-13）
+
+開始baseは`c40601695e1e32aae5bb2d40f38ca043a80432f4`、実装branchは`feat/v6.4.0-aggregation-correction`。結果訂正、判断のrevise／withdraw／replace、bounded flatten、`work.result`による原子的な確定・再確定、上位へのstale伝播と、Slice 4から延期した同一rootのmove／reopen接続を対象とする。既存履歴・grantを再baselineせず、既存revision、transaction、idempotency ownerを使用する。cross-root単体moveとdelegation transaction全体は後続Sliceへ残す。
+
+直接検証は旧resultと判断履歴の保持、競合拒否、未判断件数、replacement provenance、flattenの可視性と上限、finalizeのrollback、上位staleと新規採用拒否、再確定、再送、populated migration、確定済みbranchのmoveを観測する。`design-tests` Skillは利用可能なskillsとplugin cacheに見つからなかったため、`designs/09-public-api-migration-and-review.md`のfailure mode、consumer、canonical ownerに最も近い検証という基準を用いる。変更testは現行`review-test-value`によるGit差分抽出と独立審査を実施する。実装・検証・commit-bound reviewの完了記録は結果が確定してから追記する。
+
+結果revisionを既存result eventと共通provenance headerへ結び付け、判断訂正・stale・finalizedを既存aggregation event streamへ保存した。訂正と再確定は既存transaction／idempotency内で行い、Rootのstaleも永続化する。同一rootのmove／reopenは旧結果・所属・replacement／successor履歴を保持して上位へstaleを伝播する。公開contract、HTTP、CLI、MCP、catalog、managed Skillとrunbookを更新し、訂正grantは既存trusted issuerの明示発行だけで取得する。
+
+直接検証と公開adapter検証、`npm run typecheck`、`npm test`（3597件、3596成功、1 skip、0失敗）、`npm run build`、`git diff --check`が成功した。初回全体testでは編集中の公開fixture／schema不一致と旧schema移行の不備を検出して修正した。対象外のGlossary queueと画像previewのtimeoutは直接再実行で成功し、最終全体testでも再発しなかった。populated migrationでは旧result、判断、replacement、successor、削除snapshot、header、grant、budget、idempotencyを比較し、二回目openと移行済みresult行欠損の拒否を確認した。変更testの独立価値審査とcommit-bound complete-diff reviewは進行中。GUI変更とfilesystem interactionの追加はなく、GUI目視は未実施。
+
 ### Slice 4 の承認済み実装境界（2026-09-12）
 
 開始baseは`ab7b4e25709086a0f1859e1345ea87e83956fa07`。ユーザー承認により、moveに必要な旧decisionのsupersede、旧parentからの離脱、新parentへのadoptionと、その原子的保存・履歴再生・migration・直接検証をSlice 5から前倒しする。adoptionは所属の引受だけを表し、成果を自動採用しない。

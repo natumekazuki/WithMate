@@ -128,11 +128,13 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "work.history.list", title: "List Work Item history", description: "Read bounded Work Item history.", readOnly: true, destructive: false },
   { name: "work.transition", title: "Transition Work Item", description: "Start, wait, or resume a Work Item assigned to the bound Session.", readOnly: false, destructive: false },
   { name: "work.result", title: "Report Work Item result", description: "Atomically report a strict result and terminal Work Item state.", readOnly: false, destructive: false },
+  { name: "work.result.correct", title: "Correct Work Item result", description: "Append a corrected terminal result revision and propagate stale state.", readOnly: false, destructive: false },
   { name: "work.cancel", title: "Cancel Work Item", description: "Cancel an active Work Item created by the bound Session.", readOnly: false, destructive: true },
   { name: "work.aggregation.get", title: "Get Work Item aggregation", description: "Get bounded aggregation counts for one parent Work Item.", readOnly: true, destructive: false },
   { name: "work.aggregation.list", title: "List Work Item aggregation", description: "List direct child summaries and immutable decisions using a bounded cursor.", readOnly: true, destructive: false },
   { name: "work.aggregation.decide", title: "Decide Work Item result", description: "Accept or exclude one terminal direct child result.", readOnly: false, destructive: false },
   { name: "work.aggregation.retry", title: "Retry Work Item result", description: "Atomically record a retry decision and create its replacement Work Item.", readOnly: false, destructive: false },
+  { name: "work.aggregation.correct", title: "Correct Work Item aggregation", description: "Correct an immutable child decision with an explicit current result revision.", readOnly: false, destructive: false },
   { name: "turn.options", title: "Get Session turn options", description: "Read valid turn options for one normal Session.", readOnly: true, destructive: false },
   { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately at the target Session's current expectedContainerRevision.", readOnly: false, destructive: true },
   { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn at the target Session's current expectedContainerRevision.", readOnly: false, destructive: true },
@@ -370,6 +372,10 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     ...definitions.get("work.result")!, annotations: annotations(definitions.get("work.result")!),
     inputSchema: createSessionRuntimeAdvertisedInputSchema("work.result"), outputSchema: createSessionRuntimeOutputSchema("work.result"),
   }, async (input) => executeOperation("work.result", input, deps));
+  server.registerTool("work.result.correct", {
+    ...definitions.get("work.result.correct")!, annotations: annotations(definitions.get("work.result.correct")!),
+    inputSchema: createSessionRuntimeAdvertisedInputSchema("work.result.correct"), outputSchema: createSessionRuntimeOutputSchema("work.result.correct"),
+  }, async (input) => executeOperation("work.result.correct", input, deps));
   server.registerTool("work.cancel", {
     ...definitions.get("work.cancel")!, annotations: annotations(definitions.get("work.cancel")!),
     inputSchema: createSessionRuntimeAdvertisedInputSchema("work.cancel"), outputSchema: createSessionRuntimeOutputSchema("work.cancel"),
@@ -390,6 +396,10 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     ...definitions.get("work.aggregation.retry")!, annotations: annotations(definitions.get("work.aggregation.retry")!),
     inputSchema: createSessionRuntimeAdvertisedInputSchema("work.aggregation.retry"), outputSchema: createSessionRuntimeOutputSchema("work.aggregation.retry"),
   }, async (input) => executeOperation("work.aggregation.retry", input, deps));
+  server.registerTool("work.aggregation.correct", {
+    ...definitions.get("work.aggregation.correct")!, annotations: annotations(definitions.get("work.aggregation.correct")!),
+    inputSchema: createSessionRuntimeAdvertisedInputSchema("work.aggregation.correct"), outputSchema: createSessionRuntimeOutputSchema("work.aggregation.correct"),
+  }, async (input) => executeOperation("work.aggregation.correct", input, deps));
   server.registerTool("turn.options", {
     ...definitions.get("turn.options")!,
     annotations: annotations(definitions.get("turn.options")!),

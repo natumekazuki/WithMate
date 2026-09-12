@@ -25,7 +25,7 @@ const CREATE_WORK_ITEM_AGGREGATION_EVENTS_SQL = `
       parent_work_item_id TEXT NOT NULL,
       child_work_item_id TEXT NOT NULL,
       aggregate_revision INTEGER NOT NULL,
-      event_kind TEXT NOT NULL CHECK (event_kind IN ('migration_baseline', 'child_added', 'child_removed', 'child_adopted', 'decision_superseded', 'decided', 'retry_requested')),
+      event_kind TEXT NOT NULL CHECK (event_kind IN ('migration_baseline', 'child_added', 'child_removed', 'child_adopted', 'decision_superseded', 'decided', 'retry_requested', 'decision_corrected', 'stale', 'finalized')),
       payload_json TEXT NOT NULL,
       CHECK (aggregate_revision >= 1),
       CHECK (json_valid(payload_json) AND json_type(payload_json) = 'object'),
@@ -56,7 +56,7 @@ export function ensureResourceHistorySchema(
 
   const aggregationSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='work_item_aggregation_events_v6'")
     .get() as { sql: string } | undefined;
-  if (aggregationSchema && !aggregationSchema.sql.includes("'child_removed'")) {
+  if (aggregationSchema && (!aggregationSchema.sql.includes("'child_removed'") || !aggregationSchema.sql.includes("'finalized'"))) {
     db.exec(`
       DROP TRIGGER IF EXISTS work_item_aggregation_events_no_update_v6;
       DROP TRIGGER IF EXISTS work_item_aggregation_events_no_delete_v6;
@@ -281,6 +281,7 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
     throw new Error(`Work Item aggregation projection has no matching resource event: ${missingAggregation.id}`);
   }
   verifyWorkItemReplay(db);
+  verifyWorkItemResultRevisions(db);
   verifyWorkItemTombstones(db);
   verifyWorkItemAggregationReplay(db);
 
@@ -709,11 +710,57 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
   }
 }
 
+function verifyWorkItemResultRevisions(db: DatabaseSync): void {
+  const results = db.prepare(`SELECT * FROM work_item_result_revisions_v6 ORDER BY work_item_id, result_revision`).all() as Array<{
+    result_revision_id: string; work_item_id: string; result_revision: number;
+    superseded_result_revision: number | null; result_json: string; correction_reason: string | null;
+    reporting_session_id: string; source_revision: number; execution_revision: number | null; created_at: string;
+  }>;
+  const events = db.prepare(`SELECT work_item_id, revision, payload_json FROM work_item_events_v6
+    WHERE event_type IN ('result_reported', 'migration_baseline') ORDER BY work_item_id, revision`).all() as Array<{
+    work_item_id: string; revision: number; payload_json: string;
+  }>;
+  const expected = new Map<string, Record<string, unknown>>();
+  for (const event of events) {
+    const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
+    if (payload.result === null || payload.result === undefined) continue;
+    const revision = payload.resultRevision ?? 1;
+    const identity = `${event.work_item_id}:result:${revision}`;
+    const previous = expected.get(identity);
+    if (previous && stableJson(previous.result) !== stableJson(payload.result)) {
+      throw new Error(`Work Item result revision was overwritten by an event: ${identity}`);
+    }
+    if (!previous) expected.set(identity, payload);
+  }
+  const lastRevision = new Map<string, number>();
+  for (const result of results) {
+    const payload = expected.get(result.result_revision_id);
+    const prior = lastRevision.get(result.work_item_id) ?? 0;
+    if (!payload || result.result_revision_id !== `${result.work_item_id}:result:${result.result_revision}`
+      || result.result_revision !== prior + 1
+      || result.superseded_result_revision !== (prior === 0 ? null : prior)
+      || stableJson(payload.result) !== stableJson(JSON.parse(result.result_json))
+      || (payload.result as { reportingSessionId?: unknown }).reportingSessionId !== result.reporting_session_id
+      || (payload.correctionReason ?? null) !== result.correction_reason
+      || (payload.sourceRevision !== undefined && payload.sourceRevision !== result.source_revision)
+      || (payload.executionRevision !== undefined && payload.executionRevision !== result.execution_revision)) {
+      throw new Error(`Work Item result revision does not match its event history: ${result.result_revision_id}`);
+    }
+    expected.delete(result.result_revision_id);
+    lastRevision.set(result.work_item_id, result.result_revision);
+  }
+  if (expected.size !== 0) throw new Error("Work Item result history has no matching result revision.");
+}
+
 function verifyWorkItemAggregationReplay(db: DatabaseSync): void {
   const aggregations = db.prepare(`
-    SELECT parent_work_item_id, aggregate_revision, updated_at
+    SELECT parent_work_item_id, aggregate_revision, updated_at,
+      stale, stale_reasons_json, finalized_revision, finalized_result_revision
     FROM work_item_aggregations_v6
-  `).all() as Array<{ parent_work_item_id: string; aggregate_revision: number; updated_at: string }>;
+  `).all() as Array<{
+    parent_work_item_id: string; aggregate_revision: number; updated_at: string;
+    stale: number; stale_reasons_json: string; finalized_revision: number | null; finalized_result_revision: number | null;
+  }>;
   const readEvents = db.prepare(`
     SELECT event.child_work_item_id, event.aggregate_revision, event.event_kind,
       event.payload_json, header.occurred_at
@@ -736,6 +783,7 @@ function verifyWorkItemAggregationReplay(db: DatabaseSync): void {
     }
     const childAdditions = new Set<string>();
     const decisions = new Map<string, Record<string, unknown>>();
+    let aggregateState: unknown;
     for (const event of events) {
       const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
       if (payload.childWorkItemId !== undefined && payload.childWorkItemId !== event.child_work_item_id) {
@@ -743,10 +791,34 @@ function verifyWorkItemAggregationReplay(db: DatabaseSync): void {
       }
       if (event.event_kind === "child_added" || event.event_kind === "child_adopted") childAdditions.add(event.child_work_item_id);
       if (event.event_kind === "child_removed") childAdditions.delete(event.child_work_item_id);
-      if (event.event_kind === "decided" || event.event_kind === "retry_requested") {
+      if (event.event_kind === "decided" || event.event_kind === "retry_requested" || event.event_kind === "decision_corrected") {
         decisions.set(event.child_work_item_id, payload);
       }
-      if (event.event_kind === "decision_superseded") decisions.delete(event.child_work_item_id);
+      if (event.event_kind === "decision_superseded" || (event.event_kind === "decision_corrected" && payload.decision === null)) decisions.delete(event.child_work_item_id);
+      if (payload.aggregateState !== undefined) aggregateState = payload.aggregateState;
+      if ((event.event_kind === "stale" || event.event_kind === "finalized") && payload.aggregateState === undefined) {
+        throw new Error(`Work Item aggregation status event has no projection: ${aggregation.parent_work_item_id}`);
+      }
+    }
+    if (aggregateState === undefined) {
+      const legacyResult = db.prepare(`SELECT 1 FROM work_item_events_v6
+        WHERE work_item_id = ? AND event_type IN ('result_reported', 'migration_baseline')
+          AND json_type(payload_json, '$.result') = 'object'
+          AND json_type(payload_json, '$.resultRevision') IS NULL LIMIT 1`).get(aggregation.parent_work_item_id);
+      aggregateState = {
+        stale: false,
+        staleReasons: [],
+        finalizedRevision: legacyResult ? aggregation.aggregate_revision : null,
+        finalizedResultRevision: legacyResult ? 1 : null,
+      };
+    }
+    if (stableJson(aggregateState) !== stableJson({
+      stale: aggregation.stale === 1,
+      staleReasons: JSON.parse(aggregation.stale_reasons_json),
+      finalizedRevision: aggregation.finalized_revision,
+      finalizedResultRevision: aggregation.finalized_result_revision,
+    })) {
+      throw new Error(`Work Item aggregation status replay does not match the current projection: ${aggregation.parent_work_item_id}`);
     }
     const children = db.prepare(`
       SELECT id FROM work_items_v6 WHERE parent_work_item_id = ?
@@ -1158,7 +1230,7 @@ export function appendWorkItemAggregationEvent(db: DatabaseSync, input: {
   parentWorkItemId: string;
   childWorkItemId: string;
   aggregateRevision: number;
-  eventKind: "migration_baseline" | "child_added" | "child_removed" | "child_adopted" | "decision_superseded" | "decided" | "retry_requested";
+  eventKind: "migration_baseline" | "child_added" | "child_removed" | "child_adopted" | "decision_superseded" | "decided" | "retry_requested" | "decision_corrected" | "stale" | "finalized";
   proof: MutationAuthorityProof;
   operationId: string;
   idempotencyKey: string;

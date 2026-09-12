@@ -88,12 +88,14 @@ import {
   type SessionRuntimeWorkItemListInput,
   type SessionRuntimeWorkItemListResult,
   type SessionRuntimeWorkItemResultInput,
+  type SessionRuntimeWorkItemResultCorrectionInput,
   type SessionRuntimeWorkItemTransitionInput,
   type SessionRuntimeWorkItemAggregationGetInput,
   type SessionRuntimeWorkItemAggregationListInput,
   type SessionRuntimeWorkItemAggregationListResult,
   type SessionRuntimeWorkItemAggregationDecisionInput,
   type SessionRuntimeWorkItemAggregationRetryInput,
+  type SessionRuntimeWorkItemAggregationCorrectionInput,
 } from "../src/session-external-runtime-contract.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import {
@@ -226,7 +228,7 @@ export type SessionExternalApplicationServiceDeps = {
   workItemService?: Pick<
     WorkItemService,
     "create" | "get" | "resolveListScope" | "iterateList" | "transition" | "reportResult" | "cancel" | "requireExecutionAssociation"
-    | "getAggregation" | "listAggregation" | "decideAggregation" | "retryAggregation" | "revise" | "appendHistory" | "iterateHistory"
+    | "getAggregation" | "listAggregation" | "decideAggregation" | "retryAggregation" | "correctResult" | "correctAggregation" | "revise" | "appendHistory" | "iterateHistory"
     | "reassign" | "move" | "clone" | "reopen" | "archive" | "restore" | "delete"
   >;
   getExecutionWorkItemId?(executionId: string): string | null;
@@ -248,9 +250,11 @@ const WORK_ITEM_MUTATION_OPERATIONS = new Set<SessionRuntimeOperation>([
   "work.history.append",
   "work.transition",
   "work.result",
+  "work.result.correct",
   "work.cancel",
   "work.aggregation.decide",
   "work.aggregation.retry",
+  "work.aggregation.correct",
 ]);
 
 export class SessionExternalApplicationService {
@@ -415,6 +419,9 @@ export class SessionExternalApplicationService {
     if (operation === "work.result") {
       return this.requireWorkItemService().reportResult(input as SessionRuntimeWorkItemResultInput, agentRuntimeBinding, proof);
     }
+    if (operation === "work.result.correct") {
+      return this.requireWorkItemService().correctResult(input as SessionRuntimeWorkItemResultCorrectionInput, agentRuntimeBinding, proof);
+    }
     if (operation === "work.cancel") {
       return this.requireWorkItemService().cancel(input as SessionRuntimeWorkItemCancelInput, agentRuntimeBinding, proof);
     }
@@ -429,6 +436,9 @@ export class SessionExternalApplicationService {
     }
     if (operation === "work.aggregation.retry") {
       return this.requireWorkItemService().retryAggregation(input as SessionRuntimeWorkItemAggregationRetryInput, agentRuntimeBinding, proof);
+    }
+    if (operation === "work.aggregation.correct") {
+      return this.requireWorkItemService().correctAggregation(input as SessionRuntimeWorkItemAggregationCorrectionInput, agentRuntimeBinding, proof);
     }
     if (operation === "turn.options") {
       return this.turnOptions((input as SessionRuntimeSessionInput).sessionId);
@@ -865,6 +875,9 @@ export class SessionExternalApplicationService {
     const items = service.listAggregation({
       parentWorkItemId: input.parentWorkItemId,
       ...(input.decision === undefined ? {} : { decision: input.decision }),
+      ...(input.state === undefined ? {} : { state: input.state }),
+      ...(input.depth === undefined ? {} : { depth: input.depth }),
+      ...(input.fields === undefined ? {} : { fields: input.fields }),
       limit: input.limit + 1,
       afterSequence,
     }, binding, proof);
@@ -1180,7 +1193,7 @@ function projectRuntimeCatalog(
     workItems: {
       contractRevision: WORK_ITEM_CONTRACT_REVISION,
       states: WORK_ITEM_STATES,
-      mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "cancel", "history.append"],
+      mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "result.correct", "cancel", "history.append"],
       history: { events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported", "assignment_changed", "parent_changed", "archived", "restored", "deleted"], operations: ["append", "list"], defaultListLimit: WORK_ITEM_DEFAULT_LIST_LIMIT, maxListLimit: WORK_ITEM_MAX_LIST_LIMIT },
       defaultListLimit: WORK_ITEM_DEFAULT_LIST_LIMIT,
       maxListLimit: WORK_ITEM_MAX_LIST_LIMIT,
@@ -1191,7 +1204,7 @@ function projectRuntimeCatalog(
       aggregation: {
         contractRevision: WORK_ITEM_AGGREGATION_CONTRACT_REVISION,
         decisions: WORK_ITEM_AGGREGATION_DECISIONS,
-        operations: ["get", "list", "decide", "retry"],
+        operations: ["get", "list", "decide", "retry", "correct"],
         defaultListLimit: WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT,
         maxListLimit: WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
       },
@@ -1445,6 +1458,9 @@ function encodeWorkItemAggregationCursor(
     actorSessionId: scope.actorSessionId,
     visibility: scope.visibility,
     decision: input.decision ?? null,
+    state: input.state ?? null,
+    depth: input.depth ?? 1,
+    fields: input.fields ?? null,
     afterSequence,
   }), "utf8").toString("base64url");
 }
@@ -1459,7 +1475,10 @@ function decodeWorkItemAggregationCursor(
     if (value.version !== 1 || value.operation !== "work.aggregation.list"
       || value.parentWorkItemId !== input.parentWorkItemId || value.rootSessionId !== scope.rootSessionId
       || value.actorSessionId !== scope.actorSessionId || value.visibility !== scope.visibility
-      || value.decision !== (input.decision ?? null) || !Number.isSafeInteger(value.afterSequence)
+      || value.decision !== (input.decision ?? null) || value.state !== (input.state ?? null)
+      || value.depth !== (input.depth ?? 1)
+      || JSON.stringify(value.fields ?? null) !== JSON.stringify(input.fields ?? null)
+      || !Number.isSafeInteger(value.afterSequence)
       || (value.afterSequence as number) < 1) throw new Error("invalid cursor");
     return value.afterSequence as number;
   } catch {
@@ -1582,9 +1601,11 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
         || operation === "work.reopen" || operation === "work.archive" || operation === "work.restore" || operation === "work.delete"
         || operation === "work.transition"
         || operation === "work.result"
+        || operation === "work.result.correct"
         || operation === "work.cancel"
         || operation === "work.aggregation.decide"
         || operation === "work.aggregation.retry"
+        || operation === "work.aggregation.correct"
         || operation === "interaction.respond"
         || operation === "coordination.event.create"
         || operation === "coordination.event.resolve"
@@ -1763,9 +1784,11 @@ function isMutationOperation(operation: SessionRuntimeOperation | string, input?
     || operation === "work.history.append"
     || operation === "work.transition"
     || operation === "work.result"
+    || operation === "work.result.correct"
     || operation === "work.cancel"
     || operation === "work.aggregation.decide"
     || operation === "work.aggregation.retry"
+    || operation === "work.aggregation.correct"
     || operation === "interaction.respond"
     || operation === "coordination.event.create"
     || operation === "coordination.event.resolve"

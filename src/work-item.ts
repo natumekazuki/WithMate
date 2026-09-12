@@ -8,7 +8,7 @@ export const WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES = 2 * 1024 * 1024;
 export const WORK_ITEM_MAX_TEXT_LENGTH = 16_000;
 export const WORK_ITEM_MAX_RESULT_ITEMS = 100;
 export const WORK_ITEM_IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60 * 1000;
-export const WORK_ITEM_AGGREGATION_CONTRACT_REVISION = 1 as const;
+export const WORK_ITEM_AGGREGATION_CONTRACT_REVISION = 2 as const;
 export const WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT = 50;
 export const WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT = 200;
 export const WORK_ITEM_AGGREGATION_DECISIONS = ["accepted", "excluded", "retry_requested"] as const;
@@ -108,6 +108,9 @@ type WorkItemBase = Readonly<{
   updatedAt: string;
   archivedAt?: string | null;
   deletedAt?: string | null;
+  resultRevision?: number;
+  resultCurrent?: boolean;
+  stale?: boolean;
 }>;
 
 type WorkItemLifecycle =
@@ -173,6 +176,11 @@ export type WorkItemResultReportedEventPayload = Readonly<{
   from: WorkItemState;
   to: WorkItemResultState;
   result: WorkItemResult;
+  resultRevision?: number;
+  supersededResultRevision?: number;
+  correctionReason?: string;
+  sourceRevision?: number;
+  executionRevision?: number | null;
 }>;
 export type WorkItemAssignmentChangedEventPayload = Readonly<{
   beforeTargetSessionId: string;
@@ -261,8 +269,16 @@ export type WorkItemAggregationDecision = Readonly<{
   decidedAt: string;
 }>;
 
+export const WORK_ITEM_AGGREGATION_CORRECTIONS = ["revise", "withdraw", "replace"] as const;
+export type WorkItemAggregationCorrection = (typeof WORK_ITEM_AGGREGATION_CORRECTIONS)[number];
+
 export type WorkItemAggregationListItem = Readonly<{
+  depth?: number;
+  provenance?: Readonly<{ creatorSessionId: string; targetSessionId: string; parentWorkItemId: string | null }>;
   child: Pick<WorkItem, "id" | "sequence" | "creatorSessionId" | "targetSessionId" | "parentWorkItemId" | "state" | "revision" | "createdAt" | "updatedAt">;
+  resultRevision: number;
+  resultCurrent: boolean;
+  stale: boolean;
   hasResult: boolean;
   resultSummary: string | null;
   decision: WorkItemAggregationDecision | null;
@@ -278,6 +294,10 @@ export type WorkItemAggregationSummary = Readonly<{
   acceptedCount: number;
   excludedCount: number;
   retryRequestedCount: number;
+  stale: boolean;
+  staleReasons: readonly string[];
+  finalizedRevision: number | null;
+  finalizedResultRevision?: number | null;
 }>;
 
 export const WORK_ITEM_TRANSITIONS: Readonly<Record<WorkItemState, readonly WorkItemState[]>> = {
