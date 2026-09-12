@@ -316,9 +316,13 @@ export function useAuxiliaryWorkspace(input: {
   }, [selectSession, summaries]);
 
   const collapse = useCallback(() => {
-    setIsExpanded(false);
-    setTargetState("main");
-  }, []);
+    if (isExpanded) {
+      setIsExpanded(false);
+      setTargetState("main");
+    } else {
+      setIsExpanded(true);
+    }
+  }, [isExpanded]);
 
   const addSession = useCallback((saved: AuxiliarySession) => {
     if (!parentSessionIdRef.current || saved.parentSessionId !== parentSessionIdRef.current) return;

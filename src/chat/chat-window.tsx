@@ -115,6 +115,8 @@ export type ConcurrentChatWindowProps = {
   error?: string | null;
 };
 
+const COLLAPSED_AUXILIARY_WIDTH_RATIO = 0.05;
+
 export function ConcurrentChatSplitter({
   isExpanded,
   widthRatio,
@@ -124,7 +126,7 @@ export function ConcurrentChatSplitter({
   const draggedRef = useRef(false);
   const startRef = useRef<{ x: number; width: number; widthRatio: number } | null>(null);
   const handlePointerDown: PointerEventHandler<HTMLButtonElement> = (event) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || !isExpanded) return;
     const parent = event.currentTarget.parentElement;
     if (!parent) return;
     startRef.current = { x: event.clientX, width: parent.getBoundingClientRect().width, widthRatio };
@@ -148,7 +150,7 @@ export function ConcurrentChatSplitter({
   return (
     <button
       type="button"
-      className={`concurrent-chat-splitter${isExpanded ? "" : " is-collapsed"}`}
+      className={`session-dock-splitter edge-right concurrent-chat-splitter${isExpanded ? "" : " is-collapsed"}`}
       aria-label={isExpanded ? "Auxiliaryを折りたたむ" : "Auxiliaryを展開"}
       aria-controls="session-auxiliary-chat-pane"
       aria-expanded={isExpanded}
@@ -158,12 +160,21 @@ export function ConcurrentChatSplitter({
         draggedRef.current = false;
       }}
       onKeyDown={(event) => {
-        if ((event.key === "Enter" || event.key === " ") && isExpanded) {
+        if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onCollapse();
         }
       }}
-    />
+    >
+      <span
+        className={`session-dock-splitter-chevron direction-${isExpanded ? "right" : "left"}`}
+        aria-hidden="true"
+      >
+        <svg viewBox="0 0 12 12" focusable="false">
+          <path d="M4 2.5 8 6 4 9.5" />
+        </svg>
+      </span>
+    </button>
   );
 }
 
@@ -601,7 +612,7 @@ export function ChatWindow({
               messageViewMode={messageViewMode}
             />
           )}
-          {concurrentChats?.isExpanded && concurrentChats.target === "auxiliary" ? (
+          {concurrentChats?.target === "main" ? (
             <div className="concurrent-chat-target-overlay" aria-hidden="true" />
           ) : null}
         </div>
@@ -611,6 +622,7 @@ export function ChatWindow({
           {concurrentChats.auxiliaryItems.length > 0 ? (
             <SessionSwitcher
               ariaLabel="Auxiliary会話切り替え"
+              className={`concurrent-chat-session-switcher${concurrentChats.isExpanded ? "" : " is-collapsed"}`}
               options={concurrentChats.auxiliaryItems}
               selectedId={concurrentChats.selectedAuxiliaryId ?? ""}
               searchable
@@ -643,7 +655,7 @@ export function ChatWindow({
                   stateCache={conversationStateCacheRef.current}
                   onColumnControls={handleAuxiliaryColumnControls}
                 />
-                {concurrentChats.target === "main" ? (
+                {concurrentChats.target === "auxiliary" ? (
                   <div className="concurrent-chat-target-overlay" aria-hidden="true" />
                 ) : null}
               </>
@@ -653,20 +665,22 @@ export function ChatWindow({
           </div>
         </>
       ) : auxiliaryMessageColumn}
-      auxiliarySplitter={concurrentChats?.isExpanded ? (
+      auxiliarySplitter={concurrentChats && concurrentChats.auxiliaryItems.length > 0 ? (
         <ConcurrentChatSplitter
-          isExpanded
+          isExpanded={concurrentChats.isExpanded}
           widthRatio={concurrentChats.widthRatio}
           onCollapse={concurrentChats.onCollapse}
           onWidthRatioChange={concurrentChats.onWidthRatioChange}
         />
       ) : concurrentChats?.auxiliarySplitter ?? auxiliarySplitter}
-      isAuxiliaryVisible={concurrentChats?.isExpanded ?? isAuxiliaryVisible}
-      auxiliaryWidthRatio={concurrentChats?.widthRatio ?? auxiliaryWidthRatio}
+      isAuxiliaryVisible={concurrentChats ? concurrentChats.auxiliaryItems.length > 0 : isAuxiliaryVisible}
+      auxiliaryWidthRatio={concurrentChats
+        ? (concurrentChats.isExpanded ? concurrentChats.widthRatio : COLLAPSED_AUXILIARY_WIDTH_RATIO)
+        : auxiliaryWidthRatio}
       concurrentTarget={concurrentChats?.target ?? concurrentTarget}
+      concurrentTargetDock={concurrentChats ? <ConcurrentChatTargetDock chats={concurrentChats} /> : null}
       actionDock={(
           <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
-          {concurrentChats ? <ConcurrentChatTargetDock chats={concurrentChats} /> : null}
           <div
             className={`session-action-dock-content session-action-dock-expanded-content${
               isActionDockExpanded ? " is-active" : ""

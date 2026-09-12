@@ -4371,6 +4371,18 @@ button:disabled {
   min-height: 0;
 }
 
+.session-central-surface.has-concurrent-chats {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.concurrent-chat-target-dock-slot {
+  display: flex;
+  justify-content: center;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.12);
+  background: rgba(18, 22, 30, 0.82);
+}
+
 .session-concurrent-chat-columns {
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--session-dock-splitter-size) minmax(0, 1fr);
@@ -4428,42 +4440,36 @@ button:disabled {
 .concurrent-chat-splitter {
   position: relative;
   z-index: 3;
-  width: var(--session-dock-splitter-size);
-  min-width: var(--session-dock-splitter-size);
-  height: 100%;
-  padding: 0;
-  border: 0;
-  border-left: 1px solid rgba(203, 213, 225, 0.16);
-  border-right: 1px solid rgba(203, 213, 225, 0.16);
-  background: transparent;
-  cursor: col-resize;
   touch-action: none;
 }
-
-.concurrent-chat-splitter:hover,
-.concurrent-chat-splitter:focus-visible { background: color-mix(in srgb, var(--character-main) 16%, transparent); }
 
 .concurrent-chat-target-dock {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-bottom: 1px solid rgba(203, 213, 225, 0.12);
+  gap: 6px;
+  padding: 2px;
+  border: 1px solid rgba(203, 213, 225, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .concurrent-chat-target-dock button {
-  padding: 3px 10px;
-  border: 1px solid rgba(203, 213, 225, 0.16);
+  min-width: 86px;
+  padding: 6px 14px;
+  border: 0;
   border-radius: 999px;
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 700;
   cursor: pointer;
 }
 
 .concurrent-chat-target-dock button.is-active {
-  background: color-mix(in srgb, var(--character-main) 24%, transparent);
-  color: var(--ink);
+  background: color-mix(in srgb, var(--character-main) 42%, rgba(12, 17, 25, 0.92));
+  color: #ffffff;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--character-main) 22%, transparent);
 }
 
 .session-concurrent-chat-auxiliary {
@@ -4480,6 +4486,15 @@ button:disabled {
   min-width: 0;
 }
 
+.concurrent-chat-session-switcher {
+  gap: 14px;
+  padding: 8px 12px;
+}
+
+.concurrent-chat-session-switcher.is-collapsed {
+  display: none;
+}
+
 .session-switcher-button {
   display: inline-flex;
   align-items: center;
@@ -4492,6 +4507,14 @@ button:disabled {
   background: rgba(255, 255, 255, 0.03);
   color: var(--ink);
   cursor: pointer;
+}
+
+.concurrent-chat-session-switcher .session-switcher-button {
+  width: 34px;
+  height: 34px;
+  border-color: rgba(203, 213, 225, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
 }
 
 .session-switcher-button:disabled { cursor: default; opacity: 0.36; }
@@ -4508,6 +4531,13 @@ button:disabled {
   background: rgba(255, 255, 255, 0.03);
   color: var(--ink);
   cursor: pointer;
+}
+
+.concurrent-chat-session-switcher .session-switcher-current {
+  min-height: 36px;
+  padding: 7px 14px;
+  border-color: rgba(203, 213, 225, 0.18);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .session-switcher-label,
@@ -4542,7 +4572,22 @@ button:disabled {
   box-shadow: 0 20px 44px rgba(0, 0, 0, 0.36);
 }
 
-.session-switcher-search { min-width: 0; width: 100%; }
+.session-switcher-search {
+  min-width: 0;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid rgba(203, 213, 225, 0.18);
+  border-radius: 8px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+}
+.session-switcher-search:focus-visible {
+  border-color: color-mix(in srgb, var(--character-main) 64%, rgba(203, 213, 225, 0.24));
+  outline: 2px solid color-mix(in srgb, var(--character-main) 36%, transparent);
+  outline-offset: 1px;
+}
 .session-switcher-options { display: grid; gap: 3px; overflow: auto; }
 .session-switcher-option { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; min-width: 0; padding: 7px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .session-switcher-option:hover, .session-switcher-option[aria-selected="true"] { background: color-mix(in srgb, var(--character-main) 16%, transparent); }

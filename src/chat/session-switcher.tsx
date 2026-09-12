@@ -168,7 +168,6 @@ export function SessionSwitcher({
                   focusOption(listRef.current, 0);
                 }
               }}
-              placeholder="会話を検索"
               aria-label="一覧を検索"
             />
           ) : null}

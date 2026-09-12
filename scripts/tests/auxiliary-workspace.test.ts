@@ -197,7 +197,7 @@ test("Main targetとcollapseは選択・幅を保ったまま再展開できる"
   assert.equal(view.current.selectedId, "a");
   assert.equal(view.current.target, "main");
   assert.equal(view.current.isExpanded, false);
-  await act(async () => { view.current.setTarget("auxiliary"); });
+  await act(async () => { view.current.collapse(); });
   assert.equal(view.current.isExpanded, true);
   assert.equal(view.current.widthRatio, 0.65);
   await view.unmount();

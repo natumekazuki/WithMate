@@ -960,10 +960,10 @@ test("SessionActionDockCompactRow は通常時の chat notice を下書き表示
 
 // @test-value v2
 // kind = "contract"
-// claim = "Concurrent chat shell は Main/Auxiliary の操作対象、非対象overlay、Auxiliary一覧、独立splitterを同じWindowへ投影する"
+// claim = "Concurrent chat shell は Main/Auxiliary の操作対象、対象overlay、Auxiliary一覧、独立splitterを同じWindowへ投影する"
 // oracle = { type = "contract", ref = "issue-710-ui-shell" }
 // fault = "Auxiliaryを表示しても対象切替や折りたたみ導線がActionDockと中央列へ接続されない"
-// observable = "renderされた操作対象ボタン、overlay、一覧trigger、splitterのARIA属性と会話列"
+// observable = "renderされた操作対象ボタン、中央target dock、対象列内のoverlay、一覧trigger、splitterのARIA属性と会話列"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -991,12 +991,51 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
   }));
 
   assert.match(html, /操作対象チャット/);
+  assert.match(html, /concurrent-chat-target-dock-slot/);
   assert.match(html, />Main<\/button>/);
   assert.match(html, />Auxiliary<\/button>/);
   assert.match(html, /concurrent-chat-target-overlay/);
+  assert.equal((html.match(/concurrent-chat-target-overlay/g) ?? []).length, 1);
+  const renderedDocument = new JSDOM(html).window.document;
+  assert.equal(renderedDocument.querySelector(".session-concurrent-chat-main .concurrent-chat-target-overlay"), null);
+  assert.ok(renderedDocument.querySelector(".session-concurrent-chat-auxiliary .concurrent-chat-target-overlay"));
   assert.match(html, /Auxiliary会話切り替え/);
   assert.match(html, /session-auxiliary-chat-pane/);
   assert.match(html, /aria-controls="session-auxiliary-chat-pane"/);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Concurrent chat shell は折りたたみ後もAuxiliaryを最小幅で表示し、splitterの再展開導線を残す"
+// oracle = { type = "contract", ref = "issue-710-collapsed-auxiliary-visibility" }
+// fault = "Auxiliaryを閉じると列と再表示導線が消え、ActionDockの対象切替なしでは戻せない"
+// observable = "最小幅のgrid templateとsplitterのaria-expanded"
+// observation_boundary = "component-behavior"
+// scope = "concurrent-chat-shell"
+// lifecycle = "permanent"
+// @end-test-value
+test("ChatWindow はAuxiliaryを最小幅で残しsplitterの再展開導線を表示する", () => {
+  const props = createChatWindowProps();
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, {
+    ...props,
+    concurrentChats: {
+      main: props.messageColumnProps,
+      auxiliary: props.messageColumnProps,
+      selectedAuxiliaryId: "aux-a",
+      auxiliaryItems: [{ id: "aux-a", label: "A" }],
+      target: "main",
+      isExpanded: false,
+      widthRatio: 0.45,
+      onSelectAuxiliary() {},
+      onTargetChange() {},
+      onCollapse() {},
+      onWidthRatioChange() {},
+    },
+  }));
+
+  assert.match(html, /0\.05fr/);
+  assert.match(html, /aria-label="Auxiliaryを展開"/);
+  assert.match(html, /aria-expanded="false"/);
 });
 
 // @test-value v2

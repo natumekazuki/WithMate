@@ -872,6 +872,7 @@ export type SessionChatScreenProps = {
   headerSplitter: ReactNode;
   isHeaderVisible: boolean;
   messageColumn: ReactNode;
+  concurrentTargetDock?: ReactNode;
   auxiliaryMessageColumn?: ReactNode;
   auxiliarySplitter?: ReactNode;
   isAuxiliaryVisible?: boolean;
@@ -924,6 +925,7 @@ export function SessionChatScreen({
   headerSplitter,
   isHeaderVisible,
   messageColumn,
+  concurrentTargetDock = null,
   auxiliaryMessageColumn = null,
   auxiliarySplitter = null,
   isAuxiliaryVisible = false,
@@ -1003,9 +1005,14 @@ export function SessionChatScreen({
           hidden={mainContent !== undefined}
         >
           {isAuxiliaryVisible ? (
+            <div className="concurrent-chat-target-dock-slot">
+              {concurrentTargetDock}
+            </div>
+          ) : null}
+          {isAuxiliaryVisible ? (
             <div
               className="session-concurrent-chat-columns"
-              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0.1, 1 - auxiliaryWidthRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0.1, auxiliaryWidthRatio)}fr)` }}
+              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0.05, 1 - auxiliaryWidthRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0.05, auxiliaryWidthRatio)}fr)` }}
             >
               <div className="session-concurrent-chat-column session-concurrent-chat-main">{messageColumn}</div>
               {auxiliarySplitter}
