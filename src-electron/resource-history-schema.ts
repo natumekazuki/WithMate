@@ -19,6 +19,21 @@ const SESSION_EXECUTION_HISTORY_PAYLOAD_LIMIT_BYTES =
   SESSION_RUNTIME_MAX_BODY_BYTES + SESSION_RUNTIME_MAX_RESPONSE_BYTES + RESOURCE_HISTORY_ENVELOPE_BYTES;
 const SESSION_BINDING_HISTORY_MIGRATION_SETTING_KEY = "session_binding_history_v6_migrated_at";
 
+const CREATE_WORK_ITEM_AGGREGATION_EVENTS_SQL = `
+    CREATE TABLE IF NOT EXISTS work_item_aggregation_events_v6 (
+      event_id TEXT PRIMARY KEY,
+      parent_work_item_id TEXT NOT NULL,
+      child_work_item_id TEXT NOT NULL,
+      aggregate_revision INTEGER NOT NULL,
+      event_kind TEXT NOT NULL CHECK (event_kind IN ('migration_baseline', 'child_added', 'child_removed', 'child_adopted', 'decision_superseded', 'decided', 'retry_requested')),
+      payload_json TEXT NOT NULL,
+      CHECK (aggregate_revision >= 1),
+      CHECK (json_valid(payload_json) AND json_type(payload_json) = 'object'),
+      CHECK (length(CAST(payload_json AS BLOB)) <= ${RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES}),
+      UNIQUE (parent_work_item_id, aggregate_revision)
+    ) STRICT;
+`;
+
 export function ensureResourceHistorySchema(
   db: DatabaseSync,
   options: { backfillLegacyHistory: boolean },
@@ -38,6 +53,19 @@ export function ensureResourceHistorySchema(
   ensureJsonColumn(db, "session_transcript_export_idempotency_v6", "authority_proof_json");
   ensureTextColumn(db, "session_file_write_idempotency_v6", "operation_id");
   ensureTextColumn(db, "session_transcript_export_idempotency_v6", "operation_id");
+
+  const aggregationSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='work_item_aggregation_events_v6'")
+    .get() as { sql: string } | undefined;
+  if (aggregationSchema && !aggregationSchema.sql.includes("'child_removed'")) {
+    db.exec(`
+      DROP TRIGGER IF EXISTS work_item_aggregation_events_no_update_v6;
+      DROP TRIGGER IF EXISTS work_item_aggregation_events_no_delete_v6;
+      ALTER TABLE work_item_aggregation_events_v6 RENAME TO work_item_aggregation_events_v6_legacy;
+      ${CREATE_WORK_ITEM_AGGREGATION_EVENTS_SQL}
+      INSERT INTO work_item_aggregation_events_v6 SELECT * FROM work_item_aggregation_events_v6_legacy;
+      DROP TABLE work_item_aggregation_events_v6_legacy;
+    `);
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS session_resource_events_v6 (
@@ -95,19 +123,7 @@ export function ensureResourceHistorySchema(
       UNIQUE (operation_id, revision)
     ) STRICT;
 
-    CREATE TABLE IF NOT EXISTS work_item_aggregation_events_v6 (
-      event_id TEXT PRIMARY KEY,
-      parent_work_item_id TEXT NOT NULL,
-      child_work_item_id TEXT NOT NULL,
-      aggregate_revision INTEGER NOT NULL,
-      event_kind TEXT NOT NULL CHECK (event_kind IN ('migration_baseline', 'child_added', 'decided', 'retry_requested')),
-      payload_json TEXT NOT NULL,
-      CHECK (aggregate_revision >= 1),
-      CHECK (json_valid(payload_json) AND json_type(payload_json) = 'object'),
-      CHECK (length(CAST(payload_json AS BLOB)) <= ${RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES}),
-      UNIQUE (parent_work_item_id, aggregate_revision)
-    ) STRICT;
-
+    ${CREATE_WORK_ITEM_AGGREGATION_EVENTS_SQL}
     CREATE TRIGGER IF NOT EXISTS session_resource_events_no_update_v6
     BEFORE UPDATE ON session_resource_events_v6 BEGIN
       SELECT RAISE(ABORT, 'session resource events are append-only');
@@ -222,7 +238,7 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
 
   const missingWorkItem = db.prepare(`
     SELECT item.id
-    FROM work_items_v6 AS item
+    FROM (${retainedWorkItemRowsSql}) AS item
     LEFT JOIN (
       SELECT work_item_id, COUNT(*) AS event_count, MIN(revision) AS first_revision, MAX(revision) AS last_revision
       FROM work_item_events_v6 GROUP BY work_item_id
@@ -265,6 +281,7 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
     throw new Error(`Work Item aggregation projection has no matching resource event: ${missingAggregation.id}`);
   }
   verifyWorkItemReplay(db);
+  verifyWorkItemTombstones(db);
   verifyWorkItemAggregationReplay(db);
 
   verifySagaProjection(db, {
@@ -282,6 +299,35 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
   verifyInteractionReplay(db);
   verifyCoordinationReplay(db);
   verifyResourceEventHeaders(db);
+}
+
+const retainedWorkItemRowsSql = `
+  SELECT id, sequence, contract_revision, kind, root_session_id, creator_session_id, target_session_id, parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority, source_identity_json, state, revision, progress_summary, blockers_json, next_action, result_json, created_at, updated_at, archived_at FROM work_items_v6
+  UNION ALL
+  SELECT json_extract(snapshot_json, '$.id') AS id, json_extract(snapshot_json, '$.sequence') AS sequence, json_extract(snapshot_json, '$.contract_revision') AS contract_revision, json_extract(snapshot_json, '$.kind') AS kind, json_extract(snapshot_json, '$.root_session_id') AS root_session_id, json_extract(snapshot_json, '$.creator_session_id') AS creator_session_id, json_extract(snapshot_json, '$.target_session_id') AS target_session_id, json_extract(snapshot_json, '$.parent_work_item_id') AS parent_work_item_id, json_extract(snapshot_json, '$.predecessor_work_item_id') AS predecessor_work_item_id, json_extract(snapshot_json, '$.goal') AS goal, json_extract(snapshot_json, '$.scope') AS scope, json_extract(snapshot_json, '$.completion_criteria') AS completion_criteria, json_extract(snapshot_json, '$.authority') AS authority, json_extract(snapshot_json, '$.source_identity_json') AS source_identity_json, json_extract(snapshot_json, '$.state') AS state, json_extract(snapshot_json, '$.revision') AS revision, json_extract(snapshot_json, '$.progress_summary') AS progress_summary, json_extract(snapshot_json, '$.blockers_json') AS blockers_json, json_extract(snapshot_json, '$.next_action') AS next_action, json_extract(snapshot_json, '$.result_json') AS result_json, json_extract(snapshot_json, '$.created_at') AS created_at, json_extract(snapshot_json, '$.updated_at') AS updated_at, json_extract(snapshot_json, '$.archived_at') AS archived_at FROM work_item_tombstones_v6
+`;
+
+function verifyWorkItemTombstones(db: DatabaseSync): void {
+  const rows = db.prepare("SELECT work_item_id, snapshot_json, deleted_at FROM work_item_tombstones_v6").all() as Array<{ work_item_id: string; snapshot_json: string; deleted_at: string }>;
+  for (const row of rows) {
+    const snapshot = JSON.parse(row.snapshot_json) as Record<string, unknown>;
+    if (snapshot.id !== row.work_item_id || snapshot.deleted_at !== row.deleted_at || snapshot.updated_at !== row.deleted_at) {
+      throw new Error(`Work Item tombstone identity does not match its snapshot: ${row.work_item_id}`);
+    }
+    if (typeof snapshot.revision !== "number" || snapshot.revision < 1) {
+      throw new Error(`Work Item tombstone revision is invalid: ${row.work_item_id}`);
+    }
+    const current = db.prepare("SELECT 1 FROM work_items_v6 WHERE id=?").get(row.work_item_id);
+    if (current) throw new Error(`Work Item tombstone still has a current projection: ${row.work_item_id}`);
+    const deletedEvent = db.prepare("SELECT revision, payload_json FROM work_item_events_v6 WHERE work_item_id=? ORDER BY revision DESC LIMIT 1").get(row.work_item_id) as { revision: number; payload_json: string } | undefined;
+    if (!deletedEvent || deletedEvent.revision !== snapshot.revision) {
+      throw new Error(`Work Item tombstone has no matching deleted event: ${row.work_item_id}`);
+    }
+    const payload = JSON.parse(deletedEvent.payload_json) as Record<string, unknown>;
+    if (payload.deletedAt !== row.deleted_at) {
+      throw new Error(`Work Item deleted event does not match its tombstone: ${row.work_item_id}`);
+    }
+  }
 }
 
 type ExpectedHeaderRow = {
@@ -365,16 +411,26 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id
     UNION ALL
     SELECT 'work-item:' || event.work_item_id || ':revision:' || event.revision,
-      'work_item', event.work_item_id, item.root_session_id, item.target_session_id,
+      'work_item', event.work_item_id, item.root_session_id,
+      COALESCE((SELECT json_extract(next.payload_json, '$.beforeTargetSessionId') FROM work_item_events_v6 next
+        WHERE next.work_item_id=event.work_item_id AND next.event_type='assignment_changed' AND next.revision>event.revision
+        ORDER BY next.revision LIMIT 1),item.target_session_id),
       event.event_type, event.revision,
       event.principal_kind,
       CASE WHEN event.principal_kind = 'agent' THEN event.actor_session_id ELSE NULL END,
       NULL, 1, 'committed'
     FROM work_item_events_v6 AS event
-    INNER JOIN work_items_v6 AS item ON item.id = event.work_item_id
+    INNER JOIN (${retainedWorkItemRowsSql}) AS item ON item.id = event.work_item_id
     UNION ALL
     SELECT event.event_id, 'work_item', event.parent_work_item_id,
-      item.root_session_id, item.target_session_id, event.event_kind,
+      item.root_session_id,
+      COALESCE((SELECT json_extract(assignment.payload_json, '$.beforeTargetSessionId')
+        FROM work_item_events_v6 assignment
+        JOIN resource_event_headers_v6 assignment_header
+          ON assignment_header.event_id = 'work-item:' || assignment.work_item_id || ':revision:' || assignment.revision
+        WHERE assignment.work_item_id = item.id AND assignment.event_type = 'assignment_changed'
+          AND assignment_header.sequence > (SELECT sequence FROM resource_event_headers_v6 WHERE event_id = event.event_id)
+        ORDER BY assignment.revision LIMIT 1), item.target_session_id), event.event_kind,
       event.aggregate_revision, NULL, NULL, NULL, 1, 'committed'
     FROM work_item_aggregation_events_v6 AS event
     INNER JOIN work_items_v6 AS item ON item.id = event.parent_work_item_id
@@ -523,8 +579,8 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
     SELECT id, sequence, contract_revision, kind, root_session_id, creator_session_id,
       target_session_id, parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority,
       source_identity_json, state, revision, progress_summary, blockers_json, next_action,
-      result_json, created_at, updated_at
-    FROM work_items_v6
+      result_json, created_at, updated_at, archived_at
+    FROM (${retainedWorkItemRowsSql})
   `).all() as Array<Record<string, string | number | null>>;
   const readEvents = db.prepare(`
     SELECT revision, event_type, principal_kind, actor_session_id, payload_json, created_at
@@ -552,7 +608,7 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
       }
     }
     const initial = JSON.parse(first.payload_json) as Record<string, unknown>;
-    const replay = {
+    const replay: Record<string, unknown> = {
       kind: initial.kind,
       rootSessionId: initial.rootSessionId,
       creatorSessionId: initial.creatorSessionId,
@@ -564,6 +620,8 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
       progress: initial.progress,
       state: initial.state,
       result: initial.result,
+      archivedAt: null,
+      deletedAt: null,
       updatedAt: first.created_at,
     };
     for (const event of events.slice(1)) {
@@ -573,6 +631,10 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
           throw new Error(`Work Item contract event cannot replay from its predecessor: ${item.id}`);
         }
         replay.contract = payload.after;
+        if (payload.afterSourceIdentity !== undefined) {
+          if (stableJson(payload.beforeSourceIdentity) !== stableJson(replay.sourceIdentity)) throw new Error(`Work Item source revision cannot replay: ${item.id}`);
+          replay.sourceIdentity = payload.afterSourceIdentity;
+        }
       } else if (event.event_type === "progress" || event.event_type === "handoff") {
         replay.progress = payload;
       } else if (event.event_type === "state_transitioned") {
@@ -586,6 +648,28 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
         }
         replay.state = payload.to;
         replay.result = payload.result;
+      } else if (event.event_type === "assignment_changed") {
+        if (payload.beforeTargetSessionId !== replay.targetSessionId) {
+          throw new Error(`Work Item assignment event cannot replay from its predecessor: ${item.id}`);
+        }
+        replay.targetSessionId = payload.afterTargetSessionId;
+      } else if (event.event_type === "parent_changed") {
+        if (payload.beforeParentWorkItemId !== replay.parentWorkItemId) {
+          throw new Error(`Work Item parent event cannot replay from its predecessor: ${item.id}`);
+        }
+        replay.parentWorkItemId = payload.afterParentWorkItemId;
+        if (payload.beforeCreatorSessionId !== undefined) {
+          if (payload.beforeCreatorSessionId !== replay.creatorSessionId) {
+            throw new Error(`Work Item creator event cannot replay from its predecessor: ${item.id}`);
+          }
+          replay.creatorSessionId = payload.afterCreatorSessionId;
+        }
+      } else if (event.event_type === "archived") {
+        replay.archivedAt = payload.archivedAt;
+      } else if (event.event_type === "restored") {
+        replay.archivedAt = null;
+      } else if (event.event_type === "deleted") {
+        replay.deletedAt = payload.deletedAt;
       } else {
         throw new Error(`Work Item event kind cannot follow the baseline: ${item.id}`);
       }
@@ -612,6 +696,8 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
       },
       state: item.state,
       result: item.result_json === null ? null : JSON.parse(String(item.result_json)),
+      archivedAt: item.archived_at ?? null,
+      deletedAt: (db.prepare("SELECT deleted_at FROM work_item_tombstones_v6 WHERE work_item_id=?").get(item.id) as {deleted_at:string}|undefined)?.deleted_at ?? null,
       updatedAt: item.updated_at,
     };
     if (stableJson(replay) !== stableJson(current)
@@ -655,10 +741,12 @@ function verifyWorkItemAggregationReplay(db: DatabaseSync): void {
       if (payload.childWorkItemId !== undefined && payload.childWorkItemId !== event.child_work_item_id) {
         throw new Error(`Work Item aggregation event child identity is inconsistent: ${aggregation.parent_work_item_id}`);
       }
-      if (event.event_kind === "child_added") childAdditions.add(event.child_work_item_id);
+      if (event.event_kind === "child_added" || event.event_kind === "child_adopted") childAdditions.add(event.child_work_item_id);
+      if (event.event_kind === "child_removed") childAdditions.delete(event.child_work_item_id);
       if (event.event_kind === "decided" || event.event_kind === "retry_requested") {
         decisions.set(event.child_work_item_id, payload);
       }
+      if (event.event_kind === "decision_superseded") decisions.delete(event.child_work_item_id);
     }
     const children = db.prepare(`
       SELECT id FROM work_items_v6 WHERE parent_work_item_id = ?
@@ -1070,7 +1158,7 @@ export function appendWorkItemAggregationEvent(db: DatabaseSync, input: {
   parentWorkItemId: string;
   childWorkItemId: string;
   aggregateRevision: number;
-  eventKind: "migration_baseline" | "child_added" | "decided" | "retry_requested";
+  eventKind: "migration_baseline" | "child_added" | "child_removed" | "child_adopted" | "decision_superseded" | "decided" | "retry_requested";
   proof: MutationAuthorityProof;
   operationId: string;
   idempotencyKey: string;
@@ -1428,7 +1516,8 @@ function readSessionExecutionProjection(db: DatabaseSync, executionId: string): 
     SELECT execution.sequence, execution.operation, execution.state, execution.request_json,
       execution.result_json, execution.error_code, execution.reason, execution.created_at,
       execution.admitted_at, execution.completed_at, execution.updated_at,
-      execution.authority_proof_json, association.work_item_id
+      execution.authority_proof_json, association.work_item_id,
+      association.work_item_revision, association.planned_source_json, association.actual_source_json
     FROM session_executions_v6 AS execution
     LEFT JOIN work_item_execution_associations_v6 AS association ON association.execution_id = execution.id
     WHERE execution.id = ?
@@ -1446,6 +1535,9 @@ function readSessionExecutionProjection(db: DatabaseSync, executionId: string): 
     updated_at: string;
     authority_proof_json: string | null;
     work_item_id: string | null;
+    work_item_revision: number | null;
+    planned_source_json: string | null;
+    actual_source_json: string | null;
   } | undefined;
   if (!row) throw new Error(`Session execution was not found: ${executionId}`);
   return {
@@ -1462,6 +1554,9 @@ function readSessionExecutionProjection(db: DatabaseSync, executionId: string): 
     updatedAt: row.updated_at,
     authorityProof: row.authority_proof_json === null ? null : JSON.parse(row.authority_proof_json) as unknown,
     workItemId: row.work_item_id,
+    ...(row.work_item_revision === null ? {} : { workItemRevision: row.work_item_revision }),
+    ...(row.planned_source_json === null ? {} : { plannedSourceIdentity: JSON.parse(row.planned_source_json) as unknown }),
+    ...(row.actual_source_json === null ? {} : { actualStartSourceIdentity: JSON.parse(row.actual_source_json) as unknown }),
   };
 }
 

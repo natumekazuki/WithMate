@@ -23,6 +23,7 @@ import {
   SessionBindingRevisionConflictError,
   SessionBindingStorage,
 } from "./session-binding-storage.js";
+import { parseActualStartSourceIdentity, resolveActualStartSourceIdentity } from "./work-item-source-admission.js";
 
 type SessionExecutionRow = {
   sequence: number;
@@ -189,7 +190,7 @@ export class SessionExecutionStorageV6 {
         input.createdAt,
       );
       this.insertOriginSnapshot(input.id, input.sessionId, input.origin, input.createdAt);
-      this.insertWorkItemAssociation(input.id, input.workItemId, input.sessionId, input.createdAt);
+      this.insertWorkItemAssociation(input.id, input.workItemId, input.sessionId, input.createdAt, input.binding, false);
       const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         INSERT INTO session_execution_idempotency_v6 (
@@ -291,7 +292,7 @@ export class SessionExecutionStorageV6 {
         input.createdAt,
       );
       this.insertOriginSnapshot(input.id, input.sessionId, input.origin, input.createdAt);
-      this.insertWorkItemAssociation(input.id, input.workItemId, input.sessionId, input.createdAt);
+      this.insertWorkItemAssociation(input.id, input.workItemId, input.sessionId, input.createdAt, input.binding, true);
       const principal = mutationPrincipalIdentity(input.proof);
       this.db.prepare(`
         INSERT INTO session_execution_idempotency_v6 (
@@ -578,6 +579,8 @@ export class SessionExecutionStorageV6 {
       if (!next) {
         return null;
       }
+
+      this.assertQueuedWorkItemAssociation(next.id, sessionId);
 
       new ResourceBudgetStorage(this.db).startQueuedTurn({
         sessionId,
@@ -991,19 +994,75 @@ export class SessionExecutionStorageV6 {
     workItemId: string | undefined,
     targetSessionId: string,
     createdAt: string,
+    binding: SessionExecutionBindingSnapshot | undefined,
+    admitted: boolean,
   ): void {
     if (!workItemId) return;
+    const workspacePath = admitted ? this.resolveExecutionWorkspacePath(targetSessionId, binding) : null;
+    if (admitted && !workspacePath) {
+      throw new SessionExecutionWorkItemAssociationError(workItemId, targetSessionId);
+    }
     const result = this.db.prepare(`
-      INSERT INTO work_item_execution_associations_v6 (execution_id, work_item_id, created_at)
-      SELECT ?, id, ?
+      INSERT INTO work_item_execution_associations_v6
+        (execution_id, work_item_id, created_at, work_item_revision, planned_source_json, actual_source_json)
+      SELECT ?, id, ?, revision, source_identity_json, ?
       FROM work_items_v6
       WHERE id = ?
         AND target_session_id = ?
+        AND archived_at IS NULL
         AND state IN ('pending', 'in_progress', 'waiting')
-    `).run(executionId, createdAt, workItemId, targetSessionId);
+    `).run(
+      executionId,
+      createdAt,
+      workspacePath
+        ? serializeJson(resolveActualStartSourceIdentity(workspacePath), "Actual source identity")
+        : null,
+      workItemId,
+      targetSessionId,
+    );
     if (result.changes !== 1) {
       throw new SessionExecutionWorkItemAssociationError(workItemId, targetSessionId);
     }
+  }
+
+  private assertQueuedWorkItemAssociation(executionId: string, sessionId: string): void {
+    const row = this.db.prepare(`
+      SELECT association.work_item_id, association.work_item_revision, work_item.revision,
+      work_item.target_session_id, work_item.state, work_item.archived_at
+      FROM work_item_execution_associations_v6 AS association
+      INNER JOIN work_items_v6 AS work_item ON work_item.id = association.work_item_id
+      WHERE association.execution_id = ?
+    `).get(executionId) as {
+      work_item_id: string; work_item_revision: number | null; revision: number;
+      target_session_id: string; state: string; archived_at: string | null;
+    } | undefined;
+    if (!row) return;
+    if (row.target_session_id !== sessionId || row.archived_at !== null
+      || !["pending", "in_progress", "waiting"].includes(row.state)
+      || row.work_item_revision !== row.revision) {
+      throw new SessionExecutionWorkItemAssociationError(row.work_item_id, sessionId);
+    }
+    const actual = serializeJson(
+      resolveActualStartSourceIdentity(this.resolveExecutionWorkspacePath(sessionId, this.readBinding(executionId))!),
+      "Actual source identity",
+    );
+    this.db.prepare(`
+      UPDATE work_item_execution_associations_v6
+      SET actual_source_json = ?
+      WHERE execution_id = ? AND actual_source_json IS NULL
+    `).run(actual, executionId);
+  }
+
+  private resolveExecutionWorkspacePath(
+    sessionId: string,
+    binding: SessionExecutionBindingSnapshot | undefined,
+  ): string | null {
+    const boundPath = binding?.workspacePath.trim();
+    if (boundPath) return boundPath;
+    const row = this.db.prepare("SELECT workspace_path FROM sessions_v6 WHERE id = ?")
+      .get(sessionId) as { workspace_path?: string } | undefined;
+    const workspacePath = row?.workspace_path?.trim();
+    return workspacePath || null;
   }
 
   private updateIdempotencyExpiry(executionId: string, expiresAt: string): void {
@@ -1105,7 +1164,25 @@ export class SessionExecutionStorageV6 {
   }
 
   private parseStoredExecution(row: SessionExecutionRow): SessionExecutionStorageRecord {
-    return parseExecution(row, this.readBinding(row.id));
+    const execution = parseExecution(row, this.readBinding(row.id));
+    const association = this.db.prepare(`
+      SELECT work_item_revision, planned_source_json, actual_source_json
+      FROM work_item_execution_associations_v6
+      WHERE execution_id = ?
+    `).get(row.id) as {
+      work_item_revision: number | null;
+      planned_source_json: string | null;
+      actual_source_json: string | null;
+    } | undefined;
+    if (!association) return execution;
+    return {
+      ...execution,
+      ...(association.work_item_revision === null ? {} : { workItemRevision: association.work_item_revision }),
+      ...(association.planned_source_json === null ? {} : { plannedSourceIdentity: JSON.parse(association.planned_source_json) }),
+      ...(association.actual_source_json === null ? {} : {
+        actualStartSourceIdentity: parseActualStartSourceIdentity(JSON.parse(association.actual_source_json)),
+      }),
+    };
   }
 
   private withCapturedBinding<T extends EnqueueSessionExecutionInput>(input: T): T {
@@ -1355,6 +1432,9 @@ function executionHistoryPayload(
     completedAt: execution.completedAt,
     updatedAt: execution.updatedAt,
     ...(binding ? { binding } : {}),
+    ...(execution.workItemRevision === undefined ? {} : { workItemRevision: execution.workItemRevision }),
+    ...(execution.plannedSourceIdentity === undefined ? {} : { plannedSourceIdentity: execution.plannedSourceIdentity }),
+    ...(execution.actualStartSourceIdentity === undefined ? {} : { actualStartSourceIdentity: execution.actualStartSourceIdentity }),
   };
 }
 

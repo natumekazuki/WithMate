@@ -84,13 +84,14 @@ async function createFixture(options: {
         catalog_revision,
         model_id,
         approval_mode,
+        workspace_path,
         created_at,
         updated_at,
         last_active_at
-      ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
+      ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?, ?)
     `);
-    insert.run("session-1", "Session 1", CREATED_AT, CREATED_AT, CREATED_AT);
-    insert.run("session-2", "Session 2", CREATED_AT, CREATED_AT, CREATED_AT);
+    insert.run("session-1", "Session 1", process.cwd(), CREATED_AT, CREATED_AT, CREATED_AT);
+    insert.run("session-2", "Session 2", process.cwd(), CREATED_AT, CREATED_AT, CREATED_AT);
     insertStandaloneRoleBindingsForSessions(db);
   } finally {
     db.close();
@@ -497,14 +498,16 @@ describe("SessionExecutionService", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "compatibility"
   // claim = "runとenqueueはrevision 2のdelegated WorkItem bindingを検証してexecution associationを同じacceptance境界へ保存する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#実行関連付けと再開" }
-  // failure_mode = "schema revision追加後にdelegated WorkItem associationが拒否されるかexecutionだけが保存される"
+  // fault = "schema revision追加後にdelegated WorkItem associationが拒否されるかexecutionだけが保存される"
   // scope = "SessionExecutionService WorkItem association admission"
   // lifecycle = "permanent"
   // distinction = "runとenqueueの双方をreal SQLiteのdelegated rowへ関連付けて観測する"
+  // observable = "run/enqueueのWork Item associationと返却executionの保存結果"
+  // observation_boundary = "component-behavior"
   // @end-test-value
   it("WORK-EXEC-05: runとenqueueは検証済みWork Item associationをexecutionと同時保存する", async () => {
     const fixture = await createFixture();
@@ -554,6 +557,9 @@ describe("SessionExecutionService", () => {
       });
       assert.equal(fixture.storage.getExecutionWorkItemId(running.id), "work-run");
       assert.equal(fixture.storage.getExecutionWorkItemId(queued.id), "work-enqueue");
+      assert.equal(running.workItemRevision, 1);
+      assert.equal(running.actualStartSourceIdentity?.kind, "resolved");
+      assert.equal(queued.workItemRevision, 1);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

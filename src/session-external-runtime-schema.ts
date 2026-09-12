@@ -343,9 +343,22 @@ const workItemCreateInputSchema = z.object({
 const workItemInputSchema = z.object({ workItemId: nonEmptyStringSchema }).strict();
 const workItemReviseInputSchema = z.object({
   workItemId: nonEmptyStringSchema, goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), scope: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH),
-  completionCriteria: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), authority: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH),
+  completionCriteria: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), authority: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), sourceIdentity: workItemSourceIdentitySchema.optional(),
   expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema,
 }).strict();
+const actualStartSourceIdentitySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("git_unavailable"), workspace: z.string(), repository: z.null(), branch: z.null(), base: z.null(), head: z.null() }).strict(),
+  z.object({ kind: z.literal("detached_head"), workspace: z.string(), repository: z.string(), branch: z.null(), base: z.string().nullable(), head: z.string() }).strict(),
+  z.object({ kind: z.literal("unborn_branch"), workspace: z.string(), repository: z.string(), branch: z.string(), base: z.null(), head: z.null() }).strict(),
+  z.object({ kind: z.literal("resolved"), workspace: z.string(), repository: z.string(), branch: z.string(), base: z.string().nullable(), head: z.string() }).strict(),
+]);
+const workItemReassignInputSchema = z.object({ workItemId: nonEmptyStringSchema, targetSessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), expectedContainerRevision: z.number().int().min(1).optional(), transferPolicy: z.enum(["handoff", "successor"]), idempotencyKey: nonEmptyStringSchema }).strict();
+const workItemMoveInputSchema = z.object({ workItemId: nonEmptyStringSchema, destinationParentWorkItemId: nonEmptyStringSchema.nullable(), expectedRevision: z.number().int().min(1), expectedAggregateRevision: z.number().int().min(0).optional(), expectedDestinationAggregateRevision: z.number().int().min(0).optional(), idempotencyKey: nonEmptyStringSchema }).strict();
+const workItemCloneInputSchema = z.object({ workItemId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), expectedContainerRevision: z.number().int().min(1), targetSessionId: nonEmptyStringSchema, parentWorkItemId: nonEmptyStringSchema.nullable().optional(), goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), scope: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), completionCriteria: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), authority: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), sourceIdentity: workItemSourceIdentitySchema, idempotencyKey: nonEmptyStringSchema }).strict();
+const workItemReopenInputSchema = z.object({ workItemId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), strategy: z.literal("successor"), expectedContainerRevision: z.number().int().min(1).optional(), destinationParentWorkItemId: nonEmptyStringSchema.nullable().optional(), goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), scope: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), completionCriteria: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), authority: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), sourceIdentity: workItemSourceIdentitySchema, idempotencyKey: nonEmptyStringSchema }).strict();
+const workItemArchiveInputSchema = z.object({ workItemId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), idempotencyKey: nonEmptyStringSchema }).strict();
+const workItemRestoreInputSchema = z.object({ workItemId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema }).strict();
+const workItemDeleteInputSchema = z.object({ workItemId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema }).strict();
 const workItemHistoryAppendInputSchema = z.object({
   workItemId: nonEmptyStringSchema, type: z.enum(["progress", "handoff"]), summary: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
   blockers: z.array(nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH)).max(WORK_ITEM_MAX_RESULT_ITEMS), nextAction: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema,
@@ -356,18 +369,24 @@ const workItemContractProjectionSchema = z.object({ goal: z.string(), scope: z.s
 const workItemEventResultSchema = z.object({ outcome: z.enum(["completed", "partially_completed", "failed"]), summary: z.string(), changes: z.array(z.string()), verificationResults: z.array(z.object({ name: z.string(), status: z.enum(["passed", "failed", "not_run"]), details: z.string() }).strict()), findings: z.array(z.string()), unverifiedItems: z.array(z.string()), remainingWork: z.array(z.string()), reportingSessionId: z.string(), reportedAt: z.string() }).strict();
 const workItemEventBase = { sequence: z.number().int().positive(), workItemId: z.string(), revision: z.number().int().positive(), actorSessionId: z.string().nullable(), createdAt: z.string() };
 const workItemEventSchema = z.discriminatedUnion("type", [
-  z.object({ ...workItemEventBase, type: z.literal("created"), payload: z.object({ kind: z.enum(["root", "delegated"]), rootSessionId: z.string(), creatorSessionId: z.string(), targetSessionId: z.string(), parentWorkItemId: z.string().nullable(), sourceIdentity: workItemSourceIdentitySchema, contract: workItemContractProjectionSchema, progress: workItemProgressPayloadSchema, state: z.enum(WORK_ITEM_STATES), result: workItemEventResultSchema.nullable() }).strict() }).strict(),
-  z.object({ ...workItemEventBase, type: z.literal("migration_baseline"), payload: z.object({ kind: z.enum(["root", "delegated"]), rootSessionId: z.string(), creatorSessionId: z.string(), targetSessionId: z.string(), parentWorkItemId: z.string().nullable(), sourceIdentity: workItemSourceIdentitySchema, contract: workItemContractProjectionSchema, progress: workItemProgressPayloadSchema, state: z.enum(WORK_ITEM_STATES), result: workItemEventResultSchema.nullable() }).strict() }).strict(),
-  z.object({ ...workItemEventBase, type: z.literal("contract_revised"), payload: z.object({ before: workItemContractProjectionSchema, after: workItemContractProjectionSchema }).strict() }).strict(),
+  z.object({ ...workItemEventBase, type: z.literal("created"), payload: z.object({ kind: z.enum(["root", "delegated"]), rootSessionId: z.string(), creatorSessionId: z.string(), targetSessionId: z.string(), parentWorkItemId: z.string().nullable(), sourceIdentity: workItemSourceIdentitySchema, contract: workItemContractProjectionSchema, progress: workItemProgressPayloadSchema, state: z.enum(WORK_ITEM_STATES), result: workItemEventResultSchema.nullable(), predecessorWorkItemId: z.string().nullable().optional(), sourceWorkItemId: z.string().nullable().optional() }).strict() }).strict(),
+  z.object({ ...workItemEventBase, type: z.literal("migration_baseline"), payload: z.object({ kind: z.enum(["root", "delegated"]), rootSessionId: z.string(), creatorSessionId: z.string(), targetSessionId: z.string(), parentWorkItemId: z.string().nullable(), sourceIdentity: workItemSourceIdentitySchema, contract: workItemContractProjectionSchema, progress: workItemProgressPayloadSchema, state: z.enum(WORK_ITEM_STATES), result: workItemEventResultSchema.nullable(), predecessorWorkItemId: z.string().nullable().optional(), sourceWorkItemId: z.string().nullable().optional() }).strict() }).strict(),
+  z.object({ ...workItemEventBase, type: z.literal("contract_revised"), payload: z.object({ before: workItemContractProjectionSchema, after: workItemContractProjectionSchema, beforeSourceIdentity: workItemSourceIdentitySchema.optional(), afterSourceIdentity: workItemSourceIdentitySchema.optional() }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("progress"), payload: workItemProgressPayloadSchema }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("handoff"), payload: workItemProgressPayloadSchema }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("state_transitioned"), payload: z.object({ from: z.enum(WORK_ITEM_STATES), to: z.enum(WORK_ITEM_STATES) }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("result_reported"), payload: z.object({ from: z.enum(WORK_ITEM_STATES), to: z.enum(WORK_ITEM_STATES), result: workItemEventResultSchema }).strict() }).strict(),
+  z.object({ ...workItemEventBase, type: z.literal("assignment_changed"), payload: z.object({ beforeTargetSessionId: z.string(), afterTargetSessionId: z.string() }).strict() }).strict(),
+  z.object({ ...workItemEventBase, type: z.literal("parent_changed"), payload: z.object({ beforeParentWorkItemId: z.string().nullable(), afterParentWorkItemId: z.string().nullable(), beforeCreatorSessionId: z.string().optional(), afterCreatorSessionId: z.string().optional(), supersededDecision: z.boolean() }).strict() }).strict(),
+  z.object({ ...workItemEventBase, type: z.literal("archived"), payload: z.object({ archivedAt: z.string(), reason: z.string().optional() }).strict() }).strict(),
+  z.object({ ...workItemEventBase, type: z.literal("restored"), payload: z.object({ restoredAt: z.string() }).strict() }).strict(),
+  z.object({ ...workItemEventBase, type: z.literal("deleted"), payload: z.object({ deletedAt: z.string() }).strict() }).strict(),
 ]);
 const workItemListInputSchema = z.object({
   creatorSessionId: nonEmptyStringSchema.optional(),
   targetSessionId: nonEmptyStringSchema.optional(),
   state: z.enum(WORK_ITEM_STATES).optional(),
+  includeArchived: z.boolean().default(false),
   limit: z.number().int().min(1).max(WORK_ITEM_MAX_LIST_LIMIT).default(WORK_ITEM_DEFAULT_LIST_LIMIT),
   cursor: nonEmptyStringSchema.optional(),
 }).strict();
@@ -609,6 +628,9 @@ function createExecutionSchema(operation: z.ZodType<"turn.run" | "turn.enqueue">
       updatedAt: z.string(),
     }).strict().nullable(),
     workItemId: z.string().nullable(),
+    workItemRevision: z.number().int().positive().nullable(),
+    plannedSourceIdentity: workItemSourceIdentitySchema.nullable(),
+    actualStartSourceIdentity: actualStartSourceIdentitySchema.nullable(),
   }).strict();
 }
 const elicitationFieldBase = {
@@ -773,6 +795,8 @@ const workItemIdentityShape = {
   revision: z.number().int().positive(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  archivedAt: z.string().nullable().optional(),
+  deletedAt: z.string().nullable().optional(),
   progressSummary: z.string().optional(),
   blockers: z.array(z.string()).optional(),
   nextAction: z.string().optional(),
@@ -948,6 +972,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       mutations: z.tuple([
         z.literal("create"),
         z.literal("revise"),
+        z.literal("reassign"), z.literal("move"), z.literal("clone"), z.literal("reopen"), z.literal("archive"), z.literal("restore"), z.literal("delete"),
         z.literal("transition"),
         z.literal("result"),
         z.literal("cancel"),
@@ -962,6 +987,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
           z.literal("handoff"),
           z.literal("state_transitioned"),
           z.literal("result_reported"),
+          z.literal("assignment_changed"), z.literal("parent_changed"), z.literal("archived"), z.literal("restored"), z.literal("deleted"),
         ]),
         operations: z.tuple([z.literal("append"), z.literal("list")]),
         defaultListLimit: z.literal(WORK_ITEM_DEFAULT_LIST_LIMIT),
@@ -1023,6 +1049,13 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "work.list": z.object({ items: z.array(workItemSchema), nextCursor: z.string().optional() }).strict(),
   "work.get": workItemSchema,
   "work.revise": workItemSchema,
+  "work.reassign": workItemSchema,
+  "work.move": workItemSchema,
+  "work.clone": workItemSchema,
+  "work.reopen": workItemSchema,
+  "work.archive": workItemSchema,
+  "work.restore": workItemSchema,
+  "work.delete": workItemSchema,
   "work.history.append": workItemSchema,
   "work.history.list": z.object({ items: z.array(workItemEventSchema), nextCursor: z.string().optional() }).strict(),
   "work.transition": workItemSchema,
@@ -1103,6 +1136,13 @@ const inputSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "work.list": workItemListInputSchema,
   "work.get": workItemInputSchema,
   "work.revise": workItemReviseInputSchema,
+  "work.reassign": workItemReassignInputSchema,
+  "work.move": workItemMoveInputSchema,
+  "work.clone": workItemCloneInputSchema,
+  "work.reopen": workItemReopenInputSchema,
+  "work.archive": workItemArchiveInputSchema,
+  "work.restore": workItemRestoreInputSchema,
+  "work.delete": workItemDeleteInputSchema,
   "work.history.append": workItemHistoryAppendInputSchema,
   "work.history.list": workItemHistoryListInputSchema,
   "work.transition": workItemTransitionInputSchema,

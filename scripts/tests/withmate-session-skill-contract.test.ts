@@ -12,11 +12,13 @@ import {
 const skillRoot = path.resolve("resources", "skills", "withmate-session");
 
 describe("withmate-session managed Skill contract", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "managed Session guidanceはself-owned Root Work Itemのclosureとtop-level delegated Work Itemの非集約closureを区別する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-  // failure_mode = "Agentがroot自身のWork Itemを存在しないものとして扱うか、top-level delegated itemへaggregationを適用してroot resultを確定できない"
+  // fault = "Agentがroot自身のWork Itemを存在しないものとして扱うか、top-level delegated itemへaggregationを適用してroot resultを確定できない"
+  // observable = "managed Skillとoperations referenceに記載されたroot Work Item、parent-null delegation、aggregation境界"
+  // observation_boundary = "declaration"
   // scope = "withmate-session managed Skill root closure guidance"
   // lifecycle = "permanent"
   // distinction = "self-owned root result、parent-null top-level delegation、task coordinator aggregationの三境界を同じ配布文書から検証する"
@@ -26,7 +28,7 @@ describe("withmate-session managed Skill contract", () => {
     const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
     const contract = skill + "\n" + operations;
 
-    assert.match(contract, /root overall coordinator has exactly one self-owned Root Work Item/i);
+    assert.match(contract, /root (?:overall )?coordinator keeps its self-owned root Work Item current/i);
     assert.match(contract, /top-level delegated Work Items with `parentWorkItemId: null`/);
     assert.match(contract, /`work\.get` to validate and adopt the prerequisite's terminal result/);
     assert.match(contract, /Do not call `work\.aggregation\.\*` for top-level items/);

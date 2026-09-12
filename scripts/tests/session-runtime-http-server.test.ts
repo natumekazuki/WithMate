@@ -66,6 +66,9 @@ function publicExecution(operation: "turn.run" | "turn.enqueue" = "turn.run", as
     partialOutput: null,
     terminalFailureNotification: null,
     workItemId: null,
+    workItemRevision: null,
+    plannedSourceIdentity: null,
+    actualStartSourceIdentity: null,
   };
 }
 
@@ -121,6 +124,30 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   "work.revise": {
     workItemId: "work-1", goal: "goal", scope: "scope", completionCriteria: "done", authority: "local",
     expectedRevision: 1, idempotencyKey: "work-revise-key",
+  },
+  "work.reassign": {
+    workItemId: "work-1", targetSessionId: "session-2", expectedRevision: 1, transferPolicy: "handoff", idempotencyKey: "work-reassign-key",
+  },
+  "work.move": {
+    workItemId: "work-1", destinationParentWorkItemId: null, expectedRevision: 1, expectedAggregateRevision: 0, idempotencyKey: "work-move-key",
+  },
+  "work.clone": {
+    workItemId: "work-1", expectedRevision: 1, expectedContainerRevision: 1, targetSessionId: "session-1", parentWorkItemId: null,
+    goal: "goal", scope: "scope", completionCriteria: "done", authority: "local",
+    sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null }, idempotencyKey: "work-clone-key",
+  },
+  "work.reopen": {
+    workItemId: "work-1", expectedRevision: 1, strategy: "successor", goal: "goal", scope: "scope", completionCriteria: "done", authority: "local",
+    sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null }, idempotencyKey: "work-reopen-key",
+  },
+  "work.archive": {
+    workItemId: "work-1", expectedRevision: 1, reason: "done", idempotencyKey: "work-archive-key",
+  },
+  "work.restore": {
+    workItemId: "work-1", expectedRevision: 1, idempotencyKey: "work-restore-key",
+  },
+  "work.delete": {
+    workItemId: "work-1", expectedRevision: 1, idempotencyKey: "work-delete-key",
   },
   "work.history.append": {
     workItemId: "work-1", type: "progress", summary: "started", blockers: [], nextAction: "continue",

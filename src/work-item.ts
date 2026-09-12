@@ -21,6 +21,11 @@ export const WORK_ITEM_EVENT_TYPES = [
   "handoff",
   "state_transitioned",
   "result_reported",
+  "assignment_changed",
+  "parent_changed",
+  "archived",
+  "restored",
+  "deleted",
 ] as const;
 
 export const WORK_ITEM_STATES = [
@@ -101,6 +106,8 @@ type WorkItemBase = Readonly<{
   revision: number;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string | null;
+  deletedAt?: string | null;
 }>;
 
 type WorkItemLifecycle =
@@ -145,11 +152,14 @@ export type WorkItemCreatedEventPayload = Readonly<{
   state: WorkItemState;
   result: WorkItemResult | null;
   predecessorWorkItemId?: string | null;
+  sourceWorkItemId?: string | null;
 }>;
 
 export type WorkItemContractRevisedEventPayload = Readonly<{
   before: WorkItemContractProjection;
   after: WorkItemContractProjection;
+  beforeSourceIdentity?: WorkItemSourceIdentity;
+  afterSourceIdentity?: WorkItemSourceIdentity;
 }>;
 
 export type WorkItemProgressEventPayload = WorkItemProgressProjection;
@@ -164,6 +174,20 @@ export type WorkItemResultReportedEventPayload = Readonly<{
   to: WorkItemResultState;
   result: WorkItemResult;
 }>;
+export type WorkItemAssignmentChangedEventPayload = Readonly<{
+  beforeTargetSessionId: string;
+  afterTargetSessionId: string;
+}>;
+export type WorkItemParentChangedEventPayload = Readonly<{
+  beforeParentWorkItemId: string | null;
+  afterParentWorkItemId: string | null;
+  beforeCreatorSessionId?: string;
+  afterCreatorSessionId?: string;
+  supersededDecision: boolean;
+}>;
+export type WorkItemArchivedEventPayload = Readonly<{ archivedAt: string; reason?: string }>;
+export type WorkItemRestoredEventPayload = Readonly<{ restoredAt: string }>;
+export type WorkItemDeletedEventPayload = Readonly<{ deletedAt: string }>;
 
 type WorkItemEventBase<T extends WorkItemEventType, P> = Readonly<{
   sequence: number;
@@ -182,7 +206,12 @@ export type WorkItemEvent =
   | WorkItemEventBase<"progress", WorkItemProgressEventPayload>
   | WorkItemEventBase<"handoff", WorkItemProgressEventPayload>
   | WorkItemEventBase<"state_transitioned", WorkItemStateTransitionedEventPayload>
-  | WorkItemEventBase<"result_reported", WorkItemResultReportedEventPayload>;
+  | WorkItemEventBase<"result_reported", WorkItemResultReportedEventPayload>
+  | WorkItemEventBase<"assignment_changed", WorkItemAssignmentChangedEventPayload>
+  | WorkItemEventBase<"parent_changed", WorkItemParentChangedEventPayload>
+  | WorkItemEventBase<"archived", WorkItemArchivedEventPayload>
+  | WorkItemEventBase<"restored", WorkItemRestoredEventPayload>
+  | WorkItemEventBase<"deleted", WorkItemDeletedEventPayload>;
 
 export function workItemEventPayloadByteLength(payload: WorkItemEvent["payload"]): number {
   const serialized = JSON.stringify(payload);

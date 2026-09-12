@@ -352,6 +352,24 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 ## Validation gap
 
+### Slice 4 の承認済み実装境界（2026-09-12）
+
+開始baseは`ab7b4e25709086a0f1859e1345ea87e83956fa07`。ユーザー承認により、moveに必要な旧decisionのsupersede、旧parentからの離脱、新parentへのadoptionと、その原子的保存・履歴再生・migration・直接検証をSlice 5から前倒しする。adoptionは所属の引受だけを表し、成果を自動採用しない。
+
+確定済み親結果または上位集約結果の訂正・stale伝播が必要な移動は、Slice 5接続まで明示的なconflictとし、未接続能力として残す。successorも旧branchの結果・判断・所属履歴を変更しない範囲に限定する。公開の汎用correction APIとflattenはSlice 5、batch splitのdelegation compositionはSlice 6に残す。以下の実装・検証・レビュー記録が揃うまではSlice 4の完了を意味しない。
+
+### Slice 4 の実装・直接検証（2026-09-13）
+
+同一root内のreassign/move、clone、新ID successorによるreopen、archive/restore、参照がないarchived terminalの物理delete、delegated revise/history、admission時のactual source snapshotを接続した。公開面は56 operationへ揃え、CLI生成物、MCP、catalog、managed Skill、runbookを更新した。新lifecycle grantはbaselineを変更せず、既存grant ownerのtrusted内部発行で明示付与する。Agent向け汎用grant発行は未接続である。
+
+実SQLiteでmoveの旧decision失効・所属変更・新parent未decision、確定済み親のconflict、cycle、handoffのqueued/running拒否、successorの旧branch保持・予算・replay、archive/restoreのdecision保持、削除後のhistory/tombstone/replayを検証した。sourceは実Gitの通常branch、detached、unborn、Git外と障害を区別し、queued admission後のsnapshot保持と改変拒否を確認した。populated migrationでは旧row、event/header、decision/replacement、grant、budget、idempotency responseを保持し、migration後のmove/reopenとstartup replayを実行した。
+
+全suiteの初回は3,569件中3,553 pass、15 fail、1 skip。公開fixtureとschemaの今回変更に伴う失敗を修正した後の全suiteは3,572件中3,569 pass、2 fail、1 skipだった。残る失敗は`session-admission-regressions.test.ts`の旧Session placement fixtureと`session-transcript-service.test.ts`の固定期限経過である。前者は開始baseのclean detached worktreeでも同じ`AUTHORITY_SCOPE_INVALID`を再現し、後者は開始時に報告済みの`2026-09-12T00:00:00Z`期限切れを実測した。初回のGlossary queue timeoutは再実行で成功した。最終の権限・migration修正後は関連49件、型検査、production buildが成功した。GUIは変更しておらず目視未実行。
+
+異なるroot間のWork Item単体moveは、target Sessionの所属・grant・budget移管の接続が必要なため現在明示conflictである。単体moveの延期方針はユーザーへ確認中であり、実装済み能力に数えない。確定済み結果を訂正するmoveとflattenは承認済みのSlice 5待ち、batch splitはSlice 6待ちとして保持する。
+
+変更testの価値審査と固定commitの独立complete-diff reviewは進行中であり、Slice 4は未完了。
+
 ### Slice 2 の実装・検証対象
 
 Root ledger、原子的な予約と精算、Session／Work Item作成数、実行queue、Provider retry／使用量、SessionFolderの仲介書き込み、Settingsからの上限・期限延長を接続した。初期policyは2026-09-07のユーザー指定を採用し、token・費用は計測のみとする。設計の採用方針とADR 030を正本とする。

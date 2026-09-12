@@ -159,7 +159,7 @@ Agent起点の`turn.run`と`turn.enqueue`は、runtime bindingで確定したact
 | `task-coordinator` | actor自身、直属の`executor`、rootの`overall-coordinator`、同じrootかつ同じ親の兄弟`task-coordinator` |
 | `executor` | actor自身、直属の`overall-coordinator`または`task-coordinator` |
 
-異なるroot、孫executor、executorの兄弟または別branch、存在しないtargetはexecution、queue、Coordination Eventを作る前に拒否する。API要求はreplayを含め現在のbindingとactive grantを評価する。許可された同一principalの再送には保存済みcanonical resultを返し、新しいexecutionを作らない。GUI送信はtrusted user invocationとして同じexecution ownerを使うが、このAgent間authorityの対象にはしない。
+異なるroot、孫executor、executorの兄弟または別branch、存在しないtargetはexecution、queue、Coordination Eventを作る前に拒否する。API要求はreplayを含め現在のbindingとactive grantを評価する。新しいWork Item lifecycle capabilityは既存baseline grantへ自動追加せず、既存grant ownerのtrusted issuanceで明示付与されたactorだけが実行できる。再発行による権限拡張やAgent向け汎用grant APIはSlice 7まで提供しない。許可された同一principalの再送には保存済みcanonical resultを返し、新しいexecutionを作らない。GUI送信はtrusted user invocationとして同じexecution ownerを使うが、このAgent間authorityの対象にはしない。
 
 cross-Session Turnのacceptanceでは、target側executionを正本としたまま`session_execution_origins_v6`へsource Session ID、canonical target Session ID、operation、target titleとRoleのsnapshot、送信本文、source Session message sequence anchor、canonical execution sequence、acceptance時刻を同じtransactionで保存する。source queryは`(source_session_id, execution_sequence)` indexを使い、`request_json`を走査しない。既存executionの補完はschema遷移後の一回だけ実行し、Session initiatorを持つAgent-origin executionに限定して、terminal failure notification executionを除外する。
 
@@ -529,11 +529,22 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | Application operation and MCP tool | CLI command |
 | --- | --- |
 | `runtime.catalog` | `runtime catalog` |
+| `budget.get` | `budget get` |
+| `budget.list` | `budget list` |
+| `budget.configure` | `budget configure` |
 | `session.self` | `session self` |
 | `session.create` | `session create` |
 | `session.list` | `session list` |
 | `session.get` | `session get` |
+| `session.configure` | `session configure` |
 | `session.rename` | `session rename` |
+| `session.move.manifest` | `session move-manifest` |
+| `session.move` | `session move` |
+| `session.clone` | `session clone` |
+| `session.restore` | `session restore` |
+| `session.archive` | `session archive` |
+| `session.delete.manifest` | `session delete-manifest` |
+| `session.delete` | `session delete` |
 | `turn.options` | `turn options` |
 | `turn.run` | `turn run` |
 | `turn.enqueue` | `turn enqueue` |
@@ -550,6 +561,13 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | `work.list` | `work list` |
 | `work.get` | `work get` |
 | `work.revise` | `work revise` |
+| `work.reassign` | `work reassign` |
+| `work.move` | `work move` |
+| `work.clone` | `work clone` |
+| `work.reopen` | `work reopen` |
+| `work.archive` | `work archive` |
+| `work.restore` | `work restore` |
+| `work.delete` | `work delete` |
 | `work.history.append` | `work history append` |
 | `work.history.list` | `work history list` |
 | `work.transition` | `work transition` |
@@ -571,13 +589,13 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 
 ## Work Item contract
 
-Work ItemはSession自身の長期状態またはSession間委譲を表し、executionとは別のserver生成IDを持つ。`root` と `delegated` のunionを判別可能にする。両kindのID、root、creator、target、任意のparent、source identityは作成後に変更しない。`delegated` のgoal、scope、completion criteria、authorityは不変の委譲契約とし、`root` の同fieldだけはroot ownerがrevisioned mutationで改訂できる。Role binding revision 1へWork Item IDを追加せず、Work ItemからSessionを参照する。
+Work ItemはSession自身の長期状態またはSession間委譲を表し、executionとは別のserver生成IDを持つ。`root` と `delegated` のunionを判別可能にする。rootのidentityとroot所属は固定する。delegatedのassignment（creator、target、parent）は専用のrevisioned lifecycle mutationで変更でき、変更前後を同一の履歴streamへ保存する。`delegated` のgoal、scope、completion criteria、authorityは`work.revise`で明示的に改訂できる。planned source identityは契約として保存し、Turn admission時にtarget Sessionのcanonical workspaceからactual source identityを解決して実行associationへ保存する。Role binding revision 1へWork Item IDを追加せず、Work ItemからSessionを参照する。
 
-root Work Itemは`standalone`または`overall-coordinator`のroot Sessionごとに一件だけ存在し、Session作成と同一database transactionで作成する。goalはSessionのtask titleから初期化し、scope、completion criteria、authority説明は空から開始してroot ownerがrevisioned mutationで具体化できる。root ownerはstate、progress、blockers、next action、terminal resultを同じ単調増加revisionとprincipal単位のidempotency keyで更新し、current projectionとappend-only event history（`created`、`migration_baseline`、`contract_revised`、`progress`、`handoff`、`state_transitioned`、`result_reported`）を一つのstreamへ直列化する。通常のhistory event payloadは512 KiBを上限とし、exact payloadが確定するmutation境界とdatabase CHECKで検証する。V1 public contractから生成できる既存値を欠落なく移すため、`migration_baseline`だけは2 MiBまで許可し、runtime catalogで別上限として公開する。authority説明の自由記述は認可に使わず、既存Session role、communication policy、runtime capabilityだけを実効権限の根拠とする。terminal rootは再開せず、terminal resultは全descendantのterminal化とnested aggregation decision確定を同一transactionで検証する。
+root Work Itemは`standalone`または`overall-coordinator`のroot Sessionごとに一件だけ存在し、Session作成と同一database transactionで作成する。goalはSessionのtask titleから初期化し、scope、completion criteria、authority説明は空から開始してroot ownerがrevisioned mutationで具体化できる。root ownerはstate、progress、blockers、next action、terminal resultを同じ単調増加revisionとprincipal単位のidempotency keyで更新し、current projectionとappend-only event history（`created`、`migration_baseline`、`contract_revised`、`progress`、`handoff`、`state_transitioned`、`result_reported`）を一つのstreamへ直列化する。通常のhistory event payloadは512 KiBを上限とし、exact payloadが確定するmutation境界とdatabase CHECKで検証する。V1 public contractから生成できる既存値を欠落なく移すため、`migration_baseline`だけは2 MiBまで許可し、runtime catalogで別上限として公開する。authority説明の自由記述は認可に使わず、既存Session role、communication policy、runtime capabilityだけを実効権限の根拠とする。terminal rootは`work.reopen`で新IDのsuccessorを作成でき、旧rootのresultと履歴を保持する。terminal resultは全descendantのterminal化とnested aggregation decision確定を同一transactionで検証する。
 
-既存Work Itemのmigrationはすべて`delegated`として保持し、移行時点の`migration_baseline`から履歴を開始する。過去のeventを生成せず、legacy parent-null delegated Work Itemを自動reparentしない。migration前のidempotency ledgerにcanonical responseが存在しない再送は、後続のcurrent projectionへfallbackせず、versioned `IDEMPOTENCY_RESPONSE_UNAVAILABLE` errorを`effect: applied`で返す。active root、active descendant、未回収結果が残るroot Sessionの削除は拒否し、parent-null delegated resultは同じrootのRoot WorkItemがterminalになるまで未回収として扱う。削除可能なterminal root Sessionでは、自己所有Root Work Itemとterminalかつ回収済みのdelegated Work Item、およびそれらの履歴、idempotency record、execution association、aggregation ledgerを同一transactionで物理削除する。
+既存Work Itemのmigrationはすべて`delegated`として保持し、移行時点の`migration_baseline`から履歴を開始する。過去のeventを生成せず、legacy parent-null delegated Work Itemを自動reparentしない。migration前のidempotency ledgerにcanonical responseが存在しない再送は、後続のcurrent projectionへfallbackせず、versioned `IDEMPOTENCY_RESPONSE_UNAVAILABLE` errorを`effect: applied`で返す。active root、active descendant、未回収結果が残るroot Sessionの削除は拒否し、parent-null delegated resultは同じrootのRoot WorkItemがterminalになるまで未回収として扱う。Work Itemのarchiveは履歴を保持したまま一覧の既定表示から隠し、restoreはarchive状態だけを戻す。deleteは適格なterminal Work Itemのcurrent rowだけを物理削除し、履歴、idempotency response、execution association、aggregation ledgerと再取得用tombstoneを保持する。root Session削除に伴う既存の一括cleanupはこのWork Item lifecycle deleteとは別のSession削除経路である。
 
-作成はruntime bindingで確定した`overall-coordinator | task-coordinator`に限り、既存のSession間Turn authorityで送信可能かつ`parentSessionId`がactor Sessionと一致する直属targetだけを受け付ける。root overall coordinatorや兄弟task coordinatorへの通信許可を委譲authorityへ流用しない。parentは同じrootでactor Sessionがtargetとなっているactiveなdelegated Work Itemに限定する。root coordinatorが作成するtop-level delegated Work Itemは`parentWorkItemId = null`とし、Root Work Itemをdelegation parentへ指定できない。target Sessionは`pending -> in_progress -> waiting -> in_progress`の進行操作とterminal result報告を行い、creator Sessionはactive Work Itemを取消せる。全mutationはexpected revisionとprincipal Session単位のidempotency keyを要求する。GUI editorは開始時revisionをdraftと共に保持し、外部更新でcurrent projectionが進んだ場合は保存を止める。入力を破棄して最新版を読み込むか、draftの契約fieldが最新版と一致する場合に限って進捗入力を明示的に引き継ぐ操作でbase revisionを更新する。自動mergeや最新revisionへの暗黙の付け替えは行わない。canonical replayはcurrent Session bindingの再検証より先に返し、recordは24時間後にcleanupする。
+作成はruntime bindingで確定した`overall-coordinator | task-coordinator`に限り、既存のSession間Turn authorityで送信可能かつ`parentSessionId`がactor Sessionと一致する直属targetだけを受け付ける。root overall coordinatorや兄弟task coordinatorへの通信許可を委譲authorityへ流用しない。parentは同じrootでactor Sessionがtargetとなっているactiveなdelegated Work Itemに限定する。root coordinatorが作成するtop-level delegated Work Itemは`parentWorkItemId = null`とし、Root Work Itemをdelegation parentへ指定できない。target Sessionは`pending -> in_progress -> waiting -> in_progress`の進行操作とterminal result報告を行い、creator Sessionはactive Work Itemを取消せる。`work.reassign`はassignmentをhandoffまたは新ID successorとして変更し、`work.move`は旧parentからの離脱・新parentへのadoption・必要な旧decisionのsupersedeを一transactionへ保存する。adoptionは結果の自動採用を意味せず、新parentは別途decisionを作る。確定済みparentまたはancestorのresult訂正・stale伝播が必要なmoveはSlice 5接続までconflictとして扱う。異なるroot間のWork Item単体moveはこのSliceへ接続されておらず、実装済み能力として扱わない。`work.clone`は契約だけを新IDへ複製し、`work.reopen`は旧Work Itemのresult、decision、所属履歴を保持したsuccessorを作る。generic correction APIとflattenはSlice 5へ残す。全mutationはexpected revisionとprincipal Session単位のidempotency keyを要求する。GUI editorは開始時revisionをdraftと共に保持し、外部更新でcurrent projectionが進んだ場合は保存を止める。入力を破棄して最新版を読み込むか、draftの契約fieldが最新版と一致する場合に限って進捗入力を明示的に引き継ぐ操作でbase revisionを更新する。自動mergeや最新revisionへの暗黙の付け替えは行わない。canonical replayはcurrent Session bindingの再検証より先に返し、recordは24時間後にcleanupする。
 
 `completed | partially_completed | failed`は同名のresult outcomeとstrict result envelopeを同じtransactionで保存し、DB CHECKでもstateとoutcomeの一致を保持する。`canceled`はresultを持たず、terminal stateから再開しない。resultはsummary、changes、verification results、findings、unverified items、remaining work、reporting Session、timestampを区別し、256 KiBを上限とする。
 

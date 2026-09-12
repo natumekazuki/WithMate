@@ -36,6 +36,9 @@ export type SessionExecution = {
   admittedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
+  workItemRevision?: number;
+  plannedSourceIdentity?: import("./work-item.js").WorkItemSourceIdentity;
+  actualStartSourceIdentity?: ActualStartSourceIdentity;
 };
 
 export type SessionExecutionStorageRecord = SessionExecution & {
@@ -43,7 +46,16 @@ export type SessionExecutionStorageRecord = SessionExecution & {
   request: unknown;
   /** Binding captured when the execution was admitted. */
   binding?: SessionExecutionBindingSnapshot;
+  workItemRevision?: number;
+  plannedSourceIdentity?: import("./work-item.js").WorkItemSourceIdentity;
+  actualStartSourceIdentity?: ActualStartSourceIdentity;
 };
+
+export type ActualStartSourceIdentity =
+  | Readonly<{ kind: "git_unavailable"; workspace: string; repository: null; branch: null; base: null; head: null }>
+  | Readonly<{ kind: "detached_head"; workspace: string; repository: string; branch: null; base: string | null; head: string }>
+  | Readonly<{ kind: "unborn_branch"; workspace: string; repository: string; branch: string; base: null; head: null }>
+  | Readonly<{ kind: "resolved"; workspace: string; repository: string; branch: string; base: string | null; head: string }>;
 
 export type SessionExecutionBindingSnapshot = Readonly<{
   bindingRevision: number;

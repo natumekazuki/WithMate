@@ -83,6 +83,9 @@ function publicExecutionResult() {
     partialOutput: null,
     terminalFailureNotification: null,
     workItemId: null,
+    workItemRevision: null,
+    plannedSourceIdentity: null,
+    actualStartSourceIdentity: null,
   };
 }
 

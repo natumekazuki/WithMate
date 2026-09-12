@@ -2,7 +2,7 @@ import type { AuthorityOperationDefinition } from "./session-authority.js";
 import { APPROVAL_MODE_VALUES, type ApprovalMode } from "./approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES, type CodexSandboxMode } from "./codex-sandbox-mode.js";
 import { isModelReasoningEffort, type ModelReasoningEffort } from "./model-catalog.js";
-import type { SessionExecution } from "./session-execution.js";
+import type { SessionExecution, ActualStartSourceIdentity } from "./session-execution.js";
 import {
   RESOURCE_BUDGET_CONTRACT_REVISION,
   RESOURCE_BUDGET_DEFAULT_DURATION_MS,
@@ -128,6 +128,13 @@ export const SESSION_RUNTIME_OPERATIONS = [
   "work.list",
   "work.get",
   "work.revise",
+  "work.reassign",
+  "work.move",
+  "work.clone",
+  "work.reopen",
+  "work.archive",
+  "work.restore",
+  "work.delete",
   "work.history.append",
   "work.history.list",
   "work.transition",
@@ -195,9 +202,9 @@ export type SessionRuntimeCatalogResult = {
   workItems: {
     contractRevision: typeof WORK_ITEM_CONTRACT_REVISION;
     states: typeof WORK_ITEM_STATES;
-    mutations: readonly ["create", "revise", "transition", "result", "cancel", "history.append"];
+    mutations: readonly ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "cancel", "history.append"];
     history: {
-      events: readonly ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported"];
+      events: readonly ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported", "assignment_changed", "parent_changed", "archived", "restored", "deleted"];
       operations: readonly ["append", "list"];
       defaultListLimit: number;
       maxListLimit: number;
@@ -416,9 +423,55 @@ export type SessionRuntimeWorkItemReviseInput = {
   scope: string;
   completionCriteria: string;
   authority: string;
+  sourceIdentity?: WorkItemSourceIdentity;
   expectedRevision: number;
   idempotencyKey: string;
 };
+export type SessionRuntimeWorkItemReassignInput = {
+  workItemId: string;
+  targetSessionId: string;
+  expectedRevision: number;
+  expectedContainerRevision?: number;
+  transferPolicy: "handoff" | "successor";
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemMoveInput = {
+  workItemId: string;
+  destinationParentWorkItemId: string | null;
+  expectedRevision: number;
+  expectedAggregateRevision?: number;
+  expectedDestinationAggregateRevision?: number;
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemCloneInput = {
+  workItemId: string;
+  expectedRevision: number;
+  expectedContainerRevision: number;
+  targetSessionId: string;
+  parentWorkItemId?: string | null;
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  sourceIdentity: WorkItemSourceIdentity;
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemReopenInput = {
+  workItemId: string;
+  expectedRevision: number;
+  strategy: "successor";
+  expectedContainerRevision?: number;
+  destinationParentWorkItemId?: string | null;
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  sourceIdentity: WorkItemSourceIdentity;
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemArchiveInput = { workItemId: string; expectedRevision: number; reason: string; idempotencyKey: string };
+export type SessionRuntimeWorkItemRestoreInput = { workItemId: string; expectedRevision: number; idempotencyKey: string };
+export type SessionRuntimeWorkItemDeleteInput = { workItemId: string; expectedRevision: number; idempotencyKey: string };
 export type SessionRuntimeWorkItemHistoryAppendInput = {
   workItemId: string;
   type: "progress" | "handoff";
@@ -438,6 +491,7 @@ export type SessionRuntimeWorkItemListInput = {
   creatorSessionId?: string;
   targetSessionId?: string;
   state?: WorkItemState;
+  includeArchived?: boolean;
   limit: number;
   cursor?: string;
 };
@@ -607,8 +661,11 @@ export type SessionRuntimePublicInteraction =
   | SessionRuntimeAnsweredInteraction
   | SessionRuntimeExpiredInteraction;
 
-export type SessionRuntimePublicExecution = Omit<SessionExecution, "result"> & {
+export type SessionRuntimePublicExecution = Omit<SessionExecution, "result" | "workItemRevision" | "plannedSourceIdentity" | "actualStartSourceIdentity"> & {
   workItemId: string | null;
+  workItemRevision: number | null;
+  plannedSourceIdentity: WorkItemSourceIdentity | null;
+  actualStartSourceIdentity: ActualStartSourceIdentity | null;
   result: { assistantText: string } | null;
   effectiveTurn: SessionRuntimeEffectiveTurn | null;
   attachments: SessionRuntimeTurnAttachment[];
@@ -690,6 +747,13 @@ export type SessionRuntimeResultByOperation = {
   "work.list": SessionRuntimeWorkItemListResult;
   "work.get": WorkItem;
   "work.revise": WorkItem;
+  "work.reassign": WorkItem;
+  "work.move": WorkItem;
+  "work.clone": WorkItem;
+  "work.reopen": WorkItem;
+  "work.archive": WorkItem;
+  "work.restore": WorkItem;
+  "work.delete": WorkItem;
   "work.history.append": WorkItem;
   "work.history.list": SessionRuntimeWorkItemHistoryListResult;
   "work.transition": WorkItem;
@@ -778,6 +842,8 @@ export function sessionRuntimeOperationMayHaveEffect(
     || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
     || operation === "work.create" || operation === "work.transition"
     || operation === "work.revise" || operation === "work.history.append"
+    || operation === "work.reassign" || operation === "work.move" || operation === "work.clone"
+    || operation === "work.reopen" || operation === "work.archive" || operation === "work.restore" || operation === "work.delete"
     || operation === "work.result" || operation === "work.cancel"
     || operation === "work.aggregation.decide" || operation === "work.aggregation.retry"
     || operation === "interaction.respond"
@@ -888,6 +954,13 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (operation === "work.list") return parseWorkItemListInput(value);
   if (operation === "work.get") return parseWorkItemInput(value);
   if (operation === "work.revise") return parseWorkItemReviseInput(value);
+  if (operation === "work.reassign") return parseWorkItemReassignInput(value);
+  if (operation === "work.move") return parseWorkItemMoveInput(value);
+  if (operation === "work.clone") return parseWorkItemCloneInput(value);
+  if (operation === "work.reopen") return parseWorkItemReopenInput(value);
+  if (operation === "work.archive") return parseWorkItemArchiveInput(value);
+  if (operation === "work.restore") return parseWorkItemRestoreInput(value);
+  if (operation === "work.delete") return parseWorkItemDeleteInput(value);
   if (operation === "work.history.append") return parseWorkItemHistoryAppendInput(value);
   if (operation === "work.history.list") return parseWorkItemHistoryListInput(value);
   if (operation === "work.transition") return parseWorkItemTransitionInput(value);
@@ -1321,17 +1394,40 @@ function requireBoundedStringAllowEmpty(value: unknown, field: string, maxLength
 
 function parseWorkItemReviseInput(value: unknown): SessionRuntimeWorkItemReviseInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["workItemId", "goal", "scope", "completionCriteria", "authority", "expectedRevision", "idempotencyKey"], "input");
+  assertKeys(record, ["workItemId", "goal", "scope", "completionCriteria", "authority", "sourceIdentity", "expectedRevision", "idempotencyKey"], "input");
   return {
     workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
     goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
     scope: requireBoundedStringAllowEmpty(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
     completionCriteria: requireBoundedStringAllowEmpty(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
     authority: requireBoundedStringAllowEmpty(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+    ...(record.sourceIdentity === undefined ? {} : { sourceIdentity: parseWorkItemSourceIdentity(record.sourceIdentity) }),
     expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
 }
+function parseWorkItemReassignInput(value: unknown): SessionRuntimeWorkItemReassignInput {
+  const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "targetSessionId", "expectedRevision", "transferPolicy", "idempotencyKey"], "input");
+  return { workItemId: requireNonEmptyString(r.workItemId, "workItemId"), targetSessionId: requireNonEmptyString(r.targetSessionId, "targetSessionId"), expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), ...(r.expectedContainerRevision === undefined ? {} : { expectedContainerRevision: requireInteger(r.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER) }), transferPolicy: requireEnum(r.transferPolicy, ["handoff", "successor"] as const, "transferPolicy"), idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey") };
+}
+function parseWorkItemMoveInput(value: unknown): SessionRuntimeWorkItemMoveInput {
+  const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "destinationParentWorkItemId", "expectedRevision", "expectedAggregateRevision", "idempotencyKey"], "input");
+  return { workItemId: requireNonEmptyString(r.workItemId, "workItemId"), destinationParentWorkItemId: r.destinationParentWorkItemId === null ? null : requireNonEmptyString(r.destinationParentWorkItemId, "destinationParentWorkItemId"), expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), ...(r.expectedAggregateRevision === undefined ? {} : { expectedAggregateRevision: requireInteger(r.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER) }), ...(r.expectedDestinationAggregateRevision === undefined ? {} : { expectedDestinationAggregateRevision: requireInteger(r.expectedDestinationAggregateRevision, "expectedDestinationAggregateRevision", 0, Number.MAX_SAFE_INTEGER) }), idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey") };
+}
+function parseWorkItemCloneInput(value: unknown): SessionRuntimeWorkItemCloneInput {
+  const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "expectedRevision", "expectedContainerRevision", "targetSessionId", "parentWorkItemId", "goal", "scope", "completionCriteria", "authority", "sourceIdentity", "idempotencyKey"], "input");
+  return { workItemId: requireNonEmptyString(r.workItemId, "workItemId"), expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), expectedContainerRevision: requireInteger(r.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER), targetSessionId: requireNonEmptyString(r.targetSessionId, "targetSessionId"), ...(r.parentWorkItemId === undefined ? {} : { parentWorkItemId: r.parentWorkItemId === null ? null : requireNonEmptyString(r.parentWorkItemId, "parentWorkItemId") }), goal: requireBoundedString(r.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH), scope: requireBoundedStringAllowEmpty(r.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH), completionCriteria: requireBoundedStringAllowEmpty(r.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH), authority: requireBoundedStringAllowEmpty(r.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH), sourceIdentity: parseWorkItemSourceIdentity(r.sourceIdentity), idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey") };
+}
+function parseWorkItemReopenInput(value: unknown): SessionRuntimeWorkItemReopenInput { return parseWorkItemRestoreLike(value, "reopen") as SessionRuntimeWorkItemReopenInput; }
+function parseWorkItemRestoreInput(value: unknown): SessionRuntimeWorkItemRestoreInput { return parseWorkItemRestoreLike(value, "restore") as SessionRuntimeWorkItemRestoreInput; }
+function parseWorkItemRestoreLike(value: unknown, operation: "reopen" | "restore"): Record<string, unknown> {
+  if (operation === "restore") { const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "expectedRevision", "idempotencyKey"], "input"); return { workItemId: requireNonEmptyString(r.workItemId, "workItemId"), expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey") }; }
+  const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "expectedRevision", "strategy", "expectedContainerRevision", "destinationParentWorkItemId", "goal", "scope", "completionCriteria", "authority", "sourceIdentity", "idempotencyKey"], "input");
+  return { workItemId: requireNonEmptyString(r.workItemId, "workItemId"), expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), strategy: requireEnum(r.strategy, ["successor"] as const, "strategy"), ...(r.expectedContainerRevision === undefined ? {} : { expectedContainerRevision: requireInteger(r.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER) }), ...(r.destinationParentWorkItemId === undefined ? {} : { destinationParentWorkItemId: r.destinationParentWorkItemId === null ? null : requireNonEmptyString(r.destinationParentWorkItemId, "destinationParentWorkItemId") }), goal: requireBoundedString(r.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH), scope: requireBoundedStringAllowEmpty(r.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH), completionCriteria: requireBoundedStringAllowEmpty(r.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH), authority: requireBoundedStringAllowEmpty(r.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH), sourceIdentity: parseWorkItemSourceIdentity(r.sourceIdentity), idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey") };
+}
+function parseWorkItemSourceIdentity(value: unknown): WorkItemSourceIdentity { const r = requireObject(value, "sourceIdentity"); assertKeys(r, ["workspace", "repository", "branch", "base", "head"], "sourceIdentity"); return { workspace: requireNullableBoundedString(r.workspace, "sourceIdentity.workspace"), repository: requireNullableBoundedString(r.repository, "sourceIdentity.repository"), branch: requireNullableBoundedString(r.branch, "sourceIdentity.branch"), base: requireNullableBoundedString(r.base, "sourceIdentity.base"), head: requireNullableBoundedString(r.head, "sourceIdentity.head") }; }
+function parseWorkItemArchiveInput(value: unknown): SessionRuntimeWorkItemArchiveInput { const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "expectedRevision", "reason", "idempotencyKey"], "input"); return { workItemId: requireNonEmptyString(r.workItemId, "workItemId"), expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), reason: requireBoundedString(r.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH), idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey") }; }
+function parseWorkItemDeleteInput(value: unknown): SessionRuntimeWorkItemDeleteInput { const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "expectedRevision", "idempotencyKey"], "input"); return { workItemId: requireNonEmptyString(r.workItemId, "workItemId"), expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey") }; }
 
 function parseWorkItemHistoryAppendInput(value: unknown): SessionRuntimeWorkItemHistoryAppendInput {
   const record = requireObject(value, "input");
@@ -1378,11 +1474,12 @@ function parseWorkItemHistoryListInput(value: unknown): SessionRuntimeWorkItemHi
 
 function parseWorkItemListInput(value: unknown): SessionRuntimeWorkItemListInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["creatorSessionId", "targetSessionId", "state", "limit", "cursor"], "input");
+  assertKeys(record, ["creatorSessionId", "targetSessionId", "state", "includeArchived", "limit", "cursor"], "input");
   return {
     ...(record.creatorSessionId === undefined ? {} : { creatorSessionId: requireNonEmptyString(record.creatorSessionId, "creatorSessionId") }),
     ...(record.targetSessionId === undefined ? {} : { targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId") }),
     ...(record.state === undefined ? {} : { state: requireEnum(record.state, WORK_ITEM_STATES, "state") }),
+    includeArchived: record.includeArchived === undefined ? false : requireBoolean(record.includeArchived, "includeArchived"),
     limit: record.limit === undefined
       ? WORK_ITEM_DEFAULT_LIST_LIMIT
       : requireInteger(record.limit, "limit", 1, WORK_ITEM_MAX_LIST_LIMIT, "LIMIT_EXCEEDED"),
@@ -1595,6 +1692,9 @@ export function projectSessionExecution(
       completedAt: execution.completedAt,
       updatedAt: execution.updatedAt,
       workItemId: observation.workItemId ?? null,
+      workItemRevision: execution.workItemRevision ?? null,
+      plannedSourceIdentity: execution.plannedSourceIdentity ?? null,
+      actualStartSourceIdentity: execution.actualStartSourceIdentity ?? null,
       effectiveTurn: turn?.effectiveTurn ?? null,
       attachments: turn?.attachments ?? [],
       pendingInteraction: observation.pendingInteraction

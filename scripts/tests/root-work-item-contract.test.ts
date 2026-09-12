@@ -146,7 +146,7 @@ function createSession(input: {
       id: input.id,
       taskTitle: input.title ?? input.id,
       workspaceLabel: "workspace",
-      workspacePath: "C:/workspace",
+      workspacePath: process.cwd(),
       branch: "main",
       sessionKind: input.sessionKind,
       rootSessionRole: input.rootRole,
@@ -479,7 +479,7 @@ describe("Root WorkItem contract", () => {
       const restoreSession = {
         id: "root",
         taskTitle: "Initial goal",
-        workspacePath: "C:/workspace",
+        workspacePath: process.cwd(),
         branch: "main",
       } as const;
       const restoreProof = trustedProof("session.restore", "root");
@@ -1885,14 +1885,16 @@ describe("Root WorkItem contract", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "compatibility"
   // claim = "既存V2 databaseの旧event CHECKと512 KiB idempotency response CHECKは、rowとsequenceを保持したままbaseline専用上限とcanonical response用2 MiB境界へrepairされ、再実行しても収束する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#改訂と進捗の履歴" }
-  // failure_mode = "fresh databaseだけ上限が更新され、既存利用者ではmigration baselineまたはcanonical responseが古いCHECKでrollbackし続けるか、table rebuildでeventやreplay rowを失う"
+  // fault = "fresh databaseだけ上限が更新され、既存利用者ではmigration baselineまたはcanonical responseが古いCHECKでrollbackし続けるか、table rebuildでeventやreplay rowを失う"
   // scope = "ensureV6Schema Work Item event and idempotency limit repair"
   // lifecycle = "permanent"
   // distinction = "現行V2のeventとidempotency tableを旧CHECKへ狭め、schema repair二回後のDDL、event sequence、ledger row保持を直接観測する"
+  // observable = "既存row・sequence・responseの保持、修復後の上限内保存と上限超過拒否、再起動成功"
+  // observation_boundary = "component-behavior"
   // @end-test-value
   it("RW-5B: 旧eventとidempotency上限をrow保持付きでrepairする", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-root-idempotency-repair-"));
@@ -1924,6 +1926,8 @@ describe("Root WorkItem contract", () => {
         );
         assert.notEqual(oldCapSql, current.sql);
         db.exec(`
+          DROP TRIGGER IF EXISTS trg_v6_work_items_protect_session_delete;
+          DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;
           ALTER TABLE work_item_idempotency_v6 RENAME TO work_item_idempotency_v6_old_cap;
           DROP INDEX IF EXISTS idx_v6_work_item_idempotency_item;
           DROP INDEX IF EXISTS idx_v6_work_item_idempotency_expiry;
@@ -1948,6 +1952,8 @@ describe("Root WorkItem contract", () => {
         );
         assert.notEqual(oldEventCapSql, currentEvents.sql);
         db.exec(`
+          DROP TRIGGER IF EXISTS trg_v6_work_items_protect_session_delete;
+          DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;
           ALTER TABLE work_item_events_v6 RENAME TO work_item_events_v6_old_cap;
           DROP INDEX IF EXISTS idx_v6_work_item_events_item_sequence;
           ${oldEventCapSql};
@@ -1956,6 +1962,10 @@ describe("Root WorkItem contract", () => {
           INSERT INTO work_item_events_v6
           SELECT * FROM work_item_events_v6_old_cap;
           DROP TABLE work_item_events_v6_old_cap;
+        `);
+        db.exec(`
+          DROP TRIGGER IF EXISTS trg_v6_work_items_protect_session_delete;
+          DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;
         `);
 
         ensureV6Schema(db);
