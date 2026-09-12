@@ -412,28 +412,26 @@ Provider自身のshell、Git、外部service toolはSession Runtime APIを経由
 - typecheck、全 test、build、必要な smoke／visual check が最終統合 commit で成功する。
 
 
-### Slice 3 の作業状況（2026-09-12、レビュー修正中）
+### Slice 3 の完了記録（2026-09-12）
 
-開始コミットは `7c30c31922dbdd71f77b36da716bd363482c4163`。Session lifecycle に必要な回復記録の拡張と、Root WorkItem successor・cross-root transfer の内部処理の前倒しはユーザー承認済みである。後続 Slice の公開 WorkItem lifecycle、delegation transaction、grant routing 全体は追加していない。
+開始コミットは `7c30c31922dbdd71f77b36da716bd363482c4163`。Session lifecycleに必要な回復記録の拡張と、Root WorkItem successor・cross-root transferの内部処理の前倒しはユーザー承認の範囲で実装した。後続Sliceの公開WorkItem lifecycle、delegation transaction、grant routing全体は追加していない。
 
-作業中の実装では、root/child construction の明示 tuple・grant ceiling・budget、binding revision を捕捉する execution、configure、clone、root/child restore、archive、idle subtree の cross-root transfer を lifecycle owner に接続した。root restore は terminal predecessor の successor を追加し、既存 root budget と累積消費を保持する。active Root WorkItem を伴う root 移管は開始前に拒否する。
+実装を `69618de69f457ae500a421ba0a9b66e549e4401d`、独立レビューによる修正を `4d713ecb399bb5b1c5ba74262e6df3743c32dd92` に固定した。root/child constructionの明示tuple・grant ceiling・budget、binding revisionを捕捉するexecution、configure、clone、root/child restore、archive、idle subtreeのcross-root transferをlifecycle ownerへ接続した。root restoreはterminal predecessorのsuccessorを追加し、既存root budgetと累積消費を保持する。active Root WorkItemを伴うroot移管は開始前に拒否する。
 
-2026-09-09 の作業treeで `npm run typecheck`、`npm test`（3529件、3528 pass、1 skip、0 fail）、`npm run build`、`git diff --check` が成功した。固定commitでの検証記録ではない。binding/terminal変更による既存thread保存とConversation Timingの回帰、空DBへのbinding migration marker追加、失効済みgrantのstartup検証を修正した。回復は101件以上のpendingも処理する。GUI目視は未実行。
+ユーザー指摘の通常Session削除、移動前execution履歴のroot帰属、GUIのCodex Speed／Reviewer保存、move manifestの移動先入力、Copilot標準agentの空文字tupleを修正した。通常SessionのGUI/API削除は共通ownerのtombstone処理へ接続し、Character作成用Sessionは既存persistenceを使用する。履歴・ledger・retry identityとSessionFolder workspaceを保持する。directory workspaceに付随するSessionFolderの既存cleanup経路は維持する。物理purgeはユーザー承認により別変更へ分離し、今回の完了条件に含めない。
 
-物理purgeはユーザー承認により別変更へ分離し、今回の完了条件に含めない。既存の通常削除は履歴・ledger・retry identityを保持するtombstoneであり、SessionFolder workspaceも保持する。directory workspaceに付随するSessionFolderの既存cleanup経路は維持する。tombstone deleteの共通owner接続はSlice 3の範囲とし、保持期間・purge範囲を定義するphysical purgeは別変更へ分けることをユーザー承認済みとした。削除のGUI/API統合は完了した。test-value review、固定commitでのcomplete-diff reviewとtargeted closureが残っている。
+固定コミット `69618de6` のclean detached worktreeで、全差分をlifecycle／GUI、authority／transfer、binding／publicの3範囲に分けて独立レビューした。SessionFolderの二重作成、moveの親子Role制約、公開parserのvariant外field受理、複数回moveおよびfile／transcript／interaction履歴のroot照合を修正した。root successorのagent actor帰属も修正した。予算移管順序の候補はtarget先頭と合法depth制約によりinvalidと判断した。同worktreeを `4d713ecb` へ固定したfinding family限定のtargeted closureは全3範囲で完了し、blocking findingは残っていない。全差分レビューは繰り返していない。
 
-レビュー指摘の通常Session削除、移動前execution履歴のroot帰属、GUIのCodex Speed／Reviewer保存、move manifestの移動先入力、Copilot標準agentの空文字tupleを修正した。履歴は書き換えず、executionのbindingまたはlegacy execution作成時点の移動履歴から当時のrootを解決する。
+履歴headerは書き換えず、executionのbindingまたはlegacy execution作成時点の移動履歴から当時のrootを解決する。Session／file／transcript／interactionは共通header sequenceと次回moveのsource rootからイベント時点のrootを検証する。実storageのA→B→C移動、startup検証、旧header保持と改ざん拒否を確認した。
 
-2026-09-12 の最終作業treeで型検査、build、関連公開境界54 testが成功した。全testは3537件中3534 pass、2 fail、1 skip。変更外のGlossary queue解放testは全体実行時に待ち時間超過となり、同ファイルの単独実行24件は成功した。変更外のtranscript予算testは固定期限 `2026-09-12T00:00:00.000Z` を過ぎたことで失敗した。期限判定を弱める変更はしていない。GUI目視は未実行。
+SessionFolderのmkdir成功からfilesystem effect保存までの停止は、自動回復保証外の可用性上のrisk-candidateとして残す。既存directoryの所有を推測して採用・削除せず、回復recordと同じretry identityを保持してrecovery-requiredを返す。effect保存後のDB一時失敗とDB commit後のpublication失敗は同じkeyで回復する。新しい所有markerや独自storeは導入していない。
 
-test-value初回審査の指摘に基づき、旧facade cleanup 3件と旧CRUD cleanup 2件を共通owner routing・実DB補償testへ整理した。metadata追加と宣言名変更が同じhunkにある場合のextractor境界判定を作業用コピーで修正し、既存87 testとPython／TypeScriptの追加回帰を通した。開始baseや対象recordの手動変更はせず、Git差分から67 tests／67 transitionsをdiagnostic 0で抽出した。通常のread-only general_lunaによる全recordの最終審査を進めている。
+検証結果は次のとおり。
 
-追加審査で、一括削除の通常Session／Character作成用Sessionのowner振り分けを修正した。通常Sessionはlifecycle、Character作成用Sessionは既存persistenceへ渡し、最終利用日時によるcanonical候補IDを保持する。facade34件、persistence25件、binding5件、authority15件、move6件、creation5件、clone1件、lifecycle service/storage13件、CRUD5件の関連検証と型検査・buildが成功した。
+- `69618de6` の全testは3539件中3536 pass、2 fail、1 skip。変更外のGlossary queue解放testは全体実行時に2秒の待ち時間を超え、同ファイル単独の24件は成功した。変更外のtranscript予算testは固定期限 `2026-09-12T00:00:00.000Z` の経過により失敗した。期限判定や無関係なtestは変更していない。
+- `4d713ecb` の修正sourceで関連179 test、型検査、build、Git差分checkが成功した。最終のZod拒否assertion補強後も公開contract22件が成功した。修正後の全suiteは再実行していない。
+- GUI目視は未実行。必要に応じて `scripts/start-withmate-visual-check.ps1` による分離起動で確認する。
 
-固定コミット `69618de69f457ae500a421ba0a9b66e549e4401d` のclean detached worktreeで、全差分をlifecycle／GUI、authority／transfer、binding／publicの3範囲に分けて独立レビューした。SessionFolderの二重作成、moveの親子Role制約、公開parserのvariant外field受理、複数回moveおよびfile／transcript／interaction履歴のroot照合をblockingとして修正する。root successorのagent actor帰属も同時に修正する。予算移管の順序に関する候補は、target先頭と合法depth制約により再現できずinvalidとした。
+test-valueではmetadata追加と宣言名変更が同じhunkにある場合のextractor境界判定を作業用コピーで補正し、既存87 testとPython／TypeScriptの追加回帰を通した。開始baseや対象recordを手動変更せず、最終Git差分から77 tests／77 transitionsをdiagnostic 0で抽出した。通常のread-only general_lunaによる全recordの審査と、変更箇所のtargeted closureを実施した。
 
-同コミットの全testは3539件中3536 pass、2 fail、1 skipで、前述のGlossary待ち時間とtranscript固定期限の2件が再発した。source/testを固定したGit抽出67件は、審査済みrecordと一致し、通常のread-only general_lunaで全件の指摘解消を確認した。
-
-SessionFolderのmkdir成功からfilesystem effect保存までの停止は、自動回復保証外の可用性上のrisk-candidateとして残す。既存directoryの所有を推測して採用・削除せず、回復recordと同じretry identityを保持してrecovery-requiredを返す。effect保存後のDB一時失敗とDB commit後のpublication失敗は同じkeyで回復する。新しい所有markerや独自storeは導入しない。
-
-上記review修正後の関連179 test、型検査、build、Git差分checkは成功した。開始baseから77 tests／77 transitionsをdiagnostic 0で再抽出し、追加・意味変更したrecordのtargeted test-value closureを進めている。次の固定修正commitで同じfinding familyの独立targeted closureを行い、全差分レビューは繰り返さない。
+全recordの指摘解消を確認し、レビュー用worktreeはHEADとcleanliness、SessionFolder内の絶対pathを確認して削除した。

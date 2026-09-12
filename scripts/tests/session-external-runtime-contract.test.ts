@@ -623,15 +623,22 @@ test("SESSION-LIFECYCLE-CONTRACT-01: lifecycle operations preserve strict unions
       expectedContainerRevision: 1, placement: { kind: "root", rootKind: "standalone" }, title: "root", character: { characterId: "character-1", expectedDefinitionSha256: "definition-sha256" }, provider, workspace: { kind: "session_folder" }, initialGrant: { kind: "inherit" }, budget: { kind: "inherit" }, idempotencyKey: "provider-extra",
     }).success, false);
   }
-  assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "session.move", input: { ...base, kind: "same_root", destinationParentSessionId: null, destinationExpectedRevision: 4, destinationRootSessionId: "must-reject" } }), SessionRuntimeValidationError);
-  assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "session.restore", input: { ...base, kind: "child", purpose: "resume", provider: codexProvider, idempotencyKey: "restore-extra", budget: { kind: "inherit" } } }), SessionRuntimeValidationError);
+  const moveExtra = { ...base, kind: "same_root", destinationParentSessionId: null, destinationExpectedRevision: 4, destinationRootSessionId: "must-reject" };
+  const restoreExtra = { ...base, kind: "child", purpose: "resume", provider: codexProvider, idempotencyKey: "restore-extra", budget: { kind: "inherit" } };
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "session.move", input: moveExtra }), SessionRuntimeValidationError);
+  assert.equal(createSessionRuntimeInputSchema("session.move").safeParse(moveExtra).success, false);
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "session.restore", input: restoreExtra }), SessionRuntimeValidationError);
+  assert.equal(createSessionRuntimeInputSchema("session.restore").safeParse(restoreExtra).success, false);
   for (const input of [
     { ...base, kind: "title", title: "Configured", provider: codexProvider },
     { ...base, kind: "runtime", provider: codexProvider, title: "must-reject" },
     { ...base, kind: "character", character: { characterId: "character-1", expectedDefinitionSha256: "definition-sha256" }, threadContinuity: "reset", budget: { kind: "inherit" } },
     { ...base, kind: "workspace", workspace: { kind: "session_folder" }, threadContinuity: "reset", sessionRole: "executor" },
     { ...base, kind: "role", sessionRole: "executor", title: "must-reject" },
-  ]) assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "session.configure", input }), SessionRuntimeValidationError);
+  ]) {
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "session.configure", input }), SessionRuntimeValidationError);
+    assert.equal(createSessionRuntimeInputSchema("session.configure").safeParse(input).success, false);
+  }
 });
 
 // @test-value v1
