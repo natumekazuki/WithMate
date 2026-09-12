@@ -366,6 +366,12 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 修正後はacceptedの依存関係だけでstaleを伝播し、未確定parentをstaleにしない。訂正eventの共通headerを旧結果・旧判断へ結び、再生時にも参照先を検証する。使用済みreplacementは既存の明示エラーで拒否し、公開schema／catalogと配布CLIを更新した。関連25件、公開・履歴・migrationの関連79件、型検査、build、固定baseからの差分checkが成功した。修正後の全体testは3598件中3596成功、1失敗、1 skipで、変更外のGlossary queue解放testがtimeoutした。同file単独の24件は成功し、timeoutの恒久解消は今回の対象に含めない。
 
+修正commit `24e32fac80a260be2aad02cecacde0399596e0ac`のclean detached snapshotを対象としたtargeted closureは、採用した5件と同familyの確認が完了し、全件closed、新規findingなしとなった。全差分レビューは反復していない。review worktreeは最終HEAD・cleanliness・SessionFolder内の絶対pathを確認して削除した。
+
+その後の変更はtestのobservable表記、CLI応答喪失時の`error.effect`、flattenのsummary-only field projectionのassertion補強で、production sourceは変更していない。公開関連85件とstorage／migration関連16件、最終型検査が成功した。最終全体testは3598件中3596成功、1失敗、1 skipで、同じ変更外のGlossary queue timeoutのみが残った。flatten assertion補強後は関連testだけを再実行した。全suite成功とは扱わず、関連検証成功と区別する。skipはWindowsで対象外のPOSIX symlink testである。GUI目視、cross-root Work Item単体move、Slice 6のdelegation transaction、Slice 7の公開grant routingは未実施・未接続の境界として維持する。
+
+固定task baseから現行`review-test-value`のGit modeで最終差分を抽出し、30 tests／30 transitions（22 ADDED、8 SURVIVED）、diagnostic 0を確認した。通常のread-only `general_luna`へpublic 10件、storage等20件を渡し、metadata、本文、production経路の三観点で全件審査した。履歴・予算・再送・authority・field projectionの観測不足を補強し、実測していない範囲のmetadataは明示的に限定した。追加したexcluded／retry依存境界を含め、全recordと指摘のclosureが完了し、未解決のレビュー項目はない。
+
 ### Slice 4 の承認済み実装境界（2026-09-12）
 
 開始baseは`ab7b4e25709086a0f1859e1345ea87e83956fa07`。ユーザー承認により、moveに必要な旧decisionのsupersede、旧parentからの離脱、新parentへのadoptionと、その原子的保存・履歴再生・migration・直接検証をSlice 5から前倒しする。adoptionは所属の引受だけを表し、成果を自動採用しない。

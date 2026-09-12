@@ -593,7 +593,7 @@ describe("withmate-session CLI", () => {
   // claim = "CLI correction commandsはcanonical operationとeffect-bearing inputへdispatchする"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
   // fault = "CLIがcorrectionを通常resultへ誤写像する、expected child result revisionを落とす、またはeffect mappingをread扱いする"
-  // observable = "CLI request operation/inputとsuccess exit"
+  // observable = "CLI request operation/input、success exitとresponse loss時のindeterminate effect／exit"
   // observation_boundary = "public-boundary"
   // scope = "withmate-session-cli correction dispatch"
   // lifecycle = "permanent"
@@ -623,12 +623,14 @@ describe("withmate-session CLI", () => {
       [["work", "result", "correct", "--json", JSON.stringify(resultInput)], "work.result.correct"],
       [["work", "aggregation", "correct", "--json", JSON.stringify(aggregationInput)], "work.aggregation.correct"],
     ] as const) {
+      const failureOutput = capture();
       const exitCode = await runWithMateSessionCli(args, {
-        stdout: stdout.stream,
+        stdout: failureOutput.stream,
         discover: async () => connection,
         call: async () => { throw new SessionRuntimeClientError(`response lost: ${operation}`, true); },
       });
       assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate);
+      assert.equal(failureOutput.json().error.effect, "indeterminate");
     }
   });
 

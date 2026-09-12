@@ -50,13 +50,13 @@ describe("work item correction populated migration", () => {
   // @test-value v2
   // kind = "compatibility"
   // claim = "実storageで生成したresult/decision/retry replacement/reopen successor/archive delete/grant/budget populated DBを旧Slice 4相当DDLへ降格しても、ensureV6Schemaがcurrent projectionとbaseline result revisionを再構築し、二回目のschema ensureで同一状態を保つ"
-  // fault = "migrationが旧decision/replacement、successor、削除済みresult、header、grant、budget、idempotencyを失う、または移行済みresult revisionの欠損を修復して隠す"
+  // fault = "migrationが旧decision/replacement、successor、削除済みresult、header、grantとgrant event、budget account／reservation／dimension／event、Work Item idempotencyを失う、または移行済みresult revisionの欠損を修復して隠す"
   // observable = "snapshotで列挙したcurrent/history/provenance表の全行比較、result revision baseline、terminal parentのfinalized状態、二回目schema ensureの同一状態、移行済みresult行欠損の拒否"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
   // scope = "populated correction schema migration"
   // lifecycle = "permanent"
-  // distinction = "手作りrowではなくproduction WorkItemStorageV6経路で履歴を生成し、DDL降格前後の全current/history/provenanceを比較する"
+  // distinction = "手作りrowではなくproduction WorkItemStorageV6経路で履歴を生成し、DDL降格前後でsnapshotのtables配列に列挙した表の全行を比較する"
   // @end-test-value
   it("populated correction databaseを降格DDLから再構築する", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-correction-migration-"));

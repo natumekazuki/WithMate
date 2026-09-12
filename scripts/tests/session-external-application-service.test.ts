@@ -2327,7 +2327,7 @@ test("WORK-EXEC-05: run/enqueue/get/listは同じWork Item associationを投影�
 // claim = "application serviceはcontract revision 2のaggregation projectionを公開する"
 // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md" }
 // fault = "service adapterが旧aggregation revisionを返しstrict public schemaで拒否される"
-// observable = "runtime.catalog aggregation contract output"
+// observable = "work.aggregation.get resultのcontractRevisionとserviceへのdispatch input"
 // observation_boundary = "public-boundary"
 // scope = "SessionExternalApplicationService aggregation adapter"
 // lifecycle = "permanent"

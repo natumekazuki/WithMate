@@ -140,7 +140,7 @@ describe("Work Item result and aggregation correction", () => {
   // kind = "invariant"
   // claim = "旧child result revisionを参照したaggregation correctionはcommitされず、active decisionとaggregate projectionを変更しない"
   // fault = "stale child revisionの訂正がdecision chainへ入り、旧結果をacceptedした判断をcurrentとして再利用する"
-  // observable = "work_item_aggregation_decisions_v6, work_item_aggregation_decision_events_v6, WorkItemAggregationSummary"
+  // observable = "work_item_aggregation_decisions_v6, work_item_aggregation_events_v6, WorkItemAggregationSummary"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
   // scope = "WorkItemStorageV6.correctAggregation stale child revision"
@@ -256,8 +256,8 @@ describe("Work Item result and aggregation correction", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "同じcorrection requestの再送はrevisionとresult/eventを重複生成せず、後続訂正後も保存済みresponseをread-backできる"
-  // fault = "effect-bearing correctionの再送が別revisionを生成し、旧decisionと新decisionのprovenanceを二重化する"
-  // observable = "result revision count, aggregation decision event count, idempotency response, current projection"
+  // fault = "effect-bearing correctionの再送が別revisionを生成し、訂正resultとそのeventを二重化する"
+  // observable = "result revision行数、result_reported event行数、後続訂正後も保持されるidempotency response"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
   // scope = "WorkItemStorageV6 result correction replay"
@@ -282,9 +282,9 @@ describe("Work Item result and aggregation correction", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "retry/replaceは旧childのdecision、replacement child、replacement provenanceを一つの集約履歴として保持する"
+  // claim = "retryは旧childのdecision、replacement child、replacement provenanceを一つの集約履歴として保持する"
   // fault = "retryが旧decisionを消去する、replacementを別parentへ作る、または同じidempotency keyで予算とchildを二重生成する"
-  // observable = "work_item_aggregation_decisions_v6, work_item_aggregation_events_v6, replacement Work Item parent/predecessor, budget events"
+  // observable = "work_item_aggregation_decisions_v6, work_item_aggregation_events_v6, replacement Work Item parent/predecessor, budget reservationとdimension rows"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
   // scope = "WorkItemStorageV6.retryAggregation replacement provenance"
@@ -476,6 +476,12 @@ describe("Work Item result and aggregation correction", () => {
     assert.equal(flattenedGrandchild.resultCurrent, true);
     assert.equal(flattenedGrandchild.decision?.decision, "accepted");
     assert.equal(flattenedGrandchild.provenance?.parentWorkItemId, child.id);
+    const summaries = storage.listAggregationItems({ parentWorkItemId: parent.id, depth: 8, fields: ["summary"], afterSequence: null, limit: 3 });
+    const summaryGrandchild = summaries.find((item) => item.child.id === grandchildren[0].id)!;
+    assert.equal(summaryGrandchild.resultSummary, grandchildren[0].result!.summary);
+    assert.equal(summaryGrandchild.decision, null);
+    assert.equal(summaryGrandchild.provenance, undefined);
+    assert.equal(Object.hasOwn(summaryGrandchild.child, "result"), false);
     const service = new WorkItemService({ storage, getTurnAuthoritySession(sessionId) { const row = sql<Record<string, unknown>>(`SELECT session.id AS session_id, session.title, role.* FROM sessions_v6 AS session INNER JOIN session_role_bindings_v6 AS role ON role.session_id=session.id WHERE session.id=?`, sessionId)[0]; return row ? { sessionId: row.session_id, title: row.title, sessionRole: row.session_role, roleContractRevision: row.role_contract_revision, rootSessionId: row.root_session_id, parentSessionId: row.parent_session_id, delegationDepth: row.delegation_depth } as never : null; }, createWorkItemId: () => "unused", currentTimestamp: () => LATER });
     const authority = new SessionAuthorityService({ databasePath: dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(LATER) });
     try {
@@ -535,7 +541,7 @@ describe("Work Item result and aggregation correction", () => {
   // kind = "invariant"
   // claim = "root resultはdescendant correction後にstaleとして新規採用を拒否し、child/parentの再確定後にroot result correctionと再finalizeで復旧する"
   // fault = "rootがstale descendant resultをcurrent finalとして採用する、またはroot correction後の再finalizeが履歴とprojectionを分岐させる"
-  // observable = "root Work Item result revisions, nested aggregate stale/finalized projections, work.result rejection and replay"
+  // observable = "root Work Item result revisions, nested aggregate stale/finalized projections, work.result rejection and re-finalization"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
   // scope = "root stale propagation and re-finalization"
