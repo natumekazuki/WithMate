@@ -993,10 +993,10 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorのagent/companion entryはsession情報とmode/status表示を維持する"
+  // claim = "Home Monitorのagent/companion entryはAuxiliary有無にかかわらず基本mode/status表示を維持する"
   // oracle = { type = "contract", ref = "home-monitor rendering" }
-  // fault = "Monitor entryの基本表示が欠落する"
-  // observable = "HomeMonitorContentのrender済みHTML"
+  // fault = "Auxiliaryを持つMonitor entryがAuxiliaryラベルへ変わる、または基本表示が欠落する"
+  // observable = "HomeMonitorContentのrender済みHTMLにおけるAgent/Companion/status badge"
   // observation_boundary = "component-behavior"
   // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
@@ -1045,9 +1045,9 @@ describe("HomeMonitorContent", () => {
     assert.ok(html.includes("Companion task"));
     assert.ok(html.includes("Companion Auxiliary task"));
     assert.ok(html.includes("demo"));
-    assert.ok(html.includes(">Agent</span>"));
-    assert.equal(html.match(/>Auxiliary<\/span>/g)?.length, 2);
-    assert.ok(html.includes(">Companion</span>"));
+    assert.equal(html.match(/>Agent<\/span>/g)?.length, 2);
+    assert.equal(html.match(/>Auxiliary<\/span>/g)?.length ?? 0, 0);
+    assert.equal(html.match(/>Companion<\/span>/g)?.length, 2);
     assert.equal(html.match(/class="session-status home-monitor-status running"/g)?.length, 3);
     assert.equal(html.match(/class="session-status home-monitor-status neutral"/g)?.length, 1);
     assert.equal(html.match(/>実行中<\/span>/g)?.length, 3);

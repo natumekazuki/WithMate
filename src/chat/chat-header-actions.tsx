@@ -123,7 +123,6 @@ export function createAuxiliaryHeaderActions({
 }: AuxiliaryHeaderActionsOptions) {
   return (
     <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
-      {(isActive || showIdleLabel) ? <span className="session-window-control-group-label">Auxiliary</span> : null}
       <button
         className="drawer-toggle compact secondary"
         type="button"

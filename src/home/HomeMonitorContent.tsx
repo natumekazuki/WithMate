@@ -27,8 +27,8 @@ export function HomeMonitorContent({
       if (entry.kind === "companion") {
         const { session } = entry;
         const groupClassName = companionGroupMarkerClassName(session.groupId);
-        const modeLabel = entry.auxiliarySessions.length > 0 ? "Auxiliary" : "Companion";
-        const modeClassName = entry.auxiliarySessions.length > 0 ? "auxiliary" : "companion";
+        const modeLabel = "Companion";
+        const modeClassName = "companion";
         return (
           <button
             key={`companion-${session.id}`}
@@ -55,8 +55,8 @@ export function HomeMonitorContent({
       }
 
       const { session } = entry;
-      const modeLabel = entry.auxiliarySessions.length > 0 ? "Auxiliary" : "Agent";
-      const modeClassName = entry.auxiliarySessions.length > 0 ? "auxiliary" : "agent";
+      const modeLabel = "Agent";
+      const modeClassName = "agent";
       return (
         <button
           key={`agent-${session.id}`}

@@ -2349,6 +2349,7 @@ export type SessionMessageColumnProps = {
   pendingMessageGroupId?: string | null;
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
+  onJumpToBottom?: () => void;
   onToggleMessageCollapse?: (key: string) => void;
   onToggleAllMessageCollapse?: () => void;
   onToggleArtifact: (artifactKey: string) => void;
@@ -2671,6 +2672,7 @@ export function SessionMessageColumn({
   pendingMessageGroupId = null,
   isMessageListFollowing,
   onMessageListScroll,
+  onJumpToBottom,
   onToggleMessageCollapse,
   onToggleAllMessageCollapse,
   onToggleArtifact,
@@ -3237,6 +3239,19 @@ export function SessionMessageColumn({
         onNext={() => navigateFindMatch(1)}
         onClose={() => setFindOpen(false)}
       />
+      {onJumpToBottom ? (
+        <button
+          className="message-list-jump-bottom-button"
+          type="button"
+          onClick={onJumpToBottom}
+          aria-label="末尾へ移動"
+          title="末尾へ移動"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M8 2v9M3.5 7.5 8 12l4.5-4.5M3 14h10" />
+          </svg>
+        </button>
+      ) : null}
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
         {messages.length > 0 || isRunning ? (
           <div className="session-message-list-window">
@@ -3581,7 +3596,6 @@ export function SessionActionDockCompactRow({
         </button>
       )}
       <div className="session-action-dock-compact-actions">
-        {targetDock ? <div className="session-action-dock-target-slot">{targetDock}</div> : null}
         {isRunning && chatNotice ? (
           <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
         ) : null}
@@ -3614,6 +3628,7 @@ export function SessionActionDockCompactRow({
             </button>
           </div>
         ) : null}
+        {targetDock ? <div className="session-action-dock-target-slot">{targetDock}</div> : null}
         {isRunning ? (
           <button
             className="danger session-send-button"
@@ -4011,7 +4026,6 @@ export function SessionComposerExpanded({
               </button>
             </div>
           ) : null}
-          {targetDock ? <div className="composer-target-dock-slot">{targetDock}</div> : null}
           {isRunning ? (
             <div className="composer-toolbar-progress">
               <PendingRunIndicator
@@ -4063,6 +4077,7 @@ export function SessionComposerExpanded({
               ) : null}
             </div>
           ) : null}
+          {targetDock ? <div className="composer-target-dock-slot">{targetDock}</div> : null}
         </div>
       ) : null}
 

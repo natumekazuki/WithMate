@@ -1190,15 +1190,15 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
 
 // @test-value v2
 // kind = "contract"
-// claim = "ChatWindowはMain target columnのscroll状態をActionDock表示と送信時追従へ接続する"
+// claim = "ChatWindowはMain targetの末尾移動をメッセージ欄へ置き、Auxiliaryにも導線を表示して送信時追従を維持する"
 // oracle = { type = "contract", ref = "issue-710-shared-scroll-following" }
-// fault = "Main会話列が過去位置にあっても末尾移動が表示されず、送信時にMain列が末尾へ戻らない"
-// observable = "Main target message listのscrollTop、末尾移動button、composer送信callback"
+// fault = "末尾移動がActionDockに残る、Auxiliaryの導線が欠ける、または送信時にMain列が末尾へ戻らない"
+// observable = "Main/Auxiliary message listの末尾移動button、クリック後scrollTop、ActionDock全体、composer送信callback"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
 // @end-test-value
-test("ChatWindow はtarget columnのscroll状態をActionDockと送信へ共有する", async () => {
+test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示し送信時追従を維持する", async () => {
   const props = createChatWindowProps({
     messages: [{ role: "mate", text: "message" }],
   });
@@ -1273,7 +1273,26 @@ test("ChatWindow はtarget columnのscroll状態をActionDockと送信へ共有�
     });
     messageList.scrollTop = 10;
     await act(async () => messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true })));
-    assert.ok(dom.window.document.querySelector(".session-action-dock-expanded-content .message-jump-bottom-button"));
+    const mainJumpButton = dom.window.document.querySelector<HTMLButtonElement>(".session-concurrent-chat-main .message-list-jump-bottom-button");
+    const auxiliaryJumpButton = dom.window.document.querySelector<HTMLButtonElement>(".session-concurrent-chat-auxiliary .message-list-jump-bottom-button");
+    assert.ok(mainJumpButton);
+    assert.ok(auxiliaryJumpButton);
+    assert.equal(dom.window.document.querySelector(".session-action-dock .message-jump-bottom-button"), null);
+
+    const auxiliaryMessageList = dom.window.document.querySelector<HTMLDivElement>(".session-concurrent-chat-auxiliary .session-message-list");
+    assert.ok(auxiliaryMessageList);
+    Object.defineProperties(auxiliaryMessageList, {
+      scrollHeight: { configurable: true, value: 100 },
+      clientHeight: { configurable: true, value: 40 },
+    });
+    auxiliaryMessageList.scrollTop = 10;
+    await act(async () => auxiliaryJumpButton.click());
+    assert.equal(auxiliaryMessageList.scrollTop, 60);
+
+    await act(async () => mainJumpButton.click());
+    assert.equal(messageList.scrollTop, 60);
+    messageList.scrollTop = 10;
+    await act(async () => messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true })));
 
     const sendButton = dom.window.document.querySelector<HTMLButtonElement>(".session-action-dock-expanded-content .session-send-button");
     assert.ok(sendButton);

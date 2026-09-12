@@ -219,6 +219,7 @@ export function useConversationMessageColumn({
     messageListRef: following.messageListRef,
     isMessageListFollowing: following.isMessageListFollowing,
     onMessageListScroll,
+    onJumpToBottom: following.followMessageListLatest,
     onToggleMessageCollapse,
     onToggleAllMessageCollapse,
     onResolveLiveApproval,

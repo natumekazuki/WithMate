@@ -48,6 +48,7 @@ import { focusRovingItemByKey } from "../a11y.js";
 import {
   SHORTCUT_COMMAND_IDS,
   useShortcutCommandHandler,
+  useShortcutScope,
 } from "../shortcut-registry.js";
 
 type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
@@ -500,6 +501,18 @@ export function ChatWindow({
     },
     showMessageViewModeControls,
   );
+  useShortcutScope("session", Boolean(concurrentChats));
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.conversationToggleTarget,
+    () => {
+      if (!concurrentChats || concurrentChats.auxiliaryItems.length === 0) {
+        return false;
+      }
+      concurrentChats.onTargetChange(concurrentChats.target === "main" ? "auxiliary" : "main");
+      return true;
+    },
+    Boolean(concurrentChats),
+  );
 
   useEffect(() => {
     const isOpen = skillPickerProps?.isOpen ?? false;
@@ -645,10 +658,12 @@ export function ChatWindow({
             />
           ) : null}
           <div id="session-auxiliary-chat-pane" className="concurrent-chat-column-content">
-            {concurrentChats.auxiliaryItems.length === 0 ? null : concurrentChats.error ? (
+            {concurrentChats.auxiliaryItems.length === 0 ? null : concurrentChats.loading ? (
+              <div className="concurrent-chat-state" role="status" aria-label="Auxiliaryを読み込み中">
+                <span className="concurrent-chat-loading-spinner" aria-hidden="true" />
+              </div>
+            ) : concurrentChats.error ? (
               <div className="concurrent-chat-state" role="alert">{concurrentChats.error}</div>
-            ) : concurrentChats.loading ? (
-              <div className="concurrent-chat-state" role="status">Auxiliaryを読み込んでいます。</div>
             ) : concurrentChats.auxiliary ? (
               <>
                 <ConversationMessageColumn
@@ -700,7 +715,7 @@ export function ChatWindow({
             <SessionComposerExpanded
               {...composerProps}
               externalErrorDescriptionIds={composerErrorDescriptionIds || undefined}
-              showJumpToBottom={targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
+              showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
               onJumpToBottom={targetColumnControls?.followLatest ?? composerProps.onJumpToBottom}
               onSendOrCancel={targetComposerSend}
               skillButtonRef={skillButtonRef}
@@ -720,7 +735,7 @@ export function ChatWindow({
             <SessionActionDockCompactRow
               {...compactActionDockProps}
               onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}
-              showJumpToBottom={targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
+              showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}
               onMessageViewModeChange={handleMessageViewModeChange}
