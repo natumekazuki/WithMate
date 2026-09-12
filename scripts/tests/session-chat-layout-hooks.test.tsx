@@ -22,15 +22,15 @@ import type { SessionSidePane } from "../../src/session-side-pane.js";
 
 // @test-value v2
 // kind = "invariant"
-// claim = "高さclamp helperは、中央領域5%とHeader・splitterを残す残余高を上限にする"
+// claim = "高さclamp helperは、中央領域のCSS最小高または5%とHeader・splitterを残す残余高を上限にする"
 // oracle = { type = "contract", ref = "ActionDock layout height bounds" }
-// fault = "中央領域5%・Header・splitterを残す残余高上限を使わず、要求値をそのまま返す"
+// fault = "中央領域のCSS最小高を無視して要求値を通し、中央surfaceを潰す"
 // observable = "clampSessionVerticalDockHeightが返すActionDock高さ"
 // observation_boundary = "component-behavior"
 // scope = "session-action-dock-height-clamp-helper"
 // lifecycle = "permanent"
-// impact = "高さ計算が上限を越え、中央surfaceまたはsplitterの操作領域を圧迫する"
-// distinction = "CSS宣言やpointer経路とは分け、helperへHeader・splitterを含む中央5%残余境界を渡して直接検証する"
+// impact = "中央surfaceの最低240pxとsplitter操作領域を確保する"
+// distinction = "CSS宣言やpointer経路とは分け、helperへCSS最小高・Header・splitterを渡して直接検証する"
 // @end-test-value
 test("vertical dock height は比率上限と中央領域の最小高を優先する", () => {
   assert.equal(clampSessionVerticalDockHeight({
@@ -39,7 +39,16 @@ test("vertical dock height は比率上限と中央領域の最小高を優先�
     minHeight: 180,
     maxHeightRatio: 0.95,
     oppositeDockHeight: 64,
-  }), 295);
+    centralMinimumHeight: 240,
+  }), 76);
+  assert.equal(clampSessionVerticalDockHeight({
+    requestedHeight: 10000,
+    layoutHeight: 6000,
+    minHeight: 180,
+    maxHeightRatio: 0.95,
+    oppositeDockHeight: 64,
+    centralMinimumHeight: 240,
+  }), 5596);
 });
 
 // @test-value v2

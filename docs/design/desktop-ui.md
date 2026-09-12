@@ -196,15 +196,16 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - 既定では左右 pane と splitter を Window 上端から下端まで通し、Header と ActionDock は中央列を占有する
   - 上下 splitter を操作した後は full-width Header / ActionDock を優先し、左右 splitter を操作すると左右 pane 優先へ戻す
   - ActionDock を expanded から閉じた時は、優先度を左右 pane 優先へ戻す
-  - HeaderとActionDockのclickによる開閉と配置の自動切り替えを維持する。左右paneは排他表示とし、clickで開閉する。閉じた領域からのdrag展開は行わない。開いた領域のdragと矢印キーによる調整は、領域側が定義する最小サイズと中央領域に必要なサイズを守る。ActionDockの最大95%・中央5%の高さ制約は維持する
+  - HeaderとActionDockのclickによる開閉と配置の自動切り替えを維持する。左右paneは排他表示とし、clickで開閉する。閉じた領域からのdrag展開は行わない。開いた領域のdragと矢印キーによる調整は、領域側が定義する最小サイズと中央領域に必要なサイズを守る。ActionDockの最大95%・中央5%以上の高さ制約と中央領域の最小高さを両方守る
   - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
   - Header、ActionDock、side pane、layout priority の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
   - title 編集などの強制表示は保存済み preference を変更しない
-  - wide layout では中央 surface を layout 高の5%程度残し、ActionDock の高さは layout 高の95%までとする。narrow layout ではこの95%／5%計算を使わず、active side pane と work surface の縦 stack を維持する
+  - wide layout では中央 surface を最低240pxかつlayout高の5%以上残し、ActionDock の高さは layout 高の95%までとする。narrow layout ではこの95%／5%計算を使わず、active side pane と work surface の縦 stack を維持する
   - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
   - 左右splitterはclickで開閉し、開いた領域をdragと矢印キーでサイズ調整する。幅0でもclick用の操作領域を残す
-  - 最小サイズは各領域のCSS custom propertyで所有し、レイアウト側が読み取る。File Explorerの最小幅は260px、Context paneは360px、縦stack時は各200px、中央の最小高さは160pxとする。Main／Auxiliaryは各360pxで、中央の実幅が両者とsplitterの合計未満なら送信対象側だけを表示する
+  - ActionDockの実行設定は折りたたみグループにまとめる。展開時も入力欄は最低100pxを保ち、高さが不足する場合は内部スクロールで設定と送信操作へ到達できるようにする
+  - 最小サイズは各領域のCSS custom propertyで所有し、レイアウト側が読み取る。File Explorerの最小幅は260px、Context paneは360px、縦stack時は各200px、中央の最小高さは240pxとする。Main／Auxiliaryは各360pxで、中央の実幅が両者とsplitterの合計未満なら送信対象側だけを表示する
   - pane を隠した時も splitter は再表示 affordance として残す
   - side pane の表示状態は `files | context | none` の値として app 共通設定へ保存し、初期値は `none` とする。新しく開く Window は利用可能な永続値を初期値として使う
   - 開いている Window の表示状態は renderer local state とし、別 Window での切り替えには追従させない

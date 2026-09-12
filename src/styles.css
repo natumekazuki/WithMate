@@ -225,6 +225,7 @@ button:disabled {
   --session-dock-splitter-size: 20px;
   --session-header-dock-row-height: 0px;
   --session-action-dock-row-height: var(--session-action-dock-compact-height, 54px);
+  --session-central-min-height: 240px;
   --session-left-pane-track-width: 0px;
   --session-right-pane-track-width: 0px;
   isolation: isolate;
@@ -355,7 +356,7 @@ button:disabled {
       var(--session-action-dock-height, 320px),
       95%,
       calc(
-        95%
+        100% - max(5%, var(--session-central-min-height))
         - var(--session-header-dock-row-height)
         - var(--session-dock-splitter-size)
         - var(--session-dock-splitter-size)
@@ -408,6 +409,7 @@ button:disabled {
 }
 
 .session-action-dock-slot.is-expanded .composer {
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-content: normal;
@@ -427,8 +429,8 @@ button:disabled {
 }
 
 .session-action-dock-slot.is-expanded .composer-input-row {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1 0 100px;
+  min-height: 100px;
   overflow: hidden;
 }
 
@@ -4370,7 +4372,7 @@ button:disabled {
   --session-main-min-width: 360px;
   --session-auxiliary-min-width: 360px;
   --session-region-min-width: var(--session-main-min-width);
-  --session-region-min-height: 160px;
+  --session-region-min-height: var(--session-central-min-height, 240px);
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto auto;
   gap: 0;
@@ -4469,6 +4471,8 @@ button:disabled {
 }
 
 .session-concurrent-chat-column {
+  position: relative;
+  isolation: isolate;
   display: grid;
   min-width: 0;
   min-height: 0;
@@ -4515,7 +4519,6 @@ button:disabled {
   inset: 0;
   z-index: 2;
   background: rgba(5, 8, 14, 0.22);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.42);
   pointer-events: none;
 }
 
@@ -10619,6 +10622,16 @@ button:disabled {
   min-width: 82px;
 }
 
+.composer-settings-group {
+  min-width: 0;
+}
+
+.composer-settings-group > summary {
+  cursor: pointer;
+  color: var(--ink);
+  padding: 6px 0;
+}
+
 .composer-settings {
   display: flex;
   flex-wrap: wrap;
@@ -13181,7 +13194,7 @@ button:disabled {
   }
 
   .session-message-stack {
-    min-height: 0;
+    min-height: var(--session-region-min-height);
   }
 
   .session-left-pane-slot,
@@ -13275,7 +13288,7 @@ button:disabled {
   }
 
   .session-message-stack {
-    min-height: min(58vh, 640px);
+    min-height: max(var(--session-region-min-height), min(58vh, 640px));
   }
 
   .session-context-pane {

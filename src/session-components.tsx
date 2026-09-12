@@ -4229,120 +4229,123 @@ export function SessionComposerExpanded({
       </div>
 
       <div className={`composer-control-row${isRunning ? " running" : ""}`}>
-        <div className="composer-settings">
-          {showExecutionModeControls ? (
-            <>
-              <div className="composer-setting-field composer-setting-approval">
-                <span>Approval</span>
-                <select
-                  value={selectedApprovalMode}
-                  onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
-                  disabled={isRunning || composerBlocked}
-                  aria-label="Approval"
-                >
-                  {approvalOptions.map((option) => (
+        <details className="composer-settings-group">
+          <summary>実行設定</summary>
+          <div className="composer-settings">
+            {showExecutionModeControls ? (
+              <>
+                <div className="composer-setting-field composer-setting-approval">
+                  <span>Approval</span>
+                  <select
+                    value={selectedApprovalMode}
+                    onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
+                    disabled={isRunning || composerBlocked}
+                    aria-label="Approval"
+                  >
+                    {approvalOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {reviewerOptions.length > 0 ? (
+                  <div className="composer-setting-field composer-setting-reviewer">
+                    <span>Reviewer</span>
+                    <select
+                      value={selectedCodexReviewer}
+                      onChange={(event) => onChangeCodexReviewer(event.target.value as CodexReviewer)}
+                      disabled={isCodexReviewerControlDisabled({
+                        approvalMode: selectedApprovalMode,
+                        isRunning,
+                        composerBlocked,
+                      })}
+                      aria-label="Reviewer"
+                    >
+                      {reviewerOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+
+                {sandboxOptions.length > 0 ? (
+                  <div className="composer-setting-field composer-setting-sandbox">
+                    <span>Sandbox</span>
+                    <select
+                      value={selectedCodexSandboxMode}
+                      onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
+                      disabled={isRunning || composerBlocked}
+                      aria-label="Sandbox"
+                    >
+                      {sandboxOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+
+            <div className="composer-setting-field composer-setting-model">
+              <span>Model</span>
+              <select
+                value={selectedModel}
+                onChange={(event) => onChangeModel(event.target.value)}
+                disabled={isRunning || composerBlocked}
+              >
+                {modelOptions.length > 0 ? (
+                  modelOptions.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
-                  ))}
-                </select>
-              </div>
+                  ))
+                ) : (
+                  <option value={selectedModel}>{selectedModelFallbackLabel}</option>
+                )}
+              </select>
+            </div>
 
-              {reviewerOptions.length > 0 ? (
-                <div className="composer-setting-field composer-setting-reviewer">
-                  <span>Reviewer</span>
-                  <select
-                    value={selectedCodexReviewer}
-                    onChange={(event) => onChangeCodexReviewer(event.target.value as CodexReviewer)}
-                    disabled={isCodexReviewerControlDisabled({
-                      approvalMode: selectedApprovalMode,
-                      isRunning,
-                      composerBlocked,
-                    })}
-                    aria-label="Reviewer"
-                  >
-                    {reviewerOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
-
-              {sandboxOptions.length > 0 ? (
-                <div className="composer-setting-field composer-setting-sandbox">
-                  <span>Sandbox</span>
-                  <select
-                    value={selectedCodexSandboxMode}
-                    onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
-                    disabled={isRunning || composerBlocked}
-                    aria-label="Sandbox"
-                  >
-                    {sandboxOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
-            </>
-          ) : null}
-
-          <div className="composer-setting-field composer-setting-model">
-            <span>Model</span>
-            <select
-              value={selectedModel}
-              onChange={(event) => onChangeModel(event.target.value)}
-              disabled={isRunning || composerBlocked}
-            >
-              {modelOptions.length > 0 ? (
-                modelOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))
-              ) : (
-                <option value={selectedModel}>{selectedModelFallbackLabel}</option>
-              )}
-            </select>
-          </div>
-
-          <div className="composer-setting-field composer-setting-depth">
-            <span>Depth</span>
-            <select
-              value={selectedReasoningEffort}
-              onChange={(event) => onChangeReasoningEffort(event.target.value)}
-              disabled={isRunning || composerBlocked}
-              aria-label="推論の深さ"
-            >
-              {reasoningOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {speedOptions.length > 0 ? (
-            <div className="composer-setting-field composer-setting-speed">
-              <span>Speed</span>
+            <div className="composer-setting-field composer-setting-depth">
+              <span>Depth</span>
               <select
-                value={selectedCodexSpeed}
-                onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
+                value={selectedReasoningEffort}
+                onChange={(event) => onChangeReasoningEffort(event.target.value)}
                 disabled={isRunning || composerBlocked}
-                aria-label="Speed"
+                aria-label="推論の深さ"
               >
-                {speedOptions.map((option) => (
+                {reasoningOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
                 ))}
               </select>
             </div>
-          ) : null}
-        </div>
+
+            {speedOptions.length > 0 ? (
+              <div className="composer-setting-field composer-setting-speed">
+                <span>Speed</span>
+                <select
+                  value={selectedCodexSpeed}
+                  onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
+                  disabled={isRunning || composerBlocked}
+                  aria-label="Speed"
+                >
+                  {speedOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+          </div>
+        </details>
 
         {isRunning ? null : (
           <button

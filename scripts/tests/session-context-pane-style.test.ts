@@ -125,9 +125,9 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "wide layoutのsplitter priorityとexpanded ActionDock rowは95%上限と中央surfaceを5%程度残す残余領域を宣言する"
+// claim = "wide layoutのsplitter priorityとexpanded ActionDock rowは95%上限と中央surfaceの最小240pxと5%を残す残余領域を宣言する"
 // oracle = { type = "contract", ref = "ActionDock layout CSS bounds" }
-// fault = "wide layoutのpriority classまたはside-pane gridが崩れるか、CSSのActionDock rowが旧40dvhのまま残るか、中央surfaceの5%・Header・splitterを残すcalcを外す"
+// fault = "wide layoutのpriority classまたはside-pane gridが崩れるか、CSSのActionDock rowが旧40dvhのまま残るか、中央surfaceの最小高さ・5%・Header・splitterを残すcalcを外す"
 // observable = "wide layoutのlayout-priority class・side-pane grid、Header visibility boundary、expanded ActionDock rowのCSS宣言"
 // observation_boundary = "declaration"
 // scope = "wide-session-chat-layout-priority-and-action-dock-css"
@@ -149,9 +149,10 @@ test("splitter が選んだ優先軸に応じて side pane または上下 dock 
   assert.doesNotMatch(componentSource, /className="session-header-dock-slot"\s+hidden=/);
   assert.match(stylesSource, /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?"left-pane left-split header right-split right-pane"[\s\S]*?"left-pane left-split action-dock right-split right-pane"/);
   assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
+  assert.match(stylesSource, /--session-central-min-height:\s*240px;/);
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),[\s\S]*?95%,[\s\S]*?calc\(\s*95%\s*-\s*var\(--session-header-dock-row-height\)\s*-\s*var\(--session-dock-splitter-size\)\s*-\s*var\(--session-dock-splitter-size\)\s*\)/,
+    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),[\s\S]*?95%,[\s\S]*?calc\(\s*100%\s*-\s*max\(5%, var\(--session-central-min-height\)\)\s*-\s*var\(--session-header-dock-row-height\)\s*-\s*var\(--session-dock-splitter-size\)\s*-\s*var\(--session-dock-splitter-size\)\s*\)/,
   );
   assert.doesNotMatch(sessionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
   assert.doesNotMatch(companionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
