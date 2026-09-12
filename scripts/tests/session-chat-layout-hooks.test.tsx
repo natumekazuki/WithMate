@@ -223,6 +223,115 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "閉じたActionDockを微小にドラッグしてもcompact高から連続して広がり、展開後の次の微小ドラッグで固定最小高へ跳ねない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session dock layout" }
+// fault = "閉じたActionDockのドラッグを絶対座標と固定260px最小高で計算して、初回または次回の移動で大きく跳ねる"
+// observable = "session dock layoutのaction dock height styleと展開状態"
+// observation_boundary = "component-behavior"
+// scope = "useSessionVerticalDockResize"
+// lifecycle = "permanent"
+// impact = "ActionDockの微小なドラッグを意図した移動量のまま扱い、サイズ変更の連続性を保つ"
+// distinction = "既存の展開中resize検証は固定最小高を確認するが、閉じた状態の開始高と展開後の再ドラッグを観測しない"
+// @end-test-value
+test("閉じたActionDockの微小ドラッグはcompact高から連続し、再ドラッグで最小高へ跳ねない", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  let root: Root | null = null;
+
+  function Harness() {
+    const [isExpanded, setIsExpanded] = React.useState(false);
+    const {
+      sessionDockLayoutRef,
+      sessionDockLayoutStyle,
+      handleStartActionDockResize,
+    } = useSessionVerticalDockResize({
+      ownerKey: "session-1",
+      isHeaderExpanded: false,
+      isActionDockExpanded: isExpanded,
+      onExpandActionDock: () => setIsExpanded(true),
+    });
+    return React.createElement(
+      "div",
+      {
+        ref: sessionDockLayoutRef,
+        style: sessionDockLayoutStyle,
+        "data-testid": "layout",
+      },
+      React.createElement("button", {
+        type: "button",
+        onPointerDown: handleStartActionDockResize,
+        "data-testid": "splitter",
+      }),
+      React.createElement("output", { "data-testid": "expanded" }, isExpanded ? "expanded" : "compact"),
+    );
+  }
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Harness));
+    });
+    const layout = dom.window.document.querySelector<HTMLElement>("[data-testid=\"layout\"]");
+    const splitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"splitter\"]");
+    const expanded = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"expanded\"]");
+    assert.ok(layout);
+    assert.ok(splitter);
+    assert.ok(expanded);
+    layout.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      right: 1000,
+      bottom: 1000,
+      left: 0,
+      width: 1000,
+      height: 1000,
+      toJSON: () => ({}),
+    });
+
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event("resize")));
+    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 500));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 490));
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "64px");
+    assert.equal(expanded.textContent, "expanded");
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 490));
+
+    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 500));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 501));
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "64px");
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 501));
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      previousActEnvironment;
+  }
+});
+
 test("ActionDock compact height は展開時の外枠高ではなく compact row から算出する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -620,6 +729,18 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "閉じた左右ペインをドラッグして開くと、開始位置からの移動量に応じて幅が連続し、次の微小ドラッグでも現在の小さい幅を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session dock layout" }
+// fault = "閉じたペインの初回ドラッグを絶対座標と固定最小幅で計算して、最小幅へ瞬間移動する"
+// observable = "session workbenchのside pane width styleとactive pane"
+// observation_boundary = "component-behavior"
+// scope = "useSessionSidePanes"
+// lifecycle = "permanent"
+// impact = "微小なドラッグでも意図しない大幅展開を避け、ペイン操作の連続性を保つ"
+// distinction = "typecheckや既存の開いたペインのresize検証では、閉じた状態からの開始幅と次回ドラッグのclampを観測できない"
+// @end-test-value
 test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右ペインを排他的に切り替える", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -846,7 +967,24 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 200));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 200));
     assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "800px");
-    assert.deepEqual(sidePaneChanges, ["none", "context", "files", "context", "none", "context"]);
+
+    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1500));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1500));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    assert.equal(activePane.textContent, "none");
+    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1500));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 1490));
+    assert.equal(activePane.textContent, "context");
+    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "10px");
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1490));
+
+    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1490));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 1491));
+    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "10px");
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1491));
+
+    assert.deepEqual(sidePaneChanges, ["none", "context", "files", "context", "none", "context", "none", "context"]);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

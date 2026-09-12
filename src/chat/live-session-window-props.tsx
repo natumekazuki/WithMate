@@ -1,10 +1,6 @@
 import type { ComponentProps, ReactNode, RefObject } from "react";
 import { ChatDockSplitter, type ChatWindowProps } from "./chat-window.js";
-import {
-  SessionContextPane,
-  SessionPaneErrorBoundary,
-  type SessionContextPaneProps,
-} from "../session-components.js";
+import type { SessionContextPaneProps } from "../session-components.js";
 
 type LiveSessionWindowShellPropsInput = {
   mode: ChatWindowProps["mode"];
@@ -82,11 +78,8 @@ export function buildLiveSessionWindowShellProps(
     ) : null,
     isLeftPaneVisible: input.isLeftPaneVisible ?? false,
     isRightPaneVisible: input.isRightPaneVisible,
-    rightPane: (
-      <SessionPaneErrorBoundary>
-        <SessionContextPane {...input.rightPaneProps} />
-      </SessionPaneErrorBoundary>
-    ),
+    rightPane: null,
+    rightPaneProps: input.rightPaneProps,
     modals: input.modals,
     concurrentChats: input.concurrentChats,
   };

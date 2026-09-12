@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 
 import { SessionMessageColumn, type SessionMessageColumnProps } from "../session-components.js";
 import { useSessionMessageListFollowing } from "../session-chat-layout-hooks.js";
-import { buildMessageListProjection, hasPersistedLiveAssistantMessage, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "../auxiliary-session-message-projection.js";
-import { buildMessageCollapseTargets } from "../session-message-collapse.js";
+import { buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "../auxiliary-session-message-projection.js";
+import { buildMessageCollapseTargets, buildMessageNavigatorEntries, type MessageCollapseStateEntry, type MessageJumpRequest, type MessageNavigatorEntry } from "../session-message-collapse.js";
 import { DEFAULT_CHARACTER_SESSION_COPY } from "../character-state.js";
 import type { LiveSessionRunState } from "../runtime-state.js";
 import type { Session } from "../session-state.js";
@@ -26,6 +26,8 @@ export type ConversationColumnCache = {
   approvalRequestId: string | null;
   elicitationRequestId: string | null;
   error: string;
+  messageJumpRequest: MessageJumpRequest | null;
+  messageJumpRequestId: number;
 };
 
 export type UseConversationMessageColumnInput = {
@@ -33,6 +35,7 @@ export type UseConversationMessageColumnInput = {
   baseProps: SessionMessageColumnProps;
   enabled: boolean;
   api?: ConversationMessageColumnApi;
+  liveRun?: LiveSessionRunState | null;
   stateCache?: Map<string, ConversationColumnCache>;
   onColumnControls?: (controls: ConversationColumnControls) => void;
 };
@@ -46,17 +49,19 @@ export type ConversationColumnControls = {
   handleMessageListSend: (scrollToLatestOnSend: boolean) => void;
   onToggleAllMessageCollapse: () => void;
   followLatest: () => void;
+  messageNavigatorEntries: readonly MessageNavigatorEntry[];
+  onJumpToMessage: (key: string) => void;
 };
 
 export function useConversationMessageColumn({
-  session, baseProps, enabled, api, stateCache, onColumnControls,
+  session, baseProps, enabled, api, liveRun: liveRunOverride, stateCache, onColumnControls,
 }: UseConversationMessageColumnInput): SessionMessageColumnProps | null {
   const localCache = useRef(new Map<string, ConversationColumnCache>());
   const caches = stateCache ?? localCache.current;
   const sessionId = session?.id ?? baseProps.sessionId;
   let cache = caches.get(sessionId);
   if (!cache) {
-    cache = { scrollState: null, collapsedMessageKeys: new Set(), liveRun: null, bridge: null, approvalRequestId: null, elicitationRequestId: null, error: "" };
+    cache = { scrollState: null, collapsedMessageKeys: new Set(), liveRun: null, bridge: null, approvalRequestId: null, elicitationRequestId: null, error: "", messageJumpRequest: null, messageJumpRequestId: 0 };
     caches.set(sessionId, cache);
   }
   const conversation = cache;
@@ -72,6 +77,11 @@ export function useConversationMessageColumn({
     if (mounted.current && displayedId.current === sessionId) rerender((revision) => revision + 1);
   }, [sessionId]);
   useEffect(() => {
+    if (liveRunOverride !== undefined) {
+      conversation.liveRun = liveRunOverride;
+      refresh();
+      return;
+    }
     if (!session || !enabled || !api?.getLiveSessionRun || !api.subscribeLiveSessionRun) return;
     let active = true;
     let receivedEvent = false;
@@ -91,7 +101,7 @@ export function useConversationMessageColumn({
       refresh();
     });
     return () => { active = false; unsubscribe(); };
-  }, [api, enabled, sessionId, refresh]);
+  }, [api, enabled, liveRunOverride, sessionId, refresh]);
 
   const messages = session?.messages ?? baseProps.messages;
   const liveRun = conversation.liveRun;
@@ -133,6 +143,7 @@ export function useConversationMessageColumn({
     following.handleMessageListScroll();
   }, [following.handleMessageListScroll]);
   const onToggleMessageCollapse = (key: string) => {
+    conversation.collapsedMessageKeys = new Set(conversation.collapsedMessageKeys);
     if (conversation.collapsedMessageKeys.has(key)) conversation.collapsedMessageKeys.delete(key);
     else conversation.collapsedMessageKeys.add(key);
     refresh();
@@ -144,6 +155,23 @@ export function useConversationMessageColumn({
   };
   const allMessagesCollapsed = collapseTargets.length > 0
     && collapseTargets.every((target) => conversation.collapsedMessageKeys.has(target.key));
+  const messageNavigatorEntries = useMemo(
+    () => buildMessageNavigatorEntries(collapseTargets, new Map(
+      collapseTargets
+        .filter((target) => conversation.collapsedMessageKeys.has(target.key))
+        .map((target) => [target.key, {
+          sourceIdentity: target.sourceIdentity,
+          role: target.role,
+          text: target.text,
+        } satisfies MessageCollapseStateEntry]),
+    )),
+    [collapseTargets, conversation.collapsedMessageKeys],
+  );
+  const onJumpToMessage = useCallback((key: string) => {
+    conversation.messageJumpRequestId += 1;
+    conversation.messageJumpRequest = { sessionId, key, requestId: conversation.messageJumpRequestId };
+    refresh();
+  }, [conversation, refresh, sessionId]);
   useEffect(() => {
     onColumnControls?.({
       sessionId,
@@ -154,8 +182,10 @@ export function useConversationMessageColumn({
       handleMessageListSend: following.handleMessageListSend,
       onToggleAllMessageCollapse,
       followLatest: following.followMessageListLatest,
+      messageNavigatorEntries,
+      onJumpToMessage,
     });
-  }, [allMessagesCollapsed, collapseTargets, conversation.collapsedMessageKeys, following.followMessageListLatest, following.handleMessageListSend, following.isMessageListFollowing, onColumnControls, sessionId]);
+  }, [allMessagesCollapsed, collapseTargets, conversation.collapsedMessageKeys, following.followMessageListLatest, following.handleMessageListSend, following.isMessageListFollowing, messageNavigatorEntries, onColumnControls, onJumpToMessage, sessionId]);
   const reloadLiveRun = async () => {
     if (api?.getLiveSessionRun) conversation.liveRun = await api.getLiveSessionRun(sessionId);
   };
@@ -206,7 +236,7 @@ export function useConversationMessageColumn({
     messageGroups: projection.groups,
     messageCollapseTargets: collapseTargets,
     collapsedMessageKeys: new Set(conversation.collapsedMessageKeys),
-    messageJumpRequest: baseProps.messageJumpRequest?.sessionId === sessionId ? baseProps.messageJumpRequest : null,
+    messageJumpRequest: conversation.messageJumpRequest,
     isRunning: session.runState === "running" || !!liveRun,
     liveRunAssistantText: assistantText,
     hasLiveRunAssistantText: assistantText.length > 0,
@@ -220,6 +250,12 @@ export function useConversationMessageColumn({
     isMessageListFollowing: following.isMessageListFollowing,
     onMessageListScroll,
     onJumpToBottom: following.followMessageListLatest,
+    onLoadArtifactDetail: baseProps.onLoadArtifactDetail
+      ? (messageIndex) => loadProjectedMessageArtifact({
+        source: projection.sources[messageIndex],
+        loadSessionArtifact: baseProps.onLoadArtifactDetail!,
+      })
+      : undefined,
     onToggleMessageCollapse,
     onToggleAllMessageCollapse,
     onResolveLiveApproval,

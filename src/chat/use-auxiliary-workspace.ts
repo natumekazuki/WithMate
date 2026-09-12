@@ -46,7 +46,7 @@ export type AuxiliaryWorkspace = {
 };
 
 const DEFAULT_WIDTH_RATIO = 0.5;
-const MIN_WIDTH_RATIO = 0.05;
+export const MIN_AUXILIARY_WIDTH_RATIO = 0.05;
 const MAX_WIDTH_RATIO = 0.8;
 const PREFS_KEY_PREFIX = "withmate:auxiliary-workspace:";
 
@@ -60,7 +60,7 @@ function readPrefs(parentSessionId: string): WorkspacePrefs {
   try {
     const value = JSON.parse(window.localStorage.getItem(prefsKey(parentSessionId)) ?? "null") as Partial<WorkspacePrefs> | null;
     const widthRatio = typeof value?.widthRatio === "number" && Number.isFinite(value.widthRatio)
-      ? Math.min(MAX_WIDTH_RATIO, Math.max(MIN_WIDTH_RATIO, value.widthRatio))
+      ? clampAuxiliaryWidthRatio(value.widthRatio)
       : DEFAULT_WIDTH_RATIO;
     return { selectedId: typeof value?.selectedId === "string" ? value.selectedId : null, widthRatio };
   } catch {
@@ -83,9 +83,9 @@ function sortByCreation(summaries: AuxiliarySessionSummary[]): AuxiliarySessionS
   });
 }
 
-function clampWidthRatio(ratio: number): number {
+export function clampAuxiliaryWidthRatio(ratio: number): number {
   if (!Number.isFinite(ratio)) return DEFAULT_WIDTH_RATIO;
-  return Math.min(MAX_WIDTH_RATIO, Math.max(MIN_WIDTH_RATIO, ratio));
+  return Math.min(MAX_WIDTH_RATIO, Math.max(MIN_AUXILIARY_WIDTH_RATIO, ratio));
 }
 
 export function useAuxiliaryWorkspace(input: {
@@ -302,7 +302,7 @@ export function useAuxiliaryWorkspace(input: {
   }, [persistPrefs, summaries]);
 
   const setWidthRatio = useCallback((ratio: number) => {
-    const next = clampWidthRatio(ratio);
+    const next = clampAuxiliaryWidthRatio(ratio);
     widthRatioRef.current = next;
     setWidthRatioState(next);
     persistPrefs({ widthRatio: next });

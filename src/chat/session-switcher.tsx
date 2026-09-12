@@ -156,7 +156,6 @@ export function SessionSwitcher({
               type="search"
               className="session-switcher-search"
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
               onInput={(event) => setSearchQuery(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) {

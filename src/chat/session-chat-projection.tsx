@@ -25,7 +25,6 @@ import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js
 import {
   buildLiveSessionChatBodyProps,
   buildLiveSessionComposerDockProps,
-  resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
 import { buildLiveSessionHeaderProps } from "./chat-header-actions.js";
 import {
@@ -283,7 +282,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isRunning: input.isSelectedSessionRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
-      modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       composerBlocked: input.composerBlocked,
       canSelectCustomAgent: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
       showCustomAgentPicker: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",

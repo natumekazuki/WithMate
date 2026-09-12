@@ -252,6 +252,7 @@ export function useSessionVerticalDockResize(input: {
   const pointerGestureRef = useRef({
     pointerId: null as number | null,
     startY: 0,
+    startHeight: SESSION_ACTION_DOCK_DEFAULT_HEIGHT,
     dragged: false,
   });
   const lastActionDockDragEndAtRef = useRef(0);
@@ -274,7 +275,7 @@ export function useSessionVerticalDockResize(input: {
     const nextActionDockHeight = clampSessionVerticalDockHeight({
       requestedHeight: actionDockHeightRef.current,
       layoutHeight,
-      minHeight: SESSION_ACTION_DOCK_MIN_HEIGHT,
+      minHeight: Math.min(SESSION_ACTION_DOCK_MIN_HEIGHT, actionDockHeightRef.current),
       maxHeightRatio: SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO,
       oppositeDockHeight: visibleHeaderHeight,
     });
@@ -348,9 +349,9 @@ export function useSessionVerticalDockResize(input: {
       const bounds = measureSessionVerticalDockLayoutBounds(layout);
       const oppositeHeight = input.isHeaderExpanded ? SESSION_HEADER_DOCK_DEFAULT_HEIGHT : 0;
       const nextHeight = clampSessionVerticalDockHeight({
-        requestedHeight: bounds.bottom - event.clientY,
+        requestedHeight: gesture.startHeight + gesture.startY - event.clientY,
         layoutHeight: bounds.height,
-        minHeight: SESSION_ACTION_DOCK_MIN_HEIGHT,
+        minHeight: Math.min(SESSION_ACTION_DOCK_MIN_HEIGHT, gesture.startHeight),
         maxHeightRatio: SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO,
         oppositeDockHeight: oppositeHeight,
       });
@@ -366,7 +367,12 @@ export function useSessionVerticalDockResize(input: {
       if (gesture.dragged) {
         lastActionDockDragEndAtRef.current = Date.now();
       }
-      pointerGestureRef.current = { pointerId: null, startY: 0, dragged: false };
+      pointerGestureRef.current = {
+        pointerId: null,
+        startY: 0,
+        startHeight: SESSION_ACTION_DOCK_DEFAULT_HEIGHT,
+        dragged: false,
+      };
       setIsActionDockResizing(false);
     };
 
@@ -395,10 +401,13 @@ export function useSessionVerticalDockResize(input: {
     pointerGestureRef.current = {
       pointerId: event.pointerId,
       startY: event.clientY,
+      startHeight: input.isActionDockExpanded
+        ? actionDockHeightRef.current
+        : actionDockCompactHeight,
       dragged: false,
     };
     setIsActionDockResizing(true);
-  }, []);
+  }, [actionDockCompactHeight, input.isActionDockExpanded]);
   const handleHeaderSplitterClick = useCallback((toggle: () => void) => {
     toggle();
   }, []);
@@ -737,6 +746,8 @@ export function useSessionSidePanes({
   const sidePanePointerGestureRef = useRef({
     pointerId: null as number | null,
     startX: 0,
+    startWidth: SESSION_CONTEXT_RAIL_DEFAULT_WIDTH,
+    startedCollapsed: false,
     dragged: false,
   });
   const lastSidePaneDragEndAtRef = useRef({ context: 0, files: 0 });
@@ -832,13 +843,21 @@ export function useSessionSidePanes({
         }
       }
 
-      const requestedWidth = resizingSidePane === "files"
-        ? event.clientX - bounds.left
-        : bounds.right - event.clientX;
+      const requestedWidth = gesture.startedCollapsed
+        ? resizingSidePane === "files"
+          ? gesture.startWidth + event.clientX - gesture.startX
+          : gesture.startWidth + gesture.startX - event.clientX
+        : resizingSidePane === "files"
+          ? event.clientX - bounds.left
+          : bounds.right - event.clientX;
       const minWidth = resizingSidePane === "files"
         ? SESSION_FILE_EXPLORER_MIN_WIDTH
         : SESSION_CONTEXT_RAIL_MIN_WIDTH;
-      const nextWidth = clampSidePaneWidth(requestedWidth, bounds.width, minWidth);
+      const nextWidth = clampSidePaneWidth(
+        requestedWidth,
+        bounds.width,
+        Math.min(minWidth, gesture.startWidth),
+      );
       if (resizingSidePane === "files") {
         fileExplorerWidthRef.current = nextWidth;
         setFileExplorerWidth(nextWidth);
@@ -898,6 +917,10 @@ export function useSessionSidePanes({
     sidePanePointerGestureRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
+      startWidth: sidePane === "files"
+        ? activeSidePaneRef.current === "files" ? fileExplorerWidthRef.current : 0
+        : activeSidePaneRef.current === "context" ? contextRailWidthRef.current : 0,
+      startedCollapsed: activeSidePaneRef.current !== sidePane,
       dragged: false,
     };
     setResizingSidePane(sidePane);

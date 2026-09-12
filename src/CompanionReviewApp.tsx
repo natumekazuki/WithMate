@@ -158,7 +158,6 @@ import {
 import {
   useChatLayoutPresentation,
   useSessionSidePanes,
-  useSessionMessageListFollowing,
   useSessionVerticalDockResize,
 } from "./session-chat-layout-hooks.js";
 import { persistChatLayoutPreference } from "./chat/chat-layout-preference.js";
@@ -184,15 +183,7 @@ import {
   startSessionContextTelemetrySubscription,
 } from "./session-telemetry-subscription.js";
 import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
-import {
-  buildMessageListProjection,
-  hasPersistedLiveAssistantMessage,
-  loadProjectedMessageArtifact,
-  resolveLiveAssistantMessageIndex,
-  resolvePendingAuxiliaryMessageGroupId,
-  shouldProjectLiveAssistantBridge,
-  type LiveAssistantProjection,
-} from "./auxiliary-session-message-projection.js";
+import { resolvePendingAuxiliaryMessageGroupId } from "./auxiliary-session-message-projection.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   buildContextPaneProjection,
@@ -206,7 +197,6 @@ import {
 import { buildCompanionAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import {
   useCompanionAuxiliaryRuntimeSession,
-  useMessageListAuxiliarySessions,
 } from "./auxiliary-render-projections.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { CharacterAvatar, fileKindLabel } from "./ui-utils.js";
@@ -511,7 +501,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
   const [liveRunStates, setLiveRunStates] = useState<Record<string, OwnedLiveSessionRunState>>({});
-  const [liveAssistantBridge, setLiveAssistantBridge] = useState<LiveAssistantProjection | null>(null);
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] =
     useState<ProviderOwnedQuotaTelemetry>({ ownerProviderId: null, telemetry: null });
   const [sessionContextTelemetryState, setSessionContextTelemetryState] =
@@ -688,167 +677,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       applyLiveRunState: setLiveRunState,
     });
   }, [activeRunSessionId, isMergeView, setLiveRunState, withmateApi]);
-  const projectedAuxiliarySessions = useMessageListAuxiliarySessions([], null);
-  const liveAssistantMessageIndex = useMemo(
-    () =>
-      activeRunSessionId
-        ? resolveLiveAssistantMessageIndex(
-          displayedSession?.messages ?? [],
-          projectedAuxiliarySessions,
-          activeRunSessionId,
-          activeRunSessionId ?? undefined,
-          liveRunAssistantText,
-        )
-        : 0,
-    [activeRunSessionId, liveRunAssistantText, projectedAuxiliarySessions, activeRunSessionId, displayedSession?.messages],
-  );
-  const hasPersistedLiveAssistantBridge = useMemo(
-    () =>
-      liveAssistantBridge
-        ? hasPersistedLiveAssistantMessage(
-          displayedSession?.messages ?? [],
-          projectedAuxiliarySessions,
-          liveAssistantBridge,
-          activeRunSessionId ?? undefined,
-        )
-        : false,
-    [liveAssistantBridge, projectedAuxiliarySessions, activeRunSessionId, displayedSession?.messages],
-  );
-  const isLiveAssistantBridgeSettling = selectedSessionLiveRun === null && !hasPersistedLiveAssistantBridge;
-  const projectedLiveAssistant = useMemo<LiveAssistantProjection | null>(() => {
-    if (!activeRunSessionId) {
-      return null;
-    }
-
-    const liveThreadId = selectedSessionLiveRun?.threadId ?? null;
-    const bridgeMessageIndex =
-      liveAssistantBridge?.sessionId === activeRunSessionId &&
-      liveAssistantBridge.threadId === liveThreadId
-        ? liveAssistantBridge.messageIndex
-        : liveAssistantMessageIndex;
-    if (liveRunAssistantText) {
-      return {
-        sessionId: activeRunSessionId,
-        threadId: liveThreadId,
-        messageIndex: bridgeMessageIndex,
-        text: liveRunAssistantText,
-      };
-    }
-
-    return shouldProjectLiveAssistantBridge({
-      bridge: liveAssistantBridge,
-      activeSessionId: activeRunSessionId,
-      hasLiveRun: selectedSessionLiveRun !== null,
-      hasPersistedAssistant: hasPersistedLiveAssistantBridge,
-      isSettling: isLiveAssistantBridgeSettling,
-    })
-      ? liveAssistantBridge
-      : null;
-  }, [
-    activeRunSessionId,
-    hasPersistedLiveAssistantBridge,
-    isLiveAssistantBridgeSettling,
-    liveAssistantBridge,
-    liveAssistantMessageIndex,
-    selectedSessionLiveRun,
-    liveRunAssistantText,
-    selectedSessionLiveRun?.threadId,
-  ]);
-  const messageListProjection = useMemo(
-    () => buildMessageListProjection(displayedSession?.messages ?? [], projectedAuxiliarySessions, activeRunSessionId ?? undefined, {
-      liveAssistant: projectedLiveAssistant,
-    }),
-    [projectedAuxiliarySessions, projectedLiveAssistant, activeRunSessionId, displayedSession?.messages],
-  );
-  const messageListMessages = messageListProjection.messages;
-  const messageListSources = messageListProjection.sources;
-  const messageListKeys = messageListProjection.keys;
-  const messageListGroups = messageListProjection.groups;
-  useEffect(() => {
-    if (!activeRunSessionId || !selectedSessionLiveRun?.assistantText) {
-      return;
-    }
-
-    const liveThreadId = selectedSessionLiveRun.threadId ?? null;
-    setLiveAssistantBridge((current) => {
-      if (current?.sessionId === activeRunSessionId && current.threadId === liveThreadId) {
-        return {
-          ...current,
-          text: selectedSessionLiveRun.assistantText,
-        };
-      }
-
-      return {
-        sessionId: activeRunSessionId,
-        threadId: liveThreadId,
-        messageIndex: liveAssistantMessageIndex,
-        text: selectedSessionLiveRun.assistantText,
-      };
-    });
-  }, [activeRunSessionId, liveAssistantMessageIndex, selectedSessionLiveRun?.assistantText, selectedSessionLiveRun?.threadId]);
-  useEffect(() => {
-    if (!liveAssistantBridge) {
-      return;
-    }
-
-    if (liveAssistantBridge.sessionId !== activeRunSessionId) {
-      setLiveAssistantBridge(null);
-      return;
-    }
-
-    if (!isLiveAssistantBridgeSettling) {
-      return;
-    }
-
-    let secondFrameId: number | null = null;
-    const firstFrameId = requestAnimationFrame(() => {
-      secondFrameId = requestAnimationFrame(() => {
-        setLiveAssistantBridge((current) =>
-          current?.sessionId === liveAssistantBridge.sessionId &&
-          current.threadId === liveAssistantBridge.threadId &&
-          current.text === liveAssistantBridge.text
-            ? null
-            : current,
-        );
-      });
-    });
-
-    return () => {
-      cancelAnimationFrame(firstFrameId);
-      if (secondFrameId !== null) {
-        cancelAnimationFrame(secondFrameId);
-      }
-    };
-  }, [activeRunSessionId, isLiveAssistantBridgeSettling, liveAssistantBridge]);
-  useEffect(() => {
-    if (!liveAssistantBridge) {
-      return;
-    }
-
-    if (!hasPersistedLiveAssistantBridge) {
-      return;
-    }
-
-    let secondFrameId: number | null = null;
-    const firstFrameId = requestAnimationFrame(() => {
-      secondFrameId = requestAnimationFrame(() => {
-        setLiveAssistantBridge((current) =>
-          current?.sessionId === liveAssistantBridge.sessionId &&
-          current.threadId === liveAssistantBridge.threadId &&
-          current.text === liveAssistantBridge.text
-            ? null
-            : current,
-        );
-      });
-    });
-
-    return () => {
-      cancelAnimationFrame(firstFrameId);
-      if (secondFrameId !== null) {
-        cancelAnimationFrame(secondFrameId);
-      }
-    };
-  }, [hasPersistedLiveAssistantBridge, liveAssistantBridge]);
 
   useEffect(() => {
     if (!isMergePaneResizing) {
@@ -1139,34 +967,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     initialSidePane: isAppSettingsLoaded ? appSettings.chatLayoutPreference.sidePane : null,
     onSidePaneChange: handleSidePaneChange,
   });
-  const companionMessageListScrollSignature = useMemo(
-    () =>
-      [
-        displayedSession?.id ?? "",
-        displayedSession?.runState ?? "",
-        messageListMessages.map((message) => `${message.role}:${message.text.length}:${message.text}`).join("\u001d"),
-        selectedSessionLiveRun?.reasoningText ?? "",
-        selectedSessionLiveRun?.errorMessage ?? "",
-      ].join("\u001a"),
-    [
-      selectedSessionLiveRun?.reasoningText,
-      selectedSessionLiveRun?.errorMessage,
-      displayedSession?.id,
-      displayedSession?.runState,
-      messageListMessages,
-    ],
-  );
-  const {
-    messageListRef,
-    isMessageListFollowing,
-    handleMessageListScroll,
-    handleMessageListSend,
-    followMessageListLatest,
-  } = useSessionMessageListFollowing({
-    ownerKey: activeRunSessionId,
-    scrollSignature: companionMessageListScrollSignature,
-    enabled: !isMergeView,
-  });
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const isMessageListFollowing = true;
+  const handleMessageListScroll = useCallback(() => {}, []);
+  const followMessageListLatest = useCallback(() => {}, []);
   const operationDisabled = operationRunning || isSelectedSessionRunning || !snapshot || snapshot.session.status !== "active";
   const targetStashBlocked = Boolean(snapshot?.targetStash);
   const mergeBlocked = (snapshot?.mergeReadiness.blockers.length ?? 0) > 0 || targetStashBlocked;
@@ -2600,7 +2404,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         throw new Error(blockedMessage);
       }
 
-      handleMessageListSend(appSettings.scrollToLatestOnSend);
       applyOptimisticSessionRunUpdate({
         session: snapshot.session,
         userMessage,
@@ -2882,9 +2685,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         <ChatWindow {...buildCompanionChatWindowProps({
         session: snapshot.session,
         character: companionCharacterProfile!,
-        displayedMessages: messageListMessages,
-        displayedMessageKeys: messageListKeys,
-        displayedMessageGroups: messageListGroups,
+        displayedMessages: displayedSession?.messages ?? [],
         expandedArtifacts,
         themeStyle,
         layoutRef: sessionDockLayoutRef,
@@ -3014,6 +2815,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           loading: auxiliaryWorkspace.loading || auxiliaryWorkspace.detailLoading,
           error: auxiliaryWorkspace.error?.message ?? auxiliaryWorkspace.detailError?.message ?? null,
           api: withmateApi ?? undefined,
+          mainLiveRun: activeAuxiliarySession ? undefined : selectedSessionLiveRun,
+          auxiliaryLiveRun: activeAuxiliarySession ? selectedSessionLiveRun : undefined,
         },
         onToggleHeaderSplitter: handleToggleHeaderSplitter,
         onOpenAuditLog: () => setAuditLogsOpen(true),
@@ -3030,11 +2833,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
         onLoadArtifactDetail: (messageIndex) =>
-          loadProjectedMessageArtifact({
-            source: messageListSources[messageIndex],
-            loadSessionArtifact: (sourceMessageIndex) =>
-              withmateApi?.getCompanionMessageArtifact(snapshot.session.id, sourceMessageIndex) ?? null,
-          }),
+          Promise.resolve(withmateApi?.getCompanionMessageArtifact(snapshot.session.id, messageIndex) ?? null),
         onOpenDiff: (title, file) =>
           setSelectedDiff({
             title,

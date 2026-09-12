@@ -10,6 +10,7 @@ import {
   type ConversationMessageColumnApi,
 } from "../../src/chat/conversation-message-column.js";
 import type { SessionMessageColumnProps } from "../../src/session-components.js";
+import type { LiveSessionRunState } from "../../src/runtime-state.js";
 
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {
@@ -168,7 +169,7 @@ test("conversation column cache は切替後のscroll位置を保持する", asy
 // @test-value v2
 // kind = "contract"
 // claim = "conversation columnがscroll following状態と送信時追従操作をcontrolsへ公開する"
-// oracle = { type = "contract", ref = "issue-710-shared-scroll-following" }
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
 // fault = "列の内部hookがscroll状態または送信時追従操作をcontrolsへ渡さない"
 // observable = "column controlsのisMessageListFollowingとhandleMessageListSend"
 // observation_boundary = "component-behavior"
@@ -227,6 +228,174 @@ test("conversation column controls はscroll状態と送信時追従操作を公
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "個別の折りたたみがnavigatorへ反映され、一覧選択が同じ会話のjump requestへ届く"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "親側の空のnavigator契約によりcollapseまたはmessage jumpが表示へ届かない"
+// observable = "Column propsのcollapsedMessageKeys・messageNavigatorEntries・messageJumpRequest"
+// observation_boundary = "component-behavior"
+// scope = "conversation-message-column"
+// lifecycle = "permanent"
+// @end-test-value
+test("conversation column はcollapseとnavigator jumpを公開する", async () => {
+  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  let root: Root | null = null;
+  let latest: ReturnType<typeof useConversationMessageColumn> = null;
+  let controls: { messageNavigatorEntries: readonly { key: string; isCollapsed: boolean }[]; onJumpToMessage: (key: string) => void } | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(function Probe() {
+        latest = useConversationMessageColumn({
+          session: {
+            id: "main",
+            messages: [
+              { role: "user", text: "request" },
+              { role: "assistant", text: "response" },
+            ],
+          },
+          baseProps: createBaseProps("main"),
+          enabled: true,
+          onColumnControls: (next) => { controls = next; },
+        });
+        return null;
+      }));
+    });
+    assert.equal(controls?.messageNavigatorEntries.length, 2);
+    const key = controls?.messageNavigatorEntries[0]?.key;
+    assert.ok(key);
+    await act(async () => latest?.onToggleMessageCollapse?.(key));
+    assert.equal(latest?.collapsedMessageKeys?.has(key), true);
+    assert.equal(controls?.messageNavigatorEntries[0]?.isCollapsed, true);
+    await act(async () => controls?.onJumpToMessage(key));
+    assert.equal(latest?.messageJumpRequest?.key, key);
+    assert.equal(latest?.messageJumpRequest?.sessionId, "main");
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "親がlive snapshotを所有するColumnは二重購読せず、親が所有しないColumnは独自購読で更新する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "MainとAuxiliaryのlive表示が二重購読で競合する、または非対象Columnのlive更新が止まる"
+// observable = "親snapshot更新後のMain表示、Auxiliary event後の表示、get/subscribe呼び出し対象"
+// observation_boundary = "component-behavior"
+// scope = "conversation-message-column"
+// lifecycle = "permanent"
+// @end-test-value
+test("conversation column は親snapshotを優先し、snapshot未提供Columnだけ購読する", async () => {
+  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const listeners = new Set<(id: string, state: LiveSessionRunState | null) => void>();
+  const subscribedIds: string[] = [];
+  const fetchedIds: string[] = [];
+  const createRun = (sessionId: string, assistantText: string): LiveSessionRunState => ({
+    sessionId,
+    threadId: `${sessionId}-thread`,
+    assistantText,
+    steps: [],
+    backgroundTasks: [],
+    usage: null,
+    errorMessage: "",
+    approvalRequest: null,
+    elicitationRequest: null,
+  });
+  const api: ConversationMessageColumnApi = {
+    subscribeLiveSessionRun: (listener) => {
+      subscribedIds.push("aux");
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    getLiveSessionRun: async (sessionId) => {
+      fetchedIds.push(sessionId);
+      return null;
+    },
+  };
+  let root: Root | null = null;
+  function Probe({ mainLiveRun }: { mainLiveRun: LiveSessionRunState }) {
+    const main = useConversationMessageColumn({
+      session: { id: "main" },
+      baseProps: createBaseProps("main"),
+      enabled: true,
+      api,
+      liveRun: mainLiveRun,
+    });
+    const auxiliary = useConversationMessageColumn({
+      session: { id: "aux" },
+      baseProps: createBaseProps("aux"),
+      enabled: true,
+      api,
+    });
+    return React.createElement(React.Fragment, null,
+      React.createElement("div", { "data-main-live": main?.liveRunAssistantText }),
+      React.createElement("div", { "data-aux-live": auxiliary?.liveRunAssistantText }),
+    );
+  }
+  try {
+    const mainRun = createRun("main", "parent snapshot 1");
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Probe, { mainLiveRun: mainRun }));
+    });
+    assert.deepEqual(subscribedIds, ["aux"]);
+    assert.deepEqual(fetchedIds, ["aux"]);
+    assert.equal(dom.window.document.querySelector("[data-main-live]")?.getAttribute("data-main-live"), "parent snapshot 1");
+
+    await act(async () => {
+      root?.render(React.createElement(Probe, { mainLiveRun: createRun("main", "parent snapshot 2") }));
+    });
+    await act(async () => {
+      listeners.forEach((listener) => listener("aux", createRun("aux", "auxiliary event")));
+    });
+    assert.equal(dom.window.document.querySelector("[data-main-live]")?.getAttribute("data-main-live"), "parent snapshot 2");
+    assert.equal(dom.window.document.querySelector("[data-aux-live]")?.getAttribute("data-aux-live"), "auxiliary event");
+    assert.deepEqual(subscribedIds, ["aux"]);
+    assert.deepEqual(fetchedIds, ["aux"]);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
     Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });

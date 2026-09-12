@@ -3537,7 +3537,6 @@ export type SessionActionDockCompactRowProps = {
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
-  modeLabel?: string;
   targetDock?: ReactNode;
   chatNotice?: string;
   showJumpToBottom: boolean;
@@ -3596,6 +3595,7 @@ export function SessionActionDockCompactRow({
         </button>
       )}
       <div className="session-action-dock-compact-actions">
+        {targetDock ? <div className="session-action-dock-target-slot">{targetDock}</div> : null}
         {isRunning && chatNotice ? (
           <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
         ) : null}
@@ -3628,7 +3628,6 @@ export function SessionActionDockCompactRow({
             </button>
           </div>
         ) : null}
-        {targetDock ? <div className="session-action-dock-target-slot">{targetDock}</div> : null}
         {isRunning ? (
           <button
             className="danger session-send-button"
@@ -3691,7 +3690,6 @@ export type SessionComposerExpandedProps = {
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
-  modeLabel?: string;
   targetDock?: ReactNode;
   chatNotice?: string;
   composerBlocked: boolean;
@@ -4044,8 +4042,9 @@ export function SessionComposerExpanded({
                 Cancel
               </button>
           ) : null}
-          {showJumpToBottom || showMessageViewModeControls ? (
+          {showJumpToBottom || showMessageViewModeControls || targetDock ? (
             <div className="composer-toolbar-view-actions">
+              {targetDock ? <div className="composer-target-dock-slot">{targetDock}</div> : null}
               {showJumpToBottom ? (
                 <button
                   className="drawer-toggle compact secondary message-jump-bottom-button"
@@ -4077,7 +4076,6 @@ export function SessionComposerExpanded({
               ) : null}
             </div>
           ) : null}
-          {targetDock ? <div className="composer-target-dock-slot">{targetDock}</div> : null}
         </div>
       ) : null}
 

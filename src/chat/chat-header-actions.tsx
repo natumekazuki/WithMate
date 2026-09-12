@@ -12,26 +12,9 @@ export type WorkspaceExplorerActionOptions = {
 };
 
 export type AuxiliaryHeaderActionsOptions = {
-  isActive: boolean;
-  showIdleLabel?: boolean;
   startDisabled?: boolean;
-  returnDisabled?: boolean;
   onStart: () => void;
-  onReturnToMain: () => void;
 };
-
-export type AuxiliaryHeaderActionStateInput = {
-  isActive: boolean;
-  isActionPending: boolean;
-  isStartBlocked: boolean;
-  activeRunState?: "idle" | "running" | "error" | null;
-  showIdleLabel?: boolean;
-};
-
-export type AuxiliaryHeaderActionState = Pick<
-  AuxiliaryHeaderActionsOptions,
-  "isActive" | "showIdleLabel" | "startDisabled" | "returnDisabled"
->;
 
 export type LiveSessionHeaderPropsInput = {
   taskTitle: string;
@@ -81,12 +64,14 @@ export function createWorkspaceExplorerAction({
 
 export type MessageCollapseHeaderActionOptions = {
   allMessagesCollapsed: boolean;
+  disabled?: boolean;
   onToggle: () => void;
   keyboardShortcuts?: KeyboardShortcutSettings;
 };
 
 export function createMessageCollapseHeaderAction({
   allMessagesCollapsed,
+  disabled = false,
   onToggle,
   keyboardShortcuts,
 }: MessageCollapseHeaderActionOptions) {
@@ -100,6 +85,7 @@ export function createMessageCollapseHeaderAction({
       className="drawer-toggle compact secondary"
       type="button"
       onClick={onToggle}
+      disabled={disabled}
       aria-label={accessibleLabel}
       title={appendShortcutLabel(
         accessibleLabel,
@@ -114,12 +100,8 @@ export function createMessageCollapseHeaderAction({
 }
 
 export function createAuxiliaryHeaderActions({
-  isActive,
-  showIdleLabel = false,
   startDisabled = false,
-  returnDisabled = false,
   onStart,
-  onReturnToMain,
 }: AuxiliaryHeaderActionsOptions) {
   return (
     <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
@@ -133,15 +115,6 @@ export function createAuxiliaryHeaderActions({
       </button>
     </div>
   );
-}
-
-export function resolveAuxiliaryHeaderActionState(input: AuxiliaryHeaderActionStateInput): AuxiliaryHeaderActionState {
-  return {
-    isActive: input.isActive,
-    showIdleLabel: input.showIdleLabel,
-    startDisabled: input.isActionPending || input.isStartBlocked,
-    returnDisabled: input.isActionPending || input.activeRunState === "running",
-  };
 }
 
 export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput): SessionHeaderProps {

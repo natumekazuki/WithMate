@@ -13,6 +13,8 @@ import {
   type SetStateAction,
 } from "react";
 
+import { MIN_AUXILIARY_WIDTH_RATIO, clampAuxiliaryWidthRatio } from "./use-auxiliary-workspace.js";
+
 import type { MessageViewMode } from "../MessageRichText.js";
 import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
 import { CloseButton } from "../close-button.js";
@@ -24,6 +26,8 @@ import {
   SESSION_LEFT_PANE_ID,
   SessionActionDockCompactRow,
   SessionChatScreen,
+  SessionContextPane,
+  SessionPaneErrorBoundary,
   SessionComposerExpanded,
   SessionHeader,
   SessionHeaderHandle,
@@ -32,6 +36,7 @@ import {
   type SessionComposerExpandedProps,
   type SessionHeaderProps,
   type SessionMessageColumnProps,
+  type SessionContextPaneProps,
   type SessionSelectOption,
   type SessionSkillItem,
 } from "../session-components.js";
@@ -75,6 +80,7 @@ export type ChatErrorNotice = {
 export type ChatWindowProps = Omit<
   ChatScreenProps,
   "header" | "messageColumn" | "actionDock" | "isHeaderVisible" | "supportingSurface" | "errorSurface"
+  | "auxiliaryMessageColumn" | "auxiliarySplitter" | "isAuxiliaryVisible" | "auxiliaryWidthRatio" | "concurrentTarget"
 > & {
   isHeaderExpanded: boolean;
   headerProps: SessionHeaderProps;
@@ -86,13 +92,9 @@ export type ChatWindowProps = Omit<
   additionalDirectoryListProps?: ChatAdditionalDirectoryListProps;
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
+  rightPaneProps?: SessionContextPaneProps;
   mainContent?: ChatScreenProps["mainContent"];
   concurrentChats?: ConcurrentChatWindowProps;
-  auxiliaryMessageColumn?: ChatScreenProps["auxiliaryMessageColumn"];
-  auxiliarySplitter?: ChatScreenProps["auxiliarySplitter"];
-  isAuxiliaryVisible?: ChatScreenProps["isAuxiliaryVisible"];
-  auxiliaryWidthRatio?: ChatScreenProps["auxiliaryWidthRatio"];
-  concurrentTarget?: ChatScreenProps["concurrentTarget"];
 };
 
 export type ConcurrentChatWindowProps = {
@@ -101,6 +103,8 @@ export type ConcurrentChatWindowProps = {
   mainSession?: ConversationColumnSession | null;
   auxiliarySession?: ConversationColumnSession | null;
   api?: ConversationMessageColumnApi;
+  mainLiveRun?: import("../runtime-state.js").LiveSessionRunState | null;
+  auxiliaryLiveRun?: import("../runtime-state.js").LiveSessionRunState | null;
   selectedAuxiliaryId: string | null;
   auxiliaryItems: readonly SessionSwitcherOption[];
   target: "main" | "auxiliary";
@@ -112,12 +116,11 @@ export type ConcurrentChatWindowProps = {
   onCollapse: () => void;
   onExpand: () => void;
   onWidthRatioChange: (ratio: number) => void;
-  auxiliarySplitter?: ReactNode;
   loading?: boolean;
   error?: string | null;
 };
 
-const COLLAPSED_AUXILIARY_WIDTH_RATIO = 0.05;
+const COLLAPSED_AUXILIARY_WIDTH_RATIO = MIN_AUXILIARY_WIDTH_RATIO;
 
 export function ConcurrentChatSplitter({
   isExpanded,
@@ -149,7 +152,7 @@ export function ConcurrentChatSplitter({
         onExpand();
         start.isExpanded = true;
       }
-      onWidthRatioChange(Math.min(0.8, Math.max(0.05, start.widthRatio - delta / start.width)));
+      onWidthRatioChange(clampAuxiliaryWidthRatio(start.widthRatio - delta / start.width));
     };
     const handleUp = () => {
       startRef.current = null;
@@ -454,11 +457,6 @@ export function ChatWindow({
   additionalDirectoryListProps,
   skillPickerProps,
   compactActionDockProps,
-  auxiliaryMessageColumn,
-  auxiliarySplitter,
-  isAuxiliaryVisible,
-  auxiliaryWidthRatio,
-  concurrentTarget,
   concurrentChats,
   ...screenProps
 }: ChatWindowProps) {
@@ -539,25 +537,38 @@ export function ChatWindow({
       composerProps.onSendOrCancel();
     }
     : composerProps.onSendOrCancel;
-  const resolvedHeaderProps = concurrentChats && targetColumnControls
-    && targetColumnControls.messageCollapseTargetKeys.length > 0
+  const resolvedHeaderProps = concurrentChats
     ? {
       ...headerProps,
       actions: (
         <>
-          {headerProps.actions}
           {createMessageCollapseHeaderAction({
-            allMessagesCollapsed: targetColumnControls.allMessagesCollapsed,
-            onToggle: targetColumnControls.onToggleAllMessageCollapse,
+            allMessagesCollapsed: targetColumnControls?.allMessagesCollapsed ?? false,
+            disabled: !targetColumnControls?.messageCollapseTargetKeys.length,
+            onToggle: () => targetColumnControls?.onToggleAllMessageCollapse(),
           })}
+          {headerProps.actions}
         </>
       ),
     }
     : headerProps;
 
+  const resolvedRightPaneProps = concurrentChats && screenProps.rightPaneProps
+    ? {
+      ...screenProps.rightPaneProps,
+      messageNavigatorEntries: targetColumnControls?.messageNavigatorEntries ?? screenProps.rightPaneProps.messageNavigatorEntries,
+      onJumpToMessage: targetColumnControls?.onJumpToMessage ?? screenProps.rightPaneProps.onJumpToMessage,
+    }
+    : screenProps.rightPaneProps;
+
   return (
     <SessionChatScreen
       {...screenProps}
+      rightPane={resolvedRightPaneProps ? (
+        <SessionPaneErrorBoundary>
+          <SessionContextPane {...resolvedRightPaneProps} />
+        </SessionPaneErrorBoundary>
+      ) : screenProps.rightPane}
       header={<SessionHeader {...resolvedHeaderProps} />}
       isHeaderVisible={isHeaderExpanded}
       isActionDockExpanded={isActionDockExpanded}
@@ -615,6 +626,7 @@ export function ChatWindow({
               }}
               enabled={concurrentChats.isExpanded || concurrentChats.target === "main"}
               api={concurrentChats.api}
+              liveRun={concurrentChats.mainLiveRun}
               stateCache={conversationStateCacheRef.current}
               onColumnControls={handleMainColumnControls}
             />
@@ -666,6 +678,7 @@ export function ChatWindow({
                   }}
                   enabled={concurrentChats.isExpanded || concurrentChats.target === "auxiliary"}
                   api={concurrentChats.api}
+                  liveRun={concurrentChats.auxiliaryLiveRun}
                   stateCache={conversationStateCacheRef.current}
                   onColumnControls={handleAuxiliaryColumnControls}
                 />
@@ -678,7 +691,7 @@ export function ChatWindow({
             )}
           </div>
         </>
-      ) : auxiliaryMessageColumn}
+      ) : null}
       auxiliarySplitter={concurrentChats ? (
         <ConcurrentChatSplitter
           isExpanded={concurrentChats.isExpanded}
@@ -687,12 +700,12 @@ export function ChatWindow({
           onExpand={concurrentChats.onExpand}
           onWidthRatioChange={concurrentChats.onWidthRatioChange}
         />
-      ) : auxiliarySplitter}
-      isAuxiliaryVisible={concurrentChats ? true : isAuxiliaryVisible}
+      ) : null}
+      isAuxiliaryVisible={Boolean(concurrentChats)}
       auxiliaryWidthRatio={concurrentChats
         ? (concurrentChats.isExpanded ? concurrentChats.widthRatio : COLLAPSED_AUXILIARY_WIDTH_RATIO)
-        : auxiliaryWidthRatio}
-      concurrentTarget={concurrentChats?.target ?? concurrentTarget}
+        : undefined}
+      concurrentTarget={concurrentChats?.target}
       actionDock={(
           <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
           <div

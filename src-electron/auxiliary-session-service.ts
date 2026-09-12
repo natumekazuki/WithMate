@@ -306,7 +306,6 @@ export class AuxiliarySessionService {
     if (!auxiliary) {
       return null;
     }
-    this.assertCharacterSnapshotValid(auxiliary);
 
     return await this.toRuntimeSession(auxiliary);
   }
@@ -319,7 +318,6 @@ export class AuxiliarySessionService {
     if (!current) {
       throw new Error("Auxiliary Session が見つからないよ。");
     }
-    this.assertCharacterSnapshotValid(current);
     return this.deps.getStorage().upsertAuxiliarySession({
       ...current,
       status: "active",
@@ -352,7 +350,6 @@ export class AuxiliarySessionService {
     if (!current) {
       throw new Error("Auxiliary Session が見つからないよ。");
     }
-    this.assertCharacterSnapshotValid(current);
     if (current.runState === "running") {
       throw new Error("実行中の Auxiliary Session は更新できないよ。");
     }

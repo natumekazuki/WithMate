@@ -51,8 +51,7 @@ test("createAuxiliaryHeaderActions は active 時も新規追加を呼ぶ", asyn
   const calls: string[] = [];
   try {
     await act(async () => root.render(createAuxiliaryHeaderActions({
-      isActive: true, returnDisabled: true,
-      onStart: () => calls.push("start"), onReturnToMain: () => calls.push("return"),
+      onStart: () => calls.push("start"),
     })));
     const button = [...container.querySelectorAll("button")].find((entry) => entry.textContent === "New Auxiliary");
     assert.ok(button);
@@ -1067,6 +1066,119 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
 
 // @test-value v2
 // kind = "contract"
+// claim = "Concurrent ChatのCollapseは折りたたみ対象がない間はdisabledで、対象messageが追加されるとenabledになり、クリックで全対象を縮小する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: message collapse" }
+// fault = "対象messageがない状態でCollapseを操作できる、対象追加後もdisabledのままになる、またはクリックしても対象messageが縮小されない"
+// observable = "Collapse buttonのdisabled状態、New Auxiliaryとの順序、click後のmessage card縮小状態とExpand label"
+// observation_boundary = "component-behavior"
+// scope = "ChatWindow concurrent message collapse action"
+// lifecycle = "permanent"
+// impact = "利用可能な操作だけを有効化し、Main/Auxiliaryの表示内容をActionDockから一貫して操作できる"
+// distinction = "静的render確認では列側の非同期control projectionとclick後のmessage縮小状態を同時に確認できない"
+// @end-test-value
+test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切り替え、クリックで縮小する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const previousResizeObserver = globalThis.ResizeObserver;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", { configurable: true, get: () => 600 });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => 800 });
+  class TestResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { configurable: true, value() {} });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+  let root: Root | null = null;
+  const props = createChatWindowProps({ messages: [] });
+  props.headerProps.actions = createAuxiliaryHeaderActions({ onStart: noop });
+  const buildConcurrentChats = (messages: ChatWindowProps["messageColumnProps"]["messages"]) => ({
+    mainSession: { id: "main", messages },
+    auxiliarySession: null,
+    main: { ...props.messageColumnProps, messages },
+    auxiliary: null,
+    selectedAuxiliaryId: null,
+    auxiliaryItems: [],
+    target: "main" as const,
+    isExpanded: true,
+    widthRatio: 0.45,
+    onSelectAuxiliary() {},
+    onTargetChange() {},
+    onCollapse() {},
+    onExpand() {},
+    onWidthRatioChange() {},
+  });
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(ChatWindow, {
+        ...props,
+        concurrentChats: buildConcurrentChats([]),
+      }));
+    });
+    const container = dom.window.document.getElementById("root") as HTMLElement;
+    let collapseButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Collapse");
+    assert.ok(collapseButton);
+    assert.equal(collapseButton.disabled, true);
+    const newAuxiliaryButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "New Auxiliary");
+    assert.ok(newAuxiliaryButton);
+    assert.ok(collapseButton.compareDocumentPosition(newAuxiliaryButton) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+
+    const messages = [{ role: "assistant" as const, text: "完了したmessage" }];
+    await act(async () => {
+      root?.render(React.createElement(ChatWindow, {
+        ...props,
+        concurrentChats: buildConcurrentChats(messages),
+      }));
+    });
+    collapseButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Collapse");
+    assert.ok(collapseButton);
+    assert.equal(collapseButton.disabled, false);
+
+    assert.ok(container.querySelector(".message-card.assistant"));
+    await act(async () => collapseButton?.click());
+    assert.ok(container.querySelector(".message-card.assistant.is-collapsed .message-collapsed-preview"));
+    const expandedButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Expand");
+    assert.ok(expandedButton);
+    assert.equal(expandedButton.disabled, false);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      previousActEnvironment;
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Concurrent chat shell は折りたたみ後もAuxiliaryを最小幅で表示し、splitterの再展開導線を残す"
 // oracle = { type = "contract", ref = "issue-710-collapsed-auxiliary-visibility" }
 // fault = "Auxiliaryを閉じると列と再表示導線が消え、ActionDockの対象切替なしでは戻せない"
@@ -1466,7 +1578,7 @@ test("ConcurrentChatSplitter は折りたたみ中の drag で展開を開始す
 // @test-value v2
 // kind = "contract"
 // claim = "共通switcherは中央triggerから検索一覧を開き、検索中の矢印・IME入力を壊さず、候補確定・outside click・Escape後のfocus復帰を扱う"
-// oracle = { type = "contract", ref = "issue-710-switcher" }
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
 // fault = "検索中のArrowDownで候補を飛ばす、IMEのEscapeで一覧を閉じる、候補を選べない、または閉じた後にtriggerへfocusが戻らない"
 // observable = "候補一覧、選択callback、popoverの表示状態、document.activeElement"
 // observation_boundary = "component-behavior"
@@ -1521,9 +1633,8 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
       valueSetter?.call(search, "beta");
-      (search as HTMLInputElement & { _valueTracker?: { setValue(value: string): void } })._valueTracker?.setValue("");
       search.dispatchEvent(new dom.window.InputEvent("input", { bubbles: true, inputType: "insertText", data: "beta" }));
-      search.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
     });
     const filteredOptions = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
     assert.equal(filteredOptions.length, 1);

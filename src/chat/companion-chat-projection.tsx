@@ -24,7 +24,6 @@ import { ChatSessionModals } from "./chat-session-modals.js";
 import {
   buildLiveSessionChatBodyProps,
   buildLiveSessionComposerDockProps,
-  resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
 import type { ChatWindowProps, ConcurrentChatWindowProps } from "./chat-window.js";
 import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js";
@@ -270,7 +269,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     buildLiveSessionCommonComposerDockInput({
       isRunning: input.isSelectedSessionRunning,
       ...COMPANION_PENDING_RUN_INDICATOR_TEXT,
-      modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       composerBlocked: input.composerBlocked,
       canSelectCustomAgent: input.session.provider === "copilot",
       isAgentPickerOpen: input.isAgentPickerOpen,

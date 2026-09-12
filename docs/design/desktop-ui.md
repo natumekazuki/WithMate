@@ -197,7 +197,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - 上下 splitter を操作した後は full-width Header / ActionDock を優先し、左右 splitter を操作すると左右 pane 優先へ戻す
   - ActionDock を expanded から閉じた時は、優先度を左右 pane 優先へ戻す
   - File Explorer と Context pane は左右を同時には表示しない
-  - Header、ActionDock、左右 pane は対応する splitter の click で切り替える。左右 pane と ActionDock は展開中の drag でサイズを調整する
+  - Header、ActionDock、左右 pane は対応する splitter の click で切り替える。左右 pane と ActionDock は最小化中も drag でき、表示中のサイズから移動量に応じて連続的に広げる。最小化からの drag で既定の最小サイズへ跳ねない
   - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
   - Header、ActionDock、side pane、layout priority の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
   - title 編集などの強制表示は保存済み preference を変更しない

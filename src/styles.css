@@ -201,16 +201,16 @@ button:disabled {
 }
 
 .session-chat-layout.layout-priority-side-pane.is-left-pane-visible {
-  --session-left-pane-track-width: max(260px, var(--session-file-explorer-width, 320px));
+  --session-left-pane-track-width: var(--session-file-explorer-width, 320px);
 }
 
 .session-chat-layout.layout-priority-side-pane.is-right-pane-visible {
-  --session-right-pane-track-width: max(360px, var(--session-context-rail-width, 420px));
+  --session-right-pane-track-width: var(--session-context-rail-width, 420px);
 }
 
 .session-chat-layout.layout-priority-side-pane.is-left-pane-visible.is-right-pane-visible {
-  --session-left-pane-track-width: max(260px, var(--session-file-explorer-width, 320px));
-  --session-right-pane-track-width: max(360px, var(--session-context-rail-width, 420px));
+  --session-left-pane-track-width: var(--session-file-explorer-width, 320px);
+  --session-right-pane-track-width: var(--session-context-rail-width, 420px);
 }
 
 .session-chat-layout.layout-priority-dock {
@@ -229,16 +229,16 @@ button:disabled {
 }
 
 .session-chat-layout.layout-priority-dock.is-left-pane-visible {
-  --session-left-pane-track-width: max(260px, var(--session-file-explorer-width, 320px));
+  --session-left-pane-track-width: var(--session-file-explorer-width, 320px);
 }
 
 .session-chat-layout.layout-priority-dock.is-right-pane-visible {
-  --session-right-pane-track-width: max(360px, var(--session-context-rail-width, 420px));
+  --session-right-pane-track-width: var(--session-context-rail-width, 420px);
 }
 
 .session-chat-layout.layout-priority-dock.is-left-pane-visible.is-right-pane-visible {
-  --session-left-pane-track-width: max(260px, var(--session-file-explorer-width, 320px));
-  --session-right-pane-track-width: max(360px, var(--session-context-rail-width, 420px));
+  --session-left-pane-track-width: var(--session-file-explorer-width, 320px);
+  --session-right-pane-track-width: var(--session-context-rail-width, 420px);
 }
 
 .session-header-dock-slot {
@@ -4426,9 +4426,8 @@ button:disabled {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: rgba(5, 8, 14, 0.74);
+  background: rgba(5, 8, 14, 0.22);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.42);
-  backdrop-filter: brightness(0.72) saturate(0.62);
   pointer-events: none;
 }
 
@@ -9878,7 +9877,7 @@ button:disabled {
 
 .message-list-jump-bottom-button {
   position: absolute;
-  right: 16px;
+  right: 32px;
   bottom: 16px;
   z-index: 4;
   display: inline-flex;

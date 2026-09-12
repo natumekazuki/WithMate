@@ -25,10 +25,6 @@ type ChatMessageColumnProps = ChatWindowProps["messageColumnProps"];
 type ChatComposerProps = ChatWindowProps["composerProps"];
 type ChatCompactActionDockProps = ChatWindowProps["compactActionDockProps"];
 
-export function resolveAuxiliaryModeLabel(isAuxiliaryMode?: boolean): string | undefined {
-  return isAuxiliaryMode ? "Auxiliary" : undefined;
-}
-
 type StaticChatCharacterInput = {
   id: string;
   name: string;
@@ -325,7 +321,6 @@ export function buildLiveSessionComposerDockProps(
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
-      modeLabel: input.modeLabel,
       chatNotice: input.chatNotice,
       showJumpToBottom,
       cancelButtonTitle: input.sendButtonTitle,
