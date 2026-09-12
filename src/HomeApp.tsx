@@ -99,6 +99,10 @@ import {
   buildSessionWindowRestoreFeedback,
   selectPendingSessionWindowRestoreIds,
 } from "./home/home-session-window-restore.js";
+import type {
+  SessionMonitorContextMenuPoint,
+  SessionMonitorEntryKind,
+} from "./withmate-window-types.js";
 import {
   createHomeActiveAuxiliarySessionRefresher,
   resolveHomeActiveAuxiliarySessionsState,
@@ -887,6 +891,20 @@ export default function HomeApp() {
     ...settingsCommandHandlers,
   };
 
+  const showSessionMonitorContextMenu = (
+    kind: SessionMonitorEntryKind,
+    sessionId: string,
+    point: SessionMonitorContextMenuPoint,
+  ) => {
+    const api = getWithMateApi();
+    if (!api) {
+      return;
+    }
+    void api.showSessionMonitorContextMenu({ kind, sessionId, point }).catch((error) => {
+      console.error(error);
+    });
+  };
+
   const { settingsContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
     settingsContent: buildHomeSettingsContentProps(baseSettingsContentProps),
     mateSetupContent: buildHomeMateSetupContentProps({
@@ -908,6 +926,7 @@ export default function HomeApp() {
       nonRunningEntries: nonRunningMonitorEntries,
       onOpenSession: (sessionId) => void openSessionWindow(sessionId),
       onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+      onShowContextMenu: showSessionMonitorContextMenu,
     }),
   });
 
@@ -947,6 +966,7 @@ export default function HomeApp() {
         onEditCharacter: (characterId) => void openCharacterEditorWindow(characterId),
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+        onShowSessionMonitorContextMenu: showSessionMonitorContextMenu,
       },
       canUsePrimaryFeatures,
       sessionWindowRestoreIds: pendingSessionWindowRestoreIds,

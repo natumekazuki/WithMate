@@ -16,6 +16,62 @@ export type OpenSessionWindowIdsPageResult = {
   hasMore: boolean;
 };
 
+export type SessionMonitorEntryKind = "agent" | "companion";
+
+export type SessionMonitorContextMenuPoint = {
+  x: number;
+  y: number;
+};
+
+export type SessionMonitorContextMenuRequest = {
+  kind: SessionMonitorEntryKind;
+  sessionId: string;
+  point: SessionMonitorContextMenuPoint;
+};
+
+export type SessionMonitorContextMenuResult =
+  | { status: "closed" | "dismissed" }
+  | { status: "failed"; message: string };
+
+export function parseSessionMonitorContextMenuRequest(value: unknown): SessionMonitorContextMenuRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Session Monitor context menu request is invalid.");
+  }
+  const candidate = value as Record<string, unknown>;
+  if (!Object.keys(candidate).every((key) => ["kind", "sessionId", "point"].includes(key))) {
+    throw new TypeError("Session Monitor context menu request is invalid.");
+  }
+  const point = candidate.point;
+  if (
+    (candidate.kind !== "agent" && candidate.kind !== "companion")
+    || typeof candidate.sessionId !== "string"
+    || !candidate.sessionId
+    || !point
+    || typeof point !== "object"
+    || Array.isArray(point)
+  ) {
+    throw new TypeError("Session Monitor context menu request is invalid.");
+  }
+  const pointCandidate = point as Record<string, unknown>;
+  if (
+    !Object.keys(pointCandidate).every((key) => ["x", "y"].includes(key))
+    || !Number.isSafeInteger(pointCandidate.x)
+    || (pointCandidate.x as number) < 0
+    || !Number.isSafeInteger(pointCandidate.y)
+    || (pointCandidate.y as number) < 0
+  ) {
+    throw new TypeError("Session Monitor context menu request is invalid.");
+  }
+  return {
+    kind: candidate.kind as SessionMonitorEntryKind,
+    sessionId: candidate.sessionId as string,
+    point: {
+      x: pointCandidate.x as number,
+      y: pointCandidate.y as number,
+    },
+  };
+}
+
 export function parseOpenSessionWindowIdsPageRequest(value: unknown): { cursor: string | null; limit: number } {
   if (value !== undefined && value !== null && (typeof value !== "object" || Array.isArray(value))) {
     throw new TypeError("open Session Window ID page request が不正です。");

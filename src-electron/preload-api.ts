@@ -95,6 +95,7 @@ import {
   WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
@@ -256,6 +257,9 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
   return {
     openSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_CHANNEL, sessionId);
+    },
+    showSessionMonitorContextMenu(request) {
+      return ipcRenderer.invoke(WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL, request);
     },
     async getSessionWindowRestoreSet() {
       const sessionIds = normalizeSessionWindowRestoreIds(

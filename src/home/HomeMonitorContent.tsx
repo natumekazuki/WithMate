@@ -1,3 +1,9 @@
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+
+import type {
+  SessionMonitorContextMenuPoint,
+  SessionMonitorEntryKind,
+} from "../withmate-window-types.js";
 import type { HomeMonitorEntry } from "./home-session-projection.js";
 import { CharacterAvatar } from "../ui-utils.js";
 
@@ -6,6 +12,11 @@ export type HomeMonitorContentProps = {
   nonRunningEntries: HomeMonitorEntry[];
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  onShowContextMenu: (
+    kind: SessionMonitorEntryKind,
+    sessionId: string,
+    point: SessionMonitorContextMenuPoint,
+  ) => void;
 };
 
 export function HomeMonitorContent({
@@ -13,6 +24,7 @@ export function HomeMonitorContent({
   nonRunningEntries,
   onOpenSession,
   onOpenCompanionReview,
+  onShowContextMenu,
 }: HomeMonitorContentProps) {
   const companionGroupMarkerClassName = (groupId: string): string => {
     let hash = 0;
@@ -20,6 +32,32 @@ export function HomeMonitorContent({
       hash = (hash * 31 + groupId.charCodeAt(index)) >>> 0;
     }
     return `companion-group-${hash % 6}`;
+  };
+
+  const showEntryContextMenu = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    entry: HomeMonitorEntry,
+  ) => {
+    event.preventDefault();
+    onShowContextMenu(entry.kind, entry.session.id, {
+      x: Math.max(0, Math.round(event.clientX)),
+      y: Math.max(0, Math.round(event.clientY)),
+    });
+  };
+
+  const showEntryContextMenuFromKeyboard = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    entry: HomeMonitorEntry,
+  ) => {
+    if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) {
+      return;
+    }
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    onShowContextMenu(entry.kind, entry.session.id, {
+      x: Math.max(0, Math.round(rect.left)),
+      y: Math.max(0, Math.round(rect.bottom)),
+    });
   };
 
   const renderMonitorEntries = (entries: HomeMonitorEntry[]) => {
@@ -35,6 +73,9 @@ export function HomeMonitorContent({
             className={`home-monitor-row companion ${groupClassName}`}
             type="button"
             onClick={() => onOpenCompanionReview(session.id)}
+            onContextMenu={(event) => showEntryContextMenu(event, entry)}
+            onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
+            aria-haspopup="menu"
           >
             <CharacterAvatar
               character={{ name: session.character, iconPath: session.characterIconPath }}
@@ -63,6 +104,9 @@ export function HomeMonitorContent({
           className="home-monitor-row"
           type="button"
           onClick={() => onOpenSession(session.id)}
+          onContextMenu={(event) => showEntryContextMenu(event, entry)}
+          onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
+          aria-haspopup="menu"
         >
           <CharacterAvatar
             character={{ name: session.character, iconPath: session.characterIconPath }}

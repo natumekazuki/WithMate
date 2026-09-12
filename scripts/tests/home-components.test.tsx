@@ -918,6 +918,18 @@ describe("HomeRecentSessionsPanel", () => {
 describe("HomeMonitorContent", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Monitor row はAgentとCompanionの対象情報を表示する"
+  // oracle = { type = "contract", ref = "HomeMonitorContent monitor row contract" }
+  // fault = "context menu用のhandler追加で対象rowの表示を壊す"
+  // observable = "renderされたrowのラベル、mode、status、avatarを含むHTML"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent row rendering"
+  // lifecycle = "permanent"
+  // impact = "Monitorの既存表示を保つ"
+  // distinction = "context menu interaction testとは別に、row projectionの表示契約を検証する"
+  // @end-test-value
   it("Monitor カードはキャラアイコン付きでセッション情報を表示する", () => {
     const entries: HomeMonitorEntry[] = [
       {
@@ -1015,6 +1027,7 @@ describe("HomeMonitorContent", () => {
         nonRunningEntries={[]}
         onOpenSession={noOp}
         onOpenCompanionReview={noOp}
+        onShowContextMenu={noOp}
       />,
     );
 
@@ -1033,6 +1046,155 @@ describe("HomeMonitorContent", () => {
     assert.ok(html.includes(">待機</span>"));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 4);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 4);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Agent/CompanionのMonitor rowは右クリックとContextMenu/Shift+F10を対象entryと座標へ変換し、browser default menuを抑止する"
+  // oracle = { type = "contract", ref = "HomeMonitorContent session monitor context menu contract" }
+  // fault = "Agent/Companionの種別またはkeyboard context menuの分岐が別entryへ送られるか、browserのmenuが抑止されない"
+  // observable = "callbackへ渡されたkind、sessionId、point、およびcontextmenu eventのdefaultPrevented"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent context menu interaction"
+  // lifecycle = "permanent"
+  // impact = "誤ったSession Windowを閉じる操作やbrowser menuとの競合を防ぐ"
+  // distinction = "native menuのselectionやMain IPCのrequest validationとは分離してrendererのentry mappingを検証する"
+  // @end-test-value
+  it("Monitor row は右クリックとkeyboard context menuを対象entryへ渡す", async () => {
+    const previousGlobals = {
+      window: globalThis.window,
+      document: globalThis.document,
+      Node: globalThis.Node,
+      HTMLElement: globalThis.HTMLElement,
+      Event: globalThis.Event,
+      MouseEvent: globalThis.MouseEvent,
+      KeyboardEvent: globalThis.KeyboardEvent,
+      PointerEvent: globalThis.PointerEvent,
+    };
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+      pretendToBeVisual: true,
+    });
+    const container = dom.window.document.getElementById("root") as HTMLElement;
+    const root = createRoot(container);
+    const requests: unknown[] = [];
+    const entry: HomeMonitorEntry = {
+      kind: "agent",
+      session: {
+        id: "session-context-menu",
+        taskTitle: "Context menu task",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        character: "Solo Mate",
+        characterIconPath: "mate.png",
+      },
+      state: { kind: "neutral", label: "待機" },
+    } as HomeMonitorEntry;
+    const companionEntry: HomeMonitorEntry = {
+      kind: "companion",
+      session: {
+        id: "companion-context-menu",
+        groupId: "group-context-menu",
+        taskTitle: "Companion context menu task",
+        character: "Solo Mate",
+        characterIconPath: "mate.png",
+      },
+      state: { kind: "neutral", label: "待機" },
+      groupLabel: "context menu",
+    } as HomeMonitorEntry;
+
+    Object.defineProperties(globalThis, {
+      window: { configurable: true, value: dom.window },
+      document: { configurable: true, value: dom.window.document },
+      Node: { configurable: true, value: dom.window.Node },
+      HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+      Event: { configurable: true, value: dom.window.Event },
+      MouseEvent: { configurable: true, value: dom.window.MouseEvent },
+      KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
+      PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+    });
+
+    try {
+      await act(async () => root.render(
+        <HomeMonitorContent
+          runningEntries={[entry, companionEntry]}
+          nonRunningEntries={[]}
+          onOpenSession={noOp}
+          onOpenCompanionReview={noOp}
+          onShowContextMenu={(kind, sessionId, point) => requests.push({ kind, sessionId, point })}
+        />,
+      ));
+
+      const [row, companionRow] = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-row"));
+      assert.ok(row);
+      assert.ok(companionRow);
+      const contextMenuEvent = new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 24,
+        clientY: 48,
+      });
+      await act(async () => row.dispatchEvent(contextMenuEvent));
+      assert.equal(contextMenuEvent.defaultPrevented, true);
+      assert.deepEqual(requests, [{
+        kind: "agent",
+        sessionId: "session-context-menu",
+        point: { x: 24, y: 48 },
+      }]);
+
+      const companionContextMenuEvent = new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 72,
+        clientY: 96,
+      });
+      await act(async () => companionRow.dispatchEvent(companionContextMenuEvent));
+      assert.equal(companionContextMenuEvent.defaultPrevented, true);
+      assert.deepEqual(requests.at(-1), {
+        kind: "companion",
+        sessionId: "companion-context-menu",
+        point: { x: 72, y: 96 },
+      });
+
+      const contextMenuKeyEvent = new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "ContextMenu",
+      });
+      await act(async () => row.dispatchEvent(contextMenuKeyEvent));
+      assert.equal(contextMenuKeyEvent.defaultPrevented, true);
+      assert.deepEqual(requests.at(-1), {
+        kind: "agent",
+        sessionId: "session-context-menu",
+        point: { x: 0, y: 0 },
+      });
+
+      const shiftF10Event = new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "F10",
+        shiftKey: true,
+      });
+      await act(async () => companionRow.dispatchEvent(shiftF10Event));
+      assert.equal(shiftF10Event.defaultPrevented, true);
+      assert.deepEqual(requests.at(-1), {
+        kind: "companion",
+        sessionId: "companion-context-menu",
+        point: { x: 0, y: 0 },
+      });
+    } finally {
+      await act(async () => root.unmount());
+      dom.window.close();
+      Object.defineProperties(globalThis, {
+        window: { configurable: true, value: previousGlobals.window },
+        document: { configurable: true, value: previousGlobals.document },
+        Node: { configurable: true, value: previousGlobals.Node },
+        HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
+        Event: { configurable: true, value: previousGlobals.Event },
+        MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
+        KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
+        PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+      });
+    }
   });
 });
 
@@ -1071,6 +1233,7 @@ describe("HomeRightPane", () => {
       onEditCharacter={noOp}
       onOpenSession={noOp}
       onOpenCompanionReview={noOp}
+      onShowSessionMonitorContextMenu={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
       sessionWindowRestoreIds={sessionWindowRestoreIds}
       sessionWindowRestorePending={sessionWindowRestorePending}

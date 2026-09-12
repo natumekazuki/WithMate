@@ -163,6 +163,19 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     window.close();
   }
 
+  requestCloseSessionWindow(sessionId: string): void {
+    const window = this.sessionWindows.get(sessionId);
+    if (!window) {
+      return;
+    }
+    if (window.isDestroyed()) {
+      this.releaseWindowClaim(sessionId, window);
+      return;
+    }
+
+    window.close();
+  }
+
   closeAllSessionWindows(): void {
     for (const sessionId of Array.from(this.sessionWindows.keys())) {
       this.closeSessionWindow(sessionId);

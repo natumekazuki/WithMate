@@ -84,6 +84,10 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return this.settingsWindow === window && !window.isDestroyed();
   }
 
+  isSessionMonitorWindow(window: TWindow): boolean {
+    return this.sessionMonitorWindow === window && !window.isDestroyed();
+  }
+
   listHomeWindows(): TWindow[] {
     return [
       this.homeWindow,
@@ -153,6 +157,19 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   getCompanionReviewWindow(sessionId: string): TWindow | null {
     const window = this.companionReviewWindows.get(sessionId) ?? null;
     return window && !window.isDestroyed() ? window : null;
+  }
+
+  closeCompanionReviewWindow(sessionId: string): void {
+    const window = this.companionReviewWindows.get(sessionId) ?? null;
+    if (!window || window.isDestroyed()) {
+      if (window) {
+        this.companionReviewWindows.delete(sessionId);
+        this.deps.onCompanionReviewWindowsChanged();
+      }
+      return;
+    }
+
+    window.close();
   }
 
   async openHomeWindow(): Promise<TWindow> {

@@ -165,6 +165,7 @@ import { SessionFileExplorerService, type SessionFileExplorerContext } from "./s
 import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
 import { SessionFileObjectCopyService } from "./session-file-object-copy-service.js";
 import { SessionFileTreeContextMenuService } from "./session-file-tree-context-menu-service.js";
+import { SessionMonitorContextMenuService } from "./session-monitor-context-menu-service.js";
 import { MarkdownLinkContextMenuService } from "./markdown-link-context-menu-service.js";
 import { WindowsFileDropClipboardWriter } from "./windows-file-drop-clipboard-writer.js";
 import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
@@ -347,6 +348,11 @@ const sessionFileTreeContextMenuService = new SessionFileTreeContextMenuService(
   createAuthorizationBoundary: createSessionFileExplorerService,
   writeText: (targetPath) => clipboard.writeText(targetPath),
   copyFileObject: (resource) => sessionFileObjectCopyService.copyTreeResource(resource),
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+});
+const sessionMonitorContextMenuService = new SessionMonitorContextMenuService({
+  requestCloseSessionWindow: (sessionId) => requireMainWindowFacade().requestCloseSessionWindow(sessionId),
+  closeCompanionReviewWindow: (sessionId) => requireMainWindowFacade().closeCompanionReviewWindow(sessionId),
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
 const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({
@@ -1519,12 +1525,18 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveCompanionReviewWindow: (sessionId) =>
                   requireMainWindowFacade().getCompanionReviewWindow(sessionId),
                 openSessionWindow,
+                showSessionMonitorContextMenu: (event, request) =>
+                  sessionMonitorContextMenuService.showContextMenu(
+                    BrowserWindow.fromWebContents(event.sender) ?? null,
+                    request,
+                  ),
                 getSessionWindowRestoreSet: () => requireSessionWindowRestoreService().getSnapshot(),
                 restoreSessionWindows: () => requireSessionWindowRestoreService().restoreSnapshot(),
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
                 openMemoryV6ReviewWindow,
+                isSessionMonitorWindow: (window) => requireMainWindowFacade().isSessionMonitorWindow(window),
                 isSettingsWindow: (window) => requireMainWindowFacade().isSettingsWindow(window),
                 isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
                 openCharacterEditorWindow,

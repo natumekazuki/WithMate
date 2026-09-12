@@ -129,6 +129,8 @@ import type {
   OpenPathResult,
   OpenSessionWindowIdsPageRequest,
   OpenSessionWindowIdsPageResult,
+  SessionMonitorContextMenuRequest,
+  SessionMonitorContextMenuResult,
 } from "../src/withmate-window-types.js";
 import type {
   CreateMateInput,
@@ -155,12 +157,17 @@ export type MainIpcWindowDepsArgs = {
   resolveSessionWindow(sessionId: string): MaybeWindow;
   resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<BrowserWindow>;
+  showSessionMonitorContextMenu(
+    event: IpcMainInvokeEvent,
+    request: SessionMonitorContextMenuRequest,
+  ): Awaitable<SessionMonitorContextMenuResult>;
   getSessionWindowRestoreSet(): Promise<string[]>;
   restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
   openHomeWindow(): Promise<BrowserWindow>;
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
   openMemoryV6ReviewWindow(): Promise<BrowserWindow>;
+  isSessionMonitorWindow(window: BrowserWindow): boolean;
   isSettingsWindow(window: BrowserWindow): boolean;
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
@@ -450,6 +457,7 @@ export function createMainIpcRegistrationDeps(
     openSessionWindow: async (sessionId) => {
       await args.window.openSessionWindow(sessionId);
     },
+    showSessionMonitorContextMenu: args.window.showSessionMonitorContextMenu,
     getSessionWindowRestoreSet: () => args.window.getSessionWindowRestoreSet(),
     restoreSessionWindows: () => args.window.restoreSessionWindows(),
     openHomeWindow: async () => {
@@ -464,6 +472,7 @@ export function createMainIpcRegistrationDeps(
     openMemoryV6ReviewWindow: async () => {
       await args.window.openMemoryV6ReviewWindow();
     },
+    isSessionMonitorWindow: args.window.isSessionMonitorWindow,
     isSettingsWindow: args.window.isSettingsWindow,
     isMemoryV6ReviewWindow: args.window.isMemoryV6ReviewWindow,
     openCharacterEditorWindow: async (characterId) => {

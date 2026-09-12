@@ -258,6 +258,7 @@ import {
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL,
   WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
   WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
@@ -307,6 +308,7 @@ import {
 } from "../src/withmate-ipc-channels.js";
 import {
   parseImageFilePickerPurpose,
+  parseSessionMonitorContextMenuRequest,
   parseOpenSessionWindowIdsPageRequest,
   type ImageFilePickerPurpose,
   type OpenPathOptions,
@@ -317,6 +319,8 @@ import {
   type OpenSessionWindowIdsPageResult,
   type ResetAppDatabaseRequest,
   type SavePastedSessionFileRequest,
+  type SessionMonitorContextMenuRequest,
+  type SessionMonitorContextMenuResult,
 } from "../src/withmate-window-types.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
@@ -338,12 +342,17 @@ export type MainIpcRegistrationDeps = {
   resolveSessionWindow(sessionId: string): MaybeWindow;
   resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<void>;
+  showSessionMonitorContextMenu(
+    event: IpcSenderEvent,
+    request: SessionMonitorContextMenuRequest,
+  ): Awaitable<SessionMonitorContextMenuResult>;
   getSessionWindowRestoreSet(): Promise<string[]>;
   restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openMemoryV6ReviewWindow(): Promise<void>;
+  isSessionMonitorWindow(window: BrowserWindow): boolean;
   isSettingsWindow(window: BrowserWindow): boolean;
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
@@ -568,12 +577,14 @@ type MainIpcWindowDeps = Pick<
   | "resolveHomeWindow"
   | "resolveSessionWindow"
   | "openSessionWindow"
+  | "showSessionMonitorContextMenu"
   | "getSessionWindowRestoreSet"
   | "restoreSessionWindows"
   | "openHomeWindow"
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
   | "openMemoryV6ReviewWindow"
+  | "isSessionMonitorWindow"
   | "openCharacterEditorWindow"
   | "openDiffWindow"
   | "isFilePreviewWindow"
@@ -838,6 +849,17 @@ function assertHomeWindowSender(
     return;
   }
   throw new Error("Workspace validation IPC is only available from the Home window.");
+}
+
+function assertSessionMonitorContextMenuSender(
+  event: IpcMainInvokeEvent,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveHomeWindow" | "isSessionMonitorWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (window && (deps.resolveHomeWindow() === window || deps.isSessionMonitorWindow(window))) {
+    return;
+  }
+  throw new Error("Session Monitor context menu IPC is only available from Home or Session Monitor window.");
 }
 
 function assertSessionDeleteSender(
@@ -1347,6 +1369,11 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
       return;
     }
     await deps.openSessionWindow(sessionId);
+  });
+  ipcMain.handle(WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL, (event, input: unknown) => {
+    assertSessionMonitorContextMenuSender(event, deps);
+    const request = parseSessionMonitorContextMenuRequest(input);
+    return deps.showSessionMonitorContextMenu(event, request);
   });
   ipcMain.handle(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL, async (event) => {
     assertHomeWindowSender(event, deps);
