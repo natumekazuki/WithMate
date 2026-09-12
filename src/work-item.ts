@@ -269,8 +269,7 @@ export type WorkItemAggregationDecision = Readonly<{
   decidedAt: string;
 }>;
 
-export const WORK_ITEM_AGGREGATION_CORRECTIONS = ["revise", "withdraw", "replace"] as const;
-export type WorkItemAggregationCorrection = (typeof WORK_ITEM_AGGREGATION_CORRECTIONS)[number];
+export type WorkItemAggregationCorrection = "revise" | "withdraw" | "replace";
 
 export type WorkItemAggregationListItem = Readonly<{
   depth?: number;

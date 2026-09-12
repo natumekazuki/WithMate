@@ -503,6 +503,82 @@ describe("Work Item result and aggregation correction", () => {
 
   // @test-value v2
   // kind = "invariant"
+  // claim = "same-root moveとreopenは複数経路で共有する確定済みancestorを一操作につき一度だけstale化し、所属event以外のaggregate revisionを重複生成しない"
+  // fault = "old/new parentまたはsource/rootから同じancestorへ到達するたびにstale event、reason、aggregate revisionを重複追加する"
+  // observable = "old/new/shared/root aggregation revisions、操作後event kinds、stale reasons、idempotency replay、storage再open後projection"
+  // observation_boundary = "component-behavior"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/03-result-and-aggregation-correction.md" }
+  // scope = "same-root move/reopen stale ancestor deduplication"
+  // lifecycle = "permanent"
+  // distinction = "共有ancestorを持つterminal sibling間moveと、source/root・destination ancestor経路がRootで重なるreopenを同じ実DBで前後比較する"
+  // @end-test-value
+  it("move/reopenは共有ancestorを一度だけstale化する", () => {
+    const root = createRoot("deduplicated-stale-root");
+    const shared = create(null, "root", "task", "deduplicated-stale-shared");
+    const oldParent = create(shared.id, "task", "task-2", "deduplicated-stale-old");
+    const newParent = settle(create(shared.id, "task", "task-2", "deduplicated-stale-new"));
+    const child = settle(create(oldParent.id, "task-2", "executor", "deduplicated-stale-child"));
+    storage.decideAggregation({ parentWorkItemId: oldParent.id, childWorkItemId: child.id, actorSessionId: "task-2", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(oldParent.id).aggregateRevision, idempotencyKey: "deduplicated-stale-old-accept", requestFingerprint: "deduplicated-stale-old-accept-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+    const finalizedOldParent = settle(oldParent, "deduplicated-stale-old-result");
+    storage.decideAggregation({ parentWorkItemId: shared.id, childWorkItemId: finalizedOldParent.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(shared.id).aggregateRevision, idempotencyKey: "deduplicated-stale-shared-old", requestFingerprint: "deduplicated-stale-shared-old-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+    storage.decideAggregation({ parentWorkItemId: shared.id, childWorkItemId: newParent.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(shared.id).aggregateRevision, idempotencyKey: "deduplicated-stale-shared-new", requestFingerprint: "deduplicated-stale-shared-new-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+    settle(shared, "deduplicated-stale-shared-result");
+    settle(root, "deduplicated-stale-root-result");
+
+    type AggregateSnapshot = Readonly<{ revision: number; stale: boolean; reasons: readonly string[] }>;
+    const aggregateSnapshot = (workItemId: string): AggregateSnapshot => {
+      const row = sql<{ aggregate_revision: number; stale: number; stale_reasons_json: string }>("SELECT aggregate_revision,stale,stale_reasons_json FROM work_item_aggregations_v6 WHERE parent_work_item_id=?", workItemId)[0];
+      return row ? { revision: row.aggregate_revision, stale: row.stale === 1, reasons: JSON.parse(row.stale_reasons_json) as string[] } : { revision: 0, stale: false, reasons: [] };
+    };
+    const affectedIds = [oldParent.id, newParent.id, shared.id, root.id];
+    const snapshots = () => Object.fromEntries(affectedIds.map((id) => [id, aggregateSnapshot(id)]));
+    const eventKindsSince = (workItemId: string, revision: number) => sql<{ event_kind: string }>("SELECT event_kind FROM work_item_aggregation_events_v6 WHERE parent_work_item_id=? AND aggregate_revision>? ORDER BY aggregate_revision", workItemId, revision).map(({ event_kind }) => event_kind);
+
+    const beforeMove = snapshots();
+    const moveInput = { workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: "deduplicated-stale-move", requestFingerprint: "deduplicated-stale-move-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move"), destinationParentWorkItemId: newParent.id, expectedAggregateRevision: beforeMove[oldParent.id].revision, expectedDestinationAggregateRevision: beforeMove[newParent.id].revision };
+    const moved = storage.move(moveInput);
+    const afterMove = snapshots();
+    assert.deepEqual(eventKindsSince(oldParent.id, beforeMove[oldParent.id].revision), ["decision_superseded", "child_removed", "stale"]);
+    assert.deepEqual(eventKindsSince(newParent.id, beforeMove[newParent.id].revision), ["child_adopted", "stale"]);
+    assert.deepEqual(eventKindsSince(shared.id, beforeMove[shared.id].revision), ["stale"]);
+    assert.deepEqual(eventKindsSince(root.id, beforeMove[root.id].revision), ["stale"]);
+    assert.equal(afterMove[oldParent.id].revision, beforeMove[oldParent.id].revision + 3);
+    assert.equal(afterMove[newParent.id].revision, beforeMove[newParent.id].revision + 2);
+    assert.equal(afterMove[shared.id].revision, beforeMove[shared.id].revision + 1);
+    assert.equal(afterMove[root.id].revision, beforeMove[root.id].revision + 1);
+    for (const id of affectedIds) {
+      assert.equal(afterMove[id].stale, true);
+      assert.deepEqual(afterMove[id].reasons, [...beforeMove[id].reasons, "work.move"]);
+    }
+    assert.deepEqual(storage.move(moveInput), moved);
+    assert.deepEqual(snapshots(), afterMove);
+
+    const reopenInput = { workItemId: moved.id, expectedRevision: moved.revision, principalSessionId: "root", idempotencyKey: "deduplicated-stale-reopen", requestFingerprint: "deduplicated-stale-reopen-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reopen"), targetSessionId: moved.targetSessionId, goal: "reopened", scope: moved.scope, completionCriteria: moved.completionCriteria, authority: moved.authority, sourceIdentity: moved.sourceIdentity, expectedContainerRevision: Number(sql<{ resource_revision: number }>("SELECT resource_revision FROM sessions_v6 WHERE id=?", moved.targetSessionId)[0].resource_revision) };
+    const beforeReopen = snapshots();
+    const reopened = storage.reopen(reopenInput);
+    const afterReopen = snapshots();
+    assert.deepEqual(eventKindsSince(oldParent.id, beforeReopen[oldParent.id].revision), []);
+    assert.deepEqual(eventKindsSince(newParent.id, beforeReopen[newParent.id].revision), ["child_added", "stale"]);
+    assert.deepEqual(eventKindsSince(shared.id, beforeReopen[shared.id].revision), ["stale"]);
+    assert.deepEqual(eventKindsSince(root.id, beforeReopen[root.id].revision), ["stale"]);
+    assert.equal(afterReopen[newParent.id].revision, beforeReopen[newParent.id].revision + 2);
+    assert.equal(afterReopen[shared.id].revision, beforeReopen[shared.id].revision + 1);
+    assert.equal(afterReopen[root.id].revision, beforeReopen[root.id].revision + 1);
+    for (const id of [newParent.id, shared.id, root.id]) {
+      assert.equal(afterReopen[id].stale, true);
+      assert.deepEqual(afterReopen[id].reasons, [...beforeReopen[id].reasons, "work.reopen"]);
+    }
+    assert.deepEqual(afterReopen[oldParent.id], beforeReopen[oldParent.id]);
+    assert.deepEqual(storage.reopen(reopenInput), reopened);
+    assert.deepEqual(snapshots(), afterReopen);
+    storage.close();
+    storage = new WorkItemStorageV6(dbPath);
+    assert.deepEqual(snapshots(), afterReopen);
+    assert.equal(storage.get(reopened.id)?.predecessorWorkItemId, moved.id);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "flatten readはdepth、cursor、field projectionをboundedに適用し、孫のdecision mutation authorityを付与しない"
   // fault = "深さ制限を越えて全descendantを返す、full resultを無制限hydrateする、root read proofからchild correctionを許可する"
   // observable = "listAggregationItems output size/fields and correction authorization error"

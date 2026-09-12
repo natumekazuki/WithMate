@@ -532,8 +532,13 @@ export class WorkItemStorageV6 {
       });
     }
     if (operation === "work.reopen" && input.sourceWorkItemId) {
-      this.markAncestorAggregationsStale(input.sourceWorkItemId, "work.reopen", input.proof, input.requestFingerprint, input.idempotencyKey, input.createdAt, operation, true, true);
-      if (input.binding.parentWorkItemId) this.markAncestorAggregationsStale(input.binding.parentWorkItemId, "work.reopen", input.proof, input.requestFingerprint, input.idempotencyKey, input.createdAt, operation, true);
+      const affected = new Set(this.getFinalizedAncestorAggregationIds(input.sourceWorkItemId, true));
+      if (input.binding.parentWorkItemId) {
+        for (const id of this.getFinalizedAncestorAggregationIds(input.binding.parentWorkItemId)) affected.add(id);
+      }
+      for (const id of affected) {
+        this.markAggregationStaleWithEvent(id, input.sourceWorkItemId, "work.reopen", input.proof, input.requestFingerprint, input.idempotencyKey, input.createdAt, operation);
+      }
     }
     const created = this.getRequired(input.id);
     this.insertIdempotency(
@@ -662,57 +667,8 @@ export class WorkItemStorageV6 {
             .run(`${updated.id}:result:${resultRevision}`, updated.id, resultRevision, resultJson, input.result.reportingSessionId, sourceRevision, executionRevision, input.updatedAt);
         }
       }
-      if (input.operation === "work.result" && updated.kind === "delegated") {
-        const aggregate = this.db.prepare("SELECT aggregate_revision FROM work_item_aggregations_v6 WHERE parent_work_item_id = ?").get(updated.id) as { aggregate_revision: number } | undefined;
-        if (aggregate) {
-          this.incrementAggregateRevision(updated.id, input.updatedAt);
-          const finalizedSummary = this.getAggregationSummary(updated.id);
-          appendWorkItemAggregationEvent(this.db, {
-            parentWorkItemId: updated.id,
-            childWorkItemId: updated.id,
-            aggregateRevision: finalizedSummary.aggregateRevision,
-            eventKind: "finalized",
-            proof: input.proof,
-            operationId: workItemOperationId("work.result", input.proof, input.requestFingerprint),
-            idempotencyKey: input.idempotencyKey,
-            occurredAt: input.updatedAt,
-            payload: {
-              aggregateState: {
-                stale: false,
-                staleReasons: [],
-                finalizedRevision: finalizedSummary.aggregateRevision,
-                finalizedResultRevision: resultRevision ?? 1,
-              },
-            },
-          });
-        }
-        this.db.prepare(`
-          UPDATE work_item_aggregations_v6
-          SET stale = 0, stale_reasons_json = '[]', finalized_revision = aggregate_revision,
-              finalized_result_revision = COALESCE((SELECT MAX(result_revision) FROM work_item_result_revisions_v6 WHERE work_item_id = ?), 1),
-              updated_at = ?
-          WHERE parent_work_item_id = ?
-        `).run(updated.id, input.updatedAt, updated.id);
-        updated = this.getRequired(input.workItemId);
-      }
-      if (input.operation === "work.result" && updated.kind === "root") {
-        this.db.prepare(`INSERT OR IGNORE INTO work_item_aggregations_v6 (parent_work_item_id, aggregate_revision, updated_at) VALUES (?, 0, ?)`)
-          .run(updated.id, input.updatedAt);
-        this.incrementAggregateRevision(updated.id, input.updatedAt);
-        const rootState = this.getInternalAggregationState(updated.id);
-        appendWorkItemAggregationEvent(this.db, {
-          parentWorkItemId: updated.id,
-          childWorkItemId: updated.id,
-          aggregateRevision: rootState.aggregateRevision,
-          eventKind: "finalized",
-          proof: input.proof,
-          operationId: workItemOperationId("work.result", input.proof, input.requestFingerprint),
-          idempotencyKey: input.idempotencyKey,
-          occurredAt: input.updatedAt,
-          payload: { aggregateState: { stale: false, staleReasons: [], finalizedRevision: rootState.aggregateRevision, finalizedResultRevision: resultRevision ?? 1 } },
-        });
-        this.db.prepare(`UPDATE work_item_aggregations_v6 SET stale=0, stale_reasons_json='[]', finalized_revision=aggregate_revision, finalized_result_revision=? WHERE parent_work_item_id=?`)
-          .run(resultRevision ?? 1, updated.id);
+      if (input.operation === "work.result") {
+        this.finalizeAggregation(updated, resultRevision ?? 1, input);
         updated = this.getRequired(input.workItemId);
       }
       this.insertEvent({
@@ -805,12 +761,12 @@ export class WorkItemStorageV6 {
         ORDER BY revision LIMIT 1`).get(current.id, supersededResultRevision) as { revision: number } | undefined;
       if (!supersededEvent) throw new Error(`Superseded result event is missing: ${current.id}`);
       const association = this.db.prepare(`
-        SELECT association.work_item_revision, association.actual_source_json, association.planned_source_json,
+        SELECT association.work_item_revision,
           execution.revision AS execution_revision
         FROM work_item_execution_associations_v6 AS association
         LEFT JOIN session_executions_v6 AS execution ON execution.id = association.execution_id
         WHERE association.work_item_id = ? ORDER BY association.created_at DESC LIMIT 1
-      `).get(current.id) as { work_item_revision: number | null; actual_source_json: string | null; planned_source_json: string | null; execution_revision: number | null } | undefined;
+      `).get(current.id) as { work_item_revision: number | null; execution_revision: number | null } | undefined;
       const sourceRevision = association?.work_item_revision ?? current.revision;
       this.db.prepare(`INSERT INTO work_item_result_revisions_v6 (
         result_revision_id, work_item_id, result_revision, superseded_result_revision, result_json,
@@ -982,10 +938,16 @@ export class WorkItemStorageV6 {
           childWorkItemId: current.id,
           childRevision: current.revision + 1,
         });
+      const affected = new Set<string>();
       for (const parent of [oldParent, newParent]) {
-        if (parent) this.markAncestorAggregationsStale(parent.id, "work.move", input.proof, input.requestFingerprint, input.idempotencyKey, input.updatedAt, "work.move", true);
+        if (parent) {
+          for (const id of this.getFinalizedAncestorAggregationIds(parent.id)) affected.add(id);
+        }
       }
-      this.markAncestorAggregationsStale(current.id, "work.move", input.proof, input.requestFingerprint, input.idempotencyKey, input.updatedAt, "work.move", true, true);
+      for (const id of this.getFinalizedAncestorAggregationIds(current.id, true)) affected.add(id);
+      for (const id of affected) {
+        this.markAggregationStaleWithEvent(id, current.id, "work.move", input.proof, input.requestFingerprint, input.idempotencyKey, input.updatedAt, "work.move");
+      }
       return this.finishLifecycleEvent("work.move", input, current, "parent_changed", {
         beforeParentWorkItemId: current.parentWorkItemId,
         afterParentWorkItemId: parentId,
@@ -2279,7 +2241,32 @@ export class WorkItemStorageV6 {
     return affected;
   }
 
-  private markAncestorAggregationsStale(workItemId: string, reason: string, proof: MutationAuthorityProof, requestFingerprint: string, idempotencyKey: string, occurredAt: string, operation: WorkItemMutationOperation | WorkItemAggregationMutationOperation, finalizedOnly = false, rootsOnly = false): string[] {
+  private finalizeAggregation(item: WorkItem, resultRevision: number, input: {
+    proof: MutationAuthorityProof;
+    requestFingerprint: string;
+    idempotencyKey: string;
+    updatedAt: string;
+  }): void {
+    if (item.kind === "delegated" && !this.db.prepare("SELECT 1 FROM work_item_aggregations_v6 WHERE parent_work_item_id = ?").get(item.id)) return;
+    this.incrementAggregateRevision(item.id, input.updatedAt);
+    const { aggregateRevision } = this.getInternalAggregationState(item.id);
+    appendWorkItemAggregationEvent(this.db, {
+      parentWorkItemId: item.id,
+      childWorkItemId: item.id,
+      aggregateRevision,
+      eventKind: "finalized",
+      proof: input.proof,
+      operationId: workItemOperationId("work.result", input.proof, input.requestFingerprint),
+      idempotencyKey: input.idempotencyKey,
+      occurredAt: input.updatedAt,
+      payload: { aggregateState: { stale: false, staleReasons: [], finalizedRevision: aggregateRevision, finalizedResultRevision: resultRevision } },
+    });
+    this.db.prepare(`UPDATE work_item_aggregations_v6
+      SET stale=0, stale_reasons_json='[]', finalized_revision=aggregate_revision, finalized_result_revision=?
+      WHERE parent_work_item_id=?`).run(resultRevision, item.id);
+  }
+
+  private getFinalizedAncestorAggregationIds(workItemId: string, rootsOnly = false): string[] {
     const ancestors = this.db.prepare(`
       WITH RECURSIVE ancestors(id) AS (
         SELECT id FROM work_items_v6 WHERE id = ?
@@ -2297,11 +2284,8 @@ export class WorkItemStorageV6 {
     `).all(workItemId, workItemId, workItemId, workItemId) as Array<{ id: string }>;
     const affected = ancestors.filter(ancestor => {
       const item = this.getRequired(ancestor.id);
-      return (!finalizedOnly || item.result !== null) && (!rootsOnly || item.kind === "root");
+      return item.result !== null && (!rootsOnly || item.kind === "root");
     });
-    for (const ancestor of affected) {
-      this.markAggregationStaleWithEvent(ancestor.id, workItemId, reason, proof, requestFingerprint, idempotencyKey, occurredAt, operation);
-    }
     return affected.map((ancestor) => ancestor.id);
   }
 

@@ -374,6 +374,8 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 2026-09-13の追加指摘2件を`25d44576146e5ceda301a93755dbf83ed31dda49`で修正した。集約を持たないterminal delegated Work Itemの訂正結果に対する再finalizeを拒否し、不要なrevision増加による親decisionとの不整合を防ぐ。Session削除とdelete manifestは、自身のstale集約、top-level結果の回収先Rootのstale、accepted decisionの直接の親集約のstaleを未回収として扱う。関連24件と既存関連80件、型検査、build、差分checkが成功した。今回の全suiteとGUI目視は未実施。開始base `78aab77a7fac53591633a70c4dfd2217e7b1746a`から変更test 2件／2 transitionsをdiagnostic 0で抽出し、通常のread-only `general_luna`による価値審査を完了した。固定commitの独立targeted closureは両指摘closed。設計文言のdelegated／Root区別も修正して確認を完了し、未解決のレビュー指摘はない。
 
+2026-09-13の重複実装レビューに対応した。move／reopenは影響する確定済み集約IDをSetへ統合してから、各集約のstale revision・event・reasonを一度だけ追加する。Rootとdelegatedのfinalizeは既存transaction内の同じhelperへ統合し、Root初期行の作成には既存のrevision更新を使用する。無効なrevision 0のinsert、未参照のsource JSON列、未使用のcorrection配列定数を削除し、managed Skillとdatabase設計のsame-root move説明を現行仕様へ揃えた。開始baseは`9be501505708f46e9033420293c59393e337d449`。訂正関連17件と既存関連47件、型検査、build、差分checkが成功した。新規testは共有ancestorを持つmoveとreopenのrevision・event・reason、再送と再openを実DBで比較する。Git差分抽出は2 tests／2 transitions（1 ADDED、1 SURVIVED）、diagnostic 0で、価値審査と指摘のclosureは進行中。今回の全suiteとGUI目視は未実施。
+
 ### Slice 4 の承認済み実装境界（2026-09-12）
 
 開始baseは`ab7b4e25709086a0f1859e1345ea87e83956fa07`。ユーザー承認により、moveに必要な旧decisionのsupersede、旧parentからの離脱、新parentへのadoptionと、その原子的保存・履歴再生・migration・直接検証をSlice 5から前倒しする。adoptionは所属の引受だけを表し、成果を自動採用しない。
