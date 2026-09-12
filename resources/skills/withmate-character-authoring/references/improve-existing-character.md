@@ -1,60 +1,112 @@
 # Improve Existing Character
 
-improve modeは自動的な全文再生成ではなく、既存定義を尊重した差分改善とする。
+既存のWithMate V5 Characterを、ユーザーが感じるらしさと実際の会話出力を確認しながら改稿する。formatを新しくすることや短縮自体を成功としない。
 
-## Preserve Before Editing
+WithMateでは保存済み`character.md`と、存在する場合の`character-notes.md`がCharacter directoryのcanonical filesである。候補を外部の採用版へ自動同期したり、Notion・Zip・別revision保存へ広げたりしない。
 
-変更前に既存定義を次へ分類する。短縮やsection移動を先に行わない。
+## Input / Optional Context
 
-### Preserve as identity signal
+会話、既存files、過去のフィードバックから分かるものを引き継ぐ。次は必要な場合だけ確認する。
 
-- 一人称と正確な表記
-- ユーザー呼称と使用条件
-- 常体・敬体の切り替え
-- 文の長さ、構文、テンポ、語尾、語彙、表記習慣
-- 繰り返し性があり、使用場面が明確なmarker
-- Character固有の注意、評価、social intent、core tension
+- 実際の入力と未編集の出力、モデルや利用環境（分かる範囲）
+- 似ていない点、弱くなった特徴
+- 良かった点、変えたくないところ
+- 対象personaの時期・媒体・対人場面・ネタバレ範囲
+- 参考の公式URL / community URL / 公開場面
+- 関係性、呼称、甘さ、からかい等の変更希望
 
-### Convert during full authoring
+既に答えられた項目を聞き直さない。未回答は調査で解けるものを先に調べ、ユーザーへ聞くのは品質に影響する解釈だけに絞る。
 
-- `Natural Reactions`と`Situation Styles`
-- 作業、失敗、成功、疲労、冗談、意見不一致の場面別規則
-- 完成返答の`Examples`
-- 性格形容詞や設定をそのまま返答指示にした記述
+## Governing Documents
 
-これらから有用なsignalを取り出し、Identity Core、Attention and Appraisal、Social Intent、Emotional Dynamics、Thinking and Action Style、Voice Rules、State Modulationへ一般化する。
+設計は`runtime-philosophy.md`、本文は`character-format.md`、sourceは`source-and-rights-policy.md`、検証は`authoring-rubric.md`と`review-checklist.md`に従う。
 
-### Move to notes or remove
+schema v5、本文8,000文字上限、`character-notes.md` optional、Character directory外を変更しない境界を維持する。targeted updateとfull authoringを分け、既存版を読んだだけで全面改稿済みとは扱わない。
 
-- source、rights、uncertainty、改稿理由、比較候補、rejected ideaはnotesへ移す。
-- すべてのCharacterに共通する正確性、読みやすさ、一般的配慮はBase Runtimeへ任せる。
-- Character名を別人へ置換して成立する汎用行や同義反復は削除または固有化する。
+## 1. Preserve the Existing Definition
 
-## Targeted Update
+既存`character.md`、存在する場合のnotes、source、色、過去の改稿理由を読む。旧版にある有用な声・距離・構文・反応・状態差を先にPreserve候補として挙げる。
 
-1. ユーザー指示をobservable behaviorの変更へ翻訳する。
-2. 変更を所有する最小sectionを特定する。
-3. 依頼と競合しないidentity signalとrelationship boundaryを保持する。
-4. 必要な箇所だけを編集し、旧sectionや既存`Examples`を理由なく再構成しない。
-5. 既存事実と解釈を変えない限りsource調査を行わない。必要になればfull authoringへ切り替える。
-6. 変更箇所と直接影響するbehavior、hard format、8,000 code point上限を確認する。
+「既存を無理に引き継がなくてよい」は本文構造の再設計を許す指定であり、ユーザーが良いと確認した声や性質を自動で捨てる許可ではない。
 
-targeted updateでnotesが存在しない場合、source、materialな解釈、再導入防止のguardrailを残す必要がある時だけtemplateから作成する。
+## 2. Read Feedback before Rewriting
 
-## Full Authoring
+ユーザーが失われたと述べた特徴、保ちたい点、出力への違和感を分けて読む。定義文に書かれていることと、通常出力に現れることを混同しない。
 
-1. 既存定義の有用なidentity signalを先に抽出する。
-2. source policyに従い、現在利用できる公式・一次情報と関連community sourceを確認する。
-3. 既存主張と公開例を、状況、最初の着眼点、評価、対人行為、感情推移、言語特徴、相手・媒体・時期差へ分解する。
-4. Characterらしさを「選択の核 × 言語アイデンティティ × 状態変調」として再構成する。
-5. 一人称、基本呼称、敬語、構文、markerを、表記、使用条件、頻度、状態差を持つVoice Rulesへ整理する。
-6. 通常傾向、反転条件、反転後の選択、一貫する上位原理をCore Tensionsへ統合する。
-7. 場面別の完成返答を削り、複数の未知場面へ効くState Modulationへ変換する。
-8. observation、採否、uncertainty、revision guardrail、validation結果をnotesへ記録する。
-9. rubricとchecklistで必須検証を行う。
+低温さ、馴れ馴れしさ、常用の口癖、ミーム反応など、具体的に示された特徴は今回の保護対象にする。実出力がない場合は、定義から分かる問題と未確認の原因仮説を明示する。
 
-## Canonical Files
+## 3. Diagnose the Regression
 
-保存済み`character.md`と、存在する場合は保存済み`character-notes.md`を開始点にする。launch処理は未保存Editor draftからfilesをseedせず、既存filesをrewriteしない。未保存変更へ依存する改善なら、先に保存するよう求める。
+旧版と現在の出力を、可能な範囲で次の観点から読む。
 
-Character Kernelは新規作成とfull authoringの推奨構造であり、legacy Characterのload contractではない。既存Characterへ自動migrationや一括rewriteを要求しない。
+| 観点 | 確認すること |
+| --- | --- |
+| 平常の存在感 | 本来の声・距離・絡み方が特別な状態だけへ押し込まれていないか |
+| 声の具体性 | 一人称、呼称、語尾、構文、短い口癖が抽象語へ置換されていないか |
+| 出現条件 | markerに「まれ・少量・一回だけ」が重なり、発火しなくなっていないか |
+| 親しさの変換 | 遠慮の薄さ、張り合い、ちょっかいが穏当な共感・助言だけになっていないか |
+| 状態と優先 | 長文や真剣さのたびにvoiceを停止していないか |
+| 調査 | profileや書面だけから日常の口語を作っていないか |
+| 評価 | 作例、口癖禁止試験、自己採点を自然生成の証拠と混同していないか |
+| 外部条件 | Base Runtime、モデル、注入範囲、設定、履歴の差があり得るか |
+
+原因を定義だけに断定しない。調べられる利用条件は調べ、取得できないものはunknownとする。提供済みのログや設定を理由なく再提出させない。
+
+## 4. Separate Preserve / Revise / Investigate
+
+- **Preserve**：ユーザーが良いと確認した声、距離、構文、反応、状態差。単独では一般的でも組合せへ効く特徴を含む。
+- **Revise**：抑制過多、優先順位の矛盾、一般的な美徳への置換、固定返答、重複。
+- **Investigate**：本人使用歴、時期差、一対一呼称、音声・テンポ、語句の反復性が未確認の項目。
+- **Notes-only**：source、比較候補、権利、旧版、検証記録、採用しなかった案。
+
+完成返答のExamplesを整理する場合も、そこにしかない語尾、構文、距離のsignalを先に抽出する。短い特徴ラベルを、確認なく弱い形容詞へ置き換えない。
+
+## 5. Expand Relevant Research
+
+full authoring、sourceに依存する変更、またはユーザーが調査を求めた場合だけ調査する。公式・canon・一次情報と関連community sourceを再確認し、プロフィールの最新性と再現したい時期の口語を別軸で扱う。
+
+元配信、原作、公式投稿へ戻れる範囲で戻り、音声・映像・字幕・概要・タイトル・検索表示を区別してnotesへ記録する。出典の確度と採用する表現の強さを混同しない。canonや私生活上の事実をユーザーの希望で上書きしない。
+
+## 6. Align the Revised Character Image
+
+旧版の問題、今回維持する特徴、基準の声と距離、変更する少数の軸を整理する。失うと別人になるLikeness Anchor候補と、どの出力なら戻ったと判断するかを必要な範囲で定める。
+
+すでに具体的な指摘がある場合はそれを引き継いだ候補を作る。「もっとそれっぽく」だけをユーザーへ返さない。必要なら声の温度、絡みの強さ、markerの出やすさなどを分けたA/Bにする。
+
+## 7. Rewrite the Runtime without Sanitizing
+
+Baseline Presenceを先に置き、選択・声・距離を同時に残す。平常の性質を特別な状態だけへ移さない。
+
+Voice Rulesには正確な一人称、任意の一人へ使える基本呼称、構文、語尾、表記を残す。markerはhabitual / reactive / signatureを分け、Trigger / Function / Intensity / Placement / Frequency / Variationを持たせる。広い習慣を狭い意味条件へ変えない。
+
+ネット反応が重要なら、連想→反応→現在の話題への変形→相手の返しへの乗り方を、採用する短い語・構文で支える。全Characterへ同じミームや強い表現を追加しない。
+
+State Modulationは、変わるもの、残るもの、平常へ戻る条件を書く。Character Priorityは声を下位へ落とす階層ではなく、短文・長文・真剣な場面でも同時に残すidentityの組合せにする。正確性、本気の不快への対応、実行状態の報告は保つ。
+
+## 8. Compare Outputs and Revise by Cause
+
+旧版が取得できる場合は、同じ入力・環境・履歴条件で候補と比較する。旧版を再実行できない場合は、保存された実出力との条件差をnotesへ記録する。
+
+未編集出力、作成者が整えた作例、WithMate実機出力を区別する。具体的に良い一節をそのまま固定返答へせず、何が効いたかを生成規則へ移す。
+
+フィードバックは、指摘された現象→原因仮説→変更箇所→別入力での再確認として記録する。確認済みの良い特徴が弱まった場合は、追加修正より先に退行を扱う。
+
+## 9. Test Beyond the Tuning Prompts
+
+標準7場面だけで完了とせず、通常の雑談・質問、調整に使っていない未見入力3件以上、同義入力3件、長い説明、状態遷移、継続対話を確認する。調整に使った入力をholdoutと呼ばない。
+
+Marker-underuseとMarker-overuseを対で行う。Name-swapとPhrase-suppressionは診断であり、口癖を消した無色の返答を理想にしない。継続会話では、説明や不一致の後に平常へ戻れるかを見る。
+
+検証環境、候補本文、試行数、未編集の結果、ユーザー評価の有無をnotesへ記録する。未実施や根拠不足はpassにしない。
+
+## 10. Compress after Calibration
+
+声と距離が合ってから、重複、一般手順、背景、source説明を整理する。8,000文字上限は守るが、最低文字数や目標帯へ合わせるための短縮・水増しはしない。
+
+圧縮後は変更された候補として、重要なanchor、自然なmarker出現、未見入力、継続会話を再確認する。本文へsource、承認管理、作業手順、検証ログを混ぜない。
+
+## 11. Deliver in the WithMate Boundary
+
+変更対象は`character.md`と、必要な場合の`character-notes.md`だけとする。ユーザーへはmode、変更したbehavior、実測文字数、検証範囲、未確認事項を短く報告する。
+
+WithMateの現行契約では、agentの編集結果はCharacter directoryのcanonical filesとして扱う。Notion親・子ページ、CharacterPack Zip、asset、外部同期、承認版の凍結、revision/hash台帳を追加しない。

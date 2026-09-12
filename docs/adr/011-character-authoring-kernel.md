@@ -2,13 +2,14 @@
 
 - Status: Accepted
 - Date: 2026-09-04
+- Updated: 2026-09-12
 - Supersedes: ADR 010 の fixed Skill quality model
 
 ## Context
 
 ADR 010 は、WithMate がapp管理の固定Skillをprovider固有rootへ配布し、targeted updateとfull authoringを分ける境界を定めた。従来のSkillは、`Natural Reactions`、`Situation Styles`、完成返答の`Examples`を推奨していた。この構成は既知場面の再現には使えるが、未知場面への一般化、markerを抑えた時のCharacter性、長文中のvoice維持を直接設計しにくい。
 
-ChatGPT Pro向けCharacter Authoring Projectでは、Characterらしさを選択の核、言語アイデンティティ、状態変調の組み合わせとして導出し、observationとruntime規則を分離する設計へ更新された。WithMateへ取り込む際は、Character storage、Session、provider、snapshotの既存境界を維持する必要がある。
+ChatGPT Pro向けCharacter Authoring Projectでは、Characterらしさを選択の核、言語アイデンティティ、状態変調の組み合わせとして導出し、observationとruntime規則を分離する設計へ更新された。2026-09-11のdialogue-calibrated revisionでは、Baseline Presence、Likeness Anchor、marker不足、複数ターン継続、regression、検証provenanceを追加して、質問票中心のauthoringから出力校正中心へ品質モデルを広げている。WithMateへ取り込む際は、Character storage、Session、provider、snapshotの既存境界を維持する必要がある。
 
 ## Decision
 
@@ -25,6 +26,8 @@ Characterらしさ
 
 `character.md`は、Identity Core、Attention and Appraisal、Social Intent / User Relationship、Emotional Dynamics and Core Tensions、Thinking and Action Style、Voice Rules、State Modulation、Character Priority、Minimal Reliabilityの役割を持つ。
 
+平常時のBaseline Presenceと保護するLikeness Anchorを先に定める。Voice Rulesのmarkerはhabitual / reactive / signatureに分け、出現機会の不足と過剰を別に検証する。ネット反応がCharacterのidentityに関係する場合は、Association and Meme Responseを任意sectionとして使う。
+
 Voice RulesはIdentity Invariants、Distributional Tendencies、Triggered Markersに分ける。一人称と任意の一人へ使えるユーザー基本呼称には、正確な表記、使用場面、省略方針、頻度、必要な語気調整を持たせる。口癖や反応語にはtrigger、function、intensity、placement、frequency、variationを持たせる。
 
 完成返答の`Examples`や場面別台詞集を新しいruntime定義へ置かない。既存例から必要なsignalを取り出す場合は、注意、評価、social intent、state modulation、voiceの生成規則へ変換する。
@@ -39,7 +42,9 @@ Character Kernelのsection構成はauthoring品質の推奨契約とし、`chara
 
 full authoringでは、公式・一次情報を事実確認と強い定義の根拠に使い、community sourceを口癖、反応、時期差、代表場面の手掛かりに使う。状況、最初の着眼点、評価、対人行為、感情推移、言語特徴をobservationとして分解し、採否、uncertainty、revision guardrail、validation結果とともに`character-notes.md`へ記録する。
 
-Name-swap、Phrase-suppression、Voice-restoration、Unseen-scenario、Paraphrase diversity、Marker-overuse、Core-tension、Long-form retention、7ケースのrelationship smoke testをfull authoringの検証に使う。
+Baseline / Anchor-presence、Name-swap / Combination、Phrase-suppression、Voice-restoration、Marker-underuse / Marker-overuse、Unseen-scenario、Paraphrase diversity、Core-tension、Long-form retention、Multi-turn continuity / Return-to-baseline、Regression / Protected-trait、7ケースのrelationship smoke testをfull authoringの検証に使う。各結果は環境とprovenanceを分け、pass、fail、inconclusive、not-run、not-applicableを区別する。Phrase-suppressionは診断であり、markerを消すことを品質目標にしない。
+
+改善指示は通常Sessionのメッセージから受け取り、既存定義、notes、フィードバックを読んでPreserve / Revise / Investigateへ分類する。出力上の現象、原因仮説、規則変更、別入力での検証を対応付け、未実施やinconclusiveをpassと扱わない。
 
 ### WithMate境界
 

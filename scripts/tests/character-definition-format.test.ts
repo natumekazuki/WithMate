@@ -194,37 +194,52 @@ name: Mia
     assert.equal(skillTemplate.replace(/\r\n?/g, "\n"), buildDefaultCharacterNotes());
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "新規Characterのdefault定義とnotes templateが固定返答例ではなくCharacter Kernelとevidence分離の推奨構造を提供する"
+  // claim = "default builderがBaseline Presenceを含むCharacter Kernelとevidence分離の推奨構造を返す"
   // oracle = { type = "adr", ref = "docs/adr/011-character-authoring-kernel.md" }
-  // failure_mode = "新規Characterが旧Examples中心の初期定義または記録欄不足のnotesから始まり、full authoringの品質契約と食い違う"
+  // fault = "default builderがBaseline PresenceまたはVoice Rulesのない旧Examples中心の定義、必要な校正記録欄のないnotes、固定返答例の代表的な見出しを返し、full authoringの品質契約と食い違う"
+  // observable = "buildDefaultCharacterDefinition()とbuildDefaultCharacterNotes()の戻り値"
+  // observation_boundary = "component-behavior"
   // scope = "character-definition-templates"
   // lifecycle = "permanent"
-  // distinction = "appとSkill templateの単純な同一性では検出できない、両方が同じ誤った構造へdriftする欠陥を検出する"
+  // impact = "新規draftやCharacter作成の開始点から平常時のCharacter性と校正記録が欠落し、品質契約に沿った改善を始められない"
+  // distinction = "storage/editor経路やSkill templateの同一性ではなく、default builder自身の推奨構造を直接観測する"
   // @end-test-value
   it("default Character files は Kernel と evidence 分離の推奨構造を持つ", async () => {
     const definition = buildDefaultCharacterDefinition("Muse");
     const notes = buildDefaultCharacterNotes();
 
     assert.match(definition, /# Character Kernel/);
+    assert.match(definition, /^## Baseline Presence$/m);
     assert.match(definition, /## Identity Core/);
     assert.match(definition, /## Attention and Appraisal/);
     assert.match(definition, /## Social Intent \/ User Relationship/);
+    assert.match(definition, /## Emotional Dynamics and Core Tensions/);
+    assert.match(definition, /## Thinking and Action Style/);
     assert.match(definition, /### Identity Invariants/);
     assert.match(definition, /### Distributional Tendencies/);
     assert.match(definition, /### Triggered Markers/);
     assert.match(definition, /## State Modulation/);
     assert.match(definition, /## Character Priority/);
     assert.match(definition, /## Minimal Reliability/);
-    assert.doesNotMatch(definition, /^## Examples$/m);
+    assert.match(definition, /^## Voice Rules$/m);
+    assert.doesNotMatch(definition, /^#{2,3} (?:Examples?|Example Responses|Response Examples|Scene Dialogues?)(?: \(.+\))?(?::.*)?$/m);
 
-    assert.match(notes, /## Observation Log/);
+    assert.match(notes, /^## Calibration Brief$/m);
+    assert.match(notes, /^## Likeness Anchors \/ Protected Traits$/m);
+    assert.match(notes, /^## Source Coverage$/m);
+    assert.match(notes, /^## Evidence \/ Sources$/m);
+    assert.match(notes, /^## Observation Log$/m);
     assert.match(notes, /## Character Kernel Derivation/);
     assert.match(notes, /## Voice Evidence/);
+    assert.match(notes, /^## State Modulation$/m);
     assert.match(notes, /## Runtime Handoff/);
     assert.match(notes, /## Conflicts \/ Uncertainty/);
     assert.match(notes, /## Revision Guardrails/);
-    assert.match(notes, /## Validation Summary/);
+    assert.match(notes, /^## Validation Summary$/m);
+    assert.match(notes, /^### Environment and Provenance$/m);
+    assert.match(notes, /^### Main Quality Test Details$/m);
+    assert.match(notes, /^### Continuous Conversation Record$/m);
   });
 });

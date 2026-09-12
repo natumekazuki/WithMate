@@ -1,7 +1,7 @@
 # Character Authoring And Improvement
 
 - 作成日: 2026-06-16
-- 更新日: 2026-09-04
+- 更新日: 2026-09-12
 - 対象: 保存済み Character の agent authoring
 
 ## Goal
@@ -70,9 +70,11 @@ app 管理 Skill の正本は `resources/skills/withmate-character-authoring/` �
 - public description と relationship rubric
 - official / community source と rights / privacy policy
 - observation、採否、uncertainty、revision guardrail、validation result の notes 分離
-- full authoring 用の generalization / voice test と seven-scenario relationship smoke test
+- collaborative authoring の research → alignment → calibration ⇄ validation workflow
+- Baseline Presence、Likeness Anchor、habitual / reactive / signature marker、Association and Meme Response
+- full authoring 用の generalization / voice test、marker不足・過剰、複数ターン継続、regression / protected-trait、seven-scenario relationship smoke test
 
-Skill は局所的な語尾、反応、呼称頻度の修正を targeted update とし、新規作成、Character Kernel への再構成、全面改稿、事実・関係性・public description の位置付けを変える作業を full authoring とする。format、8,000 文字上限、output boundary、依頼箇所の review は両 mode で確認する。source 調査、全 rubric、Name-swap、Phrase-suppression、Voice-restoration、Unseen-scenario、Paraphrase diversity、Marker-overuse、Core-tension、Long-form retention、7 ケースの relationship smoke test は full authoring、source に依存する変更、またはユーザーが調査を求めた場合に行う。
+Skill は局所的な語尾、反応、呼称頻度の修正を targeted update とし、新規作成、Character Kernel への再構成、全面改稿、事実・関係性・public description の位置付けを変える作業を full authoring とする。format、8,000 文字上限、output boundary、依頼箇所の review は両 mode で確認する。source 調査、全 rubric、Baseline / Anchor-presence、Name-swap / Combination、Phrase-suppression、Voice-restoration、Marker-underuse / Marker-overuse、Unseen-scenario、Paraphrase diversity、Core-tension、Long-form retention、Multi-turn continuity / Return-to-baseline、Regression / Protected-trait、7 ケースの relationship smoke test は full authoring、source に依存する変更、またはユーザーが調査を求めた場合に行う。未実施やinconclusiveの検証はpassと扱わない。
 
 full authoring の新しい runtime 定義は、完成返答の `Examples` や場面別台詞集を置かず、未知場面へ一般化できる生成規則で構成する。targeted update は旧 section や既存 `Examples` があることだけで全面 rewrite せず、有用な identity signal を保持する。推奨 Kernel 構造を storage parser の hard contract へ昇格せず、既存 Character を自動 migration しない。
 
@@ -83,6 +85,8 @@ full authoring の新しい runtime 定義は、完成返答の `Examples` や�
 - `sessionKind = "character-authoring"` を使う。
 - provider 固有差分は既存 Session adapter と provider skill root に閉じ込める。
 - agent は catalog storage API を直接呼ばず workspace files を編集する。
+- authoring の改善指示は通常 Session のメッセージから受け取り、既存定義、notes、フィードバックを読んで必要な論点だけを照合する。質問票の再提示や既回答の聞き直しは行わない。
+- フィードバックは定義にある規則と出力に現れた挙動を分け、現象、原因仮説、規則変更、別入力での検証を対応付ける。作例や後編集を実機出力として扱わない。
 - authoring runtime は stable owner を維持し、各 turn で canonical definition から snapshot を再解決する。invalid 遷移時の failure timing は `src-electron/session-runtime-service.ts` と対応 test を正本とする。
 - 汎用 Session / Companion の owner と immutable snapshot 契約は `docs/design/character-storage.md` と ADR 009 を参照する。
 - Editor save、storage create/update、direct file runtime snapshot は共通 format validator を使う。
