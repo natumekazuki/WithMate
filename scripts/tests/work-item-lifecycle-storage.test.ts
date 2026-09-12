@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { backfillBaselineSessionAuthority } from "../../src-electron/session-authority-storage.js";
 import { WorkItemAggregationConflictError, WorkItemIdempotencyConflictError, WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
+import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
+import { buildSessionLifecycleManifest } from "../../src-electron/session-lifecycle-manifest.js";
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
 import { SESSION_AUTHORITY_MAPPING_REVISION, SESSION_AUTHORITY_OPERATION_DEFINITIONS, type MutationAuthorityProof } from "../../src/session-authority.js";
 import { parseSessionRuntimeResultEnvelope } from "../../src/session-external-runtime-schema.js";
@@ -68,9 +70,9 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     return storage.create({ id, binding: binding(parent, creator, target), principalSessionId: "root", idempotencyKey: key, requestFingerprint: key + "-fp", expectedContainerRevision: containerRevision, createdAt: NOW, expiresAt: EXPIRES, proof: proof("work.create") });
   }
 
-  function settle(item: WorkItem): WorkItem {
+  function settle(item: WorkItem, expectedAggregateRevision?: number): WorkItem {
     const active = storage.mutate({ operation: "work.transition", workItemId: item.id, principalSessionId: "root", idempotencyKey: item.id + "-start", requestFingerprint: item.id + "-start-fp", expectedRevision: item.revision, state: "in_progress", result: null, updatedAt: NOW, expiresAt: EXPIRES, proof: proof("work.transition") });
-    return storage.mutate({ operation: "work.result", workItemId: item.id, principalSessionId: "root", idempotencyKey: item.id + "-result", requestFingerprint: item.id + "-result-fp", expectedRevision: active.revision, state: "completed", result: { outcome: "completed", summary: "done", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [], reportingSessionId: item.targetSessionId, reportedAt: LATER }, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result") });
+    return storage.mutate({ operation: "work.result", expectedAggregateRevision, workItemId: item.id, principalSessionId: "root", idempotencyKey: item.id + "-result", requestFingerprint: item.id + "-result-fp", expectedRevision: active.revision, state: "completed", result: { outcome: "completed", summary: "done", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [], reportingSessionId: item.targetSessionId, reportedAt: LATER }, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.result") });
   }
 
   function assertPublicHistory(workItemId: string): void {
@@ -352,4 +354,47 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     assert.deepEqual(storage.getAggregationSummary(newParent.id), beforeNew);
     assert.equal(Number(sql("SELECT COUNT(*) AS n FROM work_item_events_v6 WHERE work_item_id=?", child.id)[0].n), beforeEvents);
   });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "採用済みchildのarchive/restoreだけのrevision差はSession削除とmanifestを妨げず、未判断childは引き続き削除を阻止する"
+  // fault = "表示用lifecycle revisionを未回収結果と誤判定する、または未判断結果の担当Sessionを削除する"
+  // observable = "manifest blockers、Session削除の成否とtombstone、decision全行とchild resultの保持、storage再open"
+  // observation_boundary = "component-behavior"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
+  // scope = "SessionStorageV6 deletion and lifecycle manifest after Work Item visibility changes"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("採用済みchildのarchive/restore後も担当Sessionを削除できる", () => {
+    const parent = create(null, "root", "task", "delete-parent");
+    const children = [settle(create(parent.id, "task", "executor", "delete-archived")), settle(create(parent.id, "task", "task-2", "delete-restored"))];
+    const sessions = new SessionStorageV6(dbPath);
+    const db = new DatabaseSync(dbPath);
+    try {
+      for (const child of children) {
+        assert.ok(buildSessionLifecycleManifest(db, child.targetSessionId).blockers.includes("work_items_present"));
+        assert.throws(() => sessions.deleteSession(child.targetSessionId), /WORK_ITEM_SESSION_PROTECTED/);
+        storage.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, idempotencyKey: child.id + "-accept", requestFingerprint: child.id + "-accept", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+      }
+      settle(parent, storage.getAggregationSummary(parent.id).aggregateRevision);
+      const decisions = sql("SELECT * FROM work_item_aggregation_decisions_v6 ORDER BY sequence");
+      for (const [index, child] of children.entries()) {
+        assert.deepEqual(buildSessionLifecycleManifest(db, child.targetSessionId).blockers, []);
+        const archived = storage.archive({ workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: child.id + "-archive", requestFingerprint: child.id + "-archive", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.archive"), reason: "retained" });
+        assert.deepEqual(buildSessionLifecycleManifest(db, child.targetSessionId).blockers, []);
+        if (index === 1) {
+          storage.restore({ workItemId: child.id, expectedRevision: archived.revision, principalSessionId: "root", idempotencyKey: child.id + "-restore", requestFingerprint: child.id + "-restore", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.restore") });
+          assert.deepEqual(buildSessionLifecycleManifest(db, child.targetSessionId).blockers, []);
+        }
+        sessions.deleteSession(child.targetSessionId);
+        assert.equal(sessions.getSession(child.targetSessionId), null);
+        assert.ok(db.prepare("SELECT deleted_at FROM sessions_v6 WHERE id=?").get(child.targetSessionId)?.deleted_at);
+        assert.deepEqual(storage.get(child.id)?.result, child.result);
+      }
+      assert.deepEqual(sql("SELECT * FROM work_item_aggregation_decisions_v6 ORDER BY sequence"), decisions);
+    } finally { db.close(); sessions.close(); }
+    storage.close(); storage = new WorkItemStorageV6(dbPath);
+    for (const child of children) assert.deepEqual(storage.get(child.id)?.result, child.result);
+  });
+
 });

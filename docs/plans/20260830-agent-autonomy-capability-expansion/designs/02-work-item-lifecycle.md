@@ -76,7 +76,7 @@ parentが旧terminal resultを既にacceptedとしてfinalize済みなら、reop
 
 ## Archive と delete
 
-archiveは履歴とrelationを保持し、default listから除外する。deleteは次を満たす場合だけ許可する。
+archiveは履歴とrelationを保持し、default listから除外する。集約判断時のrevisionから現在までの全eventがarchive/restoreの場合は、判断のchild revisionを書き換えず有効な採否として扱う。通常のSession削除（tombstone）とそのmanifestもこの条件を共有し、未判断結果やそれ以外のrevision差による保護は維持する。deleteは次を満たす場合だけ許可する。
 
 - active execution、open interaction、active descendantがない
 - resultとdecisionが必要な親またはsuccessorへ移管済み
