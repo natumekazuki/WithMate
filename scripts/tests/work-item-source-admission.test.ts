@@ -61,7 +61,8 @@ async function createStorageFixture(workspacePath = process.cwd()): Promise<{ di
 // lifecycle = "permanent"
 // @end-test-value
 test("同期running作成はrevision/planned/actual sourceを同時保存する", async () => {
-  const fixture = await createStorageFixture();
+  const repository = createRepository();
+  const fixture = await createStorageFixture(repository);
   try {
     const execution = fixture.storage.startImmediate({ id: "exec-1", expectedContainerRevision: fixture.storage.getSessionContainerRevision("session-1"), sessionId: "session-1", request: { userMessage: "run" }, idempotencyKey: "run-1", requestFingerprint: "run-1", createdAt: CREATED_AT, expiresAt: EXPIRES_AT, proof: proof("turn.run"), workItemId: "work-1" }).execution;
     assert.equal(execution.workItemRevision, 1);
@@ -78,7 +79,7 @@ test("同期running作成はrevision/planned/actual sourceを同時保存する"
     const eventPayload = JSON.parse(event.payload_json) as { projection?: Record<string, unknown> };
     assert.deepEqual(eventPayload.projection?.plannedSourceIdentity, { workspace: "planned", repository: null, branch: "main", base: null, head: null });
     assert.deepEqual(eventPayload.projection?.actualStartSourceIdentity, execution.actualStartSourceIdentity);
-  } finally { fixture.db.close(); fixture.storage.close(); await rm(fixture.directory, { recursive: true, force: true }); }
+  } finally { fixture.db.close(); fixture.storage.close(); await rm(fixture.directory, { recursive: true, force: true }); await rm(repository, { recursive: true, force: true }); }
 });
 
 // @test-value v2

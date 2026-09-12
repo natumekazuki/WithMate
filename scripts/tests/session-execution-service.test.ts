@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -513,6 +514,9 @@ describe("SessionExecutionService", () => {
     const fixture = await createFixture();
     const db = new DatabaseSync(fixture.dbPath);
     try {
+      execFileSync("git", ["init", "--initial-branch", "main"], { cwd: fixture.directory, stdio: "ignore", windowsHide: true });
+      execFileSync("git", ["-c", "user.name=WithMate Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial"], { cwd: fixture.directory, stdio: "ignore", windowsHide: true });
+      db.prepare("UPDATE sessions_v6 SET workspace_path = ? WHERE id IN ('session-1', 'session-2')").run(fixture.directory);
       const insertWorkItem = db.prepare(`
         INSERT INTO work_items_v6 (
           id, kind, contract_revision, root_session_id, creator_session_id, target_session_id,

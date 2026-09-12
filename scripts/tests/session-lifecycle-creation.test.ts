@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -33,7 +33,8 @@ function agentProof(actor: string, grantId: string, revision: number): MutationA
 }
 
 async function harness(): Promise<{ directory: string; storage: SessionStorageV6; db: DatabaseSync }> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-construction-"));
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-construction-"));
+  const directory = await realpath(temporaryDirectory);
   const dbPath = path.join(directory, "db.sqlite");
   const storage = new SessionStorageV6(dbPath);
   return { directory, storage, db: new DatabaseSync(dbPath) };

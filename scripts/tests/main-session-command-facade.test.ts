@@ -941,7 +941,7 @@ test("MainSessionCommandFacade は cutoff deleteの入力と削除済み・skip�
       ({
         deleteSessionsLastActiveBefore(cutoff, mode) {
           assert.equal(mode, "tombstone");
-          assert.equal(cutoff.cutoffTimestampMs, Date.parse("2026-07-01T00:00:00+09:00"));
+          assert.equal(cutoff.cutoffTimestampMs, new Date(2026, 6, 1).getTime());
           calls.push(`delete-before:${cutoff.cutoffDate}`);
           return {
             cutoffDate: cutoff.cutoffDate,
@@ -997,7 +997,7 @@ test("MainSessionCommandFacade は mixed cutoff delete を Session kind ごと�
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () => ({
       deleteSessionsLastActiveBefore(cutoff, sessionKind) {
-        assert.equal(cutoff.cutoffTimestampMs, Date.parse("2026-07-01T00:00:00+09:00"));
+        assert.equal(cutoff.cutoffTimestampMs, new Date(2026, 6, 1).getTime());
         assert.equal(sessionKind, "character-authoring");
         calls.push("persistence:authoring");
         return { cutoffDate: cutoff.cutoffDate, cutoffTimestampMs: cutoff.cutoffTimestampMs, deletedSessionIds: [authoring.id], skippedRunningSessionIds: [] };
@@ -1006,7 +1006,7 @@ test("MainSessionCommandFacade は mixed cutoff delete を Session kind ごと�
     getSessionLifecycleMutationCallbacks: () => ({
       deleteSessionsLastActiveBefore(cutoff, mode) {
         assert.equal(mode, "tombstone");
-        assert.equal(cutoff.cutoffTimestampMs, Date.parse("2026-07-01T00:00:00+09:00"));
+        assert.equal(cutoff.cutoffTimestampMs, new Date(2026, 6, 1).getTime());
         calls.push("lifecycle:default");
         return { cutoffDate: cutoff.cutoffDate, cutoffTimestampMs: cutoff.cutoffTimestampMs, deletedSessionIds: [normal.id], skippedRunningSessionIds: ["normal-running"] };
       },
