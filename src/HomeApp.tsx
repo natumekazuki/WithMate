@@ -99,6 +99,7 @@ import {
   buildSessionWindowRestoreFeedback,
   selectPendingSessionWindowRestoreIds,
 } from "./home/home-session-window-restore.js";
+import { runSessionMonitorContextMenu } from "./home/home-session-monitor-feedback.js";
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
@@ -188,6 +189,7 @@ export default function HomeApp() {
   const [sessionWindowRestoreIds, setSessionWindowRestoreIds] = useState<string[]>([]);
   const [sessionWindowRestorePending, setSessionWindowRestorePending] = useState(false);
   const [sessionWindowRestoreFeedback, setSessionWindowRestoreFeedback] = useState("");
+  const [sessionMonitorFeedback, setSessionMonitorFeedback] = useState("");
   const pendingSessionWindowRestoreIds = useMemo(
     () => openSessionWindowIdsState.status === "loaded"
       ? selectPendingSessionWindowRestoreIds(sessionWindowRestoreIds, openSessionWindowIds)
@@ -900,9 +902,7 @@ export default function HomeApp() {
     if (!api) {
       return;
     }
-    void api.showSessionMonitorContextMenu({ kind, sessionId, point }).catch((error) => {
-      console.error(error);
-    });
+    runSessionMonitorContextMenu(api, { kind, sessionId, point }, setSessionMonitorFeedback);
   };
 
   const { settingsContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
@@ -924,6 +924,7 @@ export default function HomeApp() {
     monitorContent: buildHomeMonitorContentProps({
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
+      feedback: sessionMonitorFeedback,
       onOpenSession: (sessionId) => void openSessionWindow(sessionId),
       onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       onShowContextMenu: showSessionMonitorContextMenu,
@@ -954,6 +955,7 @@ export default function HomeApp() {
       rightPaneView,
       runningMonitorEntries,
       nonRunningMonitorEntries,
+      sessionMonitorFeedback,
       characterEntries,
       characterListFeedback,
       monitorWindowIcon: renderHomeMonitorWindowIcon(),

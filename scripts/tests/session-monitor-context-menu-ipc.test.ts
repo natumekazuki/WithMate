@@ -20,11 +20,33 @@ function createIpcMainStub() {
 }
 
 function createDeps(requests: unknown[], senderKind: "home" | "monitor" | "unauthorized" = "home") {
-  const senderWindow = {};
-  return new Proxy({
-    resolveEventWindow: () => senderWindow,
-    resolveHomeWindow: () => senderKind === "home" ? senderWindow : null,
-    isSessionMonitorWindow: () => senderKind === "monitor",
+  const homeWindow = {};
+  const monitorWindow = {};
+  const externalWindow = {};
+  const homeSender = {};
+  const monitorSender = {};
+  const externalSender = {};
+  const sender = senderKind === "home"
+    ? homeSender
+    : senderKind === "monitor"
+      ? monitorSender
+      : externalSender;
+  const event = { sender };
+  const deps = new Proxy({
+    resolveEventWindow: (currentEvent: { sender: unknown }) => {
+      if (currentEvent.sender === homeSender) {
+        return homeWindow;
+      }
+      if (currentEvent.sender === monitorSender) {
+        return monitorWindow;
+      }
+      if (currentEvent.sender === externalSender) {
+        return externalWindow;
+      }
+      return null;
+    },
+    resolveHomeWindow: () => homeWindow,
+    isSessionMonitorWindow: (window: unknown) => window === monitorWindow,
     isSettingsWindow: () => false,
     isMemoryV6ReviewWindow: () => false,
     isFilePreviewWindow: () => false,
@@ -42,14 +64,15 @@ function createDeps(requests: unknown[], senderKind: "home" | "monitor" | "unaut
       return async () => null;
     },
   }) as never;
+  return { deps, event };
 }
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session Monitor context menu IPCはHome/MonitorからのAgent/Companion strict requestを変換せずdelegateへ渡し、それ以外のsenderや不正requestを拒否する"
+// claim = "Session Monitor context menu IPCはHome/Monitorの実Window identityからのAgent/Companion strict requestを変換せずdelegateへ渡し、それ以外のsenderや不正requestを拒否する"
 // oracle = { type = "contract", ref = "Session Monitor context menu IPC request boundary" }
-// fault = "許可外senderや不正なkind、Session ID、座標、nested/top-level余分なfieldがnative menu delegateへ到達するか、公開channelにhandlerが登録されない"
-// observable = "登録handlerの存在、delegateへ渡されたrequest、invalid requestのTypeError"
+// fault = "Home Windowが存在するだけで許可される、許可外senderや不正なkind、Session ID、座標、nested/top-level余分なfieldがnative menu delegateへ到達する、または公開channelにhandlerが登録されない"
+// observable = "登録handlerの存在、sender-bearing eventから解決されたWindowの認可、delegateへ渡されたrequest、invalid requestのTypeError"
 // observation_boundary = "public-boundary"
 // scope = "Main IPC Session Monitor context menu handler"
 // lifecycle = "permanent"
@@ -59,23 +82,25 @@ function createDeps(requests: unknown[], senderKind: "home" | "monitor" | "unaut
 test("Session Monitor context menu IPCはstrict requestをdelegateへ渡す", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const requests: unknown[] = [];
-  registerMainIpcHandlers(ipcMain, createDeps(requests));
+  const home = createDeps(requests);
+  registerMainIpcHandlers(ipcMain, home.deps);
 
   const handler = handlers.get(WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL);
   assert.ok(handler);
   const agentRequest = { kind: "agent", sessionId: "agent-1", point: { x: 24, y: 48 } };
   const companionRequest = { kind: "companion", sessionId: "companion-1", point: { x: 72, y: 96 } };
 
-  assert.deepEqual(await handler({}, agentRequest), { status: "dismissed" });
-  assert.deepEqual(await handler({}, companionRequest), { status: "dismissed" });
+  assert.deepEqual(await handler(home.event, agentRequest), { status: "dismissed" });
+  assert.deepEqual(await handler(home.event, companionRequest), { status: "dismissed" });
   assert.deepEqual(requests, [agentRequest, companionRequest]);
 
   const monitorIpc = createIpcMainStub();
   const monitorRequests: unknown[] = [];
-  registerMainIpcHandlers(monitorIpc.ipcMain, createDeps(monitorRequests, "monitor"));
+  const monitor = createDeps(monitorRequests, "monitor");
+  registerMainIpcHandlers(monitorIpc.ipcMain, monitor.deps);
   const monitorHandler = monitorIpc.handlers.get(WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL);
   assert.ok(monitorHandler);
-  assert.deepEqual(await monitorHandler({}, agentRequest), { status: "dismissed" });
+  assert.deepEqual(await monitorHandler(monitor.event, agentRequest), { status: "dismissed" });
   assert.deepEqual(monitorRequests, [agentRequest]);
 
   for (const invalidRequest of [
@@ -88,7 +113,7 @@ test("Session Monitor context menu IPCはstrict requestをdelegateへ渡す", as
     { ...agentRequest, extra: true },
   ]) {
     await assert.rejects(
-      () => handler({}, invalidRequest) as Promise<unknown>,
+      () => handler(home.event, invalidRequest) as Promise<unknown>,
       /Session Monitor context menu request is invalid/,
     );
   }
@@ -96,11 +121,12 @@ test("Session Monitor context menu IPCはstrict requestをdelegateへ渡す", as
 
   const unauthorizedIpc = createIpcMainStub();
   const unauthorizedRequests: unknown[] = [];
-  registerMainIpcHandlers(unauthorizedIpc.ipcMain, createDeps(unauthorizedRequests, "unauthorized"));
+  const unauthorized = createDeps(unauthorizedRequests, "unauthorized");
+  registerMainIpcHandlers(unauthorizedIpc.ipcMain, unauthorized.deps);
   const unauthorizedHandler = unauthorizedIpc.handlers.get(WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL);
   assert.ok(unauthorizedHandler);
   await assert.rejects(
-    () => unauthorizedHandler({}, agentRequest) as Promise<unknown>,
+    () => unauthorizedHandler(unauthorized.event, agentRequest) as Promise<unknown>,
     /Session Monitor context menu IPC is only available from Home or Session Monitor window/,
   );
   assert.deepEqual(unauthorizedRequests, []);

@@ -18,6 +18,7 @@ export type HomeAgentMonitorEntry = {
 export type HomeCompanionMonitorEntry = {
   kind: "companion";
   session: CompanionSessionSummary;
+  isWindowOpen: boolean;
   activeAuxiliarySession?: AuxiliarySessionSummary | null;
   state: HomeSessionState;
   groupLabel: string;
@@ -185,6 +186,7 @@ export function buildHomeCompanionMonitorEntries(
       return {
         kind: "companion" as const,
         session,
+        isWindowOpen: openCompanionIdSet.has(session.id),
         activeAuxiliarySession,
         state: getHomeCompanionSessionState(session, activeAuxiliarySession),
         groupLabel: buildCompanionGroupLabel(session),

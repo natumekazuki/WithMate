@@ -8,6 +8,7 @@ import type {
 export type HomeMonitorContentInput = {
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
+  feedback?: string;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
   onShowContextMenu: (
@@ -20,6 +21,7 @@ export type HomeMonitorContentInput = {
 export function buildHomeMonitorContentProps({
   runningEntries,
   nonRunningEntries,
+  feedback,
   onOpenSession,
   onOpenCompanionReview,
   onShowContextMenu,
@@ -27,6 +29,7 @@ export function buildHomeMonitorContentProps({
   return {
     runningEntries,
     nonRunningEntries,
+    feedback,
     onOpenSession,
     onOpenCompanionReview,
     onShowContextMenu,

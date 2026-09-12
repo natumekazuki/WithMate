@@ -13,6 +13,7 @@ export type HomeRightPaneProps = {
   rightPaneView: "monitor" | "characters";
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
+  sessionMonitorFeedback?: string;
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
   characterListFeedback?: string;
@@ -39,6 +40,7 @@ export function HomeRightPane({
   rightPaneView,
   runningMonitorEntries,
   nonRunningMonitorEntries,
+  sessionMonitorFeedback = "",
   monitorWindowIcon,
   characterEntries,
   characterListFeedback = "",
@@ -152,6 +154,7 @@ export function HomeRightPane({
           <HomeMonitorContent
             runningEntries={runningMonitorEntries}
             nonRunningEntries={nonRunningMonitorEntries}
+            feedback={sessionMonitorFeedback}
             onOpenSession={openSession}
             onOpenCompanionReview={openCompanionReview}
             onShowContextMenu={showSessionMonitorContextMenu}

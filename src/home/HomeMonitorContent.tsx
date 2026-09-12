@@ -10,6 +10,7 @@ import { CharacterAvatar } from "../ui-utils.js";
 export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
+  feedback?: string;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
   onShowContextMenu: (
@@ -22,6 +23,7 @@ export type HomeMonitorContentProps = {
 export function HomeMonitorContent({
   runningEntries,
   nonRunningEntries,
+  feedback = "",
   onOpenSession,
   onOpenCompanionReview,
   onShowContextMenu,
@@ -39,6 +41,9 @@ export function HomeMonitorContent({
     entry: HomeMonitorEntry,
   ) => {
     event.preventDefault();
+    if (entry.kind === "companion" && !entry.isWindowOpen) {
+      return;
+    }
     onShowContextMenu(entry.kind, entry.session.id, {
       x: Math.max(0, Math.round(event.clientX)),
       y: Math.max(0, Math.round(event.clientY)),
@@ -53,6 +58,9 @@ export function HomeMonitorContent({
       return;
     }
     event.preventDefault();
+    if (entry.kind === "companion" && !entry.isWindowOpen) {
+      return;
+    }
     const rect = event.currentTarget.getBoundingClientRect();
     onShowContextMenu(entry.kind, entry.session.id, {
       x: Math.max(0, Math.round(rect.left)),
@@ -75,7 +83,7 @@ export function HomeMonitorContent({
             onClick={() => onOpenCompanionReview(session.id)}
             onContextMenu={(event) => showEntryContextMenu(event, entry)}
             onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
-            aria-haspopup="menu"
+            aria-haspopup={entry.isWindowOpen ? "menu" : undefined}
           >
             <CharacterAvatar
               character={{ name: session.character, iconPath: session.characterIconPath }}
@@ -128,6 +136,11 @@ export function HomeMonitorContent({
 
   return (
     <div className="home-monitor-body">
+      {feedback ? (
+        <p className="settings-feedback" role="status" aria-live="polite">
+          {feedback}
+        </p>
+      ) : null}
       <section className="home-monitor-section" aria-labelledby="home-monitor-running">
         <div className="home-monitor-section-head">
           <h3 id="home-monitor-running">実行中</h3>
