@@ -376,6 +376,15 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 source改変のstartup拒否検証で、既存SessionExecutionStorageV6 constructorがschema検証例外時にDB handleを明示closeしないことも確認した。通常admissionとは別の既存失敗経路であり、今回の3 finding familyには含めず残リスクとして記録する。cross-root単体moveを上記の承認済み未完了項目として後続へ残し、Slice 4の今回合意した範囲の実装・検証・レビューは完了した。最終test補強とレビュー記録は`277d2b5a`に保存済み。統合先へのmerge・pushは未実行である。
 
+
+### Slice 4 追加レビュー：旧queued executionの移行（2026-09-13）
+
+旧associationのsource追加列がNULLのままではadmissionがrevision不一致として拒否し、未改訂の旧queued executionまで実行不能になるP1を修正した。修正開始baseは`c6d103e42913cd402bc5accc5b25211489e1d0a2`、実装commitは`315e998da88ebf6ea3fd904175e98b1e38634e5f`。旧queued形式と元のenqueue履歴を確認し、共通header sequenceから現在のWork Item revisionがenqueue以前に存在した場合だけ、admission transactionでrevision/planned/actualを保存してrunningへ進める。旧event/headerは変更せず、admitted eventへ新しいsnapshotを追加する。
+
+移行前後の改訂、現在形式のassociation欠落は拒否する。backfilled enqueue headerだけでは当時の共通順序を証明できないためconflictを維持し、現在値や時刻からの推測は行わない。既存のrunning/terminal associationのactual sourceも未取得のまま保持する。
+
+旧DDLからのmigration・未改訂queueのadmission・再open・履歴保持と、migration前後の改訂／modern NULL欠落拒否を直接検証した。関連46 testと型検査が成功し、fixtureのWorkspaceを一時directoryへ独立させた後のmigration関連3件も成功した。全suite・build・GUIは再実行していない。変更testは今回の開始baseから2 tests／2 ADDED transitionsをdiagnostic 0で抽出した。通常のread-only general_lunaによる全2件のtest-value審査を完了し、metadataの観測範囲をstorage再openと比較対象の予算tableへ明確化した。固定commitのclean detached worktreeで当該finding family限定の独立reviewも完了し、残るblockingはない。review worktreeはHEAD・cleanliness・SessionFolder内pathを確認して削除した。
+
 ### Slice 2 の実装・検証対象
 
 Root ledger、原子的な予約と精算、Session／Work Item作成数、実行queue、Provider retry／使用量、SessionFolderの仲介書き込み、Settingsからの上限・期限延長を接続した。初期policyは2026-09-07のユーザー指定を採用し、token・費用は計測のみとする。設計の採用方針とADR 030を正本とする。

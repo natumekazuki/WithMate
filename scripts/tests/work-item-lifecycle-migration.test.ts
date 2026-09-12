@@ -167,7 +167,7 @@ function downgradeQueuedAssociation(db: DatabaseSync): void {
 // kind = "compatibility"
 // claim = "旧schemaの未改訂queued Work Itemは元のenqueue履歴を保持し、admission時にrevision/planned/actualを原子的に取得してrunningへ移行できる"
 // fault = "NULL revisionの旧associationを一律拒否する、または移行で過去のexecution履歴を書き換える"
-// observable = "旧DDLからのmigration、queued/running状態、association全列、旧event/header、admitted payload、再open後のprojection"
+// observable = "旧DDLからのmigration、queued/running状態、association全列、旧event/header、admitted payload、storage再open後のprojection"
 // observation_boundary = "component-behavior"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
 // scope = "legacy queued execution source migration and admission"
@@ -216,7 +216,7 @@ it("未改訂の旧queued associationをadmissionで移行し履歴を保持す�
 // kind = "invariant"
 // claim = "旧queuedでもenqueue後の改訂がmigration前後のいずれで起きても拒否し、新形式のassociation欠落を旧形式として救済しない"
 // fault = "migrationまたはadmissionで現在revisionを無条件採用し、enqueue後に変わった契約や改変associationを実行する"
-// observable = "admissionの型付き拒否、queued状態、association/event/budget全行の不変"
+// observable = "admissionの型付き拒否、queued状態、association/session execution event/resource_budget_dimensions_v6/resource_budget_events_v6の全行不変"
 // observation_boundary = "component-behavior"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
 // scope = "legacy queued revision and source integrity"
