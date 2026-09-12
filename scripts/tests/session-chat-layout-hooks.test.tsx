@@ -22,33 +22,29 @@ import type { SessionSidePane } from "../../src/session-side-pane.js";
 
 // @test-value v2
 // kind = "invariant"
-// claim = "高さclamp helperは、中央領域のCSS最小高または5%とHeader・splitterを残す残余高を上限にする"
+// claim = "高さclamp helperは、Header・splitter以外の残余高をActionDock上限にする"
 // oracle = { type = "contract", ref = "ActionDock layout height bounds" }
-// fault = "中央領域のCSS最小高を無視して要求値を通し、中央surfaceを潰す"
+// fault = "Header・splitterの占有高を無視してActionDockを画面外へ広げる"
 // observable = "clampSessionVerticalDockHeightが返すActionDock高さ"
 // observation_boundary = "component-behavior"
 // scope = "session-action-dock-height-clamp-helper"
 // lifecycle = "permanent"
-// impact = "中央surfaceの最低240pxとsplitter操作領域を確保する"
-// distinction = "CSS宣言やpointer経路とは分け、helperへCSS最小高・Header・splitterを渡して直接検証する"
+// impact = "ActionDockを利用可能な残余高まで広げながらHeaderとsplitterの操作領域を確保する"
+// distinction = "CSS宣言やpointer経路とは分け、helperへHeader・splitterを渡して直接検証する"
 // @end-test-value
-test("vertical dock height は比率上限と中央領域の最小高を優先する", () => {
+test("vertical dock height はHeaderとsplitterを除く残余高を上限にする", () => {
   assert.equal(clampSessionVerticalDockHeight({
     requestedHeight: 500,
     layoutHeight: 420,
     minHeight: 180,
-    maxHeightRatio: 0.95,
     oppositeDockHeight: 64,
-    centralMinimumHeight: 240,
-  }), 76);
+  }), 316);
   assert.equal(clampSessionVerticalDockHeight({
     requestedHeight: 10000,
     layoutHeight: 6000,
     minHeight: 180,
-    maxHeightRatio: 0.95,
     oppositeDockHeight: 64,
-    centralMinimumHeight: 240,
-  }), 5596);
+  }), 5896);
 });
 
 // @test-value v2
@@ -149,7 +145,7 @@ function dispatchPointerEvent(
 
 // @test-value v2
 // kind = "invariant"
-// claim = "ActionDockのpointer resizeは設定された最大・最小高さを越えず、layoutのCSS custom propertyへclamp済みの高さを反映する"
+// claim = "ActionDockのpointer resizeはHeader・splitter以外の残余高と設定最小高さの範囲へclampする"
 // oracle = { type = "contract", ref = "ActionDock drag resize contract" }
 // fault = "ドラッグ中に要求値をそのまま反映し、ActionDockが設定された最大高さを越えるか最小高さを下回る"
 // observable = "layoutの--session-action-dock-height CSS custom property"
@@ -237,7 +233,7 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
 
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 1686));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 31));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "1772.25px");
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "1871px");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 1800));
     assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "260px");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 1800));

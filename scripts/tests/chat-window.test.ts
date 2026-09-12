@@ -1774,3 +1774,106 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
   }
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "中央の残余高さが160px未満なら非表示・操作不可とし、160pxに復帰すると同じ会話stateとscroll位置を再表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 中央表示最低高" }
+// fault = "最低高境界が逆転するか、非表示時のunmountで会話stateやscroll位置を失う"
+// observable = "高さ変更前後のaria-hidden、child instance、state、scrollTop"
+// observation_boundary = "component-behavior"
+// scope = "SessionChatScreen central visibility lifecycle"
+// lifecycle = "permanent"
+// impact = "ActionDockを広げた後の会話継続位置と操作可能状態を守る"
+// distinction = "CSS描画寸法は対象外とし、実componentの高さ判定とReact instance保持を検証する"
+// @end-test-value
+test("SessionChatScreen は中央160px境界で非表示と復帰を切り替えて状態を保持する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  Object.defineProperty(dom.window, "innerWidth", { value: 1600, configurable: true });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", { configurable: true, get() { return 800; } });
+  const style = dom.window.document.createElement("style");
+  style.textContent = ".session-message-stack { --session-region-min-height: 160px; }";
+  dom.window.document.head.append(style);
+
+  function StatefulCentral() {
+    const [count, setCount] = React.useState(0);
+    return React.createElement("button", {
+      type: "button",
+      "data-central-state": "true",
+      onClick: () => setCount((current) => current + 1),
+    }, `state:${count}`);
+  }
+  const renderScreen = (height: number) => React.createElement(SessionChatScreen, {
+    mode: "agent" as const,
+    header: null,
+    headerSplitter: null,
+    isHeaderVisible: true,
+    messageColumn: React.createElement(StatefulCentral),
+    style: { "--session-action-dock-height": `${height}px`, "--session-header-dock-row-height": "64px", "--session-dock-splitter-size": "20px" } as React.CSSProperties,
+    actionDock: React.createElement("div", null, "Composer"),
+    actionDockSplitter: null,
+    isActionDockExpanded: true,
+    layoutPriority: "side-pane-first" as const,
+    splitter: null,
+  });
+
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(renderScreen(536));
+    });
+    const button = dom.window.document.querySelector<HTMLButtonElement>("[data-central-state='true']");
+    assert.ok(button);
+    assert.equal(dom.window.document.querySelector(".session-message-stack")?.getAttribute("aria-hidden"), "false");
+    const central = dom.window.document.querySelector<HTMLElement>(".session-message-stack")!;
+    central.scrollTop = 42;
+    await act(async () => button.click());
+    assert.equal(button.textContent, "state:1");
+
+    await act(async () => root?.render(renderScreen(537)));
+    assert.equal(dom.window.document.querySelector(".session-message-stack")?.getAttribute("aria-hidden"), "true");
+    assert.ok(central.hasAttribute("inert"));
+    assert.ok(dom.window.document.querySelector(".session-chat-layout.is-central-collapsed"));
+    assert.equal(dom.window.document.querySelector("[data-central-state='true']"), button);
+    assert.equal(button.textContent, "state:1");
+
+    await act(async () => root?.render(renderScreen(536)));
+    assert.equal(dom.window.document.querySelector("[data-central-state='true']"), button);
+    assert.equal(button.textContent, "state:1");
+    assert.equal(central.getAttribute("aria-hidden"), "false");
+    assert.equal(central.scrollTop, 42);
+    assert.equal(central.hasAttribute("inert"), false);
+    Object.defineProperty(dom.window, "innerWidth", { value: 1200, configurable: true });
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event("resize")));
+    assert.equal(central.getAttribute("aria-hidden"), "true");
+    await act(async () => root?.render(renderScreen(496)));
+    assert.equal(central.getAttribute("aria-hidden"), "false");
+    assert.equal(button.textContent, "state:1");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});

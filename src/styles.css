@@ -225,14 +225,14 @@ button:disabled {
   --session-dock-splitter-size: 20px;
   --session-header-dock-row-height: 0px;
   --session-action-dock-row-height: var(--session-action-dock-compact-height, 54px);
-  --session-central-min-height: 240px;
+  --session-central-min-height: 160px;
   --session-left-pane-track-width: 0px;
   --session-right-pane-track-width: 0px;
   isolation: isolate;
   grid-template-rows:
     var(--session-header-dock-row-height)
     var(--session-dock-splitter-size)
-    minmax(5%, 1fr)
+    minmax(0, 1fr)
     var(--session-dock-splitter-size)
     var(--session-action-dock-row-height);
   transition:
@@ -354,9 +354,8 @@ button:disabled {
     0px,
     min(
       var(--session-action-dock-height, 320px),
-      95%,
       calc(
-        100% - max(5%, var(--session-central-min-height))
+        100%
         - var(--session-header-dock-row-height)
         - var(--session-dock-splitter-size)
         - var(--session-dock-splitter-size)
@@ -4372,7 +4371,7 @@ button:disabled {
   --session-main-min-width: 360px;
   --session-auxiliary-min-width: 360px;
   --session-region-min-width: var(--session-main-min-width);
-  --session-region-min-height: var(--session-central-min-height, 240px);
+  --session-region-min-height: var(--session-central-min-height, 160px);
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto auto;
   gap: 0;
@@ -7880,13 +7879,6 @@ button:disabled {
   background: rgba(30, 41, 59, 0.42);
 }
 
-.session-page.auxiliary-session-mode .session-work-surface {
-  position: relative;
-  border-color: color-mix(in srgb, var(--character-sub) 34%, rgba(148, 163, 184, 0.28));
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--character-sub) 20%, transparent),
-    var(--shadow);
-}
 
 .auxiliary-session-control-group {
   border-color: color-mix(in srgb, var(--character-sub) 36%, rgba(148, 163, 184, 0.28));
@@ -10622,16 +10614,6 @@ button:disabled {
   min-width: 82px;
 }
 
-.composer-settings-group {
-  min-width: 0;
-}
-
-.composer-settings-group > summary {
-  cursor: pointer;
-  color: var(--ink);
-  padding: 6px 0;
-}
-
 .composer-settings {
   display: flex;
   flex-wrap: wrap;
@@ -13158,8 +13140,10 @@ button:disabled {
   .session-chat-layout.layout-priority-dock {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows:
-      auto auto var(--session-left-pane-track-width) var(--session-dock-splitter-size) minmax(0, 1fr)
-      var(--session-dock-splitter-size) var(--session-right-pane-track-width) auto auto;
+      var(--session-header-dock-row-height) var(--session-dock-splitter-size)
+      var(--session-left-pane-track-width) var(--session-dock-splitter-size) minmax(0, 1fr)
+      var(--session-dock-splitter-size) var(--session-right-pane-track-width)
+      var(--session-dock-splitter-size) var(--session-action-dock-row-height);
     grid-template-areas:
       "header"
       "top-split"
@@ -13194,7 +13178,7 @@ button:disabled {
   }
 
   .session-message-stack {
-    min-height: var(--session-region-min-height);
+    min-height: 0;
   }
 
   .session-left-pane-slot,
@@ -13288,7 +13272,7 @@ button:disabled {
   }
 
   .session-message-stack {
-    min-height: max(var(--session-region-min-height), min(58vh, 640px));
+    min-height: 0;
   }
 
   .session-context-pane {
@@ -13625,5 +13609,24 @@ button:disabled {
 
   .composer-attachment-list {
     max-height: min(20vh, 144px);
+  }
+}
+
+.session-chat-layout.is-central-collapsed {
+  grid-template-rows: var(--session-header-dock-row-height) var(--session-dock-splitter-size)
+    0px var(--session-dock-splitter-size) minmax(0, 1fr);
+}
+.session-chat-layout.is-central-collapsed .session-message-stack {
+  visibility: hidden;
+  overflow: hidden;
+  min-height: 0;
+  height: 0;
+}
+@media (max-width: 1399.98px) {
+  .session-chat-layout.is-central-collapsed {
+    grid-template-rows: var(--session-header-dock-row-height) var(--session-dock-splitter-size)
+      var(--session-left-pane-track-width) var(--session-dock-splitter-size) 0px
+      var(--session-dock-splitter-size) var(--session-right-pane-track-width)
+      var(--session-dock-splitter-size) minmax(0, 1fr);
   }
 }

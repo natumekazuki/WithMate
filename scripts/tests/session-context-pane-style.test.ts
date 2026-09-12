@@ -119,15 +119,15 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
   );
   assert.match(
     stylesSource,
-    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?grid-template-rows:\s*auto auto var\(--session-left-pane-track-width\) var\(--session-dock-splitter-size\) minmax\(0, 1fr\)\s*var\(--session-dock-splitter-size\) var\(--session-right-pane-track-width\)/,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?grid-template-rows:[\s\S]*?var\(--session-left-pane-track-width\)[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?minmax\(0, 1fr\)[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?var\(--session-right-pane-track-width\)/,
   );
 });
 
 // @test-value v2
 // kind = "invariant"
-// claim = "wide layoutのsplitter priorityとexpanded ActionDock rowは95%上限と中央surfaceの最小240pxと5%を残す残余領域を宣言する"
+// claim = "wide layoutのsplitter priorityとexpanded ActionDock rowはHeader・splitter以外の残余領域を使い、中央最小高160pxを宣言する"
 // oracle = { type = "contract", ref = "ActionDock layout CSS bounds" }
-// fault = "wide layoutのpriority classまたはside-pane gridが崩れるか、CSSのActionDock rowが旧40dvhのまま残るか、中央surfaceの最小高さ・5%・Header・splitterを残すcalcを外す"
+// fault = "wide layoutのpriority classまたはside-pane gridが崩れるか、ActionDock rowが旧固定値のまま残るか、中央最小高を失う"
 // observable = "wide layoutのlayout-priority class・side-pane grid、Header visibility boundary、expanded ActionDock rowのCSS宣言"
 // observation_boundary = "declaration"
 // scope = "wide-session-chat-layout-priority-and-action-dock-css"
@@ -149,10 +149,10 @@ test("splitter が選んだ優先軸に応じて side pane または上下 dock 
   assert.doesNotMatch(componentSource, /className="session-header-dock-slot"\s+hidden=/);
   assert.match(stylesSource, /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?"left-pane left-split header right-split right-pane"[\s\S]*?"left-pane left-split action-dock right-split right-pane"/);
   assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
-  assert.match(stylesSource, /--session-central-min-height:\s*240px;/);
+  assert.match(stylesSource, /--session-central-min-height:\s*160px;/);
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),[\s\S]*?95%,[\s\S]*?calc\(\s*100%\s*-\s*max\(5%, var\(--session-central-min-height\)\)\s*-\s*var\(--session-header-dock-row-height\)\s*-\s*var\(--session-dock-splitter-size\)\s*-\s*var\(--session-dock-splitter-size\)\s*\)/,
+    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),\s*calc\(\s*100%\s*-\s*var\(--session-header-dock-row-height\)\s*-\s*var\(--session-dock-splitter-size\)\s*-\s*var\(--session-dock-splitter-size\)\s*\)/,
   );
   assert.doesNotMatch(sessionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
   assert.doesNotMatch(companionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
@@ -160,14 +160,14 @@ test("splitter が選んだ優先軸に応じて side pane または上下 dock 
 
 // @test-value v2
 // kind = "invariant"
-// claim = "wide layoutのSession layoutは中央surfaceの5% rowと上下splitterのtrack、modal背面境界を保持する"
+// claim = "wide layoutのSession layoutは中央surfaceの可変rowと上下splitterのtrack、modal背面境界を保持する"
 // oracle = { type = "contract", ref = "Session layout vertical track bounds" }
-// fault = "wide layoutの中央rowが旧280px固定のまま残るか、上下splitterのtrack寸法またはmodal背面境界が崩れる"
+// fault = "wide layoutの中央rowが旧固定値や5%制約のまま残るか、上下splitterのtrack寸法またはmodal背面境界が崩れる"
 // observable = "wide layoutのgrid-template-rows、splitter track、splitter affordance、modal z-indexのCSS宣言"
 // observation_boundary = "declaration"
 // scope = "wide-session-action-dock-grid-track"
 // lifecycle = "permanent"
-// impact = "ActionDockを拡張した時に中央surfaceが5%まで縮まず、またはsplitterへ到達できない"
+// impact = "ActionDockを拡張した時に中央最小高160pxを守りつつsplitterへ到達できない"
 // distinction = "expanded ActionDockの95%上限式、narrow layoutの縦stack、full-width ActionDock内のcomposer制約とは分け、wide layoutの基底gridとsplitter geometryを確認する"
 // @end-test-value
 test("splitter の枠は各 track に収まり、modal より背面に残る", async () => {
@@ -175,7 +175,7 @@ test("splitter の枠は各 track に収まり、modal より背面に残る", a
 
   assert.match(
     stylesSource,
-    /\.session-chat-layout\s*{[\s\S]*?--session-dock-splitter-size:\s*20px;[\s\S]*?grid-template-rows:[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?minmax\(5%,\s*1fr\)[\s\S]*?var\(--session-dock-splitter-size\);/,
+    /\.session-chat-layout\s*{[\s\S]*?--session-dock-splitter-size:\s*20px;[\s\S]*?grid-template-rows:[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-dock-splitter-size\);/,
   );
   assert.match(
     stylesSource,
@@ -221,7 +221,7 @@ test("splitter の枠は各 track に収まり、modal より背面に残る", a
 // scope = "wide-session-action-dock-full-width-css"
 // lifecycle = "permanent"
 // impact = "全幅ActionDockでtextareaまたは操作群がdock外へ押し出される"
-// distinction = "expanded rowの95%上限と中央5%を残す残余高計算、side-pane priority gridは別recordで検証し、wide layoutのfull-width dock gridとcontent containment、composerの固定・可変flex制約、textareaの高さ・scroll・resizeだけを確認する"
+// distinction = "expanded rowの残余高計算とside-pane priority gridは別recordで検証し、wide layoutのfull-width dock gridとcontent containment、composerの固定・可変flex制約、textareaの高さ・scroll・resizeだけを確認する"
 // @end-test-value
 test("Header と ActionDock は中央・左右ペインの外側に全幅 dock として配置する", async () => {
   const [chatWindowSource, stylesSource] = await Promise.all([

@@ -951,7 +951,11 @@ export function SessionChatScreen({
   workbenchStyle,
   modals,
 }: SessionChatScreenProps) {
+  const ownLayoutRef = useRef<HTMLDivElement | null>(null);
+  const centralRef = useRef<HTMLElement | null>(null);
+  const [isCentralCollapsed, setIsCentralCollapsed] = useState(false);
   const setLayoutElementRefs = useCallback((node: HTMLDivElement | null) => {
+    ownLayoutRef.current = node;
     if (layoutRef) {
       layoutRef.current = node;
     }
@@ -960,6 +964,33 @@ export function SessionChatScreen({
     }
   }, [layoutRef, workbenchRef]);
   const layoutStyle = useMemo(() => ({ ...style, ...workbenchStyle }), [style, workbenchStyle]);
+  useLayoutEffect(() => {
+    const layout = ownLayoutRef.current;
+    const central = centralRef.current;
+    if (!layout || !central) return;
+    const measure = () => {
+      const view = layout.ownerDocument.defaultView!;
+      const css = view.getComputedStyle(layout);
+      const pixel = (value: string) => Number.parseFloat(value) || 0;
+      const height = layout.clientHeight - pixel(css.paddingTop) - pixel(css.paddingBottom);
+      const narrow = view.innerWidth < 1400;
+      const sideHeight = narrow
+        ? pixel(css.getPropertyValue("--session-left-pane-track-width"))
+          + pixel(css.getPropertyValue("--session-right-pane-track-width")) : 0;
+      const remaining = height - sideHeight
+        - pixel(css.getPropertyValue("--session-header-dock-row-height"))
+        - pixel(css.getPropertyValue("--session-dock-splitter-size")) * (narrow ? 4 : 2)
+        - pixel(css.getPropertyValue("--session-action-dock-height"));
+      const minimum = pixel(view.getComputedStyle(central).getPropertyValue("--session-region-min-height"));
+      setIsCentralCollapsed(isActionDockExpanded && remaining < minimum);
+    };
+    measure();
+    const Observer = layout.ownerDocument.defaultView?.ResizeObserver;
+    const observer = Observer ? new Observer(measure) : null;
+    observer?.observe(layout);
+    window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, [layoutStyle, isActionDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible, layoutPriority]);
   const columnsRef = useRef<HTMLDivElement | null>(null);
   const [columnSizes, setColumnSizes] = useState({ width: 0, main: 0, auxiliary: 0, splitter: 0 });
   useLayoutEffect(() => {
@@ -1001,7 +1032,7 @@ export function SessionChatScreen({
         isActionDockExpanded ? " is-action-dock-expanded" : ""
       }${isLeftPaneVisible ? " is-left-pane-visible" : ""}${
         isRightPaneVisible ? " is-right-pane-visible" : ""
-      }${className ? ` ${className}` : ""}`}
+      }${isCentralCollapsed ? " is-central-collapsed" : ""}${className ? ` ${className}` : ""}`}
       style={layoutStyle}
       data-session-mode={mode}
     >
@@ -1028,6 +1059,9 @@ export function SessionChatScreen({
 
       {leftSplitter}
       <section
+        ref={centralRef}
+        aria-hidden={isCentralCollapsed}
+        inert={isCentralCollapsed}
         className="chat-panel session-work-surface session-message-stack rise-3"
         style={isAuxiliaryVisible && auxiliaryWidthRatio > 0 && mainContent === undefined && columnSizes.main > 0
           ? { "--session-region-min-width": `${columnSizes.main + columnSizes.auxiliary + columnSizes.splitter}px` } as CSSProperties
@@ -4229,123 +4263,121 @@ export function SessionComposerExpanded({
       </div>
 
       <div className={`composer-control-row${isRunning ? " running" : ""}`}>
-        <details className="composer-settings-group">
-          <summary>実行設定</summary>
-          <div className="composer-settings">
-            {showExecutionModeControls ? (
-              <>
-                <div className="composer-setting-field composer-setting-approval">
-                  <span>Approval</span>
-                  <select
-                    value={selectedApprovalMode}
-                    onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
-                    disabled={isRunning || composerBlocked}
-                    aria-label="Approval"
-                  >
-                    {approvalOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {reviewerOptions.length > 0 ? (
-                  <div className="composer-setting-field composer-setting-reviewer">
-                    <span>Reviewer</span>
-                    <select
-                      value={selectedCodexReviewer}
-                      onChange={(event) => onChangeCodexReviewer(event.target.value as CodexReviewer)}
-                      disabled={isCodexReviewerControlDisabled({
-                        approvalMode: selectedApprovalMode,
-                        isRunning,
-                        composerBlocked,
-                      })}
-                      aria-label="Reviewer"
-                    >
-                      {reviewerOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : null}
-
-                {sandboxOptions.length > 0 ? (
-                  <div className="composer-setting-field composer-setting-sandbox">
-                    <span>Sandbox</span>
-                    <select
-                      value={selectedCodexSandboxMode}
-                      onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
-                      disabled={isRunning || composerBlocked}
-                      aria-label="Sandbox"
-                    >
-                      {sandboxOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : null}
-              </>
-            ) : null}
-
-            <div className="composer-setting-field composer-setting-model">
-              <span>Model</span>
-              <select
-                value={selectedModel}
-                onChange={(event) => onChangeModel(event.target.value)}
-                disabled={isRunning || composerBlocked}
-              >
-                {modelOptions.length > 0 ? (
-                  modelOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))
-                ) : (
-                  <option value={selectedModel}>{selectedModelFallbackLabel}</option>
-                )}
-              </select>
-            </div>
-
-            <div className="composer-setting-field composer-setting-depth">
-              <span>Depth</span>
-              <select
-                value={selectedReasoningEffort}
-                onChange={(event) => onChangeReasoningEffort(event.target.value)}
-                disabled={isRunning || composerBlocked}
-                aria-label="推論の深さ"
-              >
-                {reasoningOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {speedOptions.length > 0 ? (
-              <div className="composer-setting-field composer-setting-speed">
-                <span>Speed</span>
+        <div className="composer-settings">
+          {showExecutionModeControls ? (
+            <>
+              <div className="composer-setting-field composer-setting-approval">
+                <span>Approval</span>
                 <select
-                  value={selectedCodexSpeed}
-                  onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
+                  value={selectedApprovalMode}
+                  onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
                   disabled={isRunning || composerBlocked}
-                  aria-label="Speed"
+                  aria-label="Approval"
                 >
-                  {speedOptions.map((option) => (
+                  {approvalOptions.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
                   ))}
                 </select>
               </div>
-            ) : null}
+
+              {reviewerOptions.length > 0 ? (
+                <div className="composer-setting-field composer-setting-reviewer">
+                  <span>Reviewer</span>
+                  <select
+                    value={selectedCodexReviewer}
+                    onChange={(event) => onChangeCodexReviewer(event.target.value as CodexReviewer)}
+                    disabled={isCodexReviewerControlDisabled({
+                      approvalMode: selectedApprovalMode,
+                      isRunning,
+                      composerBlocked,
+                    })}
+                    aria-label="Reviewer"
+                  >
+                    {reviewerOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              {sandboxOptions.length > 0 ? (
+                <div className="composer-setting-field composer-setting-sandbox">
+                  <span>Sandbox</span>
+                  <select
+                    value={selectedCodexSandboxMode}
+                    onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
+                    disabled={isRunning || composerBlocked}
+                    aria-label="Sandbox"
+                  >
+                    {sandboxOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          <div className="composer-setting-field composer-setting-model">
+            <span>Model</span>
+            <select
+              value={selectedModel}
+              onChange={(event) => onChangeModel(event.target.value)}
+              disabled={isRunning || composerBlocked}
+            >
+              {modelOptions.length > 0 ? (
+                modelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))
+              ) : (
+                <option value={selectedModel}>{selectedModelFallbackLabel}</option>
+              )}
+            </select>
           </div>
-        </details>
+
+          <div className="composer-setting-field composer-setting-depth">
+            <span>Depth</span>
+            <select
+              value={selectedReasoningEffort}
+              onChange={(event) => onChangeReasoningEffort(event.target.value)}
+              disabled={isRunning || composerBlocked}
+              aria-label="推論の深さ"
+            >
+              {reasoningOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {speedOptions.length > 0 ? (
+            <div className="composer-setting-field composer-setting-speed">
+              <span>Speed</span>
+              <select
+                value={selectedCodexSpeed}
+                onChange={(event) => onChangeCodexSpeed(event.target.value as CodexSpeed)}
+                disabled={isRunning || composerBlocked}
+                aria-label="Speed"
+              >
+                {speedOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+        </div>
+
 
         {isRunning ? null : (
           <button

@@ -25,8 +25,6 @@ const SESSION_HORIZONTAL_SPLITTER_SIZE = 20;
 const SESSION_HEADER_DOCK_DEFAULT_HEIGHT = 64;
 const SESSION_ACTION_DOCK_DEFAULT_HEIGHT = 320;
 const SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT = 54;
-const SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO = 0.95;
-const SESSION_CENTRAL_SURFACE_MIN_HEIGHT_RATIO = 0.05;
 const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 40;
 const SESSION_MESSAGE_BOTTOM_EPSILON = 1;
 const SESSION_MESSAGE_SCROLL_INTENT_SETTLE_MS = 180;
@@ -268,19 +266,10 @@ export function clampSessionVerticalDockHeight(input: {
   requestedHeight: number;
   layoutHeight: number;
   minHeight: number;
-  maxHeightRatio: number;
   oppositeDockHeight: number;
-  centralMinimumHeight: number;
 }): number {
-  const ratioMax = input.layoutHeight * input.maxHeightRatio;
-  const centralMinimumHeight = Math.max(
-    input.layoutHeight * SESSION_CENTRAL_SURFACE_MIN_HEIGHT_RATIO,
-    input.centralMinimumHeight,
-  );
-  const centralSurfaceMax = input.layoutHeight - centralMinimumHeight
-    - input.oppositeDockHeight
-    - SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT;
-  const maxHeight = Math.max(0, Math.min(ratioMax, centralSurfaceMax));
+  const maxHeight = Math.max(0, input.layoutHeight - input.oppositeDockHeight
+    - SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT);
   const minHeight = Math.min(input.minHeight, maxHeight);
   return Math.min(maxHeight, Math.max(minHeight, input.requestedHeight));
 }
@@ -322,18 +311,11 @@ export function useSessionVerticalDockResize(input: {
       return;
     }
     const visibleHeaderHeight = input.isHeaderExpanded ? SESSION_HEADER_DOCK_DEFAULT_HEIGHT : 0;
-    const centralMinimumHeight = readSessionRegionMinimum(
-      layout,
-      ".session-message-stack",
-      "--session-region-min-height",
-    );
     const nextActionDockHeight = clampSessionVerticalDockHeight({
       requestedHeight: actionDockHeightRef.current,
       layoutHeight,
       minHeight: readSessionRegionMinimum(layout, ".session-action-dock-slot", "--session-region-min-height"),
-      maxHeightRatio: SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO,
       oppositeDockHeight: visibleHeaderHeight,
-      centralMinimumHeight,
     });
     actionDockHeightRef.current = nextActionDockHeight;
     setActionDockHeight((current) => current === nextActionDockHeight ? current : nextActionDockHeight);
@@ -405,13 +387,7 @@ export function useSessionVerticalDockResize(input: {
         requestedHeight: gesture.startHeight + gesture.startY - event.clientY,
         layoutHeight: bounds.height,
         minHeight: readSessionRegionMinimum(layout, ".session-action-dock-slot", "--session-region-min-height"),
-        maxHeightRatio: SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO,
         oppositeDockHeight: oppositeHeight,
-        centralMinimumHeight: readSessionRegionMinimum(
-          layout,
-          ".session-message-stack",
-          "--session-region-min-height",
-        ),
       });
       actionDockHeightRef.current = nextHeight;
       setActionDockHeight(nextHeight);

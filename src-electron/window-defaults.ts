@@ -8,8 +8,8 @@ export const HOME_WINDOW_DEFAULT_BOUNDS = {
 export const SESSION_WINDOW_DEFAULT_BOUNDS = {
   width: 1520,
   height: 940,
-  minWidth: 900,
-  minHeight: 680,
+  minWidth: 1100,
+  minHeight: 720,
 } as const;
 
 export const DIFF_WINDOW_DEFAULT_BOUNDS = {
