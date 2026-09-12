@@ -366,7 +366,7 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 全suiteの初回は3,569件中3,553 pass、15 fail、1 skip。公開fixtureとschemaの今回変更に伴う失敗を修正した後の全suiteは3,572件中3,569 pass、2 fail、1 skipだった。残る失敗は`session-admission-regressions.test.ts`の旧Session placement fixtureと`session-transcript-service.test.ts`の固定期限経過である。前者は開始baseのclean detached worktreeでも同じ`AUTHORITY_SCOPE_INVALID`を再現し、後者は開始時に報告済みの`2026-09-12T00:00:00Z`期限切れを実測した。初回のGlossary queue timeoutは再実行で成功した。最終の権限・migration修正後は関連49件、型検査、production buildが成功した。GUIは変更しておらず目視未実行。
 
-異なるroot間のWork Item単体moveは、target Sessionの所属・grant・budget移管の接続が必要なため現在明示conflictである。単体moveの延期方針はユーザーへ確認中であり、実装済み能力に数えない。確定済み結果を訂正するmoveとflattenは承認済みのSlice 5待ち、batch splitはSlice 6待ちとして保持する。
+異なるroot間のWork Item単体moveは、target Sessionの所属・grant・budget移管の接続が必要なため現在明示conflictである。2026-09-13、未完了項目として本planに保持することを条件に、ユーザーが単体moveの延期を承認した。後続のtransfer接続でtarget Sessionの所属・grant・budget移管と原子的保存・履歴保持を実装・検証するまで未完了とし、実装済み能力に数えない。確定済み結果を訂正するmoveとflattenは承認済みのSlice 5待ち、batch splitはSlice 6待ちとして保持する。
 
 実装を`230cceed32fa2424e669c5e4fede5282fc8a2fde`へ固定し、clean detached worktreeで開始baseから全36 fileの独立complete-diff reviewを行った。`work.move.expectedDestinationAggregateRevision`と`work.reassign.expectedContainerRevision`の公開parser許可漏れをblockingとして採用し、queued admissionのWorkspace不明時にTypeErrorになる指摘も採用した。修正commitは`58e0074c9417e63aa750a3c5140453c1d640e2d1`。TS parserと生成CLIを修正し、Workspace不明時は既存association errorで拒否する。同commitのclean worktreeで当該3 finding familyのtargeted closureが完了し、残るblockingはない。全差分reviewは繰り返さず、review worktreeはHEAD・cleanliness・SessionFolder内pathを確認して削除した。
 
@@ -374,7 +374,7 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 変更testは開始baseから最終snapshotまで26 tests／26 transitionsをdiagnostic 0で抽出し、通常のread-only general_lunaで審査した。公開revisionの伝播、provider tuple、root選択、admission時点のGit状態、履歴payload、権限proofの独立性、migrationの旧列・sequence、cycleの拒否条件、delete参照・再送、successorの旧branch・予算を補強した。全recordの指摘解消を確認した。最終補強はtestと記録だけであり、production sourceは独立targeted closure済みの修正commitと同一である。
 
-source改変のstartup拒否検証で、既存SessionExecutionStorageV6 constructorがschema検証例外時にDB handleを明示closeしないことも確認した。通常admissionとは別の既存失敗経路であり、今回の3 finding familyには含めず残リスクとして記録する。cross-root単体moveの延期方針は確認待ちのため、Slice 4全体の完了・統合済みとは扱わない。
+source改変のstartup拒否検証で、既存SessionExecutionStorageV6 constructorがschema検証例外時にDB handleを明示closeしないことも確認した。通常admissionとは別の既存失敗経路であり、今回の3 finding familyには含めず残リスクとして記録する。cross-root単体moveを上記の承認済み未完了項目として後続へ残し、Slice 4の今回合意した範囲の実装・検証・レビューは完了した。最終test補強とレビュー記録は`277d2b5a`に保存済み。統合先へのmerge・pushは未実行である。
 
 ### Slice 2 の実装・検証対象
 
