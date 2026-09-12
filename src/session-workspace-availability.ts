@@ -66,6 +66,21 @@ export function isSessionWorkspaceAvailable(
     && state.workspacePath === workspacePath;
 }
 
+export function isSessionWorkspaceFileExplorerEnabled(
+  state: SessionWorkspaceAvailabilityState,
+  sessionId: string,
+  workspacePath: string,
+  wasAvailableBeforeCheck: boolean,
+): boolean {
+  if (isSessionWorkspaceAvailable(state, sessionId, workspacePath)) {
+    return true;
+  }
+  return wasAvailableBeforeCheck
+    && state.status === "checking"
+    && state.sessionId === sessionId
+    && state.workspacePath === workspacePath;
+}
+
 export function resolveSessionWorkspaceBlockedReason(
   state: SessionWorkspaceAvailabilityState,
   sessionId: string,
