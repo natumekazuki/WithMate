@@ -196,14 +196,14 @@ name: Mia
 
   // @test-value v2
   // kind = "contract"
-  // claim = "default builderがBaseline Presenceを含むCharacter Kernelとevidence分離の推奨構造を返す"
+  // claim = "default builderがBaseline Presenceを含むCharacter Kernelと、会話・作業のevidence分離を備えた推奨構造を返す"
   // oracle = { type = "adr", ref = "docs/adr/011-character-authoring-kernel.md" }
-  // fault = "default builderがBaseline PresenceまたはVoice Rulesのない旧Examples中心の定義、必要な校正記録欄のないnotes、固定返答例の代表的な見出しを返し、full authoringの品質契約と食い違う"
+  // fault = "default builderがBaseline PresenceまたはVoice Rulesのない旧Examples中心の定義、作業中の声・検証欄のないnotes、必要な校正記録欄のないnotes、固定返答例の代表的な見出しを返し、full authoringの品質契約と食い違う"
   // observable = "buildDefaultCharacterDefinition()とbuildDefaultCharacterNotes()の戻り値"
   // observation_boundary = "component-behavior"
   // scope = "character-definition-templates"
   // lifecycle = "permanent"
-  // impact = "新規draftやCharacter作成の開始点から平常時のCharacter性と校正記録が欠落し、品質契約に沿った改善を始められない"
+  // impact = "新規draftやCharacter作成の開始点から平常時のCharacter性、作業中の声、校正記録が欠落し、品質契約に沿った改善を始められない"
   // distinction = "storage/editor経路やSkill templateの同一性ではなく、default builder自身の推奨構造を直接観測する"
   // @end-test-value
   it("default Character files は Kernel と evidence 分離の推奨構造を持つ", async () => {
@@ -217,14 +217,28 @@ name: Mia
     assert.match(definition, /## Social Intent \/ User Relationship/);
     assert.match(definition, /## Emotional Dynamics and Core Tensions/);
     assert.match(definition, /## Thinking and Action Style/);
+    assert.match(definition, /作業中にコード・資料・tool結果/);
     assert.match(definition, /### Identity Invariants/);
     assert.match(definition, /### Distributional Tendencies/);
     assert.match(definition, /### Triggered Markers/);
     assert.match(definition, /## State Modulation/);
+    assert.match(definition, /作業中・集中・発見・見立ての修正/);
     assert.match(definition, /## Character Priority/);
     assert.match(definition, /## Minimal Reliability/);
     assert.match(definition, /^## Voice Rules$/m);
+    for (const section of [
+      "Identity Invariants",
+      "Distributional Tendencies",
+      "Triggered Markers",
+    ]) {
+      const escapedSection = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      assert.match(definition, new RegExp(`^### ${escapedSection}$`, "m"));
+    }
     assert.doesNotMatch(definition, /^#{2,3} (?:Examples?|Example Responses|Response Examples|Scene Dialogues?)(?: \(.+\))?(?::.*)?$/m);
+    assert.doesNotMatch(
+      definition,
+      /^#{2,3} (?:Work-session Design|Evidence(?: \/ Sources)?|Observation Log|Revision Notes|Validation Summary|Work-session Validation Record)$/m,
+    );
 
     assert.match(notes, /^## Calibration Brief$/m);
     assert.match(notes, /^## Likeness Anchors \/ Protected Traits$/m);
@@ -241,5 +255,40 @@ name: Mia
     assert.match(notes, /^### Environment and Provenance$/m);
     assert.match(notes, /^### Main Quality Test Details$/m);
     assert.match(notes, /^### Continuous Conversation Record$/m);
+    assert.match(notes, /^## Work-session Design$/m);
+    assert.match(notes, /^### Work-session Validation Record$/m);
+    assert.match(notes, /Task-execution \/ Conversation-work Continuity/);
+    assert.match(notes, /synthetic-event \/ recorded-tool-replay \/ live-tool-execution/);
+    for (const axis of ["Work Likeness", "Task Integrity", "Collaboration Comfort"]) {
+      assert.match(notes, new RegExp(`^\\| ${axis} \\|`, "m"));
+    }
+    assert.match(notes, /^- Functional verification: pass \/ fail \/ inconclusive \/ not-run \/ not-applicable$/m);
+    assert.match(notes, /Session \/ task ID、候補revision/);
+    assert.match(notes, /ユーザー依頼・初期資料やfileの版・受入条件/);
+    assert.match(notes, /tool構成・権限・初期状態の復元方法/);
+    assert.match(notes, /synthetic-eventやreplayのみのFunctional verificationはnot-run/);
+    assert.match(notes, /非公開の内部思考は原出力証拠にしない/);
+
+    for (const section of [
+      "Identity Core",
+      "Attention and Appraisal",
+      "Social Intent / User Relationship",
+      "Emotional Dynamics and Core Tensions",
+      "Thinking and Action Style",
+      "State Modulation",
+      "Character Priority",
+      "Minimal Reliability",
+    ]) {
+      const escapedSection = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      assert.match(definition, new RegExp(`^## ${escapedSection}$`, "m"));
+    }
+    assert.doesNotMatch(
+      definition,
+      /^#{2,3} (?:Calibration Brief|Likeness Anchors \/ Protected Traits|Source Coverage|Evidence \/ Sources|Observation Log|Character Kernel Derivation|Voice Evidence|Feedback and Revision Log|User Input Classification|Frontmatter Description|Runtime Handoff|Conflicts \/ Uncertainty|Revision Guardrails|Revision Notes|Validation Summary|Environment and Provenance|Main Quality Test Details|Natural Marker Opportunity Log|Required Diagnostics|Relationship Smoke Test|Continuous Conversation Record|Work-session Design|Work-session Validation Record|Future Improvements)$/m,
+    );
+    assert.doesNotMatch(
+      definition,
+      /^### Generalization and Voice$/m,
+    );
   });
 });

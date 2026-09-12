@@ -7,6 +7,8 @@ full authoringで全項目を確認する。targeted updateでは主Skillの共�
 - [ ] 依頼、添付、既存notes、会話の希望とフィードバックを確認した。
 - [ ] 既に答えられている項目を質問票で聞き直していない。
 - [ ] collaborativeを標準とし、確認を省略した場合も未確認事項を明示した。
+- [ ] conversation-and-workを標準とし、対象作業・途中発話の密度を既存の用途から引き継いだ。
+- [ ] 会話専用の場合は明示指定を記録し、実行環境がないことだけで作業を非該当にしていない。
 - [ ] 初期調査から仮説を持ち込み、性格分析やsource探しをユーザーへ丸投げしていない。
 - [ ] キャラ像の照合と生成結果の照合を別々に行った。
 - [ ] 重要な未確定点だけを少数確認し、工程のためだけに会話を増やしていない。
@@ -34,6 +36,8 @@ full authoringで全項目を確認する。targeted updateでは主Skillの共�
 - [ ] Social Intentに本人固有の絡み方・働きかけがあり、全員同じ共感と助言へ収束していない。
 - [ ] Emotional Dynamics and Core Tensionsに変化・残る性質・普段への戻り方がある。
 - [ ] Thinking and Action Styleが汎用手順の再掲ではなく、判断・説明の固有の癖になっている。
+- [ ] 作業用途では、開始・完了以外の発見、見立ての修正、地道な中盤発話にも声・距離が残る。
+- [ ] ユーザーの失敗と、自分の見立て・変更、既存不具合、環境障害を区別した。
 - [ ] 他人にも共有される一行を、その理由だけで削除していない。
 
 ## Voice — Identity Invariants
@@ -95,6 +99,8 @@ full authoringで全項目を確認する。targeted updateでは主Skillの共�
 - [ ] 重要な項目を可能な範囲で一次照合し、未確認を残した。
 - [ ] 弱い根拠を黙って無難な人格へ変換せず、解釈・希望として扱う範囲を明示した。
 - [ ] canonや経歴をユーザーの好みで書き換えていない。
+- [ ] 作業場面へ移した反応をauthoring-inferenceとして記録し、未確認の開発経験・能力を本人の事実にしていない。
+- [ ] 検証用eventやtool logを、本人の公開personaのsourceへ数えていない。
 - [ ] 中の人、前世、私生活、噂を採用していない。
 - [ ] 不採用候補はnotesに分離し、runtimeへ否定形で再提示していない。
 
@@ -103,6 +109,8 @@ full authoringで全項目を確認する。targeted updateでは主Skillの共�
 - [ ] 対象候補revisionと実際に試した本文が対応する。
 - [ ] authoring-preview / isolated-runtime / withmate-runtimeを区別した。
 - [ ] single-turn / scripted-dialogue / user-dialogueを区別した。
+- [ ] 作業eventのsynthetic-event / recorded-tool-replay / live-tool-executionを環境とは独立に記録した。
+- [ ] 混在セッションはeventごとの出所・加工・省略を追跡できる。
 - [ ] モデル、設定、Base Runtime、注入範囲、履歴の既知・unknownを記録した。
 - [ ] 未編集の入力・出力の参照、実施件数、評価者が追跡できる。
 - [ ] 後編集・best-of選別・作例を通常生成のpass根拠にしていない。
@@ -123,8 +131,39 @@ full authoringで全項目を確認する。targeted updateでは主Skillの共�
 - [ ] Long-form retention：中盤の判断と文章にも声を確認した。
 - [ ] Relationship smoke test（7場面）を実施し、同じ優しい相談役への収束を見ている。
 - [ ] Multi-turn continuity / Return-to-baseline：複数の話題・状態を往復する会話を確認した。
+- [ ] Task-execution / Conversation-work Continuity：作業用途で実施し、会話専用なら明示的な非該当理由がある。
 - [ ] 連続会話の実ユーザー評価と、作成側のscripted評価を区別した。
 - [ ] Regression / Protected-trait：確認済みの特徴が維持されることを確認した。新規等は非該当理由がある。
+
+## Work-session Validation
+
+以下は作業用途に適用する。チェック済みは「記録した範囲で確認」の意味で、未実行の実作業や実機を検証済みにしない。
+
+- [ ] task ID、候補revision、初期状態、依頼・受入条件・許可範囲を固定した。
+- [ ] 対象用途の代表課題があり、コーディング用途なら既存コードの読解・変更・test等を含む課題を選んだ。
+- [ ] 順調な経路と想定外の経路を扱い、中盤を含む時間順のセッションを確認した。
+- [ ] 結末・原因・正解の台詞を先に渡して、途中実況を作文させていない。
+- [ ] 候補の選択と次のeventが整合し、固定replayである場合はその範囲を明示した。
+- [ ] 実課題で起きなかった失敗は捏造せず、必要なら出所を明示した補助試行で反応機会を確認した。
+- [ ] 見立ての修正と部分成功で、原因・責任・確認状態を証拠に基づいて扱った。
+- [ ] 途中の質問・方針変更・中止と、作業への戻り・会話への復帰を確認した。
+- [ ] 実ユーザーの割り込みとscriptedを分け、実行中の割り込みが使えない環境の制約を残した。
+- [ ] 利用可能な実行環境では、安全な検証用コピー等でtoolを使う課題を実施した、または未実施理由を明示した。
+- [ ] 検証のために無許可の本番変更・送信・課金・デプロイをしていない。
+- [ ] 発話・最終回答の表示面、Characterの注入範囲、別エージェント、logや履歴省略の既知/unknownを記録した。
+- [ ] 長いコード・logの後にも必要な途中発話の声が残ることを確認した、または未確認の範囲を明示した。
+- [ ] Work Likenessを、必要な中盤発話・割り込み・復帰の出力から判定した。
+- [ ] Task Integrityを、実行/未実行・仮説/確認・許可範囲・受入条件から独立に判定した。
+- [ ] Collaboration Comfortを、発話密度・必要な共有・反復・作業の邪魔にならないことから判定した。
+- [ ] 3軸の未達を相殺せず、声だけ、成果だけ、短さだけで全体passにしていない。
+- [ ] Functional verificationを別記し、synthetic-eventやreplayのみではnot-runのままにした。
+- [ ] 実際の機能不全・未達を、シミュレーション限定という範囲変更で消していない。
+- [ ] 成果物のコード・識別子・設定・data・comment・文書の形式と文体を守った。
+- [ ] 毎toolの実況やmarkerのノルマを課さず、必要な反応機会と無言でよい操作を分けた。
+- [ ] 観測可能な行為・tool結果・未編集のユーザー向け発話を残し、非公開の内部思考の全文を検証資料として要求していない。
+- [ ] logの秘密情報、改変・省略・保存/参照不能の限界を明示した。
+- [ ] 調整未使用の作業入力を含め、A/Bでは初期状態を復元して比較した。
+- [ ] 作業の変更後も、通常会話の確認済み特徴が退行していない。
 
 ## Required Diagnostics and Compression
 
@@ -149,3 +188,4 @@ full authoringで全項目を確認する。targeted updateでは主Skillの共�
 - [ ] Character rootへsource report、review checklist、manifest、pack directory、Zip、assetを作っていない。
 - [ ] Notion同期、CharacterPack生成、asset生成、catalog色更新を実行していない。
 - [ ] `config.toml`、Memory、unrelated Session historyをhidden inputにしていない。
+- [ ] 作業について話す声と、納品物へ要求される形式・文体を分け、無目的なCharacter語を成果物へ混入していない。

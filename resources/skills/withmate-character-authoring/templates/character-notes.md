@@ -10,10 +10,16 @@
 - Default language: Japanese
 - Runtime schema: withmate-character-v5
 - Candidate revision:
+- 利用範囲: conversation-and-work（標準）/ conversation-only（明示指定）
+- 対象作業（コーディング・調査・編集等）と、既知のtool・表示条件:
+- 作業testの適用・理由・現在確認できた証拠範囲:
 
 ## Calibration Brief
 
 - ユーザーの用途と会話体験の目標:
+- 利用範囲: conversation-and-work（標準）/ conversation-only（明示指定）
+- 対象作業（コーディング・調査・編集等）と、既知のtool・表示条件:
+- 作業中に残す声・絡み方、途中報告や集中時の発話密度の希望:
 - 平常の声の温度・文の崩れ方:
 - 平常の距離・絡み方・自己位置づけ:
 - 感情の快・不快、活性、声の温度を分けた見立て:
@@ -73,6 +79,7 @@
 | 平常時の本人発話・作品本文 |  |  |  |
 | 親しい相手との公開応酬 |  |  |  |
 | 状態差・平常への復帰 |  |  |  |
+| 作業・挑戦の最中の公開発話 |  |  |  |
 
 ## Evidence / Sources
 
@@ -147,6 +154,8 @@
 - 判断・比較の軸:
 - 説明の語順、途中に残る声:
 - 長い作業でも残す判断癖:
+- 作業での発見・見立ての修正・部分成功・割り込みに残る特徴:
+- ユーザーの失敗、自分の判断・変更、環境障害を分けた反応:
 
 ## Voice Evidence
 
@@ -202,6 +211,26 @@ Type: habitual / reactive / signature。広い習慣は広い条件のまま扱�
 | explanation / long-form |  |  |  |  |  |  |
 | disagreement / repair |  |  |  |  |  |  |
 
+## Work-session Design
+
+作業用途で使用する。会話専用なら非該当理由を残し、詳細の空欄は削除できる。作業の台本ではなく、既存の声・距離・選び方が作業へどう現れるかを記録する。
+
+- 対象task領域・利用範囲と、その根拠となる依頼:
+- 合意した作業中の声・距離・発話密度:
+- 本人の公開作業を直接確認した範囲:
+- 別文脈から移した設計上の解釈と、未確認の本人経験:
+- 普段の性質のうち中盤にも残すもの・runtime対応箇所:
+- 集中・途中の質問・方針変更・中止・再開・平常への復帰:
+- 話す声と成果物の形式・文体を分ける方針:
+- 想定する表示面・注入範囲とunknownの項目:
+- 非該当の場合の明示指定・理由:
+
+| 元の観察・Source / ユーザー指定 | 移す声・反応・判断の特徴 | 作業での発生文脈 | 残すもの・変えるもの | authoring-inferenceの範囲 | ユーザー確認・対象revision |
+| --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |
+
+自分の見立ての修正を、ユーザーへの励ましで代用しない。常用する失敗、偽の進捗、特定のtoolを使う固定手順は人格へ採用しない。
+
 ## Runtime Handoff
 
 ### Adopted Rules
@@ -255,6 +284,7 @@ Type: habitual / reactive / signature。広い習慣は広い条件のまま扱�
 - 候補revision:
 - Environment: authoring-preview / isolated-runtime / withmate-runtime
 - Dialogue mode: single-turn / scripted-dialogue / user-dialogue
+- 作業イベント出所: synthetic-event / recorded-tool-replay / live-tool-execution（非作業時はnot-applicable、混在時はevent別に記録）
 - モデル・設定・Base Runtime・注入範囲・履歴（不明はunknown）:
 - 実行方法・実際の試行数:
 - 入力と未編集出力の参照・保存状況:
@@ -291,6 +321,7 @@ Type: habitual / reactive / signature。広い習慣は広い条件のまま扱�
 | Long-form retention |  |  |  |  |
 | 7-scene relationship smoke test |  |  |  |  |
 | Multi-turn continuity / Return-to-baseline |  |  |  |  |
+| Task-execution / Conversation-work Continuity（作業用途で必須） |  |  |  |  |
 | Regression / Protected-trait |  |  |  |  |
 
 ### Natural Marker Opportunity Log
@@ -327,6 +358,59 @@ marker名を入力で指定した試行は、自然出現とは別枠にする�
 - 普段へ戻れたか:
 - ユーザーが感じた長時間の違和感:
 - 確認できなかった遷移・今後の課題:
+
+### Work-session Validation Record
+
+EnvironmentとEvent sourceは別軸で記録する。必要なsessionごとに表を追加し、結果を先に書かない。taskの初期状態やlogの参照が利用不能なら、その限界も記録する。
+
+#### Task and Execution Conditions
+
+- Session / task ID、候補revision:
+- 対象領域、調整用 / holdout、通常経路 / 想定外経路:
+- ユーザー依頼・初期資料やfileの版・受入条件:
+- Environment / Dialogue mode / Event source:
+- モデル・設定・Base Runtime・tool構成・権限・初期状態の復元方法:
+- 検証用コピー / sandboxの範囲、外部への副作用の許可:
+- 途中発話・最終回答の表示面、各段階のCharacter注入、履歴・log省略:
+- 長いコード・logを読んだ位置と、その後の発話参照:
+- 観測可能な範囲・不明な段階・別agentの発話:
+- 実際の試行数、ユーザー往復数、tool実行数（それぞれ実測）:
+- A/Bで同じにした条件と、枝分かれ・環境差:
+
+#### Event and Visible Response Trace
+
+| 順序 / event ID | その時点の入力・分かった事実の参照 | Event source・元log・加工の有無 | 候補の行為・tool結果の参照 | 未編集のユーザー向け発話の参照 | 変更後の状態・残件 | anchor / 発話が必要な機会・無言が適切な機会 |
+| --- | --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |  |
+
+- 未来の結果を提示せず、選んだ行為と次のeventを整合させた範囲:
+- 見立ての誤り / 自己変更 / 既存不具合 / 環境障害の区分と証拠:
+- 自然に起きなかった反応機会を別試行で補った範囲・出所:
+- 実ユーザーの途中質問・変更・中止と、その後の再開・復帰:
+- scriptedな割り込みと実ユーザーの発言の区別:
+- 開始・中盤・検証・引き渡し・会話復帰のcoverage:
+- 伏せた秘密情報・省略・欠落・参照不能による限界:
+
+#### Three-axis Assessment and Functional Verification
+
+| Axis | 結果 | 根拠となるevent / 出力 | 実ユーザー評価 / 作成者評価の区別 | 証拠範囲・未確認 |
+| --- | --- | --- | --- | --- |
+| Work Likeness |  |  |  |  |
+| Task Integrity |  |  |  |  |
+| Collaboration Comfort |  |  |  |  |
+
+- Functional verification: pass / fail / inconclusive / not-run / not-applicable
+- 実際に編集・実行した範囲、差分、受入条件との照合:
+- 実行したtest・確認と実結果、未実行・部分成功・残件:
+- シミュレーション / replayだけの時に実作業の確認をnot-runとしたこと:
+- 作業test全体の結果・3軸の判定根拠・限定範囲:
+- 発話密度と必要な共有、同じ反応の反復・不足の解釈:
+- 成果物の形式・文体・コード等への無目的なCharacter語混入の有無:
+- 調整に使っていない作業入力と、その検証結果:
+- 実機・実行能力・UI・注入条件について主張できない範囲:
+- 圧縮・改稿後に守れた作業中の特徴と、通常会話の退行検査:
+
+結果はpass / fail / inconclusive / not-run / not-applicable。synthetic-eventやreplayのみのFunctional verificationはnot-run。3軸のpassを、実際の編集や機能検証のpassへ置き換えない。後編集した作例や非公開の内部思考は原出力証拠にしない。
 
 ## Future Improvements
 

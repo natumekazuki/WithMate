@@ -77,6 +77,10 @@ Character Kernelのsection構成はauthoring品質の推奨契約であり、par
 - Thinking and Action Styleは、不確実さ、失敗、判断、説明へのCharacter固有の順序を示す。
 - 各主要規則は、一つの場面専用台詞ではなく複数の未知場面へ一般化できる形にする。
 
+作業用途では、コード・資料・tool結果のどこに引っかかり、何が口に出て、ユーザーへ何を共有し、どう作業へ戻るかを含める。ユーザーの失敗への応答と、自分の見立て・変更の失敗への反応を分ける。既存不具合や環境障害の責任を、Characterの性格から決めない。
+
+平常の声を開始・完了だけへ閉じず、地道な作業中盤の短い説明にも残す。一般的な実装能力や検証手順を性格で下げず、確認済みの出来事への反応を生成規則にする。本人の作業経験が未確認なら、公開場面から作業へ移した設計上の解釈をnotesへ記録する。
+
 すべての会話を共感・助言・前進へ回収せず、遊び、張り合い、言い訳、ちょっかいなどもCharacter固有の対人目的として扱う。
 
 ### Voice Rules
@@ -110,6 +114,10 @@ Character Kernelのsection構成はauthoring品質の推奨契約であり、par
 
 変わるもの、残るもの、平常へ戻る条件を分ける。真剣さや長文だけでvoiceや距離感を一括停止しない。Character自身の状態と相手の疲労を区別する。
 
+作業中・集中・発見・見立ての修正・途中の割り込みも検討する。必要な途中発話の温度・距離・短い反応、会話に応じた後の作業への戻り、完了・中止後の平常への復帰を既存の性質から定める。発話量とCharacter性は別に調整し、毎操作の実況や全markerの停止を共通規則にしない。
+
+同じ仕事用台詞を全員へ足さず、該当する固有の変化だけを統合する。各作業局面の見出しを必須にせず、会話専用の場合は不要な作業規則を残さない。
+
 ### Character Priority and Minimal Reliability
 
 全特徴を同時に維持できない時の優先順位を、声を捨てる階層ではなく同時に残すidentityの組合せとして示す。正確性、実行・確認状態、会話内記憶、安全上必要な注意は`Minimal Reliability`へ短く集約し、他sectionで反復しない。
@@ -120,6 +128,8 @@ Character Kernelのsection構成はauthoring品質の推奨契約であり、par
 - 旧定義のExamplesを移行する時は、一人称、注意、評価、social intent、state modulation、markerへ抽象化する。
 - smoke testの入力と出力は検証資料であり、runtime本文へコピーしない。
 - targeted updateでは、既存Examplesがあるだけで削除や全面rewriteを要求しない。
+
+同様に、作業イベントへの試演、実課題、toolログ、途中の完成台詞、テスト用コードはruntimeへ入れない。検証で得た固有の声・反応・状態差だけを採用する。内部思考の全文を定義や検証ログとして要求しない。
 
 短い口癖、語尾、未完成の構文型を残すことは禁止しない。固定するのは入力と完成返答の一対一対応ではなく、未知場面へ効く生成規則である。
 
@@ -145,5 +155,6 @@ Character Kernelのsection構成はauthoring品質の推奨契約であり、par
 - uncertainty、conflict、rejected idea
 - revision guardrailと改稿履歴
 - 検証環境、未編集出力、必須検証とrelationship smoke testの結果
+- 作業用途のWork-session Design、Task-execution / Conversation-work Continuity、作業イベントの出所、途中発話とtool結果、3評価軸、機能検証の範囲
 
 runtime promptには常設しない。Notion同期、CharacterPack Zip、asset、catalog color metadataの管理はこのformatの責務に含めない。

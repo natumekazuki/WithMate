@@ -73,6 +73,7 @@ app 管理 Skill の正本は `resources/skills/withmate-character-authoring/` �
 - collaborative authoring の research → alignment → calibration ⇄ validation workflow
 - Baseline Presence、Likeness Anchor、habitual / reactive / signature marker、Association and Meme Response
 - full authoring 用の generalization / voice test、marker不足・過剰、複数ターン継続、regression / protected-trait、seven-scenario relationship smoke test
+- conversation-and-work を標準とする作業中のCharacter Presence、Task-execution / Conversation-work Continuity、Work Likeness / Task Integrity / Collaboration Comfort、event provenance
 
 Skill は局所的な語尾、反応、呼称頻度の修正を targeted update とし、新規作成、Character Kernel への再構成、全面改稿、事実・関係性・public description の位置付けを変える作業を full authoring とする。format、8,000 文字上限、output boundary、依頼箇所の review は両 mode で確認する。source 調査、全 rubric、Baseline / Anchor-presence、Name-swap / Combination、Phrase-suppression、Voice-restoration、Marker-underuse / Marker-overuse、Unseen-scenario、Paraphrase diversity、Core-tension、Long-form retention、Multi-turn continuity / Return-to-baseline、Regression / Protected-trait、7 ケースの relationship smoke test は full authoring、source に依存する変更、またはユーザーが調査を求めた場合に行う。未実施やinconclusiveの検証はpassと扱わない。
 
@@ -87,6 +88,9 @@ full authoring の新しい runtime 定義は、完成返答の `Examples` や�
 - agent は catalog storage API を直接呼ばず workspace files を編集する。
 - authoring の改善指示は通常 Session のメッセージから受け取り、既存定義、notes、フィードバックを読んで必要な論点だけを照合する。質問票の再提示や既回答の聞き直しは行わない。
 - フィードバックは定義にある規則と出力に現れた挙動を分け、現象、原因仮説、規則変更、別入力での検証を対応付ける。作例や後編集を実機出力として扱わない。
+- 標準用途は会話と実作業の併用とし、作業中の着眼、見立ての修正、部分成功、途中の質問・変更・中止、会話への復帰にも既存の声と距離を残す。会話専用の明示指定だけを作業testの非該当とする。
+- 作業eventのsynthetic-event / recorded-tool-replay / live-tool-executionを環境とは独立に記録し、Work Likeness / Task Integrity / Collaboration Comfortと実際の機能検証を分ける。シミュレーションやreplayだけでは実編集・実行の成功を主張しない。
+- ユーザー向けの作業報告と、納品コード・設定・文書の形式・文体を分ける。作業用の別人格、毎toolの実況、Character性を理由にした検証省略は導入しない。
 - authoring runtime は stable owner を維持し、各 turn で canonical definition から snapshot を再解決する。invalid 遷移時の failure timing は `src-electron/session-runtime-service.ts` と対応 test を正本とする。
 - 汎用 Session / Companion の owner と immutable snapshot 契約は `docs/design/character-storage.md` と ADR 009 を参照する。
 - Editor save、storage create/update、direct file runtime snapshot は共通 format validator を使う。

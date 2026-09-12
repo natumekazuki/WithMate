@@ -11,6 +11,8 @@ authoring指示は通常のSession messageから受け取る。起動時専用�
 
 標準は、既存定義と会話を読み、必要な論点だけを照合し、試作・検証の結果から原因を直すcollaborative authoringである。質問票をそのままユーザーへ返さず、既に示された希望やフィードバックを引き継ぐ。確認を省略して一度に進める場合も、未確認事項を確認済みとは扱わない。
 
+WithMateの標準用途は会話と実作業を一緒に進める`conversation-and-work`である。会話専用の明示指定時だけ`conversation-only`として作業検証を非該当扱いにできる。作業中の声、発話密度、途中の割り込み、会話への復帰は、作業手順や固定台詞ではなくCharacter固有の選択・声・状態変調として扱う。
+
 ```text
 research → alignment → calibration ⇄ validation
 ```
@@ -83,7 +85,8 @@ Common Preparationに加えて、次を最後まで読む。
 4. ユーザーがすでに示した観察、希望、出力評価を聞き直さず、重要な解釈だけを1〜3論点に絞って照合する。
 5. observationを、状況、最初の着眼点、評価、対人行為、感情推移、言語特徴へ分解してnotesに記録する。
 6. Characterらしさを「選択の核 × 言語アイデンティティ × 状態変調」として導出し、平常時のBaseline Presenceと保護するLikeness Anchorを先に定める。
-7. `character.md`を次の生成規則で構成する。
+7. 作業用途では、コード・資料・tool結果への着眼、見立ての修正、部分成功、途中の質問・変更・中止、作業から会話への復帰に残す既存の声と距離をnotesへ分けて定める。本人の開発経験が未確認ならauthoring-inferenceとして扱い、成果物の形式・文体とは分離する。
+8. `character.md`を次の生成規則で構成する。
    - Baseline Presence
    - Identity Core
    - Attention and Appraisal
@@ -95,13 +98,13 @@ Common Preparationに加えて、次を最後まで読む。
    - State Modulation
    - Character Priority
    - Minimal Reliability
-8. 一人称と任意の一人へ使えるユーザー基本呼称について、正確な表記、使用場面、省略方針、出やすさ、状態による語気調整を明示する。
-9. 完成返答の`Examples`や場面別台詞集を新しいruntime本文へ置かない。既存例から有用なsignalを抽出する場合は、未知場面へ一般化できる生成規則へ変換する。
-10. 口癖はhabitual / reactive / signatureを区別し、出現しやすい文脈と抑える文脈の両方を定める。全markerへ「まれ」「少量」「一返答一度」を機械的に付けない。
-11. ネット反応が重要な場合は、連想の手掛かり、反応の入り方、話題への変形、相手の返しへの乗り方を短い採用語・構文で定める。未確認の使用歴や新しい流行は作らない。
-12. observation、採否、uncertainty、revision guardrail、validation結果をnotesへ分離する。
-13. LF正規化後のファイル全体が8,000 Unicode code point以下であることを実測する。
-14. rubricとreview checklistを使い、次を検証する。
+9. 一人称と任意の一人へ使えるユーザー基本呼称について、正確な表記、使用場面、省略方針、出やすさ、状態による語気調整を明示する。
+10. 完成返答の`Examples`や場面別台詞集を新しいruntime本文へ置かない。既存例から有用なsignalを抽出する場合は、未知場面へ一般化できる生成規則へ変換する。
+11. 口癖はhabitual / reactive / signatureを区別し、出現しやすい文脈と抑える文脈の両方を定める。全markerへ「まれ」「少量」「一返答一度」を機械的に付けない。
+12. ネット反応が重要な場合は、連想の手掛かり、反応の入り方、話題への変形、相手の返しへの乗り方を短い採用語・構文で定める。未確認の使用歴や新しい流行は作らない。
+13. observation、採否、uncertainty、revision guardrail、validation結果をnotesへ分離する。
+14. LF正規化後のファイル全体が8,000 Unicode code point以下であることを実測する。
+15. rubricとreview checklistを使い、次を検証する。
    - Baseline / Anchor-presence
    - Name-swap / Combination
    - Phrase-suppression
@@ -112,10 +115,14 @@ Common Preparationに加えて、次を最後まで読む。
    - Core-tension
    - Long-form retention
    - Multi-turn continuity / Return-to-baseline
+   - Task-execution / Conversation-work Continuity（作業用途。会話専用は明示的な非該当理由を記録）
+   - Work Likeness / Task Integrity / Collaboration Comfortを独立に評価し、実際の機能検証を別記
    - Regression / Protected-trait
    - 7場面のrelationship smoke test
 
 調整用の入力をholdoutや未見入力と呼ばない。後編集した作例、作成者が演じた仮想ユーザーとのscripted dialogue、WithMate実機の未編集出力は別々に記録する。未実施や根拠不足はpassにしない。
+
+作業イベントは`synthetic-event`、`recorded-tool-replay`、`live-tool-execution`を環境とは独立に記録する。実際の編集・実行・受入条件の確認をしていない場合、反応の確認だけで機能検証をpassにしない。全toolを実況させず、必要な途中共有と無言でよい操作を分ける。
 
 ## Boundaries
 
