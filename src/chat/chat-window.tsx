@@ -105,6 +105,7 @@ export type ConcurrentChatWindowProps = {
   target: "main" | "auxiliary";
   isExpanded: boolean;
   widthRatio: number;
+  scrollToLatestOnSend?: boolean;
   onSelectAuxiliary: (id: string) => void;
   onTargetChange: (target: "main" | "auxiliary") => void;
   onCollapse: () => void;
@@ -116,16 +117,17 @@ export type ConcurrentChatWindowProps = {
 
 export function ConcurrentChatSplitter({
   isExpanded,
+  widthRatio,
   onCollapse,
   onWidthRatioChange,
-}: Pick<ConcurrentChatWindowProps, "isExpanded" | "onCollapse" | "onWidthRatioChange">) {
+}: Pick<ConcurrentChatWindowProps, "isExpanded" | "widthRatio" | "onCollapse" | "onWidthRatioChange">) {
   const draggedRef = useRef(false);
-  const startRef = useRef<{ x: number; width: number } | null>(null);
+  const startRef = useRef<{ x: number; width: number; widthRatio: number } | null>(null);
   const handlePointerDown: PointerEventHandler<HTMLButtonElement> = (event) => {
     if (event.button !== 0) return;
     const parent = event.currentTarget.parentElement;
     if (!parent) return;
-    startRef.current = { x: event.clientX, width: parent.getBoundingClientRect().width };
+    startRef.current = { x: event.clientX, width: parent.getBoundingClientRect().width, widthRatio };
     draggedRef.current = false;
     event.currentTarget.setPointerCapture(event.pointerId);
     const handleMove = (moveEvent: PointerEvent) => {
@@ -133,7 +135,7 @@ export function ConcurrentChatSplitter({
       if (!start || start.width <= 0) return;
       const delta = moveEvent.clientX - start.x;
       if (Math.abs(delta) > 4) draggedRef.current = true;
-      onWidthRatioChange(Math.min(0.8, Math.max(0.2, 0.5 - delta / start.width)));
+      onWidthRatioChange(Math.min(0.8, Math.max(0.2, start.widthRatio - delta / start.width)));
     };
     const handleUp = () => {
       startRef.current = null;
@@ -169,7 +171,7 @@ function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps 
   return (
     <div className="concurrent-chat-target-dock" role="group" aria-label="操作対象チャット">
       <button type="button" className={chats.target === "main" ? "is-active" : ""} onClick={() => chats.onTargetChange("main")}>Main</button>
-      {chats.auxiliary ? (
+      {chats.auxiliaryItems.length > 0 ? (
         <button type="button" className={chats.target === "auxiliary" ? "is-active" : ""} onClick={() => chats.onTargetChange("auxiliary")}>Auxiliary</button>
       ) : null}
     </div>
@@ -506,6 +508,14 @@ export function ChatWindow({
   const targetColumnControls = rawTargetColumnControls?.sessionId === targetSessionId
     ? rawTargetColumnControls
     : null;
+  const targetComposerSend = concurrentChats && targetColumnControls
+    ? () => {
+      if (!composerProps.isRunning && !composerProps.isSendDisabled) {
+        targetColumnControls.handleMessageListSend(concurrentChats.scrollToLatestOnSend ?? true);
+      }
+      composerProps.onSendOrCancel();
+    }
+    : composerProps.onSendOrCancel;
   const resolvedHeaderProps = concurrentChats && targetColumnControls
     && targetColumnControls.messageCollapseTargetKeys.length > 0
     ? {
@@ -646,6 +656,7 @@ export function ChatWindow({
       auxiliarySplitter={concurrentChats?.isExpanded ? (
         <ConcurrentChatSplitter
           isExpanded
+          widthRatio={concurrentChats.widthRatio}
           onCollapse={concurrentChats.onCollapse}
           onWidthRatioChange={concurrentChats.onWidthRatioChange}
         />
@@ -666,7 +677,9 @@ export function ChatWindow({
             <SessionComposerExpanded
               {...composerProps}
               externalErrorDescriptionIds={composerErrorDescriptionIds || undefined}
+              showJumpToBottom={targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
               onJumpToBottom={targetColumnControls?.followLatest ?? composerProps.onJumpToBottom}
+              onSendOrCancel={targetComposerSend}
               skillButtonRef={skillButtonRef}
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}
@@ -683,6 +696,7 @@ export function ChatWindow({
             <SessionActionDockCompactRow
               {...compactActionDockProps}
               onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}
+              showJumpToBottom={targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}
               onMessageViewModeChange={handleMessageViewModeChange}

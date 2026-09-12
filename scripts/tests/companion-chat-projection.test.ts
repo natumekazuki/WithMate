@@ -409,11 +409,23 @@ test("buildCompanionChatWindowProps は Auxiliary mode の header action slot �
   assert.equal(props.compactActionDockProps.modeLabel, "Auxiliary");
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "buildCompanionChatWindowPropsはright paneの一覧選択callbackを共通paneへ転送する"
+// oracle = { type = "contract", ref = "issue-710-companion-context-pane-selection" }
+// fault = "projectionがonSelectContextPaneTabを欠落させ、共通paneが一覧選択を通知できない"
+// observable = "buildCompanionChatWindowPropsが返すSessionContextPaneのonSelectContextPaneTab"
+// observation_boundary = "public-boundary"
+// scope = "companion-chat-projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildCompanionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {
   const onCycleContextPaneTab = () => {};
+  const onSelectContextPaneTab = () => {};
   const onOpenCompanionReview = () => {};
   const props = buildCompanionChatWindowProps(createProjectionInput({
     onCycleContextPaneTab,
+    onSelectContextPaneTab,
     onOpenCompanionReview,
   }));
   const rightPane = props.rightPane as React.ReactElement<{
@@ -425,6 +437,7 @@ test("buildCompanionChatWindowProps は Header から独立した right pane pro
   assert.equal(paneProps.latestCommandEmptyText, undefined);
   assert.equal("onToggleHeaderExpanded" in paneProps, false);
   assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
+  assert.equal(paneProps.onSelectContextPaneTab, onSelectContextPaneTab);
   assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
 });
 

@@ -4669,6 +4669,7 @@ export default function AgentSessionWindowApp() {
           target: auxiliaryWorkspace.target,
           isExpanded: auxiliaryWorkspace.isExpanded,
           widthRatio: auxiliaryWorkspace.widthRatio,
+          scrollToLatestOnSend: appSettings.scrollToLatestOnSend,
           onSelectAuxiliary: auxiliaryWorkspace.selectSession,
           onTargetChange: handleChangeConversationTarget,
           onCollapse: auxiliaryWorkspace.collapse,

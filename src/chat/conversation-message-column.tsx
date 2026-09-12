@@ -42,6 +42,8 @@ export type ConversationColumnControls = {
   messageCollapseTargetKeys: readonly string[];
   collapsedMessageKeys: ReadonlySet<string>;
   allMessagesCollapsed: boolean;
+  isMessageListFollowing: boolean;
+  handleMessageListSend: (scrollToLatestOnSend: boolean) => void;
   onToggleAllMessageCollapse: () => void;
   followLatest: () => void;
 };
@@ -148,10 +150,12 @@ export function useConversationMessageColumn({
       messageCollapseTargetKeys: collapseTargets.map((target) => target.key),
       collapsedMessageKeys: new Set(conversation.collapsedMessageKeys),
       allMessagesCollapsed,
+      isMessageListFollowing: following.isMessageListFollowing,
+      handleMessageListSend: following.handleMessageListSend,
       onToggleAllMessageCollapse,
       followLatest: following.followMessageListLatest,
     });
-  }, [allMessagesCollapsed, collapseTargets, conversation.collapsedMessageKeys, following.followMessageListLatest, onColumnControls, sessionId]);
+  }, [allMessagesCollapsed, collapseTargets, conversation.collapsedMessageKeys, following.followMessageListLatest, following.handleMessageListSend, following.isMessageListFollowing, onColumnControls, sessionId]);
   const reloadLiveRun = async () => {
     if (api?.getLiveSessionRun) conversation.liveRun = await api.getLiveSessionRun(sessionId);
   };

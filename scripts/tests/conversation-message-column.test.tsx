@@ -164,3 +164,73 @@ test("conversation column cache は切替後のscroll位置を保持する", asy
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
   }
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "conversation columnがscroll following状態と送信時追従操作をcontrolsへ公開する"
+// oracle = { type = "contract", ref = "issue-710-shared-scroll-following" }
+// fault = "列の内部hookがscroll状態または送信時追従操作をcontrolsへ渡さない"
+// observable = "column controlsのisMessageListFollowingとhandleMessageListSend"
+// observation_boundary = "component-behavior"
+// scope = "conversation-message-column"
+// lifecycle = "permanent"
+// @end-test-value
+test("conversation column controls はscroll状態と送信時追従操作を公開する", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  let root: Root | null = null;
+  let latest: ReturnType<typeof useConversationMessageColumn> = null;
+  let controls: { isMessageListFollowing: boolean; handleMessageListSend: (scrollToLatestOnSend: boolean) => void } | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(function Probe() {
+        latest = useConversationMessageColumn({
+          session: { id: "main" },
+          baseProps: createBaseProps("main"),
+          enabled: true,
+          onColumnControls: (next) => { controls = next; },
+        });
+        return React.createElement("div", {
+          ref: latest?.messageListRef,
+          "data-id": "main",
+          onScroll: latest?.onMessageListScroll,
+        });
+      }));
+    });
+    const element = dom.window.document.querySelector<HTMLDivElement>("[data-id='main']");
+    assert.ok(element);
+    Object.defineProperties(element, {
+      scrollHeight: { configurable: true, value: 100 },
+      clientHeight: { configurable: true, value: 40 },
+    });
+    element.scrollTop = 10;
+    await act(async () => latest?.onMessageListScroll({ currentTarget: element } as UIEvent<HTMLDivElement>));
+    assert.equal(controls?.isMessageListFollowing, false);
+
+    await act(async () => controls?.handleMessageListSend(false));
+    assert.equal(controls?.isMessageListFollowing, false);
+    await act(async () => controls?.handleMessageListSend(true));
+    assert.equal(controls?.isMessageListFollowing, true);
+    assert.equal(element.scrollTop, 60);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});

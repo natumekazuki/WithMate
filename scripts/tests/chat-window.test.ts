@@ -1004,7 +1004,7 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
 // claim = "Auxiliaryの読み込みエラー中もsummary switcherを保持し、Main targetから別Auxiliaryを選択できる"
 // oracle = { type = "contract", ref = "issue-710-auxiliary-switcher-error" }
 // fault = "Auxiliary detail errorがswitcherを消してしまい、Main表示中に別のAuxiliaryへ切り替えられない"
-// observable = "switcher trigger、error region、Main target buttonのrender済みDOM"
+// observable = "switcher trigger、error region、Main/Auxiliary target button、別Auxiliary選択callbackのrender済みDOM"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -1062,6 +1062,8 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
     assert.match(dom.window.document.body.textContent ?? "", /Auxiliary detail failed/);
     assert.ok([...dom.window.document.querySelectorAll<HTMLButtonElement>(".concurrent-chat-target-dock button")]
       .some((button) => button.textContent === "Main"));
+    assert.ok([...dom.window.document.querySelectorAll<HTMLButtonElement>(".concurrent-chat-target-dock button")]
+      .some((button) => button.textContent === "Auxiliary"));
     assert.equal(dom.window.document.querySelector(".concurrent-chat-state")?.textContent, "Auxiliary detail failed");
     const trigger = dom.window.document.querySelector<HTMLButtonElement>(".session-switcher-current");
     assert.ok(trigger);
@@ -1071,6 +1073,110 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
     assert.ok(optionB);
     await act(async () => optionB.click());
     assert.deepEqual(selected, ["aux-b"]);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
+    Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "ChatWindowはtarget columnのscroll状態をActionDock表示と送信時追従へ接続する"
+// oracle = { type = "contract", ref = "issue-710-shared-scroll-following" }
+// fault = "会話列が過去位置にあっても末尾移動が表示されず、送信時にtarget columnが末尾へ戻らない"
+// observable = "target message listのscrollTop、末尾移動button、composer送信callback"
+// observation_boundary = "component-behavior"
+// scope = "concurrent-chat-shell"
+// lifecycle = "permanent"
+// @end-test-value
+test("ChatWindow はtarget columnのscroll状態をActionDockと送信へ共有する", async () => {
+  const props = createChatWindowProps({
+    messages: [{ role: "mate", text: "message" }],
+  });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const previousResizeObserver = globalThis.ResizeObserver;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value(this: HTMLElement) {
+      let parent = this.parentElement;
+      while (parent && !parent.classList.contains("session-message-list")) {
+        parent = parent.parentElement;
+      }
+      if (parent) {
+        parent.scrollTop = Math.max(0, parent.scrollHeight - parent.clientHeight);
+      }
+    },
+  });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  let root: Root | null = null;
+  let sendCount = 0;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(ChatWindow, {
+        ...props,
+        composerProps: {
+          ...props.composerProps,
+          draft: "send this",
+          isSendDisabled: false,
+          onSendOrCancel: () => { sendCount += 1; },
+        },
+        concurrentChats: {
+          main: props.messageColumnProps,
+          auxiliary: props.messageColumnProps,
+          mainSession: { id: "main", messages: props.messageColumnProps.messages },
+          auxiliarySession: { id: "aux", messages: props.messageColumnProps.messages },
+          selectedAuxiliaryId: "aux",
+          auxiliaryItems: [{ id: "aux", label: "Auxiliary", preview: "Auxiliary" }],
+          target: "main",
+          isExpanded: true,
+          widthRatio: 0.5,
+          scrollToLatestOnSend: true,
+          onSelectAuxiliary() {},
+          onTargetChange() {},
+          onCollapse() {},
+          onWidthRatioChange() {},
+        },
+      }));
+    });
+    const messageList = dom.window.document.querySelector<HTMLDivElement>(".session-concurrent-chat-main .session-message-list");
+    assert.ok(messageList);
+    Object.defineProperties(messageList, {
+      scrollHeight: { configurable: true, value: 100 },
+      clientHeight: { configurable: true, value: 40 },
+    });
+    messageList.scrollTop = 10;
+    await act(async () => messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true })));
+    assert.ok(dom.window.document.querySelector(".session-action-dock-expanded-content .message-jump-bottom-button"));
+
+    const sendButton = dom.window.document.querySelector<HTMLButtonElement>(".session-action-dock-expanded-content .session-send-button");
+    assert.ok(sendButton);
+    await act(async () => sendButton.click());
+    assert.equal(sendCount, 1);
+    assert.equal(messageList.scrollTop, 60);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -1119,6 +1225,7 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement("div", { style: { width: "1000px" } }, React.createElement(ConcurrentChatSplitter, {
         isExpanded: true,
+        widthRatio: 0.3,
         onCollapse: () => { collapseCount += 1; },
         onWidthRatioChange: (ratio: number) => ratios.push(ratio),
       })));
@@ -1140,11 +1247,12 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
     };
     await act(async () => {
       splitter.dispatchEvent(pointerEvent("pointerdown", 500));
-      dom.window.dispatchEvent(pointerEvent("pointermove", 600));
-      dom.window.dispatchEvent(pointerEvent("pointerup", 600));
+      dom.window.dispatchEvent(pointerEvent("pointermove", 510));
+      dom.window.dispatchEvent(pointerEvent("pointerup", 510));
       splitter.click();
     });
     assert.ok(ratios.length > 0);
+    assert.ok(Math.abs((ratios.at(-1) ?? 0) - 0.29) < 0.000001);
     assert.equal(collapseCount, 0);
   } finally {
     await act(async () => root?.unmount());
