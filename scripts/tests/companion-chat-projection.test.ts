@@ -387,6 +387,17 @@ test("buildCompanionChatWindowProps は Companion toast を modal child とし�
   assert.match(html, />保存しました<\/div>/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "旧Auxiliary modeは専用header actionとcomposerのAuxiliary labelを渡す"
+// oracle = { type = "characterization", ref = "src/chat/companion-chat-projection.tsx at a4304ad5: Auxiliary mode" }
+// fault = "専用header actionが失われる、または通常Companion用操作とlabelを投影する"
+// observable = "header action flags、Auxiliary class、Return to main button、composer/compact modeLabel"
+// observation_boundary = "public-boundary"
+// scope = "companion-auxiliary-header-projection"
+// lifecycle = "ephemeral"
+// remove_when = "modeLabelを含む旧投影契約の変更確認が完了した時"
+// @end-test-value
 test("buildCompanionChatWindowProps は Auxiliary mode の header action slot と mode label を渡す", () => {
   const props = buildCompanionChatWindowProps(createProjectionInput({
     headerActions: React.createElement(
