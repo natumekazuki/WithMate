@@ -495,7 +495,6 @@ describe("HomeLaunchDialog", () => {
       open={true}
       title="demo"
       sessionFolderSelected={false}
-      launchWorkspacePathLabel="workspace"
       workspacePathInput="C:\\work space\\"
       workspaceValidation={workspaceValidation}
       workspaceValidationMessage={workspaceValidation === "invalid" ? "Path not found." : ""}
