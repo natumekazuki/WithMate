@@ -42,6 +42,17 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "createAuxiliaryLoadRevisionGuard は revision と active 状態が一致する場合だけ true を返す"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "revisionとactive状態から返るload適用可否boolean が期待値と異なる"
+// observable = "revisionとactive状態から返るload適用可否boolean"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("createAuxiliaryLoadRevisionGuard は revision と active 状態が一致する場合だけ true を返す", () => {
   const loadRevision = { current: 3 };
   let active = true;
@@ -61,6 +72,17 @@ test("createAuxiliaryLoadRevisionGuard は revision と active 状態が一致�
   assert.equal(canApplyLoadResult(), false);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "createAuxiliaryLoadRevisionGuard は active callback なしで revision だけを判定する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "revisionとactive状態から返るload適用可否boolean が期待値と異なる"
+// observable = "revisionとactive状態から返るload適用可否boolean"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("createAuxiliaryLoadRevisionGuard は active callback なしで revision だけを判定する", () => {
   const loadRevision = { current: 7 };
   const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
@@ -74,6 +96,17 @@ test("createAuxiliaryLoadRevisionGuard は active callback なしで revision �
   assert.equal(canApplyLoadResult(), false);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionRefreshOperation は active id が違う場合 load しない"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "active id判定、load呼出、saved/null/stale result が期待値と異なる"
+// observable = "active id判定、load呼出、saved/null/stale result"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionRefreshOperation は active id が違う場合 load しない", async () => {
   const loadedSessionIds: string[] = [];
 
@@ -91,6 +124,17 @@ test("runActiveAuxiliarySessionRefreshOperation は active id が違う場合 lo
   assert.deepEqual(loadedSessionIds, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionRefreshOperation は load 後に inactive なら stale にする"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "active id判定、load呼出、saved/null/stale result が期待値と異なる"
+// observable = "active id判定、load呼出、saved/null/stale result"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionRefreshOperation は load 後に inactive なら stale にする", async () => {
   const savedSession = createAuxiliarySession({ title: "saved" });
   let active = true;
@@ -108,6 +152,17 @@ test("runActiveAuxiliarySessionRefreshOperation は load 後に inactive なら 
   assert.deepEqual(result, { status: "stale" });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionRefreshOperation は active のままなら saved session を返す"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "active id判定、load呼出、saved/null/stale result が期待値と異なる"
+// observable = "active id判定、load呼出、saved/null/stale result"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionRefreshOperation は active のままなら saved session を返す", async () => {
   const savedSession = createAuxiliarySession({ title: "saved" });
 
@@ -124,6 +179,17 @@ test("runActiveAuxiliarySessionRefreshOperation は active のままなら saved
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionRefreshOperation は active のままなら null 保存結果も返す"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "active id判定、load呼出、saved/null/stale result が期待値と異なる"
+// observable = "active id判定、load呼出、saved/null/stale result"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionRefreshOperation は active のままなら null 保存結果も返す", async () => {
   const result = await runActiveAuxiliarySessionRefreshOperation({
     sessionId: "aux-1",
@@ -138,6 +204,17 @@ test("runActiveAuxiliarySessionRefreshOperation は active のままなら null 
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "applyActiveAuxiliarySessionRefreshResult は反映時に active ref を同期する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "active sessionとactive refの更新有無 が期待値と異なる"
+// observable = "active sessionとactive refの更新有無"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("applyActiveAuxiliarySessionRefreshResult は反映時に active ref を同期する", () => {
   const currentSession = createAuxiliarySession({ id: "aux-1", title: "current" });
   const savedSession = createAuxiliarySession({ id: "aux-1", title: "saved" });
@@ -155,6 +232,17 @@ test("applyActiveAuxiliarySessionRefreshResult は反映時に active ref を同
   assert.equal(activeSessionRef.current, savedSession);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "applyActiveAuxiliarySessionRefreshResult は反映しない場合 active ref を維持する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "active sessionとactive refの更新有無 が期待値と異なる"
+// observable = "active sessionとactive refの更新有無"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("applyActiveAuxiliarySessionRefreshResult は反映しない場合 active ref を維持する", () => {
   const currentSession = createAuxiliarySession({ id: "aux-1", title: "current" });
   const savedSession = createAuxiliarySession({ id: "aux-other", title: "saved" });
@@ -172,6 +260,17 @@ test("applyActiveAuxiliarySessionRefreshResult は反映しない場合 active r
   assert.equal(activeSessionRef.current, currentSession);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionRefreshAndApply は loaded result を active session と ref に反映する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/stale/skipped結果に対するactive sessionとrefの更新 が期待値と異なる"
+// observable = "loaded/stale/skipped結果に対するactive sessionとrefの更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionRefreshAndApply は loaded result を active session と ref に反映する", async () => {
   const currentSession = createAuxiliarySession({ id: "aux-1", title: "current" });
   const savedSession = createAuxiliarySession({ id: "aux-1", title: "saved" });
@@ -198,6 +297,17 @@ test("runActiveAuxiliarySessionRefreshAndApply は loaded result を active sess
   assert.equal(activeSessionRef.current, savedSession);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionRefreshAndApply は stale / skipped result では active session を変更しない"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/stale/skipped結果に対するactive sessionとrefの更新 が期待値と異なる"
+// observable = "loaded/stale/skipped結果に対するactive sessionとrefの更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionRefreshAndApply は stale / skipped result では active session を変更しない", async () => {
   const currentSession = createAuxiliarySession({ id: "aux-1", title: "current" });
   const activeSessionRef = { current: currentSession as AuxiliarySession | null };
@@ -239,6 +349,17 @@ test("runActiveAuxiliarySessionRefreshAndApply は stale / skipped result では
   assert.equal(activeSessionRef.current, currentSession);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionLoadOperation は parent session id がない場合 load しない"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "parent session id判定、load結果、stale状態 が期待値と異なる"
+// observable = "parent session id判定、load結果、stale状態"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionLoadOperation は parent session id がない場合 load しない", async () => {
   const loadedParentSessionIds: string[] = [];
 
@@ -255,6 +376,17 @@ test("runActiveAuxiliarySessionLoadOperation は parent session id がない場�
   assert.deepEqual(loadedParentSessionIds, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionLoadOperation は active session を読み込む"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "parent session id判定、load結果、stale状態 が期待値と異なる"
+// observable = "parent session id判定、load結果、stale状態"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionLoadOperation は active session を読み込む", async () => {
   const activeSession = createAuxiliarySession({ parentSessionId: "parent-1" });
 
@@ -270,6 +402,17 @@ test("runActiveAuxiliarySessionLoadOperation は active session を読み込む"
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionLoadOperation は load failure を null loaded result にする"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "parent session id判定、load結果、stale状態 が期待値と異なる"
+// observable = "parent session id判定、load結果、stale状態"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionLoadOperation は load failure を null loaded result にする", async () => {
   const result = await runActiveAuxiliarySessionLoadOperation({
     parentSessionId: "parent-1",
@@ -285,6 +428,17 @@ test("runActiveAuxiliarySessionLoadOperation は load failure を null loaded re
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionLoadOperation は load 後に inactive なら stale にする"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "parent session id判定、load結果、stale状態 が期待値と異なる"
+// observable = "parent session id判定、load結果、stale状態"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionLoadOperation は load 後に inactive なら stale にする", async () => {
   let active = true;
 
@@ -300,6 +454,17 @@ test("runActiveAuxiliarySessionLoadOperation は load 後に inactive なら sta
   assert.deepEqual(result, { status: "stale" });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "applyActiveAuxiliarySessionLoadResult は loaded result だけ active session に反映する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/null/stale結果に対するactive session更新 が期待値と異なる"
+// observable = "loaded/null/stale結果に対するactive session更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("applyActiveAuxiliarySessionLoadResult は loaded result だけ active session に反映する", () => {
   const activeSession = createAuxiliarySession({ id: "aux-loaded" });
   const appliedSessions: Array<AuxiliarySession | null> = [];
@@ -320,6 +485,17 @@ test("applyActiveAuxiliarySessionLoadResult は loaded result だけ active sess
   assert.deepEqual(appliedSessions, [activeSession]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "applyActiveAuxiliarySessionLoadResult は loaded null result を active session clear として反映する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/null/stale結果に対するactive session更新 が期待値と異なる"
+// observable = "loaded/null/stale結果に対するactive session更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("applyActiveAuxiliarySessionLoadResult は loaded null result を active session clear として反映する", () => {
   const appliedSessions: Array<AuxiliarySession | null> = [];
 
@@ -339,6 +515,17 @@ test("applyActiveAuxiliarySessionLoadResult は loaded null result を active se
   assert.deepEqual(appliedSessions, [null]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "applyActiveAuxiliarySessionLoadResult は stale / skipped result では active session を変更しない"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/null/stale結果に対するactive session更新 が期待値と異なる"
+// observable = "loaded/null/stale結果に対するactive session更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("applyActiveAuxiliarySessionLoadResult は stale / skipped result では active session を変更しない", () => {
   const appliedSessions: Array<AuxiliarySession | null> = [];
 
@@ -364,6 +551,17 @@ test("applyActiveAuxiliarySessionLoadResult は stale / skipped result では ac
   assert.deepEqual(appliedSessions, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionLoadAndApply は loaded result を active session に反映する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/stale/skipped結果に対するactive session更新 が期待値と異なる"
+// observable = "loaded/stale/skipped結果に対するactive session更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionLoadAndApply は loaded result を active session に反映する", async () => {
   const activeSession = createAuxiliarySession({ id: "aux-loaded" });
   const appliedSessions: Array<AuxiliarySession | null> = [];
@@ -384,6 +582,17 @@ test("runActiveAuxiliarySessionLoadAndApply は loaded result を active session
   assert.deepEqual(appliedSessions, [activeSession]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runActiveAuxiliarySessionLoadAndApply は stale / skipped result では active session を変更しない"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/stale/skipped結果に対するactive session更新 が期待値と異なる"
+// observable = "loaded/stale/skipped結果に対するactive session更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runActiveAuxiliarySessionLoadAndApply は stale / skipped result では active session を変更しない", async () => {
   const appliedSessions: Array<AuxiliarySession | null> = [];
   let active = true;
@@ -418,6 +627,17 @@ test("runActiveAuxiliarySessionLoadAndApply は stale / skipped result では ac
   assert.deepEqual(appliedSessions, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runClosedAuxiliarySessionsLoadOperation は parent session id がない場合 load しない"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "parent session id判定、closed details load結果、stale状態 が期待値と異なる"
+// observable = "parent session id判定、closed details load結果、stale状態"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runClosedAuxiliarySessionsLoadOperation は parent session id がない場合 load しない", async () => {
   const listedSessionIds: string[] = [];
 
@@ -435,6 +655,17 @@ test("runClosedAuxiliarySessionsLoadOperation は parent session id がない場
   assert.deepEqual(listedSessionIds, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runClosedAuxiliarySessionsLoadOperation は closed session details を読み込む"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "parent session id判定、closed details load結果、stale状態 が期待値と異なる"
+// observable = "parent session id判定、closed details load結果、stale状態"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runClosedAuxiliarySessionsLoadOperation は closed session details を読み込む", async () => {
   const closedSession = createAuxiliarySession({ id: "closed-1", status: "closed" });
   const listedParentSessionIds: string[] = [];
@@ -468,6 +699,17 @@ test("runClosedAuxiliarySessionsLoadOperation は closed session details を読�
   assert.deepEqual(requestedSessionIds, ["closed-missing", "closed-1"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runClosedAuxiliarySessionsLoadOperation は load failure を empty loaded result にする"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "parent session id判定、closed details load結果、stale状態 が期待値と異なる"
+// observable = "parent session id判定、closed details load結果、stale状態"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runClosedAuxiliarySessionsLoadOperation は load failure を empty loaded result にする", async () => {
   const result = await runClosedAuxiliarySessionsLoadOperation({
     parentSessionId: "parent-1",
@@ -484,6 +726,17 @@ test("runClosedAuxiliarySessionsLoadOperation は load failure を empty loaded 
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runClosedAuxiliarySessionsLoadOperation は load 後に inactive なら stale にする"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "parent session id判定、closed details load結果、stale状態 が期待値と異なる"
+// observable = "parent session id判定、closed details load結果、stale状態"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runClosedAuxiliarySessionsLoadOperation は load 後に inactive なら stale にする", async () => {
   let active = true;
 
@@ -500,6 +753,17 @@ test("runClosedAuxiliarySessionsLoadOperation は load 後に inactive なら st
   assert.deepEqual(result, { status: "stale" });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "applyClosedAuxiliarySessionsLoadResult は loaded result だけ closed sessions に反映する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/empty/stale結果に対するclosed sessions更新 が期待値と異なる"
+// observable = "loaded/empty/stale結果に対するclosed sessions更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("applyClosedAuxiliarySessionsLoadResult は loaded result だけ closed sessions に反映する", () => {
   const closedSession = createAuxiliarySession({ id: "closed-1", status: "closed" });
   const appliedSessions: AuxiliarySession[][] = [];
@@ -520,6 +784,17 @@ test("applyClosedAuxiliarySessionsLoadResult は loaded result だけ closed ses
   assert.deepEqual(appliedSessions, [[closedSession]]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "applyClosedAuxiliarySessionsLoadResult は empty loaded result を closed sessions clear として反映する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/empty/stale結果に対するclosed sessions更新 が期待値と異なる"
+// observable = "loaded/empty/stale結果に対するclosed sessions更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("applyClosedAuxiliarySessionsLoadResult は empty loaded result を closed sessions clear として反映する", () => {
   const appliedSessions: AuxiliarySession[][] = [];
 
@@ -539,6 +814,17 @@ test("applyClosedAuxiliarySessionsLoadResult は empty loaded result を closed 
   assert.deepEqual(appliedSessions, [[]]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "applyClosedAuxiliarySessionsLoadResult は stale / skipped result では closed sessions を変更しない"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/empty/stale結果に対するclosed sessions更新 が期待値と異なる"
+// observable = "loaded/empty/stale結果に対するclosed sessions更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("applyClosedAuxiliarySessionsLoadResult は stale / skipped result では closed sessions を変更しない", () => {
   const appliedSessions: AuxiliarySession[][] = [];
 
@@ -564,6 +850,17 @@ test("applyClosedAuxiliarySessionsLoadResult は stale / skipped result では c
   assert.deepEqual(appliedSessions, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runClosedAuxiliarySessionsLoadAndApply は loaded result を closed sessions に反映する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/stale/skipped結果に対するclosed sessions更新 が期待値と異なる"
+// observable = "loaded/stale/skipped結果に対するclosed sessions更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runClosedAuxiliarySessionsLoadAndApply は loaded result を closed sessions に反映する", async () => {
   const closedSession = createAuxiliarySession({ id: "closed-1", status: "closed" });
   const appliedSessions: AuxiliarySession[][] = [];
@@ -585,6 +882,17 @@ test("runClosedAuxiliarySessionsLoadAndApply は loaded result を closed sessio
   assert.deepEqual(appliedSessions, [[closedSession]]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "runClosedAuxiliarySessionsLoadAndApply は stale / skipped result では closed sessions を変更しない"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "loaded/stale/skipped結果に対するclosed sessions更新 が期待値と異なる"
+// observable = "loaded/stale/skipped結果に対するclosed sessions更新"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("runClosedAuxiliarySessionsLoadAndApply は stale / skipped result では closed sessions を変更しない", async () => {
   const appliedSessions: AuxiliarySession[][] = [];
   let active = true;
@@ -621,6 +929,17 @@ test("runClosedAuxiliarySessionsLoadAndApply は stale / skipped result では c
   assert.deepEqual(appliedSessions, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "clearAuxiliarySessionsLoadState は active session と closed sessions を初期化する"
+// oracle = { type = "characterization", ref = "src/auxiliary-session-refresh-operation.ts at a4304ad5: 削除前の挙動" }
+// fault = "active sessionとclosed sessionsの初期化callback が期待値と異なる"
+// observable = "active sessionとclosed sessionsの初期化callback"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-refresh-operation"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("clearAuxiliarySessionsLoadState は active session と closed sessions を初期化する", () => {
   const activeSessions: Array<AuxiliarySession | null> = [];
   const closedSessions: AuxiliarySession[][] = [];

@@ -56,6 +56,17 @@ test("createSessionFilesActions は共通の session files action group を描�
   assert.match(html, /class="drawer-toggle compact secondary"/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "旧mode labelはAuxiliary指定時だけAuxiliaryを返す"
+// oracle = { type = "characterization", ref = "src/chat/chat-window-adapter.ts at a4304ad5: resolveAuxiliaryModeLabel" }
+// fault = "Mainまたは未指定にもAuxiliaryラベルを返す"
+// observable = "true/false/undefinedに対する返却文字列またはundefined"
+// observation_boundary = "public-boundary"
+// scope = "legacy-mode-label"
+// lifecycle = "ephemeral"
+// remove_when = "未使用mode label契約の削除確認が完了した時"
+// @end-test-value
 test("resolveAuxiliaryModeLabel は Auxiliary mode だけ label を返す", () => {
   assert.equal(resolveAuxiliaryModeLabel(true), "Auxiliary");
   assert.equal(resolveAuxiliaryModeLabel(false), undefined);

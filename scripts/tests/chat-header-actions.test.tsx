@@ -288,6 +288,17 @@ test("createAuxiliaryHeaderActions は idle 時もAuxiliaryラベルを表示し
   assert.match(html, />New Auxiliary<\/button>/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "resolveAuxiliaryHeaderActionState は start/return disabled state を解決する"
+// oracle = { type = "characterization", ref = "src/chat/chat-header-actions.tsx at a4304ad5: 削除前の挙動" }
+// fault = "Auxiliary header actionのlabel、disabled属性、label group不在 が期待値と異なる"
+// observable = "Auxiliary header actionのlabel、disabled属性、label group不在"
+// observation_boundary = "public-boundary"
+// scope = "chat-header-actions"
+// lifecycle = "ephemeral"
+// remove_when = "旧operation本体と対応テストの削除確認が完了した時"
+// @end-test-value
 test("resolveAuxiliaryHeaderActionState は start/return disabled state を解決する", () => {
   assert.deepEqual(
     resolveAuxiliaryHeaderActionState({
