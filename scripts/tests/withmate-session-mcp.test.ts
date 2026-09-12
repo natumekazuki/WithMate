@@ -274,8 +274,11 @@ describe("WithMate Session MCP contract", () => {
         assert.equal(tool.inputSchema.additionalProperties, false);
         assert.equal(tool.outputSchema?.type, "object");
         assert.equal(tool.outputSchema?.additionalProperties, false);
+        assert.ok(tool.outputSchema?.required?.includes("schemaVersion"));
         assert.ok(tool.outputSchema?.required?.includes("operation"));
         assert.ok(tool.outputSchema?.required?.includes("result"));
+        const outputSchemaJson = JSON.stringify(tool.outputSchema);
+        assert.match(outputSchemaJson, new RegExp(`\\"const\\":\\"${tool.name}\\"`));
         assert.ok(tool.description?.trim());
         assert.equal(
           tool.annotations?.openWorldHint,
@@ -930,6 +933,15 @@ describe("WithMate Session MCP contract", () => {
   // @end-test-value
   it("EXT-PROVIDER-02: Copilot Turnをprovider固有schemaでrun/enqueueへdispatchする", async () => {
     const requests: any[] = [];
+    const expectedCopilotTurn = {
+      provider: "copilot",
+      userMessage: "hello",
+      model: "claude-sonnet",
+      reasoningEffort: "high",
+      approvalMode: "on-request",
+      customAgentName: "reviewer",
+      attachments: [],
+    };
     await withClient(createWithMateSessionMcpServer({
       discover: async () => connection,
       call: async (_connection, envelope) => {
@@ -952,15 +964,7 @@ describe("WithMate Session MCP contract", () => {
         };
       },
     }), async (client) => {
-      const turn = {
-        provider: "copilot",
-        userMessage: "hello",
-        model: "claude-sonnet",
-        reasoningEffort: "high",
-        approvalMode: "on-request",
-        customAgentName: "reviewer",
-        attachments: [],
-      };
+      const turn = expectedCopilotTurn;
       assert.equal((await client.callTool({
         name: "turn.run",
         arguments: {
@@ -1010,6 +1014,7 @@ describe("WithMate Session MCP contract", () => {
     });
     assert.deepEqual(requests.map((request) => request.operation), ["turn.run", "turn.enqueue"]);
     assert.deepEqual(requests.map((request) => request.input.expectedContainerRevision), [1, 2]);
+    assert.deepEqual(requests.map((request) => request.input.turn), [expectedCopilotTurn, expectedCopilotTurn]);
     assert.deepEqual(requests.map((request) => request.input.terminalFailureNotification), [
       { targetSessionId: "target-session" },
       { targetSessionId: "target-session" },

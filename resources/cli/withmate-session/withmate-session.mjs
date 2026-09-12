@@ -1238,6 +1238,7 @@ function parseWorkItemReassignInput(value) {
 		"workItemId",
 		"targetSessionId",
 		"expectedRevision",
+		"expectedContainerRevision",
 		"transferPolicy",
 		"idempotencyKey"
 	], "input");
@@ -1257,6 +1258,7 @@ function parseWorkItemMoveInput(value) {
 		"destinationParentWorkItemId",
 		"expectedRevision",
 		"expectedAggregateRevision",
+		"expectedDestinationAggregateRevision",
 		"idempotencyKey"
 	], "input");
 	return {

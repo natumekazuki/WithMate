@@ -1042,8 +1042,12 @@ export class SessionExecutionStorageV6 {
       || row.work_item_revision !== row.revision) {
       throw new SessionExecutionWorkItemAssociationError(row.work_item_id, sessionId);
     }
+    const workspacePath = this.resolveExecutionWorkspacePath(sessionId, this.readBinding(executionId));
+    if (!workspacePath) {
+      throw new SessionExecutionWorkItemAssociationError(row.work_item_id, sessionId);
+    }
     const actual = serializeJson(
-      resolveActualStartSourceIdentity(this.resolveExecutionWorkspacePath(sessionId, this.readBinding(executionId))!),
+      resolveActualStartSourceIdentity(workspacePath),
       "Actual source identity",
     );
     this.db.prepare(`

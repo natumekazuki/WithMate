@@ -109,6 +109,11 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     assert.equal(storage.getAggregationSummary(oldParent.id).directChildCount, 0);
     assert.equal(storage.getAggregationSummary(newParent.id).undecidedTerminalCount, 1);
     assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_aggregation_decisions_v6 WHERE child_work_item_id=?", child.id)[0].n, 0);
+    assert.deepEqual(sql("SELECT event_kind FROM work_item_aggregation_events_v6 WHERE child_work_item_id=?", child.id).map((r) => r.event_kind).sort(), ["child_added", "child_adopted", "child_removed", "decided", "decision_superseded"].sort());
+    const movedAggregationEvents = sql<{ event_kind: string; parent_work_item_id: string; payload_json: string }>("SELECT event_kind,parent_work_item_id,payload_json FROM work_item_aggregation_events_v6 WHERE child_work_item_id=? ORDER BY aggregate_revision,event_kind", child.id);
+    assert.deepEqual(JSON.parse(movedAggregationEvents.find((event) => event.event_kind === "decision_superseded")!.payload_json), { childRevision: child.revision, decision: "accepted", reason: null, replacementWorkItemId: null });
+    assert.deepEqual(JSON.parse(movedAggregationEvents.find((event) => event.event_kind === "child_removed")!.payload_json), { childWorkItemId: child.id, childRevision: child.revision });
+    assert.deepEqual(JSON.parse(movedAggregationEvents.find((event) => event.event_kind === "child_adopted")!.payload_json), { childWorkItemId: child.id, childRevision: moved.revision });
     const replayedDecision = storage.decideAggregation({ parentWorkItemId: oldParent.id, childWorkItemId: child.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(oldParent.id).aggregateRevision, idempotencyKey: "decision", requestFingerprint: "decision-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
     assert.equal(replayedDecision.parentWorkItemId, oldParent.id);
     assert.equal(storage.getAggregationSummary(newParent.id).undecidedTerminalCount, 1);
@@ -118,6 +123,9 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     storage.reassign({ workItemId: oldParent.id, expectedRevision: oldParent.revision, principalSessionId: "root", idempotencyKey: "handoff-empty-parent", requestFingerprint: "handoff-empty-parent-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "executor", transferPolicy: "handoff" });
     assert.deepEqual(sql("SELECT * FROM resource_event_headers_v6 WHERE resource_id=? ORDER BY sequence", oldParent.id).slice(0, oldHeaders.length), oldHeaders);
     storage.close(); storage = new WorkItemStorageV6(dbPath);
+    assert.deepEqual(sql("SELECT event_kind,parent_work_item_id,payload_json FROM work_item_aggregation_events_v6 WHERE child_work_item_id=? ORDER BY aggregate_revision,event_kind", child.id), movedAggregationEvents);
+    assert.equal(storage.getAggregationSummary(newParent.id).undecidedTerminalCount, 1);
+    assert.equal(storage.getAggregationSummary(oldParent.id).directChildCount, 0);
     assert.equal(storage.get(oldParent.id)?.targetSessionId, "executor");
     assertPublicHistory(child.id);
     assertPublicHistory(oldParent.id);
@@ -147,6 +155,11 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     const restored = storage.restore({ workItemId: child.id, expectedRevision: archived.revision, principalSessionId: "root", idempotencyKey: "restore", requestFingerprint: "restore-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.restore") });
     assert.equal(restored.result?.summary, "done");
     assert.equal(Number(sql("SELECT child_revision AS n FROM work_item_aggregation_decisions_v6 WHERE child_work_item_id=?", child.id)[0].n), decisionRevision);
+    const archivedAgain = storage.archive({ workItemId: child.id, expectedRevision: restored.revision, principalSessionId: "root", idempotencyKey: "archive-again", requestFingerprint: "archive-again-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.archive"), reason: "retained" });
+    let referencedDeleteError: unknown;
+    try { storage.delete({ workItemId: child.id, expectedRevision: archivedAgain.revision, principalSessionId: "root", idempotencyKey: "delete-referenced", requestFingerprint: "delete-referenced-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.delete") }); } catch (error) { referencedDeleteError = error; }
+    assert.equal((referencedDeleteError as { code?: string }).code, "WORK_ITEM_DELETE_REFERENCED");
+    storage.restore({ workItemId: child.id, expectedRevision: archivedAgain.revision, principalSessionId: "root", idempotencyKey: "restore-again", requestFingerprint: "restore-again-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.restore") });
     const orphan = create(null, "root", "executor", "orphan");
     assertPublicHistory(child.id);
     const canceled = storage.mutate({ operation: "work.cancel", workItemId: orphan.id, principalSessionId: "root", idempotencyKey: "cancel", requestFingerprint: "cancel-fp", expectedRevision: orphan.revision, state: "canceled", result: null, updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.cancel") });
@@ -157,6 +170,8 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_events_v6 WHERE work_item_id=?", orphan.id)[0].n, 4);
     assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_tombstones_v6 WHERE work_item_id=?", orphan.id)[0].n, 1);
     assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_idempotency_v6 WHERE work_item_id=?", orphan.id)[0].n >= 3, true);
+    const deletedReplay = storage.delete({ workItemId: orphan.id, expectedRevision: deleted.revision, principalSessionId: "root", idempotencyKey: "delete", requestFingerprint: "delete-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.delete") });
+    assert.equal(deletedReplay.id, orphan.id);
     storage.close(); storage = new WorkItemStorageV6(dbPath);
     assert.equal(storage.get(orphan.id)?.deletedAt, LATER);
     assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_events_v6 WHERE work_item_id=?", orphan.id)[0].n, 4);
@@ -164,8 +179,8 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "moveのcycle/finalized-parent conflictは副作用を保存せず、同一idempotency keyの異payloadはconflictにする"
-  // fault = "拒否されたmoveがparent/revision/eventを部分更新し、再送が別payloadで成功する"
+  // claim = "moveのcycle conflictはparent、子孫、集約、event、idempotency rowを変更しない"
+  // fault = "循環するmoveがparent/revision/eventまたはidempotency rowを部分更新する"
   // observable = "work_items_v6, work_item_aggregations_v6, work_item_events_v6, work_item_idempotency_v6"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
@@ -176,10 +191,13 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
   it("拒否されたmoveは原子性を保つ", () => {
     const parent = create(null, "root", "task", "cycle-parent");
     const child = create(parent.id, "task", "executor", "cycle-child");
-    const before = { item: storage.get(child.id), events: sql("SELECT COUNT(*) AS n FROM work_item_events_v6 WHERE work_item_id=?", child.id)[0].n };
-    assert.throws(() => storage.move({ workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: "cycle", requestFingerprint: "cycle-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move"), destinationParentWorkItemId: parent.id, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, expectedDestinationAggregateRevision: 0 }), WorkItemAggregationConflictError);
-    assert.deepEqual(storage.get(child.id), before.item);
-    assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_events_v6 WHERE work_item_id=?", child.id)[0].n, before.events);
+    const descendant = create(child.id, "executor", "task-2", "cycle-descendant");
+    const snapshot = () => ["work_items_v6", "work_item_aggregations_v6", "work_item_events_v6", "work_item_idempotency_v6"].map((table) => sql(`SELECT * FROM ${table} ORDER BY rowid`));
+    const before = snapshot();
+    let cycleError: unknown;
+    try { storage.move({ workItemId: parent.id, expectedRevision: parent.revision, principalSessionId: "root", idempotencyKey: "cycle", requestFingerprint: "cycle-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move"), destinationParentWorkItemId: descendant.id, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, expectedDestinationAggregateRevision: storage.getAggregationSummary(descendant.id).aggregateRevision }); } catch (error) { cycleError = error; }
+    assert.equal((cycleError as { code?: string }).code, "WORK_ITEM_CYCLE");
+    assert.deepEqual(snapshot(), before);
   });
 
   // @test-value v2
@@ -194,7 +212,17 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
   // distinction = "各 successor の新ID・predecessor/source created event・予算差分・旧branch不変を同一DBで観測する"
   // @end-test-value
   it("successor操作は旧branchを保全し予算を一度だけ消費する", () => {
-    const source = settle(create(null, "root", "executor", "successor-source"));
+    const parent = create(null, "root", "task", "successor-parent");
+    const pendingSource = create(parent.id, "task", "executor", "successor-source");
+    const executions = new SessionExecutionStorageV6(dbPath);
+    try {
+      const execution = executions.startImmediate({ id: "source-execution", sessionId: "executor", expectedContainerRevision: Number(sql("SELECT resource_revision AS n FROM sessions_v6 WHERE id='executor'")[0].n), request: { userMessage: "source" }, idempotencyKey: "source-execution", requestFingerprint: "source-execution-fp", createdAt: NOW, expiresAt: EXPIRES, workItemId: pendingSource.id, proof: proof("turn.run", "executor") });
+      executions.completeRunning({ executionId: execution.execution.id, state: "completed", result: {}, errorCode: "", reason: "done", completedAt: LATER, expiresAt: EXPIRES });
+    } finally { executions.close(); }
+    const source = settle(pendingSource);
+    storage.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: source.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, idempotencyKey: "source-decision", requestFingerprint: "source-decision-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
+    const retainedSource = () => [sql("SELECT * FROM work_item_events_v6 WHERE work_item_id=? ORDER BY sequence", source.id), sql("SELECT * FROM work_item_aggregation_decisions_v6 WHERE child_work_item_id=?", source.id), sql("SELECT * FROM work_item_execution_associations_v6 WHERE work_item_id=?", source.id), sql("SELECT * FROM work_item_idempotency_v6 WHERE work_item_id=? ORDER BY operation,idempotency_key", source.id)];
+    const sourceHistory = retainedSource();
     const sourceSnapshot = JSON.stringify(source);
     const budget = () => Number(sql("SELECT committed FROM resource_budget_dimensions_v6 d INNER JOIN resource_budget_accounts_v6 a ON a.account_id=d.account_id WHERE a.owner_session_id='root' AND a.account_kind='root' AND d.dimension='workItems'")[0].committed);
     const beforeClone = budget();
@@ -202,6 +230,10 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     assert.notEqual(clone.id, source.id);
     assert.equal(clone.predecessorWorkItemId ?? null, null);
     assert.equal(clone.result, null);
+    assert.deepEqual(sql("SELECT event_type FROM work_item_events_v6 WHERE work_item_id=?", clone.id).map((row) => row.event_type), ["created"]);
+    assert.equal(JSON.parse(sql<{ payload_json: string }>("SELECT payload_json FROM work_item_events_v6 WHERE work_item_id=? AND event_type='created'", clone.id)[0].payload_json).sourceWorkItemId, source.id);
+    assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_aggregation_decisions_v6 WHERE child_work_item_id=?", clone.id)[0].n, 0);
+    assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_execution_associations_v6 WHERE work_item_id=?", clone.id)[0].n, 0);
     assert.equal(JSON.stringify(storage.get(source.id)), sourceSnapshot);
     assert.equal(budget(), beforeClone + 1);
     const replayClone = storage.clone({ workItemId: source.id, expectedRevision: source.revision, principalSessionId: "root", idempotencyKey: "clone", requestFingerprint: "clone-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.clone"), targetSessionId: "task", parentWorkItemId: null, expectedContainerRevision: Number(sql("SELECT resource_revision AS n FROM sessions_v6 WHERE id='task'")[0].n) });
@@ -216,15 +248,21 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     assert.equal(budget(), beforeReopen + 1);
     const active = create(null, "root", "executor", "reassign-source");
     const beforeReassign = JSON.stringify(active);
+    const beforeReassignBudget = budget();
     const reassigned = storage.reassign({ workItemId: active.id, expectedRevision: active.revision, principalSessionId: "root", idempotencyKey: "reassign", requestFingerprint: "reassign-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "task-2", transferPolicy: "successor", expectedContainerRevision: Number(sql("SELECT resource_revision AS n FROM sessions_v6 WHERE id='task-2'")[0].n) });
     assert.notEqual(reassigned.id, active.id);
     assert.equal(reassigned.predecessorWorkItemId, active.id);
     assert.equal(reassigned.targetSessionId, "task-2");
     assert.equal(JSON.stringify(storage.get(active.id)), beforeReassign);
+    assert.equal(budget(), beforeReassignBudget + 1);
+    const reassignedReplay = storage.reassign({ workItemId: active.id, expectedRevision: active.revision, principalSessionId: "root", idempotencyKey: "reassign", requestFingerprint: "reassign-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "task-2", transferPolicy: "successor", expectedContainerRevision: Number(sql("SELECT resource_revision AS n FROM sessions_v6 WHERE id='task-2'")[0].n) });
+    assert.equal(reassignedReplay.id, reassigned.id);
+    assert.equal(budget(), beforeReassignBudget + 1);
     assert.deepEqual(sql("SELECT event_type FROM work_item_events_v6 WHERE work_item_id=?", reassigned.id).map((r) => r.event_type), ["created"]);
     storage.close(); storage = new WorkItemStorageV6(dbPath);
     assert.equal(storage.get(reopened.id)?.predecessorWorkItemId, source.id);
     assert.equal(storage.get(reassigned.id)?.targetSessionId, "task-2");
+    assert.deepEqual(retainedSource(), sourceHistory);
     assertPublicHistory(reassigned.id);
   });
 
@@ -246,15 +284,25 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
       const containerRevision = () => Number(sql("SELECT resource_revision AS n FROM sessions_v6 WHERE id='executor'")[0].n);
       const queued = executions.enqueue({ id: "execution-queued", sessionId: "executor", expectedContainerRevision: containerRevision(), request: { turn: { userMessage: "queued" } }, idempotencyKey: "execution-queued", requestFingerprint: "execution-queued-fp", createdAt: NOW, expiresAt: EXPIRES, workItemId: queuedItem.id, proof: proof("turn.enqueue", "executor") });
       const before = storage.get(queuedItem.id)!;
-      assert.throws(() => storage.reassign({ workItemId: queuedItem.id, expectedRevision: before.revision, principalSessionId: "root", idempotencyKey: "handoff-queued", requestFingerprint: "handoff-queued-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "task-2", transferPolicy: "handoff" }), WorkItemAggregationConflictError);
+      const queuedAssociation = sql("SELECT * FROM work_item_execution_associations_v6 WHERE execution_id=?", queued.execution.id)[0];
+      let queuedError: unknown;
+      try { storage.reassign({ workItemId: queuedItem.id, expectedRevision: before.revision, principalSessionId: "root", idempotencyKey: "handoff-queued", requestFingerprint: "handoff-queued-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "task-2", transferPolicy: "handoff" }); } catch (error) { queuedError = error; }
+      assert.equal((queuedError as { code?: string }).code, "WORK_ITEM_HANDOFF_REQUIRED");
       assert.deepEqual(storage.get(queuedItem.id), before);
+      assert.deepEqual(sql("SELECT * FROM work_item_execution_associations_v6 WHERE execution_id=?", queued.execution.id)[0], queuedAssociation);
+      assert.equal(sql("SELECT state FROM session_executions_v6 WHERE id=?", queued.execution.id)[0].state, "queued");
       executions.cancelQueued(queued.execution.id, LATER, EXPIRES);
 
       const runningItem = create(null, "root", "executor", "handoff-running");
       const running = executions.startImmediate({ id: "execution-running", sessionId: "executor", expectedContainerRevision: containerRevision(), request: { turn: { userMessage: "running" } }, idempotencyKey: "execution-running", requestFingerprint: "execution-running-fp", createdAt: NOW, expiresAt: EXPIRES, workItemId: runningItem.id, proof: proof("turn.run", "executor") });
       const runningBefore = storage.get(runningItem.id)!;
-      assert.throws(() => storage.reassign({ workItemId: runningItem.id, expectedRevision: runningBefore.revision, principalSessionId: "root", idempotencyKey: "handoff-running", requestFingerprint: "handoff-running-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "task-2", transferPolicy: "handoff" }), WorkItemAggregationConflictError);
+      const runningAssociation = sql("SELECT * FROM work_item_execution_associations_v6 WHERE execution_id=?", running.execution.id)[0];
+      let runningError: unknown;
+      try { storage.reassign({ workItemId: runningItem.id, expectedRevision: runningBefore.revision, principalSessionId: "root", idempotencyKey: "handoff-running", requestFingerprint: "handoff-running-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "task-2", transferPolicy: "handoff" }); } catch (error) { runningError = error; }
+      assert.equal((runningError as { code?: string }).code, "WORK_ITEM_HANDOFF_REQUIRED");
       assert.deepEqual(storage.get(runningItem.id), runningBefore);
+      assert.deepEqual(sql("SELECT * FROM work_item_execution_associations_v6 WHERE execution_id=?", running.execution.id)[0], runningAssociation);
+      assert.equal(sql("SELECT state FROM session_executions_v6 WHERE id=?", running.execution.id)[0].state, "running");
       executions.completeRunning({ executionId: running.execution.id, state: "completed", result: {}, errorCode: "", reason: "done", completedAt: LATER, expiresAt: EXPIRES });
     } finally { executions.close(); }
     storage.close(); storage = new WorkItemStorageV6(dbPath);
@@ -284,8 +332,13 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     const beforeOld = storage.getAggregationSummary(oldParent.id);
     const beforeNew = storage.getAggregationSummary(newParent.id);
     const beforeEvents = Number(sql("SELECT COUNT(*) AS n FROM work_item_events_v6 WHERE work_item_id=?", child.id)[0].n);
+    const retained = () => [sql("SELECT * FROM work_items_v6 ORDER BY sequence"), sql("SELECT * FROM work_item_events_v6 ORDER BY sequence"), sql("SELECT * FROM work_item_aggregation_events_v6 ORDER BY event_id")];
+    const beforeRetained = retained();
     assert.equal(finalized.state, "completed");
-    assert.throws(() => storage.move({ workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: "finalized-move", requestFingerprint: "finalized-move-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move"), destinationParentWorkItemId: newParent.id, expectedAggregateRevision: beforeOld.aggregateRevision, expectedDestinationAggregateRevision: beforeNew.aggregateRevision }), WorkItemAggregationConflictError);
+    let finalizedMoveError: unknown;
+    try { storage.move({ workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: "finalized-move", requestFingerprint: "finalized-move-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move"), destinationParentWorkItemId: newParent.id, expectedAggregateRevision: beforeOld.aggregateRevision, expectedDestinationAggregateRevision: beforeNew.aggregateRevision }); } catch (error) { finalizedMoveError = error; }
+    assert.equal((finalizedMoveError as { code?: string }).code, "WORK_ITEM_PARENT_CORRECTION_REQUIRED");
+    assert.deepEqual(retained(), beforeRetained);
     assert.deepEqual(storage.get(child.id), beforeChild);
     assert.deepEqual(storage.getAggregationSummary(oldParent.id), beforeOld);
     assert.deepEqual(storage.getAggregationSummary(newParent.id), beforeNew);

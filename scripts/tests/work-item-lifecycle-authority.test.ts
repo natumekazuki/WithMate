@@ -103,7 +103,7 @@ describe("Work Item lifecycle authority capability", () => {
   // kind = "security"
   // claim = "Work Item move authorization requires independent source and destination grants, and a revoked destination grant is rejected"
   // fault = "one lifecycle grant is reused for both sides of a move, or a revoked destination grant remains usable"
-  // observable = "SessionAuthorityService authorization result and SessionAuthorityError"
+  // observable = "SessionAuthorityService authorization result and SessionAuthorityError、WorkItemService move admission/errorと拒否前後のprojection/history"
   // observation_boundary = "public-boundary"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
   // scope = "trusted Work Item lifecycle capability and move admission"
@@ -116,12 +116,13 @@ describe("Work Item lifecycle authority capability", () => {
     const destinationInput = { workItemId: destination.id };
     assert.throws(() => authority!.authorize(agentBinding("task"), "work.move", sourceInput), SessionAuthorityError);
     issue(dbPath, "created", ["executor"]);
-    assert.doesNotThrow(() => authority!.authorize(agentBinding("task"), "work.move", sourceInput));
+    const sourceProof = authority!.authorize(agentBinding("task"), "work.move", sourceInput).proof;
     assert.throws(() => authority!.authorize(agentBinding("task"), "work.move", destinationInput), SessionAuthorityError);
     issue(dbPath, "assigned", ["task-coordinator"]);
     const destinationProof = authority!.authorize(agentBinding("task"), "work.move", destinationInput).proof;
     assert.notEqual(destinationProof.grantId, null);
-    const moved = service!.move({ workItemId: source.id, destinationParentWorkItemId: destination.id, expectedRevision: source.revision, expectedAggregateRevision: 0, expectedDestinationAggregateRevision: 0, idempotencyKey: "service-move" }, agentBinding("task"), authority!.authorize(agentBinding("task"), "work.move", sourceInput).proof, [destinationProof]);
+    assert.notEqual(sourceProof.grantId, destinationProof.grantId);
+    const moved = service!.move({ workItemId: source.id, destinationParentWorkItemId: destination.id, expectedRevision: source.revision, expectedAggregateRevision: 0, expectedDestinationAggregateRevision: 0, idempotencyKey: "service-move" }, agentBinding("task"), sourceProof, [destinationProof]);
     assert.equal(moved.parentWorkItemId, destination.id);
     issue(dbPath, "created", ["executor"], "work.revise");
     issue(dbPath, "created", ["executor"], "work.history.list");
@@ -131,6 +132,9 @@ describe("Work Item lifecycle authority capability", () => {
     const secondSource = create("source-after-move", "task", "executor");
     const secondSourceBefore = storage!.get(secondSource.id)!;
     const secondSourceEventsBefore = storage!.listHistory({ workItemId: secondSource.id, limit: 20, afterSequence: null });
+    assert.throws(() => service!.move({ workItemId: secondSource.id, destinationParentWorkItemId: destination.id, expectedRevision: secondSource.revision, expectedAggregateRevision: 0, expectedDestinationAggregateRevision: 1, idempotencyKey: "wrong-destination-proof" }, agentBinding("task"), authority!.authorize(agentBinding("task"), "work.move", { workItemId: secondSource.id }).proof, [sourceProof]), Error);
+    assert.deepEqual(storage!.get(secondSource.id), secondSourceBefore);
+    assert.deepEqual(storage!.listHistory({ workItemId: secondSource.id, limit: 20, afterSequence: null }), secondSourceEventsBefore);
     const db = new DatabaseSync(dbPath);
     try {
       const row = db.prepare("SELECT revision FROM session_authority_grants_v6 WHERE grant_id = ?").get(destinationProof.grantId) as { revision: number };
@@ -159,12 +163,12 @@ describe("Work Item lifecycle authority capability", () => {
     const { dbPath, source, destination } = await fixture();
     const sourceGrant = issue(dbPath, "created", ["executor"]);
     const destinationGrant = issue(dbPath, "assigned", ["task-coordinator"]);
-    const before = (() => { const db = new DatabaseSync(dbPath); try { return { grants: db.prepare("SELECT grant_id, revision, provenance_json FROM session_authority_grants_v6 WHERE grant_id IN (?, ?) ORDER BY grant_id").all(sourceGrant.grantId, destinationGrant.grantId), events: db.prepare("SELECT grant_id, event_kind, grant_revision FROM session_authority_grant_events_v6 WHERE grant_id IN (?, ?) ORDER BY grant_id, grant_revision").all(sourceGrant.grantId, destinationGrant.grantId) }; } finally { db.close(); } })();
+    const before = (() => { const db = new DatabaseSync(dbPath); try { return { grants: db.prepare("SELECT * FROM session_authority_grants_v6 ORDER BY grant_id").all(), events: db.prepare("SELECT * FROM session_authority_grant_events_v6 ORDER BY grant_id, grant_revision, event_id").all() }; } finally { db.close(); } })();
     authority!.close();
     authority = new SessionAuthorityService({ databasePath: dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
     assert.doesNotThrow(() => authority!.authorize(agentBinding("task"), "work.move", { workItemId: source.id }));
     assert.doesNotThrow(() => authority!.authorize(agentBinding("task"), "work.move", { workItemId: destination.id }));
-    const after = (() => { const db = new DatabaseSync(dbPath); try { return { grants: db.prepare("SELECT grant_id, revision, provenance_json FROM session_authority_grants_v6 WHERE grant_id IN (?, ?) ORDER BY grant_id").all(sourceGrant.grantId, destinationGrant.grantId), events: db.prepare("SELECT grant_id, event_kind, grant_revision FROM session_authority_grant_events_v6 WHERE grant_id IN (?, ?) ORDER BY grant_id, grant_revision").all(sourceGrant.grantId, destinationGrant.grantId) }; } finally { db.close(); } })();
+    const after = (() => { const db = new DatabaseSync(dbPath); try { return { grants: db.prepare("SELECT * FROM session_authority_grants_v6 ORDER BY grant_id").all(), events: db.prepare("SELECT * FROM session_authority_grant_events_v6 ORDER BY grant_id, grant_revision, event_id").all() }; } finally { db.close(); } })();
     assert.deepEqual(after, before);
   });
 });

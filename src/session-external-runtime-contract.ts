@@ -1407,11 +1407,11 @@ function parseWorkItemReviseInput(value: unknown): SessionRuntimeWorkItemReviseI
   };
 }
 function parseWorkItemReassignInput(value: unknown): SessionRuntimeWorkItemReassignInput {
-  const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "targetSessionId", "expectedRevision", "transferPolicy", "idempotencyKey"], "input");
+  const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "targetSessionId", "expectedRevision", "expectedContainerRevision", "transferPolicy", "idempotencyKey"], "input");
   return { workItemId: requireNonEmptyString(r.workItemId, "workItemId"), targetSessionId: requireNonEmptyString(r.targetSessionId, "targetSessionId"), expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), ...(r.expectedContainerRevision === undefined ? {} : { expectedContainerRevision: requireInteger(r.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER) }), transferPolicy: requireEnum(r.transferPolicy, ["handoff", "successor"] as const, "transferPolicy"), idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey") };
 }
 function parseWorkItemMoveInput(value: unknown): SessionRuntimeWorkItemMoveInput {
-  const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "destinationParentWorkItemId", "expectedRevision", "expectedAggregateRevision", "idempotencyKey"], "input");
+  const r = requireObject(value, "input"); assertKeys(r, ["workItemId", "destinationParentWorkItemId", "expectedRevision", "expectedAggregateRevision", "expectedDestinationAggregateRevision", "idempotencyKey"], "input");
   return { workItemId: requireNonEmptyString(r.workItemId, "workItemId"), destinationParentWorkItemId: r.destinationParentWorkItemId === null ? null : requireNonEmptyString(r.destinationParentWorkItemId, "destinationParentWorkItemId"), expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), ...(r.expectedAggregateRevision === undefined ? {} : { expectedAggregateRevision: requireInteger(r.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER) }), ...(r.expectedDestinationAggregateRevision === undefined ? {} : { expectedDestinationAggregateRevision: requireInteger(r.expectedDestinationAggregateRevision, "expectedDestinationAggregateRevision", 0, Number.MAX_SAFE_INTEGER) }), idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey") };
 }
 function parseWorkItemCloneInput(value: unknown): SessionRuntimeWorkItemCloneInput {

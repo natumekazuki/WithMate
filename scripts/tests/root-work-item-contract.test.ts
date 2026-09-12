@@ -1893,7 +1893,7 @@ describe("Root WorkItem contract", () => {
   // scope = "ensureV6Schema Work Item event and idempotency limit repair"
   // lifecycle = "permanent"
   // distinction = "現行V2のeventとidempotency tableを旧CHECKへ狭め、schema repair二回後のDDL、event sequence、ledger row保持を直接観測する"
-  // observable = "既存row・sequence・responseの保持、修復後の上限内保存と上限超過拒否、再起動成功"
+  // observable = "旧CHECKから修復されたDDL、event rowとsequence、idempotency row全列の保持、ensureV6Schema再実行の収束"
   // observation_boundary = "component-behavior"
   // @end-test-value
   it("RW-5B: 旧eventとidempotency上限をrow保持付きでrepairする", async () => {
@@ -1914,7 +1914,7 @@ describe("Root WorkItem contract", () => {
           INSERT INTO work_item_idempotency_v6 (
             operation, principal_session_id, idempotency_key, request_fingerprint,
             work_item_id, response_json, created_at, expires_at
-          ) VALUES ('work.revise', 'root', 'preserved-key', 'fingerprint', ?, NULL, ?, ?)
+          ) VALUES ('work.revise', 'legacy_unknown:root', 'preserved-key', 'fingerprint', ?, NULL, ?, ?)
         `).run(rootRow.id, NOW, EXPIRES);
         const current = db.prepare(`
           SELECT sql FROM sqlite_schema
@@ -1968,8 +1968,12 @@ describe("Root WorkItem contract", () => {
           DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;
         `);
 
+        const originalEvents = db.prepare("SELECT * FROM work_item_events_v6 ORDER BY sequence").all();
+        const originalReplay = db.prepare("SELECT * FROM work_item_idempotency_v6 ORDER BY operation,principal_session_id,idempotency_key").all();
         ensureV6Schema(db);
         ensureV6Schema(db);
+        assert.deepEqual(db.prepare("SELECT * FROM work_item_events_v6 ORDER BY sequence").all(), originalEvents);
+        assert.deepEqual(db.prepare("SELECT * FROM work_item_idempotency_v6 ORDER BY operation,principal_session_id,idempotency_key").all(), originalReplay);
         const repaired = db.prepare(`
           SELECT sql FROM sqlite_schema
           WHERE type = 'table' AND name = 'work_item_idempotency_v6'

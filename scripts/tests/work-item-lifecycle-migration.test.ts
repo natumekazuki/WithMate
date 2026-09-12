@@ -60,9 +60,9 @@ async function fixture(): Promise<{ dbPath: string; directory: string }> {
 describe("work-item lifecycle populated migration", () => {
   // @test-value v2
   // kind = "compatibility"
-  // claim = "production storageで生成した旧Slice 3のWork Item projection、全履歴header、decision/replacement、execution association、grant、budget usageはSlice 4 schema migration後も同一内容で再生できる"
+  // claim = "production storageで生成した旧Slice 3のWork Item projection、全履歴header、decision/replacement、execution association、grant、Work Item作成のbudget消費と履歴はSlice 4 schema migration後も同一内容で再生できる"
   // fault = "migrationが実データを失う、旧associationのactual sourceを捏造する、または履歴とprojectionを分岐させる"
-  // observable = "work_items_v6, work_item_events_v6, resource_event_headers_v6, work_item_aggregation_events_v6, work_item_aggregation_decisions_v6, work_item_aggregation_idempotency_v6, work_item_execution_associations_v6, session_authority_grants_v6, resource_budget_usages_v6"
+  // observable = "work_items_v6, work_item_events_v6, resource_event_headers_v6, work_item_aggregation_events_v6, work_item_aggregation_decisions_v6, work_item_aggregation_idempotency_v6, work_item_execution_associations_v6, session_authority_grants_v6, resource_budget_accounts_v6, resource_budget_dimensions_v6, resource_budget_events_v6"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
   // scope = "populated legacy Work Item schema migration"
@@ -80,11 +80,11 @@ describe("work-item lifecycle populated migration", () => {
       const child = create("child", binding(parent.id, "task", "executor", "child"), "create-child");
       const moveChild = create("move-child", binding(parent.id, "task", "executor", "move-child"), "create-move-child");
       const running = storage.mutate({ operation: "work.transition", workItemId: child.id, principalSessionId: "root", idempotencyKey: "child-start", requestFingerprint: "child-start-fp", expectedRevision: child.revision, state: "in_progress", result: null, updatedAt: NOW, expiresAt: EXPIRES, proof: proof("work.transition") });
-      const done = storage.mutate({ operation: "work.result", workItemId: child.id, principalSessionId: "root", idempotencyKey: "child-result", requestFingerprint: "child-result-fp", expectedRevision: running.revision, state: "completed", result: { outcome: "completed", summary: "done", artifacts: [] }, updatedAt: NOW, expiresAt: EXPIRES, proof: proof("work.result") });
+      const done = storage.mutate({ operation: "work.result", workItemId: child.id, principalSessionId: "root", idempotencyKey: "child-result", requestFingerprint: "child-result-fp", expectedRevision: running.revision, state: "completed", result: { outcome: "completed", summary: "done", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [], reportingSessionId: "executor", reportedAt: NOW }, updatedAt: NOW, expiresAt: EXPIRES, proof: proof("work.result") });
       const summary = storage.getAggregationSummary(parent.id);
       storage.retryAggregation({ parentWorkItemId: parent.id, childWorkItemId: done.id, actorSessionId: "task", expectedAggregateRevision: summary.aggregateRevision, idempotencyKey: "retry", requestFingerprint: "retry-fp", replacementId: "replacement", replacementBinding: binding(parent.id, "task", "executor", "replacement"), decidedAt: NOW, expiresAt: EXPIRES, reason: "retry", proof: proof("work.aggregation.retry") });
       executions.startImmediate({ id: "execution", expectedContainerRevision: containerRevision(f.dbPath, "executor"), sessionId: "executor", request: { userMessage: "run" }, idempotencyKey: "execution", requestFingerprint: "execution-fp", createdAt: NOW, expiresAt: EXPIRES, proof: proof("turn.run", "executor"), workItemId: "replacement" });
-        const db = new DatabaseSync(f.dbPath);
+      const db = new DatabaseSync(f.dbPath);
       try {
         db.exec("DROP TRIGGER IF EXISTS session_execution_events_no_update_v6; UPDATE session_execution_events_v6 SET payload_json = json_remove(payload_json, '$.projection.workItemRevision', '$.projection.plannedSourceIdentity', '$.projection.actualStartSourceIdentity') WHERE execution_id='execution'");
         const workSql = (db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='work_items_v6'").get() as { sql: string }).sql.replace("    archived_at TEXT,\n", "");
@@ -112,17 +112,24 @@ describe("work-item lifecycle populated migration", () => {
         rebuild(db, "work_item_aggregation_idempotency_v6", aggregationIdemSql, ["operation","principal_session_id","idempotency_key","request_fingerprint","child_work_item_id","replacement_work_item_id","created_at","expires_at"]);
         rebuild(db, "work_item_aggregation_events_v6", aggregationEventsSql, ["event_id","parent_work_item_id","child_work_item_id","aggregate_revision","event_kind","payload_json"]);
         db.exec("PRAGMA foreign_keys=ON;");
-        const before = JSON.stringify(db.prepare("SELECT id,kind,root_session_id,creator_session_id,target_session_id,parent_work_item_id,goal,scope,completion_criteria,authority,source_identity_json,state,revision,result_json,created_at,updated_at FROM work_items_v6 ORDER BY id").all());
-        const events = JSON.stringify(db.prepare("SELECT work_item_id,revision,event_type,actor_session_id,principal_kind,payload_json,created_at FROM work_item_events_v6 ORDER BY sequence").all());
-        const headers = JSON.stringify(db.prepare("SELECT event_id,resource_kind,resource_id,root_id,owner_kind,owner_id,event_kind,resource_revision,principal_kind,actor_session_id,grant_id,grant_revision,operation_id,idempotency_key_fingerprint,occurred_at,committed_at,supersedes_event_id,payload_schema_revision,effect FROM resource_event_headers_v6 WHERE resource_kind='work_item' ORDER BY event_id").all());
+        const before = JSON.stringify(db.prepare("SELECT sequence,id,kind,contract_revision,root_session_id,creator_session_id,target_session_id,parent_work_item_id,predecessor_work_item_id,goal,scope,completion_criteria,authority,source_identity_json,state,revision,progress_summary,blockers_json,next_action,result_json,created_at,updated_at FROM work_items_v6 ORDER BY id").all());
+        const events = JSON.stringify(db.prepare("SELECT * FROM work_item_events_v6 ORDER BY sequence").all());
+        const headers = JSON.stringify(db.prepare("SELECT event_id,resource_kind,resource_id,root_id,owner_kind,owner_id,event_kind,resource_revision,principal_kind,actor_session_id,grant_id,grant_revision,operation_id,idempotency_key_fingerprint,occurred_at,committed_at,supersedes_event_id,payload_schema_revision,effect FROM resource_event_headers_v6 ORDER BY event_id").all());
         const grants = JSON.stringify(db.prepare("SELECT * FROM session_authority_grants_v6 ORDER BY grant_id").all());
         const budgetAccounts = JSON.stringify(db.prepare("SELECT * FROM resource_budget_accounts_v6 ORDER BY account_id").all());
         const budgetDimensions = JSON.stringify(db.prepare("SELECT * FROM resource_budget_dimensions_v6 ORDER BY account_id,dimension").all());
         const budgetEvents = JSON.stringify(db.prepare("SELECT * FROM resource_budget_events_v6 ORDER BY account_id,sequence").all());
+        const associations = db.prepare("SELECT execution_id,work_item_id,created_at FROM work_item_execution_associations_v6 ORDER BY execution_id").all();
+        const aggregations = db.prepare("SELECT * FROM work_item_aggregations_v6 ORDER BY parent_work_item_id").all();
+        const aggregationReplay = db.prepare("SELECT operation,principal_session_id,idempotency_key,request_fingerprint,child_work_item_id,replacement_work_item_id,created_at,expires_at FROM work_item_aggregation_idempotency_v6 ORDER BY operation,principal_session_id,idempotency_key").all();
+        assert.ok(JSON.parse(budgetEvents).length > 0);
         ensureV6Schema(db);
-        assert.equal(JSON.stringify(db.prepare("SELECT id,kind,root_session_id,creator_session_id,target_session_id,parent_work_item_id,goal,scope,completion_criteria,authority,source_identity_json,state,revision,result_json,created_at,updated_at FROM work_items_v6 ORDER BY id").all()), before);
-        assert.equal(JSON.stringify(db.prepare("SELECT work_item_id,revision,event_type,actor_session_id,principal_kind,payload_json,created_at FROM work_item_events_v6 ORDER BY sequence").all()), events);
-        assert.equal(JSON.stringify(db.prepare("SELECT event_id,resource_kind,resource_id,root_id,owner_kind,owner_id,event_kind,resource_revision,principal_kind,actor_session_id,grant_id,grant_revision,operation_id,idempotency_key_fingerprint,occurred_at,committed_at,supersedes_event_id,payload_schema_revision,effect FROM resource_event_headers_v6 WHERE resource_kind='work_item' ORDER BY event_id").all()), headers);
+        assert.deepEqual(db.prepare("SELECT execution_id,work_item_id,created_at FROM work_item_execution_associations_v6 ORDER BY execution_id").all(), associations);
+        assert.deepEqual(db.prepare("SELECT * FROM work_item_aggregations_v6 ORDER BY parent_work_item_id").all(), aggregations);
+        assert.deepEqual(db.prepare("SELECT operation,principal_session_id,idempotency_key,request_fingerprint,child_work_item_id,replacement_work_item_id,created_at,expires_at FROM work_item_aggregation_idempotency_v6 ORDER BY operation,principal_session_id,idempotency_key").all(), aggregationReplay);
+        assert.equal(JSON.stringify(db.prepare("SELECT sequence,id,kind,contract_revision,root_session_id,creator_session_id,target_session_id,parent_work_item_id,predecessor_work_item_id,goal,scope,completion_criteria,authority,source_identity_json,state,revision,progress_summary,blockers_json,next_action,result_json,created_at,updated_at FROM work_items_v6 ORDER BY id").all()), before);
+        assert.equal(JSON.stringify(db.prepare("SELECT * FROM work_item_events_v6 ORDER BY sequence").all()), events);
+        assert.equal(JSON.stringify(db.prepare("SELECT event_id,resource_kind,resource_id,root_id,owner_kind,owner_id,event_kind,resource_revision,principal_kind,actor_session_id,grant_id,grant_revision,operation_id,idempotency_key_fingerprint,occurred_at,committed_at,supersedes_event_id,payload_schema_revision,effect FROM resource_event_headers_v6 ORDER BY event_id").all()), headers);
         assert.equal(JSON.stringify(db.prepare("SELECT * FROM session_authority_grants_v6 ORDER BY grant_id").all()), grants);
         assert.equal(JSON.stringify(db.prepare("SELECT * FROM resource_budget_accounts_v6 ORDER BY account_id").all()), budgetAccounts);
         assert.equal(JSON.stringify(db.prepare("SELECT * FROM resource_budget_dimensions_v6 ORDER BY account_id,dimension").all()), budgetDimensions);
