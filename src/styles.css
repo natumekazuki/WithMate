@@ -30,10 +30,60 @@
   --radius-xl: 28px;
   --radius-lg: 22px;
   --radius-md: 18px;
+  --scrollbar-track: color-mix(in srgb, var(--surface-deep) 88%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, var(--muted) 68%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--character-sub) 52%, var(--muted) 48%);
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-width: auto;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*:hover {
+  scrollbar-color: var(--scrollbar-thumb-hover) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid var(--scrollbar-track);
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+@media (forced-colors: active) {
+  *,
+  *:hover {
+    scrollbar-color: ButtonText Canvas;
+  }
+
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background: Canvas;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    border-color: Canvas;
+    background: ButtonText;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: Highlight;
+  }
 }
 
 html,
@@ -140,6 +190,17 @@ button:disabled {
   background:
     radial-gradient(circle at top left, rgba(111, 140, 255, 0.12), transparent 28%),
     linear-gradient(180deg, #0f131a 0%, #151a22 100%);
+}
+
+.home-page,
+.session-page,
+.message-image-lightbox,
+.file-preview-window-page,
+.character-editor-page,
+.companion-review-page {
+  --scrollbar-track: color-mix(in srgb, var(--surface-deep) 88%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, var(--muted) 68%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--character-sub) 52%, var(--muted) 48%);
 }
 
 .session-header-dock-slot,
@@ -5692,8 +5753,6 @@ button:disabled {
   min-height: 0;
   overflow: auto;
   overscroll-behavior-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(203, 213, 225, 0.38) transparent;
 }
 
 .workspace-changes-list:focus-visible {
@@ -5709,30 +5768,6 @@ button:disabled {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(203, 213, 225, 0.3) transparent;
-}
-
-.workspace-changes-list::-webkit-scrollbar,
-.workspace-changes-groups::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
-}
-
-.workspace-changes-list::-webkit-scrollbar-track,
-.workspace-changes-groups::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.workspace-changes-list::-webkit-scrollbar-thumb,
-.workspace-changes-groups::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: rgba(203, 213, 225, 0.28);
-}
-
-.workspace-changes-list::-webkit-scrollbar-thumb:hover,
-.workspace-changes-groups::-webkit-scrollbar-thumb:hover {
-  background: rgba(203, 213, 225, 0.48);
 }
 
 .workspace-changes-root-group {
@@ -5968,8 +6003,6 @@ button:disabled {
   flex: 1 1 auto;
   overflow: auto;
   overscroll-behavior-y: contain;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(203, 213, 225, 0.3) transparent;
 }
 
 .file-history-commit-list:focus-visible {
@@ -6148,8 +6181,6 @@ button:disabled {
   height: 100%;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(203, 213, 225, 0.3) transparent;
 }
 
 .file-history-back {
@@ -6718,8 +6749,6 @@ button:disabled {
   min-height: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(203, 213, 225, 0.3) transparent;
 }
 
 .glossary-entry-row {
@@ -11742,6 +11771,9 @@ button:disabled {
   height: 100%;
   overflow: hidden;
   background: var(--editor);
+  --scrollbar-track: color-mix(in srgb, var(--editor) 88%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, #cbd5e1 40%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--character-sub, #6fb8c7) 52%, #cbd5e1 48%);
 }
 
 .diff-toolbar {
@@ -11816,11 +11848,6 @@ button:disabled {
   text-transform: uppercase;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-.diff-pane-head::-webkit-scrollbar {
-  display: none;
 }
 
 .diff-pane-head-inner,
@@ -12013,6 +12040,7 @@ button:disabled {
 .companion-review-page {
   min-height: 100vh;
   padding: 14px;
+  --surface-deep: rgba(13, 17, 24, 0.96);
   --ink: #edf2fb;
   --muted: #9aa8bd;
   background:
