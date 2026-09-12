@@ -109,7 +109,8 @@ function main(): void {
     console.log(`- ${file.relativePath}`);
   }
 
-  const result = spawnSync(process.execPath, ["--import", "tsx", "--test", ...shardFiles.map((file) => file.relativePath)], {
+  // Runtime integration tests also spawn PowerShell for Windows ACL verification.
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=2", ...shardFiles.map((file) => file.relativePath)], {
     cwd: rootDirectory,
     stdio: "inherit",
   });
