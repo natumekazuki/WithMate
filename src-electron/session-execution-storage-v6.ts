@@ -1027,19 +1027,43 @@ export class SessionExecutionStorageV6 {
 
   private assertQueuedWorkItemAssociation(executionId: string, sessionId: string): void {
     const row = this.db.prepare(`
-      SELECT association.work_item_id, association.work_item_revision, work_item.revision,
+      SELECT association.work_item_id, association.work_item_revision, association.planned_source_json,
+      association.actual_source_json, work_item.revision, work_item.source_identity_json,
       work_item.target_session_id, work_item.state, work_item.archived_at
       FROM work_item_execution_associations_v6 AS association
       INNER JOIN work_items_v6 AS work_item ON work_item.id = association.work_item_id
       WHERE association.execution_id = ?
     `).get(executionId) as {
       work_item_id: string; work_item_revision: number | null; revision: number;
+      planned_source_json: string | null; actual_source_json: string | null; source_identity_json: string;
       target_session_id: string; state: string; archived_at: string | null;
     } | undefined;
     if (!row) return;
+    const legacyAssociation = row.work_item_revision === null
+      && row.planned_source_json === null && row.actual_source_json === null;
+    // Migrate legacy snapshots only when the original enqueue history proves the current revision already existed.
+    // Backfilled headers cannot establish cross-resource order; past queued payloads remain unchanged.
+    const unchangedLegacyRevision = legacyAssociation && this.db.prepare(`
+      SELECT 1
+      FROM session_execution_events_v6 AS queued
+      INNER JOIN resource_event_headers_v6 AS queued_header ON queued_header.event_id = queued.event_id
+      INNER JOIN resource_event_headers_v6 AS work_header
+        ON work_header.event_id = 'work-item:' || ? || ':revision:' || CAST(? AS INTEGER)
+      WHERE queued.execution_id = ? AND queued.session_id = ?
+        AND queued.revision = 1 AND queued.event_kind = 'queued'
+        AND queued_header.operation_id IS NOT NULL
+        AND json_type(queued.payload_json, '$.workItemRevision') IS NULL
+        AND json_type(queued.payload_json, '$.plannedSourceIdentity') IS NULL
+        AND json_type(queued.payload_json, '$.actualStartSourceIdentity') IS NULL
+        AND json_extract(queued.payload_json, '$.projection.workItemId') = ?
+        AND json_type(queued.payload_json, '$.projection.workItemRevision') IS NULL
+        AND json_type(queued.payload_json, '$.projection.plannedSourceIdentity') IS NULL
+        AND json_type(queued.payload_json, '$.projection.actualStartSourceIdentity') IS NULL
+        AND work_header.sequence < queued_header.sequence
+    `).get(row.work_item_id, row.revision, executionId, sessionId, row.work_item_id) !== undefined;
     if (row.target_session_id !== sessionId || row.archived_at !== null
       || !["pending", "in_progress", "waiting"].includes(row.state)
-      || row.work_item_revision !== row.revision) {
+      || (row.work_item_revision !== row.revision && !unchangedLegacyRevision)) {
       throw new SessionExecutionWorkItemAssociationError(row.work_item_id, sessionId);
     }
     const workspacePath = this.resolveExecutionWorkspacePath(sessionId, this.readBinding(executionId));
@@ -1052,9 +1076,9 @@ export class SessionExecutionStorageV6 {
     );
     this.db.prepare(`
       UPDATE work_item_execution_associations_v6
-      SET actual_source_json = ?
+      SET work_item_revision = ?, planned_source_json = ?, actual_source_json = ?
       WHERE execution_id = ? AND actual_source_json IS NULL
-    `).run(actual, executionId);
+    `).run(row.revision, unchangedLegacyRevision ? row.source_identity_json : row.planned_source_json, actual, executionId);
   }
 
   private resolveExecutionWorkspacePath(

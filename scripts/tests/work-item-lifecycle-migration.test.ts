@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import { backfillBaselineSessionAuthority } from "../../src-electron/session-authority-storage.js";
-import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
+import { SessionExecutionStorageV6, SessionExecutionWorkItemAssociationError } from "../../src-electron/session-execution-storage-v6.js";
 import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
 import { SESSION_AUTHORITY_MAPPING_REVISION, SESSION_AUTHORITY_OPERATION_DEFINITIONS, type MutationAuthorityProof } from "../../src/session-authority.js";
 import type { DelegatedWorkItemBinding } from "../../src/work-item.js";
@@ -42,13 +42,13 @@ function rebuild(db: DatabaseSync, table: string, sql: string, columns: string[]
   db.exec(`INSERT INTO ${table} (${columns.join(",")}) SELECT ${columns.join(",")} FROM ${table}_legacy; DROP TABLE ${table}_legacy;`);
 }
 
-async function fixture(): Promise<{ dbPath: string; directory: string }> {
+async function fixture(useTemporaryWorkspace = false): Promise<{ dbPath: string; directory: string }> {
   const directory = await mkdtemp(join(tmpdir(), "withmate-lifecycle-migration-real-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
   const db = new DatabaseSync(dbPath);
   try {
     const session = db.prepare("INSERT INTO sessions_v6 (id,title,state,provider_id,catalog_revision,model_id,approval_mode,workspace_path,created_at,updated_at,last_active_at) VALUES (?,?,'active','codex',1,'gpt-5','on-request',?,?,?,?)");
-    for (const id of ["root", "task", "task-2", "executor"]) session.run(id, id, process.cwd(), NOW, NOW, NOW);
+    for (const id of ["root", "task", "task-2", "executor"]) session.run(id, id, useTemporaryWorkspace ? directory : process.cwd(), NOW, NOW, NOW);
     const role = db.prepare("INSERT INTO session_role_bindings_v6 (session_id,session_role,role_contract_revision,root_session_id,parent_session_id,delegation_depth) VALUES (?, ?, 1, 'root', ?, ?)");
     role.run("root", "overall-coordinator", null, 0); role.run("task", "task-coordinator", "root", 1); role.run("task-2", "task-coordinator", "root", 1); role.run("executor", "executor", "task", 2);
     backfillBaselineSessionAuthority(db, NOW);
@@ -149,4 +149,98 @@ describe("work-item lifecycle populated migration", () => {
       } finally { db.close(); }
     } finally { executions.close(); storage.close(); await rm(f.directory, { recursive: true, force: true }); }
   });
+});
+
+
+function downgradeQueuedAssociation(db: DatabaseSync): void {
+  // Reproduce the Slice 3 schema and the payload emitted before source snapshots existed.
+  db.exec("DROP TRIGGER IF EXISTS session_execution_events_no_update_v6; UPDATE session_execution_events_v6 SET payload_json=json_remove(payload_json, '$.workItemRevision', '$.plannedSourceIdentity', '$.actualStartSourceIdentity', '$.projection.workItemRevision', '$.projection.plannedSourceIdentity', '$.projection.actualStartSourceIdentity')");
+  const ddl = (db.prepare("SELECT sql FROM sqlite_schema WHERE name='work_item_execution_associations_v6'").get() as { sql: string }).sql
+    .replace("    work_item_revision INTEGER CHECK (work_item_revision IS NULL OR work_item_revision >= 1),\n", "")
+    .replace("    planned_source_json TEXT CHECK (planned_source_json IS NULL OR json_valid(planned_source_json)),\n", "")
+    .replace("    actual_source_json TEXT CHECK (actual_source_json IS NULL OR json_valid(actual_source_json)),\n", "");
+  rebuild(db, "work_item_execution_associations_v6", ddl, ["execution_id", "work_item_id", "created_at"]);
+  assert.deepEqual(db.prepare("PRAGMA table_info(work_item_execution_associations_v6)").all().map((row) => row.name), ["execution_id", "work_item_id", "created_at"]);
+}
+
+// @test-value v2
+// kind = "compatibility"
+// claim = "旧schemaの未改訂queued Work Itemは元のenqueue履歴を保持し、admission時にrevision/planned/actualを原子的に取得してrunningへ移行できる"
+// fault = "NULL revisionの旧associationを一律拒否する、または移行で過去のexecution履歴を書き換える"
+// observable = "旧DDLからのmigration、queued/running状態、association全列、旧event/header、admitted payload、再open後のprojection"
+// observation_boundary = "component-behavior"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
+// scope = "legacy queued execution source migration and admission"
+// lifecycle = "permanent"
+// @end-test-value
+it("未改訂の旧queued associationをadmissionで移行し履歴を保持する", async () => {
+  const f = await fixture(true);
+  const work = new WorkItemStorageV6(f.dbPath);
+  let executions = new SessionExecutionStorageV6(f.dbPath);
+  const db = new DatabaseSync(f.dbPath);
+  try {
+    const item = work.create({ id: "legacy-queued-work", binding: binding(null, "root", "executor", "legacy"), principalSessionId: "root", idempotencyKey: "create-queued", requestFingerprint: "create-queued", expectedContainerRevision: containerRevision(f.dbPath, "executor"), createdAt: NOW, expiresAt: EXPIRES, proof: proof("work.create") });
+    executions.enqueue({ id: "legacy-queued", sessionId: "executor", expectedContainerRevision: containerRevision(f.dbPath, "executor"), request: { userMessage: "queued" }, idempotencyKey: "queued", requestFingerprint: "queued", createdAt: NOW, expiresAt: EXPIRES, proof: proof("turn.enqueue", "executor"), workItemId: item.id });
+    executions.close();
+    downgradeQueuedAssociation(db);
+    const oldEvents = db.prepare("SELECT * FROM session_execution_events_v6 ORDER BY revision").all();
+    const oldHeaders = db.prepare("SELECT * FROM resource_event_headers_v6 ORDER BY sequence").all();
+    ensureV6Schema(db);
+    executions = new SessionExecutionStorageV6(f.dbPath);
+    assert.equal(executions.get("legacy-queued")?.state, "queued");
+    assert.equal(db.prepare("SELECT work_item_revision FROM work_item_execution_associations_v6").get()?.work_item_revision, null);
+    const admitted = executions.admitNextQueued("executor", NOW)!;
+    assert.equal(admitted.state, "running");
+    assert.equal(admitted.workItemRevision, item.revision);
+    assert.deepEqual(admitted.plannedSourceIdentity, item.sourceIdentity);
+    assert.deepEqual(admitted.actualStartSourceIdentity, { kind: "git_unavailable", workspace: f.directory.replace(/\\/g, "/"), repository: null, branch: null, base: null, head: null });
+    const association = db.prepare("SELECT * FROM work_item_execution_associations_v6").get()!;
+    assert.equal(association.work_item_revision, item.revision);
+    assert.deepEqual(JSON.parse(association.planned_source_json as string), item.sourceIdentity);
+    assert.deepEqual(JSON.parse(association.actual_source_json as string), admitted.actualStartSourceIdentity);
+    assert.deepEqual(db.prepare("SELECT * FROM session_execution_events_v6 WHERE revision=1").all(), oldEvents);
+    assert.deepEqual(db.prepare("SELECT * FROM resource_event_headers_v6 ORDER BY sequence").all().slice(0, oldHeaders.length), oldHeaders);
+    const event = db.prepare("SELECT payload_json FROM session_execution_events_v6 WHERE event_kind='admitted'").get()!;
+    const projection = JSON.parse(event.payload_json as string).projection;
+    assert.equal(projection.workItemRevision, item.revision);
+    assert.deepEqual(projection.plannedSourceIdentity, item.sourceIdentity);
+    assert.deepEqual(projection.actualStartSourceIdentity, admitted.actualStartSourceIdentity);
+    assert.equal(executions.admitNextQueued("executor", NOW), null);
+    executions.close();
+    executions = new SessionExecutionStorageV6(f.dbPath);
+    assert.deepEqual(executions.get("legacy-queued"), admitted);
+  } finally { db.close(); executions.close(); work.close(); await rm(f.directory, { recursive: true, force: true }); }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "旧queuedでもenqueue後の改訂がmigration前後のいずれで起きても拒否し、新形式のassociation欠落を旧形式として救済しない"
+// fault = "migrationまたはadmissionで現在revisionを無条件採用し、enqueue後に変わった契約や改変associationを実行する"
+// observable = "admissionの型付き拒否、queued状態、association/event/budget全行の不変"
+// observation_boundary = "component-behavior"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
+// scope = "legacy queued revision and source integrity"
+// lifecycle = "permanent"
+// @end-test-value
+it("旧queuedの移行前後の改訂と新associationのNULL改変を拒否する", async () => {
+  for (const scenario of ["before-migration", "after-migration", "modern-null"] as const) {
+    const f = await fixture();
+    const work = new WorkItemStorageV6(f.dbPath);
+    const executions = new SessionExecutionStorageV6(f.dbPath);
+    const db = new DatabaseSync(f.dbPath);
+    try {
+      const item = work.create({ id: "queued-work", binding: binding(null, "root", "executor", "queued"), principalSessionId: "root", idempotencyKey: "create", requestFingerprint: "create", expectedContainerRevision: containerRevision(f.dbPath, "executor"), createdAt: NOW, expiresAt: EXPIRES, proof: proof("work.create") });
+      executions.enqueue({ id: "queued", sessionId: "executor", expectedContainerRevision: containerRevision(f.dbPath, "executor"), request: { userMessage: "queued" }, idempotencyKey: "queued", requestFingerprint: "queued", createdAt: NOW, expiresAt: EXPIRES, proof: proof("turn.enqueue", "executor"), workItemId: item.id });
+      const revise = () => work.reviseRoot({ workItemId: item.id, principalSessionId: "root", idempotencyKey: "revise", requestFingerprint: "revise", expectedRevision: item.revision, goal: "changed", scope: item.scope, completionCriteria: item.completionCriteria, authority: item.authority, updatedAt: NOW, expiresAt: EXPIRES, proof: proof("work.revise") });
+      if (scenario === "before-migration") revise();
+      if (scenario !== "modern-null") { downgradeQueuedAssociation(db); ensureV6Schema(db); }
+      else db.exec("UPDATE work_item_execution_associations_v6 SET work_item_revision=NULL,planned_source_json=NULL,actual_source_json=NULL");
+      if (scenario === "after-migration") revise();
+      const snapshot = () => ["work_item_execution_associations_v6", "session_execution_events_v6", "resource_budget_dimensions_v6", "resource_budget_events_v6"].map((table) => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+      const before = snapshot();
+      assert.throws(() => executions.admitNextQueued("executor", NOW), SessionExecutionWorkItemAssociationError, scenario);
+      assert.equal(executions.get("queued")?.state, "queued");
+      assert.deepEqual(snapshot(), before, scenario);
+    } finally { db.close(); executions.close(); work.close(); await rm(f.directory, { recursive: true, force: true }); }
+  }
 });

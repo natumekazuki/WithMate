@@ -99,6 +99,8 @@ Agentが作成直後に不要と判断した未着手Work Itemは、自律的に
 
 統合済みSlice 3のschemaをbaseに、追加列とlifecycle eventのCHECKを更新する。既存current row、revision、result、aggregation decision、replacement relation、execution association、grant、usage、履歴を保持し、再baselineやgrant再生成は行わない。legacy executionのactual sourceは未取得のまま保持し、現在のWorkspace状態から補わない。旧terminal rowは変更せず、明示操作を受けた時だけsuccessorを作る。
 
+旧queued associationのrevision/planned/actualがすべて未取得の場合は、admission時に移行する。元のqueued eventがsource snapshot導入前の形式であることと、既存の共通履歴sequenceから現在のWork Item revisionがenqueue以前に存在したことを確認する。未改訂の場合のみcurrent planned tupleを引き継ぎ、actual sourceをその時点のcanonical Workspaceから取得し、associationとrunning遷移・admitted eventを同じtransactionで保存する。旧queued event/headerは書き換えない。enqueue後の改訂、associationの付替え、新形式の欠落は拒否する。元のenqueueがbackfillされた履歴しかない場合は、共通sequenceで当時の順序を証明できないためconflictとし、時刻や現在値から推測して実行しない。
+
 ## Direct validation
 
 - pending、in-progress、waiting、terminalごとのrevise可能fieldを直接検証する。
