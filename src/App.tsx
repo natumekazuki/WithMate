@@ -2554,6 +2554,10 @@ export default function AgentSessionWindowApp() {
     [displayedSession],
   );
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
+  const actionDockExpandRef = useRef<(() => void) | null>(null);
+  const expandActionDockOnDrag = useCallback(() => {
+    actionDockExpandRef.current?.();
+  }, []);
   const {
     sessionDockLayoutRef,
     headerDockRef,
@@ -2567,6 +2571,7 @@ export default function AgentSessionWindowApp() {
     ownerKey: selectedSessionId,
     isHeaderExpanded: isSessionHeaderExpanded,
     isActionDockExpanded,
+    onExpandActionDock: expandActionDockOnDrag,
   });
   useEffect(() => {
     if (!retryBanner) {
@@ -3341,6 +3346,7 @@ export default function AgentSessionWindowApp() {
     setPinnedExpanded: setIsActionDockPinnedExpanded,
     focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
   });
+  actionDockExpandRef.current = handleExpandActionDock;
 
   const handleCollapseActionDock = createActionDockCollapseHandler({
     canCollapse: canCollapseActionDock,

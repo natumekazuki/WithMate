@@ -483,7 +483,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isActive: input.isActionDockResizing,
       isPanelExpanded: input.isActionDockExpanded,
       canCollapse: input.canCollapseActionDock,
-      onPointerDown: input.isActionDockExpanded ? input.onStartActionDockResize : undefined,
+      onPointerDown: input.onStartActionDockResize,
       onTogglePanel: input.onToggleActionDock,
     },
     composerProps: chatBodyProps.composerProps,
@@ -507,7 +507,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     leftSplitterProps: {
       isActive: input.isFilesPaneResizing,
       isPanelExpanded: input.isFilesPaneVisible,
-      onPointerDown: input.isFilesPaneVisible ? input.onStartFilesPaneResize : undefined,
+      onPointerDown: input.onStartFilesPaneResize,
       onTogglePanel: input.onToggleFilesPaneVisibility,
       ariaLabel: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
       title: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",

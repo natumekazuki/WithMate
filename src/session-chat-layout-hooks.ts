@@ -238,6 +238,7 @@ export function useSessionVerticalDockResize(input: {
   ownerKey: string | null;
   isHeaderExpanded: boolean;
   isActionDockExpanded: boolean;
+  onExpandActionDock?: () => void;
 }) {
   const [actionDockHeight, setActionDockHeight] = useState(SESSION_ACTION_DOCK_DEFAULT_HEIGHT);
   const [actionDockCompactHeight, setActionDockCompactHeight] = useState(
@@ -339,6 +340,9 @@ export function useSessionVerticalDockResize(input: {
           return;
         }
         gesture.dragged = true;
+        if (!input.isActionDockExpanded) {
+          input.onExpandActionDock?.();
+        }
       }
 
       const bounds = measureSessionVerticalDockLayoutBounds(layout);
@@ -381,10 +385,10 @@ export function useSessionVerticalDockResize(input: {
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [input.isHeaderExpanded, isActionDockResizing]);
+  }, [input.isActionDockExpanded, input.isHeaderExpanded, input.onExpandActionDock, isActionDockResizing]);
 
   const handleStartActionDockResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (!input.isActionDockExpanded || event.button !== 0 || !sessionDockLayoutRef.current) {
+    if (event.button !== 0 || !sessionDockLayoutRef.current) {
       return;
     }
     event.preventDefault();
@@ -394,7 +398,7 @@ export function useSessionVerticalDockResize(input: {
       dragged: false,
     };
     setIsActionDockResizing(true);
-  }, [input.isActionDockExpanded]);
+  }, []);
   const handleHeaderSplitterClick = useCallback((toggle: () => void) => {
     toggle();
   }, []);
@@ -795,7 +799,7 @@ export function useSessionSidePanes({
   }, [enabled, ownerKey]);
 
   useEffect(() => {
-    if (!enabled || resizingSidePane === null || activeSidePane !== resizingSidePane) {
+    if (!enabled || resizingSidePane === null) {
       return;
     }
 
@@ -820,6 +824,12 @@ export function useSessionSidePanes({
           return;
         }
         gesture.dragged = true;
+        if (activeSidePaneRef.current !== resizingSidePane) {
+          activeSidePaneRef.current = resizingSidePane;
+          setActiveSidePane(resizingSidePane);
+          hasInteractedWithSidePaneRef.current = true;
+          onSidePaneChange?.(resizingSidePane);
+        }
       }
 
       const requestedWidth = resizingSidePane === "files"
@@ -868,7 +878,7 @@ export function useSessionSidePanes({
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [activeSidePane, enabled, resizingSidePane]);
+  }, [enabled, onSidePaneChange, resizingSidePane]);
 
   const startSidePaneResize = useCallback((
     sidePane: Exclude<SessionSidePane, "none">,
@@ -877,7 +887,6 @@ export function useSessionSidePanes({
     const workbenchElement = sessionWorkbenchRef.current;
     if (
       !enabled
-      || activeSidePane !== sidePane
       || event.button !== 0
       || !workbenchElement
       || isNarrowSessionLayoutViewport()
@@ -892,7 +901,7 @@ export function useSessionSidePanes({
       dragged: false,
     };
     setResizingSidePane(sidePane);
-  }, [activeSidePane, enabled]);
+  }, [enabled]);
 
   const handleStartContextRailResize = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => startSidePaneResize("context", event),

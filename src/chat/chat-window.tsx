@@ -139,7 +139,7 @@ export function ConcurrentChatSplitter({
       isExpanded,
     };
     draggedRef.current = false;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     const handleMove = (moveEvent: PointerEvent) => {
       const start = startRef.current;
       if (!start || start.width <= 0) return;
@@ -159,34 +159,22 @@ export function ConcurrentChatSplitter({
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp, { once: true });
   };
+  const handleTogglePanel: MouseEventHandler<HTMLButtonElement> = () => {
+    if (!draggedRef.current) onCollapse();
+    draggedRef.current = false;
+  };
+
   return (
-    <button
-      type="button"
-      className={`session-dock-splitter edge-right concurrent-chat-splitter${isExpanded ? "" : " is-collapsed"}`}
-      aria-label={isExpanded ? "Auxiliaryを折りたたむ" : "Auxiliaryの幅を調整"}
-      aria-controls="session-auxiliary-chat-pane"
-      aria-expanded={isExpanded}
+    <ChatDockSplitter
+      edge="right"
+      className="concurrent-chat-splitter"
+      isPanelExpanded={isExpanded}
       onPointerDown={handlePointerDown}
-      onClick={() => {
-        if (!draggedRef.current) onCollapse();
-        draggedRef.current = false;
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onCollapse();
-        }
-      }}
-    >
-      <span
-        className={`session-dock-splitter-chevron direction-${isExpanded ? "right" : "left"}`}
-        aria-hidden="true"
-      >
-        <svg viewBox="0 0 12 12" focusable="false">
-          <path d="M4 2.5 8 6 4 9.5" />
-        </svg>
-      </span>
-    </button>
+      onTogglePanel={handleTogglePanel}
+      ariaLabel={isExpanded ? "Auxiliaryを折りたたむ" : "Auxiliaryの幅を調整"}
+      ariaControls="session-auxiliary-chat-pane"
+      title={isExpanded ? "クリックでAuxiliaryを折りたたみ、ドラッグでサイズを調整" : "Auxiliaryの幅をドラッグで調整"}
+    />
   );
 }
 
@@ -222,6 +210,7 @@ export type ChatRightPaneShellProps = {
 
 export type ChatDockSplitterProps = {
   edge: "top" | "right" | "bottom" | "left";
+  className?: string;
   isActive?: boolean;
   isPanelExpanded?: boolean;
   canCollapse?: boolean;
@@ -229,6 +218,7 @@ export type ChatDockSplitterProps = {
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
   onTogglePanel?: MouseEventHandler<HTMLButtonElement>;
   ariaLabel?: string;
+  ariaControls?: string;
   title?: string;
 };
 
@@ -764,6 +754,7 @@ export function ChatWindowStatusScreen({ message, className = "" }: ChatWindowSt
 
 export function ChatDockSplitter({
   edge,
+  className = "",
   isActive = false,
   isPanelExpanded = true,
   canCollapse = true,
@@ -771,11 +762,19 @@ export function ChatDockSplitter({
   onPointerDown,
   onTogglePanel,
   ariaLabel,
+  ariaControls,
   title,
 }: ChatDockSplitterProps) {
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const draggedRef = useRef(false);
   const effectiveTogglePanel = isPanelExpanded && !canCollapse ? undefined : onTogglePanel;
   if (!onPointerDown && !onTogglePanel && !onActivate) {
-    return <div className={`session-dock-splitter edge-${edge} is-static`} aria-hidden="true" />;
+    return (
+      <div
+        className={`session-dock-splitter edge-${edge} is-static${className ? ` ${className}` : ""}`}
+        aria-hidden="true"
+      />
+    );
   }
 
   const panelLabel = edge === "top"
@@ -823,26 +822,53 @@ export function ChatDockSplitter({
     if (event.button !== 0) {
       return;
     }
+    pointerStartRef.current = { x: event.clientX, y: event.clientY };
+    draggedRef.current = false;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     onActivate?.();
-    if (isPanelExpanded) {
-      onPointerDown?.(event);
+    onPointerDown?.(event);
+  };
+  const handlePointerMove: PointerEventHandler<HTMLButtonElement> = (event) => {
+    const start = pointerStartRef.current;
+    if (!start) {
+      return;
     }
+    const distance = edge === "left" || edge === "right"
+      ? Math.abs(event.clientX - start.x)
+      : Math.abs(event.clientY - start.y);
+    if (distance > 4) {
+      draggedRef.current = true;
+    }
+  };
+  const handlePointerEnd = () => {
+    pointerStartRef.current = null;
+  };
+  const handlePointerCancel = () => {
+    pointerStartRef.current = null;
+    draggedRef.current = false;
   };
   const handleClick: MouseEventHandler<HTMLButtonElement> = (event) => {
     onActivate?.();
+    if (draggedRef.current) {
+      draggedRef.current = false;
+      return;
+    }
     effectiveTogglePanel?.(event);
   };
 
   return (
     <button
-      className={`session-dock-splitter edge-${edge}${!onPointerDown ? " is-toggle-only" : ""}${isActive ? " is-active" : ""}${
+      className={`session-dock-splitter edge-${edge}${className ? ` ${className}` : ""}${!onPointerDown ? " is-toggle-only" : ""}${isActive ? " is-active" : ""}${
         isPanelExpanded ? "" : " is-collapsed"
       }`}
       type="button"
       onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerCancel}
       onClick={handleClick}
       aria-label={resolvedAriaLabel}
-      aria-controls={effectiveTogglePanel ? controlledId : undefined}
+      aria-controls={effectiveTogglePanel ? (ariaControls ?? controlledId) : undefined}
       aria-expanded={effectiveTogglePanel ? isPanelExpanded : undefined}
       title={resolvedTitle}
     >

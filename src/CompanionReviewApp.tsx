@@ -1327,6 +1327,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     canCollapseActionDock,
   } = actionDockRuntimeState;
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
+  const actionDockExpandRef = useRef<(() => void) | null>(null);
+  const expandActionDockOnDrag = useCallback(() => {
+    actionDockExpandRef.current?.();
+  }, []);
   const {
     sessionDockLayoutRef,
     headerDockRef,
@@ -1340,6 +1344,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     ownerKey: snapshot?.session.id ?? null,
     isHeaderExpanded: isSessionHeaderExpanded,
     isActionDockExpanded,
+    onExpandActionDock: expandActionDockOnDrag,
   });
   useEffect(() => {
     if (!composerText.trim() || !retryBanner) {
@@ -2190,6 +2195,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setPinnedExpanded: setIsActionDockPinnedExpanded,
     focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
   });
+  actionDockExpandRef.current = handleExpandActionDock;
 
   const handleCollapseActionDock = createActionDockCollapseHandler({
     canCollapse: canCollapseActionDock,

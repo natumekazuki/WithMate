@@ -420,7 +420,7 @@ export function buildLiveSessionSplitterProps(
   return {
     isActive: input.isContextRailResizing,
     isPanelExpanded: input.isContextRailVisible,
-    onPointerDown: input.isContextRailVisible ? input.onStartContextRailResize : undefined,
+    onPointerDown: input.onStartContextRailResize,
     onTogglePanel: input.onToggleContextRailVisibility,
   };
 }

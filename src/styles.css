@@ -4432,12 +4432,6 @@ button:disabled {
   pointer-events: none;
 }
 
-.concurrent-chat-splitter {
-  position: relative;
-  z-index: 3;
-  touch-action: none;
-}
-
 .concurrent-chat-target-dock {
   display: flex;
   align-items: center;
@@ -6684,10 +6678,12 @@ button:disabled {
 
 .session-dock-splitter {
   position: relative;
+  z-index: 3;
   min-height: 0;
   padding: 0;
   border: 0;
   background: transparent;
+  touch-action: none;
 }
 
 .session-dock-splitter.edge-left,

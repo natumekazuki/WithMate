@@ -427,7 +427,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isActive: input.isActionDockResizing,
       isPanelExpanded: input.isActionDockExpanded,
       canCollapse: input.canCollapseActionDock,
-      onPointerDown: input.isActionDockExpanded ? input.onStartActionDockResize : undefined,
+      onPointerDown: input.onStartActionDockResize,
       onTogglePanel: input.onToggleActionDock,
     },
     composerProps: chatBodyProps.composerProps,
