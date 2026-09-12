@@ -108,6 +108,48 @@ test("reopen後もpending operationを同じidentityで再取得できる", asyn
 
 // @test-value v2
 // kind = "invariant"
+// claim = "DB確定済みのlifecycle operationは、保存側のdatabase effectとイベント側のdb_committed stepの表記差を越えて再起動検証を通過する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Mutation envelope" }
+// fault = "正常完了したoperationを再open時にeffect/event名の不一致として復旧不能扱いにする"
+// observable = "再open後のoperation stateとdatabase effect"
+// observation_boundary = "public-boundary"
+// scope = "session-lifecycle-storage"
+// lifecycle = "permanent"
+// @end-test-value
+test("DB確定済みoperationをreopenしてもrecovery projection検証を通過する", async () => {
+  await withStorage(async (storage, dbPath) => {
+    const operation = storage.prepare({
+      operation: "session.configure",
+      principalKind: "system",
+      principalId: "test",
+      idempotencyKey: "configure-reopen-1",
+      requestFingerprint: "fingerprint-reopen-1",
+      manifest: { sessionId: "session-1" },
+    });
+    const committed = storage.commitLifecycleMutationAtomic({
+      operationId: operation.operationId,
+      expectedOperationRevision: operation.revision,
+      proof: {} as never,
+      now: "2026-09-12T00:00:00.000Z",
+    }, () => ({ sessionId: "session-1" }));
+    assert.equal(committed.effects.database, "committed");
+    storage.complete(committed.operationId, committed.revision, committed.result, "2026-09-12T00:00:01.000Z");
+    storage.close();
+
+    const reopened = new SessionLifecycleStorage(dbPath);
+    try {
+      const recovered = reopened.replay(operation.operationId, "fingerprint-reopen-1");
+      assert.equal(recovered.state, "committed");
+      assert.equal(recovered.effects.database, "committed");
+      assert.equal(reopened.listEvents(operation.operationId).find((event) => event.step === "db_committed")?.effect, "committed");
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "破損したcurrent recovery projectionはstartup検証でfail closedになる"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Event contract" }
 // fault = "operation rowのeffectsをevent historyと異なる値へ書き換える"
@@ -139,6 +181,51 @@ test("recovery projectionとevent historyの不一致を検出する", async () 
       assert.throws(() => new SessionLifecycleStorage(sharedDb), /effect does not match event history/);
     } finally {
       sharedDb.close();
+    }
+  });
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "DB確定済みoperationのeffect projectionが改変された場合は、表記差を許容してもstartup検証でfail closedになる"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Event contract" }
+// fault = "db_committed eventに対するdatabase effectを別のeffectへ改変する"
+// observable = "再open時の検証エラー"
+// observation_boundary = "public-boundary"
+// scope = "session-lifecycle-storage"
+// lifecycle = "permanent"
+// @end-test-value
+test("DB確定済みoperationのeffect改変をreopen時に検出する", async () => {
+  await withStorage(async (storage, dbPath) => {
+    const operation = storage.prepare({
+      operation: "session.configure",
+      principalKind: "system",
+      principalId: "test",
+      idempotencyKey: "configure-reopen-tamper-1",
+      requestFingerprint: "fingerprint-reopen-tamper-1",
+      manifest: { sessionId: "session-1" },
+    });
+    const committed = storage.commitLifecycleMutationAtomic({
+      operationId: operation.operationId,
+      expectedOperationRevision: operation.revision,
+      proof: {} as never,
+      now: "2026-09-12T00:00:00.000Z",
+    }, () => ({ sessionId: "session-1" }));
+    storage.complete(committed.operationId, committed.revision, committed.result, "2026-09-12T00:00:01.000Z");
+    storage.close();
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.prepare("UPDATE session_lifecycle_operations_v6 SET effects_json = ? WHERE operation_id = ?")
+        .run(JSON.stringify({ database: "unknown" }), operation.operationId);
+    } finally {
+      db.close();
+    }
+    const reopenedDb = new DatabaseSync(dbPath);
+    try {
+      assert.throws(() => new SessionLifecycleStorage(reopenedDb), /effect does not match event history/);
+    } finally {
+      reopenedDb.close();
     }
   });
 });

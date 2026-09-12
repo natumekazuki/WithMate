@@ -2,6 +2,7 @@ import { SessionAuthorityError } from "../src/session-authority.js";
 import { ResourceBudgetError } from "./resource-budget-storage.js";
 import { SessionResourceRevisionConflictError } from "./resource-history-schema.js";
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { MutationAuthorityProof } from "../src/session-authority.js";
 import { resolveCodexReviewerUpdate } from "../src/codex-reviewer.js";
 import { buildNewSession, type CreateSessionInput, type Session } from "../src/session-state.js";
@@ -117,6 +118,16 @@ export class SessionLifecycleService {
 
   async updateSession(request: Session): Promise<Session> {
     const current = this.requireSession(request.id);
+    if (isTitleOnlySessionUpdate(current, request)) {
+      await this.mutate("session.configure", {
+        sessionId: current.id,
+        expectedRevision: this.deps.storage.getSessionResourceRevision(current.id)!,
+        kind: "title",
+        title: request.taskTitle,
+        idempotencyKey: randomUUID(),
+      }, this.userProof(current, "session.configure"));
+      return this.requireSession(current.id);
+    }
     const provider = this.providerTuple(request, current.provider === request.provider && current.threadId === request.threadId ? "continue" : "reset");
     const resolvedProvider = this.deps.resolver.provider(provider, current);
     const workspace = await this.deps.resolver.workspace(current.id,
@@ -417,4 +428,15 @@ function isLifecycleRejection(error: unknown): error is SessionCrudError | Sessi
 
 function isCleanupRequired(error: unknown): error is { cleanupRequired: true } {
   return !!error && typeof error === "object" && (error as { cleanupRequired?: unknown }).cleanupRequired === true;
+}
+
+function isTitleOnlySessionUpdate(current: Session, request: Session): boolean {
+  const comparableFields = [
+    "provider", "catalogRevision", "workspacePath", "roleBinding", "characterId",
+    "characterRuntimeSnapshot", "approvalMode", "codexSandboxMode", "codexSpeed",
+    "codexReviewer", "model", "reasoningEffort", "customAgentName",
+    "allowedAdditionalDirectories", "threadId",
+  ] as const;
+  return current.taskTitle !== request.taskTitle
+    && comparableFields.every((field) => isDeepStrictEqual(current[field], request[field]));
 }

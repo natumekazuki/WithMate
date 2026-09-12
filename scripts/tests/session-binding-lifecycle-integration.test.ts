@@ -12,6 +12,7 @@ import {
 } from "../../src/session-authority.js";
 import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { buildNewSession } from "../../src/session-state.js";
+import { buildRootSessionRoleBinding } from "../../src/session-role-binding.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
@@ -318,6 +319,136 @@ test("Session binding snapshot remains immutable across configure and terminal t
     assert.equal(storedAfterTerminal?.messages.at(-1)?.text, "completed with old binding");
   } finally {
     executionStorage.close();
+    sessionStorage.close();
+    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "同時刻に競合したSession configureでもtitle変更はProviderのterminal threadを保存し、runtime resetは新しいbindingの空threadを保護する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Session identity と変更可能性" }
+// fault = "terminal projectionがtitle変更までbinding競合として扱うか、runtime resetを旧Provider結果で上書きする"
+// observable = "実SQLiteのSession projectionとterminal turnのthread_id"
+// observation_boundary = "consumer"
+// impact = "会話継続または明示的なthread resetが失われる"
+// scope = "SessionStorageV6 lifecycle configure and terminal merge"
+// lifecycle = "permanent"
+// distinction = "同じ開始時刻・空の開始threadでtitle configureとruntime configureを別々に適用し、結果のthread採用規則を比較する"
+// @end-test-value
+test("title configureはterminal threadを保存しruntime resetは空threadを保護する", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-terminal-binding-race-"));
+  const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
+  const characterDb = new DatabaseSync(dbPath);
+  try {
+    characterDb.prepare(`
+      INSERT INTO characters (id, name, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+    `).run("character-a", "Character A", CREATED_AT, CREATED_AT);
+  } finally {
+    characterDb.close();
+  }
+  let sessionStorage = new SessionStorageV6(dbPath);
+  try {
+    const createCase = (id: string) => {
+      const initial = { ...buildSession(), id, roleBinding: buildRootSessionRoleBinding(id, "standalone"), updatedAt: CREATED_AT };
+      sessionStorage.insertSession(initial);
+      sessionStorage.appendRunningTurnStart({
+        sessionId: id,
+        expectedMessageCount: 0,
+        userMessage: { role: "user", text: "race" },
+        updatedAt: CREATED_AT,
+      });
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare(`
+          INSERT INTO session_turns_v6 (
+            session_id, phase, provider_id, model_id, reasoning_effort,
+            approval_mode, sandbox_mode, user_message_seq, started_at, updated_at
+          ) VALUES (?, 'running', 'codex', 'gpt-5', 'high', 'untrusted', 'workspace-write', 0, ?, ?)
+        `).run(id, CREATED_AT, CREATED_AT);
+      } finally {
+        db.close();
+      }
+      return initial;
+    };
+    const applyConfigure = (initial: ReturnType<typeof buildSession>, kind: "title" | "runtime", title: string) => {
+      const currentRevision = sessionStorage.getSessionResourceRevision(initial.id);
+      assert.ok(currentRevision !== null);
+      const lifecycle = sessionStorage.prepareLifecycleMutation({
+        operation: "session.configure",
+        input: {
+          sessionId: initial.id,
+          kind,
+          idempotencyKey: `${initial.id}-configure`,
+          expectedRevision: currentRevision,
+        },
+        proof: trustedProof("session.configure", "session", initial.id),
+        nextSession: { ...initial, taskTitle: title, updatedAt: CREATED_AT, threadId: "" },
+        now: CREATED_AT,
+        requestFingerprint: `${initial.id}-configure-fingerprint`,
+      });
+      sessionStorage.commitLifecycleMutation({
+        operationId: lifecycle.operationId,
+        expectedOperationRevision: lifecycle.revision,
+        proof: trustedProof("session.configure", "session", initial.id),
+        now: CREATED_AT,
+        projectResult: (session) => ({ sessionId: session.id }),
+      });
+      return lifecycle;
+    };
+
+    const titleSession = createCase("session-title-race");
+    applyConfigure(titleSession, "title", "Renamed");
+    sessionStorage.upsertTerminalSession({
+      ...titleSession,
+      status: "idle",
+      runState: "idle",
+      messages: [{ role: "assistant", text: "title result" }],
+      threadId: "provider-thread-title",
+    }, {
+      auditLogId: 1,
+      sessionId: titleSession.id,
+      phase: "completed",
+      assistantMessageSeq: 0,
+      threadId: "provider-thread-title",
+      errorMessage: "",
+      completedAt: CREATED_AT,
+    });
+    assert.equal(sessionStorage.getSession(titleSession.id)?.threadId, "provider-thread-title");
+
+    sessionStorage.close();
+    await rm(directory, { recursive: true, force: true });
+    const resetDatabase = await createOrVerifyV6FreshDatabase(directory);
+    sessionStorage = new SessionStorageV6(resetDatabase.dbPath);
+    const resetCharacterDb = new DatabaseSync(resetDatabase.dbPath);
+    try {
+      resetCharacterDb.prepare(`
+        INSERT INTO characters (id, name, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+      `).run("character-a", "Character A", CREATED_AT, CREATED_AT);
+    } finally {
+      resetCharacterDb.close();
+    }
+    const resetSession = createCase("session-runtime-reset-race");
+    applyConfigure(resetSession, "runtime", "Runtime reset");
+    sessionStorage.upsertTerminalSession({
+      ...resetSession,
+      status: "idle",
+      runState: "idle",
+      messages: [{ role: "assistant", text: "reset result" }],
+      threadId: "provider-thread-reset",
+    }, {
+      auditLogId: 1,
+      sessionId: resetSession.id,
+      phase: "completed",
+      assistantMessageSeq: 0,
+      threadId: "provider-thread-reset",
+      errorMessage: "",
+      completedAt: CREATED_AT,
+    });
+    assert.equal(sessionStorage.getSession(resetSession.id)?.threadId, "");
+  } finally {
     sessionStorage.close();
     await rm(directory, { recursive: true, force: true }).catch(() => undefined);
   }

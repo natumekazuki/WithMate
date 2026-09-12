@@ -228,6 +228,38 @@ test("SessionLifecycleService は実DBで create→configure(title/runtime)→ar
 
 // @test-value v2
 // kind = "invariant"
+// claim = "Session のタイトルだけを更新するGUI要求は、catalog revision が更新済みでも既存 configure(title) 経路で保存できる。"
+// oracle = { type = "contract", ref = "src-electron/session-lifecycle-service.ts#updateSession" }
+// fault = "タイトル変更でもProvider tupleを再検証し、catalog revision staleとして保存を拒否する。"
+// observable = "SessionLifecycleService の返却SessionとDB-backed lifecycle SessionのtaskTitle"
+// observation_boundary = "component-behavior"
+// scope = "SessionLifecycleService.updateSession title-only request with stale catalog"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionLifecycleService はcatalog更新後もタイトルだけのGUI更新を保存する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-lifecycle-title-"));
+  await mkdir(path.join(root, "session-files"));
+  const { service, storage, close } = await makeService(path.join(root, "app.db"));
+  try {
+    await service.create(createInput("title-create-key"), proof("session.create", "session-created"));
+    const current = storage.getLifecycleSession("session-created")!;
+    catalog.revision = 8;
+    const updated = await service.updateSession({ ...current, taskTitle: "Renamed after catalog update" });
+    assert.equal(updated.taskTitle, "Renamed after catalog update");
+    assert.equal(storage.getLifecycleSession("session-created")?.taskTitle, "Renamed after catalog update");
+    await assert.rejects(
+      service.updateSession({ ...current, codexSpeed: "fast" }),
+      (error) => error instanceof SessionCrudError && error.code === "CATALOG_REVISION_STALE",
+    );
+  } finally {
+    catalog.revision = 7;
+    close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "Child Session restore does not create a Root WorkItem successor."
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Direct validation" }
 // fault = "A child restore mutates root WorkItem history or creates a second root successor."

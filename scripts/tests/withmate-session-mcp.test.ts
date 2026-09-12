@@ -1193,17 +1193,32 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "MCPのrenameとcancelはdispatch後の応答喪失を適用不明として報告する"
+  // oracle = { type = "contract", ref = "docs/runbooks/session-cli.md#Exit codes" }
+  // fault = "変更済みかもしれないrenameを未適用と誤報する"
+  // observable = "MCP tool errorのeffectと秘匿済みmessage"
+  // observation_boundary = "public-boundary"
+  // scope = "MCP transport effect mapping"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("pre-dispatch failureはnot_applied、mutationのpost-dispatch failureはindeterminateにする", async () => {
     for (const [dispatched, expectedEffect] of [[false, "not_applied"], [true, "indeterminate"]] as const) {
       await withClient(createWithMateSessionMcpServer({
         discover: async () => connection,
         call: async () => { throw new SessionRuntimeClientError("private C:\\secret stack", dispatched); },
       }), async (client) => {
-        const result = await client.callTool({ name: "turn.cancel", arguments: cancelInput });
-        assert.equal(result.isError, true);
-        const error = parseToolError(result as any);
-        assert.equal(error.error.effect, expectedEffect);
-        assert.doesNotMatch(JSON.stringify(error), /secret|stack/i);
+        for (const request of [
+          { name: "turn.cancel", arguments: cancelInput },
+          { name: "session.rename", arguments: { sessionId: "session-1", title: "Renamed", expectedRevision: 1, idempotencyKey: "rename-response-loss" } },
+        ]) {
+          const result = await client.callTool(request);
+          assert.equal(result.isError, true);
+          const error = parseToolError(result as any);
+          assert.equal(error.error.effect, expectedEffect);
+          assert.doesNotMatch(JSON.stringify(error), /secret|stack/i);
+        }
       });
     }
   });

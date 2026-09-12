@@ -770,7 +770,7 @@ export function sessionRuntimeOperationMayHaveEffect(
     return input === undefined
       || (input as { destination?: { kind?: string } }).destination?.kind !== "inline";
   }
-  return operation === "session.create" || operation === "session.configure"
+  return operation === "session.create" || operation === "session.rename" || operation === "session.configure"
     || operation === "session.move" || operation === "session.clone"
     || operation === "session.restore" || operation === "session.archive"
     || operation === "session.delete"

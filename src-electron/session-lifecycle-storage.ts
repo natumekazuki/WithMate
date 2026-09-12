@@ -186,6 +186,10 @@ function assertObject(value: Record<string, unknown>, name: string): void {
   }
 }
 
+function lifecycleEffectEventStep(step: string): string {
+  return step === "database" ? "db_committed" : step;
+}
+
 export class SessionLifecycleStorage {
   private readonly db: DatabaseSync;
   private readonly ownsDatabase: boolean;
@@ -520,7 +524,7 @@ export class SessionLifecycleStorage {
       }
       const effects = parseObject(row.effects_json, "effects");
       for (const [step, effect] of Object.entries(effects)) {
-        const event = events.find((candidate) => candidate.step === step);
+        const event = events.find((candidate) => candidate.step === lifecycleEffectEventStep(step));
         if (!event || event.effect !== effect) throw new Error(`Session lifecycle effect does not match event history: ${row.operation_id}:${step}`);
       }
     }

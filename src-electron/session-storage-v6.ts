@@ -1852,7 +1852,7 @@ export class SessionStorageV6 {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       const terminalSession = terminalCommit
-        ? this.mergeTerminalSessionWithCurrentProjection(normalized)
+        ? this.mergeTerminalSessionWithCurrentProjection(normalized, terminalCommit)
         : normalized;
       this.writeSession(terminalSession, operation);
       if (operation === "create") {
@@ -1902,7 +1902,10 @@ export class SessionStorageV6 {
     return stored;
   }
 
-  private mergeTerminalSessionWithCurrentProjection(session: Session): Session {
+  private mergeTerminalSessionWithCurrentProjection(
+    session: Session,
+    terminalCommit: SessionTurnTerminalCommit,
+  ): Session {
     // Use the storage-owned read path here. Public getSession is intentionally
     // replaceable by callers for post-commit read-back handling; terminal
     // conflict protection must still complete the transaction when that
@@ -1911,6 +1914,11 @@ export class SessionStorageV6 {
     if (!current) {
       return session;
     }
+    const bindingChanged = (current.roleBinding === null || session.roleBinding === null
+      ? current.roleBinding !== session.roleBinding
+      : !sameSessionRoleBinding(current.roleBinding, session.roleBinding))
+      || !sameSessionRuntimeBindingProjection(current, session)
+      || this.hasConcurrentSessionBindingMutation(session.id, terminalCommit.auditLogId);
     return {
       ...session,
       taskTitle: current.taskTitle,
@@ -1934,8 +1942,40 @@ export class SessionStorageV6 {
       reasoningEffort: current.reasoningEffort,
       customAgentName: current.customAgentName,
       allowedAdditionalDirectories: [...current.allowedAdditionalDirectories],
-      threadId: current.threadId,
+      // Preserve a newer binding's thread state, but otherwise persist the
+      // provider thread returned by this terminal turn.
+      threadId: bindingChanged ? current.threadId : terminalCommit.threadId,
     };
+  }
+
+  private hasConcurrentSessionBindingMutation(sessionId: string, auditLogId: number): boolean {
+    // Session history orders mutations even when timestamps share a millisecond.
+    // The persisted turn-start snapshot precedes the audit row and provider run.
+    const row = this.db.prepare(`
+      SELECT 1
+      FROM session_resource_events_v6 AS event
+      LEFT JOIN session_lifecycle_operations_v6 AS operation
+        ON operation.operation_id = json_extract(event.payload_json, '$.lifecycleOperationId')
+      WHERE event.session_id = ?
+        AND event.revision > (
+          SELECT MAX(start.revision)
+          FROM session_resource_events_v6 AS start
+          INNER JOIN resource_event_headers_v6 AS header
+            ON header.event_id = 'session:' || start.session_id || ':revision:' || start.revision
+          INNER JOIN session_turns_v6 AS turn ON turn.id = ? AND turn.session_id = start.session_id
+          WHERE start.session_id = event.session_id
+            AND start.event_kind = 'running_turn_started'
+            AND header.occurred_at <= turn.started_at
+        )
+        AND (
+          (event.event_kind = 'lifecycle.session.configure'
+            AND json_extract(operation.manifest_json, '$.input.kind') <> 'title')
+          OR event.event_kind = 'lifecycle.session.restore'
+          OR (event.event_kind = 'move' AND json_extract(event.payload_json, '$.sourceRootSessionId') IS NOT NULL)
+        )
+      LIMIT 1
+    `).get(sessionId, auditLogId);
+    return row !== undefined;
   }
 
   replaceSessions(nextSessions: Session[]): Session[] {
@@ -2840,6 +2880,28 @@ function samePreparedProof(left: SessionFileWritePreparedProof, right: SessionFi
     && left.device === right.device
     && left.inode === right.inode
     && JSON.stringify(left.targetPrecondition) === JSON.stringify(right.targetPrecondition);
+}
+
+function sameSessionRuntimeBindingProjection(left: Session, right: Session): boolean {
+  return left.provider === right.provider
+    && left.catalogRevision === right.catalogRevision
+    && left.workspaceLabel === right.workspaceLabel
+    && left.workspacePath === right.workspacePath
+    && left.branch === right.branch
+    && left.accessMode === right.accessMode
+    && left.characterId === right.characterId
+    && left.character === right.character
+    && left.characterIconPath === right.characterIconPath
+    && JSON.stringify(left.characterThemeColors) === JSON.stringify(right.characterThemeColors)
+    && JSON.stringify(left.characterRuntimeSnapshot) === JSON.stringify(right.characterRuntimeSnapshot)
+    && left.approvalMode === right.approvalMode
+    && left.codexSandboxMode === right.codexSandboxMode
+    && left.codexSpeed === right.codexSpeed
+    && left.codexReviewer === right.codexReviewer
+    && left.model === right.model
+    && left.reasoningEffort === right.reasoningEffort
+    && left.customAgentName === right.customAgentName
+    && JSON.stringify(left.allowedAdditionalDirectories) === JSON.stringify(right.allowedAdditionalDirectories);
 }
 
 function isTargetPrecondition(value: unknown): value is SessionFileTargetPrecondition {

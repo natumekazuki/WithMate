@@ -1056,11 +1056,13 @@ describe("withmate-session CLI", () => {
     assert.match(stdout.text(), /"sessionId": "session-created"/);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "response lossはreadでnot_applied、revision付きmutationでindeterminateとして公開される"
   // oracle = { type = "contract", ref = "docs/runbooks/session-cli.md#Exit codes" }
-  // failure_mode = "readを適用不明と誤報するか、cancelの適用可能性を未適用として安全でないretryを促す"
+  // fault = "renameやcancelの適用可能性を未適用と誤報し安全でないretryを促す"
+  // observable = "CLI exit codeとerror.effect"
+  // observation_boundary = "public-boundary"
   // scope = "withmate-session CLI transport effect mapping"
   // lifecycle = "permanent"
   // @end-test-value
@@ -1111,6 +1113,19 @@ describe("withmate-session CLI", () => {
       call: async () => { throw new SessionRuntimeClientError("lost", true); },
     }), WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate);
     assert.equal(fileMutationFailure.json().error.effect, "indeterminate");
+
+    const renameFailure = capture();
+    assert.equal(await runWithMateSessionCli([
+      "session", "rename", "--json", JSON.stringify({
+        sessionId: "session-1", title: "Renamed", expectedRevision: 1, idempotencyKey: "rename-response-loss",
+      }),
+    ], {
+      stdout: renameFailure.stream,
+      discover: async () => connection,
+      call: async () => { throw new SessionRuntimeClientError("lost", true); },
+    }), WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate);
+    assert.equal(renameFailure.json().error.effect, "indeterminate");
+
   });
 
   test("usage failureはoperationを呼ばずexit 1を返す", async () => {
