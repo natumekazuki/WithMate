@@ -400,6 +400,12 @@ test metadataは、成功時のsource保存、archived_atフラグに対するen
 
 関連63 test、型検査、差分checkが成功した。開始baseから4 tests／4 transitionsをdiagnostic 0で抽出し、通常のread-only general_lunaによる全recordのtest-value審査を完了した。固定commitのclean detached worktreeで今回のfinding familyに限定した独立reviewも完了し、修正要求はない。review worktreeはHEAD・cleanliness・SessionFolder内pathを確認して削除した。全suite・build・GUIは今回再実行していない。
 
+### Slice 4 CI fixture修正（2026-09-13）
+
+PR #711の初回CI（run 34708930101）は7 testが失敗した。開始base `078351939b207f36ee22558bf2c3d2fe380bb809` から `975cf6f1f37083b5846247de793593a25f52ef7c` でfixtureを修正した。source admissionの2件はcheckoutのbranch状態に依存しない一時Git repositoryを用意し、cutoffの2件はlocal calendarという契約に期待値を揃えた。root constructionは一時directoryをrealpathで正規化し、旧placement入力を現行形へ更新し、transcript budgetは既存now注入で時計を固定した。production、CI設定、assertionの保護条件は変更していない。
+
+関連105 test、UTC設定でのfacade 34 test、型検査、差分checkが成功した。開始baseから6 tests／6 SURVIVED transitionsをdiagnostic 0で抽出し、read-only general_lunaのtest-value審査を完了した。宣言外のroot construction fixture変更も独立確認し、契約の弱体化や未解消指摘はない。CIの全shard再実行結果はPR #711のChecksを正本とし、この記録時点では実行中。今回build・GUIは未実行。
+
 ### Slice 2 の実装・検証対象
 
 Root ledger、原子的な予約と精算、Session／Work Item作成数、実行queue、Provider retry／使用量、SessionFolderの仲介書き込み、Settingsからの上限・期限延長を接続した。初期policyは2026-09-07のユーザー指定を採用し、token・費用は計測のみとする。設計の採用方針とADR 030を正本とする。
