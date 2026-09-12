@@ -3477,10 +3477,6 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleChangeConversationTarget = (target: "main" | "auxiliary") => {
-    if (target === "auxiliary" && auxiliaryWorkspace.summaries.length === 0) {
-      if (!auxiliaryWorkspace.loading && !auxiliaryWorkspace.error) handleOpenAuxiliaryLaunchDialog();
-      return;
-    }
     auxiliaryWorkspace.setTarget(target);
   };
 
@@ -4673,6 +4669,7 @@ export default function AgentSessionWindowApp() {
           onSelectAuxiliary: auxiliaryWorkspace.selectSession,
           onTargetChange: handleChangeConversationTarget,
           onCollapse: auxiliaryWorkspace.collapse,
+          onExpand: auxiliaryWorkspace.expand,
           onWidthRatioChange: auxiliaryWorkspace.setWidthRatio,
           loading: auxiliaryWorkspace.loading || auxiliaryWorkspace.detailLoading,
           error: auxiliaryWorkspace.detailError?.message ?? auxiliaryWorkspace.error?.message,

@@ -109,6 +109,7 @@ export type ConcurrentChatWindowProps = {
   onSelectAuxiliary: (id: string) => void;
   onTargetChange: (target: "main" | "auxiliary") => void;
   onCollapse: () => void;
+  onExpand: () => void;
   onWidthRatioChange: (ratio: number) => void;
   auxiliarySplitter?: ReactNode;
   loading?: boolean;
@@ -121,15 +122,21 @@ export function ConcurrentChatSplitter({
   isExpanded,
   widthRatio,
   onCollapse,
+  onExpand,
   onWidthRatioChange,
-}: Pick<ConcurrentChatWindowProps, "isExpanded" | "widthRatio" | "onCollapse" | "onWidthRatioChange">) {
+}: Pick<ConcurrentChatWindowProps, "isExpanded" | "widthRatio" | "onCollapse" | "onExpand" | "onWidthRatioChange">) {
   const draggedRef = useRef(false);
-  const startRef = useRef<{ x: number; width: number; widthRatio: number } | null>(null);
+  const startRef = useRef<{ x: number; width: number; widthRatio: number; isExpanded: boolean } | null>(null);
   const handlePointerDown: PointerEventHandler<HTMLButtonElement> = (event) => {
-    if (event.button !== 0 || !isExpanded) return;
+    if (event.button !== 0) return;
     const parent = event.currentTarget.parentElement;
     if (!parent) return;
-    startRef.current = { x: event.clientX, width: parent.getBoundingClientRect().width, widthRatio };
+    startRef.current = {
+      x: event.clientX,
+      width: parent.getBoundingClientRect().width,
+      widthRatio: isExpanded ? widthRatio : COLLAPSED_AUXILIARY_WIDTH_RATIO,
+      isExpanded,
+    };
     draggedRef.current = false;
     event.currentTarget.setPointerCapture(event.pointerId);
     const handleMove = (moveEvent: PointerEvent) => {
@@ -137,7 +144,11 @@ export function ConcurrentChatSplitter({
       if (!start || start.width <= 0) return;
       const delta = moveEvent.clientX - start.x;
       if (Math.abs(delta) > 4) draggedRef.current = true;
-      onWidthRatioChange(Math.min(0.8, Math.max(0.2, start.widthRatio - delta / start.width)));
+      if (!start.isExpanded && draggedRef.current) {
+        onExpand();
+        start.isExpanded = true;
+      }
+      onWidthRatioChange(Math.min(0.8, Math.max(0.05, start.widthRatio - delta / start.width)));
     };
     const handleUp = () => {
       startRef.current = null;
@@ -151,7 +162,7 @@ export function ConcurrentChatSplitter({
     <button
       type="button"
       className={`session-dock-splitter edge-right concurrent-chat-splitter${isExpanded ? "" : " is-collapsed"}`}
-      aria-label={isExpanded ? "Auxiliaryを折りたたむ" : "Auxiliaryを展開"}
+      aria-label={isExpanded ? "Auxiliaryを折りたたむ" : "Auxiliaryの幅を調整"}
       aria-controls="session-auxiliary-chat-pane"
       aria-expanded={isExpanded}
       onPointerDown={handlePointerDown}
@@ -182,9 +193,7 @@ function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps 
   return (
     <div className="concurrent-chat-target-dock" role="group" aria-label="操作対象チャット">
       <button type="button" className={chats.target === "main" ? "is-active" : ""} onClick={() => chats.onTargetChange("main")}>Main</button>
-      {chats.auxiliaryItems.length > 0 ? (
-        <button type="button" className={chats.target === "auxiliary" ? "is-active" : ""} onClick={() => chats.onTargetChange("auxiliary")}>Auxiliary</button>
-      ) : null}
+      <button type="button" className={chats.target === "auxiliary" ? "is-active" : ""} onClick={() => chats.onTargetChange("auxiliary")}>Auxiliary</button>
     </div>
   );
 }
@@ -612,7 +621,7 @@ export function ChatWindow({
               messageViewMode={messageViewMode}
             />
           )}
-          {concurrentChats?.target === "main" ? (
+          {concurrentChats && concurrentChats.target !== "main" ? (
             <div className="concurrent-chat-target-overlay" aria-hidden="true" />
           ) : null}
         </div>
@@ -636,7 +645,7 @@ export function ChatWindow({
             />
           ) : null}
           <div id="session-auxiliary-chat-pane" className="concurrent-chat-column-content">
-            {concurrentChats.error ? (
+            {concurrentChats.auxiliaryItems.length === 0 ? null : concurrentChats.error ? (
               <div className="concurrent-chat-state" role="alert">{concurrentChats.error}</div>
             ) : concurrentChats.loading ? (
               <div className="concurrent-chat-state" role="status">Auxiliaryを読み込んでいます。</div>
@@ -655,7 +664,7 @@ export function ChatWindow({
                   stateCache={conversationStateCacheRef.current}
                   onColumnControls={handleAuxiliaryColumnControls}
                 />
-                {concurrentChats.target === "auxiliary" ? (
+                {concurrentChats.target !== "auxiliary" ? (
                   <div className="concurrent-chat-target-overlay" aria-hidden="true" />
                 ) : null}
               </>
@@ -665,20 +674,20 @@ export function ChatWindow({
           </div>
         </>
       ) : auxiliaryMessageColumn}
-      auxiliarySplitter={concurrentChats && concurrentChats.auxiliaryItems.length > 0 ? (
+      auxiliarySplitter={concurrentChats ? (
         <ConcurrentChatSplitter
           isExpanded={concurrentChats.isExpanded}
           widthRatio={concurrentChats.widthRatio}
           onCollapse={concurrentChats.onCollapse}
+          onExpand={concurrentChats.onExpand}
           onWidthRatioChange={concurrentChats.onWidthRatioChange}
         />
-      ) : concurrentChats?.auxiliarySplitter ?? auxiliarySplitter}
-      isAuxiliaryVisible={concurrentChats ? concurrentChats.auxiliaryItems.length > 0 : isAuxiliaryVisible}
+      ) : auxiliarySplitter}
+      isAuxiliaryVisible={concurrentChats ? true : isAuxiliaryVisible}
       auxiliaryWidthRatio={concurrentChats
         ? (concurrentChats.isExpanded ? concurrentChats.widthRatio : COLLAPSED_AUXILIARY_WIDTH_RATIO)
         : auxiliaryWidthRatio}
       concurrentTarget={concurrentChats?.target ?? concurrentTarget}
-      concurrentTargetDock={concurrentChats ? <ConcurrentChatTargetDock chats={concurrentChats} /> : null}
       actionDock={(
           <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
           <div
@@ -698,6 +707,7 @@ export function ChatWindow({
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}
               onMessageViewModeChange={handleMessageViewModeChange}
+              targetDock={concurrentChats ? <ConcurrentChatTargetDock chats={concurrentChats} /> : null}
             />
           </div>
           <div
@@ -714,6 +724,7 @@ export function ChatWindow({
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}
               onMessageViewModeChange={handleMessageViewModeChange}
+              targetDock={concurrentChats ? <ConcurrentChatTargetDock chats={concurrentChats} /> : null}
             />
           </div>
         </div>

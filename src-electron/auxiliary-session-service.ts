@@ -42,10 +42,6 @@ type AuxiliarySessionServiceDeps = {
   runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
 };
 
-function buildAuxiliaryTitle(parent: Session): string {
-  return parent.taskTitle.trim() || "Session";
-}
-
 function buildInterruptedMessages(messages: AuxiliarySession["messages"]): AuxiliarySession["messages"] {
   const interruptedMessage = "前回の Auxiliary 実行はアプリ終了で中断された可能性があります。必要ならもう一度送信してください。";
   const lastMessage = messages.at(-1);
@@ -231,7 +227,7 @@ export class AuxiliarySessionService {
       parentSessionId: parent.id,
       status: "active",
       runState: "idle",
-      title: buildAuxiliaryTitle(parent),
+      title: "",
       provider: launchSelection.provider,
       catalogRevision: launchSelection.catalogRevision,
       model: launchSelection.model,
@@ -252,7 +248,7 @@ export class AuxiliarySessionService {
       characterId: characterSelection.characterId,
       characterRuntimeSnapshot: characterSelection.characterRuntimeSnapshot,
       characterIconPath: characterSelection.characterRuntimeSnapshot?.iconFilePath ?? "",
-      preview: "新しい会話",
+      preview: "",
       clientRequestId: requestId || undefined,
     });
   }

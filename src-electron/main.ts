@@ -1821,7 +1821,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionBackgroundActivity: (sessionId, kind) => getSessionBackgroundActivity(sessionId, kind),
                 resolveLiveApproval,
                 resolveLiveElicitation,
-                createSession: (input) => requireMainSessionCommandFacade().createSessionFromRequest(input),
+                createSession: async (input) => {
+                  const session = await requireMainSessionCommandFacade().createSessionFromRequest(input);
+                  await ensureDefaultAuxiliarySession(session);
+                  return session;
+                },
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
                 setSessionPinned: (request) => requireMainSessionCommandFacade().setSessionPinned(request),
                 deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
@@ -2097,6 +2101,20 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
   }
 
   return auxiliarySessionService;
+}
+
+async function ensureDefaultAuxiliarySession(session: Session): Promise<void> {
+  const service = requireAuxiliarySessionService();
+  if (service.listAuxiliarySessions(session.id).length > 0) {
+    return;
+  }
+
+  await service.createAuxiliarySession({
+    parentSessionId: session.id,
+    provider: session.provider,
+    runtimeSelection: "latest-session",
+    clientRequestId: `default:${session.id}`,
+  });
 }
 
 function requireAuditLogStorageForWrite(): AuditLogStorage {

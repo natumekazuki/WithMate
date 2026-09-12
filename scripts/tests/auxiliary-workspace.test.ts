@@ -176,15 +176,15 @@ test("stale summary responseはaddSessionを巻き戻さない", async () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Main対象への切替と折りたたみはAuxiliary選択と保存済み幅を保持する"
+// claim = "Main対象への切替と折りたたみはAuxiliary選択と幅を保持し、明示的な展開で戻せる"
 // oracle = { type = "contract", ref = "issue-710-collapse-restore" }
-// fault = "Mainへ戻す操作で選択IDまたは再展開可能な状態を失う"
+// fault = "Mainへ戻す操作で選択IDまたは再展開可能な状態を失う、または折りたたみ操作が暗黙に再展開する"
 // observable = "hookのtarget、isExpanded、selectedId、widthRatio"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-workspace-layout"
 // lifecycle = "permanent"
 // @end-test-value
-test("Main targetとcollapseは選択・幅を保ったまま再展開できる", async () => {
+test("Main targetとcollapseは選択・幅を保ったまま明示的に再展開できる", async () => {
   const a = session("a", "2026-01-01");
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => [a],
@@ -197,7 +197,7 @@ test("Main targetとcollapseは選択・幅を保ったまま再展開できる"
   assert.equal(view.current.selectedId, "a");
   assert.equal(view.current.target, "main");
   assert.equal(view.current.isExpanded, false);
-  await act(async () => { view.current.collapse(); });
+  await act(async () => { view.current.expand(); });
   assert.equal(view.current.isExpanded, true);
   assert.equal(view.current.widthRatio, 0.65);
   await view.unmount();

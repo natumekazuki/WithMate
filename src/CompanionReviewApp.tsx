@@ -2978,7 +2978,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         toastMessage: errorMessage || operationMessage,
         toastTone: errorMessage ? "error" : "success",
         isAuxiliaryMode,
-        concurrentChats: auxiliaryWorkspace.summaries.length > 0 ? {
+        concurrentChats: {
           mainSession: snapshot.session,
           auxiliarySession: auxiliaryDisplayedSession,
           auxiliaryProps: auxiliaryWorkspace.selectedSession ? {
@@ -3003,11 +3003,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           onSelectAuxiliary: auxiliaryWorkspace.selectSession,
           onTargetChange: (target) => auxiliaryWorkspace.setTarget(target),
           onCollapse: auxiliaryWorkspace.collapse,
+          onExpand: auxiliaryWorkspace.expand,
           onWidthRatioChange: auxiliaryWorkspace.setWidthRatio,
           loading: auxiliaryWorkspace.loading || auxiliaryWorkspace.detailLoading,
           error: auxiliaryWorkspace.error?.message ?? auxiliaryWorkspace.detailError?.message ?? null,
           api: withmateApi ?? undefined,
-        } : undefined,
+        },
         onToggleHeaderSplitter: handleToggleHeaderSplitter,
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenTerminal: () => void openCompanionTerminal(),

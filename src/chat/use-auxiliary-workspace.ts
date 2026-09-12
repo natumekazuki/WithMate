@@ -39,13 +39,14 @@ export type AuxiliaryWorkspace = {
   selectSession(id: string | null): void;
   setTarget(target: AuxiliaryWorkspaceTarget): void;
   collapse(): void;
+  expand(): void;
   addSession(saved: AuxiliarySession): void;
   refreshSummaries(): Promise<void>;
   getBinding(id: string | null): AuxiliarySessionBinding;
 };
 
 const DEFAULT_WIDTH_RATIO = 0.5;
-const MIN_WIDTH_RATIO = 0.2;
+const MIN_WIDTH_RATIO = 0.05;
 const MAX_WIDTH_RATIO = 0.8;
 const PREFS_KEY_PREFIX = "withmate:auxiliary-workspace:";
 
@@ -316,13 +317,13 @@ export function useAuxiliaryWorkspace(input: {
   }, [selectSession, summaries]);
 
   const collapse = useCallback(() => {
-    if (isExpanded) {
-      setIsExpanded(false);
-      setTargetState("main");
-    } else {
-      setIsExpanded(true);
-    }
-  }, [isExpanded]);
+    setIsExpanded(false);
+    setTargetState("main");
+  }, []);
+
+  const expand = useCallback(() => {
+    setIsExpanded(true);
+  }, []);
 
   const addSession = useCallback((saved: AuxiliarySession) => {
     if (!parentSessionIdRef.current || saved.parentSessionId !== parentSessionIdRef.current) return;
@@ -405,8 +406,9 @@ export function useAuxiliaryWorkspace(input: {
     selectSession,
     setTarget,
     collapse,
+    expand,
     addSession,
     refreshSummaries,
     getBinding,
-  }), [addSession, collapse, detailError, detailLoading, error, getBinding, isExpanded, loading, refreshSummaries, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, widthRatio]);
+  }), [addSession, collapse, detailError, detailLoading, error, expand, getBinding, isExpanded, loading, refreshSummaries, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, widthRatio]);
 }

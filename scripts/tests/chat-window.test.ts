@@ -960,48 +960,109 @@ test("SessionActionDockCompactRow は通常時の chat notice を下書き表示
 
 // @test-value v2
 // kind = "contract"
-// claim = "Concurrent chat shell は Main/Auxiliary の操作対象、対象overlay、Auxiliary一覧、独立splitterを同じWindowへ投影する"
+// claim = "Concurrent chat shell はActionDockのMain/Auxiliary操作対象、mode badgeなしの非対象overlay、Auxiliary一覧、独立splitterを同じWindowへ投影する"
 // oracle = { type = "contract", ref = "issue-710-ui-shell" }
 // fault = "Auxiliaryを表示しても対象切替や折りたたみ導線がActionDockと中央列へ接続されない"
-// observable = "renderされた操作対象ボタン、中央target dock、対象列内のoverlay、一覧trigger、splitterのARIA属性と会話列"
+// observable = "expanded/compact ActionDock操作対象ボタンとcallback、mode badgeの不在、非対象列内のoverlay、一覧trigger、splitterのARIA属性と会話列"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
 // @end-test-value
-test("ChatWindow は concurrent chat shell の操作対象と切り替え導線を描画する", () => {
+test("ChatWindow は concurrent chat shell の操作対象と切り替え導線を描画する", async () => {
   const props = createChatWindowProps();
-  const html = renderToStaticMarkup(React.createElement(ChatWindow, {
-    ...props,
-    concurrentChats: {
-      main: props.messageColumnProps,
-      auxiliary: props.messageColumnProps,
-      selectedAuxiliaryId: "aux-b",
-      auxiliaryItems: [
-        { id: "aux-a", label: "A", preview: "first preview", icon: "✦" },
-        { id: "aux-b", label: "B", preview: "second preview", icon: "✧" },
-      ],
-      target: "auxiliary",
-      isExpanded: true,
-      widthRatio: 0.45,
-      onSelectAuxiliary() {},
-      onTargetChange() {},
-      onCollapse() {},
-      onWidthRatioChange() {},
-    },
-  }));
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const previousResizeObserver = globalThis.ResizeObserver;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  class TestResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { configurable: true, value() {} });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  let root: Root | null = null;
+  const targetChanges: Array<"main" | "auxiliary"> = [];
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(ChatWindow, {
+        ...props,
+        concurrentChats: {
+          main: props.messageColumnProps,
+          auxiliary: props.messageColumnProps,
+          selectedAuxiliaryId: "aux-b",
+          auxiliaryItems: [
+            { id: "aux-a", label: "A", preview: "first preview", icon: "✦" },
+            { id: "aux-b", label: "B", preview: "second preview", icon: "✧" },
+          ],
+          target: "auxiliary",
+          isExpanded: true,
+          widthRatio: 0.45,
+          onSelectAuxiliary() {},
+          onTargetChange: (target) => targetChanges.push(target),
+          onCollapse() {},
+          onExpand() {},
+          onWidthRatioChange() {},
+        },
+      }));
+    });
 
-  assert.match(html, /操作対象チャット/);
-  assert.match(html, /concurrent-chat-target-dock-slot/);
-  assert.match(html, />Main<\/button>/);
-  assert.match(html, />Auxiliary<\/button>/);
-  assert.match(html, /concurrent-chat-target-overlay/);
-  assert.equal((html.match(/concurrent-chat-target-overlay/g) ?? []).length, 1);
-  const renderedDocument = new JSDOM(html).window.document;
-  assert.equal(renderedDocument.querySelector(".session-concurrent-chat-main .concurrent-chat-target-overlay"), null);
-  assert.ok(renderedDocument.querySelector(".session-concurrent-chat-auxiliary .concurrent-chat-target-overlay"));
-  assert.match(html, /Auxiliary会話切り替え/);
-  assert.match(html, /session-auxiliary-chat-pane/);
-  assert.match(html, /aria-controls="session-auxiliary-chat-pane"/);
+    const container = dom.window.document.getElementById("root") as HTMLElement;
+    const html = container.innerHTML;
+    assert.match(html, /操作対象チャット/);
+    assert.match(html, />Main<\/button>/);
+    assert.match(html, />Auxiliary<\/button>/);
+    assert.doesNotMatch(html, /action-dock-mode-badge/);
+    assert.match(html, /concurrent-chat-target-overlay/);
+    assert.equal((html.match(/concurrent-chat-target-overlay/g) ?? []).length, 1);
+    assert.ok(container.querySelector(".composer-target-dock-slot .concurrent-chat-target-dock"));
+    assert.equal(container.querySelector(".concurrent-chat-target-dock-slot"), null);
+    assert.ok(container.querySelector(".session-concurrent-chat-main .concurrent-chat-target-overlay"));
+    assert.equal(container.querySelector(".session-concurrent-chat-auxiliary .concurrent-chat-target-overlay"), null);
+    assert.match(html, /Auxiliary会話切り替え/);
+    assert.match(html, /session-auxiliary-chat-pane/);
+    assert.match(html, /aria-controls="session-auxiliary-chat-pane"/);
+
+    const targetDocks = [
+      container.querySelector(".composer-target-dock-slot .concurrent-chat-target-dock"),
+      container.querySelector(".session-action-dock-target-slot .concurrent-chat-target-dock"),
+    ];
+    assert.ok(targetDocks[0]);
+    assert.ok(targetDocks[1]);
+    for (const targetDock of targetDocks) {
+      const targetButtons = [...targetDock.querySelectorAll<HTMLButtonElement>("button")];
+      assert.deepEqual(targetButtons.map((button) => button.textContent), ["Main", "Auxiliary"]);
+      await act(async () => targetButtons[0].click());
+      await act(async () => targetButtons[1].click());
+    }
+    assert.deepEqual(targetChanges, ["main", "auxiliary", "main", "auxiliary"]);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  }
 });
 
 // @test-value v2
@@ -1029,12 +1090,13 @@ test("ChatWindow はAuxiliaryを最小幅で残しsplitterの再展開導線を�
       onSelectAuxiliary() {},
       onTargetChange() {},
       onCollapse() {},
+      onExpand() {},
       onWidthRatioChange() {},
     },
   }));
 
   assert.match(html, /0\.05fr/);
-  assert.match(html, /aria-label="Auxiliaryを展開"/);
+  assert.match(html, /aria-label="Auxiliaryの幅を調整"/);
   assert.match(html, /aria-expanded="false"/);
 });
 
@@ -1092,6 +1154,7 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
           onSelectAuxiliary: (id) => selected.push(id),
           onTargetChange() {},
           onCollapse() {},
+          onExpand() {},
           onWidthRatioChange() {},
         },
       }));
@@ -1127,10 +1190,10 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
 
 // @test-value v2
 // kind = "contract"
-// claim = "ChatWindowはtarget columnのscroll状態をActionDock表示と送信時追従へ接続する"
+// claim = "ChatWindowはMain target columnのscroll状態をActionDock表示と送信時追従へ接続する"
 // oracle = { type = "contract", ref = "issue-710-shared-scroll-following" }
-// fault = "会話列が過去位置にあっても末尾移動が表示されず、送信時にtarget columnが末尾へ戻らない"
-// observable = "target message listのscrollTop、末尾移動button、composer送信callback"
+// fault = "Main会話列が過去位置にあっても末尾移動が表示されず、送信時にMain列が末尾へ戻らない"
+// observable = "Main target message listのscrollTop、末尾移動button、composer送信callback"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -1197,6 +1260,7 @@ test("ChatWindow はtarget columnのscroll状態をActionDockと送信へ共有�
           onSelectAuxiliary() {},
           onTargetChange() {},
           onCollapse() {},
+          onExpand() {},
           onWidthRatioChange() {},
         },
       }));
@@ -1266,6 +1330,7 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
         isExpanded: true,
         widthRatio: 0.3,
         onCollapse: () => { collapseCount += 1; },
+        onExpand() {},
         onWidthRatioChange: (ratio: number) => ratios.push(ratio),
       })));
     });
@@ -1302,6 +1367,80 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
     Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
     Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "折りたたみ中のConcurrent splitterはクリックを要求せず、pointer dragだけでAuxiliaryの展開と幅変更を開始する"
+// oracle = { type = "contract", ref = "issue-710-collapsed-splitter-drag" }
+// fault = "最小化されたAuxiliaryのsplitterをドラッグしても幅変更が始まらず、先にクリックで再展開する必要がある"
+// observable = "onExpandの呼び出し、onWidthRatioChangeの比率、onCollapseの呼び出し回数"
+// observation_boundary = "component-behavior"
+// scope = "concurrent-chat-shell"
+// lifecycle = "permanent"
+// @end-test-value
+test("ConcurrentChatSplitter は折りたたみ中の drag で展開を開始する", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "setPointerCapture", { configurable: true, value() {} });
+  let root: Root | null = null;
+  let collapseCount = 0;
+  let expandCount = 0;
+  const ratios: number[] = [];
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement("div", { style: { width: "1000px" } }, React.createElement(ConcurrentChatSplitter, {
+        isExpanded: false,
+        widthRatio: 0.5,
+        onCollapse: () => { collapseCount += 1; },
+        onExpand: () => { expandCount += 1; },
+        onWidthRatioChange: (ratio: number) => ratios.push(ratio),
+      })));
+    });
+    const splitter = dom.window.document.querySelector<HTMLButtonElement>(".concurrent-chat-splitter");
+    assert.ok(splitter);
+    Object.defineProperty(splitter.parentElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ width: 1000, height: 300, top: 0, left: 0, right: 1000, bottom: 300 }),
+    });
+    const pointerEvent = (type: string, clientX: number) => {
+      const event = new dom.window.Event(type, { bubbles: true });
+      Object.defineProperties(event, {
+        button: { value: 0 },
+        clientX: { value: clientX },
+        pointerId: { value: 1 },
+      });
+      return event;
+    };
+    await act(async () => {
+      splitter.dispatchEvent(pointerEvent("pointerdown", 500));
+      dom.window.dispatchEvent(pointerEvent("pointermove", 480));
+      dom.window.dispatchEvent(pointerEvent("pointerup", 480));
+      splitter.click();
+    });
+    assert.equal(expandCount, 1);
+    assert.ok(Math.abs((ratios.at(-1) ?? 0) - 0.07) < 0.000001);
+    assert.equal(collapseCount, 0);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
   }
 });
 

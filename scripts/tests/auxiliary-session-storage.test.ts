@@ -503,10 +503,10 @@ test("旧summary未生成行は監査由来previewで初回だけ補完する", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryの作成・更新・再読込・終了は各会話のruntime option、draft、thread、preview、親境界を保つ"
+// claim = "Auxiliaryの新規作成はtitleとpreviewを空にし、作成・更新・再読込・終了は各会話のruntime option、draft、thread、preview、親境界を保つ"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: per-session persistence and lifecycle" }
-// fault = "複数Auxiliaryの作成やstale保存で別会話の状態を上書きする、previewをstreaming中に巻き戻す、または親境界を越えて残す"
-// observable = "作成・再読込・runtime upsert・stale update・close・parent filteringの公開結果"
+// fault = "複数Auxiliaryの作成やstale保存で別会話の状態を上書きする、初期titleを意図せず表示する、previewをstreaming中に巻き戻す、または親境界を越えて残す"
+// observable = "作成時のtitleとpreview、再読込・runtime upsert・stale update・close・parent filteringの公開結果"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-session-service"
 // lifecycle = "permanent"
@@ -558,6 +558,8 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     assert.equal(auxiliary.parentSessionId, parent.id);
     assert.equal(auxiliary.status, "active");
     assert.equal(auxiliary.runState, "idle");
+    assert.equal(auxiliary.title, "");
+    assert.equal(auxiliary.preview, "");
     assert.equal(auxiliary.provider, parent.provider);
     assert.equal(auxiliary.model, parent.model);
     assert.equal(auxiliary.reasoningEffort, parent.reasoningEffort);

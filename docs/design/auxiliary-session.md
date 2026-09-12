@@ -44,13 +44,13 @@ Shared ActionDock ──┘
 
 ## UI flow
 
-新規追加はHeaderの`New Auxiliary`から行う。作成中でも既存Auxiliaryの会話、draft、実行状態を変更しない。同じclientRequestIdの再送は同じ保存行を返し、明示的に別IDを発行した追加は別会話になる。
+通常Sessionの新規作成時は初期Auxiliaryを1件作成する。既存SessionにAuxiliaryがない場合も共通chat shellのAuxiliary領域だけを空で表示し、特別な状態文言は表示しない。追加のAuxiliaryはHeaderの`New Auxiliary`から行う。作成中でも既存Auxiliaryの会話、draft、実行状態を変更しない。同じclientRequestIdの再送は同じ保存行を返し、明示的に別IDを発行した追加は別会話になる。
 
 Companion modeは新規Auxiliary作成とprovider実行を退役させている。既存の保存済みAuxiliaryがある場合に限り、一覧の閲覧と切り替えを許可する。
 
 Auxiliary中央には、キャラiconと内容previewを持つ前後切替を置く。中央表示名のクリック、Enter、Spaceで一覧を開き、確定選択時だけ切り替える。一覧行はiconと会話内容previewだけを表示し、Character名、番号、provider、日時、status badgeを情報列として追加しない。preview検索は保存済みpreview文字列だけを対象にする。
 
-折りたたみ時はAuxiliaryと内部スプリッターを完全に隠し、ActionDock対象をMainへ戻す。会話、draft、Character、runは保持する。非対象チャットのoverlayは装飾のみで、本文選択、Copy、リンク、switcher操作を遮らない。
+折りたたみ時もAuxiliary領域と内部スプリッターは最小幅（標準5%）で残し、ActionDock対象をMainへ戻す。スプリッターのクリックは最小化だけを行い、最小化中のドラッグはその位置からAuxiliaryを再展開して幅を調整する。会話、draft、Character、runは保持する。非対象チャットには十分な濃さのoverlayをかけ、本文選択、Copy、リンク、switcher操作を遮らない。
 
 ## Context boundary
 
@@ -76,7 +76,7 @@ Auxiliaryは作成順（`createdAt ASC, id ASC`）で並べる。実行、draft�
 
 previewはProvider呼び出しを行わず、確定した最終assistant応答ブロックの冒頭をMarkdown平文化し、空白を整理して長さを制限する。コード識別子、Unicode、表示本文を不必要に壊さない。streaming中、cancel、errorで新しい確定応答がない場合は前回値を保持する。
 
-初回確定応答前は送信済みuser発言の冒頭、未送信は`新しい会話`を使う。draftはpreviewに使わない。一覧では最大2行、中央切替では同じ値を1行省略表示する。
+初回確定応答前は送信済みuser発言の冒頭を使う。新規作成直後の未送信Auxiliaryは`title`と`preview`を空文字列で保持し、一覧・中央切替でも空のまま表示する。旧形式行など空のpreviewを持たない場合だけ、表示側の互換fallbackとして`新しい会話`を使う。draftはpreviewに使わない。一覧では最大2行、中央切替では同じ値を1行省略表示する。
 
 ## Validation boundary
 

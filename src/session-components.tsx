@@ -872,7 +872,6 @@ export type SessionChatScreenProps = {
   headerSplitter: ReactNode;
   isHeaderVisible: boolean;
   messageColumn: ReactNode;
-  concurrentTargetDock?: ReactNode;
   auxiliaryMessageColumn?: ReactNode;
   auxiliarySplitter?: ReactNode;
   isAuxiliaryVisible?: boolean;
@@ -925,7 +924,6 @@ export function SessionChatScreen({
   headerSplitter,
   isHeaderVisible,
   messageColumn,
-  concurrentTargetDock = null,
   auxiliaryMessageColumn = null,
   auxiliarySplitter = null,
   isAuxiliaryVisible = false,
@@ -1004,11 +1002,6 @@ export function SessionChatScreen({
           style={isAuxiliaryVisible ? { "--auxiliary-width-ratio": auxiliaryWidthRatio } as CSSProperties : undefined}
           hidden={mainContent !== undefined}
         >
-          {isAuxiliaryVisible ? (
-            <div className="concurrent-chat-target-dock-slot">
-              {concurrentTargetDock}
-            </div>
-          ) : null}
           {isAuxiliaryVisible ? (
             <div
               className="session-concurrent-chat-columns"
@@ -3530,6 +3523,7 @@ export type SessionActionDockCompactRowProps = {
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
   modeLabel?: string;
+  targetDock?: ReactNode;
   chatNotice?: string;
   showJumpToBottom: boolean;
   showMessageViewModeControls?: boolean;
@@ -3546,7 +3540,7 @@ export function SessionActionDockCompactRow({
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
-  modeLabel,
+  targetDock = null,
   chatNotice,
   showJumpToBottom,
   showMessageViewModeControls = false,
@@ -3558,8 +3552,7 @@ export function SessionActionDockCompactRow({
   onMessageViewModeChange = () => {},
 }: SessionActionDockCompactRowProps) {
   return (
-    <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}${modeLabel ? " has-mode-label" : ""}`}>
-      {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
+    <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}`}>
       {isRunning ? (
         <button
           className="session-action-dock-compact-progress session-action-dock-compact-progress-button"
@@ -3588,6 +3581,7 @@ export function SessionActionDockCompactRow({
         </button>
       )}
       <div className="session-action-dock-compact-actions">
+        {targetDock ? <div className="session-action-dock-target-slot">{targetDock}</div> : null}
         {isRunning && chatNotice ? (
           <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
         ) : null}
@@ -3683,6 +3677,7 @@ export type SessionComposerExpandedProps = {
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
   modeLabel?: string;
+  targetDock?: ReactNode;
   chatNotice?: string;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
@@ -3764,7 +3759,7 @@ export function SessionComposerExpanded({
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
-  modeLabel,
+  targetDock = null,
   chatNotice,
   composerBlocked,
   canSelectCustomAgent,
@@ -3870,7 +3865,7 @@ export function SessionComposerExpanded({
     showAdditionalDirectoryControls ||
     showMessageViewModeControls ||
     showJumpToBottom ||
-    !!modeLabel ||
+    !!targetDock ||
     !!chatNotice ||
     isRunning;
 
@@ -3878,7 +3873,6 @@ export function SessionComposerExpanded({
     <div className="composer">
       {showComposerToolbar ? (
         <div className="composer-attachments-toolbar">
-          {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
           {chatNotice ? (
             <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
           ) : null}
@@ -4017,6 +4011,7 @@ export function SessionComposerExpanded({
               </button>
             </div>
           ) : null}
+          {targetDock ? <div className="composer-target-dock-slot">{targetDock}</div> : null}
           {isRunning ? (
             <div className="composer-toolbar-progress">
               <PendingRunIndicator
