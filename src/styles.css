@@ -304,6 +304,7 @@ button:disabled {
 
 .session-header-dock-slot {
   grid-area: header;
+  overflow-x: auto;
 }
 
 .session-chat-layout > .session-dock-splitter.edge-top {
@@ -312,6 +313,8 @@ button:disabled {
 
 .session-left-pane-slot {
   grid-area: left-pane;
+  --session-region-min-width: 260px;
+  --session-region-min-height: 200px;
 }
 
 .session-chat-layout > .session-dock-splitter.edge-left {
@@ -328,6 +331,8 @@ button:disabled {
 
 .session-right-pane-slot {
   grid-area: right-pane;
+  --session-region-min-width: 360px;
+  --session-region-min-height: 200px;
 }
 
 .session-chat-layout > .session-dock-splitter.edge-bottom {
@@ -336,6 +341,7 @@ button:disabled {
 
 .session-action-dock-slot {
   grid-area: action-dock;
+  --session-region-min-height: 260px;
 }
 
 .session-chat-layout.is-header-visible {
@@ -4361,11 +4367,23 @@ button:disabled {
 }
 
 .session-message-stack {
+  --session-main-min-width: 360px;
+  --session-auxiliary-min-width: 360px;
+  --session-region-min-width: var(--session-main-min-width);
+  --session-region-min-height: 160px;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto auto;
   gap: 0;
   min-height: 0;
   min-width: 0;
+}
+
+.session-concurrent-chat-main {
+  --session-region-min-width: var(--session-main-min-width);
+}
+
+.session-concurrent-chat-auxiliary {
+  --session-region-min-width: var(--session-auxiliary-min-width);
 }
 
 .session-recovery-actions-slot {
@@ -4457,10 +4475,8 @@ button:disabled {
   overflow: hidden;
 }
 
-@media (min-width: 901px) {
-  .session-concurrent-chat-column.is-zero-width {
-    visibility: hidden;
-  }
+.session-concurrent-chat-columns:not(.is-single-chat) .session-concurrent-chat-column.is-zero-width {
+  visibility: hidden;
 }
 
 .concurrent-chat-column-content {
@@ -13207,19 +13223,17 @@ button:disabled {
   }
 }
 
-@media (max-width: 900px) {
-  .session-concurrent-chat-columns {
-    grid-template-columns: minmax(0, 1fr) !important;
-  }
+.session-concurrent-chat-columns.is-single-chat {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
 
-  .session-concurrent-chat-columns .concurrent-chat-splitter {
-    display: none;
-  }
+.session-concurrent-chat-columns.is-single-chat .concurrent-chat-splitter {
+  display: none;
+}
 
-  .session-central-surface.concurrent-target-main .session-concurrent-chat-auxiliary,
-  .session-central-surface.concurrent-target-auxiliary .session-concurrent-chat-main {
-    display: none;
-  }
+.session-central-surface.concurrent-target-main .is-single-chat .session-concurrent-chat-auxiliary,
+.session-central-surface.concurrent-target-auxiliary .is-single-chat .session-concurrent-chat-main {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

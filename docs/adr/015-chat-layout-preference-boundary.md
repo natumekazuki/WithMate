@@ -6,7 +6,7 @@
 
 ## Context
 
-共通 chat layout の Header、ActionDock、File Explorer、Context pane を、それぞれ対応する splitter から開閉できるようにする。左右paneは独立して同時表示できる。上下 dock と左右 pane のどちらを Window 全長へ通すかは、追加の切替ボタンではなく splitter 操作の軸で選べるようにする。
+共通 chat layout の Header、ActionDock、File Explorer、Context pane を、それぞれ対応する splitter から開閉できるようにする。左右paneは中央の作業領域を確保するため排他的に表示する。上下 dock と左右 pane のどちらを Window 全長へ通すかは、追加の切替ボタンではなく splitter 操作の軸で選べるようにする。
 
 表示設定は次に開く Window へ引き継ぐ必要がある一方、すでに開いている Window は作業中の local state と drag 済みサイズを維持し、別 Window の操作へ追従させない。また、一般 App Settings の全体保存が古い snapshot で layout preference を巻き戻さない境界が必要になる。
 
@@ -14,12 +14,12 @@
 
 - chat layout preference は `header`、`actionDock`、`sidePane`、`priority` の組として所有する
 - 既定値は Header が `hidden`、ActionDock が `compact`、side pane が `none`、priority が `side-pane-first` とする
-- side paneは `files | context | both | none` とし、左右同時表示を `both` で保存する。既存の単独表示設定もそのまま利用する
+- side paneは `files | context | none` とする。過去の `both` はContext paneへ正規化する
 - preference は一般 App Settings 更新と分離した専用更新境界で、操作対象の1項目だけを保存する
 - 新しく開く Agent / Companion / Auxiliary Window は利用可能な永続値を初期値として使い、既存 Window は後続の設定 snapshot へ追従しない
 - drag 済みの左右幅と ActionDock 高さは Window local state とし、永続化しない
 - title 編集、retry、picker、blocked feedback などによる強制表示は effective state として扱い、保存済み preference を変更しない
-- HeaderとActionDockの開閉仕様は維持する。左右splitterはclickで対象サイズを0にし、dragと矢印キーで0から再展開する。左右のサイズは独立し、一方の操作で他方を閉じない
+- HeaderとActionDockのclick開閉を維持する。左右splitterもclickで開閉し、一方を開くと他方を閉じる。閉じた領域からのdrag展開は廃止する。展開中のdragと矢印キーはUI領域側のCSSで定義した最小サイズをレイアウト側が読み取って制限する
 - 左右 splitter の pointer / click / keyboard 操作は `side-pane-first`、上下 splitter の操作は `dock-first` を選び、同じ操作で従来の開閉または resize も続行する
 - ActionDock が expanded から compact へ閉じた時は `side-pane-first` へ戻し、左右 pane が Window 全長を使える状態を保存する。初期設定の compact と、force reason が解消して compact になるだけの状態復帰はこの閉鎖操作に含めない
 - wide layout の `side-pane-first` では表示中のside pane と左右 splitter を Window 上端から下端まで通し、Header と ActionDock は中央列を占有する。`dock-first` では Header と ActionDock を全幅に通し、side pane は両者の間を占有する

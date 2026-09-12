@@ -124,20 +124,41 @@ export function ConcurrentChatSplitter({
 }: Pick<ConcurrentChatWindowProps, "widthRatio" | "onWidthRatioChange">) {
   const cleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => cleanupRef.current?.(), []);
+  const getRatioBounds = (splitter: HTMLButtonElement) => {
+    const parent = splitter.parentElement;
+    if (!parent) return null;
+    const width = parent.getBoundingClientRect().width - splitter.getBoundingClientRect().width;
+    if (width <= 0) return null;
+    const main = parent.querySelector<HTMLElement>(".session-concurrent-chat-main");
+    const auxiliary = parent.querySelector<HTMLElement>(".session-concurrent-chat-auxiliary");
+    const readMinimum = (element: HTMLElement | null) => {
+      const value = element ? Number.parseFloat(window.getComputedStyle(element).getPropertyValue("--session-region-min-width")) : Number.NaN;
+      return Number.isFinite(value) ? Math.max(0, value) : 0;
+    };
+    const minRatio = readMinimum(auxiliary) / width;
+    const maxRatio = 1 - readMinimum(main) / width;
+    if (minRatio > maxRatio) return null;
+    return { width, minRatio, maxRatio };
+  };
   const handlePointerDown: PointerEventHandler<HTMLButtonElement> = (event) => {
     if (event.button !== 0) return;
     const parent = event.currentTarget.parentElement;
     if (!parent) return;
     cleanupRef.current?.();
-    const width = parent.getBoundingClientRect().width - event.currentTarget.getBoundingClientRect().width;
+    const bounds = getRatioBounds(event.currentTarget);
+    if (!bounds || widthRatio <= 0) return;
+    const startingRatio = Math.min(bounds.maxRatio, Math.max(bounds.minRatio, widthRatio));
     const startX = event.clientX;
     const pointerId = event.pointerId;
     let dragged = false;
     const handleMove = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId || width <= 0) return;
+      if (moveEvent.pointerId !== pointerId) return;
       const delta = moveEvent.clientX - startX;
       if (Math.abs(delta) > 4) dragged = true;
-      if (dragged) onWidthRatioChange(clampAuxiliaryWidthRatio(widthRatio - delta / width));
+      if (dragged) {
+        const next = Math.min(bounds.maxRatio, Math.max(bounds.minRatio, startingRatio - delta / bounds.width));
+        onWidthRatioChange(next);
+      }
     };
     const cleanup = () => {
       window.removeEventListener("pointermove", handleMove);
@@ -160,15 +181,18 @@ export function ConcurrentChatSplitter({
       className="concurrent-chat-splitter"
       isPanelExpanded={widthRatio > 0}
       onPointerDown={handlePointerDown}
-      onTogglePanel={() => onWidthRatioChange(0)}
+      onTogglePanel={() => onWidthRatioChange(widthRatio > 0 ? 0 : 0.5)}
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        if (widthRatio <= 0) return;
         event.preventDefault();
-        onWidthRatioChange(clampAuxiliaryWidthRatio(widthRatio + (event.key === "ArrowLeft" ? 0.02 : -0.02)));
+        const bounds = getRatioBounds(event.currentTarget);
+        if (!bounds) return;
+        onWidthRatioChange(Math.min(bounds.maxRatio, Math.max(bounds.minRatio, widthRatio + (event.key === "ArrowLeft" ? 0.02 : -0.02))));
       }}
-      ariaLabel={widthRatio > 0 ? "Auxiliaryを折りたたむ" : "Auxiliaryの幅を調整"}
+      ariaLabel={widthRatio > 0 ? "Auxiliaryを折りたたむ" : "Auxiliaryを開く"}
       ariaControls="session-auxiliary-chat-pane"
-      title="クリックでAuxiliaryを折りたたみ、ドラッグでサイズを調整"
+      title="クリックでAuxiliaryを開閉し、展開中はドラッグまたは矢印キーでサイズを調整"
     />
   );
 }
@@ -617,7 +641,7 @@ export function ChatWindow({
                   && concurrentChats.target === "main",
                 messageViewMode,
               }}
-              enabled={concurrentChats.widthRatio < 1 || concurrentChats.target === "main"}
+              enabled
               api={concurrentChats.api}
               liveRun={concurrentChats.mainLiveRun}
               stateCache={conversationStateCacheRef.current}

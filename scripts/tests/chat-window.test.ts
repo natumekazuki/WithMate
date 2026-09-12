@@ -930,6 +930,98 @@ test("SessionChatScreen は dock 優先を layout class へ投影する", () => 
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "Concurrent chat columns は保存幅が最小領域を下回っても実幅に合わせて補正し、利用可能幅不足では単体表示へ切り替える"
+// oracle = { type = "contract", ref = "issue-710-concurrent-column-minimums" }
+// fault = "保存されたAuxiliary幅がMain/Auxiliaryの最小幅を侵食する、または両方を表示できない幅で通常レイアウトを維持する"
+// observable = "columnsのgridTemplateColumnsとis-single-chat class"
+// observation_boundary = "component-behavior"
+// scope = "SessionChatScreen concurrent columns"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionChatScreen はConcurrent columnsの実幅不足を補正する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const previousResizeObserver = globalThis.ResizeObserver;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  let resizeCallback: (() => void) | null = null;
+  class TestResizeObserver {
+    constructor(callback: () => void) { resizeCallback = callback; }
+    observe() {}
+    disconnect() {}
+  }
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  Object.defineProperty(dom.window, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(SessionChatScreen, {
+        mode: "agent",
+        header: null,
+        headerSplitter: null,
+        isHeaderVisible: true,
+        messageColumn: React.createElement("div", null, "Main"),
+        auxiliaryMessageColumn: React.createElement("div", null, "Auxiliary"),
+        auxiliarySplitter: React.createElement("button", { type: "button" }, "Splitter"),
+        isAuxiliaryVisible: true,
+        auxiliaryWidthRatio: 0.1,
+        concurrentTarget: "main",
+        actionDock: null,
+        actionDockSplitter: null,
+        isActionDockExpanded: true,
+        layoutPriority: "dock-first",
+        rightPane: null,
+        splitter: null,
+      }));
+    });
+    const columns = dom.window.document.querySelector<HTMLElement>(".session-concurrent-chat-columns");
+    assert.ok(columns);
+    const main = columns.querySelector<HTMLElement>(".session-concurrent-chat-main");
+    const auxiliary = columns.querySelector<HTMLElement>(".session-concurrent-chat-auxiliary");
+    assert.ok(main);
+    assert.ok(auxiliary);
+    main.style.setProperty("--session-region-min-width", "360px");
+    auxiliary.style.setProperty("--session-region-min-width", "360px");
+    columns.style.setProperty("--session-dock-splitter-size", "8px");
+    Object.defineProperty(columns, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ width: 800, height: 300, top: 0, left: 0, right: 800, bottom: 300 }),
+    });
+    await act(async () => resizeCallback?.());
+    assert.doesNotMatch(columns.style.gridTemplateColumns, /0\.1fr/);
+    assert.match(columns.style.gridTemplateColumns, /0\.45/);
+    Object.defineProperty(columns, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ width: 700, height: 300, top: 0, left: 0, right: 700, bottom: 300 }),
+    });
+    await act(async () => resizeCallback?.());
+    assert.ok(columns.classList.contains("is-single-chat"));
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Compact ActionDock は通常時の通知を維持しつつ不要な下書き表示を出さない"
 // oracle = { type = "contract", ref = "chat-action-dock" }
@@ -1173,9 +1265,9 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryの幅0でも列とsplitterを残し、ドラッグによる再展開導線を維持する"
+// claim = "Auxiliaryの幅0でも列とsplitterを残し、クリックで開く操作を提示する"
 // oracle = { type = "contract", ref = "issue-710-zero-width-auxiliary" }
-// fault = "Auxiliaryを幅0にすると列またはsplitterが消え、ドラッグだけでは再展開できない"
+// fault = "Auxiliaryを幅0にするとsplitterが消えるか開く操作として提示されず、再表示できない"
 // observable = "0frのgrid templateとsplitterのaria-expanded"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
@@ -1199,7 +1291,7 @@ test("ChatWindow はAuxiliaryを幅0で残しsplitterの再展開導線を表示
   }));
 
   assert.match(html, /0fr/);
-  assert.match(html, /aria-label="Auxiliaryの幅を調整"/);
+  assert.match(html, /aria-label="Auxiliaryを開く"/);
   assert.match(html, /aria-expanded="false"/);
 });
 
@@ -1411,10 +1503,10 @@ test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Concurrent splitter のクリックは幅0への縮小だけを行い、ドラッグは幅変更だけを行う"
+// claim = "Concurrent splitter のクリックは幅0への縮小だけを行い、保存幅が最小未満でもドラッグ開始位置を実幅へ補正する"
 // oracle = { type = "contract", ref = "issue-710-ui-shell" }
-// fault = "splitterをドラッグして幅を変えた直後に幅0へ縮小される、またはクリックで幅0にならない"
-// observable = "onWidthRatioChangeの値"
+// fault = "splitterをドラッグして幅を変えた直後に幅0へ縮小される、最小幅を割り込む、またはクリックで幅0にならない"
+// observable = "Main/AuxiliaryのCSS最小幅を反映したonWidthRatioChangeの値"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -1441,16 +1533,26 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement("div", { style: { width: "1000px" } }, React.createElement(ConcurrentChatSplitter, {
-        widthRatio: 0.3,
-        onWidthRatioChange: (ratio: number) => ratios.push(ratio),
-      })));
+      root.render(React.createElement("div", { style: { width: "1000px" } },
+        React.createElement("div", { className: "session-concurrent-chat-main" }),
+        React.createElement(ConcurrentChatSplitter, {
+          widthRatio: 0.1,
+          onWidthRatioChange: (ratio: number) => ratios.push(ratio),
+        }),
+        React.createElement("div", { className: "session-concurrent-chat-auxiliary" }),
+      ));
     });
     const splitter = dom.window.document.querySelector<HTMLButtonElement>(".concurrent-chat-splitter");
     assert.ok(splitter);
+    dom.window.document.querySelector<HTMLElement>(".session-concurrent-chat-main")?.style.setProperty("--session-region-min-width", "360px");
+    dom.window.document.querySelector<HTMLElement>(".session-concurrent-chat-auxiliary")?.style.setProperty("--session-region-min-width", "360px");
     Object.defineProperty(splitter.parentElement, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ width: 1000, height: 300, top: 0, left: 0, right: 1000, bottom: 300 }),
+    });
+    Object.defineProperty(splitter, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ width: 20, height: 300, top: 0, left: 500, right: 520, bottom: 300 }),
     });
     const pointerEvent = (type: string, clientX: number) => {
       const event = new dom.window.Event(type, { bubbles: true });
@@ -1467,7 +1569,20 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
       dom.window.dispatchEvent(pointerEvent("pointerup", 510));
     });
     assert.ok(ratios.length > 0);
-    assert.ok(Math.abs((ratios.at(-1) ?? 0) - 0.29) < 0.000001);
+    assert.equal(ratios.at(-1), 360 / 980);
+    await act(async () => {
+      splitter.dispatchEvent(pointerEvent("pointerdown", 510));
+      dom.window.dispatchEvent(pointerEvent("pointermove", 490));
+      dom.window.dispatchEvent(pointerEvent("pointerup", 490));
+    });
+    assert.ok(Math.abs(ratios.at(-1)! - 380 / 980) < 1e-9);
+
+    await act(async () => {
+      splitter.dispatchEvent(pointerEvent("pointerdown", 510));
+      dom.window.dispatchEvent(pointerEvent("pointermove", 1010));
+      dom.window.dispatchEvent(pointerEvent("pointerup", 1010));
+    });
+    assert.equal(ratios.at(-1), 360 / 980);
     await act(async () => {
       splitter.dispatchEvent(pointerEvent("pointerdown", 510));
       dom.window.dispatchEvent(pointerEvent("pointerup", 510));
@@ -1488,15 +1603,15 @@ test("ConcurrentChatSplitter は drag と collapse click を分離する", async
 
 // @test-value v2
 // kind = "contract"
-// claim = "幅0のConcurrent splitterはクリックを要求せず、pointer dragとArrowLeftで再表示し、ArrowRightで0へ戻せる"
+// claim = "幅0のConcurrent splitterはpointer dragやキーでは開かず、クリックだけで既定幅へ再表示する"
 // oracle = { type = "contract", ref = "issue-710-zero-width-splitter-drag" }
-// fault = "幅0のAuxiliaryをドラッグまたはArrowLeftで再表示できない、またはArrowRightで下限0を守れない"
-// observable = "onWidthRatioChangeのpointer drag／keyboard操作による比率"
+// fault = "幅0のAuxiliaryがpointer dragやキーで意図せず開く、またはクリックで既定幅へ戻らない"
+// observable = "幅0からのpointer drag／keyboard操作／clickによる比率"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
 // @end-test-value
-test("ConcurrentChatSplitter は幅0の drag で再展開を開始する", async () => {
+test("ConcurrentChatSplitter は幅0をclickだけで既定幅へ戻す", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
@@ -1515,13 +1630,19 @@ test("ConcurrentChatSplitter は幅0の drag で再展開を開始する", async
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement("div", { style: { width: "1000px" } }, React.createElement(ConcurrentChatSplitter, {
-        widthRatio: 0,
-        onWidthRatioChange: (ratio: number) => ratios.push(ratio),
-      })));
+      root.render(React.createElement("div", { style: { width: "1000px" } },
+        React.createElement("div", { className: "session-concurrent-chat-main" }),
+        React.createElement(ConcurrentChatSplitter, {
+          widthRatio: 0,
+          onWidthRatioChange: (ratio: number) => ratios.push(ratio),
+        }),
+        React.createElement("div", { className: "session-concurrent-chat-auxiliary" }),
+      ));
     });
     const splitter = dom.window.document.querySelector<HTMLButtonElement>(".concurrent-chat-splitter");
     assert.ok(splitter);
+    dom.window.document.querySelector<HTMLElement>(".session-concurrent-chat-main")?.style.setProperty("--session-region-min-width", "360px");
+    dom.window.document.querySelector<HTMLElement>(".session-concurrent-chat-auxiliary")?.style.setProperty("--session-region-min-width", "360px");
     Object.defineProperty(splitter.parentElement, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ width: 1000, height: 300, top: 0, left: 0, right: 1000, bottom: 300 }),
@@ -1535,16 +1656,16 @@ test("ConcurrentChatSplitter は幅0の drag で再展開を開始する", async
       });
       return event;
     };
-    await act(async () => splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })));
-    assert.equal(ratios.at(-1), 0.02);
-    await act(async () => splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true })));
-    assert.equal(ratios.at(-1), 0);
     await act(async () => {
       splitter.dispatchEvent(pointerEvent("pointerdown", 500));
       dom.window.dispatchEvent(pointerEvent("pointermove", 480));
       dom.window.dispatchEvent(pointerEvent("pointerup", 480));
     });
-    assert.ok(Math.abs((ratios.at(-1) ?? 0) - 0.02) < 0.000001);
+    assert.equal(ratios.length, 0);
+    await act(async () => splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })));
+    assert.equal(ratios.length, 0);
+    await act(async () => splitter.click());
+    assert.equal(ratios.at(-1), 0.5);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

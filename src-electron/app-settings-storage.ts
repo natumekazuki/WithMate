@@ -7,7 +7,7 @@ import {
   type ChatLayoutPreferenceUpdate,
 } from "../src/chat/chat-layout-preference.js";
 import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../src/provider-settings-state.js";
-import { isSessionSidePane, type SessionSidePane } from "../src/session-side-pane.js";
+import { normalizeSessionSidePane, type SessionSidePane } from "../src/session-side-pane.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
@@ -282,7 +282,7 @@ export class AppSettingsStorage {
         continue;
       }
       if (row.setting_key === SESSION_SIDE_PANE_KEY) {
-        settings.chatLayoutPreference.sidePane = isSessionSidePane(row.setting_value) ? row.setting_value : "none";
+        settings.chatLayoutPreference.sidePane = normalizeSessionSidePane(row.setting_value);
         continue;
       }
       if (row.setting_key === SESSION_LAYOUT_PRIORITY_KEY) {

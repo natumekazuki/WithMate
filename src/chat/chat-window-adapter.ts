@@ -421,8 +421,8 @@ export function buildLiveSessionSplitterProps(
     isPanelExpanded: input.isContextRailVisible,
     onPointerDown: input.onStartContextRailResize,
     onKeyDown: input.onKeyDownContextRailResize,
-    title: "クリックで右ペインを折りたたみ、ドラッグまたは矢印キーでサイズを調整",
-    ariaLabel: input.isContextRailVisible ? "右ペインを折りたたむ" : "右ペインのサイズを調整",
+    title: "クリックで右ペインを開閉し、展開中はドラッグまたは矢印キーでサイズを調整",
+    ariaLabel: input.isContextRailVisible ? "右ペインを折りたたむ" : "右ペインを開く",
     onTogglePanel: input.onToggleContextRailVisibility,
   };
 }

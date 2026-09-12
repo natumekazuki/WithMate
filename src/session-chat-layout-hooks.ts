@@ -9,7 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import type { SessionSidePane } from "./session-side-pane.js";
+import { normalizeSessionSidePane, type SessionSidePane } from "./session-side-pane.js";
 import type {
   ChatActionDockMode,
   ChatHeaderVisibility,
@@ -25,7 +25,6 @@ const SESSION_HORIZONTAL_SPLITTER_SIZE = 20;
 const SESSION_HEADER_DOCK_DEFAULT_HEIGHT = 64;
 const SESSION_ACTION_DOCK_DEFAULT_HEIGHT = 320;
 const SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT = 54;
-const SESSION_ACTION_DOCK_MIN_HEIGHT = 260;
 const SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO = 0.95;
 const SESSION_CENTRAL_SURFACE_MIN_HEIGHT_RATIO = 0.05;
 const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 40;
@@ -46,18 +45,30 @@ function clampSidePaneWidth(
   requestedWidth: number,
   workbenchWidth: number,
   oppositeWidth: number,
+  paneMinimum: number,
+  centralMinimum: number,
 ): number {
   const maxWidth = Math.max(
     0,
     workbenchWidth
       - Math.max(0, oppositeWidth)
+      - Math.max(0, centralMinimum)
       - SESSION_HORIZONTAL_SPLITTER_SIZE * 2,
   );
-  return Math.min(maxWidth, Math.max(0, requestedWidth));
+  return Math.min(maxWidth, Math.max(0, Math.max(paneMinimum, requestedWidth)));
 }
 
 function isNarrowSessionLayoutViewport(): boolean {
   return window.innerWidth < SESSION_LAYOUT_VIEWPORT_BREAKPOINT;
+}
+
+function readSessionRegionMinimum(layout: HTMLElement, selector: string, property: string): number {
+  const element = layout.querySelector<HTMLElement>(selector);
+  if (!element) {
+    return 0;
+  }
+  const value = Number.parseFloat(window.getComputedStyle(element).getPropertyValue(property));
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
 function measureSidePaneAvailableSize(layout: HTMLElement): number {
@@ -70,6 +81,22 @@ function measureSidePaneAvailableSize(layout: HTMLElement): number {
   const actionDockHeight = layout.querySelector<HTMLElement>(".session-action-dock-slot")?.getBoundingClientRect().height ?? 0;
   return Math.max(0, measureSessionVerticalDockLayoutBounds(layout).height
     - headerHeight - actionDockHeight - SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT);
+}
+
+function measureSidePaneMinimums(layout: HTMLElement, sidePane: "files" | "context") {
+  const isNarrow = isNarrowSessionLayoutViewport();
+  const paneSelector = sidePane === "files" ? ".session-left-pane-slot" : ".session-right-pane-slot";
+  const paneMinimum = readSessionRegionMinimum(
+    layout,
+    paneSelector,
+    isNarrow ? "--session-region-min-height" : "--session-region-min-width",
+  );
+  const centralMinimum = readSessionRegionMinimum(
+    layout,
+    ".session-message-stack",
+    isNarrow ? "--session-region-min-height" : "--session-region-min-width",
+  );
+  return { paneMinimum, centralMinimum };
 }
 
 export function useChatLayoutPresentation(input: {
@@ -257,7 +284,6 @@ export function useSessionVerticalDockResize(input: {
   ownerKey: string | null;
   isHeaderExpanded: boolean;
   isActionDockExpanded: boolean;
-  onExpandActionDock?: () => void;
 }) {
   const [actionDockHeight, setActionDockHeight] = useState(SESSION_ACTION_DOCK_DEFAULT_HEIGHT);
   const [actionDockCompactHeight, setActionDockCompactHeight] = useState(
@@ -294,7 +320,7 @@ export function useSessionVerticalDockResize(input: {
     const nextActionDockHeight = clampSessionVerticalDockHeight({
       requestedHeight: actionDockHeightRef.current,
       layoutHeight,
-      minHeight: Math.min(SESSION_ACTION_DOCK_MIN_HEIGHT, actionDockHeightRef.current),
+      minHeight: readSessionRegionMinimum(layout, ".session-action-dock-slot", "--session-region-min-height"),
       maxHeightRatio: SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO,
       oppositeDockHeight: visibleHeaderHeight,
     });
@@ -360,9 +386,6 @@ export function useSessionVerticalDockResize(input: {
           return;
         }
         gesture.dragged = true;
-        if (!input.isActionDockExpanded) {
-          input.onExpandActionDock?.();
-        }
       }
 
       const bounds = measureSessionVerticalDockLayoutBounds(layout);
@@ -370,7 +393,7 @@ export function useSessionVerticalDockResize(input: {
       const nextHeight = clampSessionVerticalDockHeight({
         requestedHeight: gesture.startHeight + gesture.startY - event.clientY,
         layoutHeight: bounds.height,
-        minHeight: Math.min(SESSION_ACTION_DOCK_MIN_HEIGHT, gesture.startHeight),
+        minHeight: readSessionRegionMinimum(layout, ".session-action-dock-slot", "--session-region-min-height"),
         maxHeightRatio: SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO,
         oppositeDockHeight: oppositeHeight,
       });
@@ -410,23 +433,21 @@ export function useSessionVerticalDockResize(input: {
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [input.isActionDockExpanded, input.isHeaderExpanded, input.onExpandActionDock, isActionDockResizing]);
+  }, [input.isActionDockExpanded, input.isHeaderExpanded, isActionDockResizing]);
 
   const handleStartActionDockResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 || !sessionDockLayoutRef.current) {
+    if (event.button !== 0 || !sessionDockLayoutRef.current || !input.isActionDockExpanded) {
       return;
     }
     event.preventDefault();
     pointerGestureRef.current = {
       pointerId: event.pointerId,
       startY: event.clientY,
-      startHeight: input.isActionDockExpanded
-        ? actionDockHeightRef.current
-        : actionDockCompactHeight,
+      startHeight: actionDockHeightRef.current,
       dragged: false,
     };
     setIsActionDockResizing(true);
-  }, [actionDockCompactHeight, input.isActionDockExpanded]);
+  }, [input.isActionDockExpanded]);
   const handleHeaderSplitterClick = useCallback((toggle: () => void) => {
     toggle();
   }, []);
@@ -741,8 +762,9 @@ export type UseSessionSidePanesArgs = {
 };
 
 function resolveAvailableSidePane(sidePane: SessionSidePane, filesPaneEnabled: boolean): SessionSidePane {
+  sidePane = normalizeSessionSidePane(sidePane);
   if (filesPaneEnabled || sidePane !== "files") {
-    return sidePane === "both" && !filesPaneEnabled ? "context" : sidePane;
+    return sidePane;
   }
   return "none";
 }
@@ -754,16 +776,21 @@ export function useSessionSidePanes({
   initialSidePane = null,
   onSidePaneChange,
 }: UseSessionSidePanesArgs) {
-  const resolvedInitialSidePane = resolveAvailableSidePane(initialSidePane ?? "none", filesPaneEnabled);
-  const initialContextVisible = resolvedInitialSidePane === "context" || resolvedInitialSidePane === "both";
-  const initialFilesVisible = (resolvedInitialSidePane === "files" || resolvedInitialSidePane === "both") && filesPaneEnabled;
+  const requestedInitialSidePane = initialSidePane as string | null;
+  const resolvedInitialSidePane = resolveAvailableSidePane(
+    normalizeSessionSidePane(requestedInitialSidePane),
+    filesPaneEnabled,
+  );
+  const initialContextVisible = resolvedInitialSidePane === "context";
+  const initialFilesVisible = resolvedInitialSidePane === "files" && filesPaneEnabled;
   const [contextRailWidth, setContextRailWidth] = useState(
     initialContextVisible ? SESSION_CONTEXT_RAIL_DEFAULT_WIDTH : 0,
   );
   const [fileExplorerWidth, setFileExplorerWidth] = useState(
     initialFilesVisible ? SESSION_FILE_EXPLORER_DEFAULT_WIDTH : 0,
   );
-  const [resizingSidePane, setResizingSidePane] = useState<Exclude<SessionSidePane, "none" | "both"> | null>(null);
+  const [activeSidePane, setActiveSidePane] = useState<SessionSidePane>(resolvedInitialSidePane);
+  const [resizingSidePane, setResizingSidePane] = useState<Exclude<SessionSidePane, "none"> | null>(null);
   const sessionWorkbenchRef = useRef<HTMLDivElement | null>(null);
   const contextRailWidthRef = useRef(initialContextVisible ? SESSION_CONTEXT_RAIL_DEFAULT_WIDTH : 0);
   const fileExplorerWidthRef = useRef(initialFilesVisible ? SESSION_FILE_EXPLORER_DEFAULT_WIDTH : 0);
@@ -778,15 +805,15 @@ export function useSessionSidePanes({
   });
   const lastSidePaneDragEndAtRef = useRef({ context: 0, files: 0 });
 
-  const isContextRailVisible = contextRailWidth > 0;
-  const isFilesPaneVisible = filesPaneEnabled && fileExplorerWidth > 0;
-  const activeSidePane: SessionSidePane = isContextRailVisible
-    ? isFilesPaneVisible ? "both" : "context"
-    : isFilesPaneVisible ? "files" : "none";
+  const activeSidePaneRef = useRef<SessionSidePane>(resolvedInitialSidePane);
+  const isContextRailVisible = activeSidePane === "context";
+  const isFilesPaneVisible = filesPaneEnabled && activeSidePane === "files";
   const reportedSidePaneRef = useRef<SessionSidePane>(activeSidePane);
 
   const notifySidePaneVisibility = useCallback((context: boolean, files: boolean) => {
-    const nextSidePane = context ? files ? "both" : "context" : files ? "files" : "none";
+    const nextSidePane = context ? "context" : files ? "files" : "none";
+    activeSidePaneRef.current = nextSidePane;
+    setActiveSidePane(nextSidePane);
     if (reportedSidePaneRef.current === nextSidePane) {
       return;
     }
@@ -812,17 +839,22 @@ export function useSessionSidePanes({
       return;
     }
 
-    const nextSidePane = resolveAvailableSidePane(initialSidePane, filesPaneEnabled);
-    const nextContextVisible = nextSidePane === "context" || nextSidePane === "both";
-    const nextFilesVisible = nextSidePane === "files" || nextSidePane === "both";
-    const nextContextWidth = nextContextVisible ? contextRailWidthRef.current || SESSION_CONTEXT_RAIL_DEFAULT_WIDTH : 0;
+    const nextSidePane = resolveAvailableSidePane(
+      normalizeSessionSidePane(initialSidePane),
+      filesPaneEnabled,
+    );
+    const nextContextVisible = nextSidePane === "context";
+    const nextFilesVisible = nextSidePane === "files";
+    const nextContextWidth = nextContextVisible ? contextRailWidthRef.current || SESSION_CONTEXT_RAIL_DEFAULT_WIDTH : contextRailWidthRef.current;
     const nextFilesWidth = nextFilesVisible && filesPaneEnabled
       ? fileExplorerWidthRef.current || SESSION_FILE_EXPLORER_DEFAULT_WIDTH
-      : 0;
+      : fileExplorerWidthRef.current;
     contextRailWidthRef.current = nextContextWidth;
     fileExplorerWidthRef.current = nextFilesWidth;
     setContextRailWidth(nextContextWidth);
     setFileExplorerWidth(nextFilesWidth);
+    activeSidePaneRef.current = nextSidePane;
+    setActiveSidePane(nextSidePane);
     reportedSidePaneRef.current = nextSidePane;
   }, [filesPaneEnabled, initialSidePane, notifySidePaneVisibility]);
 
@@ -848,15 +880,21 @@ export function useSessionSidePanes({
       if (workbenchWidth <= 0) {
         return;
       }
+      const contextMinimums = measureSidePaneMinimums(workbenchElement, "context");
+      const filesMinimums = measureSidePaneMinimums(workbenchElement, "files");
       const nextContextWidth = clampSidePaneWidth(
         contextRailWidthRef.current,
         workbenchWidth,
-        fileExplorerWidthRef.current,
+        activeSidePaneRef.current === "files" ? fileExplorerWidthRef.current : 0,
+        contextMinimums.paneMinimum,
+        contextMinimums.centralMinimum,
       );
       const nextFileExplorerWidth = clampSidePaneWidth(
         fileExplorerWidthRef.current,
         workbenchWidth,
-        nextContextWidth,
+        activeSidePaneRef.current === "context" ? nextContextWidth : 0,
+        filesMinimums.paneMinimum,
+        filesMinimums.centralMinimum,
       );
       contextRailWidthRef.current = nextContextWidth;
       fileExplorerWidthRef.current = nextFileExplorerWidth;
@@ -889,9 +927,10 @@ export function useSessionSidePanes({
 
       const isNarrow = isNarrowSessionLayoutViewport();
       const oppositeWidth = resizingSidePane === "files"
-        ? contextRailWidthRef.current
-        : fileExplorerWidthRef.current;
+        ? 0
+        : 0;
       const usableSize = measureSidePaneAvailableSize(workbenchElement);
+      const minimums = measureSidePaneMinimums(workbenchElement, resizingSidePane);
 
       if (!gesture.dragged) {
         const pointerDelta = isNarrow ? event.clientY - gesture.startY : event.clientX - gesture.startX;
@@ -913,6 +952,8 @@ export function useSessionSidePanes({
         requestedWidth,
         usableSize,
         oppositeWidth,
+        minimums.paneMinimum,
+        minimums.centralMinimum,
       );
       if (resizingSidePane === "files") {
         fileExplorerWidthRef.current = nextWidth;
@@ -921,10 +962,7 @@ export function useSessionSidePanes({
         contextRailWidthRef.current = nextWidth;
         setContextRailWidth(nextWidth);
       }
-      notifySidePaneVisibility(
-        resizingSidePane === "context" ? nextWidth > 0 : contextRailWidthRef.current > 0,
-        resizingSidePane === "files" ? nextWidth > 0 : fileExplorerWidthRef.current > 0,
-      );
+      notifySidePaneVisibility(resizingSidePane === "context", resizingSidePane === "files");
     };
 
     const handlePointerEnd = (event: PointerEvent) => {
@@ -960,7 +998,7 @@ export function useSessionSidePanes({
   }, [enabled, notifySidePaneVisibility, resizingSidePane]);
 
   const startSidePaneResize = useCallback((
-    sidePane: Exclude<SessionSidePane, "none" | "both">,
+    sidePane: Exclude<SessionSidePane, "none">,
     event: ReactPointerEvent<HTMLButtonElement>,
   ) => {
     const workbenchElement = sessionWorkbenchRef.current;
@@ -968,6 +1006,7 @@ export function useSessionSidePanes({
       !enabled
       || event.button !== 0
       || !workbenchElement
+      || activeSidePaneRef.current !== sidePane
     ) {
       return;
     }
@@ -1000,7 +1039,7 @@ export function useSessionSidePanes({
     const validKey = isNarrow
       ? event.key === "ArrowUp" || event.key === "ArrowDown"
       : event.key === "ArrowLeft" || event.key === "ArrowRight";
-    if (!enabled || !validKey) {
+    if (!enabled || !isContextRailVisible || !validKey) {
       return;
     }
     event.preventDefault();
@@ -1011,25 +1050,28 @@ export function useSessionSidePanes({
     if (!workbenchElement) {
       return;
     }
-    const oppositeWidth = fileExplorerWidthRef.current;
+    const oppositeWidth = 0;
     const availableSize = measureSidePaneAvailableSize(workbenchElement);
+    const minimums = measureSidePaneMinimums(workbenchElement, "context");
     hasInteractedWithSidePaneRef.current = true;
     const nextWidth = clampSidePaneWidth(
       contextRailWidthRef.current + direction * 10,
       availableSize,
       oppositeWidth,
+      minimums.paneMinimum,
+      minimums.centralMinimum,
     );
     contextRailWidthRef.current = nextWidth;
     setContextRailWidth(nextWidth);
-    notifySidePaneVisibility(nextWidth > 0, fileExplorerWidthRef.current > 0);
-  }, [enabled, filesPaneEnabled, notifySidePaneVisibility]);
+    notifySidePaneVisibility(true, false);
+  }, [enabled, isContextRailVisible, notifySidePaneVisibility]);
 
   const handleKeyDownFilesPaneResize = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
     const isNarrow = isNarrowSessionLayoutViewport();
     const validKey = isNarrow
       ? event.key === "ArrowUp" || event.key === "ArrowDown"
       : event.key === "ArrowLeft" || event.key === "ArrowRight";
-    if (!enabled || !filesPaneEnabled || !validKey) {
+    if (!enabled || !filesPaneEnabled || !isFilesPaneVisible || !validKey) {
       return;
     }
     event.preventDefault();
@@ -1040,18 +1082,21 @@ export function useSessionSidePanes({
     if (!workbenchElement) {
       return;
     }
-    const oppositeWidth = contextRailWidthRef.current;
+    const oppositeWidth = 0;
     const availableSize = measureSidePaneAvailableSize(workbenchElement);
+    const minimums = measureSidePaneMinimums(workbenchElement, "files");
     hasInteractedWithSidePaneRef.current = true;
     const nextWidth = clampSidePaneWidth(
       fileExplorerWidthRef.current + direction * 10,
       availableSize,
       oppositeWidth,
+      minimums.paneMinimum,
+      minimums.centralMinimum,
     );
     fileExplorerWidthRef.current = nextWidth;
     setFileExplorerWidth(nextWidth);
-    notifySidePaneVisibility(contextRailWidthRef.current > 0, nextWidth > 0);
-  }, [enabled, filesPaneEnabled, notifySidePaneVisibility]);
+    notifySidePaneVisibility(false, true);
+  }, [enabled, filesPaneEnabled, isFilesPaneVisible, notifySidePaneVisibility]);
 
   const handleCollapseContextRail = useCallback(() => {
     if (
@@ -1065,8 +1110,34 @@ export function useSessionSidePanes({
     hasInteractedWithSidePaneRef.current = true;
     contextRailWidthRef.current = 0;
     setContextRailWidth(0);
-    notifySidePaneVisibility(false, fileExplorerWidthRef.current > 0);
+    notifySidePaneVisibility(false, false);
   }, [enabled, filesPaneEnabled, notifySidePaneVisibility]);
+
+  const handleToggleContextRailVisibility = useCallback(() => {
+    if (!enabled) return;
+    if (activeSidePaneRef.current === "context") {
+      handleCollapseContextRail();
+      return;
+    }
+    setResizingSidePane(null);
+    hasInteractedWithSidePaneRef.current = true;
+    const workbenchElement = sessionWorkbenchRef.current;
+    const minimums = workbenchElement ? measureSidePaneMinimums(workbenchElement, "context") : { paneMinimum: 0, centralMinimum: 0 };
+    const width = workbenchElement
+      ? clampSidePaneWidth(
+        contextRailWidthRef.current || SESSION_CONTEXT_RAIL_DEFAULT_WIDTH,
+        measureSidePaneAvailableSize(workbenchElement),
+        0,
+        minimums.paneMinimum,
+        minimums.centralMinimum,
+      )
+      : contextRailWidthRef.current || SESSION_CONTEXT_RAIL_DEFAULT_WIDTH;
+    contextRailWidthRef.current = width;
+    setContextRailWidth(width);
+    fileExplorerWidthRef.current = 0;
+    setFileExplorerWidth(0);
+    notifySidePaneVisibility(true, false);
+  }, [enabled, handleCollapseContextRail, notifySidePaneVisibility]);
 
   const handleShowContextRail = useCallback(() => {
     if (!enabled || isContextRailVisible) {
@@ -1077,14 +1148,19 @@ export function useSessionSidePanes({
     const workbenchElement = sessionWorkbenchRef.current;
     if (!workbenchElement) return;
     const workbenchWidth = measureSidePaneAvailableSize(workbenchElement);
+    const minimums = measureSidePaneMinimums(workbenchElement, "context");
     const nextWidth = clampSidePaneWidth(
       contextRailWidthRef.current || SESSION_CONTEXT_RAIL_DEFAULT_WIDTH,
       workbenchWidth,
-      fileExplorerWidthRef.current,
+      0,
+      minimums.paneMinimum,
+      minimums.centralMinimum,
     );
     contextRailWidthRef.current = nextWidth;
     setContextRailWidth(nextWidth);
-    notifySidePaneVisibility(nextWidth > 0, fileExplorerWidthRef.current > 0);
+    fileExplorerWidthRef.current = 0;
+    setFileExplorerWidth(0);
+    notifySidePaneVisibility(true, false);
   }, [enabled, isContextRailVisible, notifySidePaneVisibility]);
 
   const handleCollapseFilesPane = useCallback(() => {
@@ -1103,8 +1179,34 @@ export function useSessionSidePanes({
     hasInteractedWithSidePaneRef.current = true;
     fileExplorerWidthRef.current = 0;
     setFileExplorerWidth(0);
-    notifySidePaneVisibility(contextRailWidthRef.current > 0, false);
+    notifySidePaneVisibility(false, false);
   }, [enabled, filesPaneEnabled, notifySidePaneVisibility]);
+
+  const handleToggleFilesPaneVisibility = useCallback(() => {
+    if (!enabled || !filesPaneEnabled) return;
+    if (activeSidePaneRef.current === "files") {
+      handleCollapseFilesPane();
+      return;
+    }
+    setResizingSidePane(null);
+    hasInteractedWithSidePaneRef.current = true;
+    const workbenchElement = sessionWorkbenchRef.current;
+    const minimums = workbenchElement ? measureSidePaneMinimums(workbenchElement, "files") : { paneMinimum: 0, centralMinimum: 0 };
+    const width = workbenchElement
+      ? clampSidePaneWidth(
+        fileExplorerWidthRef.current || SESSION_FILE_EXPLORER_DEFAULT_WIDTH,
+        measureSidePaneAvailableSize(workbenchElement),
+        0,
+        minimums.paneMinimum,
+        minimums.centralMinimum,
+      )
+      : fileExplorerWidthRef.current || SESSION_FILE_EXPLORER_DEFAULT_WIDTH;
+    fileExplorerWidthRef.current = width;
+    setFileExplorerWidth(width);
+    contextRailWidthRef.current = 0;
+    setContextRailWidth(0);
+    notifySidePaneVisibility(false, true);
+  }, [enabled, filesPaneEnabled, handleCollapseFilesPane, notifySidePaneVisibility]);
 
   const sessionWorkbenchStyle = useMemo(
     () => ({
@@ -1127,7 +1229,7 @@ export function useSessionSidePanes({
     handleKeyDownContextRailResize,
     handleKeyDownFilesPaneResize,
     handleShowContextRail,
-    handleCollapseContextRail,
-    handleCollapseFilesPane,
+    handleToggleContextRailVisibility,
+    handleToggleFilesPaneVisibility,
   };
 }

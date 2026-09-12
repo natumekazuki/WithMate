@@ -193,6 +193,7 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
         },
         "data-testid": "layout",
       },
+      React.createElement("div", { className: "session-action-dock-slot", style: { "--session-region-min-height": "260px" } }),
       React.createElement("button", {
         type: "button",
         onPointerDown: handleStartActionDockResize,
@@ -242,115 +243,6 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
     Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-  }
-});
-
-// @test-value v2
-// kind = "invariant"
-// claim = "閉じたActionDockを微小にドラッグしてもcompact高から連続して広がり、展開後の次の微小ドラッグで固定最小高へ跳ねない"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session dock layout" }
-// fault = "閉じたActionDockのドラッグを絶対座標と固定260px最小高で計算して、初回または次回の移動で大きく跳ねる"
-// observable = "session dock layoutのaction dock height styleと展開状態"
-// observation_boundary = "component-behavior"
-// scope = "useSessionVerticalDockResize"
-// lifecycle = "permanent"
-// impact = "ActionDockの微小なドラッグを意図した移動量のまま扱い、サイズ変更の連続性を保つ"
-// distinction = "既存の展開中resize検証は固定最小高を確認するが、閉じた状態の開始高と展開後の再ドラッグを観測しない"
-// @end-test-value
-test("閉じたActionDockの微小ドラッグはcompact高から連続し、再ドラッグで最小高へ跳ねない", async () => {
-  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
-    .IS_REACT_ACT_ENVIRONMENT;
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  const previousHTMLElement = globalThis.HTMLElement;
-  const previousNode = globalThis.Node;
-  const previousNavigator = globalThis.navigator;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    pretendToBeVisual: true,
-  });
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
-
-  let root: Root | null = null;
-
-  function Harness() {
-    const [isExpanded, setIsExpanded] = React.useState(false);
-    const {
-      sessionDockLayoutRef,
-      sessionDockLayoutStyle,
-      handleStartActionDockResize,
-    } = useSessionVerticalDockResize({
-      ownerKey: "session-1",
-      isHeaderExpanded: false,
-      isActionDockExpanded: isExpanded,
-      onExpandActionDock: () => setIsExpanded(true),
-    });
-    return React.createElement(
-      "div",
-      {
-        ref: sessionDockLayoutRef,
-        style: sessionDockLayoutStyle,
-        "data-testid": "layout",
-      },
-      React.createElement("button", {
-        type: "button",
-        onPointerDown: handleStartActionDockResize,
-        "data-testid": "splitter",
-      }),
-      React.createElement("output", { "data-testid": "expanded" }, isExpanded ? "expanded" : "compact"),
-    );
-  }
-
-  try {
-    await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(Harness));
-    });
-    const layout = dom.window.document.querySelector<HTMLElement>("[data-testid=\"layout\"]");
-    const splitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"splitter\"]");
-    const expanded = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"expanded\"]");
-    assert.ok(layout);
-    assert.ok(splitter);
-    assert.ok(expanded);
-    layout.getBoundingClientRect = () => ({
-      x: 0,
-      y: 0,
-      top: 0,
-      right: 1000,
-      bottom: 1000,
-      left: 0,
-      width: 1000,
-      height: 1000,
-      toJSON: () => ({}),
-    });
-
-    await act(async () => dom.window.dispatchEvent(new dom.window.Event("resize")));
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 500));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 490));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "64px");
-    assert.equal(expanded.textContent, "expanded");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 490));
-
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 500));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 501));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "64px");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 501));
-  } finally {
-    if (root) {
-      await act(async () => root?.unmount());
-    }
-    dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-      previousActEnvironment;
   }
 });
 
@@ -753,265 +645,110 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "左右ペインは排他せず、幅0まで縮小した後も開始位置からの移動量で連続的に再展開できる"
+// claim = "左右ペインはクリックで排他的に開閉し、展開中のドラッグ・キー操作は領域の最小サイズを守る"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session dock layout" }
-// fault = "閉じたペインの初回ドラッグを絶対座標または固定最小幅で計算して、最小幅へ瞬間移動するか、反対側ペインを閉じる"
-// observable = "session workbenchのside pane width styleとactive pane"
+// fault = "閉じたペインのドラッグで意図せず復帰する、左右を同時表示する、または領域の最小サイズを下回る"
+// observable = "active paneとside pane width style"
 // observation_boundary = "component-behavior"
 // scope = "useSessionSidePanes"
 // lifecycle = "permanent"
-// impact = "微小なドラッグでも意図しない大幅展開を避け、ペイン操作の連続性を保つ"
-// distinction = "typecheckや既存の開いたペインのresize検証では、閉じた状態からの開始幅と次回ドラッグのclampを観測できない"
+// impact = "排他表示と開いているペインだけの操作契約を維持する"
+// distinction = "閉じたペインの操作無効化と反対側の自動クローズを確認する"
 // @end-test-value
-test("useSessionSidePanes は左右ペインを独立して縮小・再展開する", async () => {
-  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
-    .IS_REACT_ACT_ENVIRONMENT;
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  const previousHTMLElement = globalThis.HTMLElement;
-  const previousNode = globalThis.Node;
-  const previousNavigator = globalThis.navigator;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    pretendToBeVisual: true,
-  });
+test("useSessionSidePanes は左右ペインを排他表示し、閉じたペインを操作対象にしない", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window, previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement, previousNode = globalThis.Node, previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
   Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
   Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
-
   let root: Root | null = null;
-  const sidePaneChanges: SessionSidePane[] = [];
-
+  const changes: SessionSidePane[] = [];
   function Harness({ initialSidePane }: { initialSidePane: SessionSidePane | null }) {
-    const {
-      sessionWorkbenchRef,
-      sessionWorkbenchStyle,
-      activeSidePane,
-      isContextRailVisible,
-      isContextRailResizing,
-      isFilesPaneResizing,
-      handleStartContextRailResize,
-      handleStartFilesPaneResize,
-      handleShowContextRail,
-      handleCollapseContextRail,
-      handleCollapseFilesPane,
-    } = useSessionSidePanes({
-      ownerKey: "session-1",
-      initialSidePane,
-      onSidePaneChange: (sidePane) => sidePaneChanges.push(sidePane),
-    });
-
-    return React.createElement(
-      "div",
-      {
-        ref: sessionWorkbenchRef,
-        style: sessionWorkbenchStyle,
-        "data-testid": "workbench",
-      },
-      React.createElement(
-        "button",
-        {
-          type: "button",
-          onPointerDown: handleStartContextRailResize,
-          onClick: handleCollapseContextRail,
-          "data-testid": "splitter",
-        },
-        "toggle",
-      ),
-      React.createElement(
-        "button",
-        {
-          type: "button",
-          "data-testid": "files-toggle",
-        },
-        "files",
-      ),
-      React.createElement(
-        "button",
-        {
-          type: "button",
-          onPointerDown: handleStartFilesPaneResize,
-          onClick: handleCollapseFilesPane,
-          "data-testid": "files-splitter",
-        },
-        "files splitter",
-      ),
-      React.createElement(
-        "button",
-        {
-          type: "button",
-          onClick: handleShowContextRail,
-          "data-testid": "show-context",
-        },
-        "show context",
-      ),
-      React.createElement(
-        "output",
-        { "data-testid": "visibility" },
-        isContextRailVisible ? "visible" : "hidden",
-      ),
-      React.createElement("output", { "data-testid": "active-pane" }, activeSidePane),
-      React.createElement(
-        "output",
-        { "data-testid": "resizing" },
-        isContextRailResizing ? "context" : isFilesPaneResizing ? "files" : "idle",
-      ),
+    const state = useSessionSidePanes({ ownerKey: "session-1", initialSidePane, onSidePaneChange: (value) => changes.push(value) });
+    return React.createElement("div", { ref: state.sessionWorkbenchRef, style: state.sessionWorkbenchStyle, "data-testid": "workbench" },
+      React.createElement("div", { className: "session-left-pane-slot", style: { "--session-region-min-width": "260px", "--session-region-min-height": "200px" } }),
+      React.createElement("div", { className: "session-message-stack", style: { "--session-region-min-width": "360px", "--session-region-min-height": "160px" } }),
+      React.createElement("div", { className: "session-right-pane-slot", style: { "--session-region-min-width": "360px", "--session-region-min-height": "200px" } }),
+      React.createElement("button", { onPointerDown: state.handleStartContextRailResize, onClick: state.handleToggleContextRailVisibility, onKeyDown: state.handleKeyDownContextRailResize, "data-testid": "context-splitter" }),
+      React.createElement("button", { onPointerDown: state.handleStartFilesPaneResize, onClick: state.handleToggleFilesPaneVisibility, onKeyDown: state.handleKeyDownFilesPaneResize, "data-testid": "files-splitter" }),
+      React.createElement("button", { onClick: state.handleToggleFilesPaneVisibility, "data-testid": "files-toggle" }),
+      React.createElement("button", { onClick: state.handleToggleContextRailVisibility, "data-testid": "context-toggle" }),
+      React.createElement("output", { "data-testid": "active-pane" }, state.activeSidePane),
+      React.createElement("output", { "data-testid": "resizing" }, state.isContextRailResizing ? "context" : state.isFilesPaneResizing ? "files" : "idle"),
     );
   }
-
+  const pointer = (target: EventTarget, type: string, clientX: number) => {
+    const event = new dom.window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX, clientY: clientX });
+    Object.defineProperty(event, "pointerId", { value: 1 });
+    target.dispatchEvent(event);
+    return event;
+  };
   try {
-    await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(Harness, { initialSidePane: null }));
-    });
-
-    const workbench = dom.window.document.querySelector<HTMLElement>("[data-testid=\"workbench\"]");
-    const splitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"splitter\"]");
-    const filesToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"files-toggle\"]");
-    const filesSplitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"files-splitter\"]");
-    const showContext = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"show-context\"]");
-    const visibility = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"visibility\"]");
-    const activePane = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"active-pane\"]");
-    const resizing = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"resizing\"]");
-    assert.ok(workbench);
-    assert.ok(splitter);
-    assert.ok(filesToggle);
-    assert.ok(filesSplitter);
-    assert.ok(showContext);
-    assert.ok(visibility);
-    assert.ok(activePane);
-    assert.ok(resizing);
-    assert.equal(visibility.textContent, "hidden");
-
-    await act(async () => {
-      root?.render(React.createElement(Harness, { initialSidePane: "context" }));
-    });
-    assert.equal(visibility.textContent, "visible");
-
-    let viewportWidth = 1600;
-    let workbenchWidth = 1600;
-    Object.defineProperty(dom.window, "innerWidth", {
-      configurable: true,
-      get: () => viewportWidth,
-    });
-    workbench.getBoundingClientRect = () => ({
-      x: 0,
-      y: 0,
-      top: 0,
-      right: workbenchWidth,
-      bottom: 800,
-      left: 0,
-      width: workbenchWidth,
-      height: 800,
-      toJSON: () => ({}),
-    });
-
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1180));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1180));
-    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(visibility.textContent, "hidden");
-
-    await act(async () => showContext.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(visibility.textContent, "visible");
-
-    await act(async () => {
-      root?.render(React.createElement(Harness, { initialSidePane: "none" }));
-    });
-    assert.equal(visibility.textContent, "visible");
-
-    await act(async () => dispatchPointerEvent(dom, filesSplitter, "pointerdown", 320));
+    await act(async () => { root = createRoot(dom.window.document.getElementById("root") as HTMLElement); root.render(React.createElement(Harness, { initialSidePane: "context" })); });
+    const workbench = dom.window.document.querySelector<HTMLElement>("[data-testid=\"workbench\"]")!;
+    const contextSplitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"context-splitter\"]")!;
+    const filesSplitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"files-splitter\"]")!;
+    const filesToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"files-toggle\"]")!;
+    const contextToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"context-toggle\"]")!;
+    const active = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"active-pane\"]")!;
+    const resizing = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"resizing\"]")!;
+    let viewportWidth = 1600, workbenchWidth = 1600;
+    Object.defineProperty(dom.window, "innerWidth", { configurable: true, get: () => viewportWidth });
+    workbench.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, right: workbenchWidth, bottom: 800, left: 0, width: workbenchWidth, height: 800, toJSON: () => ({}) });
+    assert.equal(active.textContent, "context");
+    await act(async () => contextSplitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    assert.equal(active.textContent, "none");
+    const closed = pointer(filesSplitter, "pointerdown", 500);
+    assert.equal(closed.defaultPrevented, false);
+    assert.equal(resizing.textContent, "idle");
+    await act(async () => contextToggle.click());
+    assert.equal(active.textContent, "context");
+    await act(async () => pointer(contextSplitter, "pointerdown", 420));
+    await act(async () => pointer(dom.window, "pointermove", 1000));
+    await act(async () => pointer(dom.window, "pointerup", 1000));
+    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "360px");
+    await act(async () => filesToggle.click());
+    assert.equal(active.textContent, "files");
+    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "0px");
+    await act(async () => pointer(filesSplitter, "pointerdown", 320));
     assert.equal(resizing.textContent, "files");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 700));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 700));
-    await act(async () => filesSplitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(activePane.textContent, "both");
-    assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "380px");
-    await act(async () => showContext.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(activePane.textContent, "both");
-    assert.equal(visibility.textContent, "visible");
-
+    await act(async () => pointer(dom.window, "pointermove", 500));
+    await act(async () => pointer(dom.window, "pointerup", 500));
+    assert.equal(active.textContent, "files");
+    assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "500px");
+    await act(async () => pointer(filesSplitter, "pointerdown", 500));
+    await act(async () => pointer(dom.window, "pointermove", -500));
+    await act(async () => pointer(dom.window, "pointerup", -500));
+    assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "260px");
+    await act(async () => filesSplitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })));
+    assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "260px");
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await act(async () => filesToggle.click());
+    assert.equal(active.textContent, "none");
     viewportWidth = 1200;
-    workbenchWidth = 1200;
-    let narrowPointerDown!: MouseEvent;
-    await act(async () => {
-      narrowPointerDown = dispatchPointerEvent(dom, splitter, "pointerdown", 780);
-    });
+    const narrowClosed = pointer(contextSplitter, "pointerdown", 400);
+    assert.equal(narrowClosed.defaultPrevented, false);
+    await act(async () => contextToggle.click());
+    assert.equal(active.textContent, "context");
+    await act(async () => pointer(contextSplitter, "pointerdown", 400));
     assert.equal(resizing.textContent, "context");
-    assert.equal(narrowPointerDown.defaultPrevented, true);
-    assert.equal(dom.window.document.body.style.cursor, "row-resize");
-    assert.equal(dom.window.document.body.style.userSelect, "none");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 740));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 740));
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(visibility.textContent, "hidden");
-
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 780));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 740));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 740));
-    assert.equal(activePane.textContent, "both");
-
-    viewportWidth = 1400;
-    workbenchWidth = 1376;
-    let boundaryPointerDown!: MouseEvent;
-    await act(async () => {
-      boundaryPointerDown = dispatchPointerEvent(dom, splitter, "pointerdown", 956);
-    });
-    assert.equal(resizing.textContent, "context");
-    assert.equal(boundaryPointerDown.defaultPrevented, true);
-    assert.equal(dom.window.document.body.style.cursor, "col-resize");
-    assert.equal(dom.window.document.body.style.userSelect, "none");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 916));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 916));
-    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(visibility.textContent, "visible");
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "80px");
-
-    viewportWidth = 1600;
-    workbenchWidth = 1600;
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1180));
-    assert.equal(resizing.textContent, "context");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 1140));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1140));
-    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-
-    assert.equal(visibility.textContent, "visible");
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "120px");
-
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1140));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 200));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 200));
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "1060px");
-
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1500));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1500));
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    assert.equal(activePane.textContent, "files");
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1500));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 1490));
-    assert.equal(activePane.textContent, "both");
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "10px");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1490));
-
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1490));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 1491));
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "10px");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1491));
-
-    assert.deepEqual(sidePaneChanges, ["none", "context", "both", "files", "both", "files", "both"]);
+    await act(async () => pointer(dom.window, "pointermove", 1000));
+    await act(async () => pointer(dom.window, "pointerup", 1000));
+    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "200px");
+    assert.deepEqual(changes, ["none", "context", "files", "none", "context"]);
   } finally {
-    await act(async () => root?.unmount());
-    dom.window.close();
+    await act(async () => root?.unmount()); dom.window.close();
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
     Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
     Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-      previousActEnvironment;
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
   }
 });
 

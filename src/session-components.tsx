@@ -960,6 +960,37 @@ export function SessionChatScreen({
     }
   }, [layoutRef, workbenchRef]);
   const layoutStyle = useMemo(() => ({ ...style, ...workbenchStyle }), [style, workbenchStyle]);
+  const columnsRef = useRef<HTMLDivElement | null>(null);
+  const [columnSizes, setColumnSizes] = useState({ width: 0, main: 0, auxiliary: 0, splitter: 0 });
+  useLayoutEffect(() => {
+    const columns = columnsRef.current;
+    if (!columns || !isAuxiliaryVisible) return;
+    const measure = () => {
+      const minimum = (selector: string) => {
+        const element = columns.querySelector<HTMLElement>(selector);
+        return element ? Number.parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).getPropertyValue("--session-region-min-width")) || 0 : 0;
+      };
+      const next = {
+        width: columns.getBoundingClientRect().width,
+        main: minimum(".session-concurrent-chat-main"),
+        auxiliary: minimum(".session-concurrent-chat-auxiliary"),
+        splitter: Number.parseFloat(columns.ownerDocument.defaultView!.getComputedStyle(columns).getPropertyValue("--session-dock-splitter-size")) || 0,
+      };
+      setColumnSizes((current) => Object.keys(next).every((key) => current[key as keyof typeof next] === next[key as keyof typeof next]) ? current : next);
+    };
+    measure();
+    const Observer = columns.ownerDocument.defaultView?.ResizeObserver;
+    const observer = Observer ? new Observer(measure) : null;
+    observer?.observe(columns);
+    return () => observer?.disconnect();
+  }, [isAuxiliaryVisible, mainContent !== undefined]);
+  const singleChat = columnSizes.width > 0
+    && columnSizes.width < columnSizes.main + columnSizes.auxiliary + columnSizes.splitter;
+  const contentWidth = columnSizes.width - columnSizes.splitter;
+  const effectiveRatio = auxiliaryWidthRatio <= 0 ? 0
+    : contentWidth > 0 && !singleChat
+      ? Math.max(columnSizes.auxiliary / contentWidth, Math.min(1 - columnSizes.main / contentWidth, auxiliaryWidthRatio))
+      : auxiliaryWidthRatio;
 
   return (
     <div
@@ -996,7 +1027,12 @@ export function SessionChatScreen({
       </div>
 
       {leftSplitter}
-      <section className="chat-panel session-work-surface session-message-stack rise-3">
+      <section
+        className="chat-panel session-work-surface session-message-stack rise-3"
+        style={isAuxiliaryVisible && auxiliaryWidthRatio > 0 && mainContent === undefined && columnSizes.main > 0
+          ? { "--session-region-min-width": `${columnSizes.main + columnSizes.auxiliary + columnSizes.splitter}px` } as CSSProperties
+          : undefined}
+      >
         <div
           className={`session-central-surface${isAuxiliaryVisible ? ` has-concurrent-chats concurrent-target-${concurrentTarget}` : ""}`}
           style={isAuxiliaryVisible ? { "--auxiliary-width-ratio": auxiliaryWidthRatio } as CSSProperties : undefined}
@@ -1004,10 +1040,11 @@ export function SessionChatScreen({
         >
           {isAuxiliaryVisible ? (
             <div
-              className="session-concurrent-chat-columns"
-              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - auxiliaryWidthRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0, auxiliaryWidthRatio)}fr)` }}
+              ref={columnsRef}
+              className={`session-concurrent-chat-columns${singleChat ? " is-single-chat" : ""}`}
+              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - effectiveRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0, effectiveRatio)}fr)` }}
             >
-              <div className={`session-concurrent-chat-column session-concurrent-chat-main${auxiliaryWidthRatio >= 1 ? " is-zero-width" : ""}`}>{messageColumn}</div>
+              <div className="session-concurrent-chat-column session-concurrent-chat-main">{messageColumn}</div>
               {auxiliarySplitter}
               <div className={`session-concurrent-chat-column session-concurrent-chat-auxiliary${auxiliaryWidthRatio <= 0 ? " is-zero-width" : ""}`}>{auxiliaryMessageColumn}</div>
             </div>

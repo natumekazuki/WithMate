@@ -827,10 +827,10 @@ export default function AgentSessionWindowApp() {
     isContextRailResizing,
     isFilesPaneResizing,
     handleStartContextRailResize,
-    handleCollapseContextRail,
+    handleToggleContextRailVisibility,
     handleKeyDownContextRailResize,
     handleStartFilesPaneResize,
-    handleCollapseFilesPane,
+    handleToggleFilesPaneVisibility,
     handleKeyDownFilesPaneResize,
     handleShowContextRail,
   } = useSessionSidePanes({
@@ -2248,10 +2248,6 @@ export default function AgentSessionWindowApp() {
     [displayedSession],
   );
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
-  const actionDockExpandRef = useRef<(() => void) | null>(null);
-  const expandActionDockOnDrag = useCallback(() => {
-    actionDockExpandRef.current?.();
-  }, []);
   const {
     sessionDockLayoutRef,
     headerDockRef,
@@ -2265,7 +2261,6 @@ export default function AgentSessionWindowApp() {
     ownerKey: selectedSessionId,
     isHeaderExpanded: isSessionHeaderExpanded,
     isActionDockExpanded,
-    onExpandActionDock: expandActionDockOnDrag,
   });
   useEffect(() => {
     if (!retryBanner) {
@@ -3039,7 +3034,6 @@ export default function AgentSessionWindowApp() {
     setPinnedExpanded: setIsActionDockPinnedExpanded,
     focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
   });
-  actionDockExpandRef.current = handleExpandActionDock;
 
   const handleCollapseActionDock = createActionDockCollapseHandler({
     canCollapse: canCollapseActionDock,
@@ -4287,9 +4281,9 @@ export default function AgentSessionWindowApp() {
         onStartFilesPaneResize: handleStartFilesPaneResize,
         onStartActionDockResize: handleStartActionDockResize,
         onToggleActionDock: handleToggleActionDock,
-        onToggleContextRailVisibility: handleCollapseContextRail,
+        onToggleContextRailVisibility: handleToggleContextRailVisibility,
         onKeyDownContextRailResize: handleKeyDownContextRailResize,
-        onToggleFilesPaneVisibility: handleCollapseFilesPane,
+        onToggleFilesPaneVisibility: handleToggleFilesPaneVisibility,
         onKeyDownFilesPaneResize: handleKeyDownFilesPaneResize,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onSelectContextPaneTab: setActiveContextPaneTab,
