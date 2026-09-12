@@ -222,19 +222,17 @@ export function applySessionMove(
     const targetParent = row.session_id === input.sessionId ? input.destinationParentSessionId : row.parent_session_id;
     if (!targetParent) continue;
     if (row.root_session_id !== destinationRoot || row.session_id === input.sessionId) {
-      const destinationBinding = binding(db, targetParent);
+      binding(db, targetParent);
       const destinationGrant = input.destinationProof ?? proof;
       const hasAllocation = db.prepare("SELECT 1 FROM resource_budget_accounts_v6 WHERE owner_session_id = ? AND account_kind = 'session'")
         .get(row.session_id);
       if (!hasAllocation) {
-        void destinationBinding;
         continue;
       }
       budget.transferSessionAllocation({ sessionId: row.session_id, destinationRootSessionId: destinationRoot,
-        destinationParentAccountId: targetParent, destinationAuthorityGrantId: destinationGrant.grantId,
+        destinationParentAccountId: budget.get(targetParent).accountId, destinationAuthorityGrantId: destinationGrant.grantId,
         destinationAuthorityGrantRevision: destinationGrant.grantRevision, proof, destinationProof: input.destinationProof,
         operationId, transferredAt: now });
-      void destinationBinding;
     }
   }
   return { sessionId: input.sessionId, sourceRootSessionId: source.root_session_id, destinationRootSessionId: destinationRoot,

@@ -463,4 +463,68 @@ describe("Session lifecycle move", () => {
       } finally { db.close(); }
     } finally { service.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
   });
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Sessionのcross-root移動は移動先親の共有口座または別名口座を解決し、親子の移動では子の口座階層を保ったままrootを更新する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "親Session IDを口座IDとして渡す、または子の親口座が不変であることを循環と誤認して正常な移動を拒否する"
+  // observable = "実DBの移動後Session bindingのroot_session_idと親子のbudget account ID・parentAccountId・rootSessionId"
+  // observation_boundary = "component-behavior"
+  // scope = "Session lifecycle cross-root subtree budget transfer"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("共有予算・別名口座への移動と予算付き親子の移動を適用する", async () => {
+    for (const scenario of ["shared", "owned", "subtree"] as const) {
+      const ctx = await setup();
+      const authority = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        const moving = scenario === "subtree" ? ctx.destinationParent : ctx.target;
+        const descendant = scenario === "subtree" ? child("moving-child", moving, "executor") : null;
+        const destination = scenario === "subtree" ? ctx.destinationRoot : child("destination-parent", ctx.destinationRoot, "task-coordinator");
+        if (descendant) ctx.storage.insertSession(descendant);
+        if (destination.id !== ctx.destinationRoot.id) ctx.storage.insertSession(destination);
+        bootstrapRootResourceBudget(db, { rootSessionId: ctx.sourceRoot.id, rootCreatedAt: NOW, createdAt: NOW });
+        bootstrapRootResourceBudget(db, { rootSessionId: ctx.destinationRoot.id, rootCreatedAt: NOW, createdAt: NOW });
+        const sourceProof = moveProof(ctx.sourceRoot.id, provisionMoveGrant(db, ctx.sourceRoot.id)[0]);
+        const destinationProof = moveProof(ctx.sourceRoot.id, provisionMoveGrant(db, ctx.sourceRoot.id, ctx.destinationRoot.id)[0], ctx.destinationRoot.id);
+        const budget = new ResourceBudgetStorage(db);
+        const allocate = (owner: Session, accountId: string, parentAccountId: string, limit: number) => {
+          const parentOwnerId = budget.getByAccountId(parentAccountId).ownerSessionId;
+          const budgetProof = authority.authorize(runtimeBinding(parentOwnerId), "budget.configure", { sessionId: parentOwnerId }).proof;
+          budget.allocateChild({ accountId, accountKind: "session", rootSessionId: owner.roleBinding!.rootSessionId,
+            ownerSessionId: owner.id, parentAccountId,
+            hardLimits: Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, dimension === "storageBytes" ? 0 : limit])),
+            authorityGrantId: budgetProof.grantId, authorityGrantRevision: budgetProof.grantRevision, expiresAt: null,
+            deadlineAt: "2026-10-01T00:00:00.000Z", idempotencyKey: "allocate-" + accountId, proof: budgetProof, createdAt: NOW });
+        };
+        allocate(moving, "moving-budget", ctx.sourceRoot.id, 2);
+        if (descendant) allocate(descendant, "child-budget", "moving-budget", 1);
+        if (scenario === "owned") allocate(destination, "destination-budget", ctx.destinationRoot.id, 3);
+        const destinationAccountId = scenario === "owned" ? "destination-budget" : ctx.destinationRoot.id;
+        assert.equal(budget.get(destination.id).accountId, destinationAccountId);
+        applySessionMove(db, { sessionId: moving.id, expectedRevision: 1, kind: "cross_root",
+          descendants: descendant ? [{ sessionId: descendant.id, revision: 1 }] : [],
+          destinationRootSessionId: ctx.destinationRoot.id, destinationParentSessionId: destination.id,
+          destinationExpectedRevision: 1, transferManifestRevision: 1, transferPolicy: "full", destinationProof },
+          sourceProof, NOW, "move-budget-subtree");
+        for (const [session, accountId, parentAccountId] of [
+          [moving, "moving-budget", destinationAccountId],
+          ...(descendant ? [[descendant, "child-budget", "moving-budget"] as const] : []),
+        ] as const) {
+          const account = budget.get(session.id);
+          assert.equal(account.accountId, accountId);
+          assert.equal(account.rootSessionId, ctx.destinationRoot.id);
+          assert.equal(account.parentAccountId, parentAccountId);
+          assert.equal((db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(session.id) as { root_session_id: string }).root_session_id, ctx.destinationRoot.id);
+        }
+        ensureV6Schema(db);
+        verifyResourceHistoryProjections(db);
+      } finally {
+        db.close(); authority.close(); ctx.storage.close();
+        await rm(ctx.directory, { recursive: true, force: true });
+      }
+    }
+  });
+
 });

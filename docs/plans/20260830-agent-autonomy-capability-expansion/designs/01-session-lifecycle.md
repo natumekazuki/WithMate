@@ -61,6 +61,8 @@ restoreはroot／childのstrict unionとする。root restoreは新しいpurpose
 
 GUIが参照・編集するRoot WorkItemは、対象rootのself-owned候補を全ページから取得して選ぶ。activeが1件あればその項目、activeがなければsequenceが最大のterminal項目を使用する。activeが複数ある場合は不整合として拒否する。終了済みpredecessorを残すsuccessor方式では、候補の取得を最初の一覧ページで打ち切らない。
 
+予算配分の移管先は親SessionのIDではなく、既存の予算解決が返す口座IDを使う。親がroot共有予算を使用する場合も、Session IDと異なる専用口座を持つ場合も同じ解決を用いる。親子のcross-root移管では親口座を先に移し、子の直接の親口座IDを維持できる。循環は移管先が自分自身または自分の子孫口座になる場合に拒否し、旧親口座と同じであることだけでは拒否しない。
+
 ## Archive、tombstone delete、physical purge
 
 - archive: current操作対象から外す可逆な状態。履歴、artifact、grant tombstoneを保持する。

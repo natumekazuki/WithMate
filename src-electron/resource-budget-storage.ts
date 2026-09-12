@@ -363,7 +363,18 @@ export class ResourceBudgetStorage {
           && input.destinationProof.grantId !== input.destinationAuthorityGrantId)) {
         throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "The destination budget authority is invalid.");
       }
-      if (account.account_id === parent.account_id || parent.account_id === account.parent_account_id) {
+      const destinationIsDescendant = this.db.prepare(`WITH RECURSIVE ancestors(account_id, parent_account_id) AS (
+          SELECT account_id, parent_account_id
+          FROM resource_budget_accounts_v6
+          WHERE account_id = ?
+          UNION ALL
+          SELECT parent.account_id, parent.parent_account_id
+          FROM resource_budget_accounts_v6 AS parent
+          INNER JOIN ancestors AS child ON child.parent_account_id = parent.account_id
+        )
+        SELECT 1 AS found FROM ancestors WHERE account_id = ? LIMIT 1`)
+        .get(parent.account_id, account.account_id) as { found: number } | undefined;
+      if (account.account_id === parent.account_id || destinationIsDescendant) {
         throw new ResourceBudgetError("BUDGET_SETTLEMENT_CONFLICT", "The budget allocation would create a cycle.");
       }
       if (account.root_session_id !== input.destinationRootSessionId && !input.destinationProof) {
