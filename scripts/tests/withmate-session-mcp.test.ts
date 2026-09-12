@@ -61,6 +61,9 @@ const publicExecution = {
   partialOutput: null,
   terminalFailureNotification: null,
   workItemId: null,
+  workItemRevision: null,
+  plannedSourceIdentity: null,
+  actualStartSourceIdentity: null,
 };
 const publicSession = {
   revision: 1,
@@ -186,16 +189,16 @@ describe("WithMate Session MCP contract", () => {
   });
   // @test-value v2
   // kind = "contract"
-  // claim = "MCPはbudget三操作を含む全49 toolをdotted name、generic strict envelope schema、read/write annotation付きで公開する"
+  // claim = "MCPはbudget三操作を含む全56 toolをdotted name、generic strict envelope schema、read/write annotation付きで公開する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-public-api-migration-and-review.md#public-surface-parity" }
   // fault = "HTTPまたはCLIにあるoperationがMCP tool一覧から欠落するか、generic envelope required fieldまたはreadOnly/destructive分類が分岐する"
-  // observable = "MCP tools/listの49 tool名、generic input/output schema strictness、effect annotation"
+  // observable = "MCP tools/listの56 tool名、generic input/output schema strictness、effect annotation"
   // observation_boundary = "public-boundary"
   // scope = "WithMate Session MCP tool catalog"
   // lifecycle = "permanent"
-  // distinction = "operation固有payloadのruntime validationではなく、全49件の独立した期待表でtool集合、generic envelope schema、readOnly/destructive annotationを横断検証する"
+  // distinction = "operation固有payloadのruntime validationではなく、全56件の独立した期待表でtool集合、generic envelope schema、readOnly/destructive annotationを横断検証する"
   // @end-test-value
-  it("全49 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("全56 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     const expectedEffectAnnotations: Record<string, { readOnlyHint: boolean; destructiveHint: boolean }> = {
       "runtime.catalog": { readOnlyHint: true, destructiveHint: false },
       "budget.get": { readOnlyHint: true, destructiveHint: false },
@@ -221,6 +224,13 @@ describe("WithMate Session MCP contract", () => {
       "work.list": { readOnlyHint: true, destructiveHint: false },
       "work.get": { readOnlyHint: true, destructiveHint: false },
       "work.revise": { readOnlyHint: false, destructiveHint: false },
+      "work.reassign": { readOnlyHint: false, destructiveHint: false },
+      "work.move": { readOnlyHint: false, destructiveHint: false },
+      "work.clone": { readOnlyHint: false, destructiveHint: false },
+      "work.reopen": { readOnlyHint: false, destructiveHint: false },
+      "work.archive": { readOnlyHint: false, destructiveHint: false },
+      "work.restore": { readOnlyHint: false, destructiveHint: false },
+      "work.delete": { readOnlyHint: false, destructiveHint: true },
       "work.history.append": { readOnlyHint: false, destructiveHint: false },
       "work.history.list": { readOnlyHint: true, destructiveHint: false },
       "work.transition": { readOnlyHint: false, destructiveHint: false },
@@ -264,8 +274,11 @@ describe("WithMate Session MCP contract", () => {
         assert.equal(tool.inputSchema.additionalProperties, false);
         assert.equal(tool.outputSchema?.type, "object");
         assert.equal(tool.outputSchema?.additionalProperties, false);
+        assert.ok(tool.outputSchema?.required?.includes("schemaVersion"));
         assert.ok(tool.outputSchema?.required?.includes("operation"));
         assert.ok(tool.outputSchema?.required?.includes("result"));
+        const outputSchemaJson = JSON.stringify(tool.outputSchema);
+        assert.match(outputSchemaJson, new RegExp(`\\"const\\":\\"${tool.name}\\"`));
         assert.ok(tool.description?.trim());
         assert.equal(
           tool.annotations?.openWorldHint,
@@ -732,9 +745,9 @@ describe("WithMate Session MCP contract", () => {
             workItems: {
               contractRevision: 2,
               states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
-              mutations: ["create", "revise", "transition", "result", "cancel", "history.append"],
+              mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "cancel", "history.append"],
               history: {
-                events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported"],
+                events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported", "assignment_changed", "parent_changed", "archived", "restored", "deleted"],
                 operations: ["append", "list"],
                 defaultListLimit: 50,
                 maxListLimit: 200,
@@ -799,9 +812,9 @@ describe("WithMate Session MCP contract", () => {
         workItems: {
           contractRevision: 2,
           states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
-          mutations: ["create", "revise", "transition", "result", "cancel", "history.append"],
+          mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "cancel", "history.append"],
           history: {
-            events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported"],
+            events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported", "assignment_changed", "parent_changed", "archived", "restored", "deleted"],
             operations: ["append", "list"],
             defaultListLimit: 50,
             maxListLimit: 200,
@@ -907,16 +920,28 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "MCP turn.run/enqueueはtarget SessionのexpectedContainerRevisionとprovider固有tupleをshared operationへ渡す"
   // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
-  // failure_mode = "MCP Turn経路だけcontainer revisionを欠落させるかprovider固有fieldを混在させる"
+  // fault = "MCP Turn経路だけcontainer revisionを欠落させるかprovider固有fieldを混在させる"
+  // observable = "turn.runとturn.enqueueのshared operation envelope、およびdispatch結果のerror state"
+  // observation_boundary = "public-boundary"
   // scope = "withmate-session-mcp Turn creation input"
   // lifecycle = "permanent"
+  // distinction = "MCPのprovider固有入力がexpectedContainerRevisionを保ち、codexとCopilotのtupleを混在させずにdispatchされることを検証する"
   // @end-test-value
   it("EXT-PROVIDER-02: Copilot Turnをprovider固有schemaでrun/enqueueへdispatchする", async () => {
     const requests: any[] = [];
+    const expectedCopilotTurn = {
+      provider: "copilot",
+      userMessage: "hello",
+      model: "claude-sonnet",
+      reasoningEffort: "high",
+      approvalMode: "on-request",
+      customAgentName: "reviewer",
+      attachments: [],
+    };
     await withClient(createWithMateSessionMcpServer({
       discover: async () => connection,
       call: async (_connection, envelope) => {
@@ -927,19 +952,19 @@ describe("WithMate Session MCP contract", () => {
           value: createSessionRuntimeResult(envelope.operation, {
             ...publicExecution,
             operation: envelope.operation,
+            effectiveTurn: {
+              provider: "copilot",
+              model: "claude-sonnet",
+              reasoningEffort: "high",
+              approvalMode: "on-request",
+              sandboxMode: null,
+              customAgentName: "reviewer",
+            },
           } as never),
         };
       },
     }), async (client) => {
-      const turn = {
-        provider: "copilot",
-        userMessage: "hello",
-        model: "claude-sonnet",
-        reasoningEffort: "high",
-        approvalMode: "on-request",
-        customAgentName: "reviewer",
-        attachments: [],
-      };
+      const turn = expectedCopilotTurn;
       assert.equal((await client.callTool({
         name: "turn.run",
         arguments: {
@@ -989,6 +1014,7 @@ describe("WithMate Session MCP contract", () => {
     });
     assert.deepEqual(requests.map((request) => request.operation), ["turn.run", "turn.enqueue"]);
     assert.deepEqual(requests.map((request) => request.input.expectedContainerRevision), [1, 2]);
+    assert.deepEqual(requests.map((request) => request.input.turn), [expectedCopilotTurn, expectedCopilotTurn]);
     assert.deepEqual(requests.map((request) => request.input.terminalFailureNotification), [
       { targetSessionId: "target-session" },
       { targetSessionId: "target-session" },

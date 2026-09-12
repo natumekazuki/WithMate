@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -57,6 +58,7 @@ type DeferredDispatch = {
 };
 
 async function createFixture(options: {
+  workspacePath?: string;
   admissionFailures?: number;
   exhaustionWriteFailures?: number;
   queueRetryDelayMs?: number;
@@ -84,13 +86,14 @@ async function createFixture(options: {
         catalog_revision,
         model_id,
         approval_mode,
+        workspace_path,
         created_at,
         updated_at,
         last_active_at
-      ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
+      ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?, ?)
     `);
-    insert.run("session-1", "Session 1", CREATED_AT, CREATED_AT, CREATED_AT);
-    insert.run("session-2", "Session 2", CREATED_AT, CREATED_AT, CREATED_AT);
+    insert.run("session-1", "Session 1", options.workspacePath ?? process.cwd(), CREATED_AT, CREATED_AT, CREATED_AT);
+    insert.run("session-2", "Session 2", options.workspacePath ?? process.cwd(), CREATED_AT, CREATED_AT, CREATED_AT);
     insertStandaloneRoleBindingsForSessions(db);
   } finally {
     db.close();
@@ -497,17 +500,22 @@ describe("SessionExecutionService", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "compatibility"
   // claim = "runとenqueueはrevision 2のdelegated WorkItem bindingを検証してexecution associationを同じacceptance境界へ保存する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#実行関連付けと再開" }
-  // failure_mode = "schema revision追加後にdelegated WorkItem associationが拒否されるかexecutionだけが保存される"
+  // fault = "schema revision追加後にdelegated WorkItem associationが拒否されるかexecutionだけが保存される"
   // scope = "SessionExecutionService WorkItem association admission"
   // lifecycle = "permanent"
   // distinction = "runとenqueueの双方をreal SQLiteのdelegated rowへ関連付けて観測する"
+  // observable = "run/enqueueのWork Item associationと返却executionの保存結果"
+  // observation_boundary = "component-behavior"
   // @end-test-value
   it("WORK-EXEC-05: runとenqueueは検証済みWork Item associationをexecutionと同時保存する", async () => {
-    const fixture = await createFixture();
+    const repository = await mkdtemp(path.join(tmpdir(), "withmate-execution-source-"));
+    execFileSync("git", ["init", "--initial-branch", "main"], { cwd: repository, stdio: "ignore", windowsHide: true });
+    execFileSync("git", ["-c", "user.name=WithMate Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial"], { cwd: repository, stdio: "ignore", windowsHide: true });
+    const fixture = await createFixture({ workspacePath: repository });
     const db = new DatabaseSync(fixture.dbPath);
     try {
       const insertWorkItem = db.prepare(`
@@ -554,9 +562,13 @@ describe("SessionExecutionService", () => {
       });
       assert.equal(fixture.storage.getExecutionWorkItemId(running.id), "work-run");
       assert.equal(fixture.storage.getExecutionWorkItemId(queued.id), "work-enqueue");
+      assert.equal(running.workItemRevision, 1);
+      assert.equal(running.actualStartSourceIdentity?.kind, "resolved");
+      assert.equal(queued.workItemRevision, 1);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
+      await rm(repository, { recursive: true, force: true });
     }
   });
 

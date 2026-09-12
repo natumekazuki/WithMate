@@ -42,6 +42,7 @@ export const REQUIRED_V6_TABLES = [
   "work_item_aggregations_v6",
   "work_item_aggregation_decisions_v6",
   "work_item_aggregation_idempotency_v6",
+  "work_item_tombstones_v6",
   "session_execution_public_progress_v6",
   "session_turn_public_context_v6",
   "session_interactions_v6",
@@ -253,6 +254,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "result_json",
     "created_at",
     "updated_at",
+    "archived_at",
   ],
   work_item_events_v6: [
     "sequence", "work_item_id", "revision", "event_type", "actor_session_id", "principal_kind",
@@ -268,7 +270,10 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "created_at",
     "expires_at",
   ],
-  work_item_execution_associations_v6: ["execution_id", "work_item_id", "created_at"],
+  work_item_execution_associations_v6: [
+    "execution_id", "work_item_id", "created_at", "work_item_revision",
+    "planned_source_json", "actual_source_json",
+  ],
   work_item_aggregations_v6: ["parent_work_item_id", "aggregate_revision", "updated_at"],
   work_item_aggregation_decisions_v6: [
     "sequence", "parent_work_item_id", "child_work_item_id", "decision_revision", "child_revision",
@@ -276,8 +281,9 @@ const REQUIRED_V6_TABLE_COLUMNS = {
   ],
   work_item_aggregation_idempotency_v6: [
     "operation", "principal_session_id", "idempotency_key", "request_fingerprint",
-    "child_work_item_id", "replacement_work_item_id", "created_at", "expires_at",
+    "child_work_item_id", "replacement_work_item_id", "response_json", "created_at", "expires_at",
   ],
+  work_item_tombstones_v6: ["work_item_id", "snapshot_json", "deleted_at"],
   session_execution_public_progress_v6: [
     "execution_id",
     "assistant_text",
@@ -741,10 +747,11 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
       "CASCADE",
     )
     && hasForeignKey(db, "session_execution_origins_v6", "source_session_id", "sessions_v6", "id", "CASCADE")
-    && hasForeignKey(db, "work_item_events_v6", "work_item_id", "work_items_v6", "id", "CASCADE")
     && hasForeignKey(db, "work_items_v6", "parent_work_item_id", "work_items_v6", "id")
     && hasForeignKey(db, "work_items_v6", "predecessor_work_item_id", "work_items_v6", "id")
     && hasForeignKey(db, "work_item_events_v6", "actor_session_id", "sessions_v6", "id", "SET NULL")
+    && hasForeignKey(db, "work_item_execution_associations_v6", "execution_id", "session_executions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "work_item_execution_associations_v6", "work_item_id", "work_items_v6", "id")
     && hasForeignKey(db, "coordination_events_v6", "actor_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_events_v6", "root_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_events_v6", "parent_session_id", "sessions_v6", "id", "CASCADE")
@@ -1644,6 +1651,12 @@ export const CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL = `
 `;
 
 export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_tombstones_v6 (
+    work_item_id TEXT PRIMARY KEY,
+    snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json) AND json_type(snapshot_json) = 'object'),
+    deleted_at TEXT NOT NULL
+  ) STRICT;
+
   CREATE TABLE IF NOT EXISTS work_items_v6 (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -1675,6 +1688,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     ),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    archived_at TEXT,
     FOREIGN KEY (parent_work_item_id) REFERENCES work_items_v6(id),
     FOREIGN KEY (predecessor_work_item_id) REFERENCES work_items_v6(id),
     CHECK (
@@ -1735,7 +1749,8 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     revision INTEGER NOT NULL CHECK (revision >= 1),
     event_type TEXT NOT NULL CHECK (event_type IN (
       'created', 'migration_baseline', 'contract_revised', 'progress',
-      'handoff', 'state_transitioned', 'result_reported'
+      'handoff', 'state_transitioned', 'result_reported', 'assignment_changed',
+      'parent_changed', 'archived', 'restored', 'deleted'
     )),
     actor_session_id TEXT,
     principal_kind TEXT NOT NULL DEFAULT 'system' CHECK (principal_kind IN ('user', 'agent', 'system')),
@@ -1749,7 +1764,6 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     ),
     created_at TEXT NOT NULL,
     UNIQUE (work_item_id, revision),
-    FOREIGN KEY (work_item_id) REFERENCES work_items_v6(id) ON DELETE CASCADE,
     FOREIGN KEY (actor_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL
   );
   CREATE INDEX IF NOT EXISTS idx_v6_work_item_events_item_sequence
@@ -1758,7 +1772,9 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS work_item_idempotency_v6 (
     operation TEXT NOT NULL CHECK (operation IN (
       'work.create', 'work.revise', 'work.history.append',
-      'work.transition', 'work.result', 'work.cancel', 'work.restore'
+      'work.transition', 'work.result', 'work.cancel', 'work.restore',
+      'work.reassign', 'work.move', 'work.clone', 'work.reopen',
+      'work.archive', 'work.delete'
     )),
     principal_session_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
@@ -1770,8 +1786,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     ),
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    PRIMARY KEY (operation, principal_session_id, idempotency_key),
-    FOREIGN KEY (work_item_id) REFERENCES work_items_v6(id) ON DELETE CASCADE
+    PRIMARY KEY (operation, principal_session_id, idempotency_key)
   );
   CREATE INDEX IF NOT EXISTS idx_v6_work_item_idempotency_item
     ON work_item_idempotency_v6(work_item_id);
@@ -1782,6 +1797,9 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     execution_id TEXT PRIMARY KEY,
     work_item_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    work_item_revision INTEGER CHECK (work_item_revision IS NULL OR work_item_revision >= 1),
+    planned_source_json TEXT CHECK (planned_source_json IS NULL OR json_valid(planned_source_json)),
+    actual_source_json TEXT CHECK (actual_source_json IS NULL OR json_valid(actual_source_json)),
     FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE CASCADE,
     FOREIGN KEY (work_item_id) REFERENCES work_items_v6(id)
   );
@@ -1822,6 +1840,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     request_fingerprint TEXT NOT NULL,
     child_work_item_id TEXT NOT NULL,
     replacement_work_item_id TEXT,
+    response_json TEXT CHECK (response_json IS NULL OR json_valid(response_json)),
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     PRIMARY KEY (operation, principal_session_id, idempotency_key),
@@ -1908,6 +1927,18 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     );
     DELETE FROM work_item_aggregations_v6
     WHERE parent_work_item_id IN (
+      SELECT id FROM work_items_v6
+      WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
+        AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+    );
+    DELETE FROM work_item_events_v6
+    WHERE work_item_id IN (
+      SELECT id FROM work_items_v6
+      WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
+        AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+    );
+    DELETE FROM work_item_idempotency_v6
+    WHERE work_item_id IN (
       SELECT id FROM work_items_v6
       WHERE (root_session_id = OLD.id OR creator_session_id = OLD.id OR target_session_id = OLD.id)
         AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
@@ -3362,6 +3393,7 @@ function rebuildWorkItemContractV1ToV2(db: DatabaseSync): void {
 }
 
 function rebuildWorkItemIdempotencyV2(db: DatabaseSync): void {
+  db.exec("DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;");
   const columns = tableColumnNames(db, "work_item_idempotency_v6");
   const responseProjection = columns.has("response_json") ? "response_json" : "NULL";
   db.exec(`
@@ -3381,6 +3413,7 @@ function rebuildWorkItemIdempotencyV2(db: DatabaseSync): void {
 }
 
 function rebuildWorkItemEventsPayloadLimit(db: DatabaseSync): void {
+  db.exec("DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;");
   const columns = tableColumnNames(db, "work_item_events_v6");
   const principalKind = columns.has("principal_kind") ? "principal_kind" : "'system'";
   db.exec(`
@@ -3398,6 +3431,7 @@ function rebuildWorkItemEventsPayloadLimit(db: DatabaseSync): void {
 
 function upgradeWorkItemContractV2(db: DatabaseSync): void {
   if (!tableExists(db, "work_items_v6")) return;
+  db.exec("DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;");
   const workItemColumns = tableColumnNames(db, "work_items_v6");
   if (!workItemColumns.has("kind")) {
     rebuildWorkItemContractV1ToV2(db);
@@ -3641,6 +3675,12 @@ function ensureV6SchemaUnsafe(db: DatabaseSync, options: { backfillLegacyHistory
     db.exec(statement);
   }
   ensureRootWorkItemSuccessorSchema(db);
+  ensureWorkItemHistoryRetentionSchema(db);
+  ensureWorkItemAggregationIdempotencyResponseSchema(db);
+  ensureWorkItemExecutionSourceSchema(db);
+  if (tableExists(db, "work_items_v6") && !tableColumnNames(db, "work_items_v6").has("archived_at")) {
+    db.exec("ALTER TABLE work_items_v6 ADD COLUMN archived_at TEXT");
+  }
   const sessionColumns = tableColumnNames(db, "sessions_v6");
   if (!sessionColumns.has("deleted_at")) {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN deleted_at TEXT");
@@ -3800,6 +3840,57 @@ function ensureV6SchemaUnsafe(db: DatabaseSync, options: { backfillLegacyHistory
 
 }
 
+function ensureWorkItemAggregationIdempotencyResponseSchema(db: DatabaseSync): void {
+  if (!tableExists(db, "work_item_aggregation_idempotency_v6")) return;
+  if (tableColumnNames(db, "work_item_aggregation_idempotency_v6").has("response_json")) return;
+  db.exec("ALTER TABLE work_item_aggregation_idempotency_v6 ADD COLUMN response_json TEXT CHECK (response_json IS NULL OR json_valid(response_json))");
+  db.exec(`
+    UPDATE work_item_aggregation_idempotency_v6 AS replay
+    SET response_json = (
+      SELECT json_object(
+        'parentWorkItemId', decision.parent_work_item_id,
+        'childWorkItemId', decision.child_work_item_id,
+        'revision', decision.decision_revision,
+        'childRevision', decision.child_revision,
+        'actorSessionId', decision.actor_session_id,
+        'decision', decision.decision_type,
+        'reason', decision.reason,
+        'replacementWorkItemId', decision.replacement_work_item_id,
+        'decidedAt', decision.decided_at
+      )
+      FROM work_item_aggregation_decisions_v6 AS decision
+      WHERE decision.child_work_item_id = replay.child_work_item_id
+    )
+    WHERE replay.response_json IS NULL
+  `);
+}
+
+function ensureWorkItemHistoryRetentionSchema(db: DatabaseSync): void {
+  if (!tableExists(db, "work_item_events_v6") || !tableExists(db, "work_item_idempotency_v6")) return;
+  if (hasForeignKey(db, "work_item_events_v6", "work_item_id", "work_items_v6", "id", "CASCADE")
+    || !tableSql(db, "work_item_events_v6").includes("'parent_changed'")) {
+    rebuildWorkItemEventsPayloadLimit(db);
+  }
+  if (hasForeignKey(db, "work_item_idempotency_v6", "work_item_id", "work_items_v6", "id", "CASCADE")
+    || !tableSql(db, "work_item_idempotency_v6").includes("'work.move'")) {
+    rebuildWorkItemIdempotencyV2(db);
+  }
+}
+
+function ensureWorkItemExecutionSourceSchema(db: DatabaseSync): void {
+  if (!tableExists(db, "work_item_execution_associations_v6")) return;
+  const columns = tableColumnNames(db, "work_item_execution_associations_v6");
+  if (!columns.has("work_item_revision")) {
+    db.exec("ALTER TABLE work_item_execution_associations_v6 ADD COLUMN work_item_revision INTEGER CHECK (work_item_revision IS NULL OR work_item_revision >= 1)");
+  }
+  if (!columns.has("planned_source_json")) {
+    db.exec("ALTER TABLE work_item_execution_associations_v6 ADD COLUMN planned_source_json TEXT CHECK (planned_source_json IS NULL OR json_valid(planned_source_json))");
+  }
+  if (!columns.has("actual_source_json")) {
+    db.exec("ALTER TABLE work_item_execution_associations_v6 ADD COLUMN actual_source_json TEXT CHECK (actual_source_json IS NULL OR json_valid(actual_source_json))");
+  }
+}
+
 function hasPrimaryKeyColumns(
   db: DatabaseSync,
   tableName: string,
@@ -3833,10 +3924,6 @@ function hasValidSessionExecutionOriginSchema(db: DatabaseSync, requireMessageAn
     && hasUniqueIndexForColumns(db, "session_execution_origins_v6", ["execution_sequence"])
     && hasIndexForColumns(db, "session_execution_origins_v6", ["source_session_id", "execution_sequence"])
     && hasForeignKey(db, "session_execution_origins_v6", "source_session_id", "sessions_v6", "id", "CASCADE")
-    && hasForeignKey(db, "work_items_v6", "parent_work_item_id", "work_items_v6", "id")
-    && hasForeignKey(db, "work_item_idempotency_v6", "work_item_id", "work_items_v6", "id", "CASCADE")
-    && hasForeignKey(db, "work_item_execution_associations_v6", "execution_id", "session_executions_v6", "id", "CASCADE")
-    && hasForeignKey(db, "work_item_execution_associations_v6", "work_item_id", "work_items_v6", "id")
     && sql.includes("operation in ('turn.run', 'turn.enqueue')")
     && sql.includes("target_session_role_snapshot in ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')")
     && (!requireMessageAnchor || sql.includes("source_message_seq_anchor >= -1"))

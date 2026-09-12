@@ -29,7 +29,7 @@ Root WorkItemとdelegated WorkItemは同じevent／revision基盤を使う。act
 
 `work.revise` はownerまたは明示的なmanage grantを持つactorが実行する。targetは`change.request`相当のCoordination Eventまたはgrantで改訂を提案できるが、他Session所有の契約を暗黙に上書きしない。
 
-Work Itemは予定時点の`plannedSourceIdentity`を次のtupleで扱う。
+Work Itemの`sourceIdentity`は予定時点のplanned sourceを次のtupleで扱う。execution associationの予定snapshotは`plannedSourceIdentity`とする。
 
 - workspace identity
 - repository identity
@@ -56,6 +56,10 @@ old targetの実行を継続したままnew targetへ同じactive revisionを割
 
 reparentはaggregation decision、root、creator、target、descendantとの関係を再検証する。既にdecide済みのchildを別parentへ直接移動せず、旧decisionのsupersedeと新parentへのadoption eventを同じtransactionで保存する。
 
+2026-09-12のユーザー承認により、Slice 4へ前倒しする訂正境界は、moveに必要な旧decisionのsupersede、旧parentからの離脱、新parentへのadoptionと、その原子的保存・履歴再生・migration・直接検証に限定する。adoptionは所属の引受であり、成果の`accepted` decisionを自動生成しない。
+
+確定済み親結果や上位集約結果の訂正・stale伝播が必要な移動は、Slice 5接続まで明示的なconflictとする。successorを使用する場合も旧branchの結果・判断・所属履歴を変更しない。公開の汎用correction APIとflattenはSlice 5へ残す。
+
 ## Split、merge、clone
 
 splitは`delegation.create`のbatch inputで複数childを作り、source Work Itemへ`split` eventとchild IDsを保存する。Work Item lifecycle側に重複する`work.split` operationを作らない。sourceをterminalにするかactive coordinatorとして残すかはdelegation inputで指定する。
@@ -66,18 +70,13 @@ cloneは契約templateの複製であり、result、decision、execution、idemp
 
 ## Reopen と successor
 
-terminal rowをactiveへ直接書き換えない。`work.reopen`は次のいずれかを作る。
-
-- 同じWork Item identity上のactive lifecycle revision
-- 新しいsuccessor Work Item
-
-実装時にquery、foreign key、aggregation semanticsを比較して一つをADRで選ぶ。いずれの場合も旧terminal resultはimmutable eventとして残り、新active revisionが旧resultをsupersedeした理由を持つ。
+terminal rowをactiveへ直接書き換えない。ADR 031により、`work.reopen`は新しいstable IDとpredecessor参照を持つsuccessorを作る。旧terminal resultとdecisionはそのまま保持し、新しい契約の実行を別のbranchとして扱う。
 
 parentが旧terminal resultを既にacceptedとしてfinalize済みなら、reopen前にparent result correctionまたは新successor branchが必要である。子だけをactiveに戻してparentをterminalのまま残さない。
 
 ## Archive と delete
 
-archiveは履歴とrelationを保持し、default listから除外する。deleteは次を満たす場合だけ許可する。
+archiveは履歴とrelationを保持し、default listから除外する。集約判断時のrevisionから現在までの全eventがarchive/restoreの場合は、判断のchild revisionを書き換えず有効な採否として扱う。通常のSession削除（tombstone）とそのmanifestもこの条件を共有し、未判断結果やそれ以外のrevision差による保護は維持する。deleteは次を満たす場合だけ許可する。
 
 - active execution、open interaction、active descendantがない
 - resultとdecisionが必要な親またはsuccessorへ移管済み
@@ -98,7 +97,9 @@ Agentが作成直後に不要と判断した未着手Work Itemは、自律的に
 
 ## Migration
 
-進行中Root WorkItem実装のcontract revisionをbaseに、既存current rowを`migration_baseline` eventへ写す。既存result、aggregation decision、replacement relation、execution associationはそのまま保持する。既存terminal rowをreopen可能として自動変更せず、操作を受けた時だけ新lifecycle revisionを作る。
+統合済みSlice 3のschemaをbaseに、追加列とlifecycle eventのCHECKを更新する。既存current row、revision、result、aggregation decision、replacement relation、execution association、grant、usage、履歴を保持し、再baselineやgrant再生成は行わない。legacy executionのactual sourceは未取得のまま保持し、現在のWorkspace状態から補わない。旧terminal rowは変更せず、明示操作を受けた時だけsuccessorを作る。
+
+旧queued associationのrevision/planned/actualがすべて未取得の場合は、admission時に移行する。元のqueued eventがsource snapshot導入前の形式であることと、既存の共通履歴sequenceから現在のWork Item revisionがenqueue以前に存在したことを確認する。未改訂の場合のみcurrent planned tupleを引き継ぎ、actual sourceをその時点のcanonical Workspaceから取得し、associationとrunning遷移・admitted eventを同じtransactionで保存する。旧queued event/headerは書き換えない。enqueue後の改訂、associationの付替え、新形式の欠落は拒否する。元のenqueueがbackfillされた履歴しかない場合は、共通sequenceで当時の順序を証明できないためconflictとし、時刻や現在値から推測して実行しない。
 
 ## Direct validation
 

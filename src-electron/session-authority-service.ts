@@ -327,7 +327,7 @@ function sessionScopes(
 }
 
 function workItemScopes(db: DatabaseSync, actor: SessionIdentity, workItemId: string): ScopeCandidate[] {
-  const item = db.prepare(`
+  let item = db.prepare(`
     SELECT id, root_session_id, creator_session_id, target_session_id, kind
     FROM work_items_v6 WHERE id = ?
   `).get(workItemId) as {
@@ -337,6 +337,21 @@ function workItemScopes(db: DatabaseSync, actor: SessionIdentity, workItemId: st
     target_session_id: string;
     kind: "root" | "delegated";
   } | undefined;
+  if (!item) {
+    const tombstone = db.prepare("SELECT snapshot_json FROM work_item_tombstones_v6 WHERE work_item_id = ?")
+      .get(workItemId) as { snapshot_json: string } | undefined;
+    if (tombstone) {
+      try {
+        const snapshot = JSON.parse(tombstone.snapshot_json) as Record<string, unknown>;
+        const rootSessionId = snapshot.root_session_id;
+        const creatorSessionId = snapshot.creator_session_id;
+        const targetSessionId = snapshot.target_session_id;
+        if (snapshot.id === workItemId && typeof rootSessionId === "string" && typeof creatorSessionId === "string" && typeof targetSessionId === "string" && (snapshot.kind === "root" || snapshot.kind === "delegated")) {
+          item = { id: workItemId, root_session_id: rootSessionId, creator_session_id: creatorSessionId, target_session_id: targetSessionId, kind: snapshot.kind };
+        }
+      } catch { /* malformed tombstones remain inaccessible */ }
+    }
+  }
   if (!item || item.root_session_id !== actor.rootSessionId) return [];
   const target = requireSessionIdentity(db, item.target_session_id);
   const values: ScopeCandidate[] = [];

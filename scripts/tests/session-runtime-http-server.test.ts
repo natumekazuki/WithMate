@@ -66,6 +66,9 @@ function publicExecution(operation: "turn.run" | "turn.enqueue" = "turn.run", as
     partialOutput: null,
     terminalFailureNotification: null,
     workItemId: null,
+    workItemRevision: null,
+    plannedSourceIdentity: null,
+    actualStartSourceIdentity: null,
   };
 }
 
@@ -121,6 +124,30 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   "work.revise": {
     workItemId: "work-1", goal: "goal", scope: "scope", completionCriteria: "done", authority: "local",
     expectedRevision: 1, idempotencyKey: "work-revise-key",
+  },
+  "work.reassign": {
+    workItemId: "work-1", targetSessionId: "session-2", expectedRevision: 1, expectedContainerRevision: 3, transferPolicy: "successor", idempotencyKey: "work-reassign-key",
+  },
+  "work.move": {
+    workItemId: "work-1", destinationParentWorkItemId: "destination-work", expectedRevision: 1, expectedAggregateRevision: 0, expectedDestinationAggregateRevision: 2, idempotencyKey: "work-move-key",
+  },
+  "work.clone": {
+    workItemId: "work-1", expectedRevision: 1, expectedContainerRevision: 1, targetSessionId: "session-1", parentWorkItemId: null,
+    goal: "goal", scope: "scope", completionCriteria: "done", authority: "local",
+    sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null }, idempotencyKey: "work-clone-key",
+  },
+  "work.reopen": {
+    workItemId: "work-1", expectedRevision: 1, strategy: "successor", goal: "goal", scope: "scope", completionCriteria: "done", authority: "local",
+    sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null }, idempotencyKey: "work-reopen-key",
+  },
+  "work.archive": {
+    workItemId: "work-1", expectedRevision: 1, reason: "done", idempotencyKey: "work-archive-key",
+  },
+  "work.restore": {
+    workItemId: "work-1", expectedRevision: 1, idempotencyKey: "work-restore-key",
+  },
+  "work.delete": {
+    workItemId: "work-1", expectedRevision: 1, idempotencyKey: "work-delete-key",
   },
   "work.history.append": {
     workItemId: "work-1", type: "progress", summary: "started", blockers: [], nextAction: "continue",
@@ -183,20 +210,22 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
 
 // @test-value v2
 // kind = "security"
-// claim = "全application operationは有効なruntime bindingから解決したactor Sessionだけをhandler contextへ渡す"
+// claim = "全application operationは有効なruntime bindingから解決したactor Sessionだけをhandler contextへ渡し、work.reassign.expectedContainerRevisionとwork.move.expectedDestinationAggregateRevisionを保持する"
 // oracle = { type = "contract", ref = "ADR-023 Selection and binding" }
-// fault = "application operationを未検証または別bindingのactor identityでhandlerへ到達させる"
-// observable = "handlerが受け取ったoperationとactorSessionId、および各HTTP status"
+// fault = "application operationを未検証または別bindingのactor identityでhandlerへ到達させる、またはwork.reassign.expectedContainerRevisionまたはwork.move.expectedDestinationAggregateRevisionを入口で拒否・欠落させる"
+// observable = "handlerが受け取ったoperation、actorSessionId、work.reassign.expectedContainerRevisionとwork.move.expectedDestinationAggregateRevision、および各HTTP status"
 // observation_boundary = "public-boundary"
 // scope = "Session Runtime HTTP actor binding admission"
 // lifecycle = "permanent"
-// distinction = "単一operationの入力schemaではなく公開application operation集合を同じidentity boundaryで検証する"
+// distinction = "単一operationの入力schemaではなく公開application operation集合を同じidentity boundaryで検証し、work.reassign.expectedContainerRevisionとwork.move.expectedDestinationAggregateRevisionがhandlerまで保持されることも確認する"
 // @end-test-value
 test("ID-01: 全application operationはvalid bindingのtrusted actor contextだけをhandlerへ渡す", async () => {
   const calls: Array<{ operation: string; actorSessionId: string | null }> = [];
+  const lifecycleInputs: Record<string, any> = {};
   const server = createSessionRuntimeHttpServer({
     ...boundServerOptions,
-    handle: async (operation, _input, _adapter, context) => {
+    handle: async (operation, input, _adapter, context) => {
+      if (operation === "work.move" || operation === "work.reassign") lifecycleInputs[operation] = input;
       calls.push({
         operation,
         actorSessionId: context.agentRuntimeBinding?.actorSessionId ?? null,
@@ -220,6 +249,8 @@ test("ID-01: 全application operationはvalid bindingのtrusted actor contextだ
       operation,
       actorSessionId: "session-actor",
     })));
+    assert.equal(lifecycleInputs["work.reassign"].expectedContainerRevision, 3);
+    assert.equal(lifecycleInputs["work.move"].expectedDestinationAggregateRevision, 2);
   } finally {
     await server.stop();
   }

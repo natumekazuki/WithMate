@@ -352,6 +352,62 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 ## Validation gap
 
+### Slice 4 の承認済み実装境界（2026-09-12）
+
+開始baseは`ab7b4e25709086a0f1859e1345ea87e83956fa07`。ユーザー承認により、moveに必要な旧decisionのsupersede、旧parentからの離脱、新parentへのadoptionと、その原子的保存・履歴再生・migration・直接検証をSlice 5から前倒しする。adoptionは所属の引受だけを表し、成果を自動採用しない。
+
+確定済み親結果または上位集約結果の訂正・stale伝播が必要な移動は、Slice 5接続まで明示的なconflictとし、未接続能力として残す。successorも旧branchの結果・判断・所属履歴を変更しない範囲に限定する。公開の汎用correction APIとflattenはSlice 5、batch splitのdelegation compositionはSlice 6に残す。以下の実装・検証・レビュー記録が揃うまではSlice 4の完了を意味しない。
+
+### Slice 4 の実装・直接検証（2026-09-13）
+
+同一root内のreassign/move、clone、新ID successorによるreopen、archive/restore、参照がないarchived terminalの物理delete、delegated revise/history、admission時のactual source snapshotを接続した。公開面は56 operationへ揃え、CLI生成物、MCP、catalog、managed Skill、runbookを更新した。新lifecycle grantはbaselineを変更せず、既存grant ownerのtrusted内部発行で明示付与する。Agent向け汎用grant発行は未接続である。
+
+実SQLiteでmoveの旧decision失効・所属変更・新parent未decision、確定済み親のconflict、cycle、handoffのqueued/running拒否、successorの旧branch保持・予算・replay、archive/restoreのdecision保持、削除後のhistory/tombstone/replayを検証した。sourceは実Gitの通常branch、detached、unborn、Git外と障害を区別し、queued admission後のsnapshot保持と改変拒否を確認した。populated migrationでは旧row、event/header、decision/replacement、grant、budget、idempotency responseを保持し、migration後のmove/reopenとstartup replayを実行した。
+
+全suiteの初回は3,569件中3,553 pass、15 fail、1 skip。公開fixtureとschemaの今回変更に伴う失敗を修正した後の全suiteは3,572件中3,569 pass、2 fail、1 skipだった。残る失敗は`session-admission-regressions.test.ts`の旧Session placement fixtureと`session-transcript-service.test.ts`の固定期限経過である。前者は開始baseのclean detached worktreeでも同じ`AUTHORITY_SCOPE_INVALID`を再現し、後者は開始時に報告済みの`2026-09-12T00:00:00Z`期限切れを実測した。初回のGlossary queue timeoutは再実行で成功した。最終の権限・migration修正後は関連49件、型検査、production buildが成功した。GUIは変更しておらず目視未実行。
+
+異なるroot間のWork Item単体moveは、target Sessionの所属・grant・budget移管の接続が必要なため現在明示conflictである。2026-09-13、未完了項目として本planに保持することを条件に、ユーザーが単体moveの延期を承認した。後続のtransfer接続でtarget Sessionの所属・grant・budget移管と原子的保存・履歴保持を実装・検証するまで未完了とし、実装済み能力に数えない。確定済み結果を訂正するmoveとflattenは承認済みのSlice 5待ち、batch splitはSlice 6待ちとして保持する。
+
+実装を`230cceed32fa2424e669c5e4fede5282fc8a2fde`へ固定し、clean detached worktreeで開始baseから全36 fileの独立complete-diff reviewを行った。`work.move.expectedDestinationAggregateRevision`と`work.reassign.expectedContainerRevision`の公開parser許可漏れをblockingとして採用し、queued admissionのWorkspace不明時にTypeErrorになる指摘も採用した。修正commitは`58e0074c9417e63aa750a3c5140453c1d640e2d1`。TS parserと生成CLIを修正し、Workspace不明時は既存association errorで拒否する。同commitのclean worktreeで当該3 finding familyのtargeted closureが完了し、残るblockingはない。全差分reviewは繰り返さず、review worktreeはHEAD・cleanliness・SessionFolder内pathを確認して削除した。
+
+修正後はHTTP 19件、CLI 38件、MCP/managed Skill 42件、source admission 9件、lifecycle storage 6件、authority 2件、migration 1件、root successor/schema repair 2件が成功した。型検査、CLI再生成、差分checkも成功した。全suiteとproduction buildは上記の先行検証以降は繰り返していない。
+
+変更testは開始baseから最終snapshotまで26 tests／26 transitionsをdiagnostic 0で抽出し、通常のread-only general_lunaで審査した。公開revisionの伝播、provider tuple、root選択、admission時点のGit状態、履歴payload、権限proofの独立性、migrationの旧列・sequence、cycleの拒否条件、delete参照・再送、successorの旧branch・予算を補強した。全recordの指摘解消を確認した。最終補強はtestと記録だけであり、production sourceは独立targeted closure済みの修正commitと同一である。
+
+source改変のstartup拒否検証で、既存SessionExecutionStorageV6 constructorがschema検証例外時にDB handleを明示closeしないことも確認した。通常admissionとは別の既存失敗経路であり、今回の3 finding familyには含めず残リスクとして記録する。cross-root単体moveを上記の承認済み未完了項目として後続へ残し、Slice 4の今回合意した範囲の実装・検証・レビューは完了した。最終test補強とレビュー記録は`277d2b5a`に保存済み。統合先へのmerge・pushは未実行である。
+
+
+### Slice 4 追加レビュー：旧queued executionの移行（2026-09-13）
+
+旧associationのsource追加列がNULLのままではadmissionがrevision不一致として拒否し、未改訂の旧queued executionまで実行不能になるP1を修正した。修正開始baseは`c6d103e42913cd402bc5accc5b25211489e1d0a2`、実装commitは`315e998da88ebf6ea3fd904175e98b1e38634e5f`。旧queued形式と元のenqueue履歴を確認し、共通header sequenceから現在のWork Item revisionがenqueue以前に存在した場合だけ、admission transactionでrevision/planned/actualを保存してrunningへ進める。旧event/headerは変更せず、admitted eventへ新しいsnapshotを追加する。
+
+移行前後の改訂、現在形式のassociation欠落は拒否する。backfilled enqueue headerだけでは当時の共通順序を証明できないためconflictを維持し、現在値や時刻からの推測は行わない。既存のrunning/terminal associationのactual sourceも未取得のまま保持する。
+
+旧DDLからのmigration・未改訂queueのadmission・再open・履歴保持と、migration前後の改訂／modern NULL欠落拒否を直接検証した。関連46 testと型検査が成功し、fixtureのWorkspaceを一時directoryへ独立させた後のmigration関連3件も成功した。全suite・build・GUIは再実行していない。変更testは今回の開始baseから2 tests／2 ADDED transitionsをdiagnostic 0で抽出した。通常のread-only general_lunaによる全2件のtest-value審査を完了し、metadataの観測範囲をstorage再openと比較対象の予算tableへ明確化した。固定commitのclean detached worktreeで当該finding family限定の独立reviewも完了し、残るblockingはない。review worktreeはHEAD・cleanliness・SessionFolder内pathを確認して削除した。
+
+
+### Slice 4 追加レビュー：archive/restore後の担当Session削除（2026-09-13）
+
+採用済みWork Itemのarchive/restore後、Session削除判定とlifecycle manifestがdecisionのchild revision完全一致を要求し、未回収結果として削除を拒否するP2を修正した。開始baseは`7cfb870d51621387ba3735c1d31214ec48732fdc`、修正commitは`96e7f7832495d69c2d936a78b168b136c82b033c`。通常Session削除（tombstone）とmanifestを既存の集約判定に揃え、判断時から現在までの全revision差がarchived/restored eventなら有効とする。decision自体は更新せず、未判断結果とその他のrevision差の保護は維持する。raw physical purgeのDB triggerは今回の通常削除とは別の既存契約として変更していない。
+
+実際のchild結果採用と親完了後、archive後とrestore後の各担当Session削除、manifest、tombstone、decision/result保持とstorage再openを検証した。未判断childではmanifestと削除の両方が保護を維持する。関連45 testと型検査、差分checkが成功した。全suite・build・GUIは再実行していない。今回の開始baseから2 tests／2 transitions（新規1件と隣接既存1件）をdiagnostic 0で抽出し、通常のread-only general_lunaによるtest-value審査を完了した。指摘を受け、未判断childのarchive後・restore後もmanifestと削除が保護する直接検証を補強し、関連storage 7件成功と指摘解消を確認した。固定commitのclean detached worktreeで当該finding family限定reviewも完了し、残るblockingはない。production sourceはこのreview済みcommitと同一。review worktreeはHEAD・cleanliness・SessionFolder内pathを確認して削除した。
+
+### Slice 4 追加レビュー：重複実装とtest claimの整理（2026-09-13）
+
+開始baseは`b63f02ee3da124afa295e147a08a33a57fe2ad58`、修正commitは`5b5bc40c1e5cc0138094efd75e71b708b8eee2ae`。集約完了とSession削除／manifestの4箇所にあったarchive/restoredのみのrevision差許容SQLを共通fragmentへ集約した。呼び出しのない旧root successor生成経路と未使用型・継承元との重複フィールド・test変数を削除し、Session restoreとwork.reopenの共通生成経路を維持した。
+
+test metadataは、成功時のsource保存、archived_atフラグに対するenqueue拒否、HTTPが実assertする2つのrevision入力へ限定した。atomic rollbackやproduction archiveの検証とは扱わない。legacy queued admission fallback、生成済みCLI artifact、application/MCP schema、migrationと現行associationのrevision mismatch testは維持した。
+
+関連63 test、型検査、差分checkが成功した。開始baseから4 tests／4 transitionsをdiagnostic 0で抽出し、通常のread-only general_lunaによる全recordのtest-value審査を完了した。固定commitのclean detached worktreeで今回のfinding familyに限定した独立reviewも完了し、修正要求はない。review worktreeはHEAD・cleanliness・SessionFolder内pathを確認して削除した。全suite・build・GUIは今回再実行していない。
+
+### Slice 4 CI fixture修正（2026-09-13）
+
+PR #711の初回CI（run 34708930101）は7 testが失敗した。開始base `078351939b207f36ee22558bf2c3d2fe380bb809` から `975cf6f1f37083b5846247de793593a25f52ef7c` でfixtureを修正した。source admissionの2件はcheckoutのbranch状態に依存しない一時Git repositoryを用意し、cutoffの2件はlocal calendarという契約に期待値を揃えた。root constructionは一時directoryをrealpathで正規化し、旧placement入力を現行形へ更新し、transcript budgetは既存now注入で時計を固定した。production、CI設定、assertionの保護条件は変更していない。
+
+関連105 test、UTC設定でのfacade 34 test、型検査、差分checkが成功した。開始baseから6 tests／6 SURVIVED transitionsをdiagnostic 0で抽出し、read-only general_lunaのtest-value審査を完了した。宣言外のroot construction fixture変更も独立確認し、契約の弱体化や未解消指摘はない。CIの全shard再実行結果はPR #711のChecksを正本とし、この記録時点では実行中。今回build・GUIは未実行。
+
+CI run 34709814244ではshard 1／2と型検査が成功し、shard 3のWORK-EXEC-05だけが残った。Session作成後のworkspace更新では既に捕捉されたbindingを変更できないため、一時Git repositoryをfixtureの初期Session INSERTから渡すよう修正した。関連34 testは通常環境とdetached HEADをcwdにした環境の両方で成功し、型検査・差分check、更新抽出6 recordsの当該finding限定test-value closureも完了した。検証用worktreeはpath・HEAD・cleanliness確認後に削除した。最終CI結果はPRのChecksで追跡する。
+
 ### Slice 2 の実装・検証対象
 
 Root ledger、原子的な予約と精算、Session／Work Item作成数、実行queue、Provider retry／使用量、SessionFolderの仲介書き込み、Settingsからの上限・期限延長を接続した。初期policyは2026-09-07のユーザー指定を採用し、token・費用は計測のみとする。設計の採用方針とADR 030を正本とする。

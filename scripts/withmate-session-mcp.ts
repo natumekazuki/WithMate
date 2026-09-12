@@ -117,6 +117,13 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "work.list", title: "List Work Items", description: "List visible Work Items with bounded keyset pagination.", readOnly: true, destructive: false },
   { name: "work.get", title: "Get Work Item", description: "Read one visible Work Item.", readOnly: true, destructive: false },
   { name: "work.revise", title: "Revise Root Work Item", description: "Revise the bound root Work Item contract.", readOnly: false, destructive: false },
+  { name: "work.reassign", title: "Reassign Work Item", description: "Transfer an assignment to another authorized target using an explicit transfer policy.", readOnly: false, destructive: false },
+  { name: "work.move", title: "Move Work Item", description: "Move an assignment to another parent while preserving assignment history.", readOnly: false, destructive: false },
+  { name: "work.clone", title: "Clone Work Item", description: "Clone only the Work Item contract into a new identity.", readOnly: false, destructive: false },
+  { name: "work.reopen", title: "Reopen Work Item", description: "Create a successor for a terminal Work Item while retaining its result.", readOnly: false, destructive: false },
+  { name: "work.archive", title: "Archive Work Item", description: "Archive a Work Item while retaining its history.", readOnly: false, destructive: false },
+  { name: "work.restore", title: "Restore Work Item", description: "Restore an archived Work Item through a new lifecycle revision.", readOnly: false, destructive: false },
+  { name: "work.delete", title: "Delete Work Item", description: "Delete an eligible Work Item and retain its replay tombstone.", readOnly: false, destructive: true },
   { name: "work.history.append", title: "Append Work Item history", description: "Record progress or handoff history for the bound root Work Item.", readOnly: false, destructive: false },
   { name: "work.history.list", title: "List Work Item history", description: "Read bounded Work Item history.", readOnly: true, destructive: false },
   { name: "work.transition", title: "Transition Work Item", description: "Start, wait, or resume a Work Item assigned to the bound Session.", readOnly: false, destructive: false },
@@ -350,6 +357,9 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: createSessionRuntimeAdvertisedInputSchema("work.get"), outputSchema: createSessionRuntimeOutputSchema("work.get"),
   }, async (input) => executeOperation("work.get", input, deps));
   server.registerTool("work.revise", { ...definitions.get("work.revise")!, annotations: annotations(definitions.get("work.revise")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("work.revise"), outputSchema: createSessionRuntimeOutputSchema("work.revise") }, async (input) => executeOperation("work.revise", input, deps));
+  for (const operation of ["work.reassign", "work.move", "work.clone", "work.reopen", "work.archive", "work.restore", "work.delete"] as const) {
+    server.registerTool(operation, { ...definitions.get(operation)!, annotations: annotations(definitions.get(operation)!), inputSchema: createSessionRuntimeAdvertisedInputSchema(operation), outputSchema: createSessionRuntimeOutputSchema(operation) }, async (input) => executeOperation(operation, input, deps));
+  }
   server.registerTool("work.history.append", { ...definitions.get("work.history.append")!, annotations: annotations(definitions.get("work.history.append")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("work.history.append"), outputSchema: createSessionRuntimeOutputSchema("work.history.append") }, async (input) => executeOperation("work.history.append", input, deps));
   server.registerTool("work.history.list", { ...definitions.get("work.history.list")!, annotations: annotations(definitions.get("work.history.list")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("work.history.list"), outputSchema: createSessionRuntimeOutputSchema("work.history.list") }, async (input) => executeOperation("work.history.list", input, deps));
   server.registerTool("work.transition", {

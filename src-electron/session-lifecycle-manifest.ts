@@ -1,3 +1,4 @@
+import { workItemDecisionRevisionMatchesSql } from "./work-item-decision-revision-sql.js";
 import type { DatabaseSync } from "node:sqlite";
 
 import type {
@@ -107,7 +108,7 @@ export function buildSessionLifecycleManifest(
           AND NOT EXISTS (
             SELECT 1 FROM work_item_aggregation_decisions_v6 AS decision
             WHERE decision.child_work_item_id = item.id
-              AND decision.child_revision = item.revision
+              AND ${workItemDecisionRevisionMatchesSql("item")}
           )
         )
       )

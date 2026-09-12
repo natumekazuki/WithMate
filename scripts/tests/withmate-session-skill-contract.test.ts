@@ -12,27 +12,30 @@ import {
 const skillRoot = path.resolve("resources", "skills", "withmate-session");
 
 describe("withmate-session managed Skill contract", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "managed Session guidanceはself-owned Root Work Itemのclosureとtop-level delegated Work Itemの非集約closureを区別する"
+  // claim = "managed Session guidanceはoperations referenceの全page走査、active root優先、activeがなければlatest terminal rootの規則を配布する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-  // failure_mode = "Agentがroot自身のWork Itemを存在しないものとして扱うか、top-level delegated itemへaggregationを適用してroot resultを確定できない"
+  // fault = "Agentがroot自身のWork Itemを存在しないものとして扱うか、top-level delegated itemへaggregationを適用してroot resultを確定できない"
+  // observable = "managed Skillとoperations referenceのroot選択手順、parent-null delegation、aggregation境界"
+  // observation_boundary = "declaration"
   // scope = "withmate-session managed Skill root closure guidance"
   // lifecycle = "permanent"
-  // distinction = "self-owned root result、parent-null top-level delegation、task coordinator aggregationの三境界を同じ配布文書から検証する"
+  // distinction = "operations referenceの全page active優先/latest terminal fallback、parent-null top-level delegation、task coordinator aggregationの境界を検証する"
   // @end-test-value
   it("DECOMP-ROOT-CLOSURE-05: self-owned rootと直属委譲とtask配下集約を別のclosureで閉じる", async () => {
     const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
     const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
     const contract = skill + "\n" + operations;
 
-    assert.match(contract, /root overall coordinator has exactly one self-owned Root Work Item/i);
+    assert.match(contract, /root (?:overall )?coordinator keeps its self-owned root Work Item current/i);
     assert.match(contract, /top-level delegated Work Items with `parentWorkItemId: null`/);
     assert.match(contract, /`work\.get` to validate and adopt the prerequisite's terminal result/);
     assert.match(contract, /Do not call `work\.aggregation\.\*` for top-level items/);
     assert.match(contract, /Submit the self-owned Root Work Item result only after every descendant and nested aggregation decision is terminal and settled/);
     assert.match(contract, /task coordinator with a current parent Work Item[\s\S]*`work\.aggregation\.get`/i);
     assert.match(contract, /passes that revision to its own strict parent `work\.result`/);
+    assert.match(operations, /For a root `standalone` or `overall-coordinator`, call `work\.list` across every page[\s\S]*prefer the active self-owned root; if no active root exists, use the latest terminal self-owned root/i);
   });
 
   it("host設定済みMCPを優先しstdio entryを通常shell commandとして実行しない", async () => {

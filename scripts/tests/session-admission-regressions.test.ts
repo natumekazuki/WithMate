@@ -66,7 +66,9 @@ test("委譲済み子のrevokeはschemaとauthority serviceの再起動後も有
   const db = new DatabaseSync(f.dbPath);
   try {
     const binding = { bindingId: "binding", bindingIdHash: "hash", actorSessionId: "root", providerId: "codex", executionGeneration: "generation", authoritySnapshot: {}, operationGrants: ["session.runtime.invoke"], createdAt: NOW, expiresAt: null };
-    const parentProof = authority.authorize(binding, "session.create", { sessionRole: "executor" }).proof;
+    const parentProof = authority.authorize(binding, "session.create", {
+      placement: { kind: "child", parentSessionId: "root", sessionRole: "executor" },
+    }).proof;
     const child = { ...f.root, id: "child", roleBinding: buildChildSessionRoleBinding("child", "root", f.root.roleBinding!, "executor") };
     f.storage.insertSessionIdempotently(child, {
       operation: "session.create", principalSessionId: "root", idempotencyKey: "child-create", requestFingerprint: "child-create",

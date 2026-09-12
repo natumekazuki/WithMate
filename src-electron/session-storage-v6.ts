@@ -1,3 +1,4 @@
+import { workItemDecisionRevisionMatchesSql } from "./work-item-decision-revision-sql.js";
 import { SESSION_ROLE_CHILDREN, type SessionRole } from "../src/session-role-binding.js";
 import { restoreRootBudgetWithinTransaction } from "./session-lifecycle-restore.js";
 import type { DatabaseSync } from "node:sqlite";
@@ -2657,7 +2658,7 @@ export class SessionStorageV6 {
               SELECT 1
               FROM work_item_aggregation_decisions_v6 AS decision
               WHERE decision.child_work_item_id = item.id
-                AND decision.child_revision = item.revision
+                AND ${workItemDecisionRevisionMatchesSql("item")}
             )
           )
         )

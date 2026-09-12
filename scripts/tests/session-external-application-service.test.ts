@@ -1053,9 +1053,9 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
       workItems: {
         contractRevision: 2,
         states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
-        mutations: ["create", "revise", "transition", "result", "cancel", "history.append"],
+        mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "cancel", "history.append"],
         history: {
-          events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported"],
+          events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported", "assignment_changed", "parent_changed", "archived", "restored", "deleted"],
           operations: ["append", "list"],
           defaultListLimit: 50,
           maxListLimit: 200,

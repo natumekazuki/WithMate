@@ -744,6 +744,9 @@ export function toPublicExecution(execution: SessionExecutionStorageRecord): Ses
     admittedAt: execution.admittedAt,
     completedAt: execution.completedAt,
     updatedAt: execution.updatedAt,
+    ...(execution.workItemRevision === undefined ? {} : { workItemRevision: execution.workItemRevision }),
+    ...(execution.plannedSourceIdentity === undefined ? {} : { plannedSourceIdentity: execution.plannedSourceIdentity }),
+    ...(execution.actualStartSourceIdentity === undefined ? {} : { actualStartSourceIdentity: execution.actualStartSourceIdentity }),
   };
 }
 

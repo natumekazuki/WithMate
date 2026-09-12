@@ -2,7 +2,7 @@ import { SessionLifecycleOperationConflictError, SessionLifecycleOperationRevisi
 import { createHash } from "node:crypto";
 import { SessionLifecycleRecoveryError, type SessionLifecycleService } from "./session-lifecycle-service.js";
 import type { SessionRuntimeConfigureInput, SessionRuntimeMoveInput, SessionRuntimeCloneInput, SessionRuntimeRestoreInput, SessionRuntimeArchiveInput, SessionRuntimeDeleteInput } from "../src/session-external-runtime-contract.js";
-import { SessionAuthorityError, SESSION_AUTHORITY_MAPPING_REVISION, SESSION_AUTHORITY_OPERATION_DEFINITIONS, type MutationAdmissionProof } from "../src/session-authority.js";
+import { SessionAuthorityError, SESSION_AUTHORITY_MAPPING_REVISION, SESSION_AUTHORITY_OPERATION_DEFINITIONS, type MutationAdmissionProof, type MutationAuthorityProof } from "../src/session-authority.js";
 import type { SessionAuthorityService } from "./session-authority-service.js";
 import { SessionResourceRevisionConflictError } from "./resource-history-schema.js";
 import {
@@ -75,6 +75,13 @@ import {
   type SessionRuntimeWorkItemCreateInput,
   type SessionRuntimeWorkItemInput,
   type SessionRuntimeWorkItemReviseInput,
+  type SessionRuntimeWorkItemReassignInput,
+  type SessionRuntimeWorkItemMoveInput,
+  type SessionRuntimeWorkItemCloneInput,
+  type SessionRuntimeWorkItemReopenInput,
+  type SessionRuntimeWorkItemArchiveInput,
+  type SessionRuntimeWorkItemRestoreInput,
+  type SessionRuntimeWorkItemDeleteInput,
   type SessionRuntimeWorkItemHistoryAppendInput,
   type SessionRuntimeWorkItemHistoryListInput,
   type SessionRuntimeWorkItemHistoryListResult,
@@ -220,6 +227,7 @@ export type SessionExternalApplicationServiceDeps = {
     WorkItemService,
     "create" | "get" | "resolveListScope" | "iterateList" | "transition" | "reportResult" | "cancel" | "requireExecutionAssociation"
     | "getAggregation" | "listAggregation" | "decideAggregation" | "retryAggregation" | "revise" | "appendHistory" | "iterateHistory"
+    | "reassign" | "move" | "clone" | "reopen" | "archive" | "restore" | "delete"
   >;
   getExecutionWorkItemId?(executionId: string): string | null;
   invalidateSession?(sessionId: string): void;
@@ -229,6 +237,13 @@ export type SessionExternalApplicationResponse = SessionRuntimeResultEnvelope | 
 
 const WORK_ITEM_MUTATION_OPERATIONS = new Set<SessionRuntimeOperation>([
   "work.create",
+  "work.reassign",
+  "work.move",
+  "work.clone",
+  "work.reopen",
+  "work.archive",
+  "work.restore",
+  "work.delete",
   "work.revise",
   "work.history.append",
   "work.transition",
@@ -278,7 +293,8 @@ export class SessionExternalApplicationService {
         );
       }
       const authorized = this.deps.authorityService.authorize(agentRuntimeBinding, request.operation, request.input);
-      const result = await this.executeValidated(request.operation, authorized.input, agentRuntimeBinding, authorized.proof);
+      const additionalProofs = this.authorizeWorkItemAdditionalProofs(request.operation, request.input, agentRuntimeBinding);
+      const result = await this.executeValidated(request.operation, authorized.input, agentRuntimeBinding, authorized.proof, additionalProofs);
       this.invalidateWorkItemMutation(request.operation, agentRuntimeBinding.actorSessionId);
       const response = createSessionRuntimeResult(request.operation, result);
       assertApplicationResponseSize(request.operation, result, response);
@@ -293,6 +309,7 @@ export class SessionExternalApplicationService {
     input: unknown,
     agentRuntimeBinding: ResolvedAgentRuntimeBinding,
     proof: MutationAdmissionProof,
+    additionalProofs: readonly MutationAuthorityProof[] = [],
   ): Promise<SessionRuntimeResultByOperation[SessionRuntimeOperation]> {
     if (operation === "runtime.catalog") {
       return projectRuntimeCatalog(
@@ -376,6 +393,13 @@ export class SessionExternalApplicationService {
     if (operation === "work.revise") {
       return this.requireWorkItemService().revise(input as SessionRuntimeWorkItemReviseInput, agentRuntimeBinding, proof);
     }
+    if (operation === "work.reassign") return this.requireWorkItemService().reassign(input as SessionRuntimeWorkItemReassignInput, agentRuntimeBinding, proof, additionalProofs);
+    if (operation === "work.move") return this.requireWorkItemService().move(input as SessionRuntimeWorkItemMoveInput, agentRuntimeBinding, proof, additionalProofs);
+    if (operation === "work.clone") return this.requireWorkItemService().clone(input as SessionRuntimeWorkItemCloneInput, agentRuntimeBinding, proof, additionalProofs);
+    if (operation === "work.reopen") return this.requireWorkItemService().reopen(input as SessionRuntimeWorkItemReopenInput, agentRuntimeBinding, proof, additionalProofs);
+    if (operation === "work.archive") return this.requireWorkItemService().archive(input as SessionRuntimeWorkItemArchiveInput, agentRuntimeBinding, proof);
+    if (operation === "work.restore") return this.requireWorkItemService().restore(input as SessionRuntimeWorkItemRestoreInput, agentRuntimeBinding, proof);
+    if (operation === "work.delete") return this.requireWorkItemService().delete(input as SessionRuntimeWorkItemDeleteInput, agentRuntimeBinding, proof);
     if (operation === "work.history.append") {
       return this.requireWorkItemService().appendHistory(input as SessionRuntimeWorkItemHistoryAppendInput, agentRuntimeBinding, proof);
     }
@@ -792,6 +816,7 @@ export class SessionExternalApplicationService {
       ...(input.creatorSessionId === undefined ? {} : { creatorSessionId: input.creatorSessionId }),
       ...(input.targetSessionId === undefined ? {} : { targetSessionId: input.targetSessionId }),
       ...(input.state === undefined ? {} : { state: input.state }),
+      includeArchived: input.includeArchived ?? false,
       limit: input.limit + 1,
       afterSequence: cursor,
     }, scope, proof)[Symbol.iterator]();
@@ -1065,6 +1090,38 @@ export class SessionExternalApplicationService {
     return this.deps.workItemService;
   }
 
+  private authorizeWorkItemAdditionalProofs(operation: SessionRuntimeOperation, input: unknown, binding: ResolvedAgentRuntimeBinding): MutationAuthorityProof[] {
+    if (operation === "work.reassign") {
+      const request = input as SessionRuntimeWorkItemReassignInput;
+      return [this.deps.authorityService.authorize(binding, "work.create", { targetSessionId: request.targetSessionId }).proof];
+    }
+    if (operation === "work.clone") {
+      const request = input as SessionRuntimeWorkItemCloneInput;
+      const sourceRead = this.deps.authorityService.authorize(binding, "work.get", { workItemId: request.workItemId }).proof;
+      const source = this.requireWorkItemService().get(request.workItemId, binding, sourceRead);
+      const parentWorkItemId = request.parentWorkItemId === undefined ? source.parentWorkItemId : request.parentWorkItemId;
+      const proofs: MutationAuthorityProof[] = [this.deps.authorityService.authorize(binding, "work.create", { targetSessionId: request.targetSessionId }).proof];
+      if (parentWorkItemId !== null) proofs.push(this.deps.authorityService.authorize(binding, "work.move", { workItemId: parentWorkItemId }).proof);
+      return proofs;
+    }
+    if (operation === "work.reopen") {
+      const request = input as SessionRuntimeWorkItemReopenInput;
+      const sourceRead = this.deps.authorityService.authorize(binding, "work.get", { workItemId: request.workItemId }).proof;
+      const source = this.requireWorkItemService().get(request.workItemId, binding, sourceRead);
+      const parentWorkItemId = request.destinationParentWorkItemId === undefined ? source.parentWorkItemId : request.destinationParentWorkItemId;
+      const proofs: MutationAuthorityProof[] = [this.deps.authorityService.authorize(binding, "work.create", { targetSessionId: source.targetSessionId }).proof];
+      if (parentWorkItemId !== null) proofs.push(this.deps.authorityService.authorize(binding, "work.move", { workItemId: parentWorkItemId }).proof);
+      return proofs;
+    }
+    if (operation === "work.move") {
+      const request = input as SessionRuntimeWorkItemMoveInput;
+      const proofs: MutationAuthorityProof[] = [];
+      if (request.destinationParentWorkItemId) proofs.push(this.deps.authorityService.authorize(binding, "work.move", { workItemId: request.destinationParentWorkItemId }).proof);
+      return proofs;
+    }
+    return [];
+  }
+
   private isProviderSupported(providerId: string): boolean {
     return this.deps.isProviderSupported?.(providerId) ?? (providerId === "codex" || providerId === "copilot");
   }
@@ -1123,8 +1180,8 @@ function projectRuntimeCatalog(
     workItems: {
       contractRevision: WORK_ITEM_CONTRACT_REVISION,
       states: WORK_ITEM_STATES,
-      mutations: ["create", "revise", "transition", "result", "cancel", "history.append"],
-      history: { events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported"], operations: ["append", "list"], defaultListLimit: WORK_ITEM_DEFAULT_LIST_LIMIT, maxListLimit: WORK_ITEM_MAX_LIST_LIMIT },
+      mutations: ["create", "revise", "reassign", "move", "clone", "reopen", "archive", "restore", "delete", "transition", "result", "cancel", "history.append"],
+      history: { events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported", "assignment_changed", "parent_changed", "archived", "restored", "deleted"], operations: ["append", "list"], defaultListLimit: WORK_ITEM_DEFAULT_LIST_LIMIT, maxListLimit: WORK_ITEM_MAX_LIST_LIMIT },
       defaultListLimit: WORK_ITEM_DEFAULT_LIST_LIMIT,
       maxListLimit: WORK_ITEM_MAX_LIST_LIMIT,
       maxListResponseBytes: SESSION_RUNTIME_MAX_RESPONSE_BYTES,
@@ -1330,6 +1387,7 @@ function encodeWorkItemCursor(
     creatorSessionId: input.creatorSessionId ?? null,
     targetSessionId: input.targetSessionId ?? null,
     state: input.state ?? null,
+    includeArchived: input.includeArchived ?? false,
     afterSequence,
   }), "utf8").toString("base64url");
 }
@@ -1350,6 +1408,7 @@ function decodeWorkItemCursor(
       || value.creatorSessionId !== (input.creatorSessionId ?? null)
       || value.targetSessionId !== (input.targetSessionId ?? null)
       || value.state !== (input.state ?? null)
+      || value.includeArchived !== (input.includeArchived ?? false)
       || !Number.isSafeInteger(value.afterSequence)
       || (value.afterSequence as number) < 1
     ) throw new Error("invalid cursor");
@@ -1519,6 +1578,8 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
         || operation === "turn.enqueue"
         || operation === "turn.cancel"
         || operation === "work.create"
+        || operation === "work.reassign" || operation === "work.move" || operation === "work.clone"
+        || operation === "work.reopen" || operation === "work.archive" || operation === "work.restore" || operation === "work.delete"
         || operation === "work.transition"
         || operation === "work.result"
         || operation === "work.cancel"
@@ -1696,6 +1757,8 @@ function isMutationOperation(operation: SessionRuntimeOperation | string, input?
     || operation === "turn.enqueue"
     || operation === "turn.cancel"
     || operation === "work.create"
+    || operation === "work.reassign" || operation === "work.move" || operation === "work.clone"
+    || operation === "work.reopen" || operation === "work.archive" || operation === "work.restore" || operation === "work.delete"
     || operation === "work.revise"
     || operation === "work.history.append"
     || operation === "work.transition"

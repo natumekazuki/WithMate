@@ -464,6 +464,109 @@ export function issueTrustedCrossRootTransferCapability(db: DatabaseSync, input:
 }
 
 /**
+ * Trusted internal provisioning for the bounded Work Item lifecycle surface.
+ * This helper is deliberately narrower than the agent delegation API: it only
+ * issues exercise grants, never changes baseline grants, and never creates a
+ * child ceiling.
+ */
+export function issueTrustedWorkItemLifecycleCapability(db: DatabaseSync, input: {
+  rootSessionId: string;
+  granteeSessionId: string;
+  actions: readonly SessionRuntimeOperation[];
+  relationSelector: SessionAuthorityRelationSelector;
+  targetSessionRoles: readonly SessionRole[];
+  principal: Extract<SessionAuthorityPrincipal, { kind: "user" | "system" }>;
+  proof: MutationAuthorityProof;
+  expiresAt: string | null;
+  issuedAt: string;
+}): readonly SessionAuthorityGrant[] {
+  const trustedPrincipal = input.principal;
+  const proofPrincipal = input.proof.principal;
+  const matchingTrustedProof = trustedPrincipal.kind === "user"
+    ? proofPrincipal.kind === "user" && proofPrincipal.receiptId === trustedPrincipal.receiptId
+    : proofPrincipal.kind === "system" && proofPrincipal.service === trustedPrincipal.service;
+  if (!matchingTrustedProof) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Work Item lifecycle capability requires matching trusted authority.");
+  }
+  if (input.proof.mappingRevision !== SESSION_AUTHORITY_MAPPING_REVISION
+    || input.proof.action !== input.proof.operation
+    || !input.proof.operation.startsWith("work.")) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The trusted proof is not a current Work Item authority decision.");
+  }
+  const allowedActions = new Set<SessionRuntimeOperation>([
+    "work.create", "work.get", "work.revise", "work.reassign", "work.move",
+    "work.clone", "work.reopen", "work.archive", "work.restore", "work.delete",
+    "work.history.append", "work.history.list",
+  ]);
+  if (input.actions.length === 0 || input.actions.some((action) => !allowedActions.has(action))) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The lifecycle capability contains an unsupported Work Item action.");
+  }
+  if (new Set(input.actions).size !== input.actions.length
+    || new Set(input.targetSessionRoles).size !== input.targetSessionRoles.length
+    || input.targetSessionRoles.some((role) => !SESSION_ROLE_VALUES.includes(role))) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The lifecycle capability contains duplicate or invalid scope values.");
+  }
+  const root = requireRoleBinding(db, input.rootSessionId);
+  const grantee = requireRoleBinding(db, input.granteeSessionId);
+  if (root.root_session_id !== input.rootSessionId
+    || grantee.root_session_id !== input.rootSessionId
+    || input.proof.resolvedScope.rootSessionId !== input.rootSessionId) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The lifecycle capability is outside the trusted root scope.");
+  }
+  const issuedAt = new Date(input.issuedAt);
+  const expiresAt = input.expiresAt === null ? null : new Date(input.expiresAt);
+  if (!Number.isFinite(issuedAt.getTime()) || (expiresAt !== null && !Number.isFinite(expiresAt.getTime()))) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The lifecycle capability timestamps are invalid.");
+  }
+  if (expiresAt !== null && expiresAt.getTime() <= issuedAt.getTime()) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The lifecycle capability expiry must be after issuance.");
+  }
+  const before = new Set(listActiveSessionAuthorityGrants(db, input.granteeSessionId, issuedAt).map((grant) => grant.grantId));
+  for (const action of input.actions) {
+    const definition = SESSION_AUTHORITY_OPERATION_DEFINITIONS[action];
+    insertGrant(db, {
+      rootSessionId: input.rootSessionId,
+      issuerKind: trustedPrincipal.kind,
+      issuerId: trustedPrincipal.kind === "user" ? trustedPrincipal.receiptId : trustedPrincipal.service,
+      issuerGrantId: input.proof.grantId,
+      issuerGrantRevision: input.proof.grantRevision,
+      granteeSessionId: input.granteeSessionId,
+      permission: {
+        mode: "exercise",
+        action,
+        resourceKind: definition.resourceKind,
+        relationSelector: input.relationSelector,
+        effectClass: definition.effectClass,
+        targetSessionRoles: input.targetSessionRoles,
+      },
+      childCeiling: [],
+      issuedAt: input.issuedAt,
+      expiresAt: input.expiresAt,
+      eventKind: "delegated",
+      eventPrincipalKind: trustedPrincipal.kind,
+      eventActorSessionId: null,
+      provenance: {
+        source: "trusted-work-item-lifecycle",
+        trustedPrincipal: trustedPrincipal.kind === "user" ? trustedPrincipal.receiptId : trustedPrincipal.service,
+        proofOperation: input.proof.operation,
+        proofGrantId: input.proof.grantId,
+        proofGrantRevision: input.proof.grantRevision,
+        rootSessionId: input.rootSessionId,
+        relationSelector: input.relationSelector,
+        targetSessionRoles: input.targetSessionRoles,
+        mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+      },
+    });
+  }
+  const created = listActiveSessionAuthorityGrants(db, input.granteeSessionId, issuedAt)
+    .filter((grant) => !before.has(grant.grantId) && grant.provenance.source === "trusted-work-item-lifecycle");
+  if (created.length !== input.actions.length) {
+    throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "The lifecycle capability was not persisted.");
+  }
+  return created;
+}
+
+/**
  * Derive the initial grants for a newly-created root from an explicit
  * construction ceiling. A root id is never appended to an existing scope;
  * every derived grant has its own immutable provenance record.
@@ -781,7 +884,8 @@ export function verifySessionAuthorityMigration(db: DatabaseSync): void {
     const budgetRows = activeRows.filter((row) => grantProvenanceSource(row) === "resource-budget-v1");
     const transferredRows = activeRows.filter((row) => grantProvenanceSource(row) === "session-transfer");
     const transferCapabilityRows = activeRows.filter((row) => grantProvenanceSource(row) === "trusted-cross-root-transfer");
-    if (baselineRows.length === 0 && delegatedRows.length === 0 && transferredRows.length === 0 && transferCapabilityRows.length === 0) {
+    const lifecycleCapabilityRows = activeRows.filter((row) => grantProvenanceSource(row) === "trusted-work-item-lifecycle");
+    if (baselineRows.length === 0 && delegatedRows.length === 0 && transferredRows.length === 0 && transferCapabilityRows.length === 0 && lifecycleCapabilityRows.length === 0) {
       throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "A Session has no recognized authority grant provenance.", {
         sessionId: binding.session_id,
       });
@@ -790,7 +894,7 @@ export function verifySessionAuthorityMigration(db: DatabaseSync): void {
     verifyBudgetAuthorityGrantSet(binding.session_id, budgetRows, rows.filter((row) => row.root_session_id === binding.root_session_id),
       transferredRows.length > 0 ? transferredRows : undefined);
     const revokedBaselineRows = baselineRows.filter((row) => row.revoked_at !== null);
-    if (baselineRows.length + delegatedRows.length + budgetRows.length + transferredRows.length + transferCapabilityRows.length
+    if (baselineRows.length + delegatedRows.length + budgetRows.length + transferredRows.length + transferCapabilityRows.length + lifecycleCapabilityRows.length
       !== activeRows.length + revokedBaselineRows.length) {
       throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "A Session authority grant has unknown provenance.", {
         sessionId: binding.session_id,

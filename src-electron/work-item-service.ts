@@ -25,6 +25,8 @@ import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
 import {
   WorkItemAggregationConflictError,
   WorkItemNotFoundError,
+  WorkItemRevisionConflictError,
+  WorkItemStateConflictError,
   type WorkItemStorageV6,
 } from "./work-item-storage-v6.js";
 
@@ -53,6 +55,7 @@ export type WorkItemReviseInput = {
   scope: string;
   completionCriteria: string;
   authority: string;
+  sourceIdentity?: WorkItemSourceIdentity;
   expectedRevision: number;
   idempotencyKey: string;
 };
@@ -126,20 +129,30 @@ export type WorkItemCancelInput = {
   idempotencyKey: string;
 };
 
-export type RootWorkItemRestoreInput = {
-  predecessorWorkItemId: string;
-  goal: string;
-  scope: string;
-  completionCriteria: string;
-  authority: string;
-  sourceIdentity: WorkItemSourceIdentity;
-  idempotencyKey: string;
+export type WorkItemReassignInput = { workItemId: string; targetSessionId: string; expectedRevision: number; expectedContainerRevision?: number; transferPolicy: "handoff" | "successor"; idempotencyKey: string };
+export type WorkItemMoveInput = { workItemId: string; destinationParentWorkItemId: string | null; expectedRevision: number; expectedAggregateRevision?: number; expectedDestinationAggregateRevision?: number; idempotencyKey: string };
+export type WorkItemCloneInput = { workItemId: string; expectedRevision: number; expectedContainerRevision: number; targetSessionId: string; parentWorkItemId?: string | null; goal: string; scope: string; completionCriteria: string; authority: string; sourceIdentity: WorkItemSourceIdentity; idempotencyKey: string };
+export type WorkItemReopenInput = { workItemId: string; expectedRevision: number; strategy: "successor"; expectedContainerRevision?: number; destinationParentWorkItemId?: string | null; goal: string; scope: string; completionCriteria: string; authority: string; sourceIdentity: WorkItemSourceIdentity; idempotencyKey: string };
+export type WorkItemArchiveInput = { workItemId: string; expectedRevision: number; reason: string; idempotencyKey: string };
+export type WorkItemRestoreInput = { workItemId: string; expectedRevision: number; idempotencyKey: string };
+export type WorkItemDeleteInput = { workItemId: string; expectedRevision: number; idempotencyKey: string };
+
+type WorkItemLifecycleStoragePort = {
+  reassign(input: WorkItemReassignInput & WorkItemMutationMetadata): WorkItem;
+  move(input: WorkItemMoveInput & WorkItemMutationMetadata): WorkItem;
+  clone(input: WorkItemCloneInput & WorkItemMutationMetadata): WorkItem;
+  reopen(input: WorkItemReopenInput & WorkItemMutationMetadata): WorkItem;
+  archive(input: WorkItemArchiveInput & WorkItemMutationMetadata): WorkItem;
+  restore(input: WorkItemRestoreInput & WorkItemMutationMetadata): WorkItem;
+  delete(input: WorkItemDeleteInput & WorkItemMutationMetadata): WorkItem;
 };
+type WorkItemMutationMetadata = { principalSessionId: string; requestFingerprint: string; createdAt: string; updatedAt: string; expiresAt: string; proof: MutationAuthorityProof; additionalProofs?: readonly MutationAuthorityProof[] };
 
 export type WorkItemListInput = {
   creatorSessionId?: string;
   targetSessionId?: string;
   state?: WorkItemState;
+  includeArchived?: boolean;
   limit: number;
   afterSequence: number | null;
 };
@@ -180,10 +193,9 @@ export class WorkItemService {
       WorkItemStorageV6,
       "cleanupExpiredIdempotency" | "create" | "get" | "iteratePage" | "listPage" | "mutate" | "resolveIdempotency"
       | "reviseRoot" | "appendRootHistory" | "listHistory" | "listRecentHistory" | "iterateHistory" | "iterateRecentHistory"
-      | "createRootSuccessor"
       | "getAggregationSummary" | "listAggregationItems" | "decideAggregation" | "retryAggregation"
       | "resolveAggregationIdempotency"
-    >;
+    > & WorkItemLifecycleStoragePort;
     getTurnAuthoritySession(sessionId: string): SessionTurnAuthoritySession | null;
     createWorkItemId(): string;
     currentTimestamp(): string;
@@ -269,7 +281,7 @@ export class WorkItemService {
       updatedAt,
     );
     if (replay) return replay;
-    this.requireRootOwner(input.workItemId, binding);
+    this.requireWorkItemContractOwner(input.workItemId, binding, proof, "work.revise");
     return this.deps.storage.reviseRoot({
       ...input,
       principalSessionId: binding.actorSessionId,
@@ -278,6 +290,136 @@ export class WorkItemService {
       expiresAt: resolveIdempotencyExpiresAt(updatedAt),
       proof,
     });
+  }
+
+  reassign(input: WorkItemReassignInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof, additionalProofs: readonly MutationAuthorityProof[] = []): WorkItem {
+    if (additionalProofs.length === 0) throw new WorkItemAuthorityError("Reassign requires an independently authorized destination proof.", { workItemId: input.workItemId });
+    const metadata = this.mutationMetadata(input, binding, proof, "work.reassign", additionalProofs);
+    const replay = this.deps.storage.resolveIdempotency("work.reassign", proof, input.idempotencyKey, metadata.requestFingerprint, metadata.createdAt);
+    if (replay) return replay;
+    const item = this.requireVisibleItem(input.workItemId, binding, false, proof, "work.reassign");
+    this.requireExpectedRevision(item, input.expectedRevision);
+    const target = this.requireSession(input.targetSessionId);
+    const actor = this.requireSession(binding.actorSessionId);
+    if (target.rootSessionId !== actor.rootSessionId || item.creatorSessionId !== binding.actorSessionId) {
+      throw new WorkItemAuthorityError("Only the canonical Work Item creator can reassign within its root.", { workItemId: item.id, actorSessionId: binding.actorSessionId });
+    }
+    this.requireCreateProof(additionalProofs, target.sessionId, binding);
+    return this.deps.storage.reassign({ ...input, ...metadata });
+  }
+
+  move(input: WorkItemMoveInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof, additionalProofs: readonly MutationAuthorityProof[] = []): WorkItem {
+    if (input.destinationParentWorkItemId !== null && additionalProofs.length === 0) throw new WorkItemAuthorityError("Move requires an independently authorized destination parent proof.", { workItemId: input.workItemId });
+    const metadata = this.mutationMetadata(input, binding, proof, "work.move", additionalProofs);
+    const replay = this.deps.storage.resolveIdempotency("work.move", proof, input.idempotencyKey, metadata.requestFingerprint, metadata.createdAt);
+    if (replay) return replay;
+    const item = this.requireVisibleItem(input.workItemId, binding, false, proof, "work.move");
+    this.requireExpectedRevision(item, input.expectedRevision);
+    const rootManage = isAgentMutationProof(proof) && proof.resolvedScope.relation === "root_member" && item.rootSessionId === binding.actorSessionId;
+    if (item.kind !== "delegated" || (item.creatorSessionId !== binding.actorSessionId && !rootManage)) {
+      throw new WorkItemAuthorityError("Only the canonical Work Item creator can move a delegated Work Item.", { workItemId: item.id, actorSessionId: binding.actorSessionId });
+    }
+    if (input.destinationParentWorkItemId !== null) {
+      const parent = this.requireVisibleItem(input.destinationParentWorkItemId, binding, true);
+      if (parent.kind !== "delegated" || !isWorkItemActive(parent.state)) throw new WorkItemParentError(parent.id);
+      this.requireDestinationProof(additionalProofs, parent, binding);
+    } else if (binding.actorSessionId !== item.rootSessionId) {
+      throw new WorkItemAuthorityError("Only the root owner can adopt a top-level Work Item.", { workItemId: item.id });
+    }
+    return this.deps.storage.move({ ...input, ...metadata });
+  }
+
+  clone(input: WorkItemCloneInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof, additionalProofs: readonly MutationAuthorityProof[] = []): WorkItem {
+    const metadata = this.mutationMetadata(input, binding, proof, "work.clone", additionalProofs);
+    const replay = this.deps.storage.resolveIdempotency("work.clone", proof, input.idempotencyKey, metadata.requestFingerprint, metadata.createdAt);
+    if (replay) return replay;
+    const source = this.requireVisibleItem(input.workItemId, binding, false, proof, "work.clone");
+    this.requireExpectedRevision(source, input.expectedRevision);
+    const target = this.requireSession(input.targetSessionId);
+    const actor = this.requireSession(binding.actorSessionId);
+    if (target.rootSessionId !== actor.rootSessionId || target.sessionId === actor.sessionId) throw new WorkItemAuthorityError("The clone target must be an authorized Session in the actor root.", { targetSessionId: target.sessionId });
+    this.requireCreateProof(additionalProofs, target.sessionId, binding);
+    const parent = input.parentWorkItemId === undefined ? source.parentWorkItemId : input.parentWorkItemId;
+    if (parent !== null) this.requireDestinationProof(additionalProofs, this.requireVisibleItem(parent, binding, true), binding);
+    return this.deps.storage.clone({ ...input, ...metadata });
+  }
+
+  reopen(input: WorkItemReopenInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof, additionalProofs: readonly MutationAuthorityProof[] = []): WorkItem {
+    const metadata = this.mutationMetadata(input, binding, proof, "work.reopen", additionalProofs);
+    const replay = this.deps.storage.resolveIdempotency("work.reopen", proof, input.idempotencyKey, metadata.requestFingerprint, metadata.createdAt);
+    if (replay) return replay;
+    const item = this.requireVisibleItem(input.workItemId, binding, false, proof, "work.reopen");
+    this.requireExpectedRevision(item, input.expectedRevision);
+    if (isWorkItemActive(item.state)) throw new WorkItemStateConflictError(item.id, item.state, item.state);
+    this.requireCreateProof(additionalProofs, item.targetSessionId, binding);
+    const parent = input.destinationParentWorkItemId === undefined ? item.parentWorkItemId : input.destinationParentWorkItemId;
+    if (parent !== null) this.requireDestinationProof(additionalProofs, this.requireVisibleItem(parent, binding, true), binding);
+    return this.deps.storage.reopen({ ...input, ...metadata });
+  }
+
+  archive(input: WorkItemArchiveInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
+    const metadata = this.mutationMetadata(input, binding, proof, "work.archive");
+    const replay = this.deps.storage.resolveIdempotency("work.archive", proof, input.idempotencyKey, metadata.requestFingerprint, metadata.createdAt);
+    if (replay) return replay;
+    const item = this.requireVisibleItem(input.workItemId, binding, false, proof, "work.archive");
+    this.requireExpectedRevision(item, input.expectedRevision);
+    return this.deps.storage.archive({ ...input, ...metadata });
+  }
+
+  restore(input: WorkItemRestoreInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
+    const metadata = this.mutationMetadata(input, binding, proof, "work.restore");
+    const replay = this.deps.storage.resolveIdempotency("work.restore", proof, input.idempotencyKey, metadata.requestFingerprint, metadata.createdAt);
+    if (replay) return replay;
+    const item = this.requireVisibleItem(input.workItemId, binding, false, proof, "work.restore");
+    this.requireExpectedRevision(item, input.expectedRevision);
+    return this.deps.storage.restore({ ...input, ...metadata });
+  }
+
+  delete(input: WorkItemDeleteInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
+    const metadata = this.mutationMetadata(input, binding, proof, "work.delete");
+    const replay = this.deps.storage.resolveIdempotency("work.delete", proof, input.idempotencyKey, metadata.requestFingerprint, metadata.createdAt);
+    if (replay) return replay;
+    const item = this.requireVisibleItem(input.workItemId, binding, false, proof, "work.delete");
+    this.requireExpectedRevision(item, input.expectedRevision);
+    if (item.creatorSessionId !== binding.actorSessionId && item.rootSessionId !== binding.actorSessionId) throw new WorkItemAuthorityError("Only the canonical Work Item owner can delete it.", { workItemId: item.id, actorSessionId: binding.actorSessionId });
+    return this.deps.storage.delete({ ...input, ...metadata });
+  }
+
+  private mutationMetadata(input: unknown, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof, operation: string, additionalProofs: readonly MutationAuthorityProof[] = []): WorkItemMutationMetadata {
+    const createdAt = this.deps.currentTimestamp();
+    return { principalSessionId: binding.actorSessionId, requestFingerprint: fingerprintMutation(input, binding.actorSessionId), createdAt, updatedAt: createdAt, expiresAt: resolveIdempotencyExpiresAt(createdAt), proof, ...(additionalProofs.length === 0 ? {} : { additionalProofs }) };
+  }
+
+  private requireDestinationProof(additionalProofs: readonly MutationAuthorityProof[], parent: WorkItem, binding: ResolvedAgentRuntimeBinding): void {
+    const proof = additionalProofs.find((candidate) => candidate.operation === "work.move" && candidate.resolvedScope.resourceId === parent.id);
+    if (!proof || !isAgentMutationProof(proof) || proof.principal.actorSessionId !== binding.actorSessionId || proof.resolvedScope.resourceKind !== "work_item" || proof.resolvedScope.rootSessionId !== parent.rootSessionId || proof.resolvedScope.ownerId !== parent.targetSessionId) {
+      throw new WorkItemAuthorityError("The destination Work Item requires an independently authorized move proof.", { workItemId: parent.id, actorSessionId: binding.actorSessionId });
+    }
+  }
+
+  private requireCreateProof(additionalProofs: readonly MutationAuthorityProof[], targetSessionId: string, binding: ResolvedAgentRuntimeBinding): void {
+    const proof = additionalProofs.find((candidate) => candidate.operation === "work.create" && candidate.resolvedScope.resourceId === targetSessionId);
+    if (!proof || !isAgentMutationProof(proof) || proof.principal.actorSessionId !== binding.actorSessionId || proof.resolvedScope.resourceKind !== "work_item" || proof.resolvedScope.resourceId !== targetSessionId || proof.resolvedScope.ownerId !== targetSessionId) {
+      throw new WorkItemAuthorityError("The successor requires an independently authorized target Session create proof.", { targetSessionId, actorSessionId: binding.actorSessionId });
+    }
+  }
+
+  private requireWorkItemContractOwner(workItemId: string, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof, operation: "work.revise"): WorkItem {
+    const item = this.requireVisibleItem(workItemId, binding, false, proof, operation);
+    if (isAgentMutationProof(proof) && proof.resolvedScope.relation === "root_member") return item;
+    const allowed = item.kind === "root"
+      ? item.rootSessionId === binding.actorSessionId && item.creatorSessionId === binding.actorSessionId && item.targetSessionId === binding.actorSessionId
+      : item.creatorSessionId === binding.actorSessionId;
+    if (!allowed) throw new WorkItemAuthorityError("Only the canonical Work Item owner can revise its contract.", { workItemId, actorSessionId: binding.actorSessionId });
+    return item;
+  }
+
+  private requireWorkItemHistoryAccess(workItemId: string, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItem {
+    const item = this.requireVisibleItem(workItemId, binding, false, proof, "work.history.list");
+    if (proof && isAgentMutationProof(proof) && proof.resolvedScope.relation === "root_member") return item;
+    if (item.kind === "root" && item.rootSessionId === binding.actorSessionId && item.creatorSessionId === binding.actorSessionId && item.targetSessionId === binding.actorSessionId) return item;
+    if (item.kind === "delegated" && (item.creatorSessionId === binding.actorSessionId || item.targetSessionId === binding.actorSessionId)) return item;
+    throw new WorkItemAuthorityError("The actor cannot inspect this Work Item history.", { workItemId, actorSessionId: binding.actorSessionId });
   }
 
   appendHistory(input: WorkItemHistoryAppendInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
@@ -309,12 +451,12 @@ export class WorkItemService {
   }
 
   listHistory(input: WorkItemHistoryListInput, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItemEvent[] {
-    this.requireRootOwner(input.workItemId, binding, proof, "work.history.list");
+    this.requireWorkItemHistoryAccess(input.workItemId, binding, proof);
     return this.deps.storage.listHistory(input);
   }
 
   iterateHistory(input: WorkItemHistoryListInput, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): Iterable<WorkItemEvent> {
-    this.requireRootOwner(input.workItemId, binding, proof, "work.history.list");
+    this.requireWorkItemHistoryAccess(input.workItemId, binding, proof);
     return this.deps.storage.iterateHistory(input);
   }
 
@@ -323,7 +465,7 @@ export class WorkItemService {
     binding: ResolvedAgentRuntimeBinding,
     proof?: MutationAuthorityProof,
   ): WorkItemEvent[] {
-    this.requireRootOwner(input.workItemId, binding, proof, "work.history.list");
+    this.requireWorkItemHistoryAccess(input.workItemId, binding, proof);
     return this.deps.storage.listRecentHistory(input);
   }
 
@@ -332,7 +474,7 @@ export class WorkItemService {
     binding: ResolvedAgentRuntimeBinding,
     proof?: MutationAuthorityProof,
   ): Iterable<WorkItemEvent> {
-    this.requireRootOwner(input.workItemId, binding, proof, "work.history.list");
+    this.requireWorkItemHistoryAccess(input.workItemId, binding, proof);
     return this.deps.storage.iterateRecentHistory(input);
   }
 
@@ -386,36 +528,6 @@ export class WorkItemService {
       result: null,
       updatedAt,
       expiresAt: resolveIdempotencyExpiresAt(updatedAt),
-      proof,
-    });
-  }
-
-  restoreRoot(input: RootWorkItemRestoreInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
-    const createdAt = this.deps.currentTimestamp();
-    const fingerprint = fingerprintMutation(input, binding.actorSessionId);
-    const replay = this.deps.storage.resolveIdempotency(
-      "work.restore",
-      proof,
-      input.idempotencyKey,
-      fingerprint,
-      createdAt,
-    );
-    if (replay) return replay;
-    const predecessor = this.requireRootOwner(input.predecessorWorkItemId, binding);
-    return this.deps.storage.createRootSuccessor({
-      id: this.deps.createWorkItemId(),
-      predecessorWorkItemId: predecessor.id,
-      rootSessionId: predecessor.rootSessionId,
-      goal: input.goal,
-      scope: input.scope,
-      completionCriteria: input.completionCriteria,
-      authority: input.authority,
-      sourceIdentity: { ...input.sourceIdentity },
-      principalSessionId: binding.actorSessionId,
-      idempotencyKey: input.idempotencyKey,
-      requestFingerprint: fingerprint,
-      createdAt,
-      expiresAt: resolveIdempotencyExpiresAt(createdAt),
       proof,
     });
   }
@@ -519,6 +631,7 @@ export class WorkItemService {
         ? { targetSessionId: scope.actorSessionId }
         : input.targetSessionId === undefined ? {} : { targetSessionId: input.targetSessionId }),
       ...(input.state === undefined ? {} : { state: input.state }),
+      includeArchived: input.includeArchived ?? false,
       afterSequence: input.afterSequence,
       limit: input.limit,
     });
@@ -748,7 +861,7 @@ export class WorkItemService {
     binding: ResolvedAgentRuntimeBinding,
     allowRootCoordinator: boolean,
     proof?: MutationAuthorityProof,
-    operation?: "work.get" | "work.history.list" | "work.aggregation.get" | "work.aggregation.list",
+    operation?: "work.get" | "work.history.list" | "work.aggregation.get" | "work.aggregation.list" | "work.revise" | "work.reassign" | "work.move" | "work.clone" | "work.reopen" | "work.archive" | "work.restore" | "work.delete",
   ): WorkItem {
     const item = this.deps.storage.get(workItemId);
     if (!item) throw new WorkItemNotFoundError(workItemId);
@@ -806,7 +919,7 @@ export class WorkItemService {
   private requireAgentProof(
     proof: MutationAdmissionProof,
     binding: ResolvedAgentRuntimeBinding,
-    operation?: "work.get" | "work.history.list" | "work.aggregation.get" | "work.aggregation.list",
+    operation?: "work.get" | "work.history.list" | "work.aggregation.get" | "work.aggregation.list" | "work.revise" | "work.reassign" | "work.move" | "work.clone" | "work.reopen" | "work.archive" | "work.restore" | "work.delete",
   ): void {
     if (
       proof.principal.actorSessionId !== binding.actorSessionId
@@ -845,6 +958,10 @@ export class WorkItemService {
     const session = this.deps.getTurnAuthoritySession(sessionId);
     if (!session) throw new WorkItemAuthorityError("The required Session was not found.", { sessionId });
     return session;
+  }
+
+  private requireExpectedRevision(item: WorkItem, expectedRevision: number): void {
+    if (item.revision !== expectedRevision) throw new WorkItemRevisionConflictError(item.id, expectedRevision, item.revision);
   }
 }
 

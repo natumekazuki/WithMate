@@ -457,6 +457,7 @@ describe("SessionTranscriptService", () => {
       storage: budgetStorage,
       resolveSessionFilesDirectory: () => fixture.sessionFolder,
       listRootSessionIds: () => ["session-1"],
+      now: () => new Date(CREATED_AT),
     });
     const service = new SessionTranscriptService({
       storage: fixture.storage,
