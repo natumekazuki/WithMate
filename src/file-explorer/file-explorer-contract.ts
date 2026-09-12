@@ -331,6 +331,8 @@ export type FileRootGitHistoryRepository = {
   rootId: string;
   label: string;
   displayPath: string;
+  branches: string[];
+  currentBranch: string | null;
 };
 
 export type FileRootGitHistoryRepositoriesRequest = {
@@ -366,6 +368,7 @@ export type FileRootGitHistoryCommit = {
 };
 
 export type FileRootGitHistoryCommitsRequest = FileRootGitHistoryRequest & {
+  branch: string | null;
   cursor?: string | null;
 };
 
@@ -377,7 +380,10 @@ export type FileRootGitHistoryPage = {
 
 export type FileRootGitHistoryCommitsResult =
   | { status: "ok"; page: FileRootGitHistoryPage }
-  | { status: "repository-not-found" | "failed"; message: string };
+  | {
+      status: "repository-not-found" | "branch-not-found" | "detached-head" | "empty-repository" | "failed";
+      message: string;
+    };
 
 export type FileRootGitHistoryCommitDetailRequest = FileRootGitHistoryRequest & {
   commitId: string;

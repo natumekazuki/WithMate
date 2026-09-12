@@ -30,11 +30,13 @@ function createIpcRendererStub() {
   };
 }
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "preloadのinvoke APIはdomainごとのrequestを対応する専用IPC channelへ変換せず渡す"
 // oracle = { type = "contract", ref = "WithMateWindowApi invoke methods and withmate-ipc-channels" }
-// failure_mode = "renderer requestが別channelへ送られるか、引数の欠落または変換を受けてMainへ到達する"
+// fault = "rendererのdomain API呼び出しが対応するIPC channelへ引数をそのまま渡さず、欠落・変換・別channelでMainへ到達する"
+// observable = "ipcRenderer.invokeへ記録されたchannelとargs"
+// observation_boundary = "public-boundary"
 // scope = "preload invoke API"
 // lifecycle = "permanent"
 // distinction = "file tree context menuを含むinvoke method群のchannelと引数を一括して検証する"
@@ -360,13 +362,21 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
     rootId: "workspace",
   };
+  const historyCommitsRequest = {
+    ...historyRequest,
+    branch: "main",
+  };
   assert.deepEqual(await api.listFileRootGitHistoryRepositories({ sessionId: "session-1" }), {
     channel: "withmate:list-file-root-git-history-repositories",
     args: [{ sessionId: "session-1" }],
   });
-  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyRequest, cursor: "100" }), {
+  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyCommitsRequest, cursor: "100" }), {
     channel: "withmate:list-file-root-git-history-commits",
-    args: [{ ...historyRequest, cursor: "100" }],
+    args: [{ ...historyCommitsRequest, cursor: "100" }],
+  });
+  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyRequest, branch: null, cursor: null }), {
+    channel: "withmate:list-file-root-git-history-commits",
+    args: [{ ...historyRequest, branch: null, cursor: null }],
   });
   const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
   assert.deepEqual(await api.getFileRootGitHistoryCommitDetail(historyDetailRequest), {
