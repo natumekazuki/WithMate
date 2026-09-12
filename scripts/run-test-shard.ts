@@ -109,8 +109,8 @@ function main(): void {
     console.log(`- ${file.relativePath}`);
   }
 
-  // Runtime integration tests also spawn PowerShell for Windows ACL verification.
-  const result = spawnSync(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=2", ...shardFiles.map((file) => file.relativePath)], {
+  // Keep parallelism between shards; Windows ACL subprocesses must not compete across test files.
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", ...shardFiles.map((file) => file.relativePath)], {
     cwd: rootDirectory,
     stdio: "inherit",
   });
