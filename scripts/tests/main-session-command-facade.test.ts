@@ -35,6 +35,7 @@ function createLaunchSelection(
     approvalMode: "untrusted",
     codexSandboxMode: "workspace-write",
     codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     ...overrides,
   };
@@ -553,11 +554,13 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
   );
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "Main Session作成時のMain-owned runtime optionsはIPC payloadではなくlaunch selectionから保存する"
-// oracle = { type = "contract", ref = "accepted behavior: new Session defaults and Main-owned runtime selection" }
-// failure_mode = "型境界を迂回したIPC payloadのruntime値が新規Sessionへ混入する"
+// claim = "Main Session作成はlaunch selectionのCodex speedとReviewerをPersistence Serviceへ渡し、IPC payloadで上書きさせない"
+// oracle = { type = "contract", ref = "accepted behavior: new Session runtime selection inheritance" }
+// fault = "IPC payloadのspeedまたはReviewerがlaunch selectionの値を上書きする、または解決値がPersistence Serviceへの入力から欠落する"
+// observable = "Session persistence serviceへ渡された作成入力のcodexSpeedとcodexReviewer"
+// observation_boundary = "public-boundary"
 // scope = "main-session-create"
 // lifecycle = "permanent"
 // @end-test-value
@@ -573,6 +576,8 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
       reasoningEffort: "xhigh",
       approvalMode: "on-request",
       codexSandboxMode: "read-only",
+      codexSpeed: "fast",
+      codexReviewer: "auto-review",
       customAgentName: "stored-agent",
     }),
     getSessionPersistenceService: () =>
@@ -609,7 +614,8 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
     reasoningEffort: "low",
     approvalMode: "never",
     codexSandboxMode: "danger-full-access",
-    codexSpeed: "fast",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "forged-agent",
   };
 
@@ -626,6 +632,7 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
       approvalMode: persistedInput?.approvalMode,
       codexSandboxMode: persistedInput?.codexSandboxMode,
       codexSpeed: persistedInput?.codexSpeed,
+      codexReviewer: persistedInput?.codexReviewer,
       customAgentName: persistedInput?.customAgentName,
     },
     {
@@ -637,7 +644,8 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
       reasoningEffort: "xhigh",
       approvalMode: "on-request",
       codexSandboxMode: "read-only",
-      codexSpeed: "standard",
+      codexSpeed: "fast",
+      codexReviewer: "auto-review",
       customAgentName: "stored-agent",
     },
   );
