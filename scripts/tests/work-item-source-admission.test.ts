@@ -52,8 +52,8 @@ async function createStorageFixture(workspacePath = process.cwd()): Promise<{ di
 
 // @test-value v2
 // kind = "invariant"
-// claim = "execution admission atomically stores Work Item revision, planned source, and actual source"
-// fault = "execution row commits without its immutable Work Item source association"
+// claim = "successful immediate admission stores the captured Work Item revision and sources in its association and projection"
+// fault = "successful admission omits or changes the captured revision or source in the association or projection"
 // observable = "execution association row and execution event payload"
 // observation_boundary = "implementation"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
@@ -175,9 +175,9 @@ test("queued admissionのactual snapshotは再open後も保持しtamperを拒否
 
 // @test-value v2
 // kind = "invariant"
-// claim = "archive済みWork Itemは新規execution associationの対象にならない"
-// fault = "archived Work Itemへexecutionを関連付けてdispatchする"
-// observable = "association作成時のdomain error"
+// claim = "archived_atが設定されたWork Itemのenqueueはadmissionで拒否される"
+// fault = "archived_atが設定されたWork Itemのenqueueを受け付けてexecutionを保存する"
+// observable = "enqueueのdomain errorとexecution行が保存されていないこと"
 // observation_boundary = "implementation"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
 // scope = "SessionExecutionStorageV6 Work Item admission"

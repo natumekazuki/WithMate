@@ -1,3 +1,4 @@
+import { workItemDecisionRevisionMatchesSql } from "./work-item-decision-revision-sql.js";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 
@@ -72,9 +73,6 @@ export type RootWorkItemRestorePurpose = Readonly<{
 
 export type RootWorkItemRestoreSession = Readonly<{
   id: string;
-  taskTitle: string;
-  workspacePath: string;
-  branch: string;
 }>;
 
 type WorkItemRow = {
@@ -537,139 +535,6 @@ export class WorkItemStorageV6 {
       created,
     );
     return created;
-  }
-
-  /** Creates the active Root Work Item for a root Session restore.
-   * The terminal predecessor and its history remain immutable.
-   */
-  createRootSuccessor(input: {
-    id: string;
-    predecessorWorkItemId: string;
-    rootSessionId: string;
-    goal: string;
-    scope: string;
-    completionCriteria: string;
-    authority: string;
-    sourceIdentity: WorkItem["sourceIdentity"];
-    principalSessionId: string;
-    idempotencyKey: string;
-    requestFingerprint: string;
-    createdAt: string;
-    expiresAt: string;
-    proof: MutationAuthorityProof;
-  }): WorkItem {
-    return this.transaction(() => {
-      const replay = this.resolveIdempotency(
-        "work.restore",
-        input.proof,
-        input.idempotencyKey,
-        input.requestFingerprint,
-        input.createdAt,
-      );
-      if (replay) return replay;
-      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
-      const predecessor = this.getRequired(input.predecessorWorkItemId);
-      if (
-        !isRootWorkItem(predecessor) ||
-        predecessor.rootSessionId !== input.rootSessionId ||
-        predecessor.state === "pending" ||
-        predecessor.state === "in_progress" ||
-        predecessor.state === "waiting"
-      ) {
-        throw new WorkItemAggregationConflictError(
-          "WORK_ITEM_ROOT_SUCCESSOR_INVALID",
-          "A Root Work Item successor requires a terminal predecessor in the same root Session.",
-          { predecessorWorkItemId: input.predecessorWorkItemId },
-        );
-      }
-      const active = this.db
-        .prepare(
-          `
-        SELECT id FROM work_items_v6
-        WHERE kind = 'root' AND root_session_id = ?
-          AND state IN ('pending', 'in_progress', 'waiting')
-        LIMIT 1
-      `,
-        )
-        .get(input.rootSessionId) as { id: string } | undefined;
-      if (active) {
-        throw new WorkItemAggregationConflictError(
-          "WORK_ITEM_ROOT_SUCCESSOR_ACTIVE",
-          "The root Session already has an active Root Work Item.",
-          { workItemId: active.id },
-        );
-      }
-      const sourceIdentity = { ...input.sourceIdentity };
-      const payload: Extract<WorkItemEvent, { type: "created" }>["payload"] = {
-        kind: "root",
-        rootSessionId: input.rootSessionId,
-        creatorSessionId: input.rootSessionId,
-        targetSessionId: input.rootSessionId,
-        parentWorkItemId: null,
-        predecessorWorkItemId: input.predecessorWorkItemId,
-        sourceIdentity,
-        contract: {
-          goal: input.goal,
-          scope: input.scope,
-          completionCriteria: input.completionCriteria,
-          authority: input.authority,
-        },
-        progress: { progressSummary: "", blockers: [], nextAction: "" },
-        state: "pending",
-        result: null,
-      };
-      assertWorkItemEventPayloadWithinLimit("created", payload);
-      this.db
-        .prepare(
-          `
-        INSERT INTO work_items_v6 (
-          id, kind, contract_revision, root_session_id, creator_session_id,
-          target_session_id, parent_work_item_id, predecessor_work_item_id,
-          goal, scope, completion_criteria, authority, source_identity_json,
-          state, revision, progress_summary, blockers_json, next_action,
-          result_json, created_at, updated_at
-        ) VALUES (?, 'root', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'pending', 1, '', '[]', '', NULL, ?, ?)
-      `,
-        )
-        .run(
-        input.id,
-        WORK_ITEM_CONTRACT_REVISION,
-        input.rootSessionId,
-        input.rootSessionId,
-        input.rootSessionId,
-        input.predecessorWorkItemId,
-        input.goal,
-        input.scope,
-        input.completionCriteria,
-        input.authority,
-        serializeJson(sourceIdentity, "Work Item source identity"),
-        input.createdAt,
-        input.createdAt,
-      );
-      this.insertEvent({
-        workItemId: input.id,
-        revision: 1,
-        type: "created",
-        actorSessionId: input.principalSessionId,
-        payload,
-        createdAt: input.createdAt,
-        proof: input.proof,
-        operationId: workItemOperationId("work.restore", input.proof, input.requestFingerprint),
-        idempotencyKey: input.idempotencyKey,
-      });
-      const created = this.getRequired(input.id);
-      this.insertIdempotency(
-        "work.restore",
-        input.proof,
-        input.idempotencyKey,
-        input.requestFingerprint,
-        input.id,
-        input.createdAt,
-        input.expiresAt,
-        created,
-      );
-      return created;
-    });
   }
 
   mutate(input: {
@@ -2021,7 +1886,7 @@ export class WorkItemStorageV6 {
         `
       SELECT 1 FROM work_items_v6 AS child
       INNER JOIN work_item_aggregation_decisions_v6 AS decision ON decision.child_work_item_id = child.id
-      WHERE child.parent_work_item_id = ? AND decision.child_revision <> child.revision AND NOT ((SELECT COUNT(*) FROM work_item_events_v6 lifecycle WHERE lifecycle.work_item_id=child.id AND lifecycle.revision>decision.child_revision AND lifecycle.revision<=child.revision AND lifecycle.event_type IN ('archived','restored')) = child.revision-decision.child_revision) LIMIT 1
+      WHERE child.parent_work_item_id = ? AND NOT ${workItemDecisionRevisionMatchesSql("child")} LIMIT 1
     `,
       )
       .get(parentWorkItemId);
@@ -2056,7 +1921,7 @@ export class WorkItemStorageV6 {
           AND child.result_json IS NULL
         )
         OR (child.parent_work_item_id IS NOT NULL AND decision.child_work_item_id IS NULL)
-        OR (decision.child_revision IS NOT NULL AND decision.child_revision <> child.revision AND NOT ((SELECT COUNT(*) FROM work_item_events_v6 lifecycle WHERE lifecycle.work_item_id=child.id AND lifecycle.revision>decision.child_revision AND lifecycle.revision<=child.revision AND lifecycle.event_type IN ('archived','restored')) = child.revision-decision.child_revision))
+        OR (decision.child_revision IS NOT NULL AND NOT ${workItemDecisionRevisionMatchesSql("child")})
       )
       ORDER BY child.sequence ASC
       LIMIT 1

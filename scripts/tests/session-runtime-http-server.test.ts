@@ -210,14 +210,14 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
 
 // @test-value v2
 // kind = "security"
-// claim = "全application operationは有効なruntime bindingから解決したactor Sessionだけをhandler contextへ渡し、Work lifecycleのrevision入力を保持する"
+// claim = "全application operationは有効なruntime bindingから解決したactor Sessionだけをhandler contextへ渡し、work.reassign.expectedContainerRevisionとwork.move.expectedDestinationAggregateRevisionを保持する"
 // oracle = { type = "contract", ref = "ADR-023 Selection and binding" }
-// fault = "application operationを未検証または別bindingのactor identityでhandlerへ到達させる、またはmove/successorの必須revisionを入口で拒否・欠落させる"
-// observable = "handlerが受け取ったoperation、actorSessionId、Work lifecycle revision入力、および各HTTP status"
+// fault = "application operationを未検証または別bindingのactor identityでhandlerへ到達させる、またはwork.reassign.expectedContainerRevisionまたはwork.move.expectedDestinationAggregateRevisionを入口で拒否・欠落させる"
+// observable = "handlerが受け取ったoperation、actorSessionId、work.reassign.expectedContainerRevisionとwork.move.expectedDestinationAggregateRevision、および各HTTP status"
 // observation_boundary = "public-boundary"
 // scope = "Session Runtime HTTP actor binding admission"
 // lifecycle = "permanent"
-// distinction = "単一operationの入力schemaではなく公開application operation集合を同じidentity boundaryで検証し、move/reassign固有のrevision値がhandlerまで保持されることも確認する"
+// distinction = "単一operationの入力schemaではなく公開application operation集合を同じidentity boundaryで検証し、work.reassign.expectedContainerRevisionとwork.move.expectedDestinationAggregateRevisionがhandlerまで保持されることも確認する"
 // @end-test-value
 test("ID-01: 全application operationはvalid bindingのtrusted actor contextだけをhandlerへ渡す", async () => {
   const calls: Array<{ operation: string; actorSessionId: string | null }> = [];

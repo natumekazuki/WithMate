@@ -1,12 +1,6 @@
 import { realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import type { WorkItemSourceIdentity } from "../src/work-item.js";
 import type { ActualStartSourceIdentity } from "../src/session-execution.js";
-
-/** The source planned by a caller when a Work Item is created. */
-export type PlannedWorkItemSourceIdentity = WorkItemSourceIdentity;
-
-export type { ActualStartSourceIdentity } from "../src/session-execution.js";
 
 export function resolveActualStartSourceIdentity(workspacePath: string): ActualStartSourceIdentity {
   const workspace = canonicalPath(workspacePath);

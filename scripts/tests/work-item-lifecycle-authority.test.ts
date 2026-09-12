@@ -161,8 +161,8 @@ describe("Work Item lifecycle authority capability", () => {
   // @end-test-value
   it("両側grantと履歴を再起動後も保持する", async () => {
     const { dbPath, source, destination } = await fixture();
-    const sourceGrant = issue(dbPath, "created", ["executor"]);
-    const destinationGrant = issue(dbPath, "assigned", ["task-coordinator"]);
+    issue(dbPath, "created", ["executor"]);
+    issue(dbPath, "assigned", ["task-coordinator"]);
     const before = (() => { const db = new DatabaseSync(dbPath); try { return { grants: db.prepare("SELECT * FROM session_authority_grants_v6 ORDER BY grant_id").all(), events: db.prepare("SELECT * FROM session_authority_grant_events_v6 ORDER BY grant_id, grant_revision, event_id").all() }; } finally { db.close(); } })();
     authority!.close();
     authority = new SessionAuthorityService({ databasePath: dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });

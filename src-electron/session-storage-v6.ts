@@ -1,3 +1,4 @@
+import { workItemDecisionRevisionMatchesSql } from "./work-item-decision-revision-sql.js";
 import { SESSION_ROLE_CHILDREN, type SessionRole } from "../src/session-role-binding.js";
 import { restoreRootBudgetWithinTransaction } from "./session-lifecycle-restore.js";
 import type { DatabaseSync } from "node:sqlite";
@@ -2657,16 +2658,7 @@ export class SessionStorageV6 {
               SELECT 1
               FROM work_item_aggregation_decisions_v6 AS decision
               WHERE decision.child_work_item_id = item.id
-                AND (
-                  decision.child_revision = item.revision
-                  OR (
-                    SELECT COUNT(*) FROM work_item_events_v6 AS lifecycle
-                    WHERE lifecycle.work_item_id = item.id
-                      AND lifecycle.revision > decision.child_revision
-                      AND lifecycle.revision <= item.revision
-                      AND lifecycle.event_type IN ('archived', 'restored')
-                  ) = item.revision - decision.child_revision
-                )
+                AND ${workItemDecisionRevisionMatchesSql("item")}
             )
           )
         )

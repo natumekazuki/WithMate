@@ -46,9 +46,6 @@ export type SessionExecutionStorageRecord = SessionExecution & {
   request: unknown;
   /** Binding captured when the execution was admitted. */
   binding?: SessionExecutionBindingSnapshot;
-  workItemRevision?: number;
-  plannedSourceIdentity?: import("./work-item.js").WorkItemSourceIdentity;
-  actualStartSourceIdentity?: ActualStartSourceIdentity;
 };
 
 export type ActualStartSourceIdentity =
