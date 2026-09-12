@@ -110,6 +110,7 @@ type WorkItemLifecycle =
     }[WorkItemResultState];
 
 export type RootWorkItem = WorkItemBase & RootWorkItemBinding & WorkItemLifecycle & Readonly<{
+  predecessorWorkItemId?: string | null;
   progressSummary: string;
   blockers: readonly string[];
   nextAction: string;
@@ -143,6 +144,7 @@ export type WorkItemCreatedEventPayload = Readonly<{
   progress: WorkItemProgressProjection;
   state: WorkItemState;
   result: WorkItemResult | null;
+  predecessorWorkItemId?: string | null;
 }>;
 
 export type WorkItemContractRevisedEventPayload = Readonly<{

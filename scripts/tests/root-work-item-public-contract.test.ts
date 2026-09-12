@@ -20,6 +20,7 @@ import {
   parseSessionRuntimeOperationInput,
   type SessionRuntimeOperation,
 } from "../../src/session-external-runtime-contract.js";
+import { parseSessionRuntimeResultEnvelope } from "../../src/session-external-runtime-schema.js";
 import {
   SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
   SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER,
@@ -116,6 +117,7 @@ const rootWorkItem = {
   creatorSessionId: "root-a",
   targetSessionId: "root-a",
   parentWorkItemId: null,
+  predecessorWorkItemId: null,
   goal: "Root goal",
   scope: "",
   completionCriteria: "",
@@ -188,6 +190,62 @@ const historyAppendInput = {
 };
 
 describe("Root WorkItem public contract", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Root WorkItem successor relationを含むstorage projectionがwork.getとwork.listの共有出力schemaで受理される"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md#Reopen と successor" }
+  // fault = "predecessorWorkItemIdを含むRoot responseを公開schemaへ追加せずwork.getまたはwork.listで拒否する"
+  // observable = "work.getとwork.listのparsed result、およびdelegatedへのpredecessorWorkItemId混入時のschema rejection"
+  // observation_boundary = "public-boundary"
+  // scope = "session-runtime-work-item-output-schema"
+  // lifecycle = "permanent"
+  // distinction = "work.get単体とwork.listのitems投影を同じstrict schema parserへ通し、delegatedへのroot専用relation混入は拒否する"
+  // @end-test-value
+  test("work.getとwork.listはRoot successor relationをstrict output schemaで受理する", () => {
+    const successor = { ...rootWorkItem, predecessorWorkItemId: "work-predecessor" };
+    const {
+      progressSummary: _progressSummary,
+      blockers: _blockers,
+      nextAction: _nextAction,
+      predecessorWorkItemId: _predecessorWorkItemId,
+      ...delegatedIdentity
+    } = rootWorkItem;
+    const delegated = {
+      ...delegatedIdentity,
+      kind: "delegated" as const,
+      creatorSessionId: "root-a",
+      targetSessionId: "task-a",
+      scope: "scope",
+      completionCriteria: "done",
+      authority: "local",
+    };
+    const get = parseSessionRuntimeResultEnvelope("work.get", {
+      schemaVersion: "withmate-session-result-v2",
+      operation: "work.get",
+      result: successor,
+    });
+    const list = parseSessionRuntimeResultEnvelope("work.list", {
+      schemaVersion: "withmate-session-result-v2",
+      operation: "work.list",
+      result: { items: [successor] },
+    });
+    assert.equal(get.result.predecessorWorkItemId, "work-predecessor");
+    assert.equal(list.result.items[0]?.predecessorWorkItemId, "work-predecessor");
+    assert.doesNotThrow(() => parseSessionRuntimeResultEnvelope("work.get", {
+      schemaVersion: "withmate-session-result-v2",
+      operation: "work.get",
+      result: delegated,
+    }));
+    assert.throws(() => parseSessionRuntimeResultEnvelope("work.get", {
+      schemaVersion: "withmate-session-result-v2",
+      operation: "work.get",
+      result: {
+        ...delegated,
+        predecessorWorkItemId: "work-predecessor",
+      },
+    }));
+  });
+
   // @test-value v1
   // kind = "contract"
   // claim = "shared parserはRoot契約改訂とprogress|handoff履歴入力を正規化し、未知field、不正discriminator、上限超過、非正revision、空idempotency keyをdispatch前に拒否する"

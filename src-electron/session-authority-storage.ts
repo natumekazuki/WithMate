@@ -8,7 +8,9 @@ import {
   type MutationAuthorityProof,
   type ResourceEventHeader,
   type SessionAuthorityGrant,
+  type SessionAuthorityConstructionCeiling,
   type SessionAuthorityPermission,
+  type SessionAuthorityRootConstructionInput,
   type SessionAuthorityPrincipal,
   type SessionAuthorityRelationSelector,
   type SessionAuthorityResourceKind,
@@ -295,6 +297,8 @@ export function createDelegatedChildAuthority(db: DatabaseSync, input: {
   childSessionId: string;
   operationId: string;
   createdAt: string;
+  requestedActions?: readonly string[];
+  requestedExpiresAt?: string | null;
 }): void {
   assertGrantProofCurrent(db, input.parentProof, new Date(input.createdAt));
   if (
@@ -310,7 +314,9 @@ export function createDelegatedChildAuthority(db: DatabaseSync, input: {
     throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "Child Session does not belong to the admitted parent.");
   }
   const template = baselineSessionAuthorityPermissions(childBinding.session_role);
+  const requestedActions = input.requestedActions ? new Set(input.requestedActions) : null;
   for (const item of template) {
+    if (requestedActions && !requestedActions.has(item.action)) continue;
     const ceiling = parentGrant.childCeiling.find((candidate) => samePermission(candidate, item));
     if (!ceiling) continue;
     insertGrant(db, {
@@ -323,7 +329,7 @@ export function createDelegatedChildAuthority(db: DatabaseSync, input: {
       permission: item,
       childCeiling: childCeilingFor(childBinding.session_role, item.action),
       issuedAt: input.createdAt,
-      expiresAt: parentGrant.expiresAt,
+      expiresAt: earlierExpiry(parentGrant.expiresAt, input.requestedExpiresAt ?? null),
       eventKind: "delegated",
       eventPrincipalKind: "agent",
       eventActorSessionId: input.parentProof.principal.actorSessionId,
@@ -342,6 +348,304 @@ export function createDelegatedChildAuthority(db: DatabaseSync, input: {
     throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The parent construction grant does not provide a child authority ceiling.");
   }
   ensureBudgetSessionAuthority(db, input.childSessionId, input.createdAt);
+}
+
+/** Trusted Settings/lifecycle owner only. This is intentionally not an Agent grant API. */
+export function issueRootConstructionCapability(db: DatabaseSync, input: {
+  rootSessionId: string;
+  granteeSessionId: string;
+  targetSessionRoles: readonly SessionRole[];
+  ceiling: SessionAuthorityConstructionCeiling;
+  principal: Extract<SessionAuthorityPrincipal, { kind: "user" | "system" }>;
+  proof: MutationAuthorityProof;
+  issuedAt: string;
+}): SessionAuthorityGrant {
+  const trustedPrincipal = input.principal;
+  const proofPrincipal = input.proof.principal;
+  const matchingTrustedProof = trustedPrincipal.kind === "user"
+    ? proofPrincipal.kind === "user" && proofPrincipal.receiptId === trustedPrincipal.receiptId
+    : proofPrincipal.kind === "system" && proofPrincipal.service === trustedPrincipal.service;
+  if (!matchingTrustedProof) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Root construction capability requires matching trusted authority.");
+  }
+  const binding = requireRoleBinding(db, input.granteeSessionId);
+  if (binding.root_session_id !== input.rootSessionId
+    || binding.root_session_id !== input.granteeSessionId
+    || binding.parent_session_id !== null) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "A construction capability must be issued to a root Session.");
+  }
+  const transferPermission = {
+    mode: "delegate" as const,
+    action: "session.create" as const,
+    resourceKind: "session_namespace" as const,
+    relationSelector: "self" as const,
+    effectClass: "local_mutation" as const,
+    targetSessionRoles: input.targetSessionRoles,
+  };
+  const grantIdBefore = new Set(listActiveSessionAuthorityGrants(db, input.granteeSessionId, new Date(input.issuedAt)).map((grant) => grant.grantId));
+  insertGrant(db, {
+    rootSessionId: input.rootSessionId,
+    issuerKind: input.principal.kind,
+    issuerId: input.principal.kind === "user" ? input.principal.receiptId : input.principal.service,
+    issuerGrantId: null,
+    issuerGrantRevision: null,
+    granteeSessionId: input.granteeSessionId,
+    permission: transferPermission,
+    childCeiling: input.ceiling.actions,
+    issuedAt: input.issuedAt,
+    expiresAt: input.ceiling.expiresAt,
+    eventKind: "delegated",
+    eventPrincipalKind: input.principal.kind,
+    eventActorSessionId: null,
+    provenance: { source: "trusted-root-construction", constructionCeiling: input.ceiling },
+  });
+  const created = listActiveSessionAuthorityGrants(db, input.granteeSessionId, new Date(input.issuedAt))
+    .find((grant) => !grantIdBefore.has(grant.grantId) && grant.actions.includes("session.create"));
+  if (!created) throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "The construction capability was not persisted.");
+  return created;
+}
+
+/** Trusted internal provisioning for a cross-root transfer scope. */
+export function issueTrustedCrossRootTransferCapability(db: DatabaseSync, input: {
+  sourceActorSessionId: string;
+  destinationRootSessionId: string;
+  destinationTargetRoles: readonly SessionRole[];
+  principal: Extract<SessionAuthorityPrincipal, { kind: "user" | "system" }>;
+  proof: MutationAuthorityProof;
+  expiresAt: string | null;
+  issuedAt: string;
+}): readonly SessionAuthorityGrant[] {
+  const trustedPrincipal = input.principal;
+  const proofPrincipal = input.proof.principal;
+  const matchingTrustedProof = trustedPrincipal.kind === "user"
+    ? proofPrincipal.kind === "user" && proofPrincipal.receiptId === trustedPrincipal.receiptId
+    : proofPrincipal.kind === "system" && proofPrincipal.service === trustedPrincipal.service;
+  if (!matchingTrustedProof) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Cross-root transfer capability requires matching trusted authority.");
+  }
+  const source = requireRoleBinding(db, input.sourceActorSessionId);
+  const destination = requireRoleBinding(db, input.destinationRootSessionId);
+  if (destination.root_session_id !== input.destinationRootSessionId || destination.parent_session_id !== null) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The transfer destination must be a root Session.");
+  }
+  const transferPermission = {
+    mode: "exercise" as const,
+    action: "session.move" as const,
+    resourceKind: "session" as const,
+    relationSelector: "root_owner" as const,
+    effectClass: "local_mutation" as const,
+    targetSessionRoles: input.destinationTargetRoles,
+  };
+  insertGrant(db, {
+    rootSessionId: input.destinationRootSessionId,
+    issuerKind: input.principal.kind,
+    issuerId: input.principal.kind === "user" ? input.principal.receiptId : input.principal.service,
+    issuerGrantId: null,
+    issuerGrantRevision: null,
+    granteeSessionId: input.sourceActorSessionId,
+    permission: transferPermission,
+    childCeiling: [
+      ...input.destinationTargetRoles.flatMap((role) => baselineSessionAuthorityPermissions(role)),
+      ...BUDGET_ACTIONS.map((action) => permission(action, "self")),
+    ],
+    issuedAt: input.issuedAt,
+    expiresAt: input.expiresAt,
+    eventKind: "delegated",
+    eventPrincipalKind: input.principal.kind,
+    eventActorSessionId: null,
+    provenance: {
+      source: "trusted-cross-root-transfer",
+      sourceRootSessionId: source.root_session_id,
+      destinationRootSessionId: input.destinationRootSessionId,
+    },
+  });
+  return listActiveSessionAuthorityGrants(db, input.sourceActorSessionId, new Date(input.issuedAt))
+    .filter((grant) => grant.rootSessionId === input.destinationRootSessionId && grant.actions.includes("session.move"));
+}
+
+/**
+ * Derive the initial grants for a newly-created root from an explicit
+ * construction ceiling. A root id is never appended to an existing scope;
+ * every derived grant has its own immutable provenance record.
+ */
+export function createDerivedRootAuthority(
+  db: DatabaseSync,
+  input: SessionAuthorityRootConstructionInput,
+): readonly SessionAuthorityGrant[] {
+  const source = requireGrant(db, input.sourceGrantId);
+  assertGrantActive(source, source.granteeSessionId, input.sourceGrantRevision, new Date(input.createdAt));
+  if (source.rootSessionId !== input.sourceRootSessionId
+    || !source.actions.includes("session.create")
+    || source.effectClass !== "local_mutation"
+    || !source.delegable) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The source grant is not a root construction capability.");
+  }
+  requireRoleBinding(db, input.targetRootSessionId);
+  if (input.ceiling.expiresAt !== null
+    && (source.expiresAt === null || input.ceiling.expiresAt > source.expiresAt)) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The root construction expiry exceeds the source grant.");
+  }
+  const capability = readConstructionCeiling(source);
+  if (!capability) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The source grant has no persisted root construction capability.");
+  }
+  if (capability.workspaceId !== input.ceiling.workspaceId
+    || capability.projectId !== input.ceiling.projectId
+    || capability.visibility !== input.ceiling.visibility) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The root construction placement exceeds the source capability.");
+  }
+  const allowed = capability.actions;
+  for (const requested of input.ceiling.actions) {
+    if (!allowed.some((candidate) => samePermission(candidate, requested))) {
+      throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The root construction action exceeds the source grant ceiling.");
+    }
+  }
+  for (const [dimension, requested] of Object.entries(input.ceiling.budget)) {
+    const maximum = capability.budget[dimension];
+    if (maximum === undefined || requested > maximum) {
+      throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The root construction budget exceeds the source capability.");
+    }
+  }
+  for (const amount of Object.values(input.ceiling.budget)) {
+    if (!Number.isSafeInteger(amount) || amount < 0) {
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The root construction budget ceiling is invalid.");
+    }
+  }
+  const provenance = {
+    source: "root-construction",
+    operationId: input.operationId,
+    sourceRootSessionId: input.sourceRootSessionId,
+    sourceGrantId: source.grantId,
+    sourceGrantRevision: source.revision,
+    constructionCeiling: input.ceiling,
+    lineage: { sourceRootSessionId: input.sourceRootSessionId },
+  } as const;
+  for (const item of input.ceiling.actions) {
+    insertGrant(db, {
+      rootSessionId: input.targetRootSessionId,
+      issuerKind: "agent",
+      issuerId: source.granteeSessionId,
+      issuerGrantId: source.grantId,
+      issuerGrantRevision: source.revision,
+      granteeSessionId: input.targetRootSessionId,
+      permission: item,
+      childCeiling: [],
+      issuedAt: input.createdAt,
+      expiresAt: input.ceiling.expiresAt,
+      eventKind: "delegated",
+      eventPrincipalKind: "agent",
+      eventActorSessionId: source.granteeSessionId,
+      provenance,
+    });
+  }
+  return listActiveSessionAuthorityGrants(db, input.targetRootSessionId, new Date(input.createdAt));
+}
+
+function readConstructionCeiling(grant: SessionAuthorityGrant): SessionAuthorityConstructionCeiling | null {
+  const value = grant.provenance.constructionCeiling;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if ((typeof record.workspaceId !== "string" && record.workspaceId !== null)
+    || (typeof record.projectId !== "string" && record.projectId !== null)
+    || typeof record.visibility !== "string"
+    || !Array.isArray(record.actions)
+    || !record.actions.every((item) => item && typeof item === "object")
+    || !record.budget || typeof record.budget !== "object" || Array.isArray(record.budget)
+    || (typeof record.expiresAt !== "string" && record.expiresAt !== null)) return null;
+  const budget = record.budget as Record<string, unknown>;
+  if (Object.values(budget).some((item) => !Number.isSafeInteger(item) || (item as number) < 0)) return null;
+  return {
+    workspaceId: record.workspaceId as string | null,
+    projectId: record.projectId as string | null,
+    visibility: record.visibility,
+    actions: record.actions as SessionAuthorityPermission[],
+    budget: budget as Record<string, number>,
+    expiresAt: record.expiresAt as string | null,
+  };
+}
+
+/**
+ * Cross-root transfer creates fresh grant identities. Revoked grants are never
+ * restored; the destination issuer must be active and explicit.
+ */
+export function transferSessionAuthority(db: DatabaseSync, input: {
+  sessionId: string;
+  sourceRootSessionId: string;
+  destinationRootSessionId: string;
+  destinationIssuerGrantId: string;
+  destinationIssuerGrantRevision: number;
+  operationId: string;
+  transferredAt: string;
+}): readonly SessionAuthorityGrant[] {
+  const destinationIssuer = requireGrant(db, input.destinationIssuerGrantId);
+  assertGrantActive(destinationIssuer, destinationIssuer.granteeSessionId,
+    input.destinationIssuerGrantRevision, new Date(input.transferredAt));
+  if (destinationIssuer.rootSessionId !== input.destinationRootSessionId) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The destination issuer belongs to another root.");
+  }
+  const rows = db.prepare(`SELECT * FROM session_authority_grants_v6
+    WHERE grantee_session_id = ? AND root_session_id = ? AND revoked_at IS NULL`)
+    .all(input.sessionId, input.sourceRootSessionId) as GrantRow[];
+  const sourceGrants = rows.map(decodeGrant);
+  const now = new Date(input.transferredAt);
+  for (const grant of sourceGrants) {
+    assertGrantActive(grant, grant.granteeSessionId, grant.revision, now);
+    if (!grant.actions.every((action) => destinationIssuer.childCeiling.some((ceiling) =>
+      samePermission(ceiling, { mode: grant.delegable ? "delegate" : "exercise", action,
+        resourceKind: grant.resourceKind, relationSelector: grant.relationSelector,
+        effectClass: grant.effectClass, targetSessionRoles: grant.targetSessionRoles })))) {
+      throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The destination transfer ceiling does not permit the source grant.");
+    }
+    if (grant.expiresAt !== null && destinationIssuer.expiresAt !== null && grant.expiresAt > destinationIssuer.expiresAt) {
+      // The destination expiry narrows the resulting grant; it may not extend it.
+      continue;
+    }
+  }
+  for (const grant of sourceGrants) {
+    revokeSessionAuthorityGrant(db, {
+      grantId: grant.grantId,
+      expectedRevision: grant.revision,
+      principal: { kind: "system", service: "session-transfer" },
+      revokedAt: input.transferredAt,
+    });
+    insertGrant(db, {
+      rootSessionId: input.destinationRootSessionId,
+      issuerKind: "system",
+      issuerId: "session-transfer",
+      issuerGrantId: destinationIssuer.grantId,
+      issuerGrantRevision: destinationIssuer.revision,
+      granteeSessionId: input.sessionId,
+      permission: {
+        mode: grant.delegable ? "delegate" : "exercise",
+        action: grant.actions[0],
+        resourceKind: grant.resourceKind,
+        relationSelector: grant.relationSelector,
+        effectClass: grant.effectClass,
+        targetSessionRoles: grant.targetSessionRoles,
+      },
+      childCeiling: grant.childCeiling,
+      issuedAt: input.transferredAt,
+      expiresAt: earlierExpiry(grant.expiresAt, destinationIssuer.expiresAt),
+      eventKind: "delegated",
+      eventPrincipalKind: "system",
+      eventActorSessionId: null,
+      provenance: {
+        source: "session-transfer",
+        operationId: input.operationId,
+        supersedesGrantId: grant.grantId,
+        supersedesGrantRevision: grant.revision + 1,
+        destinationIssuerGrantId: destinationIssuer.grantId,
+        destinationIssuerGrantRevision: destinationIssuer.revision,
+      },
+    });
+  }
+  return listActiveSessionAuthorityGrants(db, input.sessionId, new Date(input.transferredAt));
+}
+
+function earlierExpiry(left: string | null, right: string | null): string | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return left < right ? left : right;
 }
 
 export function listActiveSessionAuthorityGrants(
@@ -468,17 +772,26 @@ export function verifySessionAuthorityMigration(db: DatabaseSync): void {
   `);
   for (const binding of bindings) {
     const rows = readGrants.all(binding.session_id, SESSION_AUTHORITY_MAPPING_REVISION) as GrantRow[];
-    const baselineRows = rows.filter((row) => grantProvenanceSource(row) === "role-baseline");
-    const delegatedRows = rows.filter((row) => grantProvenanceSource(row) === "child-construction");
-    const budgetRows = rows.filter((row) => grantProvenanceSource(row) === "resource-budget-v1");
-    if (baselineRows.length === 0 && delegatedRows.length === 0) {
+    const activeRows = rows.filter((row) => row.revoked_at === null);
+    // Revoked role-baseline grants remain migration evidence and must be
+    // included in the template comparison; backfill must not recreate them.
+    const baselineRows = rows.filter((row) => grantProvenanceSource(row) === "role-baseline"
+      && (row.revoked_at === null || row.root_session_id === binding.root_session_id));
+    const delegatedRows = activeRows.filter((row) => grantProvenanceSource(row) === "child-construction");
+    const budgetRows = activeRows.filter((row) => grantProvenanceSource(row) === "resource-budget-v1");
+    const transferredRows = activeRows.filter((row) => grantProvenanceSource(row) === "session-transfer");
+    const transferCapabilityRows = activeRows.filter((row) => grantProvenanceSource(row) === "trusted-cross-root-transfer");
+    if (baselineRows.length === 0 && delegatedRows.length === 0 && transferredRows.length === 0 && transferCapabilityRows.length === 0) {
       throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "A Session has no recognized authority grant provenance.", {
         sessionId: binding.session_id,
       });
     }
     if (baselineRows.length > 0) verifyBaselineGrantSet(binding, baselineRows);
-    verifyBudgetAuthorityGrantSet(binding.session_id, budgetRows, rows);
-    if (baselineRows.length + delegatedRows.length + budgetRows.length !== rows.length) {
+    verifyBudgetAuthorityGrantSet(binding.session_id, budgetRows, rows.filter((row) => row.root_session_id === binding.root_session_id),
+      transferredRows.length > 0 ? transferredRows : undefined);
+    const revokedBaselineRows = baselineRows.filter((row) => row.revoked_at !== null);
+    if (baselineRows.length + delegatedRows.length + budgetRows.length + transferredRows.length + transferCapabilityRows.length
+      !== activeRows.length + revokedBaselineRows.length) {
       throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "A Session authority grant has unknown provenance.", {
         sessionId: binding.session_id,
       });
@@ -486,7 +799,11 @@ export function verifySessionAuthorityMigration(db: DatabaseSync): void {
   }
 }
 
-function verifyBudgetAuthorityGrantSet(sessionId: string, rows: GrantRow[], allRows: GrantRow[]): void {
+function verifyBudgetAuthorityGrantSet(sessionId: string, rows: GrantRow[], allRows: GrantRow[], transferredRows?: GrantRow[]): void {
+  if (rows.length === 0 && transferredRows && transferredRows.length > 0) {
+    const transferredActions = transferredRows.flatMap((row) => JSON.parse(row.actions_json) as string);
+    if (BUDGET_ACTIONS.every((action) => transferredActions.includes(action))) return;
+  }
   const source = allRows.find((row) => JSON.parse(row.actions_json).includes("session.self"));
   if (!source || rows.length !== BUDGET_ACTIONS.length || BUDGET_ACTIONS.some((action) =>
     rows.filter((row) => {
@@ -669,6 +986,7 @@ function decodeGrant(row: GrantRow): SessionAuthorityGrant {
     revokedAt: row.revoked_at,
     revision: row.revision,
     mappingRevision: row.mapping_revision,
+    provenance: parseGrantProvenance(row),
   };
 }
 

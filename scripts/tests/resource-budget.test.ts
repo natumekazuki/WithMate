@@ -21,6 +21,7 @@ import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runti
 import {
   ResourceBudgetError,
   ResourceBudgetStorage,
+  bootstrapRootResourceBudget,
   verifyResourceBudgetLedger,
 } from "../../src-electron/resource-budget-storage.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
@@ -1083,6 +1084,47 @@ describe("Resource budget", () => {
     } finally {
       budget.close();
       authority.close();
+      fixture.sessionStorage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "transferSessionAllocationはdestination parentが対象accountの子孫になる実際のcycleを拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "子accountをparentに指定したtransferでbudget account hierarchyをcycle化する"
+  // observable = "BUDGET_SETTLEMENT_CONFLICTと対象親口座のroot_session_id・parent_account_idの維持"
+  // observation_boundary = "component-behavior"
+  // scope = "resource-budget-transfer-cycle-check"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("destination parentが子孫のtransferを拒否する", async () => {
+    const fixture = await createFixture("withmate-budget-transfer-cycle-");
+    const parentSession = makeChild("parent", fixture.root, "task-coordinator");
+    fixture.sessionStorage.insertSession(parentSession);
+    fixture.sessionStorage.insertSession(makeChild("child", parentSession));
+    const db = new DatabaseSync(fixture.dbPath);
+    const budget = new ResourceBudgetStorage(db);
+    try {
+      bootstrapRootResourceBudget(db, { rootSessionId: "root-a", rootCreatedAt: NOW, createdAt: NOW });
+      const proof = userBudgetProof("root-a", "transfer-cycle");
+      budget.allocateChild({ accountId: "parent", accountKind: "session", rootSessionId: "root-a", ownerSessionId: "parent",
+        parentAccountId: "root-a", hardLimits: childLimits(2), authorityGrantId: null, authorityGrantRevision: null,
+        expiresAt: null, deadlineAt: "2026-10-01T00:00:00.000Z", idempotencyKey: "allocate-cycle-parent", proof, createdAt: NOW });
+      budget.allocateChild({ accountId: "child", accountKind: "session", rootSessionId: "root-a", ownerSessionId: "child",
+        parentAccountId: "parent", hardLimits: childLimits(1), authorityGrantId: null, authorityGrantRevision: null,
+        expiresAt: null, deadlineAt: "2026-10-01T00:00:00.000Z", idempotencyKey: "allocate-cycle-child", proof, createdAt: NOW });
+      assert.throws(() => budget.transferSessionAllocation({ sessionId: "parent", destinationRootSessionId: "root-a",
+        destinationParentAccountId: "child", destinationAuthorityGrantId: null, destinationAuthorityGrantRevision: null,
+        proof, operationId: "transfer-cycle", transferredAt: NOW }), isBudgetError("BUDGET_SETTLEMENT_CONFLICT"));
+      const parentAccount = db.prepare("SELECT root_session_id, parent_account_id FROM resource_budget_accounts_v6 WHERE account_id = ?")
+        .get("parent") as { root_session_id: string; parent_account_id: string };
+      assert.equal(parentAccount.root_session_id, "root-a");
+      assert.equal(parentAccount.parent_account_id, "root-a");
+    } finally {
+      budget.close();
+      db.close();
       fixture.sessionStorage.close();
       await rm(fixture.directory, { recursive: true, force: true });
     }

@@ -20,6 +20,7 @@ import { verifyResourceHistoryProjections } from "../../src-electron/resource-hi
 import { SessionExecutionStorageV6 } from "../../src-electron/session-execution-storage-v6.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { SessionTranscriptStorageV6 } from "../../src-electron/session-transcript-storage-v6.js";
+import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import {
   WorkItemAuthorityError,
   WorkItemExecutionAssociationError,
@@ -33,6 +34,7 @@ import {
   WorkItemRevisionConflictError,
   WorkItemStateConflictError,
   WorkItemStorageV6,
+  restoreRootWorkItemWithinTransaction,
 } from "../../src-electron/work-item-storage-v6.js";
 import {
   buildChildSessionRoleBinding,
@@ -423,6 +425,285 @@ describe("Root WorkItem contract", () => {
       assert.equal(harness.sessionStorage.getSession("rolled-back"), null);
       assert.equal(tableCount(harness.dbPath, "work_items_v6", "root_session_id = 'rolled-back'"), 0);
     } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Root restoreはterminal predecessorのresultとhistoryを保持したままactive successorを一件作成し、同じidempotency keyの再送で追加行を作らない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "restoreがterminal rootを上書きする、predecessor relationを欠落させる、またはresponse loss後の再送でactive successorを重複作成する"
+  // observable = "work_items_v6のroot rows、predecessor result、successor created event、idempotency replay response"
+  // observation_boundary = "component-behavior"
+  // scope = "WorkItemStorageV6 root successor restore"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("RW-RESTORE-ROOT: terminal Root WorkItemを保持してactive successorをidempotently作成する", async () => {
+    const harness = await createHarness();
+    try {
+      insertRootSession(harness, "root", "standalone", "Initial goal");
+      const predecessor = getRootWorkItem(harness, "root");
+      const running = harness.service.transition({
+        workItemId: predecessor.id,
+        state: "in_progress",
+        expectedRevision: predecessor.revision,
+        idempotencyKey: "root-start-before-restore",
+      }, runtimeBinding("root"));
+      const terminal = harness.service.reportResult({
+        workItemId: predecessor.id,
+        state: "completed",
+        expectedRevision: running.revision,
+        result: {
+          summary: "completed before restore",
+          changes: [],
+          verificationResults: [],
+          findings: [],
+          unverifiedItems: [],
+          remainingWork: [],
+        },
+        idempotencyKey: "root-result-before-restore",
+      }, runtimeBinding("root"));
+      const predecessorHistory = harness.workStorage.listHistory({ workItemId: terminal.id, afterSequence: null, limit: 10 })
+        .map((event) => ({ revision: event.revision, type: event.type, payload: event.payload }));
+      const restorePurpose = {
+        predecessorWorkItemId: terminal.id,
+        goal: "Restored goal",
+        scope: "restore scope",
+        completionCriteria: "restore complete",
+        authority: "root authority",
+        sourceIdentity: SOURCE_IDENTITY,
+        idempotencyKey: "root-restore-1",
+        requestFingerprint: "root-restore-fingerprint",
+      } as const;
+      const restoreSession = {
+        id: "root",
+        taskTitle: "Initial goal",
+        workspacePath: "C:/workspace",
+        branch: "main",
+      } as const;
+      const restoreProof = trustedProof("session.restore", "root");
+      const restoreDb = new DatabaseSync(harness.dbPath);
+      let successor: WorkItem;
+      try {
+        restoreDb.exec("BEGIN IMMEDIATE TRANSACTION");
+        successor = restoreRootWorkItemWithinTransaction(
+          restoreDb,
+          restoreSession,
+          restorePurpose,
+          restoreProof,
+          "session-operation:restore:root-restore-fingerprint",
+          NOW,
+        );
+        restoreDb.exec("COMMIT");
+      } catch (error) {
+        restoreDb.exec("ROLLBACK");
+        throw error;
+      }
+      restoreDb.close();
+      assert.equal(successor.kind, "root");
+      assert.equal(successor.state, "pending");
+      assert.equal(successor.predecessorWorkItemId, terminal.id);
+      assert.equal(harness.workStorage.get(terminal.id)?.state, "completed");
+      assert.deepEqual(harness.workStorage.get(terminal.id)?.result, terminal.result);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "kind = 'root' AND root_session_id = 'root'"), 2);
+      const created = harness.workStorage.listHistory({ workItemId: successor.id, afterSequence: null, limit: 10 })[0];
+      assert.equal(created?.type, "created");
+      if (created?.type !== "created") throw new Error("Root successor created event is missing.");
+      assert.equal(created.payload.predecessorWorkItemId, terminal.id);
+      const replayDb = new DatabaseSync(harness.dbPath);
+      let replay: WorkItem;
+      try {
+        replayDb.exec("BEGIN IMMEDIATE TRANSACTION");
+        replay = restoreRootWorkItemWithinTransaction(
+          replayDb,
+          restoreSession,
+          restorePurpose,
+          restoreProof,
+          "session-operation:restore:root-restore-fingerprint",
+          NOW,
+        );
+        replayDb.exec("COMMIT");
+      } catch (error) {
+        replayDb.exec("ROLLBACK");
+        throw error;
+      }
+      replayDb.close();
+      assert.deepEqual(replay, successor);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "kind = 'root' AND root_session_id = 'root'"), 2);
+      const migrationDb = new DatabaseSync(harness.dbPath);
+      try {
+        ensureV6Schema(migrationDb);
+        verifyResourceHistoryProjections(migrationDb);
+      } finally {
+        migrationDb.close();
+      }
+      assert.deepEqual(harness.workStorage.get(terminal.id)?.result, terminal.result);
+      assert.deepEqual(
+        harness.workStorage.listHistory({ workItemId: terminal.id, afterSequence: null, limit: 10 })
+          .map((event) => ({ revision: event.revision, type: event.type, payload: event.payload })),
+        predecessorHistory,
+      );
+      assert.equal(harness.workStorage.get(successor.id)?.predecessorWorkItemId, terminal.id);
+      const successorHistory = harness.workStorage.listHistory({ workItemId: successor.id, afterSequence: null, limit: 10 });
+      assert.equal(successorHistory.length, 1);
+      assert.equal(successorHistory[0]?.type, "created");
+      if (successorHistory[0]?.type !== "created") throw new Error("Root successor history is missing.");
+      assert.equal(successorHistory[0].payload.predecessorWorkItemId, terminal.id);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "kind = 'root' AND root_session_id = 'root'"), 2);
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "root WorkItemの選択は最初の200件だけで打ち切らず、ページ外のactiveを選び、activeがなければ最新terminalへfallbackし、active重複を拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+  // fault = "200件目より後ろのactive successorが見落とされる、terminal rootを誤って古い候補へ戻す、または壊れた複数active状態を黙って選択する"
+  // observable = "WorkItemService.getRootWorkItemの返却idと複数active時の例外"
+  // observation_boundary = "component-behavior"
+  // scope = "WorkItemService root WorkItem pagination and selection"
+  // lifecycle = "permanent"
+  // distinction = "実SQLiteのwork_items_v6を200件超に構成し、serviceのproduction list paginationを通して選択結果を観測する"
+  // @end-test-value
+  it("RW-ROOT-LOOKUP: 200件を超えるroot候補からactiveと最新terminalを選びactive重複を拒否する", async () => {
+    const harness = await createHarness();
+    try {
+      insertRootSession(harness, "root", "standalone", "Paged root");
+      const initial = getRootWorkItem(harness, "root");
+      const canceled = harness.service.cancel({
+        workItemId: initial.id,
+        expectedRevision: initial.revision,
+        idempotencyKey: "paged-root-cancel-initial",
+      }, runtimeBinding("root"));
+
+      const db = new DatabaseSync(harness.dbPath);
+      try {
+        const clone = db.prepare(`
+          INSERT INTO work_items_v6 (
+            id, kind, contract_revision, root_session_id, creator_session_id,
+            target_session_id, parent_work_item_id, predecessor_work_item_id,
+            goal, scope, completion_criteria, authority, source_identity_json,
+            state, revision, progress_summary, blockers_json, next_action,
+            result_json, created_at, updated_at
+          )
+          SELECT ?, kind, contract_revision, root_session_id, creator_session_id,
+            target_session_id, parent_work_item_id, predecessor_work_item_id,
+            goal, scope, completion_criteria, authority, source_identity_json,
+            ?, revision, progress_summary, blockers_json, next_action,
+            NULL, created_at, updated_at
+          FROM work_items_v6 WHERE id = ?
+        `);
+        for (let index = 0; index < 200; index += 1) {
+          clone.run(`paged-root-terminal-${index}`, "canceled", canceled.id);
+        }
+        clone.run("paged-root-active", "pending", canceled.id);
+      } finally {
+        db.close();
+      }
+
+      const active = harness.service.getRootWorkItem("root", runtimeBinding("root"));
+      assert.equal(active?.id, "paged-root-active");
+
+      const canceledActive = harness.service.cancel({
+        workItemId: active!.id,
+        expectedRevision: active!.revision,
+        idempotencyKey: "paged-root-cancel-active",
+      }, runtimeBinding("root"));
+      const latestTerminal = harness.service.getRootWorkItem("root", runtimeBinding("root"));
+      assert.equal(latestTerminal?.id, canceledActive.id);
+
+      const duplicateDb = new DatabaseSync(harness.dbPath);
+      try {
+        duplicateDb.exec("DROP INDEX idx_v6_work_items_one_root_per_session");
+        duplicateDb.exec("BEGIN IMMEDIATE TRANSACTION");
+        const duplicate = duplicateDb.prepare(`
+          INSERT INTO work_items_v6 (
+            id, kind, contract_revision, root_session_id, creator_session_id,
+            target_session_id, parent_work_item_id, predecessor_work_item_id,
+            goal, scope, completion_criteria, authority, source_identity_json,
+            state, revision, progress_summary, blockers_json, next_action,
+            result_json, created_at, updated_at
+          )
+            SELECT ?, kind, contract_revision, root_session_id,
+            creator_session_id, target_session_id, parent_work_item_id,
+            predecessor_work_item_id, goal, scope, completion_criteria, authority,
+            source_identity_json, 'pending', revision, progress_summary,
+            blockers_json, next_action, NULL, created_at, updated_at
+          FROM work_items_v6 WHERE id = ?
+        `);
+        duplicate.run("paged-root-active-duplicate-a", "paged-root-active");
+        duplicate.run("paged-root-active-duplicate-b", "paged-root-active");
+        duplicateDb.exec("COMMIT");
+        assert.equal(Number(duplicateDb.prepare("SELECT COUNT(*) AS count FROM work_items_v6 WHERE root_session_id = 'root' AND state = 'pending'").get().count), 2);
+      } finally {
+        try { duplicateDb.exec("ROLLBACK"); } catch { /* transaction already committed */ }
+        duplicateDb.close();
+      }
+      assert.throws(
+        () => harness.service.getRootWorkItem("root", runtimeBinding("root")),
+        /exactly one self-owned Root WorkItem/,
+      );
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "restore helperがagent proofを受けた場合、WorkItem eventとresource headerのactorはproofの実actor Sessionへ直列化される"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "helperが常にrestore対象rootをactorとして保存し、agent proofの実actorと監査履歴が不一致になる"
+  // observable = "work_item_events_v6.actor_session_idとresource_event_headers_v6.actor_session_id"
+  // observation_boundary = "component-behavior"
+  // scope = "restoreRootWorkItemWithinTransaction actor serialization"
+  // lifecycle = "permanent"
+  // distinction = "authorization issuanceとstartup migrationを主張せず、helperのagent actor serializationだけを検証する"
+  // @end-test-value
+  it("restore helperはagent proofのactual actorをevent/headerへ保存する", async () => {
+    const harness = await createHarness();
+    const authority = new SessionAuthorityService({ databasePath: harness.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    try {
+      const root = insertRootSession(harness, "root-actor", "overall-coordinator", "Initial goal");
+      insertChildSession(harness, "agent-actor", root, "executor");
+      const predecessor = getRootWorkItem(harness, root.id);
+      const running = harness.service.transition({ workItemId: predecessor.id, state: "in_progress",
+        expectedRevision: predecessor.revision, idempotencyKey: "actor-restore-start" }, runtimeBinding(root.id));
+      const terminal = harness.service.reportResult({ workItemId: predecessor.id, state: "completed",
+        expectedRevision: running.revision, result: resultInput("completed"), idempotencyKey: "actor-restore-result" }, runtimeBinding(root.id));
+      const agentProof = authority.authorizeSessionAct("agent-actor", "session.self", { sessionId: "agent-actor" }).proof;
+      const restoreDb = new DatabaseSync(harness.dbPath);
+      let successor: WorkItem;
+      try {
+        restoreDb.exec("BEGIN IMMEDIATE TRANSACTION");
+        successor = restoreRootWorkItemWithinTransaction(restoreDb, {
+          id: root.id, taskTitle: root.taskTitle, workspacePath: root.workspacePath, branch: root.branch,
+        }, {
+          predecessorWorkItemId: terminal.id, goal: "Restored goal", scope: "scope", completionCriteria: "complete",
+          authority: "authority", sourceIdentity: SOURCE_IDENTITY, idempotencyKey: "actor-restore",
+          requestFingerprint: "actor-restore-fingerprint",
+        }, agentProof, "session-operation:actor-restore", NOW);
+        restoreDb.exec("COMMIT");
+      } catch (error) {
+        restoreDb.exec("ROLLBACK");
+        throw error;
+      } finally {
+        restoreDb.close();
+      }
+      const db = new DatabaseSync(harness.dbPath, { readOnly: true });
+      try {
+        const event = db.prepare("SELECT actor_session_id FROM work_item_events_v6 WHERE work_item_id = ? AND revision = 1")
+          .get(successor.id) as { actor_session_id: string | null };
+        const header = db.prepare("SELECT actor_session_id FROM resource_event_headers_v6 WHERE resource_kind = 'work_item' AND resource_id = ? AND resource_revision = 1")
+          .get(successor.id) as { actor_session_id: string | null };
+        assert.equal(event.actor_session_id, "agent-actor");
+        assert.equal(header.actor_session_id, "agent-actor");
+      } finally {
+        db.close();
+      }
+    } finally {
+      authority.close();
       await closeHarness(harness);
     }
   });

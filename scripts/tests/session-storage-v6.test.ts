@@ -1749,3 +1749,87 @@ describe("SessionStorageV6", () => {
     }
   });
 });
+
+// @test-value v2
+// kind = "invariant"
+// claim = "terminal turnのProvider threadIdをSessionへ保存し、次Turnの継続入力へ渡す"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Session identity" }
+// fault = "terminal projection mergeが保存済みthreadIdでProvider返却値を上書きし、次Turnが新threadを再利用できない"
+// observable = "実SQLiteのSessionと次Turn開始結果のthreadId"
+// observation_boundary = "consumer"
+// impact = "初回turn後の会話継続が失われる"
+// scope = "SessionStorageV6.upsertTerminalSession"
+// lifecycle = "permanent"
+// distinction = "通常terminal結果は新threadを保存し、次のterminal結果も直前threadを基点に更新できることを実DBで確認する"
+// @end-test-value
+it("terminal turnのProvider threadIdを保存し、次Turnの継続へ渡す", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-terminal-thread-v6-"));
+  const dbPath = path.join(tempDirectory, "withmate-v6.db");
+  const storage = new SessionStorageV6(dbPath);
+  const session = buildNewSession({
+    id: "terminal-thread-continuity",
+    taskTitle: "Terminal thread continuity",
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    branch: "main",
+    characterId: "char-a",
+    character: "A",
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    approvalMode: DEFAULT_APPROVAL_MODE,
+  });
+  const db = new DatabaseSync(dbPath);
+  try {
+    storage.insertSession(session);
+    const insertTurn = db.prepare(`
+      INSERT INTO session_turns_v6 (session_id, phase, provider_id, started_at, updated_at)
+      VALUES (?, 'running', 'codex', ?, ?)
+    `);
+    insertTurn.run(session.id, "2026-09-12T00:00:00.000Z", "2026-09-12T00:00:00.000Z");
+    const first = storage.upsertTerminalSession({
+      ...session,
+      status: "idle",
+      runState: "idle",
+      threadId: "provider-thread-1",
+      messages: [{ role: "assistant", text: "first" }],
+    }, {
+      auditLogId: 1,
+      sessionId: session.id,
+      phase: "completed",
+      assistantMessageSeq: 0,
+      threadId: "provider-thread-1",
+      errorMessage: "",
+      completedAt: "2026-09-12T00:00:01.000Z",
+    });
+    assert.equal(first.threadId, "provider-thread-1");
+    assert.equal(storage.getSession(session.id)?.threadId, "provider-thread-1");
+
+    const nextStart = storage.appendRunningTurnStart({
+      sessionId: session.id,
+      expectedMessageCount: first.messages.length,
+      userMessage: { role: "user", text: "continue" },
+      updatedAt: "2026-09-12T00:00:02.000Z",
+    });
+    assert.equal(nextStart.summary.threadId, "provider-thread-1");
+    insertTurn.run(session.id, "2026-09-12T00:00:02.000Z", "2026-09-12T00:00:02.000Z");
+    const second = storage.upsertTerminalSession({
+      ...first,
+      threadId: "provider-thread-2",
+      messages: [...first.messages, { role: "user", text: "continue" }, { role: "assistant", text: "second" }],
+    }, {
+      auditLogId: 2,
+      sessionId: session.id,
+      phase: "completed",
+      assistantMessageSeq: 2,
+      threadId: "provider-thread-2",
+      errorMessage: "",
+      completedAt: "2026-09-12T00:00:03.000Z",
+    });
+    assert.equal(second.threadId, "provider-thread-2");
+    assert.equal(storage.getSession(session.id)?.threadId, "provider-thread-2");
+  } finally {
+    db.close();
+    storage.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});

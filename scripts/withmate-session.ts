@@ -8,6 +8,7 @@ import {
   SessionRuntimeValidationError,
   assertSessionRuntimeRequestBodySize,
   parseSessionRuntimeOperationInput,
+  sessionRuntimeOperationMayHaveEffect,
   type SessionRuntimeError,
   type SessionRuntimeOperation,
   type SessionRuntimeRequestEnvelope,
@@ -75,6 +76,14 @@ const commandMap = new Map<string, SessionRuntimeOperation>([
   ["session list", "session.list"],
   ["session get", "session.get"],
   ["session rename", "session.rename"],
+  ["session configure", "session.configure"],
+  ["session move-manifest", "session.move.manifest"],
+  ["session move", "session.move"],
+  ["session clone", "session.clone"],
+  ["session restore", "session.restore"],
+  ["session archive", "session.archive"],
+  ["session delete-manifest", "session.delete.manifest"],
+  ["session delete", "session.delete"],
   ["session files list", "session.files.list"],
   ["session files read-text", "session.files.read_text"],
   ["session files write-text", "session.files.write_text"],
@@ -236,20 +245,9 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
 }
 
 function isMutationCommand(command: string, input?: unknown): boolean {
-  return command === "budget configure"
-    || command === "session create" || command === "session rename"
-    || command === "session files write-text"
-    || command === "turn run" || command === "turn enqueue" || command === "turn cancel"
-    || command === "work create" || command === "work transition"
-    || command === "work revise" || command === "work history append"
-    || command === "work result" || command === "work cancel"
-    || command === "work aggregation decide" || command === "work aggregation retry"
-    || command === "interaction respond"
-    || command === "coordination event create" || command === "coordination event resolve"
-    || command === "coordination event consume"
-    || command === "coordination event cancel" || command === "coordination event correct"
-    || (command === "transcript export"
-      && (input === undefined || (input as { destination?: { kind?: string } }).destination?.kind !== "inline"));
+  const operation = commandMap.get(command);
+  return operation !== undefined
+    && (operation === "budget.configure" || sessionRuntimeOperationMayHaveEffect(operation, input));
 }
 
 async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{

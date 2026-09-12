@@ -50,6 +50,8 @@ export const REQUIRED_V6_TABLES = [
   "coordination_event_actions_v6",
   "coordination_event_idempotency_v6",
   "session_transcript_export_idempotency_v6",
+  "session_lifecycle_operations_v6",
+  "session_lifecycle_operation_events_v6",
   "memory_entries_v6",
   "memory_entry_tags_v6",
   "memory_entry_relations_v6",
@@ -112,6 +114,9 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_coordination_event_actions_event_sequence",
   "idx_v6_coordination_event_idempotency_event",
   "idx_v6_session_transcript_export_idempotency_expires",
+  "idx_v6_session_lifecycle_operations_state",
+  "idx_v6_session_lifecycle_operations_target",
+  "idx_v6_session_lifecycle_operation_events_operation",
   "idx_v6_memory_entries_target_state_updated",
   "idx_v6_memory_entry_tags_lookup",
   "idx_v6_memory_target_tag_stats_page",
@@ -234,6 +239,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "creator_session_id",
     "target_session_id",
     "parent_work_item_id",
+    "predecessor_work_item_id",
     "goal",
     "scope",
     "completion_criteria",
@@ -347,6 +353,15 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "result_json",
     "created_at",
     "expires_at",
+  ],
+  session_lifecycle_operations_v6: [
+    "operation_id", "operation", "principal_kind", "principal_id", "idempotency_key", "request_fingerprint",
+    "target_session_id", "source_root_session_id", "destination_root_session_id", "revision", "state",
+    "current_step", "manifest_json", "reserved_resource_ids_json", "effects_json", "result_json",
+    "error_json", "created_at", "updated_at",
+  ],
+  session_lifecycle_operation_events_v6: [
+    "event_id", "operation_id", "revision", "step", "effect", "payload_json", "created_at",
   ],
   memory_entries_v6: [
     "id",
@@ -727,6 +742,8 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     )
     && hasForeignKey(db, "session_execution_origins_v6", "source_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "work_item_events_v6", "work_item_id", "work_items_v6", "id", "CASCADE")
+    && hasForeignKey(db, "work_items_v6", "parent_work_item_id", "work_items_v6", "id")
+    && hasForeignKey(db, "work_items_v6", "predecessor_work_item_id", "work_items_v6", "id")
     && hasForeignKey(db, "work_item_events_v6", "actor_session_id", "sessions_v6", "id", "SET NULL")
     && hasForeignKey(db, "coordination_events_v6", "actor_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_events_v6", "root_session_id", "sessions_v6", "id", "CASCADE")
@@ -917,8 +934,10 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && workItemEventsSql.includes(`WHEN 'migration_baseline' THEN ${WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES}`)
     && workItemEventsSql.includes("UNIQUE (work_item_id, revision)")
     && rootWorkItemUniqueIndexSql.includes("WHERE kind = 'root'")
+    && rootWorkItemUniqueIndexSql.includes("state IN ('pending', 'in_progress', 'waiting')")
     && workItemIdempotencySql.includes("'work.revise'")
     && workItemIdempotencySql.includes("'work.history.append'")
+    && workItemIdempotencySql.includes("'work.restore'")
     && workItemIdempotencySql.includes(`length(CAST(response_json AS BLOB)) <= ${WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES}`)
     && workItemAggregationDecisionSql.includes("decision_type IN ('accepted', 'excluded', 'retry_requested')")
     && workItemAggregationDecisionSql.includes("replacement_work_item_id IS NOT NULL")
@@ -1481,6 +1500,66 @@ export const CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL = `
     ON session_crud_idempotency_v6(expires_at);
 `;
 
+/** Durable intent and step history for Session lifecycle sagas.
+ *  The operation row is the current recovery projection; step rows remain append-only.
+ */
+export const CREATE_V6_SESSION_LIFECYCLE_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS session_lifecycle_operations_v6 (
+    operation_id TEXT PRIMARY KEY,
+    operation TEXT NOT NULL CHECK (operation IN (
+      'session.create', 'session.configure', 'session.move', 'session.clone',
+      'session.restore', 'session.archive', 'session.delete'
+    )),
+    principal_kind TEXT NOT NULL CHECK (principal_kind IN ('agent', 'user', 'system')),
+    principal_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    target_session_id TEXT,
+    source_root_session_id TEXT,
+    destination_root_session_id TEXT,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    state TEXT NOT NULL CHECK (state IN ('prepared', 'running', 'committed', 'rejected', 'recovery-required')),
+    current_step TEXT NOT NULL,
+    manifest_json TEXT NOT NULL CHECK (json_valid(manifest_json) AND json_type(manifest_json) = 'object'),
+    reserved_resource_ids_json TEXT NOT NULL CHECK (json_valid(reserved_resource_ids_json) AND json_type(reserved_resource_ids_json) = 'array'),
+    effects_json TEXT NOT NULL CHECK (json_valid(effects_json) AND json_type(effects_json) = 'object'),
+    result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+    error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (operation, principal_kind, principal_id, idempotency_key)
+  ) STRICT;
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_lifecycle_operations_state
+    ON session_lifecycle_operations_v6(state, updated_at ASC);
+  CREATE INDEX IF NOT EXISTS idx_v6_session_lifecycle_operations_target
+    ON session_lifecycle_operations_v6(target_session_id, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS session_lifecycle_operation_events_v6 (
+    event_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    step TEXT NOT NULL,
+    effect TEXT NOT NULL CHECK (effect IN ('none', 'committed', 'unknown')),
+    payload_json TEXT NOT NULL CHECK (json_valid(payload_json) AND json_type(payload_json) = 'object'),
+    created_at TEXT NOT NULL,
+    UNIQUE (operation_id, revision),
+    FOREIGN KEY (operation_id) REFERENCES session_lifecycle_operations_v6(operation_id) ON DELETE CASCADE
+  ) STRICT;
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_lifecycle_operation_events_operation
+    ON session_lifecycle_operation_events_v6(operation_id, revision);
+
+  CREATE TRIGGER IF NOT EXISTS session_lifecycle_operation_events_no_update_v6
+    BEFORE UPDATE ON session_lifecycle_operation_events_v6 BEGIN
+      SELECT RAISE(ABORT, 'Session lifecycle operation events are append-only');
+    END;
+  CREATE TRIGGER IF NOT EXISTS session_lifecycle_operation_events_no_delete_v6
+    BEFORE DELETE ON session_lifecycle_operation_events_v6 BEGIN
+      SELECT RAISE(ABORT, 'Session lifecycle operation events are append-only');
+    END;
+`;
+
 export const CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_file_write_idempotency_v6 (
     operation TEXT NOT NULL CHECK (operation = 'session.files.write_text'),
@@ -1574,6 +1653,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     creator_session_id TEXT NOT NULL,
     target_session_id TEXT NOT NULL,
     parent_work_item_id TEXT,
+    predecessor_work_item_id TEXT,
     goal TEXT NOT NULL,
     scope TEXT NOT NULL,
     completion_criteria TEXT NOT NULL,
@@ -1596,6 +1676,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (parent_work_item_id) REFERENCES work_items_v6(id),
+    FOREIGN KEY (predecessor_work_item_id) REFERENCES work_items_v6(id),
     CHECK (
       (
         kind = 'root'
@@ -1646,7 +1727,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     ON work_items_v6(parent_work_item_id);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_work_items_one_root_per_session
     ON work_items_v6(root_session_id)
-    WHERE kind = 'root';
+    WHERE kind = 'root' AND state IN ('pending', 'in_progress', 'waiting');
 
   CREATE TABLE IF NOT EXISTS work_item_events_v6 (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1677,7 +1758,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS work_item_idempotency_v6 (
     operation TEXT NOT NULL CHECK (operation IN (
       'work.create', 'work.revise', 'work.history.append',
-      'work.transition', 'work.result', 'work.cancel'
+      'work.transition', 'work.result', 'work.cancel', 'work.restore'
     )),
     principal_session_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
@@ -2751,6 +2832,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSION_ROLE_BINDINGS_TABLE_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_SESSION_LIFECYCLE_TABLES_SQL,
   CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
@@ -3164,6 +3246,30 @@ function ensureWorkItemIdempotencyExpiry(db: DatabaseSync): void {
   }
 }
 
+function ensureRootWorkItemSuccessorSchema(db: DatabaseSync): void {
+  if (!tableExists(db, "work_items_v6")) return;
+  const columns = tableColumnNames(db, "work_items_v6");
+  if (!columns.has("predecessor_work_item_id")) {
+    db.exec(`
+      ALTER TABLE work_items_v6
+        ADD COLUMN predecessor_work_item_id TEXT
+        REFERENCES work_items_v6(id);
+    `);
+  }
+  db.exec(`
+    DROP INDEX IF EXISTS idx_v6_work_items_one_root_per_session;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_work_items_one_root_per_session
+      ON work_items_v6(root_session_id)
+      WHERE kind = 'root' AND state IN ('pending', 'in_progress', 'waiting');
+  `);
+  if (tableExists(db, "work_item_idempotency_v6")) {
+    const sql = tableSql(db, "work_item_idempotency_v6");
+    if (!sql.includes("'work.restore'")) {
+      rebuildWorkItemIdempotencyV2(db);
+    }
+  }
+}
+
 function namespaceLegacyPrincipalKeys(db: DatabaseSync, tableName: string): void {
   if (!tableExists(db, tableName) || !tableColumnNames(db, tableName).has("principal_session_id")) return;
   db.exec(`
@@ -3534,6 +3640,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync, options: { backfillLegacyHistory
     }
     db.exec(statement);
   }
+  ensureRootWorkItemSuccessorSchema(db);
   const sessionColumns = tableColumnNames(db, "sessions_v6");
   if (!sessionColumns.has("deleted_at")) {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN deleted_at TEXT");

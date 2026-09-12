@@ -5,7 +5,10 @@ import { isAgentMutationProof, type MutationAdmissionProof, type MutationAuthori
 import type { SessionTurnAuthoritySession } from "../src/session-turn-communication-authority.js";
 import {
   WORK_ITEM_IDEMPOTENCY_RETENTION_MS,
+  WORK_ITEM_MAX_LIST_LIMIT,
   isWorkItemActive,
+  isRootWorkItem,
+  type RootWorkItem,
   type WorkItem,
   type WorkItemAggregationDecision,
   type WorkItemAggregationDecisionType,
@@ -123,6 +126,16 @@ export type WorkItemCancelInput = {
   idempotencyKey: string;
 };
 
+export type RootWorkItemRestoreInput = {
+  predecessorWorkItemId: string;
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  sourceIdentity: WorkItemSourceIdentity;
+  idempotencyKey: string;
+};
+
 export type WorkItemListInput = {
   creatorSessionId?: string;
   targetSessionId?: string;
@@ -167,6 +180,7 @@ export class WorkItemService {
       WorkItemStorageV6,
       "cleanupExpiredIdempotency" | "create" | "get" | "iteratePage" | "listPage" | "mutate" | "resolveIdempotency"
       | "reviseRoot" | "appendRootHistory" | "listHistory" | "listRecentHistory" | "iterateHistory" | "iterateRecentHistory"
+      | "createRootSuccessor"
       | "getAggregationSummary" | "listAggregationItems" | "decideAggregation" | "retryAggregation"
       | "resolveAggregationIdempotency"
     >;
@@ -376,12 +390,82 @@ export class WorkItemService {
     });
   }
 
+  restoreRoot(input: RootWorkItemRestoreInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
+    const createdAt = this.deps.currentTimestamp();
+    const fingerprint = fingerprintMutation(input, binding.actorSessionId);
+    const replay = this.deps.storage.resolveIdempotency(
+      "work.restore",
+      proof,
+      input.idempotencyKey,
+      fingerprint,
+      createdAt,
+    );
+    if (replay) return replay;
+    const predecessor = this.requireRootOwner(input.predecessorWorkItemId, binding);
+    return this.deps.storage.createRootSuccessor({
+      id: this.deps.createWorkItemId(),
+      predecessorWorkItemId: predecessor.id,
+      rootSessionId: predecessor.rootSessionId,
+      goal: input.goal,
+      scope: input.scope,
+      completionCriteria: input.completionCriteria,
+      authority: input.authority,
+      sourceIdentity: { ...input.sourceIdentity },
+      principalSessionId: binding.actorSessionId,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: fingerprint,
+      createdAt,
+      expiresAt: resolveIdempotencyExpiresAt(createdAt),
+      proof,
+    });
+  }
+
   get(workItemId: string, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItem {
     return this.requireVisibleItem(workItemId, binding, true, proof, "work.get");
   }
 
   list(input: WorkItemListInput, binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItem[] {
     return Array.from(this.iterateList(input, this.resolveListScope(binding, proof), proof));
+  }
+
+  getRootWorkItem(sessionId: string, binding: ResolvedAgentRuntimeBinding): RootWorkItem | null {
+    if (binding.actorSessionId !== sessionId) {
+      throw new WorkItemAuthorityError("Root WorkItem lookup requires the root Session actor.");
+    }
+    const candidates: RootWorkItem[] = [];
+    let afterSequence: number | null = null;
+    for (;;) {
+      const page = this.list({
+        creatorSessionId: sessionId,
+        targetSessionId: sessionId,
+        afterSequence,
+        limit: WORK_ITEM_MAX_LIST_LIMIT,
+      }, binding);
+      if (page.length === 0) break;
+      for (const item of page) {
+        if (
+          isRootWorkItem(item)
+          && item.rootSessionId === sessionId
+          && item.creatorSessionId === sessionId
+          && item.targetSessionId === sessionId
+          && item.parentWorkItemId === null
+        ) {
+          candidates.push(item);
+        }
+      }
+      const lastSequence = page[page.length - 1]?.sequence;
+      if (lastSequence === undefined || lastSequence <= (afterSequence ?? 0)) {
+        throw new Error("Work Item list pagination did not advance.");
+      }
+      afterSequence = lastSequence;
+      if (page.length < WORK_ITEM_MAX_LIST_LIMIT) break;
+    }
+    if (candidates.length === 0) return null;
+    const activeCandidates = candidates.filter((item) => isWorkItemActive(item.state));
+    if (activeCandidates.length > 1) {
+      throw new Error("A root Session must have exactly one self-owned Root WorkItem.");
+    }
+    return activeCandidates[0] ?? candidates[candidates.length - 1] ?? null;
   }
 
   resolveListScope(binding: ResolvedAgentRuntimeBinding, proof?: MutationAuthorityProof): WorkItemListScope {

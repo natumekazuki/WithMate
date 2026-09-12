@@ -1,4 +1,7 @@
+import { SessionLifecycleOperationConflictError, SessionLifecycleOperationRevisionConflictError } from "./session-lifecycle-storage.js";
 import { createHash } from "node:crypto";
+import { SessionLifecycleRecoveryError, type SessionLifecycleService } from "./session-lifecycle-service.js";
+import type { SessionRuntimeConfigureInput, SessionRuntimeMoveInput, SessionRuntimeCloneInput, SessionRuntimeRestoreInput, SessionRuntimeArchiveInput, SessionRuntimeDeleteInput } from "../src/session-external-runtime-contract.js";
 import { SessionAuthorityError, SESSION_AUTHORITY_MAPPING_REVISION, SESSION_AUTHORITY_OPERATION_DEFINITIONS, type MutationAdmissionProof } from "../src/session-authority.js";
 import type { SessionAuthorityService } from "./session-authority-service.js";
 import { SessionResourceRevisionConflictError } from "./resource-history-schema.js";
@@ -180,6 +183,7 @@ import {
 } from "./work-item-storage-v6.js";
 
 export type SessionExternalApplicationServiceDeps = {
+  lifecycleService?: Pick<SessionLifecycleService, "configure" | "move" | "clone" | "restore" | "archive" | "delete" | "deleteManifest" | "moveManifest">;
   authorityService: Pick<SessionAuthorityService, "authorize" | "authorizeSessionAct" | "canSessionAct">;
   executionService: Pick<
     SessionExecutionService,
@@ -238,6 +242,11 @@ export class SessionExternalApplicationService {
   private accepting = true;
 
   constructor(private readonly deps: SessionExternalApplicationServiceDeps) {}
+
+  private requireLifecycleService() {
+    if (!this.deps.lifecycleService) throw new SessionCrudError("RUNTIME_UNAVAILABLE", "The Session lifecycle owner is unavailable.");
+    return this.deps.lifecycleService;
+  }
 
   beginShutdown(): void {
     this.accepting = false;
@@ -336,7 +345,18 @@ export class SessionExternalApplicationService {
       return this.deps.crudService.get((input as SessionRuntimeSessionInput).sessionId);
     }
     if (operation === "session.rename") {
-      return this.deps.crudService.rename(input as SessionRuntimeRenameInput, proof);
+      return this.requireLifecycleService().configure({ ...input as SessionRuntimeRenameInput, kind: "title" }, proof);
+    }
+    if (operation === "session.configure") return this.requireLifecycleService().configure(input as SessionRuntimeConfigureInput, proof);
+    if (operation === "session.move") return this.requireLifecycleService().move(input as SessionRuntimeMoveInput, proof);
+    if (operation === "session.clone") return this.requireLifecycleService().clone(input as SessionRuntimeCloneInput, proof);
+    if (operation === "session.restore") return this.requireLifecycleService().restore(input as SessionRuntimeRestoreInput, proof);
+    if (operation === "session.archive") return this.requireLifecycleService().archive(input as SessionRuntimeArchiveInput, proof);
+    if (operation === "session.delete") return this.requireLifecycleService().delete(input as SessionRuntimeDeleteInput, proof);
+    if (operation === "session.delete.manifest") return this.requireLifecycleService().deleteManifest((input as { sessionId: string }).sessionId);
+    if (operation === "session.move.manifest") {
+      const request = input as { sessionId: string; destinationRootSessionId: string };
+      return this.requireLifecycleService().moveManifest(request.sessionId, request.destinationRootSessionId, proof);
     }
     if (operation === "session.files.list") {
       return this.requireFileService().list(input as SessionRuntimeFileListInput);
@@ -1119,6 +1139,18 @@ function projectRuntimeCatalog(
         maxListLimit: WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
       },
     },
+    sessionLifecycle: {
+      operations: ["create", "configure", "rename", "move.manifest", "move", "clone", "restore", "archive", "delete.manifest", "delete"],
+      placement: ["root", "child"],
+      moveKinds: ["same_root", "cross_root"],
+      restoreKinds: ["root", "child"],
+        capabilities: ["root.create", "child.create", "configure", "rename", "move.same_root", "move.cross_root", "clone", "restore", "archive", "delete"],
+      constraints: [
+        "Root WorkItem successor creation is supported by the lifecycle owner; active WorkItem root moves are rejected.",
+        "Cross-root transfer is limited to idle resources with a complete transfer manifest.",
+          "Delete records a permanent tombstone and retains history, budget ledgers and replay identity; physical purge is not supported.",
+      ],
+    },
     providers: snapshot.providers
       .filter((provider) => isProviderSupported(provider.id) && isProviderEnabled(provider.id))
       .map((provider) => ({
@@ -1161,7 +1193,13 @@ function projectionResourceDetails(
     : null;
   const relativePath = typeof file?.relativePath === "string" ? file.relativePath : null;
   const fileSessionId = typeof file?.sessionId === "string" ? file.sessionId : null;
-  if (operation === "session.create" || operation === "session.rename") {
+  if (operation === "session.create" || operation === "session.rename"
+        || operation === "session.configure"
+        || operation === "session.move"
+        || operation === "session.clone"
+        || operation === "session.restore"
+        || operation === "session.archive"
+        || operation === "session.delete" || ["session.configure", "session.move", "session.clone", "session.restore", "session.archive", "session.delete"].includes(operation)) {
     return sessionId ? { sessionId } : {};
   }
   if (operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel") {
@@ -1398,6 +1436,10 @@ function isTerminalOrPending(execution: SessionExecution, pending: unknown): boo
 }
 
 function mapApplicationError(error: unknown, operation: SessionRuntimeOperation | string, input?: unknown): SessionRuntimeError {
+  if (error instanceof SessionLifecycleRecoveryError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message, retryable: true, effect: error.effect,
+      details: { operationId: error.operationId, ...(error.sessionId ? { sessionId: error.sessionId } : {}) } });
+  }
   if (error instanceof ResourceBudgetError) {
     return createSessionRuntimeError({
       code: error.code,
@@ -1450,6 +1492,9 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
   if (error instanceof SessionAuthorityError) {
     return createSessionRuntimeError({ code: error.code, message: error.message, details: Object.fromEntries(Object.entries(error.details).filter((entry): entry is [string, string | number] => entry[1] !== null)), effect: "not_applied" });
   }
+  if (error instanceof SessionLifecycleOperationConflictError || error instanceof SessionLifecycleOperationRevisionConflictError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message, effect: "not_applied", retryable: error instanceof SessionLifecycleOperationRevisionConflictError });
+  }
   if (error instanceof SessionCrudError) {
     return createSessionRuntimeError({
       code: error.code,
@@ -1464,6 +1509,12 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
       message: error.message,
       effect: operation === "session.create"
         || operation === "session.rename"
+        || operation === "session.configure"
+        || operation === "session.move"
+        || operation === "session.clone"
+        || operation === "session.restore"
+        || operation === "session.archive"
+        || operation === "session.delete"
         || operation === "turn.run"
         || operation === "turn.enqueue"
         || operation === "turn.cancel"
@@ -1635,6 +1686,12 @@ function isMutationOperation(operation: SessionRuntimeOperation | string, input?
   return operation === "budget.configure"
     || operation === "session.create"
     || operation === "session.rename"
+        || operation === "session.configure"
+        || operation === "session.move"
+        || operation === "session.clone"
+        || operation === "session.restore"
+        || operation === "session.archive"
+        || operation === "session.delete"
     || operation === "turn.run"
     || operation === "turn.enqueue"
     || operation === "turn.cancel"

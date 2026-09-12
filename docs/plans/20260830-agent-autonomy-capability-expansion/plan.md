@@ -410,3 +410,48 @@ Provider自身のshell、Git、外部service toolはSession Runtime APIを経由
 - supported schema migration、repair、response loss、concurrency、cleanup を直接検証している。
 - 各 slice の commit-bound review と最終 cross-slice review に未解決 blocking finding がない。
 - typecheck、全 test、build、必要な smoke／visual check が最終統合 commit で成功する。
+
+
+### Slice 3 の完了記録（2026-09-12）
+
+開始コミットは `7c30c31922dbdd71f77b36da716bd363482c4163`。Session lifecycleに必要な回復記録の拡張と、Root WorkItem successor・cross-root transferの内部処理の前倒しはユーザー承認の範囲で実装した。後続Sliceの公開WorkItem lifecycle、delegation transaction、grant routing全体は追加していない。
+
+実装を `69618de69f457ae500a421ba0a9b66e549e4401d`、独立レビューによる修正を `4d713ecb399bb5b1c5ba74262e6df3743c32dd92` に固定した。root/child constructionの明示tuple・grant ceiling・budget、binding revisionを捕捉するexecution、configure、clone、root/child restore、archive、idle subtreeのcross-root transferをlifecycle ownerへ接続した。root restoreはterminal predecessorのsuccessorを追加し、既存root budgetと累積消費を保持する。active Root WorkItemを伴うroot移管は開始前に拒否する。
+
+ユーザー指摘の通常Session削除、移動前execution履歴のroot帰属、GUIのCodex Speed／Reviewer保存、move manifestの移動先入力、Copilot標準agentの空文字tupleを修正した。通常SessionのGUI/API削除は共通ownerのtombstone処理へ接続し、Character作成用Sessionは既存persistenceを使用する。履歴・ledger・retry identityとSessionFolder workspaceを保持する。directory workspaceに付随するSessionFolderの既存cleanup経路は維持する。物理purgeはユーザー承認により別変更へ分離し、今回の完了条件に含めない。
+
+固定コミット `69618de6` のclean detached worktreeで、全差分をlifecycle／GUI、authority／transfer、binding／publicの3範囲に分けて独立レビューした。SessionFolderの二重作成、moveの親子Role制約、公開parserのvariant外field受理、複数回moveおよびfile／transcript／interaction履歴のroot照合を修正した。root successorのagent actor帰属も修正した。予算移管順序の候補はtarget先頭と合法depth制約によりinvalidと判断した。同worktreeを `4d713ecb` へ固定したfinding family限定のtargeted closureは全3範囲で完了し、blocking findingは残っていない。全差分レビューは繰り返していない。
+
+履歴headerは書き換えず、executionのbindingまたはlegacy execution作成時点の移動履歴から当時のrootを解決する。Session／file／transcript／interactionは共通header sequenceと次回moveのsource rootからイベント時点のrootを検証する。実storageのA→B→C移動、startup検証、旧header保持と改ざん拒否を確認した。
+
+SessionFolderのmkdir成功からfilesystem effect保存までの停止は、自動回復保証外の可用性上のrisk-candidateとして残す。既存directoryの所有を推測して採用・削除せず、回復recordと同じretry identityを保持してrecovery-requiredを返す。effect保存後のDB一時失敗とDB commit後のpublication失敗は同じkeyで回復する。新しい所有markerや独自storeは導入していない。
+
+検証結果は次のとおり。
+
+- `69618de6` の全testは3539件中3536 pass、2 fail、1 skip。変更外のGlossary queue解放testは全体実行時に2秒の待ち時間を超え、同ファイル単独の24件は成功した。変更外のtranscript予算testは固定期限 `2026-09-12T00:00:00.000Z` の経過により失敗した。期限判定や無関係なtestは変更していない。
+- `4d713ecb` の修正sourceで関連179 test、型検査、build、Git差分checkが成功した。最終のZod拒否assertion補強後も公開contract22件が成功した。修正後の全suiteは再実行していない。
+- GUI目視は未実行。必要に応じて `scripts/start-withmate-visual-check.ps1` による分離起動で確認する。
+
+test-valueではmetadata追加と宣言名変更が同じhunkにある場合のextractor境界判定を作業用コピーで補正し、既存87 testとPython／TypeScriptの追加回帰を通した。開始baseや対象recordを手動変更せず、最終Git差分から77 tests／77 transitionsをdiagnostic 0で抽出した。通常のread-only general_lunaによる全recordの審査と、変更箇所のtargeted closureを実施した。
+
+全recordの指摘解消を確認し、レビュー用worktreeはHEADとcleanliness、SessionFolder内の絶対pathを確認して削除した。
+
+
+2026-09-12の追加レビュー4件に対応した。lifecycleのdatabase effectとdb_committed eventの対応を検証側で揃え、正常完了後の再openを可能にした。terminal保存はProviderのthread IDを採用し、並行したruntime変更・thread resetは既存のSession履歴順序で保護する。title configureはこの競合判定から除外する。GUIのタイトル単独更新は既存configure(title)へ渡し、catalog更新後の不要なProvider再検証を避ける。公開session.renameを副作用判定へ戻し、配布CLIを再生成した。
+
+関連107 test、型検査、CLI buildが成功した。同時刻のtitle変更とruntime reset、新thread保存後の次Turn開始、正常DB再openと改変拒否、CLI/MCPのrename応答喪失を確認した。今回の全suiteとGUI目視は未実行。
+
+開始base `9f16939584596f52f5006033dfba4b8198b77a89` から変更test 8件／8 transitionsをdiagnostic 0で抽出し、通常のread-only general_lunaによる全recordの審査を完了した。thread保存処理の独立read-only確認も完了し、blocking findingはない。
+
+
+同日の追加レビュー7件を修正した。AgentのSession作成はplacementからroot/child roleを解決し、Root WorkItemのpredecessorWorkItemIdを共有出力schemaへ反映した。移動は既存Turn guardに加えてcanonical executionのqueued/runningを拒否し、coordination blockerは対象subtreeのactor/target/parentとmanifest同等の解決条件で判断する。consumed単独を解決済みとせず、同rootの無関係eventは除外する。
+
+GUI更新は非同期解決前のSessionとrevisionを同期的に捕捉して保持し、解決待ち中の先行更新をrevision conflictとして拒否する。CLIの副作用判定は既存共通判定を再利用し、新lifecycle操作の送信後応答喪失をindeterminateへ写像する。Root WorkItem取得は既存serviceに専用処理を置き、全ページからactiveまたは最新terminalを選び、複数activeは拒否する。
+
+関連検証は初回141件中140件成功、1件は複数activeのテストfixtureが1件しかactiveを作らない問題だった。fixtureを明示的な2activeの破損注入へ補正後、Root契約18件が成功した。型検査、配布CLI build、Git差分checkも成功した。全suiteとGUI目視は今回は未実行。
+
+開始base `9eec7e5772e81ee1b13678854287fd039a3f0368` から変更test 8件／8 transitionsをdiagnostic 0で抽出し、通常のread-only general_lunaによる全recordの審査を完了した。authorityのmetadataを実測境界へ修正し、Root選択規則を現行設計に明記した。coordination fixtureはblockerへのユーザー返答、agentの消費、明示的解決の正規順序へ補正し、移動契約9件の再実行が成功した。未解消の審査指摘はない。
+
+2026-09-12の追加レビュー2件を修正した。GUIでProvider／model／reasoningを維持する設定変更は最新catalog revisionでtupleを検証し、選択変更と公開APIのstale revision拒否は維持する。cross-root moveのtransferPolicyは既存enum検証でfullを必須とし、省略・retainを拒否する。配布CLIも再生成した。関連75 test、型検査、CLI build、差分checkが成功した。開始base `2ca223c1df2a98fe5686ce2209de4813639af53b` から2 tests／2 SURVIVED transitionsをdiagnostic 0で抽出し、read-only general_lunaのtest-value審査を完了した。全suiteとGUI目視は未実行。
+
+2026-09-12の予算移管レビュー2件を修正した。移動先親Sessionの予算口座は既存ResourceBudgetStorage.getで解決し、root共有予算と別名口座を扱う。移管の循環判定は移動先口座の祖先を確認し、自分自身・子孫への移管を拒否する一方、cross-root親子移管で直接の親口座IDが不変の場合は許可する。移動10件・予算13件と型検査、差分checkが成功した。開始base `0a591a62ea374e6afb8b28f499651cde07ed8112` から4 tests／4 transitionsをdiagnostic 0で抽出し、read-only general_lunaの審査を完了した。metadataの観測範囲2点を実際のDB assertionへ限定した。全suiteとGUI目視は未実行。

@@ -21,6 +21,9 @@ import {
   assertGrantProofCurrent,
   backfillBaselineSessionAuthority,
   createDelegatedChildAuthority,
+  createDerivedRootAuthority,
+  issueRootConstructionCapability,
+  issueTrustedCrossRootTransferCapability,
   revokeSessionAuthorityGrant,
   verifySessionAuthorityMigration,
 } from "../../src-electron/session-authority-storage.js";
@@ -83,6 +86,140 @@ function binding(sessionId: string, generation = "generation-1"): ResolvedAgentR
 }
 
 describe("Session authority", () => {
+  // @test-value v2
+  // kind = "security"
+  // claim = "root constructionは導出grantにsource provenanceを残し、保存済みbudget ceiling超過を拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Root 作成" }
+  // fault = "導出grantからsource grant identityが失われる、またはbudget ceiling超過を受理する"
+  // observable = "導出grantのroot、provenance、超過入力のAUTHORITY_FORBIDDEN"
+  // observation_boundary = "component-behavior"
+  // scope = "session-authority-root-construction"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("保存済みconstruction capabilityからroot grantを導出する", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-root-construction-"));
+    const dbPath = path.join(directory, "db.sqlite");
+    const storage = new SessionStorageV6(dbPath);
+    storage.insertSession(makeRoot("root-a"));
+    storage.insertSession(makeRoot("root-b"));
+    const db = new DatabaseSync(dbPath);
+    try {
+      const source = issueRootConstructionCapability(db, {
+        rootSessionId: "root-a", granteeSessionId: "root-a",
+        targetSessionRoles: ["task-coordinator", "executor"],
+        ceiling: {
+          workspaceId: null, projectId: null, visibility: "root",
+          actions: [{
+            mode: "exercise", action: "session.self", resourceKind: "session",
+            relationSelector: "self", effectClass: "read", targetSessionRoles: ["task-coordinator", "executor"],
+          }],
+          budget: { concurrentTurns: 4 }, expiresAt: null,
+        },
+        principal: { kind: "user", receiptId: "settings-root-construction" },
+        proof: {
+          principal: { kind: "user", receiptId: "settings-root-construction" },
+          providerId: null, operation: "session.create", mappingRevision: 2,
+          action: "session.create", effectClass: "local_mutation", grantId: null, grantRevision: null,
+          resolvedScope: { resourceKind: "session_namespace", resourceId: "root-a", rootSessionId: "root-a", ownerKind: "session", ownerId: "root-a", relation: "self" },
+          evaluatedAt: NOW,
+        },
+        issuedAt: NOW,
+      });
+      const capability = {
+        workspaceId: null, projectId: null, visibility: "root", actions: source.childCeiling,
+        budget: { concurrentTurns: 4 }, expiresAt: source.expiresAt,
+      };
+      const derived = createDerivedRootAuthority(db, {
+        sourceRootSessionId: source.rootSessionId,
+        sourceGrantId: source.grantId,
+        sourceGrantRevision: source.revision,
+        operationId: "root-create-1",
+        targetRootSessionId: "root-b",
+        ceiling: capability,
+        createdAt: NOW,
+      });
+      const constructed = derived.filter((grant) => grant.provenance.source === "root-construction");
+      assert.equal(constructed.length, 1);
+      assert.equal(constructed[0].rootSessionId, "root-b");
+      assert.equal(constructed[0].provenance.sourceGrantId, source.grantId);
+      assert.equal(constructed[0].provenance.sourceGrantRevision, source.revision);
+      assert.throws(() => createDerivedRootAuthority(db, {
+        sourceRootSessionId: source.rootSessionId,
+        sourceGrantId: source.grantId,
+        sourceGrantRevision: source.revision,
+        operationId: "root-create-2",
+        targetRootSessionId: "root-b",
+        ceiling: { ...capability, budget: { concurrentTurns: 5 } },
+        createdAt: NOW,
+      }), (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_FORBIDDEN");
+    } finally {
+      db.close();
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "cross-root destination proofはdestination root自身のimpersonationではなく、actual source actorに保存されたdestination scope grantを要求する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "source Agentが任意destination rootをactorとして自己許可し、cross-root move authorityを取得する"
+  // observable = "destination authority authorization error"
+  // observation_boundary = "component-behavior"
+  // scope = "session-authority-cross-root-destination"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("無権限source actorの任意destination proofを拒否する", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-cross-root-destination-"));
+    const dbPath = path.join(directory, "db.sqlite");
+    const storage = new SessionStorageV6(dbPath);
+    storage.insertSession(makeRoot("root-a"));
+    storage.insertSession(makeRoot("root-b"));
+    const authority = new SessionAuthorityService({
+      databasePath: dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW),
+    });
+    const db = new DatabaseSync(dbPath);
+    try {
+      const input = {
+        sessionId: "root-a", expectedRevision: 1, idempotencyKey: "move-unauthorized", kind: "cross_root",
+        destinationRootSessionId: "root-b", destinationParentSessionId: null,
+        destinationExpectedRevision: 1, transferManifestRevision: 1, transferPolicy: "full",
+      } as const;
+      assert.throws(() => authority.authorizeTransferDestination("root-a", "root-b", "session.move", input),
+        (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_FORBIDDEN");
+      const trustedProof = {
+        principal: { kind: "user" as const, receiptId: "settings-transfer" }, providerId: null,
+        operation: "session.move" as const, mappingRevision: 2, action: "session.move" as const,
+        effectClass: "local_mutation" as const, grantId: null, grantRevision: null,
+        resolvedScope: { resourceKind: "session" as const, resourceId: "root-a", rootSessionId: "root-a", ownerKind: "session" as const, ownerId: "root-a", relation: "self" as const },
+        evaluatedAt: NOW,
+      };
+      const transferGrants = issueTrustedCrossRootTransferCapability(db, {
+        sourceActorSessionId: "root-a", destinationRootSessionId: "root-b",
+        destinationTargetRoles: ["overall-coordinator"], principal: trustedProof.principal,
+        proof: trustedProof, expiresAt: null, issuedAt: NOW,
+      });
+      assert.equal(transferGrants.length, 1);
+      issueTrustedCrossRootTransferCapability(db, {
+        sourceActorSessionId: "root-b", destinationRootSessionId: "root-b",
+        destinationTargetRoles: ["overall-coordinator"], principal: trustedProof.principal,
+        proof: trustedProof, expiresAt: null, issuedAt: NOW,
+      });
+      assert.throws(
+        () => authority.authorizeTransferDestination("root-b", "root-b", "session.move", input),
+        (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_SCOPE_INVALID",
+      );
+      const destinationProof = authority.authorizeTransferDestination("root-a", "root-b", "session.move", input).proof;
+      assert.doesNotThrow(() => assertGrantProofCurrent(db, destinationProof, new Date(NOW)));
+    } finally {
+      db.close();
+      authority.close();
+      try { storage.close(); } catch { /* the shared SQLite handle was closed by the restarted service */ }
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   // @test-value v2
   // kind = "security"
   // claim = "Budget権限は自己Sessionに限定され、元grantのrevoke後に再起動しても復活しない"
@@ -422,11 +559,13 @@ describe("Session authority", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
   // claim = "fresh task coordinatorはself操作を保持しつつconstructor ceiling外のsibling executor Turnを得ず、grant expiryは親を超えない"
-  // oracle = { type = "contract", ref = "AUTONOMY-AUTHORITY-CHILD-ATTENUATION" }
-  // failure_mode = "task coordinatorがsibling executorへのTurnなどconstructor ceiling外のauthorityを取得する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // fault = "session.createのplacementからchild roleを解決できない、または親のconstructor ceilingとexpiryを超えたchild権限を発行する"
+  // observable = "session.createのagent authority proofと、そのproofから導出されたchild grant"
+  // observation_boundary = "component-behavior"
   // scope = "session-authority-delegation"
   // lifecycle = "permanent"
   // @end-test-value
@@ -442,8 +581,14 @@ describe("Session authority", () => {
       now: () => new Date(NOW),
     });
     try {
+      assert.throws(
+        () => service.authorize(binding(root.id), "session.create", {
+          placement: { kind: "root", rootKind: "standalone" },
+        }),
+        (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_FORBIDDEN",
+      );
       const taskProof = service.authorize(binding(root.id), "session.create", {
-        sessionRole: "task-coordinator",
+        placement: { kind: "child", parentSessionId: root.id, sessionRole: "task-coordinator" },
       }).proof;
       const task = makeChild("task-a", root, "task-coordinator");
       storage.insertSession(task);
@@ -464,7 +609,9 @@ describe("Session authority", () => {
           .all(task.id) as Array<{ expires_at: string | null }>;
         assert.deepEqual(taskExpiryRows.map((row) => row.expires_at), ["2026-09-06T12:00:00.000Z"]);
 
-        const executorProof = service.authorize(binding(root.id), "session.create", { sessionRole: "executor" }).proof;
+        const executorProof = service.authorize(binding(root.id), "session.create", {
+          placement: { kind: "child", parentSessionId: root.id, sessionRole: "executor" },
+        }).proof;
         const executor = makeChild("executor-a", root, "executor");
         storage.insertSession(executor);
         db.prepare("DELETE FROM session_authority_grants_v6 WHERE grantee_session_id = ?").run(executor.id);
@@ -492,11 +639,13 @@ describe("Session authority", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "issuer grantをrevokeするとそのrevisionを根拠に発行されたchild proofは同transaction再検証で失効する"
-  // oracle = { type = "contract", ref = "AUTONOMY-AUTHORITY-REVOKE-CHAIN" }
-  // failure_mode = "親grant失効後も既発行child proofがmutation commitへ到達する"
+  // claim = "issuer grantをrevokeするとそのrevisionを根拠に発行されたchild proofの再検証が拒否される"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+  // fault = "親grant失効後もassertGrantProofCurrentが既発行child proofを有効として扱う"
+  // observable = "失効済みgrantを参照するchild proofの再検証結果"
+  // observation_boundary = "component-behavior"
   // scope = "session-authority-storage"
   // lifecycle = "permanent"
   // @end-test-value
@@ -512,7 +661,9 @@ describe("Session authority", () => {
       now: () => new Date(NOW),
     });
     try {
-      const constructorProof = service.authorize(binding(root.id), "session.create", { sessionRole: "executor" }).proof;
+      const constructorProof = service.authorize(binding(root.id), "session.create", {
+        placement: { kind: "child", parentSessionId: root.id, sessionRole: "executor" },
+      }).proof;
       const child = makeChild("executor-a", root, "executor");
       storage.insertSession(child);
       const db = new DatabaseSync(dbPath);

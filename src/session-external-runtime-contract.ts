@@ -112,7 +112,15 @@ export const SESSION_RUNTIME_OPERATIONS = [
   "session.create",
   "session.list",
   "session.get",
+  "session.configure",
   "session.rename",
+  "session.move.manifest",
+  "session.move",
+  "session.clone",
+  "session.restore",
+  "session.archive",
+  "session.delete.manifest",
+  "session.delete",
   "session.files.list",
   "session.files.read_text",
   "session.files.write_text",
@@ -219,6 +227,14 @@ export type SessionRuntimeCatalogResult = {
       reasoningEfforts: ModelReasoningEffort[];
     }>;
   }>;
+  sessionLifecycle?: {
+    operations: readonly ["create", "configure", "rename", "move.manifest", "move", "clone", "restore", "archive", "delete.manifest", "delete"];
+    placement: readonly ["root", "child"];
+    moveKinds: readonly ["same_root", "cross_root"];
+    restoreKinds: readonly ["root", "child"];
+    capabilities: readonly string[];
+    constraints: readonly string[];
+  };
 };
 
 export type SessionRuntimePublicRoleBinding = SessionRoleBinding;
@@ -232,13 +248,34 @@ export type SessionRuntimeCreateWorkspace =
   | { kind: "directory"; path: string }
   | { kind: "session_folder" };
 
+export type SessionRuntimeSessionPlacement =
+  | { kind: "root"; rootKind: "standalone" | "overall-coordinator" }
+  | { kind: "child"; parentSessionId: string; sessionRole: ChildSessionRole };
+export type SessionRuntimeInitialGrant =
+  | { kind: "inherit" }
+  | { kind: "explicit"; actions: string[]; visibility: string[]; expiresAt: string | null };
+export type SessionRuntimeInitialBudget =
+  | { kind: "inherit" }
+  | { kind: "explicit"; hardLimits: Record<string, number>; deadlineAt: string };
+export type SessionRuntimeProviderTuple = {
+  id: SessionRuntimeProviderId;
+  catalogRevision: number;
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  threadContinuity: "continue" | "reset";
+} & (
+  | { id: "codex"; approvalMode: ApprovalMode; codexSandboxMode: CodexSandboxMode; allowedAdditionalDirectories: string[] }
+  | { id: "copilot"; approvalMode: ApprovalMode; customAgentName: string }
+);
 export type SessionRuntimeCreateInput = {
   expectedContainerRevision: number;
-  sessionRole: ChildSessionRole;
+  placement: SessionRuntimeSessionPlacement;
   title: string;
-  provider: SessionRuntimeProviderId;
-  catalogRevision: number;
+  character: { characterId: string; expectedDefinitionSha256: string };
+  provider: SessionRuntimeProviderTuple;
   workspace: SessionRuntimeCreateWorkspace;
+  initialGrant: SessionRuntimeInitialGrant;
+  budget: SessionRuntimeInitialBudget;
   idempotencyKey: string;
 };
 
@@ -249,6 +286,56 @@ export type SessionRuntimeRenameInput = SessionRuntimeSessionInput & {
   title: string;
   idempotencyKey: string;
 };
+export type SessionRuntimeConfigureInput = SessionRuntimeSessionInput & {
+  expectedRevision: number;
+  idempotencyKey: string;
+} & (
+  | { kind: "title"; title: string }
+  | { kind: "runtime"; provider: SessionRuntimeProviderTuple }
+  | { kind: "character"; character: { characterId: string; expectedDefinitionSha256: string }; threadContinuity: "continue" | "reset" }
+  | { kind: "workspace"; workspace: SessionRuntimeCreateWorkspace; threadContinuity: "continue" | "reset" }
+  | { kind: "role"; sessionRole: SessionRole }
+);
+export type SessionRuntimeMoveInput = SessionRuntimeSessionInput & {
+  expectedRevision: number;
+  idempotencyKey: string;
+} & (
+  | { kind: "same_root"; destinationParentSessionId: string | null; destinationExpectedRevision: number }
+  | { kind: "cross_root"; destinationRootSessionId: string; destinationParentSessionId: string | null; destinationExpectedRevision: number; transferManifestRevision: number; transferPolicy: "full" }
+);
+export type SessionRuntimeSessionMoveManifestInput = SessionRuntimeSessionInput & { destinationRootSessionId: string };
+export type SessionRuntimeSessionMoveManifestResult = {
+  sessionId: string;
+  manifestRevision: number;
+  destinationRootSessionId: string | null;
+  descendants: Array<{ sessionId: string; revision: number }>;
+  workItems: Array<{ workItemId: string; state: string; revision: number }>;
+  artifacts: Array<{ id: string; ownerSessionId: string }>;
+  budgetReservations: Array<{ id: string; state: string }>;
+  executions: { running: number; queued: number };
+  grants: Array<{ id: string; revision: number; state: string }>;
+  openInteractions: number;
+  openCoordinationEvents: number;
+  blockers: string[];
+};
+export type SessionRuntimeCloneInput = {
+  sourceSessionId: string;
+  expectedSourceRevision: number;
+  expectedContainerRevision: number;
+  placement: SessionRuntimeSessionPlacement;
+  title: string;
+  initialGrant: SessionRuntimeInitialGrant;
+  budget: SessionRuntimeInitialBudget;
+  idempotencyKey: string;
+};
+export type SessionRuntimeRestoreInput = SessionRuntimeSessionInput & { expectedRevision: number; purpose: string; idempotencyKey: string } & (
+  | { kind: "root"; provider: SessionRuntimeProviderTuple; budget: SessionRuntimeInitialBudget }
+  | { kind: "child"; provider: SessionRuntimeProviderTuple }
+);
+export type SessionRuntimeArchiveInput = SessionRuntimeSessionInput & { expectedRevision: number; reason: string; descendantPolicy: "retain" | "archive_descendants"; idempotencyKey: string };
+export type SessionRuntimeDeleteManifestInput = SessionRuntimeSessionInput;
+export type SessionRuntimeDeleteInput = SessionRuntimeSessionInput & { expectedRevision: number; manifestRevision: number; idempotencyKey: string };
+export type SessionRuntimeDeleteManifestResult = SessionRuntimeSessionMoveManifestResult & { deletable: boolean };
 
 export type SessionRuntimePublicCharacter = { id: string; name: string };
 export type SessionRuntimePublicWorkspace = {
@@ -587,7 +674,15 @@ export type SessionRuntimeResultByOperation = {
   "session.create": SessionRuntimeSessionDetail;
   "session.list": SessionRuntimeSessionListResult;
   "session.get": SessionRuntimeSessionGetResult;
+  "session.configure": SessionRuntimeSessionDetail;
   "session.rename": SessionRuntimeSessionDetail;
+  "session.move.manifest": SessionRuntimeSessionMoveManifestResult;
+  "session.move": SessionRuntimeSessionDetail;
+  "session.clone": SessionRuntimeSessionDetail;
+  "session.restore": SessionRuntimeSessionDetail;
+  "session.archive": SessionRuntimeSessionDetail;
+  "session.delete.manifest": SessionRuntimeDeleteManifestResult;
+  "session.delete": SessionRuntimeSessionDetail;
   "session.files.list": SessionRuntimeFileListResult;
   "session.files.read_text": SessionRuntimeFileReadTextResult;
   "session.files.write_text": SessionRuntimeFileWriteTextResult;
@@ -675,7 +770,10 @@ export function sessionRuntimeOperationMayHaveEffect(
     return input === undefined
       || (input as { destination?: { kind?: string } }).destination?.kind !== "inline";
   }
-  return operation === "session.create" || operation === "session.rename"
+  return operation === "session.create" || operation === "session.rename" || operation === "session.configure"
+    || operation === "session.move" || operation === "session.clone"
+    || operation === "session.restore" || operation === "session.archive"
+    || operation === "session.delete"
     || operation === "session.files.write_text"
     || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
     || operation === "work.create" || operation === "work.transition"
@@ -769,6 +867,14 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (operation === "session.rename") {
     return parseSessionRenameInput(value);
   }
+  if (operation === "session.configure") return parseSessionConfigureInput(value);
+  if (operation === "session.move.manifest") return parseSessionMoveManifestInput(value);
+  if (operation === "session.move") return parseSessionMoveInput(value);
+  if (operation === "session.clone") return parseSessionCloneInput(value);
+  if (operation === "session.restore") return parseSessionRestoreInput(value);
+  if (operation === "session.archive") return parseSessionArchiveInput(value);
+  if (operation === "session.delete.manifest") return parseSessionInput(value);
+  if (operation === "session.delete") return parseSessionDeleteInput(value);
   if (operation === "session.files.list") {
     return parseSessionFileListInput(value);
   }
@@ -947,16 +1053,79 @@ function requireBoundedString(value: unknown, field: string, maxLength: number):
 
 function parseSessionCreateInput(value: unknown): SessionRuntimeCreateInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["expectedContainerRevision", "sessionRole", "title", "provider", "catalogRevision", "workspace", "idempotencyKey"], "input");
+  assertKeys(record, ["expectedContainerRevision", "placement", "title", "character", "provider", "workspace", "initialGrant", "budget", "idempotencyKey"], "input");
+  const placement = parseSessionPlacement(record.placement);
+  const character = requireObject(record.character, "character");
+  assertKeys(character, ["characterId", "expectedDefinitionSha256"], "character");
+  const provider = parseSessionProvider(record.provider, true);
   return {
     expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
-    sessionRole: requireEnum(record.sessionRole, ["task-coordinator", "executor"] as const, "sessionRole"),
+    placement,
     title: requireNonEmptyString(record.title, "title"),
-    provider: requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "provider"),
-    catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
+    character: { characterId: requireNonEmptyString(character.characterId, "character.characterId"), expectedDefinitionSha256: requireNonEmptyString(character.expectedDefinitionSha256, "character.expectedDefinitionSha256") },
+    provider,
     workspace: parseSessionCreateWorkspace(record.workspace),
+    initialGrant: parseSessionInitialGrant(record.initialGrant),
+    budget: parseSessionInitialBudget(record.budget),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
+}
+
+function parseSessionPlacement(value: unknown): SessionRuntimeSessionPlacement {
+  const record = requireObject(value, "placement");
+  const kind = requireEnum(record.kind, ["root", "child"] as const, "placement.kind");
+  if (kind === "root") {
+    assertKeys(record, ["kind", "rootKind"], "placement");
+    return { kind, rootKind: requireEnum(record.rootKind, ["standalone", "overall-coordinator"] as const, "placement.rootKind") };
+  }
+  assertKeys(record, ["kind", "parentSessionId", "sessionRole"], "placement");
+  return { kind, parentSessionId: requireNonEmptyString(record.parentSessionId, "placement.parentSessionId"), sessionRole: requireEnum(record.sessionRole, ["task-coordinator", "executor"] as const, "placement.sessionRole") };
+}
+
+function parseSessionProvider(value: unknown, resetOnly = false): SessionRuntimeProviderTuple {
+  const record = requireObject(value, "provider");
+  const threadContinuity = requireEnum(record.threadContinuity, ["continue", "reset"] as const, "provider.threadContinuity");
+  if (resetOnly && threadContinuity !== "reset") throw invalid("provider.threadContinuity", "New Sessions require reset thread continuity.");
+  const common = { id: requireEnum(record.id, SESSION_RUNTIME_PROVIDER_IDS, "provider.id"), catalogRevision: requireInteger(record.catalogRevision, "provider.catalogRevision", 1, Number.MAX_SAFE_INTEGER), model: requireNonEmptyString(record.model, "provider.model"), reasoningEffort: requireModelReasoningEffort(record.reasoningEffort), threadContinuity };
+  const approvalMode = requireEnum(record.approvalMode, APPROVAL_MODE_VALUES, "provider.approvalMode");
+  if (common.id === "codex") {
+    assertKeys(record, ["id", "catalogRevision", "model", "reasoningEffort", "threadContinuity", "approvalMode", "codexSandboxMode", "allowedAdditionalDirectories"], "provider");
+    if (!Array.isArray(record.allowedAdditionalDirectories) || !record.allowedAdditionalDirectories.every((item) => typeof item === "string" && item.length > 0)) throw invalid("provider.allowedAdditionalDirectories", "allowedAdditionalDirectories must be a string array.");
+    return { ...common, id: "codex", approvalMode, codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "provider.codexSandboxMode"), allowedAdditionalDirectories: record.allowedAdditionalDirectories as string[] };
+  }
+  assertKeys(record, ["id", "catalogRevision", "model", "reasoningEffort", "threadContinuity", "approvalMode", "customAgentName"], "provider");
+  return { ...common, id: "copilot", approvalMode, customAgentName: requireString(record.customAgentName, "provider.customAgentName").trim() };
+}
+
+function parseSessionMoveManifestInput(value: unknown): SessionRuntimeSessionMoveManifestInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "destinationRootSessionId"], "input");
+  return { sessionId: requireNonEmptyString(record.sessionId, "sessionId"), destinationRootSessionId: requireNonEmptyString(record.destinationRootSessionId, "destinationRootSessionId") };
+}
+
+function requireModelReasoningEffort(value: unknown): ModelReasoningEffort {
+  if (typeof value !== "string" || !isModelReasoningEffort(value)) throw invalid("provider.reasoningEffort", "Unsupported provider reasoning effort.");
+  return value;
+}
+
+function parseSessionInitialGrant(value: unknown): SessionRuntimeInitialGrant {
+  const record = requireObject(value, "initialGrant");
+  const kind = requireEnum(record.kind, ["inherit", "explicit"] as const, "initialGrant.kind");
+  if (kind === "inherit") { assertKeys(record, ["kind"], "initialGrant"); return { kind }; }
+  assertKeys(record, ["kind", "actions", "visibility", "expiresAt"], "initialGrant");
+  if (!Array.isArray(record.actions) || !record.actions.every((item) => typeof item === "string" && item.length > 0)) throw invalid("initialGrant.actions", "actions must be a non-empty string array.");
+  if (!Array.isArray(record.visibility) || !record.visibility.every((item) => typeof item === "string" && item.length > 0)) throw invalid("initialGrant.visibility", "visibility must be a non-empty string array.");
+  return { kind, actions: record.actions as string[], visibility: record.visibility as string[], expiresAt: record.expiresAt === null ? null : requireNonEmptyString(record.expiresAt, "initialGrant.expiresAt") };
+}
+
+function parseSessionInitialBudget(value: unknown): SessionRuntimeInitialBudget {
+  const record = requireObject(value, "budget");
+  const kind = requireEnum(record.kind, ["inherit", "explicit"] as const, "budget.kind");
+  if (kind === "inherit") { assertKeys(record, ["kind"], "budget"); return { kind }; }
+  assertKeys(record, ["kind", "hardLimits", "deadlineAt"], "budget");
+  const hardLimits = requireObject(record.hardLimits, "budget.hardLimits");
+  for (const [key, amount] of Object.entries(hardLimits)) if (!Number.isInteger(amount) || (amount as number) < 0) throw invalid(`budget.hardLimits.${key}`, "Budget limits must be non-negative integers.");
+  return { kind, hardLimits: hardLimits as Record<string, number>, deadlineAt: requireNonEmptyString(record.deadlineAt, "budget.deadlineAt") };
 }
 
 function parseSessionCreateWorkspace(value: unknown): SessionRuntimeCreateWorkspace {
@@ -996,6 +1165,65 @@ function parseSessionRenameInput(value: unknown): SessionRuntimeRenameInput {
     title: requireNonEmptyString(record.title, "title"),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
+}
+
+function parseSessionConfigureInput(value: unknown): SessionRuntimeConfigureInput {
+  const record = requireObject(value, "input");
+  const base = { sessionId: requireNonEmptyString(record.sessionId, "sessionId"), expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
+  const kind = requireEnum(record.kind, ["title", "runtime", "character", "workspace", "role"] as const, "kind");
+  if (kind === "title") { assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "title"], "input"); return { ...base, kind, title: requireNonEmptyString(record.title, "title") }; }
+  if (kind === "runtime") { assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "provider"], "input"); return { ...base, kind, provider: parseSessionProvider(record.provider) }; }
+  if (kind === "character") {
+    assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "character", "threadContinuity"], "input");
+    const character = requireObject(record.character, "character");
+    assertKeys(character, ["characterId", "expectedDefinitionSha256"], "character");
+    return { ...base, kind, character: { characterId: requireNonEmptyString(character.characterId, "character.characterId"), expectedDefinitionSha256: requireNonEmptyString(character.expectedDefinitionSha256, "character.expectedDefinitionSha256") }, threadContinuity: requireEnum(record.threadContinuity, ["continue", "reset"] as const, "threadContinuity") };
+  }
+  if (kind === "workspace") {
+    assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "workspace", "threadContinuity"], "input");
+    const workspace = parseSessionCreateWorkspace(record.workspace);
+    return { ...base, kind, workspace, threadContinuity: requireEnum(record.threadContinuity, ["continue", "reset"] as const, "threadContinuity") };
+  }
+  assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "sessionRole"], "input");
+  return { ...base, kind, sessionRole: requireEnum(record.sessionRole, ["standalone", "overall-coordinator", "task-coordinator", "executor"] as const, "sessionRole") };
+}
+
+function parseSessionMoveInput(value: unknown): SessionRuntimeMoveInput {
+  const record = requireObject(value, "input");
+  const base = { sessionId: requireNonEmptyString(record.sessionId, "sessionId"), expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
+  const kind = requireEnum(record.kind, ["same_root", "cross_root"] as const, "kind");
+  const destinationExpectedRevision = requireInteger(record.destinationExpectedRevision, "destinationExpectedRevision", 1, Number.MAX_SAFE_INTEGER);
+  const destinationParentSessionId = record.destinationParentSessionId === null ? null : requireNonEmptyString(record.destinationParentSessionId, "destinationParentSessionId");
+  if (kind === "same_root") { assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "destinationParentSessionId", "destinationExpectedRevision"], "input"); return { ...base, kind, destinationParentSessionId, destinationExpectedRevision }; }
+  assertKeys(record, ["sessionId", "expectedRevision", "idempotencyKey", "kind", "destinationParentSessionId", "destinationRootSessionId", "destinationExpectedRevision", "transferManifestRevision", "transferPolicy"], "input");
+  return { ...base, kind, destinationParentSessionId, destinationRootSessionId: requireNonEmptyString(record.destinationRootSessionId, "destinationRootSessionId"), destinationExpectedRevision, transferManifestRevision: requireInteger(record.transferManifestRevision, "transferManifestRevision", 1, Number.MAX_SAFE_INTEGER), transferPolicy: requireEnum(record.transferPolicy, ["full"] as const, "transferPolicy") };
+}
+
+function parseSessionCloneInput(value: unknown): SessionRuntimeCloneInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sourceSessionId", "expectedSourceRevision", "expectedContainerRevision", "placement", "title", "initialGrant", "budget", "idempotencyKey"], "input");
+  return { sourceSessionId: requireNonEmptyString(record.sourceSessionId, "sourceSessionId"), expectedSourceRevision: requireInteger(record.expectedSourceRevision, "expectedSourceRevision", 1, Number.MAX_SAFE_INTEGER), expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 0, Number.MAX_SAFE_INTEGER), placement: parseSessionPlacement(record.placement), title: requireNonEmptyString(record.title, "title"), initialGrant: parseSessionInitialGrant(record.initialGrant), budget: parseSessionInitialBudget(record.budget), idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
+}
+
+function parseSessionRestoreInput(value: unknown): SessionRuntimeRestoreInput {
+  const record = requireObject(value, "input");
+  const kind = requireEnum(record.kind, ["root", "child"] as const, "kind");
+  const base = { sessionId: requireNonEmptyString(record.sessionId, "sessionId"), expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), purpose: requireNonEmptyString(record.purpose, "purpose"), provider: parseSessionProvider(record.provider), idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
+  if (kind === "root") { assertKeys(record, ["sessionId", "expectedRevision", "kind", "purpose", "provider", "budget", "idempotencyKey"], "input"); return { ...base, kind, budget: parseSessionInitialBudget(record.budget) }; }
+  assertKeys(record, ["sessionId", "expectedRevision", "kind", "purpose", "provider", "idempotencyKey"], "input");
+  return { ...base, kind };
+}
+
+function parseSessionArchiveInput(value: unknown): SessionRuntimeArchiveInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "expectedRevision", "reason", "descendantPolicy", "idempotencyKey"], "input");
+  return { sessionId: requireNonEmptyString(record.sessionId, "sessionId"), expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), reason: requireNonEmptyString(record.reason, "reason"), descendantPolicy: requireEnum(record.descendantPolicy, ["retain", "archive_descendants"] as const, "descendantPolicy"), idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
+}
+
+function parseSessionDeleteInput(value: unknown): SessionRuntimeDeleteInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "expectedRevision", "manifestRevision", "idempotencyKey"], "input");
+  return { sessionId: requireNonEmptyString(record.sessionId, "sessionId"), expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER), manifestRevision: requireInteger(record.manifestRevision, "manifestRevision", 1, Number.MAX_SAFE_INTEGER), idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
 }
 
 function parseSessionFileListInput(value: unknown): SessionRuntimeFileListInput {

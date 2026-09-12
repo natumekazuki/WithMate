@@ -82,6 +82,16 @@ export type SessionPersistenceServiceDeps = {
   runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
 };
 
+export type SessionLifecycleMutationCallbacks = {
+  createSession(input: CreateSessionInput): Awaitable<Session>;
+  updateSession(session: Session): Awaitable<Session>;
+  deleteSession(sessionId: string, mode: "tombstone"): Awaitable<DeleteSessionsResult>;
+  deleteSessionsLastActiveBefore(
+    cutoff: DeleteSessionsLastActiveBeforeCutoff,
+    mode: "tombstone",
+  ): Awaitable<DeleteSessionsResult>;
+};
+
 function isRunningSession(session: Session): boolean {
   return session.status === "running" || session.runState === "running";
 }
@@ -270,13 +280,18 @@ export class SessionPersistenceService {
     );
   }
 
-  async deleteSessionsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): Promise<DeleteSessionsResult> {
+  async deleteSessionsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff, sessionKind?: Session["sessionKind"]): Promise<DeleteSessionsResult> {
     return this.runCharacterAffectTurnOwnershipExclusive(async () => {
-      const sessionIds = this.deps.listStoredSessionIdsLastActiveBefore
+      const candidateSessionIds = this.deps.listStoredSessionIdsLastActiveBefore
         ? await this.deps.listStoredSessionIdsLastActiveBefore(cutoff)
         : (await this.deps.listStoredSessions())
             .filter((session) => Date.parse(session.updatedAt) < cutoff.cutoffTimestampMs)
             .map((session) => session.id);
+      const sessionIds = sessionKind
+        ? (await this.deps.listStoredSessions())
+            .filter((session) => candidateSessionIds.includes(session.id) && session.sessionKind === sessionKind)
+            .map((session) => session.id)
+        : candidateSessionIds;
       return this.deleteSessionsByIds(sessionIds, { runningPolicy: "skip", cutoff, allowUncachedDeletion: true });
     });
   }

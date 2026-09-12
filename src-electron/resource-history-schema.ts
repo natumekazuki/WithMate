@@ -17,6 +17,7 @@ const RESOURCE_HISTORY_ENVELOPE_BYTES = 1024 * 1024;
 const SESSION_RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES = SESSION_RUNTIME_MAX_BODY_BYTES + RESOURCE_HISTORY_ENVELOPE_BYTES;
 const SESSION_EXECUTION_HISTORY_PAYLOAD_LIMIT_BYTES =
   SESSION_RUNTIME_MAX_BODY_BYTES + SESSION_RUNTIME_MAX_RESPONSE_BYTES + RESOURCE_HISTORY_ENVELOPE_BYTES;
+const SESSION_BINDING_HISTORY_MIGRATION_SETTING_KEY = "session_binding_history_v6_migrated_at";
 
 export function ensureResourceHistorySchema(
   db: DatabaseSync,
@@ -153,6 +154,7 @@ export function ensureResourceHistorySchema(
     backfillSagaOperationIds(db);
     backfillResourceHistory(db);
   }
+  ensureSessionBindingHistoryMigration(db);
 }
 
 export function verifyResourceHistoryProjections(db: DatabaseSync): void {
@@ -298,6 +300,7 @@ type ExpectedHeaderRow = {
 };
 
 type StoredHeaderRow = ExpectedHeaderRow & {
+  sequence: number;
   owner_kind: string;
   grant_id: string | null;
   grant_revision: number | null;
@@ -315,7 +318,48 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id
     UNION ALL
     SELECT event.event_id, 'execution', event.execution_id,
-      COALESCE(binding.root_session_id, event.session_id), event.session_id,
+      COALESCE(
+        json_extract(event.payload_json, '$.binding.roleBinding.rootSessionId'),
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM session_resource_events_v6 AS move
+            INNER JOIN resource_event_headers_v6 AS move_header
+              ON move_header.event_id = move.event_id
+            INNER JOIN session_executions_v6 AS execution
+              ON execution.id = event.execution_id
+            WHERE move.session_id = event.session_id
+              AND move.event_kind = 'move'
+              AND move_header.occurred_at <= execution.created_at
+          ) THEN (
+            SELECT json_extract(move.payload_json, '$.destinationRootSessionId')
+            FROM session_resource_events_v6 AS move
+            INNER JOIN resource_event_headers_v6 AS move_header
+              ON move_header.event_id = move.event_id
+            INNER JOIN session_executions_v6 AS execution
+              ON execution.id = event.execution_id
+            WHERE move.session_id = event.session_id
+              AND move.event_kind = 'move'
+              AND move_header.occurred_at <= execution.created_at
+            ORDER BY move_header.occurred_at DESC, move.revision DESC
+            LIMIT 1
+          )
+          ELSE (
+            SELECT json_extract(move.payload_json, '$.sourceRootSessionId')
+            FROM session_resource_events_v6 AS move
+            INNER JOIN resource_event_headers_v6 AS move_header
+              ON move_header.event_id = move.event_id
+            INNER JOIN session_executions_v6 AS execution
+              ON execution.id = event.execution_id
+            WHERE move.session_id = event.session_id
+              AND move.event_kind = 'move'
+              AND move_header.occurred_at > execution.created_at
+            ORDER BY move_header.occurred_at ASC, move.revision ASC
+            LIMIT 1
+          )
+        END,
+        COALESCE(binding.root_session_id, event.session_id)
+      ), event.session_id,
       event.event_kind, event.revision, NULL, NULL, NULL, 2, 'committed'
     FROM session_execution_events_v6 AS event
     LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = event.session_id
@@ -373,7 +417,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     INNER JOIN coordination_events_v6 AS event ON event.id = action.event_id
   `).all() as ExpectedHeaderRow[];
   const actual = db.prepare(`
-    SELECT event_id, resource_kind, resource_id, root_id, owner_kind, owner_id,
+    SELECT sequence, event_id, resource_kind, resource_id, root_id, owner_kind, owner_id,
       event_kind, resource_revision, principal_kind, actor_session_id, grant_id,
       grant_revision, operation_id, supersedes_event_id, payload_schema_revision, effect
     FROM resource_event_headers_v6
@@ -381,12 +425,32 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
       'transcript', 'interaction', 'coordination_event')
   `).all() as StoredHeaderRow[];
   const actualById = new Map(actual.map((row) => [row.event_id, row]));
+  const movesBySession = new Map<string, Array<{ sequence: number; source_root: string }>>();
+  const moves = db.prepare(`
+    SELECT event.session_id, header.sequence,
+      json_extract(event.payload_json, '$.sourceRootSessionId') AS source_root
+    FROM session_resource_events_v6 AS event
+    INNER JOIN resource_event_headers_v6 AS header ON header.event_id = event.event_id
+    WHERE event.event_kind = 'move'
+      AND json_type(event.payload_json, '$.sourceRootSessionId') = 'text'
+    ORDER BY header.sequence
+  `).all() as Array<{ session_id: string; sequence: number; source_root: string }>;
+  for (const move of moves) {
+    const history = movesBySession.get(move.session_id) ?? [];
+    history.push(move);
+    movesBySession.set(move.session_id, history);
+  }
   if (actualById.size !== expected.length || actual.length !== expected.length) {
     throw new Error("Resource event header coverage does not match the typed event history.");
   }
   for (const row of expected) {
     const header = actualById.get(row.event_id);
     if (!header) throw new Error(`Resource event header is missing: ${row.event_id}`);
+    // These resources retain the root in effect when each event was committed.
+    // A later move's source root identifies that interval without rewriting history.
+    const nextMove = ["session", "session_files", "transcript", "interaction"].includes(row.resource_kind)
+      ? movesBySession.get(row.owner_id)?.find((move) => move.sequence > header.sequence)
+      : undefined;
     const comparable = {
       resourceKind: header.resource_kind,
       resourceId: header.resource_id,
@@ -402,7 +466,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     const expectedComparable = {
       resourceKind: row.resource_kind,
       resourceId: row.resource_id,
-      rootId: row.root_id,
+      rootId: nextMove?.source_root ?? row.root_id,
       ownerKind: "session",
       ownerId: row.owner_id,
       eventKind: row.event_kind,
@@ -457,7 +521,7 @@ function verifyHeaderGrant(db: DatabaseSync, header: StoredHeaderRow): void {
 function verifyWorkItemReplay(db: DatabaseSync): void {
   const items = db.prepare(`
     SELECT id, sequence, contract_revision, kind, root_session_id, creator_session_id,
-      target_session_id, parent_work_item_id, goal, scope, completion_criteria, authority,
+      target_session_id, parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority,
       source_identity_json, state, revision, progress_summary, blockers_json, next_action,
       result_json, created_at, updated_at
     FROM work_items_v6
@@ -494,6 +558,7 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
       creatorSessionId: initial.creatorSessionId,
       targetSessionId: initial.targetSessionId,
       parentWorkItemId: initial.parentWorkItemId,
+      predecessorWorkItemId: initial.predecessorWorkItemId ?? null,
       sourceIdentity: initial.sourceIdentity,
       contract: initial.contract,
       progress: initial.progress,
@@ -532,6 +597,7 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
       creatorSessionId: item.creator_session_id,
       targetSessionId: item.target_session_id,
       parentWorkItemId: item.parent_work_item_id,
+      predecessorWorkItemId: item.predecessor_work_item_id ?? null,
       sourceIdentity: JSON.parse(String(item.source_identity_json)),
       contract: {
         goal: item.goal,
@@ -864,8 +930,8 @@ function verifySagaProjection(db: DatabaseSync, input: {
   }
 }
 
-export function getSessionResourceRevision(db: DatabaseSync, sessionId: string): number | null {
-  const row = db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ? AND deleted_at IS NULL").get(sessionId) as
+export function getSessionResourceRevision(db: DatabaseSync, sessionId: string, includeDeleted = false): number | null {
+  const row = db.prepare(`SELECT resource_revision FROM sessions_v6 WHERE id = ?${includeDeleted ? "" : " AND deleted_at IS NULL"}`).get(sessionId) as
     | { resource_revision: number }
     | undefined;
   return row?.resource_revision ?? null;
@@ -914,6 +980,7 @@ export function appendSessionResourceEvent(db: DatabaseSync, input: {
     values: [input.sessionId, input.revision, input.eventKind, serializePayload({
       ...input.payload,
       projection: readSessionProjection(db, input.sessionId),
+      binding: readSessionBindingProjection(db, input.sessionId, bindingRevisionForEvent(db, input.sessionId, input.eventKind)),
     }, SESSION_RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES)],
   });
   appendResourceEventHeader(db, createHeader({
@@ -1204,7 +1271,7 @@ function verifySnapshotProjection(db: DatabaseSync, input: {
   }
 }
 
-function readSessionProjection(db: DatabaseSync, sessionId: string): Readonly<Record<string, unknown>> {
+export function readSessionProjection(db: DatabaseSync, sessionId: string): Readonly<Record<string, unknown>> {
   const row = db.prepare(`
     SELECT title, state, session_kind, provider_id, catalog_revision, model_id,
       reasoning_effort, custom_agent_name, approval_mode, codex_sandbox_mode,
@@ -1262,6 +1329,98 @@ function readSessionProjection(db: DatabaseSync, sessionId: string): Readonly<Re
     lastActiveAt: row.last_active_at,
     ...(row.deleted_at === null ? {} : { deletedAt: row.deleted_at }),
   };
+}
+
+function readSessionBindingProjection(db: DatabaseSync, sessionId: string, revision = 1): Readonly<Record<string, unknown>> | null {
+  const row = db.prepare(`
+    SELECT binding.session_id, binding.role_contract_revision, binding.session_role,
+      binding.root_session_id, binding.parent_session_id, binding.delegation_depth,
+      session.provider_id, session.model_id, session.reasoning_effort,
+      session.custom_agent_name,
+      session.catalog_revision, session.thread_id, session.character_id,
+      session.workspace_path, session.approval_mode, session.codex_sandbox_mode,
+      session.allowed_additional_directories_json, session.character_snapshot_json,
+      session.runtime_policy_json
+    FROM session_role_bindings_v6 AS binding
+    INNER JOIN sessions_v6 AS session ON session.id = binding.session_id
+    WHERE binding.session_id = ?
+  `).get(sessionId) as {
+    session_id: string;
+    role_contract_revision: number;
+    session_role: string;
+    root_session_id: string;
+    parent_session_id: string | null;
+    delegation_depth: number;
+    provider_id: string;
+    model_id: string;
+    reasoning_effort: string;
+    custom_agent_name: string;
+    catalog_revision: number;
+    thread_id: string;
+    character_id: string | null;
+    workspace_path: string;
+    approval_mode: string;
+    codex_sandbox_mode: string;
+    allowed_additional_directories_json: string;
+    character_snapshot_json: string | null;
+    runtime_policy_json: string;
+  } | undefined;
+  if (!row) return null;
+  const runtimePolicy = JSON.parse(row.runtime_policy_json) as Record<string, unknown>;
+  const theme = runtimePolicy.characterThemeColors && typeof runtimePolicy.characterThemeColors === "object"
+    ? runtimePolicy.characterThemeColors as Record<string, string>
+    : { main: "", sub: "" };
+  return {
+    sessionId: row.session_id,
+    revision,
+    providerId: row.provider_id,
+    modelId: row.model_id,
+    reasoningEffort: row.reasoning_effort,
+    customAgentName: row.custom_agent_name,
+    catalogRevision: row.catalog_revision,
+    threadId: row.thread_id,
+    characterRuntimeIdentity: row.character_id,
+    workspaceGrant: { path: row.workspace_path },
+    providerGeneration: null,
+    executionGeneration: null,
+    roleBinding: {
+      sessionRole: row.session_role,
+      roleContractRevision: row.role_contract_revision,
+      rootSessionId: row.root_session_id,
+      parentSessionId: row.parent_session_id,
+      delegationDepth: row.delegation_depth,
+    },
+    sessionRole: row.session_role,
+    roleContractRevision: row.role_contract_revision,
+    rootSessionId: row.root_session_id,
+    parentSessionId: row.parent_session_id,
+    delegationDepth: row.delegation_depth,
+    workspaceLabel: typeof runtimePolicy.workspaceLabel === "string" ? runtimePolicy.workspaceLabel : "",
+    workspacePath: row.workspace_path,
+    branch: typeof runtimePolicy.branch === "string" ? runtimePolicy.branch : "",
+    accessMode: typeof runtimePolicy.accessMode === "string" ? runtimePolicy.accessMode : "active",
+    approvalMode: row.approval_mode,
+    codexSandboxMode: row.codex_sandbox_mode,
+    codexSpeed: typeof runtimePolicy.codexSpeed === "string" ? runtimePolicy.codexSpeed : "balanced",
+    codexReviewer: typeof runtimePolicy.codexReviewer === "string" ? runtimePolicy.codexReviewer : "none",
+    allowedAdditionalDirectories: JSON.parse(row.allowed_additional_directories_json) as string[],
+    characterId: row.character_id ?? "",
+    characterName: typeof runtimePolicy.characterName === "string" ? runtimePolicy.characterName : "",
+    characterIconPath: typeof runtimePolicy.characterIconPath === "string" ? runtimePolicy.characterIconPath : "",
+    characterThemeColors: theme,
+    characterRuntimeSnapshot: row.character_snapshot_json === null ? null : JSON.parse(row.character_snapshot_json) as unknown,
+  };
+}
+
+function bindingRevisionForEvent(db: DatabaseSync, sessionId: string, eventKind: string): number {
+  const row = db.prepare(`
+    SELECT MAX(COALESCE(CAST(json_extract(payload_json, '$.binding.revision') AS INTEGER), 1)) AS revision
+    FROM session_resource_events_v6 WHERE session_id = ?
+  `).get(sessionId) as { revision: number | null };
+  const current = Math.max(1, row.revision ?? 1);
+  return eventKind.includes("configure") || eventKind.includes("move") || eventKind.includes("restore")
+    ? current + 1
+    : current;
 }
 
 function readSessionExecutionProjection(db: DatabaseSync, executionId: string): Readonly<Record<string, unknown>> {
@@ -1330,7 +1489,7 @@ function backfillResourceHistory(db: DatabaseSync): void {
       `session:${session.id}:revision:${session.resource_revision}`,
       session.id,
       session.resource_revision,
-      serializePayload({ projection: readSessionProjection(db, session.id) }, SESSION_RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES),
+      serializePayload({ projection: readSessionProjection(db, session.id), binding: readSessionBindingProjection(db, session.id, session.resource_revision) }, SESSION_RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES),
     );
   }
 
@@ -1607,6 +1766,82 @@ function backfillResourceHistory(db: DatabaseSync): void {
     INNER JOIN work_item_aggregations_v6 AS aggregation
       ON aggregation.parent_work_item_id = event.parent_work_item_id;
   `);
+}
+
+/**
+ * Existing V6 databases may already have the resource-history migration
+ * marker while their session events predate binding snapshots. Append a new
+ * binding baseline revision for those sessions without rewriting append-only
+ * history. The marker makes the repair idempotent across restarts.
+ */
+function ensureSessionBindingHistoryMigration(db: DatabaseSync): void {
+  if (!tableExists(db, "app_settings")) return;
+  const marker = db.prepare("SELECT 1 FROM app_settings WHERE setting_key = ?")
+    .get(SESSION_BINDING_HISTORY_MIGRATION_SETTING_KEY);
+  if (marker) return;
+
+  const sessions = db.prepare(`
+    SELECT session.id, session.resource_revision
+    FROM sessions_v6 AS session
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM session_resource_events_v6 AS event
+      WHERE event.session_id = session.id
+        AND json_type(event.payload_json, '$.binding') = 'object'
+    )
+    ORDER BY session.id ASC
+  `).all() as Array<{ id: string; resource_revision: number }>;
+  if (sessions.length === 0) return;
+
+  const nextRevision = db.prepare(`
+    UPDATE sessions_v6
+    SET resource_revision = resource_revision + 1
+    WHERE id = ? AND resource_revision = ?
+  `);
+  const insertEvent = db.prepare(`
+    INSERT INTO session_resource_events_v6 (
+      event_id, session_id, revision, event_kind, payload_json
+    ) VALUES (?, ?, ?, 'binding_migration_baseline', ?)
+  `);
+  for (const session of sessions) {
+    const revision = session.resource_revision + 1;
+    const changed = nextRevision.run(session.id, session.resource_revision);
+    if (Number(changed.changes) !== 1) {
+      throw new Error(`Session binding migration revision conflict: ${session.id}`);
+    }
+    insertEvent.run(
+      `session:${session.id}:binding-revision:${revision}`,
+      session.id,
+      revision,
+      serializePayload({
+        projection: readSessionProjection(db, session.id),
+        binding: readSessionBindingProjection(db, session.id, revision),
+      }, SESSION_RESOURCE_HISTORY_PAYLOAD_LIMIT_BYTES),
+    );
+    db.prepare(`
+      INSERT INTO resource_event_headers_v6 (
+        event_id, resource_kind, resource_id, root_id, owner_kind, owner_id,
+        event_kind, resource_revision, principal_kind, actor_session_id,
+        grant_id, grant_revision, operation_id, idempotency_key_fingerprint,
+        occurred_at, committed_at, supersedes_event_id, payload_schema_revision, effect
+      )
+      SELECT ?, 'session', session.id, COALESCE(binding.root_session_id, session.id),
+        'session', session.id, 'binding_migration_baseline', ?, 'system', NULL,
+        NULL, NULL, ?, NULL, session.updated_at, session.updated_at, NULL, 2, 'committed'
+      FROM sessions_v6 AS session
+      LEFT JOIN session_role_bindings_v6 AS binding ON binding.session_id = session.id
+      WHERE session.id = ?
+    `).run(
+      `session:${session.id}:binding-revision:${revision}`,
+      revision,
+      `migration:${SESSION_BINDING_HISTORY_MIGRATION_SETTING_KEY}`,
+      session.id,
+    );
+  }
+  db.prepare(`
+    INSERT INTO app_settings (setting_key, setting_value, updated_at)
+    VALUES (?, '1', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  `).run(SESSION_BINDING_HISTORY_MIGRATION_SETTING_KEY);
 }
 
 function ensureJsonColumn(db: DatabaseSync, tableName: string, columnName: string): void {

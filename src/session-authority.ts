@@ -77,6 +77,27 @@ export type SessionAuthorityGrant = Readonly<{
   revokedAt: string | null;
   revision: number;
   mappingRevision: number;
+  /** Durable provenance and construction constraints; never an implicit scope. */
+  provenance: Readonly<Record<string, unknown>>;
+}>;
+
+export type SessionAuthorityConstructionCeiling = Readonly<{
+  workspaceId: string | null;
+  projectId: string | null;
+  visibility: string;
+  actions: readonly SessionAuthorityPermission[];
+  budget: Readonly<Record<string, number>>;
+  expiresAt: string | null;
+}>;
+
+export type SessionAuthorityRootConstructionInput = Readonly<{
+  sourceRootSessionId: string;
+  sourceGrantId: string;
+  sourceGrantRevision: number;
+  operationId: string;
+  targetRootSessionId: string;
+  ceiling: SessionAuthorityConstructionCeiling;
+  createdAt: string;
 }>;
 
 export type SessionAuthorityPermissionMode = "exercise" | "delegate";
@@ -201,6 +222,14 @@ export const SESSION_AUTHORITY_OPERATION_DEFINITIONS = {
   "runtime.catalog": definition("runtime.catalog", "runtime", "actor", "read"),
   "session.self": definition("session.self", "session", "actor", "read"),
   "session.create": definition("session.create", "session_namespace", "actor", "local_mutation"),
+  "session.configure": definition("session.configure", "session", "session", "local_mutation"),
+  "session.move.manifest": definition("session.move.manifest", "session", "session", "read"),
+  "session.move": definition("session.move", "session", "session", "local_mutation"),
+  "session.clone": definition("session.clone", "session", "session", "local_mutation"),
+  "session.restore": definition("session.restore", "session", "session", "local_mutation"),
+  "session.archive": definition("session.archive", "session", "session", "local_mutation"),
+  "session.delete.manifest": definition("session.delete.manifest", "session", "session", "read"),
+  "session.delete": definition("session.delete", "session", "session", "local_mutation"),
   "session.list": definition("session.list", "session", "actor", "read"),
   "session.get": definition("session.get", "session", "session", "read"),
   "session.rename": definition("session.rename", "session", "session", "local_mutation"),

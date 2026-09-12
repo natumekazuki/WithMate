@@ -225,17 +225,31 @@ const interactionRespondInputSchema = z.object({
     context.addIssue({ code: "custom", path: ["waitTimeoutMs"], message: "waitTimeoutMs is only valid for wait mode." });
   }
 });
+const lifecycleWorkspaceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("directory"), path: nonEmptyStringSchema }).strict(),
+  z.object({ kind: z.literal("session_folder") }).strict(),
+]);
+const lifecycleProviderSchema = z.discriminatedUnion("id", [
+  z.object({ id: z.literal("codex"), catalogRevision: z.number().int().min(1), model: nonEmptyStringSchema, reasoningEffort: reasoningEffortSchema, threadContinuity: z.enum(["continue", "reset"]), approvalMode: z.enum(APPROVAL_MODE_VALUES), codexSandboxMode: z.enum(CODEX_SANDBOX_MODE_VALUES), allowedAdditionalDirectories: z.array(nonEmptyStringSchema) }).strict(),
+  z.object({ id: z.literal("copilot"), catalogRevision: z.number().int().min(1), model: nonEmptyStringSchema, reasoningEffort: reasoningEffortSchema, threadContinuity: z.enum(["continue", "reset"]), approvalMode: z.enum(APPROVAL_MODE_VALUES), customAgentName: z.string().trim() }).strict(),
+]);
+const lifecycleInitialGrantSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("inherit") }).strict(),
+  z.object({ kind: z.literal("explicit"), actions: z.array(nonEmptyStringSchema), visibility: z.array(nonEmptyStringSchema), expiresAt: z.string().nullable() }).strict(),
+]);
+const lifecycleBudgetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("inherit") }).strict(),
+  z.object({ kind: z.literal("explicit"), hardLimits: z.record(z.string(), z.number().int().nonnegative()), deadlineAt: nonEmptyStringSchema }).strict(),
+]);
+const sessionPlacementSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("root"), rootKind: z.enum(["standalone", "overall-coordinator"]) }).strict(),
+  z.object({ kind: z.literal("child"), parentSessionId: nonEmptyStringSchema, sessionRole: z.enum(["task-coordinator", "executor"]) }).strict(),
+]);
 const sessionCreateInputSchema = z.object({
-  expectedContainerRevision: z.number().int().min(1),
-  sessionRole: z.enum(["task-coordinator", "executor"]),
-  title: nonEmptyStringSchema,
-  provider: z.enum(["codex", "copilot"]),
-  catalogRevision: z.number().int().min(1),
-  workspace: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("directory"), path: nonEmptyStringSchema }).strict(),
-    z.object({ kind: z.literal("session_folder") }).strict(),
-  ]),
-  idempotencyKey: nonEmptyStringSchema,
+  expectedContainerRevision: z.number().int().min(1), placement: sessionPlacementSchema, title: nonEmptyStringSchema,
+  character: z.object({ characterId: nonEmptyStringSchema, expectedDefinitionSha256: nonEmptyStringSchema }).strict(),
+  provider: lifecycleProviderSchema.refine((value) => value.threadContinuity === "reset", "New Sessions require reset thread continuity."),
+  workspace: lifecycleWorkspaceSchema, initialGrant: lifecycleInitialGrantSchema, budget: lifecycleBudgetSchema, idempotencyKey: nonEmptyStringSchema,
 }).strict();
 const sessionListInputSchema = z.object({
   limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),
@@ -248,6 +262,37 @@ const sessionRenameInputSchema = z.object({
   title: nonEmptyStringSchema,
   idempotencyKey: nonEmptyStringSchema,
 }).strict();
+const sessionConfigureInputSchema = z.discriminatedUnion("kind", [
+  z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema, kind: z.literal("title"), title: nonEmptyStringSchema }).strict(),
+  z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema, kind: z.literal("runtime"), provider: lifecycleProviderSchema }).strict(),
+  z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema, kind: z.literal("character"), character: z.object({ characterId: nonEmptyStringSchema, expectedDefinitionSha256: nonEmptyStringSchema }).strict(), threadContinuity: z.enum(["continue", "reset"]) }).strict(),
+  z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema, kind: z.literal("workspace"), workspace: lifecycleWorkspaceSchema, threadContinuity: z.enum(["continue", "reset"]) }).strict(),
+  z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema, kind: z.literal("role"), sessionRole: z.enum(["standalone", "overall-coordinator", "task-coordinator", "executor"]) }).strict(),
+]);
+const sessionMoveInputSchema = z.discriminatedUnion("kind", [
+  z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema, kind: z.literal("same_root"), destinationParentSessionId: z.string().nullable(), destinationExpectedRevision: z.number().int().min(1) }).strict(),
+  z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema, kind: z.literal("cross_root"), destinationRootSessionId: nonEmptyStringSchema, destinationParentSessionId: z.string().nullable(), destinationExpectedRevision: z.number().int().min(1), transferManifestRevision: z.number().int().min(1), transferPolicy: z.literal("full") }).strict(),
+]);
+const sessionMoveManifestInputSchema = z.object({ sessionId: nonEmptyStringSchema, destinationRootSessionId: nonEmptyStringSchema }).strict();
+const sessionCloneInputSchema = z.object({ sourceSessionId: nonEmptyStringSchema, expectedSourceRevision: z.number().int().min(1), expectedContainerRevision: z.number().int().min(0), placement: sessionPlacementSchema, title: nonEmptyStringSchema, initialGrant: lifecycleInitialGrantSchema, budget: lifecycleBudgetSchema, idempotencyKey: nonEmptyStringSchema }).strict();
+const sessionRestoreInputSchema = z.discriminatedUnion("kind", [
+  z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), kind: z.literal("root"), purpose: nonEmptyStringSchema, provider: lifecycleProviderSchema, budget: lifecycleBudgetSchema, idempotencyKey: nonEmptyStringSchema }).strict(),
+  z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), kind: z.literal("child"), purpose: nonEmptyStringSchema, provider: lifecycleProviderSchema, idempotencyKey: nonEmptyStringSchema }).strict(),
+]);
+const sessionArchiveInputSchema = z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), reason: nonEmptyStringSchema, descendantPolicy: z.enum(["retain", "archive_descendants"]), idempotencyKey: nonEmptyStringSchema }).strict();
+const sessionDeleteManifestInputSchema = sessionGetInputSchema;
+const sessionDeleteInputSchema = z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), manifestRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema }).strict();
+const sessionManifestResultSchema = z.object({
+  sessionId: nonEmptyStringSchema, manifestRevision: z.number().int().min(1), destinationRootSessionId: z.string().nullable(),
+  descendants: z.array(z.object({ sessionId: nonEmptyStringSchema, revision: z.number().int().min(1) }).strict()),
+  workItems: z.array(z.object({ workItemId: nonEmptyStringSchema, state: nonEmptyStringSchema, revision: z.number().int().min(1) }).strict()),
+  artifacts: z.array(z.object({ id: nonEmptyStringSchema, ownerSessionId: nonEmptyStringSchema }).strict()),
+  budgetReservations: z.array(z.object({ id: nonEmptyStringSchema, state: nonEmptyStringSchema }).strict()),
+  executions: z.object({ running: z.number().int().nonnegative(), queued: z.number().int().nonnegative() }).strict(),
+  grants: z.array(z.object({ id: nonEmptyStringSchema, revision: z.number().int().min(1), state: nonEmptyStringSchema }).strict()),
+  openInteractions: z.number().int().nonnegative(), openCoordinationEvents: z.number().int().nonnegative(), blockers: z.array(z.string()),
+}).strict();
+const sessionDeleteManifestResultSchema = sessionManifestResultSchema.extend({ deletable: z.boolean() }).strict();
 const sessionFileListInputSchema = z.object({
   sessionId: nonEmptyStringSchema,
   limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),
@@ -719,6 +764,7 @@ const workItemIdentityShape = {
   creatorSessionId: z.string(),
   targetSessionId: z.string(),
   parentWorkItemId: z.string().nullable(),
+  predecessorWorkItemId: z.string().nullable().optional(),
   goal: z.string(),
   scope: z.string(),
   completionCriteria: z.string(),
@@ -733,13 +779,20 @@ const workItemIdentityShape = {
 };
 function validateWorkItemKind<T extends z.ZodObject>(schema: T) {
   return schema.superRefine((value, context) => {
-    const v = value as { kind: string; progressSummary?: string; blockers?: string[]; nextAction?: string };
+    const v = value as {
+      kind: string;
+      progressSummary?: string;
+      blockers?: string[];
+      nextAction?: string;
+      predecessorWorkItemId?: string | null;
+    };
     const b = value as { rootSessionId: string; creatorSessionId: string; targetSessionId: string; parentWorkItemId: string | null; goal: string; scope: string; completionCriteria: string; authority: string };
     if (v.kind === "root" && (b.rootSessionId !== b.creatorSessionId || b.creatorSessionId !== b.targetSessionId || b.parentWorkItemId !== null)) context.addIssue({ code: "custom", path: ["kind"], message: "Root Work Item binding is invalid." });
     if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || b.goal.length === 0 || b.scope.length === 0 || b.completionCriteria.length === 0 || b.authority.length === 0)) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Item binding is invalid." });
     const hasProgress = v.progressSummary !== undefined || v.blockers !== undefined || v.nextAction !== undefined;
     if (v.kind === "root" && (!hasProgress || v.progressSummary === undefined || v.blockers === undefined || v.nextAction === undefined)) context.addIssue({ code: "custom", path: ["kind"], message: "Root Work Items require progress fields." });
     if (v.kind === "delegated" && hasProgress) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Items cannot include root progress fields." });
+    if (v.kind === "delegated" && v.predecessorWorkItemId !== undefined) context.addIssue({ code: "custom", path: ["predecessorWorkItemId"], message: "Delegated Work Items cannot include root successor fields." });
   });
 }
 const activeWorkItemSchema = validateWorkItemKind(z.object({
@@ -935,6 +988,14 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       defaultReasoningEffort: reasoningEffortSchema,
       models: z.array(modelSchema),
     }).strict()),
+    sessionLifecycle: z.object({
+      operations: z.tuple([z.literal("create"), z.literal("configure"), z.literal("rename"), z.literal("move.manifest"), z.literal("move"), z.literal("clone"), z.literal("restore"), z.literal("archive"), z.literal("delete.manifest"), z.literal("delete")]),
+      placement: z.tuple([z.literal("root"), z.literal("child")]),
+      moveKinds: z.tuple([z.literal("same_root"), z.literal("cross_root")]),
+      restoreKinds: z.tuple([z.literal("root"), z.literal("child")]),
+      capabilities: z.array(z.string()),
+      constraints: z.array(z.string()),
+    }).strict().optional(),
   }).strict(),
   "budget.get": budgetSchema,
   "budget.list": z.object({
@@ -946,7 +1007,15 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "session.create": sessionDetailSchema,
   "session.list": z.object({ items: z.array(sessionSummarySchema), nextCursor: z.string().optional() }).strict(),
   "session.get": sessionGetSchema,
+  "session.configure": sessionDetailSchema,
   "session.rename": sessionDetailSchema,
+  "session.move.manifest": sessionManifestResultSchema,
+  "session.move": sessionDetailSchema,
+  "session.clone": sessionDetailSchema,
+  "session.restore": sessionDetailSchema,
+  "session.archive": sessionDetailSchema,
+  "session.delete.manifest": sessionDeleteManifestResultSchema,
+  "session.delete": sessionDetailSchema,
   "session.files.list": z.object({ items: z.array(fileReferenceSchema), nextCursor: z.string().optional() }).strict(),
   "session.files.read_text": z.object({ file: fileReferenceSchema, content: z.string() }).strict(),
   "session.files.write_text": z.object({ file: fileReferenceSchema }).strict(),
@@ -1018,7 +1087,15 @@ const inputSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "session.create": sessionCreateInputSchema,
   "session.list": sessionListInputSchema,
   "session.get": sessionGetInputSchema,
+  "session.configure": sessionConfigureInputSchema,
   "session.rename": sessionRenameInputSchema,
+  "session.move.manifest": sessionMoveManifestInputSchema,
+  "session.move": sessionMoveInputSchema,
+  "session.clone": sessionCloneInputSchema,
+  "session.restore": sessionRestoreInputSchema,
+  "session.archive": sessionArchiveInputSchema,
+  "session.delete.manifest": sessionDeleteManifestInputSchema,
+  "session.delete": sessionDeleteInputSchema,
   "session.files.list": sessionFileListInputSchema,
   "session.files.read_text": sessionFileReadTextInputSchema,
   "session.files.write_text": sessionFileWriteTextInputSchema,
@@ -1060,6 +1137,7 @@ export function createSessionRuntimeInputSchema(operation: SessionRuntimeOperati
 export function createSessionRuntimeAdvertisedInputSchema(operation: SessionRuntimeOperation): z.ZodType {
   const advertised = z.toJSONSchema(inputSchemas[operation]) as Record<string, unknown>;
   delete advertised.$schema;
+  advertised.additionalProperties = false;
   return z.looseObject({}).meta(advertised);
 }
 

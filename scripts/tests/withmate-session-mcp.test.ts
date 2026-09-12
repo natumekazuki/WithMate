@@ -186,16 +186,16 @@ describe("WithMate Session MCP contract", () => {
   });
   // @test-value v2
   // kind = "contract"
-  // claim = "MCPはbudget三操作を含む全41 toolをdotted name、strict schema、read/write annotation付きで公開する"
+  // claim = "MCPはbudget三操作を含む全49 toolをdotted name、generic strict envelope schema、read/write annotation付きで公開する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-public-api-migration-and-review.md#public-surface-parity" }
-  // fault = "HTTPまたはCLIにあるbudget操作がMCP tool一覧から欠落するかreadOnly/destructive分類が実際のeffectと分岐する"
-  // observable = "MCP tools/listのtool名、input/output schema、effect annotation"
+  // fault = "HTTPまたはCLIにあるoperationがMCP tool一覧から欠落するか、generic envelope required fieldまたはreadOnly/destructive分類が分岐する"
+  // observable = "MCP tools/listの49 tool名、generic input/output schema strictness、effect annotation"
   // observation_boundary = "public-boundary"
   // scope = "WithMate Session MCP tool catalog"
   // lifecycle = "permanent"
-  // distinction = "個別tool dispatchではなく、全41件の独立した期待表でtool集合、schema strictness、readOnly/destructive annotationを横断検証する"
+  // distinction = "operation固有payloadのruntime validationではなく、全49件の独立した期待表でtool集合、generic envelope schema、readOnly/destructive annotationを横断検証する"
   // @end-test-value
-  it("全41 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("全49 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     const expectedEffectAnnotations: Record<string, { readOnlyHint: boolean; destructiveHint: boolean }> = {
       "runtime.catalog": { readOnlyHint: true, destructiveHint: false },
       "budget.get": { readOnlyHint: true, destructiveHint: false },
@@ -206,6 +206,14 @@ describe("WithMate Session MCP contract", () => {
       "session.list": { readOnlyHint: true, destructiveHint: false },
       "session.get": { readOnlyHint: true, destructiveHint: false },
       "session.rename": { readOnlyHint: false, destructiveHint: false },
+      "session.configure": { readOnlyHint: false, destructiveHint: false },
+      "session.move.manifest": { readOnlyHint: true, destructiveHint: false },
+      "session.move": { readOnlyHint: false, destructiveHint: false },
+      "session.clone": { readOnlyHint: false, destructiveHint: false },
+      "session.restore": { readOnlyHint: false, destructiveHint: false },
+      "session.archive": { readOnlyHint: false, destructiveHint: false },
+      "session.delete.manifest": { readOnlyHint: true, destructiveHint: false },
+      "session.delete": { readOnlyHint: false, destructiveHint: true },
       "session.files.list": { readOnlyHint: true, destructiveHint: false },
       "session.files.read_text": { readOnlyHint: true, destructiveHint: false },
       "session.files.write_text": { readOnlyHint: false, destructiveHint: true },
@@ -596,16 +604,29 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "MCP Session createはexpected container revisionとcaller-owned keyを必須にする"
+  // fault = "MCP createがcontainer revisionまたはidempotency keyなしでdispatchされる"
+  // observable = "MCP call result and dispatched operation input"
+  // observation_boundary = "public-boundary"
   // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
-  // failure_mode = "MCP createがcontainer revisionまたはidempotency keyなしでdispatchされる"
   // scope = "withmate-session-mcp-session-create"
   // lifecycle = "permanent"
   // @end-test-value
   it("session.createはcaller-owned keyを必須にし、session.list/getはread-onlyでdispatchする", async () => {
     const requests: any[] = [];
+    const validInput = {
+      expectedContainerRevision: 1,
+      placement: { kind: "child", parentSessionId: "actor-session", sessionRole: "executor" },
+      title: "Demo",
+      character: { characterId: "character-1", expectedDefinitionSha256: "definition-sha256" },
+      provider: { id: "codex", catalogRevision: 1, model: "model-1", reasoningEffort: "medium", threadContinuity: "reset", approvalMode: "on-request", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] },
+      workspace: { kind: "session_folder" },
+      initialGrant: { kind: "inherit" },
+      budget: { kind: "inherit" },
+      idempotencyKey: "create-key-1",
+    } as const;
     await withClient(createWithMateSessionMcpServer({
       discover: async () => connection,
       call: async (_connection, envelope) => {
@@ -618,29 +639,21 @@ describe("WithMate Session MCP contract", () => {
         return { ok: true, status: 200, value: createSessionRuntimeResult(envelope.operation, result as never) } as any;
       },
     }), async (client) => {
-      const created = await client.callTool({ name: "session.create", arguments: {
-        expectedContainerRevision: 1,
-        sessionRole: "executor", title: "Demo", provider: "codex", catalogRevision: 1,
-        workspace: { kind: "session_folder" },
-      } });
+      const { idempotencyKey: _key, ...missingKeyInput } = validInput;
+      const created = await client.callTool({ name: "session.create", arguments: missingKeyInput });
       assert.equal(created.isError, true);
-      const createdWithKey = await client.callTool({ name: "session.create", arguments: {
-        expectedContainerRevision: 1,
-        sessionRole: "executor",
-        title: "Demo",
-        provider: "codex",
-        catalogRevision: 1,
-        workspace: { kind: "session_folder" },
-        idempotencyKey: "create-key-1",
-      } });
+      const { expectedContainerRevision: _revision, ...missingRevisionInput } = validInput;
+      const missingRevision = await client.callTool({ name: "session.create", arguments: missingRevisionInput });
+      assert.equal(missingRevision.isError, true);
+      const createdWithKey = await client.callTool({ name: "session.create", arguments: validInput });
       assert.equal(createdWithKey.isError, undefined);
       const listed = await client.callTool({ name: "session.list", arguments: {} });
       assert.equal(listed.isError, undefined);
       const fetched = await client.callTool({ name: "session.get", arguments: { sessionId: "s1" } });
       assert.equal(fetched.isError, undefined);
     });
-    assert.equal(requests[0].operation, "session.create");
-    assert.equal(requests[0].input.idempotencyKey, "create-key-1");
+    assert.equal(requests.length, 3);
+    assert.deepEqual(requests[0], { schemaVersion: "withmate-session-request-v2", operation: "session.create", input: validInput });
     assert.deepEqual(requests.slice(1).map((request) => request.operation), ["session.list", "session.get"]);
   });
 
@@ -1180,17 +1193,32 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "MCPのrenameとcancelはdispatch後の応答喪失を適用不明として報告する"
+  // oracle = { type = "contract", ref = "docs/runbooks/session-cli.md#Exit codes" }
+  // fault = "変更済みかもしれないrenameを未適用と誤報する"
+  // observable = "MCP tool errorのeffectと秘匿済みmessage"
+  // observation_boundary = "public-boundary"
+  // scope = "MCP transport effect mapping"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("pre-dispatch failureはnot_applied、mutationのpost-dispatch failureはindeterminateにする", async () => {
     for (const [dispatched, expectedEffect] of [[false, "not_applied"], [true, "indeterminate"]] as const) {
       await withClient(createWithMateSessionMcpServer({
         discover: async () => connection,
         call: async () => { throw new SessionRuntimeClientError("private C:\\secret stack", dispatched); },
       }), async (client) => {
-        const result = await client.callTool({ name: "turn.cancel", arguments: cancelInput });
-        assert.equal(result.isError, true);
-        const error = parseToolError(result as any);
-        assert.equal(error.error.effect, expectedEffect);
-        assert.doesNotMatch(JSON.stringify(error), /secret|stack/i);
+        for (const request of [
+          { name: "turn.cancel", arguments: cancelInput },
+          { name: "session.rename", arguments: { sessionId: "session-1", title: "Renamed", expectedRevision: 1, idempotencyKey: "rename-response-loss" } },
+        ]) {
+          const result = await client.callTool(request);
+          assert.equal(result.isError, true);
+          const error = parseToolError(result as any);
+          assert.equal(error.error.effect, expectedEffect);
+          assert.doesNotMatch(JSON.stringify(error), /secret|stack/i);
+        }
       });
     }
   });

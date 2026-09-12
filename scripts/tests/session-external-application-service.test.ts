@@ -229,11 +229,13 @@ function executeBound(
   return service.execute(operation, input, binding);
 }
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "session.selfはauthority admission後にcanonical actor Sessionのcurrent revisionをpublic resultへ返す"
+// claim = "session.selfはcanonical actor Sessionのcurrent revisionをpublic resultへ投影する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// failure_mode = "caller指定identityを返す、またはoptimistic concurrencyに必要なSession revisionを公開しない"
+// fault = "caller指定identityを返す、またはoptimistic concurrencyに必要なSession revisionを公開しない"
+// observable = "session.selfのsessionIdとrevision"
+// observation_boundary = "public-boundary"
 // scope = "SessionExternalApplicationService session.self projection"
 // lifecycle = "permanent"
 // @end-test-value
@@ -291,11 +293,13 @@ test("SESSION-SELF-01: application serviceはruntime bindingのactor Sessionだ�
   assert.equal("error" in missing && missing.error.code, "SESSION_BINDING_REQUIRED");
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "authorityが拒否したrequestはdomain serviceへdispatchされずstableなnot_applied errorになる"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// failure_mode = "拒否済みoperationがmutation serviceへ到達する、またはauthority failureがgeneric errorへ潰れる"
+// fault = "拒否済みoperationがmutation serviceへ到達する、またはauthority failureがgeneric errorへ潰れる"
+// observable = "stable authority error codeとmutation invocation count"
+// observation_boundary = "public-boundary"
 // scope = "SessionExternalApplicationService authority admission"
 // lifecycle = "permanent"
 // @end-test-value
@@ -366,11 +370,13 @@ test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable e
   assert.equal("error" in getResponse && getResponse.error.effect, "not_applied");
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "Coordination createはexpected container revisionを保持してauthority admission後のserviceへ渡す"
+// claim = "Coordination createはexpected container revisionを保持してcoordination serviceへ渡す"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// failure_mode = "root collectionのstale write検出に必要なrevisionがadapterで欠落する"
+// fault = "root collectionのstale write検出に必要なrevisionがadapterで欠落する"
+// observable = "coordination serviceへ渡されたexpectedContainerRevision"
+// observation_boundary = "component-behavior"
 // scope = "SessionExternalApplicationService coordination create dispatch"
 // lifecycle = "permanent"
 // @end-test-value
@@ -402,11 +408,13 @@ test("COORD-ADAPTER-01: Coordination operationを同じapplication serviceへdis
   assert.deepEqual(calls, [{ operation: "create", input }]);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
-// claim = "revision付きCoordination createがcommit後publication failureになった場合もappliedとevent IDを返す"
+// claim = "Coordination ownerのpublication failureをappliedとevent IDを持つerrorへ写像する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// failure_mode = "commit済みmutationをretry可能なnot_appliedとして返し重複作成を誘発する"
+// fault = "publication failureをnot_appliedへ誤分類する"
+// observable = "applied effectとevent ID"
+// observation_boundary = "component-behavior"
 // scope = "SessionExternalApplicationService coordination create error mapping"
 // lifecycle = "permanent"
 // @end-test-value
@@ -595,16 +603,19 @@ test("SF-EFFECT-01: publish後のtyped file errorをindeterminateとsafe identif
   assert.equal("error" in response && response.error.details.relativePath, "brief.md");
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
-// claim = "revision条件を満たしてcommitしたSession mutationはprojection超過でもappliedとresource IDを返す"
+// claim = "Session mutation ownerのprojection limit errorをappliedとresource IDを持つerrorへ写像する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// failure_mode = "commit済みcreateまたはrenameをnot_appliedとして返し安全でないretryを誘発する"
+// fault = "lifecycle owner経由のrename projection overflowをnot_appliedへ誤分類する"
+// observable = "CONTENT_TOO_LARGE、applied effect、safe sessionId"
+// observation_boundary = "component-behavior"
 // scope = "SessionExternalApplicationService session mutation projection failure"
 // lifecycle = "permanent"
 // @end-test-value
 test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過をappliedとして返す", async () => {
   const service = new SessionExternalApplicationService({
+    lifecycleService: { configure: async () => { throw new SessionRuntimeProjectionLimitError("result", { sessionId: "session-1" }); } } as any,
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
@@ -628,10 +639,12 @@ test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過を
   const createResponse = await executeBound(service, "session.create", {
     expectedContainerRevision: 1,
     title: "New Session",
-    sessionRole: "executor",
-    provider: "codex",
-    catalogRevision: 4,
+    placement: { kind: "child", parentSessionId: "session-1", sessionRole: "executor" },
+    character: { characterId: "character-a", expectedDefinitionSha256: "character-a-sha256" },
+    provider: { id: "codex", catalogRevision: 4, model: "gpt-test", reasoningEffort: "high", threadContinuity: "reset", approvalMode: "never", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] },
     workspace: { kind: "session_folder" },
+    initialGrant: { kind: "inherit" },
+    budget: { kind: "inherit" },
     idempotencyKey: "create-key",
   });
   const renameResponse = await executeBound(service, "session.rename", {
@@ -649,11 +662,13 @@ test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過を
   assert.equal("error" in renameResponse && renameResponse.error.details.sessionId, "session-1");
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
-// claim = "revision付きSession mutationとTurn mutationはfinal envelope超過後もapplied effectとsafe resource IDを保つ"
+// claim = "Session/Turn mutation ownerの応答はfinal envelope超過時もapplied effectとsafe resource IDへ写像される"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// failure_mode = "commit済みmutationの識別子を失いconsumerが重複mutationをretryする"
+// fault = "mutation owner応答のresource IDを最終envelopeのerror変換で失う"
+// observable = "final envelope errorのeffectとresource ID"
+// observation_boundary = "component-behavior"
 // scope = "SessionExternalApplicationService applied projection limit"
 // lifecycle = "permanent"
 // @end-test-value
@@ -685,6 +700,7 @@ test("APPLIED-ID-01: final response envelope超過でもmutationのeffectとreso
     );
   }
   const service = new SessionExternalApplicationService({
+    lifecycleService: { configure: async () => renameResult as never } as any,
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     getTurnAuthoritySession: getDefaultTurnAuthoritySession,
@@ -709,10 +725,12 @@ test("APPLIED-ID-01: final response envelope超過でもmutationのeffectとreso
   const createResponse = await executeBound(service, "session.create", {
     expectedContainerRevision: 1,
     title: "New Session",
-    sessionRole: "executor",
-    provider: "codex",
-    catalogRevision: 4,
+    placement: { kind: "child", parentSessionId: "session-1", sessionRole: "executor" },
+    character: { characterId: "character-a", expectedDefinitionSha256: "character-a-sha256" },
+    provider: { id: "codex", catalogRevision: 4, model: "gpt-test", reasoningEffort: "high", threadContinuity: "reset", approvalMode: "never", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] },
     workspace: { kind: "session_folder" },
+    initialGrant: { kind: "inherit" },
+    budget: { kind: "inherit" },
     idempotencyKey: "create-key",
   });
   const renameResponse = await executeBound(service, "session.rename", {
@@ -903,14 +921,14 @@ test("RESOURCE-BUDGET-PUBLIC-02: budget操作を可視範囲とauthority proof�
 
 // @test-value v2
 // kind = "contract"
-// claim = "runtime catalogはauthority mappingと有限resource budget契約を含むcurrent capabilityを返しexecution副作用を起こさない"
+// claim = "runtime catalogは登録済みauthority mappingを投影し、有限resource budget契約を返してexecution副作用を起こさない"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md" }
 // fault = "public consumerがbudget dimension、初期hard limit、計測のみのusage、または迂回経路の制約をdiscoverできない"
 // observable = "runtime.catalog成功responseのauthority budget projection、validationGaps、executionInvoked"
 // observation_boundary = "public-boundary"
 // scope = "SessionExternalApplicationService runtime.catalog projection"
 // lifecycle = "permanent"
-// distinction = "authority operation集合とbudgetの強制対象、計測対象、既知の迂回経路を一つのcatalog snapshotで固定する"
+// distinction = "registry自体の網羅性ではなく、そのprojectionとbudgetの強制対象、計測対象、既知の迂回経路を確認する"
 // @end-test-value
 test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecutionへ触れない", async () => {
   let executionInvoked = false;
@@ -1055,6 +1073,18 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
           defaultListLimit: 50,
           maxListLimit: 200,
         },
+      },
+      sessionLifecycle: {
+        operations: ["create", "configure", "rename", "move.manifest", "move", "clone", "restore", "archive", "delete.manifest", "delete"],
+        placement: ["root", "child"],
+        moveKinds: ["same_root", "cross_root"],
+        restoreKinds: ["root", "child"],
+        capabilities: ["root.create", "child.create", "configure", "rename", "move.same_root", "move.cross_root", "clone", "restore", "archive", "delete"],
+        constraints: [
+          "Root WorkItem successor creation is supported by the lifecycle owner; active WorkItem root moves are rejected.",
+          "Cross-root transfer is limited to idle resources with a complete transfer manifest.",
+          "Delete records a permanent tombstone and retains history, budget ledgers and replay identity; physical purge is not supported.",
+        ],
       },
       providers: [{
         id: "codex",

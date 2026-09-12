@@ -6,7 +6,7 @@
 - Character、Provider、Workspace、Role template の明示選択
 - Session 設定の revisioned update
 - moveによるreparent／adopt、restoreによるreuse、clone
-- archive、delegation compensation、物理delete
+- archive、delegation compensation、tombstone delete。物理purgeは保持契約を定義した後続変更とする
 
 ## 公開操作候補
 
@@ -18,9 +18,9 @@
 | 複製 | `session.clone` | source、copied fields、new placement |
 | 再利用 | `session.restore` | archived Session、new purpose、new binding revision |
 | archive | `session.archive` | reason、descendant policy |
-| 物理削除 | `session.delete` | expected revision、deletion manifest |
+| 削除 | `session.delete` | expected revision、deletion manifest。Slice 3ではtombstoneへ遷移する |
 
-`session.configure` は title だけでなく、実行設定、Workspace、Character、Provider、Role templateを扱う。generic patchではなくstrict discriminated unionを使い、依存tupleの一部だけを変更しない。Provider、model、reasoning、catalog revision、thread continuity、Character runtime identity、Workspace grantsは組として解決する。
+`session.configure` は title だけでなく、実行設定、Workspace、Character、Provider、Role templateを扱う。generic patchではなくstrict discriminated unionを使い、依存tupleの一部だけを変更しない。Provider、model、reasoning、catalog revision、thread continuity、Character runtime identity、Workspace grantsは組として解決する。GUIでProvider／model／reasoningを変更しない設定更新は、最新catalog revisionで既存の選択tupleの有効性を確認する。選択tupleを変更するGUI要求と公開APIでは、要求に指定されたcatalog revisionの一致を要求する。
 
 ## Session identity と変更可能性
 
@@ -44,7 +44,7 @@ Agentによるroot作成は、現在のrootから独立した作業領域を作�
 
 ## Move、adopt、reuse
 
-`session.move` は同じroot内のparent変更と、rootまたはowner境界を越える移管をstrict unionで扱う。cross-root variantだけがsourceとdestination双方のgrant、transfer manifest、drainingを要求する。
+`session.move` は同じroot内のparent変更と、rootまたはowner境界を越える移管をstrict unionで扱う。cross-root variantだけがsourceとdestination双方のgrant、transfer manifest、drainingを要求する。現行のcross-root入力はtransferPolicyへの`"full"`明示指定を必須とし、省略や`"retain"`などの値を全量移動へ補完しない。
 
 moveは次を原子的に再評価する。
 
@@ -55,18 +55,24 @@ moveは次を原子的に再評価する。
 - grant、budget、artifact visibility
 - Coordination Eventの宛先とpending response
 
-cross-root moveはsource rootとdestination root双方のgrantを必要とし、まずtransfer manifestへSession、descendant、Work Item、artifact、budget reservation、open coordinationを列挙する。対象を暗黙に落とさない。外部side effectやrunning resourceを巨大なdatabase transactionへ含めず、drain、settlement、handoffをdurable operationとして進め、最後のtopology／owner切替だけを原子的にcommitする。適用できないresourceがあれば開始前に拒否するか、明示されたpartial transfer planへ分ける。
+cross-root moveはsource rootとdestination root双方のgrantを必要とし、まずtransfer manifestへSession、descendant、Work Item、artifact、budget reservation、open coordinationを列挙する。対象を暗黙に落とさない。移動前のCoordination Event判定はactor、target、parentのいずれかが移動対象subtreeに属するescalation／user_decision_required／blockerを対象とし、resolved／cancelled／supersededがない場合に拒否する。blockerへのrespondedとそのconsumedは解決を意味しない。同root内でも移動対象と無関係なSessionのeventは拒否理由にしない。外部side effectやrunning resourceを巨大なdatabase transactionへ含めず、drain、settlement、handoffをdurable operationとして進め、最後のtopology／owner切替だけを原子的にcommitする。適用できないresourceがあれば開始前に拒否するか、明示されたpartial transfer planへ分ける。
 
 restoreはroot／childのstrict unionとする。root restoreは新しいpurpose revision、Root WorkItem successor、active binding、budgetを追加する。child restoreは新しいpurpose revisionとactive bindingを追加するが、Root WorkItemを作らない。既存active Sessionのreuseはdelegation targetの選択で表し、別operationを追加しない。過去履歴を新規Sessionの履歴として書き換えない。物理的なprovider threadを継続するかresetするかはProvider tupleの一部として明示する。
 
-## Archive、discard、delete
+GUIが参照・編集するRoot WorkItemは、対象rootのself-owned候補を全ページから取得して選ぶ。activeが1件あればその項目、activeがなければsequenceが最大のterminal項目を使用する。activeが複数ある場合は不整合として拒否する。終了済みpredecessorを残すsuccessor方式では、候補の取得を最初の一覧ページで打ち切らない。
+
+予算配分の移管先は親SessionのIDではなく、既存の予算解決が返す口座IDを使う。親がroot共有予算を使用する場合も、Session IDと異なる専用口座を持つ場合も同じ解決を用いる。親子のcross-root移管では親口座を先に移し、子の直接の親口座IDを維持できる。循環は移管先が自分自身または自分の子孫口座になる場合に拒否し、旧親口座と同じであることだけでは拒否しない。
+
+## Archive、tombstone delete、physical purge
 
 - archive: current操作対象から外す可逆な状態。履歴、artifact、grant tombstoneを保持する。
-- delete: retention契約に従う物理削除。実行前にdeletion manifestを返し、同じmanifest revisionをmutationへ要求する。
+- delete: 実行前にdeletion manifestを返し、同じmanifest revisionをmutationへ要求してtombstoneへ遷移する。履歴、budget ledger、retry identityは保持する。
+- SessionFolder workspaceはtombstone deleteで保持する。directory workspaceに付随するSessionFolderの既存cleanup経路は維持する。
+- physical purge: retention期間、purge対象、参照中resource、履歴・ledger・retry identityの扱いを別途確定した後続変更とする。保持契約がない状態でSession rowだけを物理削除しない。
 
-Agentは自分が作成した未使用childを、delegation compensationからユーザー確認なしでdeleteまたはarchiveできる。running Turn、未回収result、第三者所有artifact、未移管grantがある場合は、先にcancel、collect、transfer、archiveを行う。単にRoleがexecutorであることをdelete拒否理由にしない。
+Agentは自分が作成した未使用childを、delegation compensationからユーザー確認なしでtombstone deleteまたはarchiveできる。running Turn、未回収result、第三者所有artifact、未移管grantがある場合は、先にcancel、collect、transfer、archiveを行う。単にRoleがexecutorであることをdelete拒否理由にしない。
 
-内部に既存のSession delete serviceがあるため、Agent APIは新しい物理削除を直接storageへ追加せず、既存application ownerへauthority、manifest、idempotencyを足す。
+内部に既存のSession delete serviceがあるため、Agent APIはstorageへ直接削除を追加せず、既存のlifecycle application ownerへauthority、manifest、idempotencyを接続する。physical purgeはこのownerの別変更として扱う。
 
 ## 必要な schema と service
 
@@ -74,10 +80,14 @@ Agentは自分が作成した未使用childを、delegation compensationから�
 - root／child placement inputのstrict union
 - Session update tuple resolver
 - move／adopt transfer planner
-- archive stateとdelete manifest
+- archive stateとtombstone delete manifest
 - root作成時のRoot WorkItem、grant、budget atomic owner
 - existing GUI update／deleteとAgent APIが共有するapplication service
 - runtime catalogのSession capability projection
+
+## Recovery boundary
+
+SessionFolderの新規作成はlifecycle ownerへ集約し、作成成功を既存の回復recordのfilesystem effectへ記録する。記録済みの同一operationはフォルダーを再作成せずDB処理を再開する。mkdir成功からeffect記録までの間に停止した場合は自動回復保証外とし、既存directoryを自動採用・削除せずrecovery-requiredとretry identityを保持する。
 
 ## Migration
 

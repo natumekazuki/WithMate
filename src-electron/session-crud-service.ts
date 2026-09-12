@@ -66,6 +66,7 @@ export class SessionCrudError extends Error {
 }
 
 export type SessionCrudServiceDeps = {
+  lifecycle?: Pick<import("./session-lifecycle-service.js").SessionLifecycleService, "create">;
   storage: Pick<
     SessionStorageV6,
     | "resolveSessionCrudIdempotency"
@@ -140,147 +141,9 @@ export class SessionCrudService {
   }
 
   private async createNow(input: SessionRuntimeCreateInput, actorSessionId: string, proof: MutationAdmissionProof): Promise<SessionRuntimeSessionDetail> {
-    const normalizedActorSessionId = actorSessionId.trim();
-    const now = this.now();
-    try {
-      const replay = this.deps.storage.resolveSessionCrudIdempotency(
-        "session.create",
-        proof,
-        input.idempotencyKey,
-        (storedResult) => fingerprintSessionCreate(
-          normalizedActorSessionId,
-          input,
-          roleBindingFromSessionProjection(storedResult),
-        ),
-        now.toISOString(),
-      );
-      if (replay.kind === "replay") {
-        const result = normalizeSessionDetailProjection(replay.result as SessionRuntimeSessionDetail);
-        return assertCrudProjectionSize(result, { sessionId: result.sessionId });
-      }
-    } catch (error) {
-      throw mapStorageMutationError(error);
-    }
-
-    const parent = this.requireDefaultSession(normalizedActorSessionId);
-    if (!parent.roleBinding) {
-      throw new SessionCrudError(
-        "SESSION_ROLE_BINDING_INVALID",
-        "The actor Session Role binding is unavailable.",
-        false,
-        { sessionId: normalizedActorSessionId },
-      );
-    }
-
-    if (this.deps.isProviderSupported && !this.deps.isProviderSupported(input.provider)) {
-      throw new SessionCrudError(
-        "RUNTIME_UNAVAILABLE",
-        "The requested provider is not supported by the external Session runtime.",
-        false,
-        { provider: input.provider },
-      );
-    }
-    const launchSelection = await this.deps.resolveLaunchSelection(input.provider);
-    if (launchSelection.provider !== input.provider) {
-      throw new SessionCrudError(
-        "RUNTIME_UNAVAILABLE",
-        "The requested provider is not enabled.",
-        true,
-        { provider: input.provider },
-      );
-    }
-    if (launchSelection.catalogRevision !== input.catalogRevision) {
-      throw new SessionCrudError(
-        "CATALOG_REVISION_STALE",
-        "The requested catalog revision is no longer current.",
-        true,
-        { requestedRevision: input.catalogRevision, currentRevision: launchSelection.catalogRevision },
-      );
-    }
-
-    const character = this.resolveRandomCharacter();
-    const sessionId = this.deps.createSessionId().trim();
-    if (!sessionId) {
-      throw new SessionCrudError("RUNTIME_UNAVAILABLE", "Session ID generation failed.", true);
-    }
-    const workspace = await this.resolveCreateWorkspace(sessionId, input.workspace);
-    let roleBinding: SessionRoleBinding;
-    try {
-      roleBinding = buildChildSessionRoleBinding(
-        sessionId,
-        normalizedActorSessionId,
-        parent.roleBinding,
-        input.sessionRole,
-      );
-    } catch (error) {
-      await this.cleanupFailedSessionFolder(sessionId, workspace.kind);
-      throw mapRoleBindingError(error);
-    }
-    const fingerprint = fingerprintSessionCreate(normalizedActorSessionId, input, roleBinding);
-    const session = buildNewSession({
-      id: sessionId,
-      provider: launchSelection.provider,
-      catalogRevision: launchSelection.catalogRevision,
-      taskTitle: input.title,
-      workspaceLabel: workspace.label,
-      workspacePath: workspace.path,
-      branch: workspace.branch,
-      sessionKind: "default",
-      roleBinding,
-      characterId: character.id,
-      character: character.name,
-      characterIconPath: character.iconFilePath,
-      characterThemeColors: character.theme,
-      characterRuntimeSnapshot: character.runtimeSnapshot,
-      approvalMode: launchSelection.approvalMode,
-      codexSandboxMode: launchSelection.codexSandboxMode,
-      model: launchSelection.model,
-      reasoningEffort: launchSelection.reasoningEffort,
-      customAgentName: launchSelection.customAgentName,
-      allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(workspace.path, []),
-    });
-    const createdAt = this.now();
-    let committed = false;
-    try {
-      const stored = this.deps.storage.insertSessionIdempotently(session, {
-        proof,
-        expectedContainerRevision: input.expectedContainerRevision,
-        operation: "session.create",
-        principalSessionId: normalizedActorSessionId,
-        idempotencyKey: input.idempotencyKey,
-        requestFingerprint: fingerprint,
-        createdAt: createdAt.toISOString(),
-        expiresAt: new Date(createdAt.getTime() + SESSION_CRUD_IDEMPOTENCY_TTL_MS).toISOString(),
-        projectResult: (storedSession) => projectSessionDetail(
-          storedSession,
-          this.deps.resolveSessionFilesDirectory(storedSession.id),
-          this.requireResourceRevision(storedSession.id),
-        ),
-        resolveReplayFingerprint: (storedResult) => fingerprintSessionCreate(
-          normalizedActorSessionId,
-          input,
-          roleBindingFromSessionProjection(storedResult),
-        ),
-      });
-      if (stored.replayed) {
-        committed = true;
-        await this.cleanupFailedSessionFolder(sessionId, workspace.kind);
-      } else {
-        committed = true;
-      }
-      if (!stored.replayed) {
-        this.publishCommittedMutation("session.create", () => this.deps.publishCreatedSession(stored.session));
-      }
-      return assertCrudProjectionSize(
-        normalizeSessionDetailProjection(stored.result as SessionRuntimeSessionDetail),
-        { sessionId: stored.session.id },
-      );
-    } catch (error) {
-      if (!committed) {
-        await this.cleanupFailedSessionFolder(sessionId, workspace.kind);
-      }
-      throw mapStorageMutationError(error);
-    }
+    if (actorSessionId !== proof.principal.actorSessionId) throw new SessionCrudError("AUTHORITY_FORBIDDEN", "The actor does not match the admission proof.");
+    if (!this.deps.lifecycle) throw new SessionCrudError("RUNTIME_UNAVAILABLE", "The Session lifecycle owner is unavailable.");
+    return this.deps.lifecycle.create(input, proof);
   }
 
   private async renameNow(input: SessionRuntimeRenameInput, proof: MutationAdmissionProof): Promise<SessionRuntimeSessionDetail> {
@@ -496,7 +359,7 @@ function projectSessionSummary(
   };
 }
 
-function projectSessionDetail(
+export function projectSessionDetail(
   session: Session | SessionSummary,
   sessionFolderPath: string,
   revision: number,
@@ -564,23 +427,6 @@ function samePath(left: string, right: string): boolean {
 
 function fingerprintMutation(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
-function fingerprintSessionCreate(
-  actorSessionId: string,
-  input: SessionRuntimeCreateInput,
-  roleBinding: SessionRoleBinding,
-): string {
-  return fingerprintMutation({
-    actorSessionId,
-    expectedContainerRevision: input.expectedContainerRevision,
-    sessionRole: input.sessionRole,
-    roleBinding,
-    title: input.title,
-    provider: input.provider,
-    catalogRevision: input.catalogRevision,
-    workspace: input.workspace,
-  });
 }
 
 function roleBindingFromSessionProjection(value: unknown): SessionRoleBinding {
