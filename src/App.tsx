@@ -228,7 +228,6 @@ import {
   applySessionWorkspaceAvailabilityResult,
   beginSessionWorkspaceAvailabilityCheck,
   isSessionWorkspaceAvailable,
-  isSessionWorkspaceFileExplorerEnabled,
   resolveSessionWorkspaceExecutionGate,
   resolveSessionWorkspaceUnavailableMessage,
 } from "./session-workspace-availability.js";
@@ -533,11 +532,6 @@ export default function AgentSessionWindowApp() {
   );
   const [workspaceAvailabilityCheckRevision, setWorkspaceAvailabilityCheckRevision] = useState(0);
   const workspaceAvailabilityRequestIdRef = useRef(0);
-  const fileExplorerWorkspaceAvailabilityRef = useRef<{
-    sessionId: string | null;
-    workspacePath: string | null;
-    wasAvailable: boolean;
-  }>({ sessionId: null, workspacePath: null, wasAvailable: false });
   const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -808,26 +802,43 @@ export default function AgentSessionWindowApp() {
     [companionSessions, openCompanionReviewWindowIds],
   );
   const selectedSessionId = selectedSession?.id ?? null;
-  const validateSessionWorkspace = useCallback(async (session: Session): Promise<boolean> => {
+  const validateSessionWorkspace = useCallback(async (
+    session: Session,
+    preserveAvailableState = false,
+  ): Promise<boolean> => {
     if (!withmateApi) {
       return false;
     }
     const { id: sessionId, workspacePath } = session;
     const requestId = workspaceAvailabilityRequestIdRef.current + 1;
     workspaceAvailabilityRequestIdRef.current = requestId;
-    setWorkspaceAvailability(beginSessionWorkspaceAvailabilityCheck(sessionId, workspacePath, requestId));
+    if (!preserveAvailableState) {
+      setWorkspaceAvailability(beginSessionWorkspaceAvailabilityCheck(sessionId, workspacePath, requestId));
+    }
     const result = await withmateApi.validateSessionWorkspace(sessionId)
       .catch(() => ({ valid: false, reason: "unavailable" } as const));
     if (workspaceAvailabilityRequestIdRef.current !== requestId) {
       return false;
     }
-    setWorkspaceAvailability((current) => applySessionWorkspaceAvailabilityResult(
-      current,
-      sessionId,
-      workspacePath,
-      requestId,
-      result,
-    ));
+    if (preserveAvailableState) {
+      setWorkspaceAvailability((current) => {
+        if (!isSessionWorkspaceAvailable(current, sessionId, workspacePath)) {
+          return current;
+        }
+        if (result.valid) {
+          return current;
+        }
+        return { status: "unavailable", sessionId, workspacePath, reason: result.reason };
+      });
+    } else {
+      setWorkspaceAvailability((current) => applySessionWorkspaceAvailabilityResult(
+        current,
+        sessionId,
+        workspacePath,
+        requestId,
+        result,
+      ));
+    }
     return result.valid;
   }, [withmateApi]);
   useEffect(() => {
@@ -1417,43 +1428,6 @@ export default function AgentSessionWindowApp() {
         selectedSession.workspacePath,
       )
     : false;
-  const wasFileExplorerWorkspaceAvailableBeforeCheck = selectedSession
-    && fileExplorerWorkspaceAvailabilityRef.current.sessionId === selectedSession.id
-    && fileExplorerWorkspaceAvailabilityRef.current.workspacePath === selectedSession.workspacePath
-    ? fileExplorerWorkspaceAvailabilityRef.current.wasAvailable
-    : false;
-  const isFileExplorerEnabled = selectedSession
-    ? isSessionWorkspaceFileExplorerEnabled(
-        workspaceAvailability,
-        selectedSession.id,
-        selectedSession.workspacePath,
-        wasFileExplorerWorkspaceAvailableBeforeCheck,
-      )
-    : false;
-  useEffect(() => {
-    const sessionId = selectedSession?.id ?? null;
-    const workspacePath = selectedSession?.workspacePath ?? null;
-    const current = fileExplorerWorkspaceAvailabilityRef.current;
-    if (current.sessionId !== sessionId || current.workspacePath !== workspacePath) {
-      fileExplorerWorkspaceAvailabilityRef.current = {
-        sessionId,
-        workspacePath,
-        wasAvailable: isSelectedWorkspaceAvailable,
-      };
-      return;
-    }
-    if (isSelectedWorkspaceAvailable) {
-      current.wasAvailable = true;
-      return;
-    }
-    if (
-      workspaceAvailability.status === "unavailable"
-      && workspaceAvailability.sessionId === sessionId
-      && workspaceAvailability.workspacePath === workspacePath
-    ) {
-      current.wasAvailable = false;
-    }
-  }, [isSelectedWorkspaceAvailable, selectedSession?.id, selectedSession?.workspacePath, workspaceAvailability]);
   const workspaceAvailabilityMessage = selectedSession
     ? resolveSessionWorkspaceUnavailableMessage(
         workspaceAvailability,
@@ -2718,7 +2692,7 @@ export default function AgentSessionWindowApp() {
         return;
       }
 
-      if (!await validateSessionWorkspace(selectedSession)) {
+      if (!await validateSessionWorkspace(selectedSession, true)) {
         setForceComposerBlockedFeedback(true);
         return;
       }
@@ -2830,7 +2804,7 @@ export default function AgentSessionWindowApp() {
         const [refreshedSessionResult, refreshedLiveRunResult] = await Promise.allSettled([
           withmateApi.getSession(sessionId),
           withmateApi.getLiveSessionRun(sessionId),
-          validateSessionWorkspace(selectedSession),
+          validateSessionWorkspace(selectedSession, true),
         ]);
         const canReplaceOptimisticBody = sessionMutationRevisionRef.current.isCurrent(
           optimisticSessionMutationRevision,
@@ -4268,7 +4242,7 @@ export default function AgentSessionWindowApp() {
     <SessionFileExplorerPane
       api={withmateApi}
       sessionId={activeRunSessionId}
-      enabled={isFileExplorerEnabled}
+      enabled={isSelectedWorkspaceAvailable}
       rootsRevision={fileExplorerRootsRevision}
       selectedFile={selectedFilePreview}
       activeTab={fileExplorerTab}
@@ -4298,7 +4272,7 @@ export default function AgentSessionWindowApp() {
         <FileRootChangesPane
           api={withmateApi}
           sessionId={activeRunSessionId}
-          enabled={isFileExplorerEnabled}
+          enabled={isSelectedWorkspaceAvailable}
           roots={roots}
           rootsRevision={fileExplorerRootsRevision}
           refreshRevision={fileRootChangesRefreshRevision}
@@ -4310,7 +4284,7 @@ export default function AgentSessionWindowApp() {
         <FileRootGitHistoryPane
           api={withmateApi}
           sessionId={activeRunSessionId}
-          enabled={isFileExplorerEnabled}
+          enabled={isSelectedWorkspaceAvailable}
           rootsRevision={fileExplorerRootsRevision}
           refreshRevision={fileRootGitHistoryRefreshRevision}
           onOpenDiff={handleShowFileRootGitHistoryDiff}
