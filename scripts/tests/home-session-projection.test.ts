@@ -232,6 +232,18 @@ describe("home-session-projection", () => {
     );
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Companion Monitor projectionはopen groupの全兄弟を表示し、各entryへ実Windowの開閉状態を投影する"
+  // oracle = { type = "contract", ref = "Home Session Monitor Companion window state projection" }
+  // fault = "開いていないCompanion siblingまでopen扱いになり、存在しないWindowへの閉じる操作が表示される"
+  // observable = "monitor entryのkind、session ID、isWindowOpen、group表示情報"
+  // observation_boundary = "implementation"
+  // scope = "buildHomeSessionProjection Companion Monitor entries"
+  // lifecycle = "permanent"
+  // impact = "Companion rowの操作対象を実在するReview Windowに限定する"
+  // distinction = "group選択やstate labelではなく、row操作可否へ使うWindow identity projectionを検証する"
+  // @end-test-value
   it("Monitor entries に Companion session と group 表示情報を含める", () => {
     const projection = buildHomeSessionProjection(
       [createSession({ id: "agent", taskTitle: "Agent Task", runState: "running", updatedAt: "2026-03-28T00:00:00.000Z" })],
@@ -270,6 +282,12 @@ describe("home-session-projection", () => {
       "agent:agent",
       "companion:sibling",
     ]);
+    assert.deepEqual(
+      projection.monitorEntries
+        .filter((entry) => entry.kind === "companion")
+        .map(({ session, isWindowOpen, groupLabel }) => [session.id, isWindowOpen, groupLabel]),
+      [["companion", true, "WithMate"], ["sibling", false, "WithMate"]],
+    );
     assert.equal(projection.monitorEntries[0]?.kind, "companion");
     assert.equal(projection.nonRunningMonitorEntries[0]?.state.label, "待機");
   });

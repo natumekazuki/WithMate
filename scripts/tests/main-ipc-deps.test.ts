@@ -3,8 +3,24 @@ import test from "node:test";
 
 import { createMainIpcRegistrationDeps } from "../../src-electron/main-ipc-deps.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "createMainIpcRegistrationDepsはSession Monitor context menu delegateをwindow groupからregistration depsへ保持する"
+// oracle = { type = "contract", ref = "createMainIpcRegistrationDeps window delegate mapping" }
+// fault = "window groupに追加したcontext menu delegateがregistration depsから欠落するか、別delegateへ置き換わる"
+// observable = "生成されたregistration depsのshowSessionMonitorContextMenu function"
+// observation_boundary = "public-boundary"
+// scope = "main IPC dependency grouping"
+// lifecycle = "permanent"
+// impact = "Main IPC handlerからSession Monitor native menu serviceへ到達できるようにする"
+// distinction = "grouped dependency mappingだけを検証し、IPC request validationとnative selectionは別testで扱う"
+// @end-test-value
 test("createMainIpcRegistrationDeps は残存する window / mate delegate を組み立てる", async () => {
   const calls: string[] = [];
+  const showSessionMonitorContextMenu = async (_event: unknown, _request: unknown) => {
+    calls.push("showSessionMonitorContextMenu");
+    return { status: "dismissed" as const };
+  };
 
   const deps = createMainIpcRegistrationDeps({
     window: {
@@ -34,6 +50,10 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async openSessionMonitorWindow() {
         return {} as never;
       },
+      isSessionMonitorWindow() {
+        return false;
+      },
+      showSessionMonitorContextMenu,
       async openSettingsWindow() {
         return {} as never;
       },
@@ -280,6 +300,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
   assert.deepEqual(await deps.getSessionWindowRestoreSet(), ["session-1"]);
   assert.deepEqual((await deps.restoreSessionWindows()).openedSessionIds, ["session-1"]);
+  assert.deepEqual(await deps.showSessionMonitorContextMenu({} as never, {} as never), { status: "dismissed" });
   await deps.getMateState();
   await deps.getMateProfile();
   await deps.createMate({ displayName: "Buddy" });
@@ -294,6 +315,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     "openSession:session-1",
     "getSessionWindowRestoreSet",
     "restoreSessionWindows",
+    "showSessionMonitorContextMenu",
     "getMateState",
     "getMateProfile",
     "createMate:Buddy",

@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
+import type {
+  SessionMonitorContextMenuPoint,
+  SessionMonitorEntryKind,
+} from "../withmate-window-types.js";
 import type { HomeMonitorEntry } from "./home-session-projection.js";
 import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
@@ -9,6 +13,7 @@ export type HomeRightPaneProps = {
   rightPaneView: "monitor" | "characters";
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
+  sessionMonitorFeedback?: string;
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
   characterListFeedback?: string;
@@ -20,6 +25,11 @@ export type HomeRightPaneProps = {
   onEditCharacter: (characterId: string) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  onShowSessionMonitorContextMenu: (
+    kind: SessionMonitorEntryKind,
+    sessionId: string,
+    point: SessionMonitorContextMenuPoint,
+  ) => void;
   canUsePrimaryFeatures?: boolean;
   sessionWindowRestoreIds?: readonly string[];
   sessionWindowRestorePending?: boolean;
@@ -30,6 +40,7 @@ export function HomeRightPane({
   rightPaneView,
   runningMonitorEntries,
   nonRunningMonitorEntries,
+  sessionMonitorFeedback = "",
   monitorWindowIcon,
   characterEntries,
   characterListFeedback = "",
@@ -41,6 +52,7 @@ export function HomeRightPane({
   onEditCharacter,
   onOpenSession,
   onOpenCompanionReview,
+  onShowSessionMonitorContextMenu,
   canUsePrimaryFeatures = true,
   sessionWindowRestoreIds = [],
   sessionWindowRestorePending = false,
@@ -63,6 +75,16 @@ export function HomeRightPane({
       return;
     }
     onOpenCompanionReview(sessionId);
+  };
+  const showSessionMonitorContextMenu = (
+    kind: SessionMonitorEntryKind,
+    sessionId: string,
+    point: SessionMonitorContextMenuPoint,
+  ) => {
+    if (!canUsePrimaryFeatures) {
+      return;
+    }
+    onShowSessionMonitorContextMenu(kind, sessionId, point);
   };
 
   return (
@@ -132,8 +154,10 @@ export function HomeRightPane({
           <HomeMonitorContent
             runningEntries={runningMonitorEntries}
             nonRunningEntries={nonRunningMonitorEntries}
+            feedback={sessionMonitorFeedback}
             onOpenSession={openSession}
             onOpenCompanionReview={openCompanionReview}
+            onShowContextMenu={showSessionMonitorContextMenu}
           />
         </section>
       ) : (
