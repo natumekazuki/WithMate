@@ -213,7 +213,7 @@ test("Git外workspaceはgit_unavailableとして保存可能なstrict snapshot�
 // @test-value v2
 // kind = "invariant"
 // claim = "admission source resolution captures a symbolic branch and HEAD for a normal repository"
-// fault = "repository is on a named branch with a commit"
+// fault = "resolver misclassifies a normal repository or returns an incorrect branch or HEAD"
 // observable = "resolved source kind, branch, and head"
 // observation_boundary = "implementation"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
@@ -227,14 +227,14 @@ test("通常のrepositoryはbranchとHEADをresolvedとして取得する", asyn
     assert.equal(actual.kind, "resolved");
     assert.equal(actual.branch, "main");
     assert.equal(actual.base, null);
-    assert.match(actual.head, /^[0-9a-f]{40}$/);
+    assert.equal(actual.head, execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", windowsHide: true }).trim());
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 // @test-value v2
 // kind = "invariant"
 // claim = "admission source resolution distinguishes detached HEAD from an unborn branch"
-// fault = "repository checkout state changes after queue registration"
+// fault = "resolver confuses detached HEAD with an unborn branch or returns an incorrect HEAD"
 // observable = "strict source kind and branch/head nullability"
 // observation_boundary = "implementation"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
@@ -249,7 +249,7 @@ test("detached HEADとunborn branchを区別する", async () => {
     const detachedActual = resolveActualStartSourceIdentity(detached);
     assert.equal(detachedActual.kind, "detached_head");
     assert.equal(detachedActual.branch, null);
-    assert.match(detachedActual.head, /^[0-9a-f]{40}$/);
+    assert.equal(detachedActual.head, execFileSync("git", ["rev-parse", "HEAD"], { cwd: detached, encoding: "utf8", windowsHide: true }).trim());
     git(unborn, ["init", "--initial-branch", "feature"]);
     const unbornActual = resolveActualStartSourceIdentity(unborn);
     assert.equal(unbornActual.kind, "unborn_branch");
@@ -263,8 +263,8 @@ test("detached HEADとunborn branchを区別する", async () => {
 // @test-value v2
 // kind = "invariant"
 // claim = "Git command failures are rejected instead of classified as a normal repository state"
-// fault = "a corrupt HEAD is misclassified as detached or unborn and execution proceeds"
-// observable = "source resolver domain error"
+// fault = "a corrupt HEAD is misclassified as detached or unborn and an identity is returned"
+// observable = "source resolver Git command error"
 // observation_boundary = "component-behavior"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
 // scope = "source admission resolver"

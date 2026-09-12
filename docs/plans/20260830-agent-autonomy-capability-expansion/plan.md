@@ -368,7 +368,13 @@ grant の確認だけを service の事前チェックに置かず、各 resourc
 
 異なるroot間のWork Item単体moveは、target Sessionの所属・grant・budget移管の接続が必要なため現在明示conflictである。単体moveの延期方針はユーザーへ確認中であり、実装済み能力に数えない。確定済み結果を訂正するmoveとflattenは承認済みのSlice 5待ち、batch splitはSlice 6待ちとして保持する。
 
-変更testの価値審査と固定commitの独立complete-diff reviewは進行中であり、Slice 4は未完了。
+実装を`230cceed32fa2424e669c5e4fede5282fc8a2fde`へ固定し、clean detached worktreeで開始baseから全36 fileの独立complete-diff reviewを行った。`work.move.expectedDestinationAggregateRevision`と`work.reassign.expectedContainerRevision`の公開parser許可漏れをblockingとして採用し、queued admissionのWorkspace不明時にTypeErrorになる指摘も採用した。修正commitは`58e0074c9417e63aa750a3c5140453c1d640e2d1`。TS parserと生成CLIを修正し、Workspace不明時は既存association errorで拒否する。同commitのclean worktreeで当該3 finding familyのtargeted closureが完了し、残るblockingはない。全差分reviewは繰り返さず、review worktreeはHEAD・cleanliness・SessionFolder内pathを確認して削除した。
+
+修正後はHTTP 19件、CLI 38件、MCP/managed Skill 42件、source admission 9件、lifecycle storage 6件、authority 2件、migration 1件、root successor/schema repair 2件が成功した。型検査、CLI再生成、差分checkも成功した。全suiteとproduction buildは上記の先行検証以降は繰り返していない。
+
+変更testは開始baseから最終snapshotまで26 tests／26 transitionsをdiagnostic 0で抽出し、通常のread-only general_lunaで審査した。公開revisionの伝播、provider tuple、root選択、admission時点のGit状態、履歴payload、権限proofの独立性、migrationの旧列・sequence、cycleの拒否条件、delete参照・再送、successorの旧branch・予算を補強した。全recordの指摘解消を確認した。最終補強はtestと記録だけであり、production sourceは独立targeted closure済みの修正commitと同一である。
+
+source改変のstartup拒否検証で、既存SessionExecutionStorageV6 constructorがschema検証例外時にDB handleを明示closeしないことも確認した。通常admissionとは別の既存失敗経路であり、今回の3 finding familyには含めず残リスクとして記録する。cross-root単体moveの延期方針は確認待ちのため、Slice 4全体の完了・統合済みとは扱わない。
 
 ### Slice 2 の実装・検証対象
 

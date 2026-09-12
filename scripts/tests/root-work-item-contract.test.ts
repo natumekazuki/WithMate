@@ -479,7 +479,7 @@ describe("Root WorkItem contract", () => {
       const restoreSession = {
         id: "root",
         taskTitle: "Initial goal",
-        workspacePath: process.cwd(),
+        workspacePath: "C:/workspace",
         branch: "main",
       } as const;
       const restoreProof = trustedProof("session.restore", "root");

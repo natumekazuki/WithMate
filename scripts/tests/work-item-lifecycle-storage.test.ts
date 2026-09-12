@@ -105,6 +105,8 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     storage.decideAggregation({ parentWorkItemId: oldParent.id, childWorkItemId: child.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: beforeOld.aggregateRevision, idempotencyKey: "decision", requestFingerprint: "decision-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
     const moved = storage.move({ workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: "move", requestFingerprint: "move-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move"), destinationParentWorkItemId: newParent.id, expectedAggregateRevision: storage.getAggregationSummary(oldParent.id).aggregateRevision, expectedDestinationAggregateRevision: beforeNew.aggregateRevision });
     assert.equal(moved.parentWorkItemId, newParent.id);
+    assert.equal(sql("SELECT aggregate_revision FROM work_item_aggregations_v6 WHERE parent_work_item_id=?", oldParent.id)[0].aggregate_revision, beforeOld.aggregateRevision + 3);
+    assert.equal(sql("SELECT aggregate_revision FROM work_item_aggregations_v6 WHERE parent_work_item_id=?", newParent.id)[0].aggregate_revision, beforeNew.aggregateRevision + 1);
     assert.deepEqual(moved.result, child.result);
     assert.equal(storage.getAggregationSummary(oldParent.id).directChildCount, 0);
     assert.equal(storage.getAggregationSummary(newParent.id).undecidedTerminalCount, 1);
@@ -243,6 +245,7 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     const reopened = storage.reopen({ workItemId: source.id, expectedRevision: source.revision, principalSessionId: "root", idempotencyKey: "reopen", requestFingerprint: "reopen-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reopen"), targetSessionId: "executor", parentWorkItemId: null, goal: "reopened", scope: source.scope, completionCriteria: source.completionCriteria, authority: source.authority, sourceIdentity: source.sourceIdentity, expectedContainerRevision: Number(sql("SELECT resource_revision AS n FROM sessions_v6 WHERE id='executor'")[0].n) });
     assert.notEqual(reopened.id, source.id);
     assert.equal(reopened.predecessorWorkItemId, source.id);
+    assert.equal(JSON.parse(sql<{ payload_json: string }>("SELECT payload_json FROM work_item_events_v6 WHERE work_item_id=? AND event_type='created'", reopened.id)[0].payload_json).sourceWorkItemId, source.id);
     assert.equal(reopened.result, null);
     assert.equal(JSON.stringify(storage.get(source.id)), sourceSnapshot);
     assert.equal(budget(), beforeReopen + 1);
@@ -252,6 +255,7 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     const reassigned = storage.reassign({ workItemId: active.id, expectedRevision: active.revision, principalSessionId: "root", idempotencyKey: "reassign", requestFingerprint: "reassign-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "task-2", transferPolicy: "successor", expectedContainerRevision: Number(sql("SELECT resource_revision AS n FROM sessions_v6 WHERE id='task-2'")[0].n) });
     assert.notEqual(reassigned.id, active.id);
     assert.equal(reassigned.predecessorWorkItemId, active.id);
+    assert.equal(JSON.parse(sql<{ payload_json: string }>("SELECT payload_json FROM work_item_events_v6 WHERE work_item_id=? AND event_type='created'", reassigned.id)[0].payload_json).sourceWorkItemId, active.id);
     assert.equal(reassigned.targetSessionId, "task-2");
     assert.equal(JSON.stringify(storage.get(active.id)), beforeReassign);
     assert.equal(budget(), beforeReassignBudget + 1);
@@ -284,11 +288,13 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
       const containerRevision = () => Number(sql("SELECT resource_revision AS n FROM sessions_v6 WHERE id='executor'")[0].n);
       const queued = executions.enqueue({ id: "execution-queued", sessionId: "executor", expectedContainerRevision: containerRevision(), request: { turn: { userMessage: "queued" } }, idempotencyKey: "execution-queued", requestFingerprint: "execution-queued-fp", createdAt: NOW, expiresAt: EXPIRES, workItemId: queuedItem.id, proof: proof("turn.enqueue", "executor") });
       const before = storage.get(queuedItem.id)!;
+      const queuedHistory = sql("SELECT * FROM work_item_events_v6 WHERE work_item_id=? ORDER BY sequence", queuedItem.id);
       const queuedAssociation = sql("SELECT * FROM work_item_execution_associations_v6 WHERE execution_id=?", queued.execution.id)[0];
       let queuedError: unknown;
       try { storage.reassign({ workItemId: queuedItem.id, expectedRevision: before.revision, principalSessionId: "root", idempotencyKey: "handoff-queued", requestFingerprint: "handoff-queued-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "task-2", transferPolicy: "handoff" }); } catch (error) { queuedError = error; }
       assert.equal((queuedError as { code?: string }).code, "WORK_ITEM_HANDOFF_REQUIRED");
       assert.deepEqual(storage.get(queuedItem.id), before);
+      assert.deepEqual(sql("SELECT * FROM work_item_events_v6 WHERE work_item_id=? ORDER BY sequence", queuedItem.id), queuedHistory);
       assert.deepEqual(sql("SELECT * FROM work_item_execution_associations_v6 WHERE execution_id=?", queued.execution.id)[0], queuedAssociation);
       assert.equal(sql("SELECT state FROM session_executions_v6 WHERE id=?", queued.execution.id)[0].state, "queued");
       executions.cancelQueued(queued.execution.id, LATER, EXPIRES);
@@ -296,11 +302,13 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
       const runningItem = create(null, "root", "executor", "handoff-running");
       const running = executions.startImmediate({ id: "execution-running", sessionId: "executor", expectedContainerRevision: containerRevision(), request: { turn: { userMessage: "running" } }, idempotencyKey: "execution-running", requestFingerprint: "execution-running-fp", createdAt: NOW, expiresAt: EXPIRES, workItemId: runningItem.id, proof: proof("turn.run", "executor") });
       const runningBefore = storage.get(runningItem.id)!;
+      const runningHistory = sql("SELECT * FROM work_item_events_v6 WHERE work_item_id=? ORDER BY sequence", runningItem.id);
       const runningAssociation = sql("SELECT * FROM work_item_execution_associations_v6 WHERE execution_id=?", running.execution.id)[0];
       let runningError: unknown;
       try { storage.reassign({ workItemId: runningItem.id, expectedRevision: runningBefore.revision, principalSessionId: "root", idempotencyKey: "handoff-running", requestFingerprint: "handoff-running-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "task-2", transferPolicy: "handoff" }); } catch (error) { runningError = error; }
       assert.equal((runningError as { code?: string }).code, "WORK_ITEM_HANDOFF_REQUIRED");
       assert.deepEqual(storage.get(runningItem.id), runningBefore);
+      assert.deepEqual(sql("SELECT * FROM work_item_events_v6 WHERE work_item_id=? ORDER BY sequence", runningItem.id), runningHistory);
       assert.deepEqual(sql("SELECT * FROM work_item_execution_associations_v6 WHERE execution_id=?", running.execution.id)[0], runningAssociation);
       assert.equal(sql("SELECT state FROM session_executions_v6 WHERE id=?", running.execution.id)[0].state, "running");
       executions.completeRunning({ executionId: running.execution.id, state: "completed", result: {}, errorCode: "", reason: "done", completedAt: LATER, expiresAt: EXPIRES });
