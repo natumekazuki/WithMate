@@ -104,19 +104,27 @@ execution resultの`terminalFailureNotification`は、未設定なら`null`、�
 
 ## Session操作
 
-通常Sessionの作成、一覧、取得、名前変更を公開する。
+通常Sessionの作成、一覧、取得、設定変更、移動、複製、復元、archive、deleteを公開する。
 
 ```powershell
-withmate-session session create --json '{"expectedContainerRevision":1,"title":"計画を分解する","sessionRole":"task-coordinator","provider":"codex","catalogRevision":1,"workspace":{"kind":"directory","path":"C:\\work"},"idempotencyKey":"create-20260812-001"}'
-withmate-session session create --json '{"expectedContainerRevision":2,"title":"実装する","sessionRole":"executor","provider":"copilot","catalogRevision":1,"workspace":{"kind":"session_folder"},"idempotencyKey":"create-copilot-20260812-001"}'
+withmate-session session create --json '{"expectedContainerRevision":1,"placement":{"kind":"child","parentSessionId":"ACTOR_SESSION_ID","sessionRole":"task-coordinator"},"title":"計画を分解する","character":{"characterId":"CHARACTER_ID","expectedDefinitionSha256":"DEFINITION_SHA256"},"provider":{"id":"codex","catalogRevision":1,"model":"MODEL_ID","reasoningEffort":"medium","threadContinuity":"reset","approvalMode":"on-request","codexSandboxMode":"workspace-write","allowedAdditionalDirectories":[]},"workspace":{"kind":"directory","path":"C:\\work"},"initialGrant":{"kind":"inherit"},"budget":{"kind":"inherit"},"idempotencyKey":"create-20260812-001"}'
 withmate-session session list --json '{}'
 withmate-session session get --json '{"sessionId":"SESSION_ID"}'
+withmate-session session configure --json '{"sessionId":"SESSION_ID","expectedRevision":1,"kind":"title","title":"新しい名前","idempotencyKey":"configure-20260812-001"}'
+
+`session configure` の `workspace` と `character` は `threadContinuity`（`reset` または `continue`）を明示する。`session restore` の provider tuple も既存 thread の継続または reset を選択できる。
 withmate-session session rename --json '{"sessionId":"SESSION_ID","expectedRevision":1,"title":"新しい名前","idempotencyKey":"rename-20260812-001"}'
+withmate-session session move-manifest --json '{"sessionId":"SESSION_ID","destinationRootSessionId":"DESTINATION_ROOT_SESSION_ID"}'
+withmate-session session delete-manifest --json '{"sessionId":"SESSION_ID"}'
 ```
 
-`session.create`は現在のbinding actorのchildだけを作成する。作成可能なchild Roleの初期上限は`baselineChildSessionRoleTemplates`からgrantへ発行され、実際のrequestはその時点のactive grantとcanonical resource relationで判定される。actor、parent、root、depth、Character identityは入力せず、WithMateがcurrent bindingから導出する。
+`session.create`はrootまたはchild placementを明示する。childではparentとRole、rootではrootKindを指定し、Character identity、provider実行tuple、Workspace、initial grant、budgetを省略しない。actor、root、depth、grant上限は保存済みbindingとactive grantから再評価される。新規Sessionのprovider thread continuityは`reset`だけを受理する。
 
-`session.self`、`session.create`、`session.list`、`session.get`は`revision`、`sessionRole`、`roleContractRevision`、`rootSessionId`、`parentSessionId`、`delegationDepth`を同じ形で返す。`session.create`はactorのcurrent `revision`を`expectedContainerRevision`へ、`session.rename`は対象Sessionのcurrent `revision`を`expectedRevision`へ指定する。`runtime catalog`の`baselineChildSessionRoleTemplates`はbaseline grant発行時のtemplateであり、現在のactorに対する認可結果ではない。実際の認可は保存済みactive grantとcanonical resource relationからrequestごとに評価される。
+`session.self`、`session.create`、`session.list`、`session.get`は`revision`、`sessionRole`、`roleContractRevision`、`rootSessionId`、`parentSessionId`、`delegationDepth`を同じ形で返す。mutationは対象またはcontainerのcurrent revisionを要求し、各操作へcaller-owned `idempotencyKey`を渡す。`session.move.manifest`と`session.delete.manifest`はread-onlyで、deleteは取得済みmanifest revisionをmutationへ要求する。`runtime catalog`の`baselineChildSessionRoleTemplates`はbaseline grant発行時のtemplateであり、現在のactorに対する認可結果ではない。
+
+`session.delete`はSlice 3では物理削除ではなくtombstoneへ遷移する。Sessionの履歴、budget ledger、retry identity、SessionFolder workspaceは保持する。directory workspaceに付随するSessionFolderの既存cleanup経路は維持する。retention期間と履歴・ledgerを含むpurge範囲を定義するphysical purgeは後続の別変更とする。
+
+Copilotの標準provider tupleでは`customAgentName`に空文字列を指定する。Codexのtupleへ`customAgentName`を混在させず、Copilotのcustom agentを選ぶ場合だけ名称を指定する。
 
 `session.create`と`session.rename`の`idempotencyKey`は必須で、callerが生成して保持する。response loss後の再送では同じkeyを使う。create keyはactorごとのscopeであり、同じactorでRoleまたは他のcreate入力を変えて再利用すると`IDEMPOTENCY_CONFLICT`になる。
 
@@ -173,7 +181,7 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは計41操作で、`budget.get`、`budget.list`、`budget.configure`、Root WorkItemの`work.revise`、`work.history.append`、`work.history.list`と、Work Item集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`を含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは計49操作で、Session lifecycleのmanifest read、configure、move、clone、restore、archive、deleteを含む。Work Item集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`も含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
 
 ## Coordination event
 

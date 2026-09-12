@@ -284,7 +284,14 @@ export function verifyResourceBudgetLedger(db: DatabaseSync): void {
   const inconsistentHeader = db.prepare(`SELECT event.event_id FROM resource_budget_events_v6 AS event
     INNER JOIN resource_budget_accounts_v6 AS account ON account.account_id = event.account_id
     INNER JOIN resource_event_headers_v6 AS header ON header.event_id = event.event_id
-    WHERE header.root_id <> account.root_session_id OR header.owner_id <> account.owner_session_id
+    WHERE (header.root_id <> account.root_session_id AND NOT EXISTS (
+        SELECT 1 FROM resource_budget_events_v6 AS transfer
+        WHERE transfer.account_id = event.account_id
+          AND transfer.event_kind = 'configured'
+          AND json_extract(transfer.payload_json, '$.transfer') = 1
+          AND event.account_revision < transfer.account_revision
+          AND header.root_id = json_extract(transfer.payload_json, '$.previousRootSessionId')
+      )) OR header.owner_id <> account.owner_session_id
       OR header.event_kind <> event.event_kind OR header.resource_revision <> event.account_revision
       OR header.principal_kind <> event.principal_kind
       OR COALESCE(header.actor_session_id, '') <> COALESCE(event.actor_session_id, '')
@@ -329,6 +336,79 @@ export class ResourceBudgetStorage {
 
   getByAccountId(accountId: string): ResourceBudget {
     return this.decode(this.requireAccount(accountId));
+  }
+
+  /** Reparents an existing Session allocation while preserving its ledger identity. */
+  transferSessionAllocation(input: {
+    sessionId: string;
+    destinationRootSessionId: string;
+    destinationParentAccountId: string;
+    destinationAuthorityGrantId: string | null;
+    destinationAuthorityGrantRevision: number | null;
+    proof: MutationAuthorityProof;
+    destinationProof?: MutationAuthorityProof;
+    operationId: string;
+    transferredAt: string;
+  }): ResourceBudget {
+    return withSavepoint(this.db, () => {
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.transferredAt));
+      if (input.destinationProof) assertGrantProofCurrent(this.db, input.destinationProof, new Date(input.transferredAt));
+      const account = this.db.prepare(`SELECT * FROM resource_budget_accounts_v6
+        WHERE owner_session_id = ? AND account_kind = 'session'`).get(input.sessionId) as AccountRow | undefined;
+      if (!account) throw budgetNotFound(input.sessionId);
+      const parent = this.requireAccount(input.destinationParentAccountId);
+      const destinationRoot = this.requireAccount(input.destinationRootSessionId);
+      if (destinationRoot.account_kind !== "root" || parent.root_session_id !== input.destinationRootSessionId
+        || (input.destinationProof && input.destinationProof.principal.kind === "agent"
+          && input.destinationProof.grantId !== input.destinationAuthorityGrantId)) {
+        throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "The destination budget authority is invalid.");
+      }
+      if (account.account_id === parent.account_id || parent.account_id === account.parent_account_id) {
+        throw new ResourceBudgetError("BUDGET_SETTLEMENT_CONFLICT", "The budget allocation would create a cycle.");
+      }
+      if (account.root_session_id !== input.destinationRootSessionId && !input.destinationProof) {
+        throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "Cross-root allocation transfer requires destination authority.");
+      }
+      if (account.root_session_id !== input.destinationRootSessionId
+        && (input.destinationAuthorityGrantId === null || input.destinationAuthorityGrantRevision === null)) {
+        throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "Cross-root allocation transfer requires a destination grant.");
+      }
+      assertAllocationActive(this.db, parent, input.transferredAt);
+      assertDeadlineOpen(this.db, parent, input.transferredAt);
+      const dimensions = this.readDimensionRows(account.account_id);
+      for (const row of dimensions) {
+        assertChildResizeCapacity(this.db, parent.account_id, account.account_id,
+          row.dimension, row.hard_limit, input.transferredAt);
+      }
+      const nextRevision = account.revision + 1;
+      this.db.prepare(`UPDATE resource_budget_accounts_v6
+        SET root_session_id = ?, parent_account_id = ?, authority_grant_id = ?,
+            authority_grant_revision = ?, revision = ?, updated_at = ?
+        WHERE account_id = ? AND revision = ?`).run(
+        input.destinationRootSessionId, parent.account_id,
+        input.destinationAuthorityGrantId ?? account.authority_grant_id,
+        input.destinationAuthorityGrantRevision ?? account.authority_grant_revision,
+        nextRevision, input.transferredAt, account.account_id, account.revision,
+      );
+      appendEvent(this.db, {
+        accountId: account.account_id,
+        revision: nextRevision,
+        eventKind: "configured",
+        proof: input.destinationProof ?? input.proof,
+        operationId: input.operationId,
+        occurredAt: input.transferredAt,
+        payload: {
+          transfer: true,
+          previousRootSessionId: account.root_session_id,
+          previousParentAccountId: account.parent_account_id,
+          destinationRootSessionId: input.destinationRootSessionId,
+          destinationParentAccountId: parent.account_id,
+          previousAuthorityGrantId: account.authority_grant_id,
+          destinationAuthorityGrantId: input.destinationAuthorityGrantId,
+        },
+      });
+      return this.getByAccountId(account.account_id);
+    });
   }
 
   list(rootSessionId: string, limit: number, cursor?: string): ResourceBudgetListResult {
@@ -440,12 +520,13 @@ export class ResourceBudgetStorage {
       if (account.account_kind === "session" && input.deadlineAt !== undefined) {
         throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "The operation deadline is configured on the root budget.");
       }
-      if (input.deadlineAt !== undefined && input.deadlineAt > account.deadline_at && proof.principal.kind !== "user") {
+      if (input.deadlineAt !== undefined && input.deadlineAt > account.deadline_at
+        && !(proof.principal.kind === "user" || (proof.principal.kind === "system" && proof.principal.service === "session-lifecycle"))) {
         throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "Extending a root deadline requires trusted user authority.");
       }
       if (input.expiresAt !== undefined
         && (account.expires_at === null || input.expiresAt === null || input.expiresAt > account.expires_at)
-        && proof.principal.kind !== "user") {
+        && !(proof.principal.kind === "user" || (proof.principal.kind === "system" && proof.principal.service === "session-lifecycle"))) {
         throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "Extending an allocation expiry requires trusted user authority.");
       }
       if (input.revoked === false && account.revoked_at !== null && proof.principal.kind !== "user") {
@@ -1456,6 +1537,7 @@ function isGrantChainActive(db: DatabaseSync, grantId: string, revision: number,
 
 function assertConfigureScope(db: DatabaseSync, account: AccountRow, sessionId: string, proof: MutationAuthorityProof): void {
   if (proof.principal.kind === "user") return;
+  if (proof.principal.kind === "system" && proof.principal.service === "session-lifecycle") return;
   if (proof.principal.kind !== "agent" || proof.principal.actorSessionId !== sessionId) {
     throw new ResourceBudgetError("BUDGET_AUTHORITY_REQUIRED", "The budget configuration actor is invalid.");
   }

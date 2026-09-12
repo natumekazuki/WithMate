@@ -1,10 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 
 import {
   WORK_ITEM_CONTRACT_REVISION,
   WORK_ITEM_AGGREGATION_CONTRACT_REVISION,
   WORK_ITEM_MAX_RESULT_BYTES,
   WORK_ITEM_MAX_TEXT_LENGTH,
+  WORK_ITEM_IDEMPOTENCY_RETENTION_MS,
   assertValidWorkItemBinding,
   assertWorkItemEventPayloadWithinLimit,
   canTransitionWorkItem,
@@ -34,12 +36,31 @@ import { assertGrantProofCurrent } from "./session-authority-storage.js";
 
 export type WorkItemMutationOperation =
   | "work.create"
+  | "work.restore"
   | "work.revise"
   | "work.history.append"
   | "work.transition"
   | "work.result"
   | "work.cancel";
 export type WorkItemAggregationMutationOperation = "work.aggregation.decide" | "work.aggregation.retry";
+
+export type RootWorkItemRestorePurpose = Readonly<{
+  predecessorWorkItemId: string;
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  sourceIdentity: WorkItem["sourceIdentity"];
+  idempotencyKey: string;
+  requestFingerprint: string;
+}>;
+
+export type RootWorkItemRestoreSession = Readonly<{
+  id: string;
+  taskTitle: string;
+  workspacePath: string;
+  branch: string;
+}>;
 
 type WorkItemRow = {
   sequence: number;
@@ -50,6 +71,7 @@ type WorkItemRow = {
   creator_session_id: string;
   target_session_id: string;
   parent_work_item_id: string | null;
+  predecessor_work_item_id?: string | null;
   goal: string;
   scope: string;
   completion_criteria: string;
@@ -157,6 +179,148 @@ export class WorkItemAggregationConflictError extends Error {
     this.name = "WorkItemAggregationConflictError";
     this.code = code;
   }
+}
+
+/**
+ * Adds a Root WorkItem successor to an already-open caller transaction.
+ * This helper deliberately does not begin, commit, or rollback a transaction.
+ */
+export function restoreRootWorkItemWithinTransaction(
+  db: DatabaseSync,
+  session: RootWorkItemRestoreSession,
+  purpose: RootWorkItemRestorePurpose,
+  proof: MutationAuthorityProof,
+  operationId: string,
+  now: string,
+): WorkItem {
+  const principalSessionId = session.id;
+  const principalKey = workItemPrincipalKey(proof);
+  const existingIdempotency = db.prepare(`
+    SELECT request_fingerprint, work_item_id, response_json
+    FROM work_item_idempotency_v6
+    WHERE operation = 'work.restore' AND principal_session_id = ? AND idempotency_key = ?
+  `).get(principalKey, purpose.idempotencyKey) as {
+    request_fingerprint: string;
+    work_item_id: string;
+    response_json: string | null;
+  } | undefined;
+  if (existingIdempotency) {
+    if (existingIdempotency.request_fingerprint !== purpose.requestFingerprint) {
+      throw new WorkItemIdempotencyConflictError("work.restore", purpose.idempotencyKey);
+    }
+    if (existingIdempotency.response_json === null) {
+      throw new WorkItemIdempotencyResponseUnavailableError(
+        "work.restore",
+        purpose.idempotencyKey,
+        existingIdempotency.work_item_id,
+      );
+    }
+    return parseStoredWorkItemResponse(existingIdempotency.response_json);
+  }
+  assertGrantProofCurrent(db, proof, new Date(now));
+  const predecessorRow = db.prepare(`
+    SELECT * FROM work_items_v6 WHERE id = ?
+  `).get(purpose.predecessorWorkItemId) as WorkItemRow | undefined;
+  if (!predecessorRow) throw new WorkItemNotFoundError(purpose.predecessorWorkItemId);
+  const predecessor = parseWorkItem(predecessorRow);
+  if (
+    !isRootWorkItem(predecessor)
+    || predecessor.rootSessionId !== session.id
+    || isWorkItemActive(predecessor.state)
+  ) {
+    throw new WorkItemAggregationConflictError(
+      "WORK_ITEM_ROOT_SUCCESSOR_INVALID",
+      "A Root Work Item successor requires a terminal predecessor in the same root Session.",
+      { predecessorWorkItemId: purpose.predecessorWorkItemId },
+    );
+  }
+  const active = db.prepare(`
+    SELECT id FROM work_items_v6
+    WHERE kind = 'root' AND root_session_id = ?
+      AND state IN ('pending', 'in_progress', 'waiting')
+    LIMIT 1
+  `).get(session.id) as { id: string } | undefined;
+  if (active) {
+    throw new WorkItemAggregationConflictError(
+      "WORK_ITEM_ROOT_SUCCESSOR_ACTIVE",
+      "The root Session already has an active Root Work Item.",
+      { workItemId: active.id },
+    );
+  }
+  const id = `root-work-item:${session.id}:successor:${randomUUID()}`;
+  const sourceIdentity = { ...purpose.sourceIdentity };
+  const payload: Extract<WorkItemEvent, { type: "created" }>["payload"] = {
+    kind: "root",
+    rootSessionId: session.id,
+    creatorSessionId: session.id,
+    targetSessionId: session.id,
+    parentWorkItemId: null,
+    predecessorWorkItemId: predecessor.id,
+    sourceIdentity,
+    contract: {
+      goal: purpose.goal,
+      scope: purpose.scope,
+      completionCriteria: purpose.completionCriteria,
+      authority: purpose.authority,
+    },
+    progress: { progressSummary: "", blockers: [], nextAction: "" },
+    state: "pending",
+    result: null,
+  };
+  assertWorkItemEventPayloadWithinLimit("created", payload);
+  db.prepare(`
+    INSERT INTO work_items_v6 (
+      id, kind, contract_revision, root_session_id, creator_session_id,
+      target_session_id, parent_work_item_id, predecessor_work_item_id,
+      goal, scope, completion_criteria, authority, source_identity_json,
+      state, revision, progress_summary, blockers_json, next_action,
+      result_json, created_at, updated_at
+    ) VALUES (?, 'root', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'pending', 1, '', '[]', '', NULL, ?, ?)
+  `).run(
+    id,
+    WORK_ITEM_CONTRACT_REVISION,
+    session.id,
+    session.id,
+    session.id,
+    predecessor.id,
+    purpose.goal,
+    purpose.scope,
+    purpose.completionCriteria,
+    purpose.authority,
+    serializeJson(sourceIdentity, "Work Item source identity"),
+    now,
+    now,
+  );
+  db.prepare(`
+    INSERT INTO work_item_events_v6 (
+      work_item_id, revision, event_type, actor_session_id, principal_kind, payload_json, created_at
+    ) VALUES (?, 1, 'created', ?, ?, ?, ?)
+  `).run(id, principalSessionId, proof.principal.kind, serializeJson(payload, "Work Item event payload"), now);
+  appendWorkItemEventHeader(db, {
+    workItemId: id,
+    revision: 1,
+    eventKind: "created",
+    proof,
+    operationId,
+    idempotencyKey: purpose.idempotencyKey,
+    occurredAt: now,
+  });
+  const created = parseWorkItem(db.prepare("SELECT * FROM work_items_v6 WHERE id = ?").get(id) as WorkItemRow);
+  db.prepare(`
+    INSERT INTO work_item_idempotency_v6 (
+      operation, principal_session_id, idempotency_key, request_fingerprint,
+      work_item_id, response_json, created_at, expires_at
+    ) VALUES ('work.restore', ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    principalKey,
+    purpose.idempotencyKey,
+    purpose.requestFingerprint,
+    created.id,
+    serializeJson(created, "Work Item idempotency response"),
+    now,
+    new Date(Date.parse(now) + WORK_ITEM_IDEMPOTENCY_RETENTION_MS).toISOString(),
+  );
+  return created;
 }
 
 export class WorkItemStorageV6 {
@@ -320,6 +484,131 @@ export class WorkItemStorageV6 {
       const created = this.getRequired(input.id);
       this.insertIdempotency(
         "work.create",
+        input.proof,
+        input.idempotencyKey,
+        input.requestFingerprint,
+        input.id,
+        input.createdAt,
+        input.expiresAt,
+        created,
+      );
+      return created;
+    });
+  }
+
+  /** Creates the active Root Work Item for a root Session restore.
+   * The terminal predecessor and its history remain immutable.
+   */
+  createRootSuccessor(input: {
+    id: string;
+    predecessorWorkItemId: string;
+    rootSessionId: string;
+    goal: string;
+    scope: string;
+    completionCriteria: string;
+    authority: string;
+    sourceIdentity: WorkItem["sourceIdentity"];
+    principalSessionId: string;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    createdAt: string;
+    expiresAt: string;
+    proof: MutationAuthorityProof;
+  }): WorkItem {
+    return this.transaction(() => {
+      const replay = this.resolveIdempotency(
+        "work.restore",
+        input.proof,
+        input.idempotencyKey,
+        input.requestFingerprint,
+        input.createdAt,
+      );
+      if (replay) return replay;
+      assertGrantProofCurrent(this.db, input.proof, new Date(input.createdAt));
+      const predecessor = this.getRequired(input.predecessorWorkItemId);
+      if (
+        !isRootWorkItem(predecessor)
+        || predecessor.rootSessionId !== input.rootSessionId
+        || predecessor.state === "pending"
+        || predecessor.state === "in_progress"
+        || predecessor.state === "waiting"
+      ) {
+        throw new WorkItemAggregationConflictError(
+          "WORK_ITEM_ROOT_SUCCESSOR_INVALID",
+          "A Root Work Item successor requires a terminal predecessor in the same root Session.",
+          { predecessorWorkItemId: input.predecessorWorkItemId },
+        );
+      }
+      const active = this.db.prepare(`
+        SELECT id FROM work_items_v6
+        WHERE kind = 'root' AND root_session_id = ?
+          AND state IN ('pending', 'in_progress', 'waiting')
+        LIMIT 1
+      `).get(input.rootSessionId) as { id: string } | undefined;
+      if (active) {
+        throw new WorkItemAggregationConflictError(
+          "WORK_ITEM_ROOT_SUCCESSOR_ACTIVE",
+          "The root Session already has an active Root Work Item.",
+          { workItemId: active.id },
+        );
+      }
+      const sourceIdentity = { ...input.sourceIdentity };
+      const payload: Extract<WorkItemEvent, { type: "created" }>['payload'] = {
+        kind: "root",
+        rootSessionId: input.rootSessionId,
+        creatorSessionId: input.rootSessionId,
+        targetSessionId: input.rootSessionId,
+        parentWorkItemId: null,
+        predecessorWorkItemId: input.predecessorWorkItemId,
+        sourceIdentity,
+        contract: {
+          goal: input.goal,
+          scope: input.scope,
+          completionCriteria: input.completionCriteria,
+          authority: input.authority,
+        },
+        progress: { progressSummary: "", blockers: [], nextAction: "" },
+        state: "pending",
+        result: null,
+      };
+      assertWorkItemEventPayloadWithinLimit("created", payload);
+      this.db.prepare(`
+        INSERT INTO work_items_v6 (
+          id, kind, contract_revision, root_session_id, creator_session_id,
+          target_session_id, parent_work_item_id, predecessor_work_item_id,
+          goal, scope, completion_criteria, authority, source_identity_json,
+          state, revision, progress_summary, blockers_json, next_action,
+          result_json, created_at, updated_at
+        ) VALUES (?, 'root', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'pending', 1, '', '[]', '', NULL, ?, ?)
+      `).run(
+        input.id,
+        WORK_ITEM_CONTRACT_REVISION,
+        input.rootSessionId,
+        input.rootSessionId,
+        input.rootSessionId,
+        input.predecessorWorkItemId,
+        input.goal,
+        input.scope,
+        input.completionCriteria,
+        input.authority,
+        serializeJson(sourceIdentity, "Work Item source identity"),
+        input.createdAt,
+        input.createdAt,
+      );
+      this.insertEvent({
+        workItemId: input.id,
+        revision: 1,
+        type: "created",
+        actorSessionId: input.principalSessionId,
+        payload,
+        createdAt: input.createdAt,
+        proof: input.proof,
+        operationId: workItemOperationId("work.restore", input.proof, input.requestFingerprint),
+        idempotencyKey: input.idempotencyKey,
+      });
+      const created = this.getRequired(input.id);
+      this.insertIdempotency(
+        "work.restore",
         input.proof,
         input.idempotencyKey,
         input.requestFingerprint,
@@ -1217,6 +1506,7 @@ function parseWorkItem(row: WorkItemRow): WorkItem {
     sequence: row.sequence,
     contractRevision: WORK_ITEM_CONTRACT_REVISION,
     ...binding,
+    ...(row.kind === "root" ? { predecessorWorkItemId: row.predecessor_work_item_id ?? null } : {}),
     state: row.state,
     revision: row.revision,
     result,
@@ -1274,6 +1564,9 @@ function createdEventPayload(item: WorkItem): Extract<WorkItemEvent, { type: "cr
     creatorSessionId: item.creatorSessionId,
     targetSessionId: item.targetSessionId,
     parentWorkItemId: item.parentWorkItemId,
+    ...(item.kind === "root" && item.predecessorWorkItemId !== undefined
+      ? { predecessorWorkItemId: item.predecessorWorkItemId }
+      : {}),
     sourceIdentity: { ...item.sourceIdentity },
     contract: contractProjection(item),
     progress: item.kind === "root"

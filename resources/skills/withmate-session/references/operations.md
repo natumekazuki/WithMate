@@ -37,11 +37,11 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 41 operations:
+The CLI and MCP expose the same 49 operations:
 
 - Runtime: `runtime.catalog`
 - Budget: `budget.get`, `budget.list`, `budget.configure`
-- Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.rename`
+- Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.configure`, `session.rename`, `session.move.manifest`, `session.move`, `session.clone`, `session.restore`, `session.archive`, `session.delete.manifest`, `session.delete`
 - SessionFolder: `session.files.list`, `session.files.read_text`, `session.files.write_text`
 - Work Item: `work.create`, `work.list`, `work.get`, `work.revise`, `work.history.append`, `work.history.list`, `work.transition`, `work.result`, `work.cancel`, `work.aggregation.get`, `work.aggregation.list`, `work.aggregation.decide`, `work.aggregation.retry`
 - Turn: `turn.options`, `turn.run`, `turn.enqueue`, `turn.list`, `turn.get`, `turn.cancel`
@@ -51,6 +51,10 @@ The CLI and MCP expose the same 41 operations:
 
 CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`.
 Coordination commands use `coordination event <verb>`.
+
+Session lifecycle operations use a read-only manifest before a move or delete mutation. `session.move.manifest` requires the target `sessionId` and `destinationRootSessionId`; pass its `manifestRevision` and the unchanged transfer plan to `session.move`. `session.delete.manifest` is a read-only precondition for `session.delete`. In Slice 3, `session.delete` creates a tombstone and retains Session history, budget ledger, retry identity, and the SessionFolder workspace. The existing cleanup path for a SessionFolder attached to a directory workspace remains in effect. Physical purge requires a later retention and purge-scope contract.
+
+For a Copilot provider tuple, the standard agent uses `customAgentName: ""`. Only a selected Copilot custom agent supplies a non-empty name; Codex tuples omit that field.
 
 ## Resource budgets
 
@@ -141,7 +145,7 @@ A wait timeout and MCP or CLI disconnect affect delivery only. They do not cance
 
 ## Idempotency and reconciliation
 
-Effect-bearing operations are Session create and rename, Session file write, Work Item create, transition, result, cancel, aggregation decide, and aggregation retry, Turn run, enqueue, and cancel, interaction response, Coordination create, resolve, consume, cancel, and correct, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
+Effect-bearing operations are Session create, configure, rename, move, clone, restore, archive, and delete, Session file write, Work Item create, transition, result, cancel, aggregation decide, and aggregation retry, Turn run, enqueue, and cancel, interaction response, Coordination create, resolve, consume, cancel, and correct, and SessionFolder transcript export. Manifest reads are read-only. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
 
 - Same operation, same key, same effect-bearing input: converge on the canonical result.
 - Same operation and key, different effect-bearing input: `IDEMPOTENCY_CONFLICT` with no new effect.

@@ -112,16 +112,54 @@ export class SessionAuthorityService {
     };
   }
 
+  authorizeConstruction<T extends { placement: { kind: string; parentSessionId?: string } }>(
+    actorSessionId: string,
+    input: T,
+    now = this.now(),
+  ): AuthorizedOperation<T> {
+    return this.authorizeSessionAct(actorSessionId, "session.create", input, now);
+  }
+
+  /** Resolve the destination-root side of a cross-root move inside the
+   * lifecycle transaction. It deliberately uses the canonical destination
+   * root Session as actor; callers cannot supply a root or owner in the proof.
+   */
+  authorizeTransferDestination<T extends { sessionId: string; destinationRootSessionId: string }>(
+    actorSessionId: string,
+    destinationRootSessionId: string,
+    operation: Extract<SessionRuntimeOperation, "session.move" | "session.move.manifest">,
+    input: T,
+    now = this.now(),
+  ): AuthorizedOperation<T> {
+    if (input.destinationRootSessionId !== destinationRootSessionId) {
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The destination authority input does not match its canonical root.");
+    }
+    const destination = requireSessionIdentity(this.db, destinationRootSessionId);
+    if (destination.rootSessionId !== destinationRootSessionId || destination.parentSessionId !== null) {
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The destination authority owner must be a root Session.");
+    }
+    const actor = requireSessionIdentity(this.db, actorSessionId);
+    if (actorSessionId === destinationRootSessionId) {
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The destination owner cannot impersonate the transfer actor.");
+    }
+    const proof = this.authorizeCanonicalSession(actorSessionId, operation, input, now, {
+      providerId: "internal",
+      executionGeneration: "internal",
+    }, destinationRootSessionId);
+    return { input, proof };
+  }
+
   private authorizeCanonicalSession(
     actorSessionId: string,
     operation: SessionRuntimeOperation,
     input: unknown,
     now: Date,
     runtime: { providerId: string; executionGeneration: string },
+    transferDestinationRootSessionId?: string,
   ): MutationAdmissionProof {
     const actor = requireSessionIdentity(this.db, actorSessionId);
     const definition = SESSION_AUTHORITY_OPERATION_DEFINITIONS[operation];
-    const scopes = resolveScopes(this.db, actor, operation, input);
+    const scopes = resolveScopes(this.db, actor, operation, input, transferDestinationRootSessionId);
     const grants = listActiveSessionAuthorityGrants(this.db, actor.sessionId, now);
     for (const candidate of scopes) {
       const request = {
@@ -179,6 +217,7 @@ function resolveScopes(
   actor: SessionIdentity,
   operation: SessionRuntimeOperation,
   input: unknown,
+  transferDestinationRootSessionId?: string,
 ): ScopeCandidate[] {
   const definition = SESSION_AUTHORITY_OPERATION_DEFINITIONS[operation];
   const record = objectInput(input);
@@ -213,7 +252,31 @@ function resolveScopes(
     return sessionScopes(db, actor, requiredString(record.targetSessionId, "targetSessionId"), definition.resourceKind);
   }
   if (definition.scopeSource === "session") {
-    return sessionScopes(db, actor, requiredString(record.sessionId, "sessionId"), definition.resourceKind);
+    const targetSessionId = requiredString(record.sessionId, "sessionId");
+    const destinationRootSessionId = typeof record.destinationRootSessionId === "string"
+      ? record.destinationRootSessionId
+      : null;
+    if ((operation === "session.move" || operation === "session.move.manifest")
+      && transferDestinationRootSessionId !== undefined
+      && destinationRootSessionId === transferDestinationRootSessionId) {
+      const target = requireSessionIdentity(db, targetSessionId);
+      const destination = requireSessionIdentity(db, transferDestinationRootSessionId);
+      if (target.rootSessionId !== transferDestinationRootSessionId
+        && destination.parentSessionId === null) {
+        return [{
+          scope: {
+            resourceKind: definition.resourceKind,
+            resourceId: targetSessionId,
+            rootSessionId: transferDestinationRootSessionId,
+            ownerKind: "session",
+            ownerId: transferDestinationRootSessionId,
+            relation: "root_owner",
+          },
+          targetRole: destination.role,
+        }];
+      }
+    }
+    return sessionScopes(db, actor, targetSessionId, definition.resourceKind);
   }
   if (definition.scopeSource === "work_item" || definition.scopeSource === "parent_work_item") {
     const key = definition.scopeSource === "parent_work_item" ? "parentWorkItemId" : "workItemId";

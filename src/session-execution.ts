@@ -41,7 +41,44 @@ export type SessionExecution = {
 export type SessionExecutionStorageRecord = SessionExecution & {
   sequence: number;
   request: unknown;
+  /** Binding captured when the execution was admitted. */
+  binding?: SessionExecutionBindingSnapshot;
 };
+
+export type SessionExecutionBindingSnapshot = Readonly<{
+  bindingRevision: number;
+  providerId: string;
+  modelId: string;
+  reasoningEffort: string;
+  customAgentName: string;
+  catalogRevision: number;
+  threadId: string;
+  workspaceLabel: string;
+  workspacePath: string;
+  branch: string;
+  accessMode: string;
+  approvalMode: string;
+  codexSandboxMode: string;
+  codexSpeed: string;
+  codexReviewer: string;
+  allowedAdditionalDirectories: readonly string[];
+  characterId: string;
+  characterName: string;
+  characterIconPath: string;
+  characterThemeColors: Readonly<Record<string, string>>;
+  characterRuntimeSnapshot: unknown | null;
+  characterRuntimeIdentity: string | null;
+  workspaceGrant: Readonly<Record<string, unknown>> | null;
+  providerGeneration: string | null;
+  executionGeneration: string | null;
+  roleBinding: Readonly<{
+    sessionRole: string;
+    roleContractRevision: number;
+    rootSessionId: string;
+    parentSessionId: string | null;
+    delegationDepth: number;
+  }> | null;
+}>;
 
 export type SessionExecutionOriginSnapshot = {
   sourceSessionId: string;

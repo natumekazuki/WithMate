@@ -51,6 +51,7 @@ import {
   SessionAttachmentSnapshotLimitError,
 } from "./session-attachment-snapshot.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
+import type { SessionExecutionBindingSnapshot } from "../src/session-execution.js";
 import {
   resolveWorkspaceDirectoryValidationMessage,
   type WorkspaceDirectoryValidationResult,
@@ -64,6 +65,36 @@ const DEFAULT_PROVIDER_CANCEL_GRACE_MS = 10_000;
 const DEFAULT_AUDIT_ENRICHMENT_GRACE_MS = 5_000;
 const DEFAULT_APPRAISAL_READY_RETRY_MS = 1_000;
 const AUDIT_ENRICHMENT_TIMEOUT = Symbol("audit-enrichment-timeout");
+
+function applyCapturedExecutionBinding(
+  session: Session,
+  binding: SessionExecutionBindingSnapshot,
+): Session {
+  return {
+    ...session,
+    provider: binding.providerId,
+    model: binding.modelId,
+    reasoningEffort: binding.reasoningEffort as Session["reasoningEffort"],
+    customAgentName: binding.customAgentName,
+    catalogRevision: binding.catalogRevision,
+    threadId: binding.threadId,
+    workspaceLabel: binding.workspaceLabel,
+    workspacePath: binding.workspacePath,
+    branch: binding.branch,
+    accessMode: binding.accessMode as Session["accessMode"],
+    approvalMode: binding.approvalMode as Session["approvalMode"],
+    codexSandboxMode: binding.codexSandboxMode as Session["codexSandboxMode"],
+    codexSpeed: binding.codexSpeed as Session["codexSpeed"],
+    codexReviewer: binding.codexReviewer as Session["codexReviewer"],
+    allowedAdditionalDirectories: [...binding.allowedAdditionalDirectories],
+    characterId: binding.characterId,
+    character: binding.characterName,
+    characterIconPath: binding.characterIconPath,
+    characterThemeColors: binding.characterThemeColors as Session["characterThemeColors"],
+    characterRuntimeSnapshot: binding.characterRuntimeSnapshot as Session["characterRuntimeSnapshot"],
+    roleBinding: binding.roleBinding as Session["roleBinding"],
+  };
+}
 
 export type ExternalSessionTurnResult = {
   session: Session;
@@ -924,11 +955,14 @@ export class SessionRuntimeService {
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
 
-  private upsertTerminalSession(
+  private async upsertTerminalSession(
     session: Session,
     terminalCommit: SessionTurnTerminalCommit,
-  ): Awaitable<Session> {
-    return this.deps.upsertTerminalSession?.(session, terminalCommit) ?? this.deps.upsertSession(session);
+  ): Promise<Session> {
+    return await Promise.resolve(
+      this.deps.upsertTerminalSession?.(session, terminalCommit)
+        ?? this.deps.upsertSession(session),
+    );
   }
 
   hasInFlightRuns(): boolean {
@@ -1025,16 +1059,18 @@ export class SessionRuntimeService {
     catalogRevision: number,
     request: RunSessionTurnRequest,
     executionId?: string,
+    binding?: SessionExecutionBindingSnapshot,
   ): Promise<ExternalSessionTurnResult> {
-    return this.runSessionTurnWithCatalog(sessionId, request, catalogRevision, executionId);
+    return this.runSessionTurnWithCatalog(sessionId, request, catalogRevision, executionId, binding);
   }
 
   async runQueuedGuiSessionTurn(
     sessionId: string,
     request: RunSessionTurnRequest,
     executionId: string,
+    binding?: SessionExecutionBindingSnapshot,
   ): Promise<ExternalSessionTurnResult> {
-    return this.runSessionTurnWithCatalog(sessionId, request, null, executionId);
+    return this.runSessionTurnWithCatalog(sessionId, request, null, executionId, binding);
   }
 
   private async runSessionTurnWithCatalog(
@@ -1042,6 +1078,7 @@ export class SessionRuntimeService {
     request: RunSessionTurnRequest,
     externalCatalogRevision: number | null,
     externalExecutionId?: string,
+    capturedBinding?: SessionExecutionBindingSnapshot,
   ): Promise<ExternalSessionTurnResult> {
     const { clientRequestId, submitSource } = normalizeSessionTurnCorrelation(request);
     const alreadyInFlight = this.isRunInFlight(sessionId);
@@ -1071,6 +1108,7 @@ export class SessionRuntimeService {
       runAbortController,
       externalCatalogRevision,
       externalExecutionId,
+      capturedBinding,
     );
     try {
       return await waitForSetupWithCancelDeadline(
@@ -1229,6 +1267,7 @@ export class SessionRuntimeService {
     runAbortController: AbortController,
     externalCatalogRevision: number | null,
     externalExecutionId?: string,
+    capturedBinding?: SessionExecutionBindingSnapshot,
   ): Promise<ExternalSessionTurnResult> {
     const { clientRequestId, submitSource } = normalizeSessionTurnCorrelation(request);
     const observedAt = (this.deps.currentDate ?? (() => new Date()))();
@@ -1247,13 +1286,16 @@ export class SessionRuntimeService {
     const resolvedSession = await Promise.resolve(
       this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession,
     );
-    await this.validateWorkspace(resolvedSession.workspacePath);
+    const boundSession = capturedBinding
+      ? applyCapturedExecutionBinding(resolvedSession, capturedBinding)
+      : resolvedSession;
+    await this.validateWorkspace(boundSession.workspacePath);
     const shouldResetCharacterAuthoringThread = storedSession.sessionKind === "character-authoring"
       && storedSession.characterRuntimeSnapshot !== null
-      && resolvedSession.characterRuntimeSnapshot === null;
+      && boundSession.characterRuntimeSnapshot === null;
     let session = shouldResetCharacterAuthoringThread
-      ? { ...resolvedSession, threadId: "" }
-      : resolvedSession;
+      ? { ...boundSession, threadId: "" }
+      : boundSession;
     if (shouldResetCharacterAuthoringThread) {
       if (!this.deps.clearCharacterAuthoringRuntimeState) {
         throw new Error("Character authoring runtime clearのstorageが利用できないよ。");

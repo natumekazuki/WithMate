@@ -1,5 +1,12 @@
+import { SESSION_ROLE_CHILDREN, type SessionRole } from "../src/session-role-binding.js";
+import { restoreRootBudgetWithinTransaction } from "./session-lifecycle-restore.js";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { SessionCrudError } from "./session-crud-service.js";
+import { restoreRootWorkItemWithinTransaction } from "./work-item-storage-v6.js";
+import { applySessionMove } from "./session-lifecycle-move.js";
+import { validateSessionConstruction, initializeSessionConstruction } from "./session-lifecycle-creation.js";
+import type { SessionRuntimeCreateInput } from "../src/session-external-runtime-contract.js";
 
 import {
   cloneHomeSessionSummaries,
@@ -90,6 +97,14 @@ import type {
   SessionRunningTurnStartInput,
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
+import type { SessionRuntimeDeleteManifestResult, SessionRuntimeSessionMoveManifestResult } from "../src/session-external-runtime-contract.js";
+import {
+  SessionLifecycleStorage,
+  type PrepareLifecycleMutationInput,
+  type SessionLifecycleOperationRecord,
+  type SessionLifecycleOperation,
+} from "./session-lifecycle-storage.js";
+import { buildSessionLifecycleManifest } from "./session-lifecycle-manifest.js";
 
 type SessionV6Row = {
   id: string;
@@ -494,6 +509,47 @@ function normalizeSessionForStorage(session: Session): Session {
   return normalized;
 }
 
+function sessionLifecyclePatch(session: Session): import("./session-lifecycle-storage.js").SessionLifecycleSessionPatch {
+  return {
+    title: session.taskTitle,
+    state: toV6State(session) as "active" | "completed" | "failed" | "archived",
+    providerId: session.provider,
+    catalogRevision: session.catalogRevision,
+    modelId: session.model,
+    reasoningEffort: session.reasoningEffort,
+    customAgentName: session.customAgentName,
+    approvalMode: session.approvalMode,
+    codexSandboxMode: session.codexSandboxMode,
+    allowedAdditionalDirectories: session.allowedAdditionalDirectories,
+    runtimePolicyJson: JSON.stringify({
+      appStatus: session.status,
+      runState: session.runState,
+      workspaceLabel: session.workspaceLabel,
+      branch: session.branch,
+      accessMode: session.accessMode,
+      sourceSchemaVersion: session.sourceSchemaVersion,
+      characterId: session.characterId,
+      characterName: session.character,
+      characterIconPath: session.characterIconPath,
+      characterThemeColors: session.characterThemeColors,
+      codexSpeed: session.codexSpeed,
+      codexReviewer: session.codexReviewer,
+    }),
+    threadId: session.threadId,
+    characterId: session.characterRuntimeSnapshot ? session.characterId : null,
+    characterSnapshotJson: session.characterRuntimeSnapshot ? stringifyCharacterRuntimeSnapshot(session.characterRuntimeSnapshot) : null,
+    workspacePath: session.workspacePath,
+    isPinned: session.isPinned,
+    binding: session.roleBinding ? {
+      sessionRole: session.roleBinding.sessionRole,
+      roleContractRevision: session.roleBinding.roleContractRevision,
+      rootSessionId: session.roleBinding.rootSessionId,
+      parentSessionId: session.roleBinding.parentSessionId,
+      delegationDepth: session.roleBinding.delegationDepth,
+    } : undefined,
+  };
+}
+
 function encodeMessage(message: Message): string {
   return JSON.stringify(message.artifact
     ? { ...message, artifact: summarizeMessageArtifact(message.artifact) }
@@ -555,6 +611,7 @@ function decodeMessage(row: MessageV6Row): Message | null {
 export class SessionStorageV6 {
   private readonly db: DatabaseSync;
   private readonly resourceBudgetStorage: ResourceBudgetStorage;
+  private readonly lifecycleStorage: SessionLifecycleStorage;
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
@@ -562,6 +619,7 @@ export class SessionStorageV6 {
     ensureV6Schema(this.db);
     this.ensureSchema();
     this.resourceBudgetStorage = new ResourceBudgetStorage(this.db);
+    this.lifecycleStorage = new SessionLifecycleStorage(this.db);
   }
 
   listRootMemberSessionIds(sessionId: string): string[] {
@@ -587,7 +645,7 @@ export class SessionStorageV6 {
         b.delegation_depth AS role_delegation_depth
       FROM sessions_v6
       LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
-      WHERE sessions_v6.deleted_at IS NULL
+      WHERE sessions_v6.deleted_at IS NULL AND sessions_v6.state <> 'archived'
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6Row[];
     return cloneSessions(rows.map((row) => this.rowToSession(row)));
@@ -597,7 +655,7 @@ export class SessionStorageV6 {
     const rows = this.db.prepare(`
       SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
-      WHERE deleted_at IS NULL
+      WHERE deleted_at IS NULL AND state <> 'archived'
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6SummaryRow[];
     return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummaryProjection(row)));
@@ -609,7 +667,7 @@ export class SessionStorageV6 {
     const rows = this.db.prepare(`
       SELECT s.id AS session_id, s.title AS task_title
       FROM json_each(?) AS requested
-      INNER JOIN sessions_v6 AS s ON s.id = requested.value AND s.deleted_at IS NULL
+      INNER JOIN sessions_v6 AS s ON s.id = requested.value AND s.deleted_at IS NULL AND s.state <> 'archived'
       ORDER BY requested.key ASC
     `).all(JSON.stringify(normalizedIds)) as RelatedSessionSummaryRow[];
     return rows.map((row) => ({ sessionId: row.session_id, taskTitle: row.task_title }));
@@ -622,7 +680,7 @@ export class SessionStorageV6 {
              b.parent_session_id, b.delegation_depth
       FROM sessions_v6 AS s
       INNER JOIN session_role_bindings_v6 AS b ON b.session_id = s.id
-      WHERE s.id = ? AND s.deleted_at IS NULL
+      WHERE s.id = ? AND s.deleted_at IS NULL AND s.state <> 'archived'
     `).get(sessionId.trim()) as SessionTurnAuthorityRow | undefined;
     if (!row) return null;
     return {
@@ -650,7 +708,7 @@ export class SessionStorageV6 {
       : decodeSessionSummaryCursor(parsed.cursor, parsed.scope, parsed.searchText);
     const search = buildSessionSummarySearchClause("s", parsed.searchText);
     const keyset = buildSessionSummaryKeysetClause("s", cursor);
-    const where: string[] = ["s.deleted_at IS NULL"];
+    const where: string[] = ["s.deleted_at IS NULL", "s.state <> 'archived'"];
     const params: string[] = [];
 
     if (parsed.scope === "pinned") {
@@ -711,12 +769,14 @@ export class SessionStorageV6 {
       FROM sessions_v6 AS s
       WHERE s.session_kind = 'default'
         AND s.deleted_at IS NULL
+        AND s.state <> 'archived'
         AND ${characterIdExpression} IS NOT NULL
         AND NOT EXISTS (
           SELECT 1
           FROM sessions_v6 AS newer
           WHERE newer.session_kind = 'default'
             AND newer.deleted_at IS NULL
+            AND newer.state <> 'archived'
             AND ${newerCharacterIdExpression} = ${characterIdExpression}
             AND (
               newer.last_active_at > s.last_active_at
@@ -740,7 +800,7 @@ export class SessionStorageV6 {
     const row = this.db.prepare(`
       SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
-      WHERE deleted_at IS NULL
+      WHERE deleted_at IS NULL AND state <> 'archived'
         AND ${SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION}(provider_id) = ?
       ORDER BY last_active_at DESC, id DESC
       LIMIT 1
@@ -758,22 +818,245 @@ export class SessionStorageV6 {
         b.delegation_depth AS role_delegation_depth
       FROM sessions_v6
       LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
-      WHERE sessions_v6.id = ? AND sessions_v6.deleted_at IS NULL
+      WHERE sessions_v6.id = ? AND sessions_v6.deleted_at IS NULL AND sessions_v6.state <> 'archived'
     `).get(sessionId) as SessionV6Row | undefined;
     return row ? this.rowToSession(row) : null;
+  }
+
+  getLifecycleSession(sessionId: string, includeArchived = false): Session | null {
+    const row = this.db.prepare(`
+      SELECT sessions_v6.*,
+        b.session_role AS role_session_role,
+        b.role_contract_revision,
+        b.root_session_id AS role_root_session_id,
+        b.parent_session_id AS role_parent_session_id,
+        b.delegation_depth AS role_delegation_depth
+      FROM sessions_v6
+      LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
+      WHERE sessions_v6.id = ? AND sessions_v6.deleted_at IS NULL
+        AND (? = 1 OR sessions_v6.state <> 'archived')
+    `).get(sessionId.trim(), includeArchived ? 1 : 0) as SessionV6Row | undefined;
+    return row ? this.rowToSession(row) : null;
+  }
+
+  getLifecycleOperationByKey(operation: SessionLifecycleOperation, proof: MutationAuthorityProof, key: string, fingerprint: string): SessionLifecycleOperationRecord | null {
+    return this.lifecycleStorage.getLifecycleOperationByKey(operation, proof, key, fingerprint);
+  }
+
+  prepareLifecycleMutation(input: PrepareLifecycleMutationInput & { requestFingerprint: string }): SessionLifecycleOperationRecord {
+    this.assertLifecyclePreconditions(input.operation, input.input, input.proof, input.now);
+    if ((input.operation === "session.create" || input.operation === "session.clone") && input.nextSession) {
+      const constructionProof = input.operation === "session.clone" ? input.destinationProof : input.proof;
+      if (!constructionProof) throw new SessionCrudError("SESSION_STATE_CONFLICT", "Clone construction authority is required.");
+      validateSessionConstruction(this.db, this.lifecycleConstructionInput(input.input, input.nextSession), constructionProof, input.nextSession, input.now);
+    }
+    if (input.operation === "session.move" && input.input.kind === "cross_root") {
+      if (!input.destinationProof) throw new SessionCrudError("SESSION_STATE_CONFLICT", "Destination authority is required.");
+      assertGrantProofCurrent(this.db, input.destinationProof, new Date(input.now));
+    }
+    return this.lifecycleStorage.prepareLifecycleMutation(input);
+  }
+
+  private lifecycleConstructionInput(input: Record<string, unknown>, session: Session): SessionRuntimeCreateInput {
+    return { ...input, workspace: input.workspace ?? { kind: "directory", path: session.workspacePath } } as unknown as SessionRuntimeCreateInput;
+  }
+
+  private assertLifecyclePreconditions(operation: SessionLifecycleOperation, request: Record<string, unknown>, proof: MutationAuthorityProof, now: string): void {
+    assertGrantProofCurrent(this.db, proof, new Date(now));
+    const creating = operation === "session.create" || operation === "session.clone";
+    const sessionId = operation === "session.clone" ? request.sourceSessionId : request.sessionId;
+    if (typeof sessionId === "string") {
+      const current = this.db.prepare("SELECT resource_revision, state, deleted_at FROM sessions_v6 WHERE id = ?")
+        .get(sessionId) as { resource_revision: number; state: string; deleted_at: string | null } | undefined;
+      if (!current || current.deleted_at) throw new SessionCrudError("SESSION_NOT_FOUND", "The Session was not found.");
+      const expected = operation === "session.clone" ? request.expectedSourceRevision : request.expectedRevision;
+      if (current.resource_revision !== expected) throw new SessionResourceRevisionConflictError(sessionId, Number(expected), current.resource_revision);
+      if (operation === "session.restore" ? current.state !== "archived" : current.state === "archived" && operation !== "session.delete") {
+        throw new SessionCrudError("SESSION_STATE_CONFLICT", "The Session lifecycle state does not allow this operation.");
+      }
+      if (operation === "session.configure" && request.kind === "role") {
+        const role = request.sessionRole as SessionRole;
+        const children = this.db.prepare("SELECT session_role FROM session_role_bindings_v6 WHERE parent_session_id = ?").all(sessionId) as Array<{ session_role: SessionRole }>;
+        if (children.some((child) => !(SESSION_ROLE_CHILDREN[role] as readonly string[]).includes(child.session_role))) {
+          throw new SessionCrudError("INVALID_INPUT", "The requested role cannot own the existing children.");
+        }
+        const parent = this.db.prepare("SELECT parent.session_role FROM session_role_bindings_v6 child JOIN session_role_bindings_v6 parent ON parent.session_id = child.parent_session_id WHERE child.session_id = ?").get(sessionId) as { session_role: SessionRole } | undefined;
+        if (parent && !(SESSION_ROLE_CHILDREN[parent.session_role] as readonly string[]).includes(role)) {
+          throw new SessionCrudError("INVALID_INPUT", "The requested role is not allowed by its parent role.");
+        }
+      }
+      if (operation === "session.restore" && request.kind === "root") {
+        const predecessor = this.db.prepare("SELECT state FROM work_items_v6 WHERE root_session_id = ? AND kind = 'root' ORDER BY sequence DESC LIMIT 1").get(sessionId) as { state: string } | undefined;
+        if (!predecessor || !["completed", "partially_completed", "failed", "canceled"].includes(predecessor.state)) {
+          throw new SessionCrudError("SESSION_STATE_CONFLICT", "Root restore requires a terminal predecessor Work Item.");
+        }
+      }
+      if (operation === "session.move" || operation === "session.delete") {
+        const manifest = this.getLifecycleManifest(sessionId, typeof request.destinationRootSessionId === "string" ? request.destinationRootSessionId : undefined);
+        const expectedManifest = operation === "session.delete" ? request.manifestRevision : request.transferManifestRevision;
+        if ((operation === "session.delete" || request.kind === "cross_root") && manifest.manifestRevision !== expectedManifest) {
+          throw new SessionCrudError("SESSION_REVISION_CONFLICT", "The lifecycle manifest has changed.", true);
+        }
+        if (operation === "session.delete" && !(manifest as SessionRuntimeDeleteManifestResult).deletable) {
+          throw new SessionCrudError("SESSION_STATE_CONFLICT", "Referenced resources prevent deletion.");
+        }
+      }
+      if (operation === "session.archive" || operation === "session.delete" || operation === "session.restore") {
+        const active = this.db.prepare("SELECT 1 FROM session_executions_v6 WHERE session_id = ? AND state IN ('queued','running','cancel_requested') LIMIT 1").get(sessionId);
+        if (active) throw new SessionCrudError("SESSION_STATE_CONFLICT", "Active executions prevent this lifecycle operation.");
+      }
+    }
+    if (creating) {
+      const placement = request.placement as { kind: string; parentSessionId?: string };
+      const container = placement.kind === "child" ? placement.parentSessionId : proof.principal.kind === "agent" ? proof.principal.actorSessionId : null;
+      if (container) {
+        const actual = this.getSessionResourceRevision(container);
+        if (actual !== request.expectedContainerRevision) throw new SessionResourceRevisionConflictError(container, Number(request.expectedContainerRevision), actual ?? 0);
+      }
+    }
+  }
+
+  commitLifecycleMutation(input: {
+    operationId: string;
+    expectedOperationRevision: number;
+    proof: MutationAuthorityProof;
+    now: string;
+    projectResult(session: Session): unknown;
+  }): SessionLifecycleOperationRecord {
+    const record = this.lifecycleStorage.get(input.operationId);
+    if (!record) throw new Error(`Session lifecycle operation was not found: ${input.operationId}`);
+    const next = record.manifest.nextSession as Session | null | undefined;
+    const operation = record.operation;
+    return this.lifecycleStorage.commitLifecycleMutationAtomic(input, () => {
+      const request = record.manifest.input as Record<string, unknown>;
+      this.assertLifecyclePreconditions(operation, request, input.proof, input.now);
+      if (next) {
+        const current = this.getLifecycleSession(next.id, true);
+        if (!current) {
+          const construction = this.lifecycleConstructionInput(request, next);
+          const constructionProof = operation === "session.clone" ? record.manifest.destinationProof as MutationAuthorityProof | null : input.proof;
+          if (!constructionProof) throw new SessionCrudError("SESSION_STATE_CONFLICT", "Clone construction authority is required.");
+          validateSessionConstruction(this.db, construction, constructionProof, next, input.now);
+          this.writeSession(normalizeSessionForStorage(next), "create");
+          initializeSessionConstruction(this.db, construction, constructionProof, next, record.operationId, input.now);
+          appendSessionResourceEvent(this.db, { sessionId: next.id, revision: this.getSessionResourceRevision(next.id)!,
+            eventKind: "created", proof: input.proof, operationId: record.operationId, idempotencyKey: record.idempotencyKey,
+            occurredAt: input.now, payload: { operation } });
+          const placement = construction.placement;
+          const container = placement.kind === "child" ? placement.parentSessionId : input.proof.principal.kind === "agent" ? input.proof.principal.actorSessionId : null;
+          if (container) claimSessionContainerRevision(this.db, {
+            sessionId: container, expectedRevision: construction.expectedContainerRevision, eventKind: "child_created", proof: input.proof,
+            operationId: record.operationId, idempotencyKey: record.idempotencyKey, occurredAt: input.now, payload: { childSessionId: next.id },
+          });
+        } else {
+          if (operation === "session.restore") {
+            const isRoot = current.roleBinding?.rootSessionId === current.id && current.roleBinding.parentSessionId === null;
+            if ((request.kind === "root") !== isRoot) throw new SessionCrudError("SESSION_STATE_CONFLICT", "The restore placement does not match the archived Session.");
+            if (isRoot) {
+              const predecessor = this.db.prepare("SELECT id, scope, completion_criteria, authority, source_identity_json FROM work_items_v6 WHERE kind = 'root' AND root_session_id = ? ORDER BY sequence DESC LIMIT 1")
+                .get(current.id) as { id: string; scope: string; completion_criteria: string; authority: string; source_identity_json: string } | undefined;
+              if (!predecessor) throw new SessionCrudError("SESSION_STATE_CONFLICT", "The predecessor Root Work Item is missing.");
+              restoreRootWorkItemWithinTransaction(this.db, next, {
+                predecessorWorkItemId: predecessor.id, goal: String(request.purpose), scope: predecessor.scope,
+                completionCriteria: predecessor.completion_criteria, authority: predecessor.authority,
+                sourceIdentity: JSON.parse(predecessor.source_identity_json), idempotencyKey: record.idempotencyKey,
+                requestFingerprint: record.requestFingerprint,
+              }, input.proof, record.operationId, input.now);
+              restoreRootBudgetWithinTransaction(this.db, current.id, request.budget as import("../src/session-external-runtime-contract.js").SessionRuntimeInitialBudget,
+                input.proof, record.operationId, input.now);
+              this.resourceBudgetStorage.consumeCount({ sessionId: current.id, dimension: "workItems", idempotencyKey: record.operationId, consumedAt: input.now });
+            }
+          }
+          this.lifecycleStorage.applySessionMutation({
+            sessionId: next.id,
+            expectedRevision: Number(request.expectedRevision),
+            patch: sessionLifecyclePatch(next),
+            eventKind: `lifecycle.${operation}`,
+            proof: input.proof,
+            operationId: record.operationId,
+            idempotencyKey: record.idempotencyKey,
+            occurredAt: input.now,
+            payload: { operation, lifecycleOperationId: record.operationId },
+          });
+        }
+        const stored = this.getLifecycleSession(next.id, true);
+        if (!stored) throw new Error("The lifecycle Session is missing after mutation.");
+        return input.projectResult(stored);
+      }
+      if (record.targetSessionId && operation === "session.move") {
+        const manifest = this.getLifecycleManifest(record.targetSessionId, typeof request.destinationRootSessionId === "string" ? request.destinationRootSessionId : undefined);
+        applySessionMove(this.db, { ...(request as unknown as import("./session-lifecycle-move.js").SessionMoveInput), descendants: manifest.descendants,
+          destinationProof: record.manifest.destinationProof as MutationAuthorityProof | undefined }, input.proof, input.now, record.operationId);
+        const moved = this.getLifecycleSession(record.targetSessionId);
+        if (!moved) throw new Error("The moved Session is missing.");
+        return input.projectResult(moved);
+      }
+      if (record.targetSessionId && operation === "session.archive") {
+        const ids = [record.targetSessionId, ...(request.descendantPolicy === "archive_descendants"
+          ? this.getLifecycleManifest(record.targetSessionId).descendants.map((entry) => entry.sessionId) : [])];
+        for (const id of ids) {
+          if (this.db.prepare("SELECT 1 FROM session_executions_v6 WHERE session_id = ? AND state IN ('queued','running','cancel_requested') LIMIT 1").get(id)) {
+            throw new SessionCrudError("SESSION_STATE_CONFLICT", "An active descendant execution prevents archive.");
+          }
+          this.lifecycleStorage.applySessionMutation({
+            sessionId: id, expectedRevision: this.getSessionResourceRevision(id) ?? 0,
+            patch: { state: "archived" }, eventKind: "lifecycle.archive", proof: input.proof,
+            operationId: record.operationId, idempotencyKey: record.idempotencyKey, occurredAt: input.now,
+            payload: { reason: request.reason },
+          });
+        }
+        const archived = this.getLifecycleSession(record.targetSessionId, true);
+        if (!archived) throw new Error("The archived Session is missing.");
+        return input.projectResult(archived);
+      }
+      if (record.targetSessionId && operation === "session.delete") {
+        const current = this.getLifecycleSession(record.targetSessionId, true);
+        if (!current) throw new SessionCrudError("SESSION_NOT_FOUND", "The Session was not found.");
+        const manifest = this.getLifecycleManifest(record.targetSessionId) as SessionRuntimeDeleteManifestResult;
+        if (!manifest.deletable) throw new SessionCrudError("SESSION_STATE_CONFLICT", "Referenced resources prevent deletion.");
+        this.tombstoneStoredSessionsByIds([record.targetSessionId], {
+          proof: input.proof,
+          operationId: record.operationId,
+          idempotencyKey: record.idempotencyKey,
+          occurredAt: input.now,
+        });
+        return input.projectResult(current);
+      }
+      throw new SessionCrudError("SESSION_STATE_CONFLICT", "The lifecycle operation has no applicable mutation.");
+    });
+  }
+
+  completeLifecycleMutation(operationId: string, expectedRevision: number, now: string): SessionLifecycleOperationRecord {
+    return this.lifecycleStorage.completeLifecycleMutation(operationId, expectedRevision, now);
+  }
+
+  rejectLifecycleMutation(operationId: string, expectedRevision: number, error: unknown, now: string): void {
+    this.lifecycleStorage.reject(operationId, expectedRevision, error, now);
+  }
+
+  markRecoveryRequiredLifecycleMutation(operationId: string, expectedRevision: number, error: unknown, now: string): void {
+    this.lifecycleStorage.markRecoveryRequired(operationId, expectedRevision, error, now);
+  }
+
+  listPendingLifecycleOperations(): SessionLifecycleOperationRecord[] {
+    return this.lifecycleStorage.listPending();
+  }
+
+  getLifecycleManifest(sessionId: string, destinationRootSessionId?: string): SessionRuntimeDeleteManifestResult | SessionRuntimeSessionMoveManifestResult {
+    return buildSessionLifecycleManifest(this.db, sessionId, destinationRootSessionId);
   }
 
   getSessionSummary(sessionId: string): SessionSummary | null {
     const row = this.db.prepare(`
       SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
-      WHERE id = ? AND deleted_at IS NULL
+      WHERE id = ? AND deleted_at IS NULL AND state <> 'archived'
     `).get(sessionId) as SessionV6SummaryRow | undefined;
     return row ? this.rowToSessionSummaryProjection(row) : null;
   }
 
-  getSessionResourceRevision(sessionId: string): number | null {
-    return readSessionResourceRevision(this.db, sessionId);
+  getSessionResourceRevision(sessionId: string, includeDeleted = false): number | null {
+    return readSessionResourceRevision(this.db, sessionId, includeDeleted);
   }
 
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult;
@@ -799,6 +1082,7 @@ export class SessionStorageV6 {
           FROM sessions_v6
           WHERE session_kind = 'default'
             AND deleted_at IS NULL
+            AND state <> 'archived'
             AND (? IS NULL OR EXISTS (
               SELECT 1 FROM session_role_bindings_v6 AS root_scope
               WHERE root_scope.session_id = sessions_v6.id AND root_scope.root_session_id = ?
@@ -822,6 +1106,7 @@ export class SessionStorageV6 {
           FROM sessions_v6
           WHERE session_kind = 'default'
             AND deleted_at IS NULL
+            AND state <> 'archived'
             AND (? IS NULL OR EXISTS (
               SELECT 1 FROM session_role_bindings_v6 AS root_scope
               WHERE root_scope.session_id = sessions_v6.id AND root_scope.root_session_id = ?
@@ -858,7 +1143,7 @@ export class SessionStorageV6 {
              binding.parent_session_id, binding.delegation_depth
       FROM session_role_bindings_v6 AS binding
       INNER JOIN sessions_v6 AS session ON session.id = binding.session_id
-      WHERE binding.session_id = ? AND session.deleted_at IS NULL
+      WHERE binding.session_id = ? AND session.deleted_at IS NULL AND session.state <> 'archived'
     `).get(sessionId) as SessionRoleBindingRow | undefined;
     return row ? decodeSessionRoleBinding(sessionId, row) : null;
   }
@@ -872,8 +1157,8 @@ export class SessionStorageV6 {
       FROM session_role_bindings_v6 AS binding
       INNER JOIN sessions_v6 AS child ON child.id = binding.session_id
       WHERE binding.parent_session_id IN (${placeholders})
-        AND child.deleted_at IS NULL
-    `).all(...uniqueSessionIds) as SessionIdRow[];
+        AND child.deleted_at IS NULL AND child.state <> 'archived'
+    `).all(...uniqueSessionIds) as Array<SessionIdRow & { resource_revision: number }>;
     return new Set(rows.map((row) => row.id));
   }
 
@@ -1555,18 +1840,21 @@ export class SessionStorageV6 {
     const startedAt = Date.now();
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.writeSession(normalized, operation);
+      const terminalSession = terminalCommit
+        ? this.mergeTerminalSessionWithCurrentProjection(normalized)
+        : normalized;
+      this.writeSession(terminalSession, operation);
       if (operation === "create") {
-        this.consumeCreatedSessionResources(normalized);
+        this.consumeCreatedSessionResources(terminalSession);
       }
-      if (operation === "create" && normalized.sessionKind === "default" && normalized.roleBinding) {
-        ensureBaselineSessionAuthority(this.db, normalized.id, normalized.updatedAt);
+      if (operation === "create" && terminalSession.sessionKind === "default" && terminalSession.roleBinding) {
+        ensureBaselineSessionAuthority(this.db, terminalSession.id, terminalSession.updatedAt);
       }
       appendStoredSessionSnapshotEvent(
         this.db,
-        normalized.id,
+        terminalSession.id,
         operation === "create" ? "created" : "stored",
-        normalized.updatedAt,
+        terminalSession.updatedAt,
       );
       if (terminalCommit) {
         writeSessionTurnTerminalCommit(this.db, terminalCommit);
@@ -1601,6 +1889,42 @@ export class SessionStorageV6 {
       storedStatus: stored.status,
     });
     return stored;
+  }
+
+  private mergeTerminalSessionWithCurrentProjection(session: Session): Session {
+    // Use the storage-owned read path here. Public getSession is intentionally
+    // replaceable by callers for post-commit read-back handling; terminal
+    // conflict protection must still complete the transaction when that
+    // read-back is unavailable.
+    const current = this.getLifecycleSession(session.id, true);
+    if (!current) {
+      return session;
+    }
+    return {
+      ...session,
+      taskTitle: current.taskTitle,
+      isPinned: current.isPinned,
+      provider: current.provider,
+      catalogRevision: current.catalogRevision,
+      workspaceLabel: current.workspaceLabel,
+      workspacePath: current.workspacePath,
+      branch: current.branch,
+      accessMode: current.accessMode,
+      characterId: current.characterId,
+      character: current.character,
+      characterIconPath: current.characterIconPath,
+      characterThemeColors: current.characterThemeColors,
+      characterRuntimeSnapshot: current.characterRuntimeSnapshot,
+      approvalMode: current.approvalMode,
+      codexSandboxMode: current.codexSandboxMode,
+      codexSpeed: current.codexSpeed,
+      codexReviewer: current.codexReviewer,
+      model: current.model,
+      reasoningEffort: current.reasoningEffort,
+      customAgentName: current.customAgentName,
+      allowedAdditionalDirectories: [...current.allowedAdditionalDirectories],
+      threadId: current.threadId,
+    };
   }
 
   replaceSessions(nextSessions: Session[]): Session[] {
@@ -2203,7 +2527,12 @@ export class SessionStorageV6 {
     return rows.map((row) => row.id).filter((id) => !retained.has(id));
   }
 
-  private tombstoneStoredSessionsByIds(sessionIds: readonly string[]): void {
+  private tombstoneStoredSessionsByIds(sessionIds: readonly string[], lifecycle?: {
+    proof: MutationAuthorityProof;
+    operationId: string;
+    idempotencyKey: string | null;
+    occurredAt: string;
+  }): void {
     const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
     if (uniqueSessionIds.length === 0) {
       return;
@@ -2212,10 +2541,10 @@ export class SessionStorageV6 {
     this.assertSessionsDeletable(uniqueSessionIds);
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
     const activeRows = this.db.prepare(`
-      SELECT id FROM sessions_v6
+      SELECT id, resource_revision FROM sessions_v6
       WHERE id IN (${placeholders}) AND deleted_at IS NULL
       ORDER BY id
-    `).all(...uniqueSessionIds) as SessionIdRow[];
+    `).all(...uniqueSessionIds) as Array<SessionIdRow & { resource_revision: number }>;
     const deletedAt = new Date().toISOString();
     for (const row of activeRows) {
       this.db.prepare(`
@@ -2223,7 +2552,20 @@ export class SessionStorageV6 {
         SET deleted_at = ?, updated_at = ?, resource_revision = resource_revision + 1
         WHERE id = ? AND deleted_at IS NULL
       `).run(deletedAt, deletedAt, row.id);
-      appendStoredSessionSnapshotEvent(this.db, row.id, "deleted", deletedAt);
+      if (lifecycle) {
+        appendSessionResourceEvent(this.db, {
+          sessionId: row.id,
+          revision: row.resource_revision + 1,
+          eventKind: "lifecycle.session.delete",
+          proof: lifecycle.proof,
+          operationId: lifecycle.operationId,
+          idempotencyKey: lifecycle.idempotencyKey,
+          occurredAt: lifecycle.occurredAt,
+          payload: { deletedAt, operation: "session.delete" },
+        });
+      } else {
+        appendStoredSessionSnapshotEvent(this.db, row.id, "deleted", deletedAt);
+      }
     }
   }
 

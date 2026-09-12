@@ -21,7 +21,10 @@ import {
   type DeleteSessionsLastActiveBeforeRequest,
   type DeleteSessionsResult,
 } from "../src/withmate-window-types.js";
-import type { SessionPersistenceService } from "./session-persistence-service.js";
+import type {
+  SessionLifecycleMutationCallbacks,
+  SessionPersistenceService,
+} from "./session-persistence-service.js";
 import type { SessionRuntimeService } from "./session-runtime-service.js";
 import { parseCreateSessionRequest } from "./create-session-request.js";
 import type { SessionLaunchSelection } from "./session-launch-selection-service.js";
@@ -57,6 +60,8 @@ type MainSessionCommandFacadeDeps = {
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
   resolveSessionLaunchSelection(providerId?: string | null): Promise<SessionLaunchSelection>;
   getSessionPersistenceService(): SessionPersistenceService;
+  /** GUI normal-Session mutations are owned by the application lifecycle service. */
+  getSessionLifecycleMutationCallbacks(): SessionLifecycleMutationCallbacks;
   getSessionRuntimeService(): SessionRuntimeService;
   getSessionExecutionService(): SessionExecutionService;
   cancelSessionRun(sessionId: string): void;
@@ -158,6 +163,10 @@ export class MainSessionCommandFacade {
   }
 
   private async persistCreatedSession(input: CreateSessionInput & { id: string }): Promise<Session> {
+    const lifecycle = this.deps.getSessionLifecycleMutationCallbacks();
+    if (input.sessionKind !== "character-authoring") {
+      return lifecycle.createSession(input);
+    }
     return this.deps.getSessionPersistenceService().createSession(input);
   }
 
@@ -170,6 +179,10 @@ export class MainSessionCommandFacade {
   }
 
   async updateSession(session: Session): Promise<Session> {
+    const lifecycle = this.deps.getSessionLifecycleMutationCallbacks();
+    if (session.sessionKind !== "character-authoring") {
+      return lifecycle.updateSession(session);
+    }
     return this.deps.getSessionPersistenceService().updateSession(session);
   }
 
@@ -179,26 +192,50 @@ export class MainSessionCommandFacade {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    const sessionsById = new Map(this.deps.getSessions().map((session) => [session.id, session] as const));
-    await this.cleanupDeletedSessions(
-      await this.deps.getSessionPersistenceService().deleteSession(sessionId),
-      sessionsById,
-    );
+    const lifecycle = this.deps.getSessionLifecycleMutationCallbacks();
+    const current = this.deps.getSession(sessionId)
+      ?? (await this.deps.getStoredSessionSummaries()).find((session) => session.id === sessionId);
+    if (current?.sessionKind === "character-authoring") {
+      const result = await this.deps.getSessionPersistenceService().deleteSession(sessionId);
+      await this.cleanupDeletedAuthoringSessions(result, new Map([[sessionId, current]]));
+      return;
+    }
+    await lifecycle.deleteSession(sessionId, "tombstone");
   }
 
   async deleteSessionsLastActiveBefore(
     request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
   ): Promise<DeleteSessionsResult> {
     const cutoff = resolveDeleteSessionsLastActiveBeforeCutoff(request);
-    const sessionsById = new Map(
-      [
-        ...await this.deps.getStoredSessionSummaries(),
-        ...this.deps.getSessions(),
-      ].map((session) => [session.id, session] as const),
-    );
-    const result = await this.deps.getSessionPersistenceService().deleteSessionsLastActiveBefore(cutoff);
-    await this.cleanupDeletedSessions(result, sessionsById);
-    return result;
+    const knownSessions = [
+      ...this.deps.getSessions(),
+      ...(await this.deps.getStoredSessionSummaries()),
+    ];
+    const hasCharacterAuthoring = knownSessions.some((session) => session.sessionKind === "character-authoring");
+    const lifecycleResult = await this.deps.getSessionLifecycleMutationCallbacks().deleteSessionsLastActiveBefore(cutoff, "tombstone");
+    if (!hasCharacterAuthoring) return lifecycleResult;
+    const authoringResult = await this.deps.getSessionPersistenceService().deleteSessionsLastActiveBefore(cutoff, "character-authoring");
+    await this.cleanupDeletedAuthoringSessions(authoringResult, new Map(
+      knownSessions.filter((session) => session.sessionKind === "character-authoring").map((session) => [session.id, session]),
+    ));
+    return {
+      cutoffDate: cutoff.cutoffDate,
+      cutoffTimestampMs: cutoff.cutoffTimestampMs,
+      deletedSessionIds: Array.from(new Set([...lifecycleResult.deletedSessionIds, ...authoringResult.deletedSessionIds])),
+      skippedRunningSessionIds: Array.from(new Set([...lifecycleResult.skippedRunningSessionIds, ...authoringResult.skippedRunningSessionIds])),
+    };
+  }
+
+  private async cleanupDeletedAuthoringSessions(
+    result: DeleteSessionsResult,
+    sessionsById: ReadonlyMap<string, Pick<Session, "id" | "workspacePath">>,
+  ): Promise<void> {
+    for (const sessionId of result.deletedSessionIds) {
+      this.deps.dismissSessionTurnNotification(sessionId);
+      const deletedSession = sessionsById.get(sessionId);
+      if (deletedSession && this.deps.isSessionFilesWorkspace(deletedSession)) continue;
+      await this.deps.cleanupSessionFilesDirectory?.(sessionId);
+    }
   }
 
   cancelSessionRun(sessionId: string): void {
@@ -481,22 +518,6 @@ export class MainSessionCommandFacade {
     }
   }
 
-  private async cleanupDeletedSessions(
-    result: DeleteSessionsResult,
-    sessionsById: ReadonlyMap<string, Pick<Session, "id" | "workspacePath">>,
-  ): Promise<void> {
-    for (const sessionId of result.deletedSessionIds) {
-      this.deps.dismissSessionTurnNotification(sessionId);
-    }
-
-    for (const sessionId of result.deletedSessionIds) {
-      const deletedSession = sessionsById.get(sessionId);
-      if (deletedSession && this.deps.isSessionFilesWorkspace(deletedSession)) {
-        continue;
-      }
-      await this.deps.cleanupSessionFilesDirectory?.(sessionId);
-    }
-  }
 }
 
 function trustedExecutionProof(input: {

@@ -790,11 +790,13 @@ describe("withmate-session CLI", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "Copilot Session/Turn createはexpected container revisionとprovider固有tupleを保持する"
+  // fault = "provider別CLI経路だけSessionまたはtarget container revisionを欠落させる"
+  // observable = "dispatched public request envelope"
+  // observation_boundary = "public-boundary"
   // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
-  // failure_mode = "provider別CLI経路だけSessionまたはtarget container revisionを欠落させる"
   // scope = "withmate-session-cli-copilot-create-and-turn"
   // lifecycle = "permanent"
   // @end-test-value
@@ -834,11 +836,13 @@ describe("withmate-session CLI", () => {
     assert.equal(await runWithMateSessionCli([
       "session", "create", "--json", JSON.stringify({
         expectedContainerRevision: 1,
-        sessionRole: "executor",
+        placement: { kind: "child", parentSessionId: "actor-session", sessionRole: "executor" },
         title: "Copilot",
-        provider: "copilot",
-        catalogRevision: 5,
+        character: { characterId: "character-1", expectedDefinitionSha256: "definition-sha256" },
+        provider: { id: "copilot", catalogRevision: 5, model: "claude-sonnet", reasoningEffort: "high", threadContinuity: "reset", approvalMode: "on-request", customAgentName: "reviewer" },
         workspace: { kind: "session_folder" },
+        initialGrant: { kind: "inherit" },
+        budget: { kind: "inherit" },
         idempotencyKey: "create-copilot",
       }),
     ], { stdout: stdout.stream, discover: async () => connection, call: call as any }), WITHMATE_SESSION_CLI_EXIT_CODES.ok);
@@ -864,10 +868,18 @@ describe("withmate-session CLI", () => {
       }),
     ], { stdout: stdout.stream, discover: async () => connection, call: call as any }), WITHMATE_SESSION_CLI_EXIT_CODES.ok);
 
-    assert.deepEqual(requests.map((request) => [request.operation, request.input.provider ?? request.input.turn?.provider]), [
+    assert.deepEqual(requests.map((request) => [request.operation, request.input.provider?.id ?? request.input.turn?.provider]), [
       ["session.create", "copilot"],
       ["turn.run", "copilot"],
     ]);
+    assert.deepEqual(requests[0].input, {
+      expectedContainerRevision: 1,
+      placement: { kind: "child", parentSessionId: "actor-session", sessionRole: "executor" }, title: "Copilot",
+      character: { characterId: "character-1", expectedDefinitionSha256: "definition-sha256" },
+      provider: { id: "copilot", catalogRevision: 5, model: "claude-sonnet", reasoningEffort: "high", threadContinuity: "reset", approvalMode: "on-request", customAgentName: "reviewer" },
+      workspace: { kind: "session_folder" }, initialGrant: { kind: "inherit" }, budget: { kind: "inherit" }, idempotencyKey: "create-copilot",
+    });
+    assert.deepEqual(requests[1].input.turn, turn);
     assert.deepEqual(requests[1].input.terminalFailureNotification, { targetSessionId: "target-session" });
     assert.equal(requests[1].input.expectedContainerRevision, 1);
 
@@ -996,11 +1008,13 @@ describe("withmate-session CLI", () => {
     assert.equal(stdout.text().includes("api-secret"), false);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "revision付きSession createでもapplied errorのresource identityをtext出力へ保持する"
+  // claim = "CLI text formatterはapplied errorのeffectとresource identityを保持する"
+  // fault = "errorのtext整形でapplied effectまたはresource identityを落とす"
+  // observable = "text error effect and resource identifier"
+  // observation_boundary = "public-boundary"
   // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05" }
-  // failure_mode = "expectedContainerRevision追加後にapplied resultのreconciliation identityを失う"
   // scope = "withmate-session-cli-applied-create-error"
   // lifecycle = "permanent"
   // @end-test-value
@@ -1009,11 +1023,13 @@ describe("withmate-session CLI", () => {
     const exitCode = await runWithMateSessionCli([
       "session", "create", "--format", "text", "--json", JSON.stringify({
         expectedContainerRevision: 1,
-        sessionRole: "executor",
+        placement: { kind: "child", parentSessionId: "actor-session", sessionRole: "executor" },
         title: "Large projection",
-        provider: "codex",
-        catalogRevision: 1,
+        character: { characterId: "character-1", expectedDefinitionSha256: "definition-sha256" },
+        provider: { id: "codex", catalogRevision: 1, model: "model-1", reasoningEffort: "medium", threadContinuity: "reset", approvalMode: "on-request", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] },
         workspace: { kind: "session_folder" },
+        initialGrant: { kind: "inherit" },
+        budget: { kind: "inherit" },
         idempotencyKey: "create-large-projection",
       }),
     ], {

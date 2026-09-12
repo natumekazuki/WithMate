@@ -410,3 +410,22 @@ Provider自身のshell、Git、外部service toolはSession Runtime APIを経由
 - supported schema migration、repair、response loss、concurrency、cleanup を直接検証している。
 - 各 slice の commit-bound review と最終 cross-slice review に未解決 blocking finding がない。
 - typecheck、全 test、build、必要な smoke／visual check が最終統合 commit で成功する。
+
+
+### Slice 3 の作業状況（2026-09-12、独立レビュー前）
+
+開始コミットは `7c30c31922dbdd71f77b36da716bd363482c4163`。Session lifecycle に必要な回復記録の拡張と、Root WorkItem successor・cross-root transfer の内部処理の前倒しはユーザー承認済みである。後続 Slice の公開 WorkItem lifecycle、delegation transaction、grant routing 全体は追加していない。
+
+作業中の実装では、root/child construction の明示 tuple・grant ceiling・budget、binding revision を捕捉する execution、configure、clone、root/child restore、archive、idle subtree の cross-root transfer を lifecycle owner に接続した。root restore は terminal predecessor の successor を追加し、既存 root budget と累積消費を保持する。active Root WorkItem を伴う root 移管は開始前に拒否する。
+
+2026-09-09 の作業treeで `npm run typecheck`、`npm test`（3529件、3528 pass、1 skip、0 fail）、`npm run build`、`git diff --check` が成功した。固定commitでの検証記録ではない。binding/terminal変更による既存thread保存とConversation Timingの回帰、空DBへのbinding migration marker追加、失効済みgrantのstartup検証を修正した。回復は101件以上のpendingも処理する。GUI目視は未実行。
+
+物理purgeはユーザー承認により別変更へ分離し、今回の完了条件に含めない。既存の通常削除は履歴・ledger・retry identityを保持するtombstoneであり、SessionFolder workspaceも保持する。directory workspaceに付随するSessionFolderの既存cleanup経路は維持する。tombstone deleteの共通owner接続はSlice 3の範囲とし、保持期間・purge範囲を定義するphysical purgeは別変更へ分けることをユーザー承認済みとした。削除のGUI/API統合は完了した。test-value review、固定commitでのcomplete-diff reviewとtargeted closureが残っている。
+
+レビュー指摘の通常Session削除、移動前execution履歴のroot帰属、GUIのCodex Speed／Reviewer保存、move manifestの移動先入力、Copilot標準agentの空文字tupleを修正した。履歴は書き換えず、executionのbindingまたはlegacy execution作成時点の移動履歴から当時のrootを解決する。
+
+2026-09-12 の最終作業treeで型検査、build、関連公開境界54 testが成功した。全testは3537件中3534 pass、2 fail、1 skip。変更外のGlossary queue解放testは全体実行時に待ち時間超過となり、同ファイルの単独実行24件は成功した。変更外のtranscript予算testは固定期限 `2026-09-12T00:00:00.000Z` を過ぎたことで失敗した。期限判定を弱める変更はしていない。GUI目視は未実行。
+
+test-value初回審査の指摘に基づき、旧facade cleanup 3件と旧CRUD cleanup 2件を共通owner routing・実DB補償testへ整理した。metadata追加と宣言名変更が同じhunkにある場合のextractor境界判定を作業用コピーで修正し、既存87 testとPython／TypeScriptの追加回帰を通した。開始baseや対象recordの手動変更はせず、Git差分から67 tests／67 transitionsをdiagnostic 0で抽出した。通常のread-only general_lunaによる全recordの最終審査を進めている。
+
+追加審査で、一括削除の通常Session／Character作成用Sessionのowner振り分けを修正した。通常Sessionはlifecycle、Character作成用Sessionは既存persistenceへ渡し、最終利用日時によるcanonical候補IDを保持する。facade34件、persistence25件、binding5件、authority15件、move6件、creation5件、clone1件、lifecycle service/storage13件、CRUD5件の関連検証と型検査・buildが成功した。

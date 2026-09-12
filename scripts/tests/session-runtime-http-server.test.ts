@@ -83,12 +83,22 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   "runtime.catalog": {},
   "session.self": {},
   "session.create": {
-    expectedContainerRevision: 1, sessionRole: "executor", title: "Session", provider: "codex", catalogRevision: 4,
-    workspace: { kind: "session_folder" }, idempotencyKey: "create-key",
+    expectedContainerRevision: 1, placement: { kind: "child", parentSessionId: "session-actor", sessionRole: "executor" }, title: "Session",
+    character: { characterId: "character-a", expectedDefinitionSha256: "character-a-sha256" },
+    provider: { id: "codex", catalogRevision: 4, model: "gpt-5.4", reasoningEffort: "high", threadContinuity: "reset", approvalMode: "on-request", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] },
+    workspace: { kind: "session_folder" }, initialGrant: { kind: "inherit" }, budget: { kind: "inherit" }, idempotencyKey: "create-key",
   },
   "session.list": {},
   "session.get": { sessionId: "session-1" },
   "session.rename": { expectedRevision: 1, sessionId: "session-1", title: "Renamed", idempotencyKey: "rename-key" },
+  "session.configure": { expectedRevision: 1, sessionId: "session-1", kind: "title", title: "Configured", idempotencyKey: "configure-key" },
+  "session.move.manifest": { sessionId: "session-1", destinationRootSessionId: "root-destination" },
+  "session.move": { expectedRevision: 1, sessionId: "session-1", kind: "same_root", destinationParentSessionId: "session-actor", destinationExpectedRevision: 1, idempotencyKey: "move-key" },
+  "session.clone": { sourceSessionId: "session-1", expectedSourceRevision: 1, expectedContainerRevision: 1, placement: { kind: "child", parentSessionId: "session-actor", sessionRole: "executor" }, title: "Clone", initialGrant: { kind: "inherit" }, budget: { kind: "inherit" }, idempotencyKey: "clone-key" },
+  "session.restore": { sessionId: "session-1", expectedRevision: 1, kind: "child", purpose: "Restore", provider: { id: "codex", catalogRevision: 4, model: "gpt-5.4", reasoningEffort: "high", threadContinuity: "continue", approvalMode: "on-request", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] }, idempotencyKey: "restore-key" },
+  "session.archive": { sessionId: "session-1", expectedRevision: 1, reason: "done", descendantPolicy: "retain", idempotencyKey: "archive-key" },
+  "session.delete.manifest": { sessionId: "session-1" },
+  "session.delete": { sessionId: "session-1", expectedRevision: 1, manifestRevision: 1, idempotencyKey: "delete-key" },
   "session.files.list": { sessionId: "session-1" },
   "session.files.read_text": { sessionId: "session-1", relativePath: "brief.md" },
   "session.files.write_text": {
@@ -257,11 +267,13 @@ test("ID-01: binding missingは全application operationをhandler前に拒否す
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
-// claim = "Session Runtime HTTPはapplication instance、generation、adapter secretの一致後にだけhandlerを呼ぶ"
+// claim = "Session Runtime HTTPはAPI secretとadapter secretが一致するrequestだけhandlerへ渡す"
 // oracle = { type = "adr", ref = "ADR-023 Diagnostics and security" }
-// failure_mode = "identity tupleまたはadapter credentialが不正なrequestをhandlerへdispatchする"
+// fault = "API secretまたはadapter credentialが不正なrequestをhandlerへdispatchする"
+// observable = "HTTP statusとhandler invocation count"
+// observation_boundary = "public-boundary"
 // scope = "Session Runtime HTTP identity and adapter authentication"
 // lifecycle = "permanent"
 // distinction = "Agent bindingの権限ではなくHTTP peer identityとadapter credentialの認証順序を観測する"
@@ -300,11 +312,13 @@ test("Session runtime authenticates identity and adapter before invoking handler
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
-// claim = "CLIとMCPへapplication authorityの拒否を403で伝えmutationを実行しない"
+// claim = "CLI/MCP adapter種別のraw HTTP requestにauthority拒否を403で伝えmutationを実行しない"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// failure_mode = "transportがauthority拒否を潰すか拒否後にmutationを実行する"
+// fault = "transportがauthority拒否を潰すか拒否後にmutationを実行する"
+// observable = "HTTP 403、stable error code、mutation invocation count"
+// observation_boundary = "public-boundary"
 // scope = "Session Runtime HTTP authority error propagation"
 // lifecycle = "permanent"
 // @end-test-value
@@ -413,11 +427,13 @@ test("ORCH-AUTH-02: CLIとMCPのHTTP transportはshared application authorityへ
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "session.selfは有効なruntime bindingのactor Sessionだけを返し、欠落・不明・失効済みbindingを拒否する"
 // oracle = { type = "contract", ref = "SESSION-SELF-01" }
-// failure_mode = "session.selfがbindingなし、未知binding、または失効済みbindingからSession identityを公開する"
+// fault = "session.selfがbindingなし、未知binding、または失効済みbindingからSession identityを公開する"
+// observable = "HTTP status、stable error code、公開されたsession identity"
+// observation_boundary = "public-boundary"
 // scope = "Session Runtime session.self binding resolution"
 // lifecycle = "permanent"
 // distinction = "一般的なHTTP credential認証ではなくactor Sessionへのbinding解決と失効を観測する"
@@ -721,11 +737,13 @@ test("AUTONOMY-PARITY-08: HTTPは不正なhandler responseをoperation別のstab
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
-// claim = "応答上限超過時もcommit済みmutationのeffectとresource IDを失わない"
+// claim = "HTTP最終応答の上限超過時もmutation owner応答をappliedとresource ID付きerrorへ写像する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// failure_mode = "応答上限がcommit済み結果を未適用と誤報してconsumerの重複実行を誘う"
+// fault = "応答上限によりmutation owner応答のeffectを未適用へ変換しresource IDを失う"
+// observable = "HTTP status、effect、safe resource ID"
+// observation_boundary = "public-boundary"
 // scope = "Session Runtime HTTP effect projection"
 // lifecycle = "permanent"
 // @end-test-value
@@ -765,6 +783,7 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
     );
   }
   const application = new SessionExternalApplicationService({
+    lifecycleService: { configure: async () => renameResult as never } as any,
     authorityService: {
       authorize(_binding, _operation, input) { return { input, proof: {} as never }; },
       canSessionAct() { return true; },
@@ -855,11 +874,13 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
         operation: "session.create",
         input: {
           expectedContainerRevision: 1,
-          sessionRole: "executor",
+          placement: { kind: "child", parentSessionId: "session-actor", sessionRole: "executor" },
           title: "New Session",
-          provider: "codex",
-          catalogRevision: 4,
+          character: { characterId: "character-a", expectedDefinitionSha256: "character-a-sha256" },
+          provider: { id: "codex", catalogRevision: 4, model: "gpt-5.4", reasoningEffort: "high", threadContinuity: "reset", approvalMode: "on-request", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] },
           workspace: { kind: "session_folder" },
+          initialGrant: { kind: "inherit" },
+          budget: { kind: "inherit" },
           idempotencyKey: "create-key",
         },
       },

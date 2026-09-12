@@ -123,6 +123,16 @@ export type WorkItemCancelInput = {
   idempotencyKey: string;
 };
 
+export type RootWorkItemRestoreInput = {
+  predecessorWorkItemId: string;
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  sourceIdentity: WorkItemSourceIdentity;
+  idempotencyKey: string;
+};
+
 export type WorkItemListInput = {
   creatorSessionId?: string;
   targetSessionId?: string;
@@ -167,6 +177,7 @@ export class WorkItemService {
       WorkItemStorageV6,
       "cleanupExpiredIdempotency" | "create" | "get" | "iteratePage" | "listPage" | "mutate" | "resolveIdempotency"
       | "reviseRoot" | "appendRootHistory" | "listHistory" | "listRecentHistory" | "iterateHistory" | "iterateRecentHistory"
+      | "createRootSuccessor"
       | "getAggregationSummary" | "listAggregationItems" | "decideAggregation" | "retryAggregation"
       | "resolveAggregationIdempotency"
     >;
@@ -372,6 +383,36 @@ export class WorkItemService {
       result: null,
       updatedAt,
       expiresAt: resolveIdempotencyExpiresAt(updatedAt),
+      proof,
+    });
+  }
+
+  restoreRoot(input: RootWorkItemRestoreInput, binding: ResolvedAgentRuntimeBinding, proof: MutationAuthorityProof): WorkItem {
+    const createdAt = this.deps.currentTimestamp();
+    const fingerprint = fingerprintMutation(input, binding.actorSessionId);
+    const replay = this.deps.storage.resolveIdempotency(
+      "work.restore",
+      proof,
+      input.idempotencyKey,
+      fingerprint,
+      createdAt,
+    );
+    if (replay) return replay;
+    const predecessor = this.requireRootOwner(input.predecessorWorkItemId, binding);
+    return this.deps.storage.createRootSuccessor({
+      id: this.deps.createWorkItemId(),
+      predecessorWorkItemId: predecessor.id,
+      rootSessionId: predecessor.rootSessionId,
+      goal: input.goal,
+      scope: input.scope,
+      completionCriteria: input.completionCriteria,
+      authority: input.authority,
+      sourceIdentity: { ...input.sourceIdentity },
+      principalSessionId: binding.actorSessionId,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: fingerprint,
+      createdAt,
+      expiresAt: resolveIdempotencyExpiresAt(createdAt),
       proof,
     });
   }

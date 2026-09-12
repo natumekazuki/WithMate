@@ -102,6 +102,14 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "session.list", title: "List Sessions", description: "List normal Sessions with keyset pagination.", readOnly: true, destructive: false },
   { name: "session.get", title: "Get Session", description: "Read one normal Session.", readOnly: true, destructive: false },
   { name: "session.rename", title: "Rename Session", description: "Rename one normal Session.", readOnly: false, destructive: false },
+  { name: "session.configure", title: "Configure Session", description: "Change one complete Session configuration tuple.", readOnly: false, destructive: false },
+  { name: "session.move.manifest", title: "Preview Session move", description: "Read the resource closure required for a Session move.", readOnly: true, destructive: false },
+  { name: "session.move", title: "Move Session", description: "Reparent or transfer one Session using a validated move manifest.", readOnly: false, destructive: false },
+  { name: "session.clone", title: "Clone Session", description: "Clone a Session into an explicit placement.", readOnly: false, destructive: false },
+  { name: "session.restore", title: "Restore Session", description: "Restore an archived root or child Session.", readOnly: false, destructive: false },
+  { name: "session.archive", title: "Archive Session", description: "Archive a Session while retaining its history.", readOnly: false, destructive: false },
+  { name: "session.delete.manifest", title: "Preview Session deletion", description: "Read the deletion manifest before physical deletion.", readOnly: true, destructive: false },
+  { name: "session.delete", title: "Delete Session", description: "Physically delete a Session using the reviewed manifest revision.", readOnly: false, destructive: true },
   { name: "session.files.list", title: "List Session files", description: "List UTF-8-capable files in one SessionFolder.", readOnly: true, destructive: false },
   { name: "session.files.read_text", title: "Read Session text file", description: "Read one bounded UTF-8 text file from a SessionFolder.", readOnly: true, destructive: false },
   { name: "session.files.write_text", title: "Write Session text file", description: "Atomically write one bounded UTF-8 text file to a SessionFolder.", readOnly: false, destructive: true },
@@ -303,6 +311,14 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: createSessionRuntimeAdvertisedInputSchema("session.rename"),
     outputSchema: createSessionRuntimeOutputSchema("session.rename"),
   }, async (input) => executeOperation("session.rename", input, deps));
+  server.registerTool("session.configure", { ...definitions.get("session.configure")!, annotations: annotations(definitions.get("session.configure")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("session.configure"), outputSchema: createSessionRuntimeOutputSchema("session.configure") }, async (input) => executeOperation("session.configure", input, deps));
+  server.registerTool("session.move.manifest", { ...definitions.get("session.move.manifest")!, annotations: annotations(definitions.get("session.move.manifest")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("session.move.manifest"), outputSchema: createSessionRuntimeOutputSchema("session.move.manifest") }, async (input) => executeOperation("session.move.manifest", input, deps));
+  server.registerTool("session.move", { ...definitions.get("session.move")!, annotations: annotations(definitions.get("session.move")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("session.move"), outputSchema: createSessionRuntimeOutputSchema("session.move") }, async (input) => executeOperation("session.move", input, deps));
+  server.registerTool("session.clone", { ...definitions.get("session.clone")!, annotations: annotations(definitions.get("session.clone")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("session.clone"), outputSchema: createSessionRuntimeOutputSchema("session.clone") }, async (input) => executeOperation("session.clone", input, deps));
+  server.registerTool("session.restore", { ...definitions.get("session.restore")!, annotations: annotations(definitions.get("session.restore")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("session.restore"), outputSchema: createSessionRuntimeOutputSchema("session.restore") }, async (input) => executeOperation("session.restore", input, deps));
+  server.registerTool("session.archive", { ...definitions.get("session.archive")!, annotations: annotations(definitions.get("session.archive")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("session.archive"), outputSchema: createSessionRuntimeOutputSchema("session.archive") }, async (input) => executeOperation("session.archive", input, deps));
+  server.registerTool("session.delete.manifest", { ...definitions.get("session.delete.manifest")!, annotations: annotations(definitions.get("session.delete.manifest")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("session.delete.manifest"), outputSchema: createSessionRuntimeOutputSchema("session.delete.manifest") }, async (input) => executeOperation("session.delete.manifest", input, deps));
+  server.registerTool("session.delete", { ...definitions.get("session.delete")!, annotations: annotations(definitions.get("session.delete")!), inputSchema: createSessionRuntimeAdvertisedInputSchema("session.delete"), outputSchema: createSessionRuntimeOutputSchema("session.delete") }, async (input) => executeOperation("session.delete", input, deps));
   server.registerTool("session.files.list", {
     ...definitions.get("session.files.list")!,
     annotations: annotations(definitions.get("session.files.list")!),

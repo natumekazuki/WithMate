@@ -14,6 +14,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character-affect-turn-ownership-coordinator.js";
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
+import { SessionLifecycleService } from "../../src-electron/session-lifecycle-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   const session = buildNewSession({
@@ -1644,6 +1645,68 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(broadcastedSessionIds, [[uncachedOldSession.id]]);
     assert.deepEqual(cachedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
     assert.deepEqual(persistedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "mixed cutoff deletion preserves the storage canonical candidate IDs while the real lifecycle owner excludes character-authoring sessions"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+  // fault = "kind filtering re-evaluates updatedAt or sends character-authoring rows through lifecycle deletion"
+  // observable = "real owner results and persistence deletion IDs for a canonical cutoff fixture"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionPersistenceService and SessionLifecycleService mixed cutoff ownership"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("real persistence/lifecycle owner は mixed cutoff を canonical ID と kind で分離する", async () => {
+    const normal = createSession({ id: "normal-old", sessionKind: "default", updatedAt: "2026-09-01T00:00:00.000Z" });
+    const authoring = createSession({ id: "authoring-canonical", sessionKind: "character-authoring", updatedAt: "2026-09-01T00:00:00.000Z" });
+    let storedSessions = [normal, authoring];
+    const deletedByPersistence: string[][] = [];
+    const persistence = new SessionPersistenceService({
+      getSessions: () => storedSessions,
+      setSessions: (next) => { storedSessions = [...next]; },
+      getSession: (id) => storedSessions.find((session) => session.id === id) ?? null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession: (session) => session,
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => storedSessions,
+      listStoredSessionIdsLastActiveBefore: () => [authoring.id],
+      deleteStoredSessions: (ids) => {
+        deletedByPersistence.push([...ids]);
+        const deleted = new Set(ids);
+        storedSessions = storedSessions.filter((session) => !deleted.has(session.id));
+      },
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: () => undefined,
+    });
+    const lifecycle = new SessionLifecycleService({
+      storage: {
+        listSessionIdsLastActiveBefore: () => [normal.id, authoring.id],
+        getLifecycleSession: (id: string) => storedSessions.find((session) => session.id === id) ?? null,
+        getLifecycleManifest: () => ({ deletable: false, executions: { running: 1, queued: 0 } }),
+      } as never,
+      resolver: {} as never,
+      createSessionFilesDirectory: async () => undefined,
+      cleanupSessionFilesDirectory: async () => undefined,
+      resolveSessionFilesDirectory: (id) => `C:/session-files/${id}`,
+      publishSession: () => undefined,
+      publishRemovedSession: async () => undefined,
+    });
+
+    const cutoff = { cutoffDate: "2026-07-01", cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z") };
+    const lifecycleResult = await lifecycle.deleteSessionsLastActiveBefore(cutoff, "tombstone");
+    const persistenceResult = await persistence.deleteSessionsLastActiveBefore(cutoff, "character-authoring");
+
+    assert.deepEqual(lifecycleResult.deletedSessionIds, []);
+    assert.deepEqual(lifecycleResult.skippedRunningSessionIds, [normal.id]);
+    assert.deepEqual(persistenceResult.deletedSessionIds, [authoring.id]);
+    assert.deepEqual(deletedByPersistence, [[authoring.id]]);
   });
 
   it("replaceAllSessions は進行中appraisalを待ってから removed/provider change の副作用を処理する", async () => {

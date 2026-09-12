@@ -146,6 +146,7 @@ import {
   SessionExecutionService,
   type SessionExecutionDispatchResult,
 } from "./session-execution-service.js";
+import type { SessionExecutionBindingSnapshot } from "../src/session-execution.js";
 import { runSessionExecutionDispatch } from "./session-execution-dispatch.js";
 import { SessionExecutionAdmissionGate } from "./session-execution-admission-gate.js";
 import { SessionExecutionStorageV6 } from "./session-execution-storage-v6.js";
@@ -171,6 +172,8 @@ import { WorkItemStorageV6 } from "./work-item-storage-v6.js";
 import { WorkItemService } from "./work-item-service.js";
 import { collectRecentWorkItemHistory } from "./work-item-history-projection.js";
 import { SessionCrudService } from "./session-crud-service.js";
+import { SessionLifecycleService } from "./session-lifecycle-service.js";
+import { SessionLifecycleResolver } from "./session-lifecycle-resolver.js";
 import { SessionFileService } from "./session-file-service.js";
 import { resolveCurrentGitBranch } from "./session-workspace-git.js";
 import {
@@ -371,6 +374,7 @@ import type {
 } from "../src/withmate-window-api.js";
 import {
   WORK_ITEM_MAX_LIST_LIMIT,
+  isWorkItemActive,
   isRootWorkItem,
   type RootWorkItem,
   type WorkItemEvent,
@@ -551,6 +555,7 @@ let sessionExecutionPublicProgressStorage: SessionExecutionPublicProgressStorage
 let sessionTranscriptStorage: SessionTranscriptStorageV6 | null = null;
 let sessionTranscriptService: SessionTranscriptService | null = null;
 let sessionCrudService: SessionCrudService | null = null;
+let sessionLifecycleService: SessionLifecycleService | null = null;
 let sessionFileService: SessionFileService | null = null;
 let sessionAuthorityService: SessionAuthorityService | null = null;
 let sessionExternalApplicationService: SessionExternalApplicationService | null = null;
@@ -2274,6 +2279,7 @@ function requireMainProviderFacade(): MainProviderFacade {
 function requireMainSessionCommandFacade(): MainSessionCommandFacade {
   if (!mainSessionCommandFacade) {
     mainSessionCommandFacade = new MainSessionCommandFacade({
+      getSessionLifecycleMutationCallbacks: () => requireSessionLifecycleService(),
       getSession,
       getSessions: () => sessions,
       getStoredSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
@@ -3562,6 +3568,7 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
       budgetStorage: requireResourceBudgetStorage(),
       executionService: requireSessionExecutionService(),
       crudService: requireSessionCrudService(),
+      lifecycleService: requireSessionLifecycleService(),
       getTurnAuthoritySession: (sessionId) => requireSessionStorageV6().getSessionTurnAuthority(sessionId),
       fileService: requireSessionFileService(),
       interactionService: requireSessionInteractionService(),
@@ -3689,7 +3696,7 @@ function getRootWorkItem(sessionId: string): RootWorkItem | null {
     creatorSessionId: sessionId,
     targetSessionId: sessionId,
     afterSequence: null,
-    limit: 2,
+    limit: WORK_ITEM_MAX_LIST_LIMIT,
   }, binding).filter((item): item is RootWorkItem =>
     isRootWorkItem(item)
     && item.rootSessionId === sessionId
@@ -3698,10 +3705,13 @@ function getRootWorkItem(sessionId: string): RootWorkItem | null {
     && item.parentWorkItemId === null,
   );
   if (candidates.length === 0) return null;
-  if (candidates.length !== 1) {
+  const activeCandidates = candidates.filter((item) => isWorkItemActive(item.state));
+  if (activeCandidates.length > 1) {
     throw new Error("A root Session must have exactly one self-owned Root WorkItem.");
   }
-  const item = requireWorkItemService().get(candidates[0].id, binding);
+  const selected = activeCandidates[0] ?? candidates[candidates.length - 1];
+  if (!selected) return null;
+  const item = requireWorkItemService().get(selected.id, binding);
   if (
     !isRootWorkItem(item)
     || item.rootSessionId !== sessionId
@@ -3807,10 +3817,56 @@ async function drainSessionExecutionsBestEffort(): Promise<void> {
   }
 }
 
+function requireSessionLifecycleService(): SessionLifecycleService {
+  if (!sessionLifecycleService) {
+    sessionLifecycleService = new SessionLifecycleService({
+      storage: requireSessionStorageV6(),
+      authorizeTransferDestination: (actor, root, operation, input) => requireSessionAuthorityService().authorizeTransferDestination(actor, root, operation, input).proof,
+      authorizeConstruction: (actor, input) => requireSessionAuthorityService().authorizeConstruction(actor, input).proof,
+      resolver: new SessionLifecycleResolver({
+        currentModelCatalog: () => getModelCatalog(null),
+        isProviderEnabled: (providerId) => getProviderAppSettings(requireAppSettingsStorage().getSettings(), providerId).enabled,
+        isProviderSupported: (providerId) => getProviderRuntimeCapabilities({ providerId }).providerSupported,
+        listCharacters: () => requireCharacterService().listCharacters(),
+        createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
+        resolveSessionFilesDirectory: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
+      }),
+      createSessionFilesDirectory: (sessionId) => createSessionFilesDirectory(app.getPath("userData"), sessionId),
+      cleanupSessionFilesDirectory: (sessionId) => deleteSessionFilesDirectory(app.getPath("userData"), sessionId),
+      resolveSessionFilesDirectory: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
+      publishSession: (session) => requireSessionPersistenceService().publishStoredSession(session),
+      isDeletionRunInFlight: (sessionId) => isSessionRunInFlight(sessionId)
+        || listRunningActiveAuxiliaryParentSessionIds([sessionId]).has(sessionId),
+      publishRemovedSession: async (sessionId) => {
+        const previous = getSession(sessionId);
+        requireSessionTurnNotificationService().dismissSessionNotification(sessionId);
+        agentRuntimeBindingRegistry.revokeSession(sessionId);
+        await invalidateProviderSessionThread(previous?.provider, sessionId);
+        clearSessionContextTelemetry(sessionId);
+        clearSessionBackgroundActivities(sessionId);
+        requireSessionWindowBridge().closeSessionWindow(sessionId);
+        requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
+        for (const auxiliary of requireAuxiliarySessionService().listAuxiliarySessions(sessionId)) {
+          agentRuntimeBindingRegistry.revokeSession(auxiliary.id);
+          await invalidateProviderSessionThread(auxiliary.provider, auxiliary.id);
+          clearSessionContextTelemetry(auxiliary.id);
+          clearSessionBackgroundActivities(auxiliary.id);
+          requireSessionWindowBridge().closeSessionWindow(auxiliary.id);
+        }
+        sessions = sessions.filter((session) => session.id !== sessionId);
+        broadcastSessions([sessionId]);
+        broadcastCoordinationEventsChanged();
+      },
+    });
+  }
+  return sessionLifecycleService;
+}
+
 function requireSessionCrudService(): SessionCrudService {
   if (!sessionCrudService) {
     sessionCrudService = new SessionCrudService({
       storage: requireSessionStorageV6(),
+      lifecycle: requireSessionLifecycleService(),
       resolveLaunchSelection: (providerId) => requireSessionLaunchSelectionService().resolve(providerId),
       isProviderSupported: (providerId) =>
         getProviderRuntimeCapabilities({ providerId }).providerSupported,
@@ -3844,18 +3900,20 @@ async function dispatchSessionExecutionTurn(
   sessionId: string,
   executionId: string,
   request: unknown,
+  binding?: SessionExecutionBindingSnapshot,
 ): Promise<SessionExecutionDispatchResult> {
   activeSessionExecutionIds.set(sessionId, executionId);
   try {
     const parsed = parseSessionExecutionTurnRequest(request);
     return await runSessionExecutionDispatch({
       runTurn: () => parsed.catalogRevision === null
-        ? requireSessionRuntimeService().runQueuedGuiSessionTurn(sessionId, parsed.turn, executionId)
+        ? requireSessionRuntimeService().runQueuedGuiSessionTurn(sessionId, parsed.turn, executionId, binding)
         : requireSessionRuntimeService().runExternalSessionTurn(
             sessionId,
             parsed.catalogRevision,
             parsed.turn,
             executionId,
+            binding,
           ),
       isCanceled: () => canceledSessionExecutionIds.has(executionId),
     });
@@ -5350,6 +5408,7 @@ async function recoverInterruptedSessions(): Promise<void> {
 }
 
 async function startSessionExecutionRuntime(): Promise<void> {
+  await requireSessionLifecycleService().recoverPending();
   for (const rootSessionId of requireSessionStorageV6().listRootSessionIds()) {
     try {
       await createSessionFolderResourceBudget().reconcileAfterRestart(rootSessionId);

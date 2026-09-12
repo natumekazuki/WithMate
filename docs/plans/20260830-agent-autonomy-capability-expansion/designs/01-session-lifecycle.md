@@ -6,7 +6,7 @@
 - Character、Provider、Workspace、Role template の明示選択
 - Session 設定の revisioned update
 - moveによるreparent／adopt、restoreによるreuse、clone
-- archive、delegation compensation、物理delete
+- archive、delegation compensation、tombstone delete。物理purgeは保持契約を定義した後続変更とする
 
 ## 公開操作候補
 
@@ -18,7 +18,7 @@
 | 複製 | `session.clone` | source、copied fields、new placement |
 | 再利用 | `session.restore` | archived Session、new purpose、new binding revision |
 | archive | `session.archive` | reason、descendant policy |
-| 物理削除 | `session.delete` | expected revision、deletion manifest |
+| 削除 | `session.delete` | expected revision、deletion manifest。Slice 3ではtombstoneへ遷移する |
 
 `session.configure` は title だけでなく、実行設定、Workspace、Character、Provider、Role templateを扱う。generic patchではなくstrict discriminated unionを使い、依存tupleの一部だけを変更しない。Provider、model、reasoning、catalog revision、thread continuity、Character runtime identity、Workspace grantsは組として解決する。
 
@@ -59,14 +59,16 @@ cross-root moveはsource rootとdestination root双方のgrantを必要とし、
 
 restoreはroot／childのstrict unionとする。root restoreは新しいpurpose revision、Root WorkItem successor、active binding、budgetを追加する。child restoreは新しいpurpose revisionとactive bindingを追加するが、Root WorkItemを作らない。既存active Sessionのreuseはdelegation targetの選択で表し、別operationを追加しない。過去履歴を新規Sessionの履歴として書き換えない。物理的なprovider threadを継続するかresetするかはProvider tupleの一部として明示する。
 
-## Archive、discard、delete
+## Archive、tombstone delete、physical purge
 
 - archive: current操作対象から外す可逆な状態。履歴、artifact、grant tombstoneを保持する。
-- delete: retention契約に従う物理削除。実行前にdeletion manifestを返し、同じmanifest revisionをmutationへ要求する。
+- delete: 実行前にdeletion manifestを返し、同じmanifest revisionをmutationへ要求してtombstoneへ遷移する。履歴、budget ledger、retry identityは保持する。
+- SessionFolder workspaceはtombstone deleteで保持する。directory workspaceに付随するSessionFolderの既存cleanup経路は維持する。
+- physical purge: retention期間、purge対象、参照中resource、履歴・ledger・retry identityの扱いを別途確定した後続変更とする。保持契約がない状態でSession rowだけを物理削除しない。
 
-Agentは自分が作成した未使用childを、delegation compensationからユーザー確認なしでdeleteまたはarchiveできる。running Turn、未回収result、第三者所有artifact、未移管grantがある場合は、先にcancel、collect、transfer、archiveを行う。単にRoleがexecutorであることをdelete拒否理由にしない。
+Agentは自分が作成した未使用childを、delegation compensationからユーザー確認なしでtombstone deleteまたはarchiveできる。running Turn、未回収result、第三者所有artifact、未移管grantがある場合は、先にcancel、collect、transfer、archiveを行う。単にRoleがexecutorであることをdelete拒否理由にしない。
 
-内部に既存のSession delete serviceがあるため、Agent APIは新しい物理削除を直接storageへ追加せず、既存application ownerへauthority、manifest、idempotencyを足す。
+内部に既存のSession delete serviceがあるため、Agent APIはstorageへ直接削除を追加せず、既存のlifecycle application ownerへauthority、manifest、idempotencyを接続する。physical purgeはこのownerの別変更として扱う。
 
 ## 必要な schema と service
 
@@ -74,7 +76,7 @@ Agentは自分が作成した未使用childを、delegation compensationから�
 - root／child placement inputのstrict union
 - Session update tuple resolver
 - move／adopt transfer planner
-- archive stateとdelete manifest
+- archive stateとtombstone delete manifest
 - root作成時のRoot WorkItem、grant、budget atomic owner
 - existing GUI update／deleteとAgent APIが共有するapplication service
 - runtime catalogのSession capability projection

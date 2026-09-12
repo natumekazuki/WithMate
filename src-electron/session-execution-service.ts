@@ -6,6 +6,7 @@ import {
   type SessionInboundExecutionRecord,
   type SessionOutboundExecutionRecord,
   type SessionExecutionStorageRecord,
+  type SessionExecutionBindingSnapshot,
 } from "../src/session-execution.js";
 import {
   SessionExecutionBusyError,
@@ -32,6 +33,7 @@ export type CreateSessionExecutionInput = {
   requestFingerprint: string;
   origin?: SessionExecutionOriginSnapshot;
   workItemId?: string;
+  binding?: SessionExecutionBindingSnapshot;
 };
 
 export type CancelSessionExecutionInput = {
@@ -77,6 +79,7 @@ export type SessionExecutionServiceDeps = {
     sessionId: string,
     executionId: string,
     request: unknown,
+    binding?: SessionExecutionBindingSnapshot,
   ): Promise<SessionExecutionDispatchResult>;
   cancelRunningTurn(sessionId: string, executionId: string): Promise<void> | void;
   isSessionRunInFlight(sessionId: string): boolean;
@@ -206,6 +209,7 @@ export class SessionExecutionService {
         expiresAt: this.deps.resolveIdempotencyExpiresAt(createdAt),
         origin: input.origin,
         workItemId: input.workItemId,
+        binding: input.binding,
       });
       if (!started.replayed) {
         this.notifyChanged(started.execution.id);
@@ -240,6 +244,7 @@ export class SessionExecutionService {
         expiresAt: this.deps.resolveIdempotencyExpiresAt(createdAt),
         origin: input.origin,
         workItemId: input.workItemId,
+        binding: input.binding,
       });
     });
     if (!queued.replayed) {
@@ -432,7 +437,12 @@ export class SessionExecutionService {
   private async runDispatch(execution: SessionExecutionStorageRecord): Promise<SessionExecution> {
     let outcome: SessionExecutionDispatchResult;
     try {
-      outcome = await this.deps.dispatchTurn(execution.sessionId, execution.id, execution.request);
+      outcome = await this.deps.dispatchTurn(
+        execution.sessionId,
+        execution.id,
+        execution.request,
+        execution.binding,
+      );
     } catch {
       outcome = {
         state: "failed",

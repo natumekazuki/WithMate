@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,9 +9,11 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { SessionAuthorityError } from "../../src/session-authority.js";
 import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
-import { buildNewSession, projectSessionSummary } from "../../src/session-state.js";
+import { buildNewSession } from "../../src/session-state.js";
 import type { SessionRuntimeOperation } from "../../src/session-external-runtime-contract.js";
 import { SessionCrudError, SessionCrudService } from "../../src-electron/session-crud-service.js";
+import { SessionLifecycleRecoveryError, SessionLifecycleService } from "../../src-electron/session-lifecycle-service.js";
+import { SessionLifecycleResolver } from "../../src-electron/session-lifecycle-resolver.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import { ResourceBudgetStorage } from "../../src-electron/resource-budget-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
@@ -72,6 +74,12 @@ function authorize(
   operation: SessionRuntimeOperation,
   input: unknown,
 ) {
+  if (operation === "session.create" && typeof input === "object" && input !== null && "placement" in input) {
+    const lifecycleInput = input as { placement: { kind: string; sessionRole?: string }; provider: { id: string; catalogRevision: number }; workspace: unknown };
+    input = { ...(input as Record<string, unknown>), sessionRole: lifecycleInput.placement.sessionRole,
+      provider: lifecycleInput.provider.id, catalogRevision: lifecycleInput.provider.catalogRevision,
+      workspace: lifecycleInput.workspace };
+  }
   const session = storage.getSessionSummary(sessionId);
   if (!session?.roleBinding) throw new Error(`Missing Session Role binding: ${sessionId}`);
   const binding: ResolvedAgentRuntimeBinding = {
@@ -101,6 +109,76 @@ function committedSessionCount(dbPath: string, sessionId: string): number {
   } finally {
     storage.close();
   }
+}
+
+async function makeLifecycleFailureCrud(root: string, cleanupFolder: (folder: string) => Promise<void>): Promise<{
+  service: SessionCrudService;
+  lifecycle: SessionLifecycleService;
+  storage: SessionStorageV6;
+  authority: SessionAuthorityService;
+  dbPath: string;
+  folder: string;
+  actorSessionId: string;
+  close: () => Promise<void>;
+}> {
+  const dbPath = path.join(root, "app.db");
+  const sessionFilesRoot = path.join(root, "session-files");
+  const folder = path.join(sessionFilesRoot, "session-created");
+  const actorSessionId = "failure-parent";
+  const storage = new SessionStorageV6(dbPath);
+  storage.insertSession(createRootSession(actorSessionId));
+  const authority = new SessionAuthorityService({ databasePath: dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(AUTHORITY_NOW) });
+  const lifecycle = new SessionLifecycleService({
+    storage,
+    resolver: new SessionLifecycleResolver({
+      currentModelCatalog: () => ({ revision: 4, providers: [{ id: "codex", label: "Codex", defaultModelId: "gpt-test", defaultReasoningEffort: "high", models: [{ id: "gpt-test", label: "GPT test", reasoningEfforts: ["high"] }] }] }),
+      isProviderEnabled: () => true,
+      isProviderSupported: () => true,
+      listCharacters: () => [character],
+      createCharacterRuntimeSnapshot: () => characterSnapshot,
+      resolveSessionFilesDirectory: (sessionId) => path.join(sessionFilesRoot, sessionId),
+    }),
+    createSessionFilesDirectory: async () => { await mkdir(folder, { recursive: false }); },
+    cleanupSessionFilesDirectory: async () => cleanupFolder(folder),
+    resolveSessionFilesDirectory: (sessionId) => path.join(sessionFilesRoot, sessionId),
+    publishSession: () => undefined,
+    publishRemovedSession: async () => undefined,
+    createSessionId: () => "session-created",
+    now: () => new Date(AUTHORITY_NOW),
+  });
+  const service = new SessionCrudService({
+    lifecycle,
+    storage,
+    resolveLaunchSelection: async () => ({ provider: "codex", catalogRevision: 4, model: "gpt-test", reasoningEffort: "high", approvalMode: DEFAULT_APPROVAL_MODE, codexSandboxMode: "workspace-write", customAgentName: "" }),
+    isProviderSupported: () => true,
+    listCharacters: () => [character],
+    listSessionSummaries: () => storage.listSessionSummaries(),
+    listOpenSessionWindowIds: () => [],
+    createCharacterRuntimeSnapshot: () => characterSnapshot,
+    createSessionId: () => "session-created",
+    createSessionFilesDirectory: async () => { await mkdir(folder, { recursive: false }); },
+    cleanupSessionFilesDirectory: async () => cleanupFolder(folder),
+    resolveSessionFilesDirectory: (sessionId) => path.join(sessionFilesRoot, sessionId),
+    publishCreatedSession: () => undefined,
+    publishRenamedSession: () => undefined,
+    reportPublicationError: () => undefined,
+    resolveCurrentWorkspaceBranch: async () => "feature/current",
+    now: () => new Date(AUTHORITY_NOW),
+    random: () => 0,
+  });
+  await mkdir(sessionFilesRoot);
+  return { service, lifecycle, storage, authority, dbPath, folder, actorSessionId, close: async () => { storage.close(); authority.close(); await rm(root, { recursive: true, force: true }); } };
+}
+
+function failureCreateInput(storage: SessionStorageV6, actorSessionId: string, idempotencyKey: string) {
+  return {
+    title: "Failure create",
+    placement: { kind: "child" as const, parentSessionId: actorSessionId, sessionRole: "executor" as const },
+    character: { characterId: character.id, expectedDefinitionSha256: characterSnapshot.definitionSha256 },
+    provider: { id: "codex" as const, catalogRevision: 4, model: "gpt-test", reasoningEffort: "high" as const, threadContinuity: "reset" as const, approvalMode: DEFAULT_APPROVAL_MODE, codexSandboxMode: "workspace-write" as const, allowedAdditionalDirectories: [] },
+    workspace: { kind: "session_folder" as const }, expectedContainerRevision: sessionRevision(storage, actorSessionId),
+    initialGrant: { kind: "inherit" as const }, budget: { kind: "inherit" as const }, idempotencyKey,
+  };
 }
 
 describe("SessionCrudService", () => {
@@ -146,7 +224,33 @@ describe("SessionCrudService", () => {
         getExecutionGeneration: () => "generation-1",
         now: () => new Date(AUTHORITY_NOW),
       });
+      const lifecycle = new SessionLifecycleService({
+        storage,
+        resolver: new SessionLifecycleResolver({
+          currentModelCatalog: () => ({ revision: catalogRevision, providers: [
+            { id: "codex", label: "Codex", defaultModelId: "gpt-test", defaultReasoningEffort: "high", models: [{ id: "gpt-test", label: "GPT test", reasoningEfforts: ["high"] }] },
+            { id: "copilot", label: "Copilot", defaultModelId: "gpt-test", defaultReasoningEffort: "high", models: [{ id: "gpt-test", label: "GPT test", reasoningEfforts: ["high"] }] },
+          ] }),
+          isProviderEnabled: () => true,
+          isProviderSupported: () => true,
+          listCharacters: () => [character],
+          createCharacterRuntimeSnapshot: () => { snapshotCount += 1; return characterSnapshot; },
+          resolveSessionFilesDirectory: (sessionId) => path.join(sessionFilesRoot, sessionId),
+        }),
+        createSessionFilesDirectory: async (sessionId) => {
+          const directoryPath = path.join(sessionFilesRoot, sessionId);
+          await mkdir(directoryPath, { recursive: false });
+          return directoryPath;
+        },
+        cleanupSessionFilesDirectory: async (sessionId) => removeDirectory(path.join(sessionFilesRoot, sessionId)),
+        resolveSessionFilesDirectory: (sessionId) => path.join(sessionFilesRoot, sessionId),
+        publishSession: (session) => { publishedSessionIds.push(session.id); },
+        publishRemovedSession: async () => undefined,
+        createSessionId: () => `session-${++sessionIdCount}`,
+        now: () => new Date(AUTHORITY_NOW),
+      });
       const service = new SessionCrudService({
+        lifecycle,
         storage,
         resolveLaunchSelection: async (providerId) => {
           launchSelectionCount += 1;
@@ -192,35 +296,21 @@ describe("SessionCrudService", () => {
 
       const input = {
         title: "Created externally",
-        sessionRole: "task-coordinator" as const,
-        provider: "codex" as const,
-        catalogRevision: 4,
+        placement: { kind: "child" as const, parentSessionId: actorSessionId, sessionRole: "task-coordinator" as const },
+        character: { characterId: character.id, expectedDefinitionSha256: characterSnapshot.definitionSha256 },
+        provider: { id: "codex" as const, catalogRevision: 4, model: "gpt-test", reasoningEffort: "high" as const, threadContinuity: "reset" as const, approvalMode: DEFAULT_APPROVAL_MODE, codexSandboxMode: "workspace-write" as const, allowedAdditionalDirectories: [] },
         workspace: { kind: "session_folder" as const },
         expectedContainerRevision: sessionRevision(storage, actorSessionId),
+        initialGrant: { kind: "inherit" as const },
+        budget: { kind: "inherit" as const },
         idempotencyKey: "create-key-1",
       };
+
       const created = await service.create(
         input,
         actorSessionId,
         authorize(authority, storage, actorSessionId, "session.create", input),
       );
-      const replayDb = new DatabaseSync(dbPath);
-      const replayRow = replayDb.prepare(`
-        SELECT result_json
-        FROM session_crud_idempotency_v6
-        WHERE operation = ? AND idempotency_key = ?
-      `).get("session.create", input.idempotencyKey) as { result_json: string };
-      const legacyReplayResult = JSON.parse(replayRow.result_json) as Record<string, unknown>;
-      legacyReplayResult.workspace = {
-        ...(legacyReplayResult.workspace as Record<string, unknown>),
-        branch: "stale/persisted-branch",
-      };
-      replayDb.prepare(`
-        UPDATE session_crud_idempotency_v6
-        SET result_json = ?
-        WHERE operation = ? AND idempotency_key = ?
-      `).run(JSON.stringify(legacyReplayResult), "session.create", input.idempotencyKey);
-      replayDb.close();
       catalogRevision = 5;
       const replay = await service.create(
         input,
@@ -254,27 +344,27 @@ describe("SessionCrudService", () => {
         path: path.join(sessionFilesRoot, "session-1"),
         isWorkspace: true,
       });
-      assert.equal(launchSelectionCount, 1);
+      assert.equal(launchSelectionCount, 0);
       assert.equal(sessionIdCount, 1);
       assert.equal(snapshotCount, 1);
       assert.deepEqual(publishedSessionIds, ["session-1"]);
-      assert.deepEqual(publicationErrors, ["session.create"]);
+      assert.deepEqual(publicationErrors, []);
 
       await assert.rejects(
         () => {
-          const changedInput = { ...input, sessionRole: "executor" as const };
+          const changedInput = { ...input, placement: { ...input.placement, sessionRole: "executor" as const } };
           return service.create(
             changedInput,
             actorSessionId,
             authorize(authority!, storage, actorSessionId, "session.create", changedInput),
           );
         },
-        (error) => error instanceof SessionCrudError && error.code === "IDEMPOTENCY_CONFLICT",
+        (error) => (error as { code?: string }).code === "SESSION_LIFECYCLE_OPERATION_CONFLICT",
       );
       catalogRevision = 4;
       const otherActorInput = {
         ...input,
-        sessionRole: "executor" as const,
+        placement: { kind: "child" as const, parentSessionId: secondActorSessionId, sessionRole: "executor" as const },
         expectedContainerRevision: sessionRevision(storage, secondActorSessionId),
       };
       const otherActorCreate = await service.create(
@@ -288,7 +378,7 @@ describe("SessionCrudService", () => {
 
       const depthTwoInput = {
         ...input,
-        sessionRole: "executor",
+        placement: { kind: "child" as const, parentSessionId: "session-1", sessionRole: "executor" as const },
         expectedContainerRevision: sessionRevision(storage, created.sessionId),
         idempotencyKey: "depth-two",
       } as const;
@@ -311,7 +401,7 @@ describe("SessionCrudService", () => {
       for (const forbiddenActorSessionId of [standaloneActorSessionId, depthTwoExecutor.sessionId]) {
         const forbiddenInput = {
           ...input,
-          sessionRole: "executor" as const,
+          placement: { kind: "child" as const, parentSessionId: forbiddenActorSessionId, sessionRole: "executor" as const },
           expectedContainerRevision: sessionRevision(storage, forbiddenActorSessionId),
           idempotencyKey: `forbidden-${forbiddenActorSessionId}`,
         };
@@ -370,7 +460,7 @@ describe("SessionCrudService", () => {
 
       const copilotInput = {
         ...input,
-        provider: "copilot",
+        provider: { id: "copilot" as const, catalogRevision: 4, model: "gpt-test", reasoningEffort: "high" as const, threadContinuity: "reset" as const, approvalMode: DEFAULT_APPROVAL_MODE, customAgentName: "" },
         workspace: { kind: "session_folder" },
         expectedContainerRevision: sessionRevision(storage, actorSessionId),
         idempotencyKey: "create-key-copilot",
@@ -383,20 +473,23 @@ describe("SessionCrudService", () => {
       assert.equal(copilot.provider.id, "copilot");
       assert.equal(storage.getSession(copilot.sessionId)?.provider, "copilot");
       const committedBeforeDelete = committedSessionCount(dbPath, actorSessionId);
-      storage.deleteSession(copilot.sessionId);
+      await lifecycle.deleteSession(copilot.sessionId, "tombstone");
+      assert.equal(storage.getSession(copilot.sessionId), null);
       assert.equal(committedSessionCount(dbPath, actorSessionId), committedBeforeDelete);
     } finally {
-      authority?.close();
       storage.close();
+      authority?.close();
       await removeDirectory(tempDirectory);
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "Session renameはresource revisionとauthority proofを要求し、同一入力のreplayでは再publishしない"
+  // claim = "Session renameは通常Sessionに限定され、同一入力のreplayでは再publishしない"
   // oracle = { type = "contract", ref = "AUTONOMY-GRANT-02 / AUTONOMY-MUTATION-05" }
-  // failure_mode = "staleまたは無権限renameを保存する、またはidempotent replayでGUI publishを重複する"
+  // fault = "character-authoring Sessionへのrenameを受理する、またはreplayで再publishする"
+  // observable = "stored Session title、publish callback回数、stable SessionCrudError code"
+  // observation_boundary = "component-behavior"
   // scope = "SessionCrudService rename"
   // lifecycle = "permanent"
   // @end-test-value
@@ -482,115 +575,89 @@ describe("SessionCrudService", () => {
       );
       assert.equal(storage.getSessionSummary("authoring-session")?.taskTitle, "Authoring");
     } finally {
-      authority?.close();
       storage.close();
+      authority?.close();
       await removeDirectory(tempDirectory);
     }
   });
 
-  it("DB commit失敗時は作成済みSessionFolderをcleanupして孤立directoryを残さない", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-crud-"));
-    const sessionFolder = path.join(tempDirectory, "session-files", "session-failed");
-    const actor = createRootSession("actor-session");
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "SessionFolder作成後のdeterministicなDB拒否はSession rowを残さず、成功した補償cleanupで孤児folderを残さない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Failure timing" }
+  // fault = "DB commit拒否後にSessionFolderだけが残る"
+  // observable = "Session rowの不在、pending operationの不在、実filesystemのfolder不在"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionLifecycleService create compensation"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("createはDB拒否後にSessionFolderを補償cleanupする", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "withmate-crud-create-compensation-"));
+    const fixture = await makeLifecycleFailureCrud(root, async (folder) => { await rm(folder, { recursive: true, force: true }); });
+    const originalCommit = fixture.storage.commitLifecycleMutation;
+    fixture.storage.commitLifecycleMutation = (() => { throw new SessionCrudError("SESSION_STATE_CONFLICT", "deterministic DB rejection"); }) as typeof originalCommit;
     try {
-      const service = new SessionCrudService({
-        storage: {
-          resolveSessionCrudIdempotency: () => ({ kind: "absent" }),
-          insertSessionIdempotently: () => { throw new Error("database failed"); },
-          renameSessionIdempotently: () => { throw new Error("unused"); },
-          listSessionSummaryPage: () => [],
-          getSessionSummary: (sessionId) => sessionId === actor.id ? projectSessionSummary(actor) : null,
-        },
-        resolveLaunchSelection: async () => ({
-          provider: "codex",
-          catalogRevision: 4,
-          model: "gpt-test",
-          reasoningEffort: "high",
-          approvalMode: DEFAULT_APPROVAL_MODE,
-          codexSandboxMode: "workspace-write",
-          customAgentName: "",
-        }),
-        isProviderSupported: () => true,
-        listCharacters: () => [character],
-        listSessionSummaries: () => [],
-        listOpenSessionWindowIds: () => [],
-        createCharacterRuntimeSnapshot: () => characterSnapshot,
-        createSessionId: () => "session-failed",
-        createSessionFilesDirectory: async () => {
-          await mkdir(sessionFolder, { recursive: true });
-          return sessionFolder;
-        },
-        cleanupSessionFilesDirectory: async () => removeDirectory(sessionFolder),
-        resolveSessionFilesDirectory: () => sessionFolder,
-        publishCreatedSession: () => undefined,
-        publishRenamedSession: () => undefined,
-        now: () => new Date("2026-08-11T00:00:00.000Z"),
-        random: () => 0,
-      });
-
-      await assert.rejects(
-        () => service.create({
-          title: "Failed create",
-          sessionRole: "executor",
-          provider: "codex",
-          catalogRevision: 4,
-          workspace: { kind: "session_folder" },
-          idempotencyKey: "failed-key",
-        }, actor.id),
-        (error) => error instanceof SessionCrudError && error.code === "RUNTIME_UNAVAILABLE",
-      );
-      await assert.rejects(() => stat(sessionFolder), { code: "ENOENT" });
-    } finally {
-      await removeDirectory(tempDirectory);
-    }
+      const input = failureCreateInput(fixture.storage, fixture.actorSessionId, "crud-compensation");
+      await assert.rejects(fixture.service.create(input, fixture.actorSessionId, authorize(fixture.authority, fixture.storage, fixture.actorSessionId, "session.create", input)), SessionCrudError);
+      assert.equal(fixture.storage.getLifecycleSession("session-created"), null);
+      assert.equal(fixture.storage.listPendingLifecycleOperations().length, 0);
+      await assert.rejects(access(fixture.folder));
+    } finally { await fixture.close(); }
   });
 
-  it("DB commit失敗後のSessionFolder cleanup失敗をrecoverable errorとして返す", async () => {
-    const actor = createRootSession("actor-session");
-    const service = new SessionCrudService({
-      storage: {
-        resolveSessionCrudIdempotency: () => ({ kind: "absent" }),
-        insertSessionIdempotently: () => { throw new Error("database failed"); },
-        renameSessionIdempotently: () => { throw new Error("unused"); },
-        listSessionSummaryPage: () => [],
-        getSessionSummary: (sessionId) => sessionId === actor.id ? projectSessionSummary(actor) : null,
-      },
-      resolveLaunchSelection: async () => ({
-        provider: "codex",
-        catalogRevision: 4,
-        model: "gpt-test",
-        reasoningEffort: "high",
-        approvalMode: DEFAULT_APPROVAL_MODE,
-        codexSandboxMode: "workspace-write",
-        customAgentName: "",
-      }),
-      isProviderSupported: () => true,
-      listCharacters: () => [character],
-      listSessionSummaries: () => [],
-      listOpenSessionWindowIds: () => [],
-      createCharacterRuntimeSnapshot: () => characterSnapshot,
-      createSessionId: () => "session-cleanup-failed",
-      createSessionFilesDirectory: async () => "C:/session-files/session-cleanup-failed",
-      cleanupSessionFilesDirectory: async () => { throw new Error("cleanup failed"); },
-      resolveSessionFilesDirectory: () => "C:/session-files/session-cleanup-failed",
-      publishCreatedSession: () => undefined,
-      publishRenamedSession: () => undefined,
-      now: () => new Date("2026-08-20T00:00:00.000Z"),
-      random: () => 0,
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "補償cleanupが失敗したcreateはrecovery-requiredとしてidentityを保持し、再開時にcleanupだけを実行してnot_appliedで終端する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Direct validation" }
+  // fault = "SessionFolder cleanup失敗後にoperationをrejectedまたは成功扱いにして再試行identityを失う"
+  // observable = "recovery-required pending record、再開後のfolderとSession row、pending record数"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionLifecycleService create cleanup recovery"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("createはcleanup失敗をrecovery-requiredに保持して再開できる", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "withmate-crud-create-recovery-"));
+    let cleanupFailures = 1;
+    const fixture = await makeLifecycleFailureCrud(root, async (folder) => {
+      if (cleanupFailures > 0) { cleanupFailures -= 1; throw new Error("cleanup unavailable"); }
+      await rm(folder, { recursive: true, force: true });
     });
+    const originalCommit = fixture.storage.commitLifecycleMutation;
+    fixture.storage.commitLifecycleMutation = (() => { throw new SessionCrudError("SESSION_STATE_CONFLICT", "deterministic DB rejection"); }) as typeof originalCommit;
+    try {
+      const input = failureCreateInput(fixture.storage, fixture.actorSessionId, "crud-recovery");
+      const proof = authorize(fixture.authority, fixture.storage, fixture.actorSessionId, "session.create", input);
+      await assert.rejects(fixture.service.create(input, fixture.actorSessionId, proof), SessionLifecycleRecoveryError);
+      const pending = fixture.storage.listPendingLifecycleOperations();
+      assert.equal(pending.length, 1);
+      assert.equal(pending[0].state, "recovery-required");
+      assert.equal((pending[0].error as { cleanupRequired?: boolean } | null)?.cleanupRequired, true);
+      await access(fixture.folder);
+      await fixture.lifecycle.recoverPending();
+      assert.equal(fixture.storage.listPendingLifecycleOperations().length, 0);
+      assert.equal(fixture.storage.getLifecycleSession("session-created"), null);
+      await assert.rejects(access(fixture.folder));
+    } finally { await fixture.close(); }
+  });
 
-    await assert.rejects(
-      () => service.create({
-        title: "Failed create",
-        sessionRole: "executor",
-        provider: "codex",
-        catalogRevision: 4,
-        workspace: { kind: "session_folder" },
-        idempotencyKey: "cleanup-failed-key",
-      }, actor.id),
-      (error) => error instanceof SessionCrudError
-        && error.code === "SESSION_FOLDER_CLEANUP_REQUIRED"
-        && error.details?.sessionId === "session-cleanup-failed",
-    );
+  // @test-value v2
+  // kind = "contract"
+  // claim = "createはlifecycle owner未接続を成功扱いせずRUNTIME_UNAVAILABLEで拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md" }
+  // fault = "ownerが未接続でも旧create経路へ進むか成功を返す"
+  // observable = "createのRUNTIME_UNAVAILABLE error"
+  // observation_boundary = "component-behavior"
+  // scope = "SessionCrudService create delegation guard"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("createはlifecycle owner未接続を拒否する", async () => {
+    const service = new SessionCrudService({} as never);
+    await assert.rejects(() => service.create({
+      expectedContainerRevision: 1, placement: { kind: "child", parentSessionId: "actor", sessionRole: "executor" },
+      title: "Create", character: { characterId: "character-a", expectedDefinitionSha256: "definition" },
+      provider: { id: "codex", catalogRevision: 1, model: "model", reasoningEffort: "high", threadContinuity: "reset", approvalMode: "on-request", codexSandboxMode: "workspace-write", allowedAdditionalDirectories: [] },
+      workspace: { kind: "session_folder" }, initialGrant: { kind: "inherit" }, budget: { kind: "inherit" }, idempotencyKey: "missing-owner",
+    }, "actor", { principal: { kind: "agent", actorSessionId: "actor" } } as never),
+    (error) => error instanceof SessionCrudError && error.code === "RUNTIME_UNAVAILABLE");
   });
 });

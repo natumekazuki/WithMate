@@ -33,6 +33,7 @@ import {
   WorkItemRevisionConflictError,
   WorkItemStateConflictError,
   WorkItemStorageV6,
+  restoreRootWorkItemWithinTransaction,
 } from "../../src-electron/work-item-storage-v6.js";
 import {
   buildChildSessionRoleBinding,
@@ -422,6 +423,131 @@ describe("Root WorkItem contract", () => {
       );
       assert.equal(harness.sessionStorage.getSession("rolled-back"), null);
       assert.equal(tableCount(harness.dbPath, "work_items_v6", "root_session_id = 'rolled-back'"), 0);
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Root restoreはterminal predecessorのresultとhistoryを保持したままactive successorを一件作成し、同じidempotency keyの再送で追加行を作らない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "restoreがterminal rootを上書きする、predecessor relationを欠落させる、またはresponse loss後の再送でactive successorを重複作成する"
+  // observable = "work_items_v6のroot rows、predecessor result、successor created event、idempotency replay response"
+  // observation_boundary = "component-behavior"
+  // scope = "WorkItemStorageV6 root successor restore"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("RW-RESTORE-ROOT: terminal Root WorkItemを保持してactive successorをidempotently作成する", async () => {
+    const harness = await createHarness();
+    try {
+      insertRootSession(harness, "root", "standalone", "Initial goal");
+      const predecessor = getRootWorkItem(harness, "root");
+      const running = harness.service.transition({
+        workItemId: predecessor.id,
+        state: "in_progress",
+        expectedRevision: predecessor.revision,
+        idempotencyKey: "root-start-before-restore",
+      }, runtimeBinding("root"));
+      const terminal = harness.service.reportResult({
+        workItemId: predecessor.id,
+        state: "completed",
+        expectedRevision: running.revision,
+        result: {
+          summary: "completed before restore",
+          changes: [],
+          verificationResults: [],
+          findings: [],
+          unverifiedItems: [],
+          remainingWork: [],
+        },
+        idempotencyKey: "root-result-before-restore",
+      }, runtimeBinding("root"));
+      const predecessorHistory = harness.workStorage.listHistory({ workItemId: terminal.id, afterSequence: null, limit: 10 })
+        .map((event) => ({ revision: event.revision, type: event.type, payload: event.payload }));
+      const restorePurpose = {
+        predecessorWorkItemId: terminal.id,
+        goal: "Restored goal",
+        scope: "restore scope",
+        completionCriteria: "restore complete",
+        authority: "root authority",
+        sourceIdentity: SOURCE_IDENTITY,
+        idempotencyKey: "root-restore-1",
+        requestFingerprint: "root-restore-fingerprint",
+      } as const;
+      const restoreSession = {
+        id: "root",
+        taskTitle: "Initial goal",
+        workspacePath: "C:/workspace",
+        branch: "main",
+      } as const;
+      const restoreDb = new DatabaseSync(harness.dbPath);
+      let successor: WorkItem;
+      try {
+        restoreDb.exec("BEGIN IMMEDIATE TRANSACTION");
+        successor = restoreRootWorkItemWithinTransaction(
+          restoreDb,
+          restoreSession,
+          restorePurpose,
+          trustedProof("session.restore", "root"),
+          "session-operation:restore:root-restore-fingerprint",
+          NOW,
+        );
+        restoreDb.exec("COMMIT");
+      } catch (error) {
+        restoreDb.exec("ROLLBACK");
+        throw error;
+      }
+      restoreDb.close();
+      assert.equal(successor.kind, "root");
+      assert.equal(successor.state, "pending");
+      assert.equal(successor.predecessorWorkItemId, terminal.id);
+      assert.equal(harness.workStorage.get(terminal.id)?.state, "completed");
+      assert.deepEqual(harness.workStorage.get(terminal.id)?.result, terminal.result);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "kind = 'root' AND root_session_id = 'root'"), 2);
+      const created = harness.workStorage.listHistory({ workItemId: successor.id, afterSequence: null, limit: 10 })[0];
+      assert.equal(created?.type, "created");
+      if (created?.type !== "created") throw new Error("Root successor created event is missing.");
+      assert.equal(created.payload.predecessorWorkItemId, terminal.id);
+      const replayDb = new DatabaseSync(harness.dbPath);
+      let replay: WorkItem;
+      try {
+        replayDb.exec("BEGIN IMMEDIATE TRANSACTION");
+        replay = restoreRootWorkItemWithinTransaction(
+          replayDb,
+          restoreSession,
+          restorePurpose,
+          trustedProof("session.restore", "root"),
+          "session-operation:restore:root-restore-fingerprint",
+          NOW,
+        );
+        replayDb.exec("COMMIT");
+      } catch (error) {
+        replayDb.exec("ROLLBACK");
+        throw error;
+      }
+      replayDb.close();
+      assert.deepEqual(replay, successor);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "kind = 'root' AND root_session_id = 'root'"), 2);
+      const migrationDb = new DatabaseSync(harness.dbPath);
+      try {
+        ensureV6Schema(migrationDb);
+      } finally {
+        migrationDb.close();
+      }
+      assert.deepEqual(harness.workStorage.get(terminal.id)?.result, terminal.result);
+      assert.deepEqual(
+        harness.workStorage.listHistory({ workItemId: terminal.id, afterSequence: null, limit: 10 })
+          .map((event) => ({ revision: event.revision, type: event.type, payload: event.payload })),
+        predecessorHistory,
+      );
+      assert.equal(harness.workStorage.get(successor.id)?.predecessorWorkItemId, terminal.id);
+      const successorHistory = harness.workStorage.listHistory({ workItemId: successor.id, afterSequence: null, limit: 10 });
+      assert.equal(successorHistory.length, 1);
+      assert.equal(successorHistory[0]?.type, "created");
+      if (successorHistory[0]?.type !== "created") throw new Error("Root successor history is missing.");
+      assert.equal(successorHistory[0].payload.predecessorWorkItemId, terminal.id);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "kind = 'root' AND root_session_id = 'root'"), 2);
     } finally {
       await closeHarness(harness);
     }

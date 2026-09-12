@@ -12,12 +12,17 @@ import {
   type SessionOutboundExecutionRecord,
   type SessionExecutionState,
   type SessionExecutionStorageRecord,
+  type SessionExecutionBindingSnapshot,
 } from "../src/session-execution.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { appendSessionExecutionEvent, claimSessionContainerRevision, getSessionResourceRevision } from "./resource-history-schema.js";
 import { assertGrantProofCurrent } from "./session-authority-storage.js";
 import { ResourceBudgetStorage } from "./resource-budget-storage.js";
+import {
+  SessionBindingRevisionConflictError,
+  SessionBindingStorage,
+} from "./session-binding-storage.js";
 
 type SessionExecutionRow = {
   sequence: number;
@@ -55,6 +60,8 @@ export type EnqueueSessionExecutionInput = {
   workItemId?: string;
   proof: MutationAuthorityProof;
   terminalFailureNotificationProof?: MutationAuthorityProof;
+  /** Snapshot resolved before the turn is admitted; never re-resolve after configure/move. */
+  binding?: SessionExecutionBindingSnapshot;
 };
 
 export type EnqueueSessionExecutionResult = {
@@ -134,6 +141,7 @@ export class SessionExecutionStorageV6 {
       throw new TypeError("Session execution request must be JSON serializable.");
     }
     return this.transaction(() => {
+      input = this.withCapturedBinding(input);
       const replay = this.findIdempotency("turn.enqueue", input.proof, input.idempotencyKey);
       if (replay) {
         if (replay.request_fingerprint !== input.requestFingerprint) {
@@ -212,7 +220,7 @@ export class SessionExecutionStorageV6 {
         operationId: executionOperationId("turn.enqueue", input.proof, input.idempotencyKey, input.requestFingerprint),
         idempotencyKey: input.idempotencyKey,
         occurredAt: input.createdAt,
-        payload: executionHistoryPayload(this.getRequired(input.id)),
+        payload: executionHistoryPayload(this.getRequired(input.id), input.binding),
       });
       claimSessionContainerRevision(this.db, {
         sessionId: input.sessionId,
@@ -232,6 +240,7 @@ export class SessionExecutionStorageV6 {
   startImmediate(input: StartSessionExecutionInput): EnqueueSessionExecutionResult {
     const requestJson = serializeJson(input.request, "Session execution request");
     return this.transaction(() => {
+      input = this.withCapturedBinding(input);
       const replay = this.findIdempotency("turn.run", input.proof, input.idempotencyKey);
       if (replay) {
         if (replay.request_fingerprint !== input.requestFingerprint) {
@@ -312,7 +321,7 @@ export class SessionExecutionStorageV6 {
         operationId: executionOperationId("turn.run", input.proof, input.idempotencyKey, input.requestFingerprint),
         idempotencyKey: input.idempotencyKey,
         occurredAt: input.createdAt,
-        payload: executionHistoryPayload(this.getRequired(input.id)),
+        payload: executionHistoryPayload(this.getRequired(input.id), input.binding),
       });
       claimSessionContainerRevision(this.db, {
         sessionId: input.sessionId,
@@ -334,7 +343,7 @@ export class SessionExecutionStorageV6 {
       FROM session_executions_v6
       WHERE id = ?
     `).get(executionId) as SessionExecutionRow | undefined;
-    return row ? parseExecution(row) : null;
+    return row ? this.parseStoredExecution(row) : null;
   }
 
   resolveIdempotency(
@@ -360,7 +369,7 @@ export class SessionExecutionStorageV6 {
       WHERE session_id = ?
       ORDER BY sequence ASC
     `).all(sessionId) as SessionExecutionRow[];
-    return rows.map(parseExecution);
+    return rows.map((row) => this.parseStoredExecution(row));
   }
 
   listSessionExecutionsPage(
@@ -392,7 +401,7 @@ export class SessionExecutionStorageV6 {
           LIMIT ?
         `).iterate(sessionId, afterSequence, limit) as IterableIterator<SessionExecutionRow>;
     for (const row of rows) {
-      yield parseExecution(row);
+      yield this.parseStoredExecution(row);
     }
   }
 
@@ -453,7 +462,7 @@ export class SessionExecutionStorageV6 {
       ORDER BY execution.sequence ASC
       LIMIT ?
     `).all(limit) as SessionExecutionRow[];
-    return rows.map(parseExecution);
+    return rows.map((row) => this.parseStoredExecution(row));
   }
 
   listSessionExecutionProjectionRecords(sessionId: string): SessionExecutionStorageRecord[] {
@@ -472,7 +481,7 @@ export class SessionExecutionStorageV6 {
         )
       ORDER BY sequence ASC
     `).all(sessionId, sessionId) as SessionExecutionRow[];
-    return rows.map(parseExecution);
+    return rows.map((row) => this.parseStoredExecution(row));
   }
 
   listSessionOutboundExecutions(sourceSessionId: string): SessionOutboundExecutionRecord[] {
@@ -524,7 +533,7 @@ export class SessionExecutionStorageV6 {
       ORDER BY turn.user_message_seq ASC, execution.sequence ASC
     `).all(targetSessionId) as Array<SessionExecutionRow & { target_message_sequence: number }>;
     return rows.map((row) => ({
-      execution: parseExecution(row),
+      execution: this.parseStoredExecution(row),
       targetMessageSequence: row.target_message_sequence,
     }));
   }
@@ -1079,7 +1088,7 @@ export class SessionExecutionStorageV6 {
       operationId,
       idempotencyKey,
       occurredAt,
-      payload: executionHistoryPayload(parseExecution(row)),
+      payload: executionHistoryPayload(this.parseStoredExecution(row), this.readBinding(row.id)),
     });
   }
 
@@ -1094,9 +1103,77 @@ export class SessionExecutionStorageV6 {
       throw error;
     }
   }
+
+  private parseStoredExecution(row: SessionExecutionRow): SessionExecutionStorageRecord {
+    return parseExecution(row, this.readBinding(row.id));
+  }
+
+  private withCapturedBinding<T extends EnqueueSessionExecutionInput>(input: T): T {
+    const binding = new SessionBindingStorage(this.db).getActive(input.sessionId);
+    if (!binding) {
+      if (input.binding) {
+        throw new SessionBindingRevisionConflictError(input.sessionId, input.binding.bindingRevision, 0);
+      }
+      return input;
+    }
+    if (input.binding && !sameExecutionBinding(binding, input.binding)) {
+      throw new SessionBindingRevisionConflictError(input.sessionId, input.binding.bindingRevision, binding.revision);
+    }
+    return {
+      ...input,
+      binding: {
+        bindingRevision: binding.revision,
+        providerId: binding.providerId,
+        modelId: binding.modelId,
+        reasoningEffort: binding.reasoningEffort,
+        customAgentName: binding.customAgentName,
+        catalogRevision: binding.catalogRevision,
+        threadId: binding.threadId,
+        workspaceLabel: binding.workspaceLabel,
+        workspacePath: binding.workspacePath,
+        branch: binding.branch,
+        accessMode: binding.accessMode,
+        approvalMode: binding.approvalMode,
+        codexSandboxMode: binding.codexSandboxMode,
+        codexSpeed: binding.codexSpeed,
+        codexReviewer: binding.codexReviewer,
+        allowedAdditionalDirectories: [...binding.allowedAdditionalDirectories],
+        characterId: binding.characterId,
+        characterName: binding.characterName,
+        characterIconPath: binding.characterIconPath,
+        characterThemeColors: binding.characterThemeColors,
+        characterRuntimeSnapshot: binding.characterRuntimeSnapshot,
+        characterRuntimeIdentity: binding.characterRuntimeIdentity,
+        workspaceGrant: binding.workspaceGrant,
+        providerGeneration: binding.providerGeneration,
+        executionGeneration: binding.executionGeneration,
+        roleBinding: binding.roleBinding,
+      },
+    };
+  }
+
+  private readBinding(executionId: string): SessionExecutionBindingSnapshot | undefined {
+    const row = this.db.prepare(`
+      SELECT payload_json
+      FROM session_execution_events_v6
+      WHERE execution_id = ? AND json_type(payload_json, '$.binding') = 'object'
+      ORDER BY revision ASC
+      LIMIT 1
+    `).get(executionId) as { payload_json: string } | undefined;
+    if (!row) return undefined;
+    try {
+      const value = JSON.parse(row.payload_json) as { binding?: unknown };
+      return isExecutionBindingSnapshot(value.binding) ? value.binding : undefined;
+    } catch {
+      return undefined;
+    }
+  }
 }
 
-function parseExecution(row: SessionExecutionRow): SessionExecutionStorageRecord {
+function parseExecution(
+  row: SessionExecutionRow,
+  binding?: SessionExecutionBindingSnapshot,
+): SessionExecutionStorageRecord {
   return {
     sequence: row.sequence,
     revision: row.revision,
@@ -1112,7 +1189,74 @@ function parseExecution(row: SessionExecutionRow): SessionExecutionStorageRecord
     admittedAt: row.admitted_at,
     completedAt: row.completed_at,
     updatedAt: row.updated_at,
+    ...(binding ? { binding } : {}),
   };
+}
+
+function isExecutionBindingSnapshot(value: unknown): value is SessionExecutionBindingSnapshot {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<SessionExecutionBindingSnapshot>;
+  const bindingRevision = candidate.bindingRevision;
+  const catalogRevision = candidate.catalogRevision;
+  return typeof bindingRevision === "number" && Number.isSafeInteger(bindingRevision) && bindingRevision > 0
+    && typeof candidate.providerId === "string"
+    && typeof candidate.modelId === "string"
+    && typeof candidate.reasoningEffort === "string"
+    && typeof candidate.customAgentName === "string"
+    && typeof catalogRevision === "number" && Number.isSafeInteger(catalogRevision) && catalogRevision > 0
+    && typeof candidate.threadId === "string"
+    && typeof candidate.workspaceLabel === "string"
+    && typeof candidate.workspacePath === "string"
+    && typeof candidate.branch === "string"
+    && typeof candidate.accessMode === "string"
+    && typeof candidate.approvalMode === "string"
+    && typeof candidate.codexSandboxMode === "string"
+    && typeof candidate.codexSpeed === "string"
+    && typeof candidate.codexReviewer === "string"
+    && Array.isArray(candidate.allowedAdditionalDirectories)
+    && candidate.allowedAdditionalDirectories.every((entry): entry is string => typeof entry === "string")
+    && typeof candidate.characterId === "string"
+    && typeof candidate.characterName === "string"
+    && typeof candidate.characterIconPath === "string"
+    && Boolean(candidate.characterThemeColors)
+    && typeof candidate.characterThemeColors === "object"
+    && !Array.isArray(candidate.characterThemeColors)
+    && (candidate.characterRuntimeIdentity === null || typeof candidate.characterRuntimeIdentity === "string")
+    && (candidate.workspaceGrant === null || (typeof candidate.workspaceGrant === "object" && !Array.isArray(candidate.workspaceGrant)))
+    && (candidate.providerGeneration === null || typeof candidate.providerGeneration === "string")
+    && (candidate.executionGeneration === null || typeof candidate.executionGeneration === "string");
+}
+
+function sameExecutionBinding(
+  binding: import("./session-binding-storage.js").SessionBindingRevision,
+  snapshot: SessionExecutionBindingSnapshot,
+): boolean {
+  return binding.revision === snapshot.bindingRevision
+    && binding.providerId === snapshot.providerId
+    && binding.modelId === snapshot.modelId
+    && binding.reasoningEffort === snapshot.reasoningEffort
+    && binding.customAgentName === snapshot.customAgentName
+    && binding.catalogRevision === snapshot.catalogRevision
+    && binding.threadId === snapshot.threadId
+    && binding.workspaceLabel === snapshot.workspaceLabel
+    && binding.workspacePath === snapshot.workspacePath
+    && binding.branch === snapshot.branch
+    && binding.accessMode === snapshot.accessMode
+    && binding.approvalMode === snapshot.approvalMode
+    && binding.codexSandboxMode === snapshot.codexSandboxMode
+    && binding.codexSpeed === snapshot.codexSpeed
+    && binding.codexReviewer === snapshot.codexReviewer
+    && JSON.stringify(binding.allowedAdditionalDirectories) === JSON.stringify(snapshot.allowedAdditionalDirectories)
+    && binding.characterId === snapshot.characterId
+    && binding.characterName === snapshot.characterName
+    && binding.characterIconPath === snapshot.characterIconPath
+    && JSON.stringify(binding.characterThemeColors) === JSON.stringify(snapshot.characterThemeColors)
+    && JSON.stringify(binding.characterRuntimeSnapshot) === JSON.stringify(snapshot.characterRuntimeSnapshot)
+    && binding.characterRuntimeIdentity === snapshot.characterRuntimeIdentity
+    && JSON.stringify(binding.workspaceGrant) === JSON.stringify(snapshot.workspaceGrant)
+    && binding.providerGeneration === snapshot.providerGeneration
+    && binding.executionGeneration === snapshot.executionGeneration
+    && JSON.stringify(binding.roleBinding) === JSON.stringify(snapshot.roleBinding);
 }
 
 function serializeJson(value: unknown, label: string): string {
@@ -1197,7 +1341,10 @@ function sessionRelationMatches(
     || (source.session_id === source.root_session_id && relation === "root_member");
 }
 
-function executionHistoryPayload(execution: SessionExecutionStorageRecord): Readonly<Record<string, unknown>> {
+function executionHistoryPayload(
+  execution: SessionExecutionStorageRecord,
+  binding?: SessionExecutionBindingSnapshot,
+): Readonly<Record<string, unknown>> {
   return {
     operation: execution.operation,
     state: execution.state,
@@ -1207,6 +1354,7 @@ function executionHistoryPayload(execution: SessionExecutionStorageRecord): Read
     admittedAt: execution.admittedAt,
     completedAt: execution.completedAt,
     updatedAt: execution.updatedAt,
+    ...(binding ? { binding } : {}),
   };
 }
 
