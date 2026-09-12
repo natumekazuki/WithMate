@@ -392,6 +392,14 @@ source改変のstartup拒否検証で、既存SessionExecutionStorageV6 construc
 
 実際のchild結果採用と親完了後、archive後とrestore後の各担当Session削除、manifest、tombstone、decision/result保持とstorage再openを検証した。未判断childではmanifestと削除の両方が保護を維持する。関連45 testと型検査、差分checkが成功した。全suite・build・GUIは再実行していない。今回の開始baseから2 tests／2 transitions（新規1件と隣接既存1件）をdiagnostic 0で抽出し、通常のread-only general_lunaによるtest-value審査を完了した。指摘を受け、未判断childのarchive後・restore後もmanifestと削除が保護する直接検証を補強し、関連storage 7件成功と指摘解消を確認した。固定commitのclean detached worktreeで当該finding family限定reviewも完了し、残るblockingはない。production sourceはこのreview済みcommitと同一。review worktreeはHEAD・cleanliness・SessionFolder内pathを確認して削除した。
 
+### Slice 4 追加レビュー：重複実装とtest claimの整理（2026-09-13）
+
+開始baseは`b63f02ee3da124afa295e147a08a33a57fe2ad58`、修正commitは`5b5bc40c1e5cc0138094efd75e71b708b8eee2ae`。集約完了とSession削除／manifestの4箇所にあったarchive/restoredのみのrevision差許容SQLを共通fragmentへ集約した。呼び出しのない旧root successor生成経路と未使用型・継承元との重複フィールド・test変数を削除し、Session restoreとwork.reopenの共通生成経路を維持した。
+
+test metadataは、成功時のsource保存、archived_atフラグに対するenqueue拒否、HTTPが実assertする2つのrevision入力へ限定した。atomic rollbackやproduction archiveの検証とは扱わない。legacy queued admission fallback、生成済みCLI artifact、application/MCP schema、migrationと現行associationのrevision mismatch testは維持した。
+
+関連63 test、型検査、差分checkが成功した。開始baseから4 tests／4 transitionsをdiagnostic 0で抽出し、通常のread-only general_lunaによる全recordのtest-value審査を完了した。固定commitのclean detached worktreeで今回のfinding familyに限定した独立reviewも完了し、修正要求はない。review worktreeはHEAD・cleanliness・SessionFolder内pathを確認して削除した。全suite・build・GUIは今回再実行していない。
+
 ### Slice 2 の実装・検証対象
 
 Root ledger、原子的な予約と精算、Session／Work Item作成数、実行queue、Provider retry／使用量、SessionFolderの仲介書き込み、Settingsからの上限・期限延長を接続した。初期policyは2026-09-07のユーザー指定を採用し、token・費用は計測のみとする。設計の採用方針とADR 030を正本とする。
