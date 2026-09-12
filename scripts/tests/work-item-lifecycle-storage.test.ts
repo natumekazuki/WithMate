@@ -371,7 +371,13 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     const sessions = new SessionStorageV6(dbPath);
     const db = new DatabaseSync(dbPath);
     try {
-      for (const child of children) {
+      for (const [index, child] of children.entries()) {
+        assert.ok(buildSessionLifecycleManifest(db, child.targetSessionId).blockers.includes("work_items_present"));
+        assert.throws(() => sessions.deleteSession(child.targetSessionId), /WORK_ITEM_SESSION_PROTECTED/);
+        const unjudgedArchive = storage.archive({ workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: child.id + "-unjudged-archive", requestFingerprint: child.id + "-unjudged-archive", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.archive"), reason: "retained" });
+        assert.ok(buildSessionLifecycleManifest(db, child.targetSessionId).blockers.includes("work_items_present"));
+        assert.throws(() => sessions.deleteSession(child.targetSessionId), /WORK_ITEM_SESSION_PROTECTED/);
+        children[index] = storage.restore({ workItemId: child.id, expectedRevision: unjudgedArchive.revision, principalSessionId: "root", idempotencyKey: child.id + "-unjudged-restore", requestFingerprint: child.id + "-unjudged-restore", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.restore") });
         assert.ok(buildSessionLifecycleManifest(db, child.targetSessionId).blockers.includes("work_items_present"));
         assert.throws(() => sessions.deleteSession(child.targetSessionId), /WORK_ITEM_SESSION_PROTECTED/);
         storage.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: storage.getAggregationSummary(parent.id).aggregateRevision, idempotencyKey: child.id + "-accept", requestFingerprint: child.id + "-accept", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
