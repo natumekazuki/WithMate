@@ -110,7 +110,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - Agent Mode の workspace は既存 directory を選ぶ `Browse` と、WithMate 管理下の directory を開始時に作る `SessionFolder` から選ぶ
   - enabled provider の選択
   - Character selector は開くたびにランダムを初期選択する。明示選択したactive Characterはそのまま使い、Characterが0件の場合はneutral fallbackを使う。詳細はADR 004を参照する
-  - model / depth / approval / sandbox / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
+  - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
   - open 時は dialog 内の最初の主要入力へ focus し、`Escape` で閉じる
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
   - provider の single-select chip は矢印キーで選択を移動できる
@@ -201,7 +201,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
   - Header、ActionDock、side pane、layout priority の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
   - title 編集などの強制表示は保存済み preference を変更しない
-  - 中央 surface の最小高を優先し、ActionDock の高さは layout 高の40%までとする
+  - wide layout では中央 surface を layout 高の5%程度残し、ActionDock の高さは layout 高の95%までとする。narrow layout ではこの95%／5%計算を使わず、active side pane と work surface の縦 stack を維持する
   - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
   - splitter の click で対応する pane を切り替える。wide layout では左右 splitter の drag による幅調整も受け付ける

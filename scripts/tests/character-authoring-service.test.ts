@@ -75,6 +75,27 @@ async function createWorkspace(
   return { tempDirectory, workspacePath };
 }
 
+function assertSectionContains(
+  markdown: string,
+  heading: string,
+  patterns: readonly RegExp[],
+): void {
+  const headingIndex = markdown.indexOf(heading);
+  assert.notEqual(headingIndex, -1, `${heading} must be present`);
+  const headingLevel = heading.match(/^#+/)?.[0].length;
+  assert.ok(headingLevel, `${heading} must be a Markdown heading`);
+  const sectionStart = headingIndex + heading.length;
+  const nextSectionOffset = markdown.slice(sectionStart).search(
+    new RegExp(`^#{1,${headingLevel}}\\s`, "m"),
+  );
+  const section = nextSectionOffset === -1
+    ? markdown.slice(headingIndex)
+    : markdown.slice(headingIndex, sectionStart + nextSectionOffset);
+  for (const pattern of patterns) {
+    assert.match(section, pattern, `${heading} must contain ${pattern}`);
+  }
+}
+
 describe("CharacterAuthoringService", () => {
   it("最新定義から snapshot を作れない turn は古い runtime snapshot を破棄する", () => {
     const session = buildNewSession({
@@ -214,14 +235,17 @@ description: "作業を一緒に進める相手"
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "authoring Sessionへコピーされた固定SkillがCharacter Kernel、必須検証、WithMate固有の除外境界をすべて含む"
+  // claim = "Codexのcreate authoring workspaceへ配布される固定Skillと生成指示が主要な対話・作業校正契約、必須検証、WithMate固有の除外境界を含む"
   // oracle = { type = "adr", ref = "docs/adr/011-character-authoring-kernel.md" }
-  // failure_mode = "配布bundleの一部が旧版または欠落し、次回のAuthor / Improve Sessionが旧品質契約、hidden input、または責務外の生成処理を使う"
-  // scope = "character-authoring-skill-distribution"
+  // fault = "Codexのcreate workspaceへ配布されるbundleまたは生成指示の主要部分が旧版または欠落し、次回のAuthor / Improve Sessionが旧品質契約、作業中のCharacter契約、hidden input、または責務外の生成処理を使う"
+  // observable = "Codexのcreate workspaceへコピーされたSKILL.md、character-format.md、authoring-rubric.md、runtime-philosophy.md、improve-existing-character.md、source-and-rights-policy.md、review-checklist.md、character-notes.mdの対話・作業校正と更新識別用section、およびAGENTS.md、AUTHORING_PROMPT.mdの主要境界"
+  // observation_boundary = "component-behavior"
+  // scope = "character-authoring-workspace-codex-create"
   // lifecycle = "permanent"
-  // distinction = "配布処理の存在だけでなく、実際のprovider workspaceにコピーされたSkill全体の品質契約を観測する"
+  // impact = "既存の良さを保持した対話・作業校正、未確認事項の正確な報告、成果物形式との分離、責務外のファイルやhidden inputの除外が次回Sessionへ伝わらない"
+  // distinction = "配布処理の存在だけでなく、実際のCodex create workspaceにコピーされた列挙済みreferenceと生成指示の対話・作業契約を観測する"
   // @end-test-value
   it("配布後の固定 Skill は Character Kernel と検証・除外境界を一式持つ", async () => {
     const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
@@ -255,9 +279,82 @@ description: "作業を一緒に進める相手"
         path.join(copiedSkillRoot, "templates", "character-notes.md"),
         "utf8",
       );
+      const runtimePhilosophyMarkdown = await readFile(
+        path.join(copiedSkillRoot, "references", "runtime-philosophy.md"),
+        "utf8",
+      );
+      const improveExistingCharacterMarkdown = await readFile(
+        path.join(copiedSkillRoot, "references", "improve-existing-character.md"),
+        "utf8",
+      );
+      const sourceAndRightsPolicyMarkdown = await readFile(
+        path.join(copiedSkillRoot, "references", "source-and-rights-policy.md"),
+        "utf8",
+      );
+      const reviewChecklistMarkdown = await readFile(
+        path.join(copiedSkillRoot, "references", "review-checklist.md"),
+        "utf8",
+      );
+      const agentsMarkdown = await readFile(path.join(result.workspacePath, "AGENTS.md"), "utf8");
+      const authoringPrompt = await readFile(path.join(result.workspacePath, "AUTHORING_PROMPT.md"), "utf8");
 
       assert.match(skillMarkdown, /選択の核 × 言語アイデンティティ × 状態変調/);
+      assert.match(skillMarkdown, /collaborative authoring/);
+      assert.match(skillMarkdown, /Baseline Presence/);
+      assert.match(skillMarkdown, /Likeness Anchor/);
+      assert.match(skillMarkdown, /Marker-underuse/);
+      assert.match(skillMarkdown, /Multi-turn continuity/);
+      assert.match(skillMarkdown, /Regression \/ Protected-trait/);
+      assert.match(skillMarkdown, /conversation-and-work/);
+      assert.match(skillMarkdown, /Task-execution \/ Conversation-work Continuity/);
+      assert.match(skillMarkdown, /Work Likeness \/ Task Integrity \/ Collaboration Comfort/);
+      assert.match(skillMarkdown, /synthetic-event.*recorded-tool-replay.*live-tool-execution/);
       assert.match(skillMarkdown, /既存Characterへ自動migrationや一括rewriteを要求しない/);
+      assert.match(runtimePhilosophyMarkdown, /## Baseline Presence and Likeness Anchors/);
+      assert.match(runtimePhilosophyMarkdown, /habitual/);
+      assert.match(runtimePhilosophyMarkdown, /reactive/);
+      assert.match(runtimePhilosophyMarkdown, /signature/);
+      assert.match(runtimePhilosophyMarkdown, /## Association and Meme Response/);
+      assert.match(runtimePhilosophyMarkdown, /## Character Presence during Work/);
+      assert.match(runtimePhilosophyMarkdown, /### Work-session Validation/);
+      assertSectionContains(runtimePhilosophyMarkdown, "### Work-session Validation", [
+        /Task-execution \/ Conversation-work Continuity/,
+        /synthetic-event \/ recorded-tool-replay \/ live-tool-execution/,
+        /Work Likeness（らしさ）、Task Integrity（作業の整合・信頼性）、Collaboration Comfort（一緒に進める心地よさ）を別評価する/,
+        /内部思考ではなく観察可能な行為と発話を検証する/,
+      ]);
+      assert.match(improveExistingCharacterMarkdown, /## 4\. Separate Preserve \/ Revise \/ Investigate/);
+      assert.match(improveExistingCharacterMarkdown, /## 8\. Compare Outputs and Revise by Cause/);
+      assert.match(improveExistingCharacterMarkdown, /Task-execution \/ Conversation-work Continuity/);
+      assert.match(improveExistingCharacterMarkdown, /Work Likeness \/ Task Integrity \/ Collaboration Comfort/);
+      assert.match(sourceAndRightsPolicyMarkdown, /user-observation \/ user-preference \/ output-feedback \/ authoring-inference/);
+      assert.match(sourceAndRightsPolicyMarkdown, /## Meme and Association Sources/);
+      assert.match(sourceAndRightsPolicyMarkdown, /## Work-context Transfer and Task Evidence/);
+      assertSectionContains(sourceAndRightsPolicyMarkdown, "## Work-context Transfer and Task Evidence", [
+        /authoring-inference/,
+        /本人の開発経験、技術的な能力、未確認のtool使用歴を創作しない/,
+        /作業品質の低下、検証省略、わざと起こすミスへ変換しない/,
+        /synthetic-event、recorded-tool-replay、live-tool-execution/,
+        /非公開の内部思考を取得する工程にはしない/,
+        /標準Packは引き続き2ファイルのみ/,
+      ]);
+      assert.match(reviewChecklistMarkdown, /## Evaluation Provenance/);
+      assert.match(reviewChecklistMarkdown, /Marker-underuse/);
+      assert.match(reviewChecklistMarkdown, /Multi-turn continuity \/ Return-to-baseline/);
+      assert.match(reviewChecklistMarkdown, /Relationship smoke test（7場面）/);
+      assert.match(reviewChecklistMarkdown, /## Work-session Validation/);
+      assert.match(reviewChecklistMarkdown, /synthetic-event \/ recorded-tool-replay \/ live-tool-execution/);
+      assertSectionContains(reviewChecklistMarkdown, "## Work-session Validation", [
+        /task ID、候補revision、初期状態、依頼・受入条件・許可範囲を固定した/,
+        /順調な経路と想定外の経路を扱い、中盤を含む時間順のセッションを確認した/,
+        /検証のために無許可の本番変更・送信・課金・デプロイをしていない/,
+        /Work Likenessを、必要な中盤発話・割り込み・復帰の出力から判定した/,
+        /Task Integrityを、実行\/未実行・仮説\/確認・許可範囲・受入条件から独立に判定した/,
+        /Collaboration Comfortを、発話密度・必要な共有・反復・作業の邪魔にならないことから判定した/,
+        /Functional verificationを別記し、synthetic-eventやreplayのみではnot-runのままにした/,
+        /非公開の内部思考の全文を検証資料として要求していない/,
+        /logの秘密情報、改変・省略・保存\/参照不能の限界を明示した/,
+      ]);
       for (const [boundary, pattern] of [
         ["permanent Character output", /`character\.md`と`character-notes\.md`以外を編集しない/],
         ["Character directory scope", /app database、packaged resource、このCharacter directory外のfileを編集しない/],
@@ -286,26 +383,111 @@ description: "作業を一緒に進める相手"
         "Character Priority",
         "Minimal Reliability",
       ]) {
-        assert.match(formatMarkdown, new RegExp(section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        const escapedSection = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        assert.match(formatMarkdown, new RegExp(`^#{2,3} ${escapedSection}$`, "m"));
       }
+      assert.match(formatMarkdown, /Baseline Presence/);
+      assert.match(formatMarkdown, /^## Voice Rules$/m);
+      assert.match(formatMarkdown, /Association and Meme Response/);
+      assert.match(formatMarkdown, /作業中・集中・発見・見立ての修正/);
+      assert.match(formatMarkdown, /Work-session Design/);
+      assertSectionContains(formatMarkdown, "## No Fixed Response Examples", [
+        /full authoringで作る`character\.md`へ完成返答の`Examples` sectionや場面別台詞集を置かない/,
+        /smoke testの入力と出力は検証資料であり、runtime本文へコピーしない/,
+        /作業イベントへの試演、実課題、toolログ、途中の完成台詞、テスト用コードはruntimeへ入れない/,
+      ]);
       assert.match(formatMarkdown, /旧sectionや既存`Examples`を含むCharacterも引き続き読み込める/);
       for (const validation of [
+        "Baseline / Anchor-presence",
         "Name-swap",
+        "Combination",
         "Phrase-suppression",
         "Voice-restoration",
+        "Marker-underuse",
         "Unseen-scenario",
-        "Paraphrase diversity",
+        "Paraphrase Diversity",
         "Marker-overuse",
         "Core-tension",
-        "Long-form retention",
-        "Relationship smoke test",
+        "Long-form Retention",
+        "Multi-turn Continuity",
+        "Return-to-baseline",
+        "Regression / Protected-trait",
+        "7-scene Relationship Smoke Test",
+        "Task-execution / Conversation-work Continuity",
       ]) {
         assert.match(rubricMarkdown, new RegExp(validation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       }
+      assertSectionContains(rubricMarkdown, "### Task-execution / Conversation-work Continuity Test", [
+        /task ID.*候補revision.*初期ファイルや資料の版.*依頼・受入条件.*許可範囲/,
+        /#### Temporal Coverage/,
+        /#### Controlled Event Trials/,
+        /未来の結果・原因・予定する反応を先に教えない/,
+        /#### Live Task Trials and Mixed Dialogue/,
+        /無許可の本番変更、外部送信、課金、デプロイは品質testに含めない/,
+        /#### Three Independent Assessments/,
+        /各軸を`pass \/ fail \/ inconclusive \/ not-run \/ not-applicable`で別記する/,
+        /Functional verification（実編集・実行・受入条件の確認）は別欄/,
+        /synthetic-eventやreplayだけの場合は`not-run`/,
+        /非公開の内部思考の全文を求めず/,
+      ]);
+      assert.match(notesTemplate, /## Calibration Brief/);
+      assert.match(notesTemplate, /## Likeness Anchors/);
+      assert.match(notesTemplate, /## Feedback and Revision Log/);
+      assert.match(notesTemplate, /^## Source Coverage$/m);
+      assert.match(notesTemplate, /^## Evidence \/ Sources$/m);
       assert.match(notesTemplate, /## Observation Log/);
       assert.match(notesTemplate, /## Character Kernel Derivation/);
+      assert.match(notesTemplate, /^## State Modulation$/m);
+      assert.match(notesTemplate, /^## Runtime Handoff$/m);
+      assert.match(notesTemplate, /^## Conflicts \/ Uncertainty$/m);
       assert.match(notesTemplate, /## Revision Guardrails/);
       assert.match(notesTemplate, /## Validation Summary/);
+      assert.match(notesTemplate, /^### Environment and Provenance$/m);
+      assert.match(notesTemplate, /^### Main Quality Test Details$/m);
+      assert.match(notesTemplate, /Continuous Conversation Record/);
+      assert.match(notesTemplate, /## Work-session Design/);
+      assert.match(notesTemplate, /### Work-session Validation Record/);
+      assert.match(notesTemplate, /Work Likeness/);
+      assert.match(
+        notesTemplate,
+        /^\| Task-execution \/ Conversation-work Continuity（作業用途で必須） \|/m,
+      );
+      assertSectionContains(notesTemplate, "### Work-session Validation Record", [
+        /Session \/ task ID、候補revision/,
+        /ユーザー依頼・初期資料やfileの版・受入条件/,
+        /tool構成・権限・初期状態の復元方法/,
+        /Environment \/ Dialogue mode \/ Event source/,
+        /Event source・元log・加工の有無/,
+        /\| Work Likeness \|/,
+        /\| Task Integrity \|/,
+        /\| Collaboration Comfort \|/,
+        /Functional verification: pass \/ fail \/ inconclusive \/ not-run \/ not-applicable/,
+        /synthetic-eventやreplayのみのFunctional verificationはnot-run/,
+        /非公開の内部思考は原出力証拠にしない/,
+      ]);
+      assert.match(agentsMarkdown, /collaborative authoring/);
+      assert.match(agentsMarkdown, /Preserve \/ Revise \/ Investigate/);
+      assert.match(agentsMarkdown, /会話履歴からの自動成長や companion\/session history の取り込みは行わない/);
+      assert.match(agentsMarkdown, /編集対象はこの workspace 内の `character\.md` \/ `character-notes\.md` に限定する/);
+      assert.match(agentsMarkdown, /未実施・未確認の検証を成功扱いしない/);
+      assert.match(agentsMarkdown, /conversation-and-work/);
+      assert.match(agentsMarkdown, /Task-execution \/ Conversation-work Continuity/);
+      assert.match(agentsMarkdown, /納品コード・設定・文書へ要求される形式・文体/);
+      assert.match(agentsMarkdown, /task ID、候補revision、初期状態、依頼・受入条件、許可範囲/);
+      assert.match(agentsMarkdown, /Functional verification は3軸と分ける.*not-run/);
+      assert.match(agentsMarkdown, /無許可の本番変更・外部送信・課金・デプロイは行わない/);
+      assert.match(authoringPrompt, /research → alignment → calibration ⇄ validation/);
+      assert.match(authoringPrompt, /現象 → 原因仮説 → 規則変更 → 別入力での検証/);
+      assert.match(authoringPrompt, /session \/ companion history は入力にしない/);
+      assert.match(authoringPrompt, /Character root に source report、review checklist、manifest、Zip などの追加成果物を作らない/);
+      assert.match(authoringPrompt, /inconclusive の検証を pass と報告しない/);
+      assert.match(authoringPrompt, /conversation-and-work/);
+      assert.match(authoringPrompt, /synthetic-event \/ recorded-tool-replay \/ live-tool-execution/);
+      assert.match(authoringPrompt, /Work Likeness \/ Task Integrity \/ Collaboration Comfort/);
+      assert.match(authoringPrompt, /task ID、候補revision、初期状態、依頼・受入条件、許可範囲/);
+      assert.match(authoringPrompt, /Functional verification を分ける.*not-run/);
+      assert.match(authoringPrompt, /無許可の本番変更・外部送信・課金・デプロイは行わない/);
+      assert.match(authoringPrompt, /表示面・注入範囲・履歴の不明点は unknown/);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }

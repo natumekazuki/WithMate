@@ -20,6 +20,7 @@ export type HomeCompanionMonitorEntry = {
   kind: "companion";
   session: CompanionSessionSummary;
   auxiliarySessions: AuxiliarySessionSummary[];
+  isWindowOpen: boolean;
   activeAuxiliarySession?: AuxiliarySessionSummary | null;
   state: HomeSessionState;
   groupLabel: string;
@@ -203,6 +204,7 @@ export function buildHomeCompanionMonitorEntries(
       return {
         kind: "companion" as const,
         session,
+        isWindowOpen: openCompanionIdSet.has(session.id),
         auxiliarySessions,
         // Kept for existing callers while the complete collection is exposed above.
         activeAuxiliarySession: auxiliarySessions[0] ?? null,

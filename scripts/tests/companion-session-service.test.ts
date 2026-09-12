@@ -54,7 +54,7 @@ function createLaunchSelection(
     reasoningEffort: "xhigh",
     approvalMode: "never",
     codexSandboxMode: "danger-full-access",
-    codexSpeed: "standard",
+    codexSpeed: "fast",
     codexReviewer: "auto-review",
     customAgentName: "reviewer",
     ...overrides,
@@ -87,11 +87,13 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("CompanionSessionService", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "Companion作成は起動時に解決したReviewerをSessionへ保存する"
-  // oracle = { type = "contract", ref = "codex-auto-review AR-2" }
-  // failure_mode = "Companion作成時にReviewerが欠落またはUserへ戻る"
+  // claim = "New Companionは共通launch selectionで解決したCodex speedとReviewerを作成Sessionと保存結果へ反映する"
+  // oracle = { type = "contract", ref = "accepted behavior: New Companion runtime selection inheritance" }
+  // fault = "CompanionSession作成が解決済みのFastまたはAuto-reviewをStandardまたはUserへ戻す、または保存しない"
+  // observable = "作成されたCompanionSessionとstorageから再取得したSessionのcodexSpeedとcodexReviewer"
+  // observation_boundary = "public-boundary"
   // scope = "companion-create"
   // lifecycle = "permanent"
   // @end-test-value
@@ -163,9 +165,12 @@ describe("CompanionSessionService", () => {
       assert.equal(session.reasoningEffort, "xhigh");
       assert.equal(session.approvalMode, "never");
       assert.equal(session.codexSandboxMode, "danger-full-access");
+      assert.equal(session.codexSpeed, "fast");
       assert.equal(session.codexReviewer, "auto-review");
       assert.equal(session.customAgentName, "reviewer");
       assert.deepEqual(storage.getSession(session.id)?.characterRuntimeSnapshot, characterRuntimeSnapshot);
+      assert.equal(storage.getSession(session.id)?.codexSpeed, "fast");
+      assert.equal(storage.getSession(session.id)?.codexReviewer, "auto-review");
     } finally {
       if (worktreePath) {
         await git(repoPath, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);

@@ -764,26 +764,43 @@ export default function AgentSessionWindowApp() {
     [companionSessions, openCompanionReviewWindowIds],
   );
   const selectedSessionId = selectedSession?.id ?? null;
-  const validateSessionWorkspace = useCallback(async (session: Session): Promise<boolean> => {
+  const validateSessionWorkspace = useCallback(async (
+    session: Session,
+    preserveAvailableState = false,
+  ): Promise<boolean> => {
     if (!withmateApi) {
       return false;
     }
     const { id: sessionId, workspacePath } = session;
     const requestId = workspaceAvailabilityRequestIdRef.current + 1;
     workspaceAvailabilityRequestIdRef.current = requestId;
-    setWorkspaceAvailability(beginSessionWorkspaceAvailabilityCheck(sessionId, workspacePath, requestId));
+    if (!preserveAvailableState) {
+      setWorkspaceAvailability(beginSessionWorkspaceAvailabilityCheck(sessionId, workspacePath, requestId));
+    }
     const result = await withmateApi.validateSessionWorkspace(sessionId)
       .catch(() => ({ valid: false, reason: "unavailable" } as const));
     if (workspaceAvailabilityRequestIdRef.current !== requestId) {
       return false;
     }
-    setWorkspaceAvailability((current) => applySessionWorkspaceAvailabilityResult(
-      current,
-      sessionId,
-      workspacePath,
-      requestId,
-      result,
-    ));
+    if (preserveAvailableState) {
+      setWorkspaceAvailability((current) => {
+        if (!isSessionWorkspaceAvailable(current, sessionId, workspacePath)) {
+          return current;
+        }
+        if (result.valid) {
+          return current;
+        }
+        return { status: "unavailable", sessionId, workspacePath, reason: result.reason };
+      });
+    } else {
+      setWorkspaceAvailability((current) => applySessionWorkspaceAvailabilityResult(
+        current,
+        sessionId,
+        workspacePath,
+        requestId,
+        result,
+      ));
+    }
     return result.valid;
   }, [withmateApi]);
   useEffect(() => {
@@ -2304,7 +2321,7 @@ export default function AgentSessionWindowApp() {
         return;
       }
 
-      if (!await validateSessionWorkspace(selectedSession)) {
+      if (!await validateSessionWorkspace(selectedSession, true)) {
         setForceComposerBlockedFeedback(true);
         return;
       }
@@ -2415,7 +2432,7 @@ export default function AgentSessionWindowApp() {
         const [refreshedSessionResult, refreshedLiveRunResult] = await Promise.allSettled([
           withmateApi.getSession(sessionId),
           withmateApi.getLiveSessionRun(sessionId),
-          validateSessionWorkspace(selectedSession),
+          validateSessionWorkspace(selectedSession, true),
         ]);
         const canReplaceOptimisticBody = sessionMutationRevisionRef.current.isCurrent(
           optimisticSessionMutationRevision,
