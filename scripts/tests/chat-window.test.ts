@@ -1877,3 +1877,70 @@ test("SessionChatScreen は中央160px境界で非表示と復帰を切り替え
     dom.window.close();
   }
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "展開中ActionDockの実幅900px未満かつ実高さ420px未満で上下優先を要求し、片方だけ不足またはcompact時には要求しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: ActionDockの優先切り替え" }
+// fault = "AND条件をORにする、境界を含める、またはresize後の不足を検知できない"
+// observable = "実componentの計測とResizeObserver通知による配置変更callback回数"
+// observation_boundary = "component-behavior"
+// scope = "SessionChatScreen ActionDock priority"
+// lifecycle = "permanent"
+// impact = "狭い入力領域を確保しつつ、収まる配置を勝手に切り替えない"
+// distinction = "CSSの描画は対象外とし、実寸通知から既存配置変更callbackへ至る判断を検証する"
+// @end-test-value
+test("SessionChatScreen はActionDockの幅と高さが両方不足した時だけ上下優先を要求する", async () => {
+  const dom = new JSDOM("<div id='root'></div><style>.session-action-dock-slot { --session-preferred-min-width: 900px; --session-preferred-min-height: 420px; }</style>");
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  let notifyResize: () => void = () => {};
+  let width = 900;
+  let height = 419;
+  class Observer {
+    constructor(callback: () => void) { notifyResize = callback; }
+    observe() {}
+    disconnect() {}
+  }
+  Object.defineProperty(dom.window, "ResizeObserver", { configurable: true, value: Observer });
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
+    return { x: 0, y: 0, left: 0, top: 0, right: width, bottom: height, width, height, toJSON() {} };
+  };
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window },
+    document: { configurable: true, value: dom.window.document },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  let requests = 0;
+  const onRequireDockPriority = () => { requests += 1; };
+  const render = (expanded: boolean, priority: "side-pane-first" | "dock-first" = "side-pane-first") =>
+    root.render(React.createElement(SessionChatScreen, {
+      mode: "agent", header: null, headerSplitter: null, isHeaderVisible: true,
+      messageColumn: null, actionDock: null, actionDockSplitter: null, splitter: null,
+      isActionDockExpanded: expanded, layoutPriority: priority, onRequireDockPriority,
+    }));
+  try {
+    await act(async () => render(true));
+    assert.equal(requests, 0, "幅900pxは不足に含めない");
+    width = 899; height = 420;
+    await act(async () => notifyResize());
+    assert.equal(requests, 0, "高さ420pxは不足に含めない");
+    height = 419;
+    await act(async () => notifyResize());
+    assert.equal(requests, 1, "両方不足なら配置を変更する");
+    await act(async () => render(true, "dock-first"));
+    width = 1000; height = 500;
+    await act(async () => render(true, "dock-first"));
+    assert.equal(requests, 1, "回復しても自動では元へ戻さない");
+    width = 899; height = 419;
+    await act(async () => render(false));
+    assert.equal(requests, 1, "compactは判定対象外");
+    await act(async () => render(true));
+    assert.equal(requests, 2, "左右優先へ戻した場合も不足を再判定する");
+  } finally {
+    await act(async () => root.unmount());
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    dom.window.close();
+  }
+});

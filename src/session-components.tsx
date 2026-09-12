@@ -886,6 +886,7 @@ export type SessionChatScreenProps = {
   actionDockSplitter: ReactNode;
   isActionDockExpanded: boolean;
   layoutPriority: ChatLayoutPriority;
+  onRequireDockPriority?: () => void;
   leftPane?: ReactNode;
   leftSplitter?: ReactNode;
   rightPane: ReactNode;
@@ -938,6 +939,7 @@ export function SessionChatScreen({
   actionDockSplitter,
   isActionDockExpanded,
   layoutPriority,
+  onRequireDockPriority,
   leftPane = null,
   leftSplitter = null,
   rightPane,
@@ -991,6 +993,24 @@ export function SessionChatScreen({
     window.addEventListener("resize", measure);
     return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
   }, [layoutStyle, isActionDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible, layoutPriority]);
+  useLayoutEffect(() => {
+    const dock = ownLayoutRef.current?.querySelector<HTMLElement>(".session-action-dock-slot");
+    if (!dock || !isActionDockExpanded || layoutPriority !== "side-pane-first" || !onRequireDockPriority) return;
+    const measure = () => {
+      const bounds = dock.getBoundingClientRect();
+      const css = dock.ownerDocument.defaultView!.getComputedStyle(dock);
+      const minimumWidth = Number.parseFloat(css.getPropertyValue("--session-preferred-min-width"));
+      const minimumHeight = Number.parseFloat(css.getPropertyValue("--session-preferred-min-height"));
+      if (bounds.width > 0 && bounds.height > 0 && bounds.width < minimumWidth && bounds.height < minimumHeight) {
+        onRequireDockPriority();
+      }
+    };
+    measure();
+    const Observer = dock.ownerDocument.defaultView?.ResizeObserver;
+    const observer = Observer ? new Observer(measure) : null;
+    observer?.observe(dock);
+    return () => observer?.disconnect();
+  }, [isActionDockExpanded, layoutPriority, layoutStyle, onRequireDockPriority]);
   const columnsRef = useRef<HTMLDivElement | null>(null);
   const [columnSizes, setColumnSizes] = useState({ width: 0, main: 0, auxiliary: 0, splitter: 0 });
   useLayoutEffect(() => {

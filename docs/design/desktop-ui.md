@@ -204,6 +204,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
   - 左右splitterはclickで開閉し、開いた領域をdragと矢印キーでサイズ調整する。幅0でもclick用の操作領域を残す
+  - 中央が高さ0の間はHeaderとActionDockのsplitterだけを表示し、それ以外のsplitterは操作不可とする
+  - 展開中のActionDockが実幅900px未満かつ実高さ420px未満になったら上下dock優先へ切り替える。サイズが回復しても自動で左右優先へ戻さない。左右splitter操作時も不足条件を満たす場合は上下dock優先とする
   - ActionDockの実行設定は常時表示する。展開時も入力欄は最低100pxを保ち、高さが不足する場合は内部スクロールで設定と送信操作へ到達できるようにする
   - 最小サイズは各領域のCSS custom propertyで所有し、レイアウト側が読み取る。File Explorerの最小幅は260px、Context paneは360px、縦stack時は各200px、中央の最小高さは160pxとする。Main／Auxiliaryは各360pxで、中央の実幅が両者とsplitterの合計未満なら送信対象側だけを表示する
   - pane を隠した時も splitter は再表示 affordance として残す

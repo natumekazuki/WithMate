@@ -343,6 +343,8 @@ button:disabled {
 .session-action-dock-slot {
   grid-area: action-dock;
   --session-region-min-height: 260px;
+  --session-preferred-min-width: 900px;
+  --session-preferred-min-height: 420px;
 }
 
 .session-chat-layout.is-header-visible {
@@ -13629,4 +13631,9 @@ button:disabled {
       var(--session-dock-splitter-size) var(--session-right-pane-track-width)
       var(--session-dock-splitter-size) minmax(0, 1fr);
   }
+}
+
+.session-chat-layout.is-central-collapsed .session-dock-splitter:not(.edge-top):not(.edge-bottom) {
+  visibility: hidden;
+  pointer-events: none;
 }

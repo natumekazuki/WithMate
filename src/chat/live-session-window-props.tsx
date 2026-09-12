@@ -51,6 +51,7 @@ export function buildLiveSessionWindowShellProps(
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
     layoutPriority: input.layoutPriority,
+    onRequireDockPriority: input.onActivateDockPriority,
     isHeaderExpanded: input.isHeaderExpanded,
     headerProps: input.headerProps,
     messageColumnProps: {
