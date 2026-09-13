@@ -526,7 +526,7 @@ export class WorkItemService {
     });
   }
 
-  cancel(input: WorkItemCancelInput, binding: Pick<ResolvedAgentRuntimeBinding, "actorSessionId">, proof: MutationAuthorityProof): WorkItem {
+  cancel(input: WorkItemCancelInput, binding: Pick<ResolvedAgentRuntimeBinding, "actorSessionId">, proof: MutationAuthorityProof, compensation?: { executionId: string | null }): WorkItem {
     const updatedAt = this.deps.currentTimestamp();
     const fingerprint = fingerprintMutation(input, binding.actorSessionId);
     const replay = this.deps.storage.resolveIdempotency(
@@ -557,6 +557,7 @@ export class WorkItemService {
       requestFingerprint: fingerprint,
       expectedRevision: input.expectedRevision,
       state: "canceled",
+      ...(compensation ? { compensationExecutionId: compensation.executionId } : {}),
       result: null,
       updatedAt,
       expiresAt: resolveIdempotencyExpiresAt(updatedAt),

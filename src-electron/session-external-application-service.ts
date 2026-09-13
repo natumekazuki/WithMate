@@ -277,7 +277,7 @@ export class SessionExternalApplicationService {
         try { this.deps.authorityService.authorize(binding, operation, input); }
         catch (error) { throw new DelegationOperationError(mapApplicationError(error, operation, input).error); }
       },
-      execute: (operation, input, binding) => this.execute(operation, input, binding),
+      execute: (operation, input, binding, compensation) => this.execute(operation, input, binding, compensation),
       executeCreatedRoot: (id, index, operation, input, binding) => this.executeCreatedRoot(id, index, operation, input, binding),
     }) : null;
   }
@@ -328,7 +328,7 @@ export class SessionExternalApplicationService {
           break;
         }
         case "work.get": result = this.requireWorkItemService().get(fields.workItemId as string, actor, proof); break;
-        case "work.cancel": result = this.requireWorkItemService().cancel(request.input as SessionRuntimeWorkItemCancelInput, actor, proof); break;
+        case "work.cancel": result = this.requireWorkItemService().cancel(request.input as SessionRuntimeWorkItemCancelInput, actor, proof, { executionId: item.executionId }); break;
         case "work.archive": result = this.requireWorkItemService().archive(request.input as SessionRuntimeWorkItemArchiveInput, actor, proof); break;
         case "turn.enqueue": result = await this.enqueue(request.input as SessionRuntimeEnqueueInput, actor, proof); break;
         case "turn.get": result = this.projectExecution(root, fields.executionId as string); break;
@@ -356,6 +356,7 @@ export class SessionExternalApplicationService {
     operation: SessionRuntimeOperation | string,
     input: unknown,
     agentRuntimeBinding: ResolvedAgentRuntimeBinding | null,
+    compensation?: { executionId: string | null },
   ): Promise<SessionExternalApplicationResponse> {
     if (!this.accepting) {
       return createSessionRuntimeError({
@@ -378,7 +379,7 @@ export class SessionExternalApplicationService {
       }
       const authorized = this.deps.authorityService.authorize(agentRuntimeBinding, request.operation, request.input);
       const additionalProofs = this.authorizeWorkItemAdditionalProofs(request.operation, request.input, agentRuntimeBinding);
-      const result = await this.executeValidated(request.operation, authorized.input, agentRuntimeBinding, authorized.proof, additionalProofs);
+      const result = await this.executeValidated(request.operation, authorized.input, agentRuntimeBinding, authorized.proof, additionalProofs, compensation);
       this.invalidateWorkItemMutation(request.operation, agentRuntimeBinding.actorSessionId);
       const response = createSessionRuntimeResult(request.operation, result);
       assertApplicationResponseSize(request.operation, result, response);
@@ -394,6 +395,7 @@ export class SessionExternalApplicationService {
     agentRuntimeBinding: ResolvedAgentRuntimeBinding,
     proof: MutationAdmissionProof,
     additionalProofs: readonly MutationAuthorityProof[] = [],
+    compensation?: { executionId: string | null },
   ): Promise<SessionRuntimeResultByOperation[SessionRuntimeOperation]> {
     if (operation.startsWith("delegation.")) {
       const service = this.delegationService;
@@ -513,7 +515,7 @@ export class SessionExternalApplicationService {
       return this.requireWorkItemService().correctResult(input as SessionRuntimeWorkItemResultCorrectionInput, agentRuntimeBinding, proof);
     }
     if (operation === "work.cancel") {
-      return this.requireWorkItemService().cancel(input as SessionRuntimeWorkItemCancelInput, agentRuntimeBinding, proof);
+      return this.requireWorkItemService().cancel(input as SessionRuntimeWorkItemCancelInput, agentRuntimeBinding, proof, compensation);
     }
     if (operation === "work.aggregation.get") {
       return this.requireWorkItemService().getAggregation(input as SessionRuntimeWorkItemAggregationGetInput, agentRuntimeBinding, proof);

@@ -17,7 +17,7 @@ export class DelegationService {
   constructor(private readonly deps: {
     storage: DelegationStorage;
     authorizeControl(binding: ResolvedAgentRuntimeBinding, operation: SessionRuntimeOperation, input: unknown): void;
-    execute(operation: SessionRuntimeOperation, input: unknown, binding: ResolvedAgentRuntimeBinding): Promise<SessionRuntimeResultEnvelope | SessionRuntimeError>;
+    execute(operation: SessionRuntimeOperation, input: unknown, binding: ResolvedAgentRuntimeBinding, compensation?: { executionId: string | null }): Promise<SessionRuntimeResultEnvelope | SessionRuntimeError>;
     executeCreatedRoot?(delegationId: string, itemIndex: number, operation: SessionRuntimeOperation, input: unknown, binding: ResolvedAgentRuntimeBinding): Promise<SessionRuntimeResultEnvelope | SessionRuntimeError>;
     currentTimestamp?: () => string;
   }) {}
@@ -232,10 +232,10 @@ export class DelegationService {
       if (response.operation !== operation) this.fail("DELEGATION_RECOVERY_REQUIRED", "Unexpected created-root response.");
       return response.result as SessionRuntimeResultByOperation[O];
     }
-    return this.call(binding, operation, input);
+    return this.call(binding, operation, input, operation === "work.cancel" ? { executionId: row.items[index].executionId } : undefined);
   }
-  private async call<O extends SessionRuntimeOperation>(binding: ResolvedAgentRuntimeBinding, operation: O, input: unknown): Promise<SessionRuntimeResultByOperation[O]> {
-    const result = await this.deps.execute(operation, input, binding);
+  private async call<O extends SessionRuntimeOperation>(binding: ResolvedAgentRuntimeBinding, operation: O, input: unknown, compensation?: { executionId: string | null }): Promise<SessionRuntimeResultByOperation[O]> {
+    const result = await this.deps.execute(operation, input, binding, compensation);
     if ("error" in result) throw new DelegationOperationError(result.error);
     if (result.operation !== operation) this.fail("DELEGATION_RECOVERY_REQUIRED", "The operation returned an unexpected response.");
     return result.result as SessionRuntimeResultByOperation[O];

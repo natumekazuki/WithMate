@@ -557,3 +557,8 @@ ownerの応答再送retention（24時間）を越えた不明stepは自動再作
 レビュー前sourceと補強testを含む全3 shardは3611件中3610 pass、1 skip、0 failだった。指摘修正後の関連test、型検査、本番buildも成功した。全suiteは修正後に反復していない。admitted executionの取消後に遅延完了が見えても、再補償でWork/Sessionを保持することはowner stubと実SQLiteで直接確認した。
 
 修正deltaのtest-valueと同family限定のtargeted closureを実施中。
+
+
+指摘修正を `34647ae2dd783fd81bc3be4301441302ae5cdcef` に固定し、関連123 test、型検査、本番buildが成功した。test-valueは固定baseから19 tests／19 transitions、diagnostic 0で審査し、metadataの範囲とpending assertionを修正して未解決指摘を解消した。
+
+targeted closureで、adoption一覧取得とWork Item取消の間に他executionがcommitする競合の取りこぼしが見つかった。補償内部呼出だけがown execution IDを既存Work Item ownerへ渡し、既存mutate transaction内で他associationとidle条件を検査してから取消すよう修正した。公開inputと通常work.cancelの契約は維持する。修正後の関連93 testと型検査・buildは成功した。実SQLiteでの競合testとそのtest-value、同family closureの結果を以下へ追記する。
