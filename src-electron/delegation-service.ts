@@ -52,6 +52,11 @@ export class DelegationService {
   retry(binding: ResolvedAgentRuntimeBinding, input: DelegationRetryInput, proof: MutationAuthorityProof) {
     return this.mutate(binding, "delegation.retry", input, proof, async (row) => {
       if (stopped(row.state)) this.fail("DELEGATION_STATE_CONFLICT", "A stopped delegation cannot dispatch. Reuse its resources in a new delegation.");
+      const pending = this.deps.storage.getInternal(row.id, binding.actorSessionId).pending;
+      if (input.dispatch === "enqueue" && pending && ["session.create", "work.create", "work.aggregation.retry"].includes(pending.operation)) {
+        row = await this.advance(binding, row, "prepare");
+        if (row.state === "recovery_required") return row;
+      }
       return this.advance(binding, row, input.dispatch);
     });
   }
@@ -210,15 +215,25 @@ export class DelegationService {
   private async step<O extends SessionRuntimeOperation>(binding: ResolvedAgentRuntimeBinding, initial: Delegation, index: number, operation: O, makeInput: () => unknown | Promise<unknown>): Promise<{ row: Delegation; result: SessionRuntimeResultByOperation[O] }> {
     let row = this.deps.storage.get(initial.id, binding.actorSessionId);
     let pending = this.deps.storage.getInternal(row.id, binding.actorSessionId).pending;
-    if (pending) {
-      if (pending.itemIndex !== index || pending.operation !== operation) this.fail("DELEGATION_RECOVERY_REQUIRED", "Another step requires recovery first.");
-      if (Date.parse(this.now()) - Date.parse(pending.startedAt) >= 24 * 60 * 60 * 1000) this.fail("DELEGATION_RECOVERY_REQUIRED", "The owner's replay retention has expired. Inspect and reuse the existing resources.");
-    } else {
-      pending = { itemIndex: index, operation, input: await makeInput(), startedAt: this.now() };
-      row = this.save(binding, row, { pending, items: row.items.map((item, i) => i === index ? { ...item, pendingStep: operation, state: operation === "turn.enqueue" ? "dispatching" : item.state } : item) });
+    const previousEffect = pending?.itemIndex === index ? row.items[index].error?.effect ?? "indeterminate" : "not_applied";
+    try {
+      if (pending) {
+        if (pending.itemIndex !== index || pending.operation !== operation) this.fail("DELEGATION_RECOVERY_REQUIRED", "Another step requires recovery first.");
+        if (Date.parse(this.now()) - Date.parse(pending.startedAt) >= 24 * 60 * 60 * 1000) this.fail("DELEGATION_RECOVERY_REQUIRED", "The owner's replay retention has expired. Inspect and reuse the existing resources.");
+      } else {
+        pending = { itemIndex: index, operation, input: await makeInput(), startedAt: this.now() };
+      }
+      // A crash after this save cannot prove whether the owner applied the step.
+      row = this.save(binding, row, { pending, items: row.items.map((item, i) => i === index ? { ...item, error: null, pendingStep: operation, state: operation === "turn.enqueue" ? "dispatching" : item.state } : item) });
+      return { row, result: await this.callItem(binding, row, index, operation, pending.input) };
+    } catch (error) {
+      if (previousEffect !== "not_applied" && error instanceof DelegationOperationError && error.error.effect === "not_applied") {
+        throw new DelegationOperationError({ ...error.error, effect: previousEffect });
+      }
+      throw error;
     }
-    return { row, result: await this.callItem(binding, row, index, operation, pending.input) };
   }
+
   private async callItem<O extends SessionRuntimeOperation>(binding: ResolvedAgentRuntimeBinding, row: Delegation, index: number, operation: O, input: unknown): Promise<SessionRuntimeResultByOperation[O]> {
     const request = JSON.parse(this.deps.storage.getRequestJson(row.id, binding.actorSessionId)) as DelegationCreateInput;
     if (!["session.get", "work.get", "work.list", "turn.get", "turn.list", "session.delete.manifest"].includes(operation)) {
@@ -242,10 +257,9 @@ export class DelegationService {
   }
   private failure(binding: ResolvedAgentRuntimeBinding, original: Delegation, index: number, error: unknown) {
     const row = this.deps.storage.get(original.id, binding.actorSessionId);
-    let detail = error instanceof DelegationOperationError ? error.error : { code: "DELEGATION_STEP_FAILED", message: "The delegation step requires read-back before retry.", retryable: true, effect: "indeterminate" as const, details: {} };
+    const detail = error instanceof DelegationOperationError ? error.error : { code: "DELEGATION_STEP_FAILED", message: "The delegation step requires read-back before retry.", retryable: true, effect: "indeterminate" as const, details: {} };
     const item = row.items[index];
     const internal = this.deps.storage.getInternal(row.id, binding.actorSessionId);
-    if (internal.pending && item.error && item.error.effect !== "not_applied" && detail.effect === "not_applied") detail = { ...detail, effect: item.error.effect };
     const cleanup = ["delegation.cancel", "delegation.compensate"].includes(internal.lastMutation?.operation ?? "");
     const uncertainCreation = internal.pending && ["session.create", "work.create", "work.aggregation.retry", "turn.enqueue"].includes(internal.pending.operation) && detail.effect !== "not_applied";
     const expired = internal.pending && Date.parse(this.now()) - Date.parse(internal.pending.startedAt) >= 24 * 60 * 60 * 1000;

@@ -76,6 +76,7 @@ async function fixture() {
   return { dir, dbPath, get storage() { return storage; }, make, resources, attempts,
     fail(operation: string | null, afterCommit = false) { failOperation = operation; failAfterCommit = afterCommit; failOnCall = 0; },
     failAt(operation: string | null, call: number) { failOperation = operation; failAfterCommit = false; failOnCall = call; },
+    revokeControl() { controlRevoked = true; },
     revokeControlAfter(operation: string) { revokeAfter = operation; },
     setOtherExecutions(value: unknown[]) { otherExecutions = value; },
     setExecutionState(value: string) { executionState = value; },
@@ -509,4 +510,75 @@ test("older mutation keys cannot be reused for another payload", async () => {
     await assert.rejects(() => f.reopen().compensate(binding, { delegationId: first.id, expectedRevision: canceled.revision, idempotencyKey: "K" }, proof), (error: unknown) => error instanceof DelegationOperationError && error.error.code === "IDEMPOTENCY_CONFLICT");
     assert.equal(f.attempts.length, calls);
   } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "enqueue応答保存前のcrashでpendingとerror nullが残っても、再送拒否から未実行や取消済みへ変更しない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#部分成功とstep状態" }
+// fault = "crash snapshotのerror nullを未実行の証拠とみなし、権限拒否やretention超過後に未知のTurnを取消済みにする"
+// observable = "SQLite再open後のeffect indeterminate、pending input保持、cancel/compensate拒否、同じowner resource数"
+// observation_boundary = "component-behavior"
+// scope = "実SQLiteへcrash時の保存状態を設定しstrict owner stubで認可拒否・owner拒否・期限超過を検証する"
+// lifecycle = "permanent"
+// @end-test-value
+test("crashed pending enqueue remains uncertain after retry rejection", async () => {
+  for (const rejection of ["authority", "owner", "retention"]) {
+    const f = await fixture();
+    try {
+      f.fail("turn.enqueue", true);
+      const lost = await f.make().create(binding, request, proof);
+      const pending = f.storage.getInternal(lost.id, "root").pending;
+      assert.equal(pending?.operation, "turn.enqueue");
+      const crashed = f.storage.update({ id: lost.id, actorSessionId: "root", expectedRevision: lost.revision, updatedAt: now, state: "preparing", items: lost.items.map((item) => ({ ...item, state: "dispatching", error: null, effect: "applied" })) });
+      f.reopen();
+      f.fail(rejection === "owner" ? "turn.enqueue" : null);
+      if (rejection === "authority") f.revokeControl();
+      const service = f.make(rejection === "retention" ? "2026-09-14T00:00:00.000Z" : now);
+      const result = await service.retry(binding, { delegationId: crashed.id, expectedRevision: crashed.revision, idempotencyKey: "rejected", dispatch: "enqueue" }, proof);
+      assert.equal(result.state, "recovery_required");
+      assert.equal(result.items[0].executionId, null);
+      assert.equal(result.items[0].error?.effect, "indeterminate");
+      assert.equal(result.items[0].effect, "indeterminate");
+      assert.deepEqual(f.storage.getInternal(result.id, "root").pending, pending);
+      for (const method of ["cancel", "compensate"] as const) {
+        await assert.rejects(() => service[method](binding, { delegationId: result.id, expectedRevision: result.revision, idempotencyKey: method }, proof), /uncertain creation/);
+      }
+      assert.equal(f.storage.get(result.id, "root").state, "recovery_required");
+      assert.equal(f.resources.size, 3);
+    } finally { await f.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "prepareで後続itemの作成が失敗してもenqueue指定retryはpending作成を先に回復し、全itemを一度だけdispatchできる"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#作成" }
+// fault = "先行prepared itemを先にenqueueしようとして後続itemのpendingと衝突し、再開不能になる"
+// observable = "最初のowner mutationが保存pendingと同じ入力、全item active、Session/Work各2資源とTurn2件"
+// observation_boundary = "component-behavior"
+// scope = "DelegationのSQLite再openとprepareからenqueueへの再開。canonical ownerはstrict再送stub"
+// lifecycle = "permanent"
+// @end-test-value
+test("enqueue retry resolves the later prepare pending before dispatch", async () => {
+  for (const operation of ["session.create", "work.create"]) {
+    const f = await fixture();
+    try {
+      f.failAt(operation, 2);
+      const failed = await f.make().create(binding, { ...request, dispatch: "prepare", items: [request.items[0], request.items[0]] }, proof);
+      assert.equal(failed.items[0].state, "prepared");
+      const pending = f.storage.getInternal(failed.id, "root").pending;
+      assert.equal(pending?.itemIndex, 1);
+      const offset = f.attempts.length;
+      f.fail(null);
+      const result = await f.reopen().retry(binding, { delegationId: failed.id, expectedRevision: failed.revision, idempotencyKey: "start", dispatch: "enqueue" }, proof);
+      const mutations = f.attempts.slice(offset).filter((call) => ["session.create", "work.create", "turn.enqueue"].includes(call.operation));
+      assert.equal(mutations[0].operation, operation);
+      assert.deepEqual(mutations[0].input, pending?.input);
+      assert.equal(result.state, "active");
+      assert.ok(result.items.every((item) => item.state === "active" && item.executionId));
+      assert.equal(f.resources.size, 6);
+      assert.equal(mutations.filter((call) => call.operation === "turn.enqueue").length, 2);
+    } finally { await f.close(); }
+  }
 });
