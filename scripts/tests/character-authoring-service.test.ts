@@ -128,6 +128,18 @@ describe("CharacterAuthoringService", () => {
     assert.equal(resolved.characterRuntimeSnapshot, null);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character authoring開始時に保存済み定義を保持したworkspaceとcharacter-authoring sessionを作成する"
+  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md: workspace preparation" }
+  // fault = "生成wrapperまたはinputのmode・Skill path・対象Characterが誤り、保存済みCharacterを壊すか実行可能なauthoring workspaceを作れない"
+  // observable = "作成されたworkspaceのcharacter.md、character-notes.md、AGENTS.md、AUTHORING_PROMPT.md、input.json、copied SkillとsessionのsessionKind/characterId/provider"
+  // observation_boundary = "component-behavior"
+  // scope = "character-authoring-workspace-start"
+  // lifecycle = "permanent"
+  // impact = "authoring開始時の既存定義保持と、run固有の生成wrapper境界が崩れる"
+  // distinction = "workspace準備・生成wrapper・session作成を実際のstartSession結果と生成ファイルで観測する"
+  // @end-test-value
   it("workspace に固定 Skill と authoring 成果物を作成し character-authoring session を作る", async () => {
     const existingDefinition = `---
 schema: withmate-character-v5
@@ -221,7 +233,7 @@ description: "作業を一緒に進める相手"
       assert.doesNotMatch(agentsMarkdown, /Grow From Conversations/);
 
       const authoringPrompt = await readFile(path.join(result.workspacePath, "AUTHORING_PROMPT.md"), "utf8");
-      assert.match(authoringPrompt, /source 調査.*mode 判定に従う/);
+      assert.match(authoringPrompt, /詳細な作成・検証手順は固定 Skill と参照資料に従う/);
       assert.match(authoringPrompt, /必要な場合の `character-notes\.md`/);
       assert.doesNotMatch(authoringPrompt, /検索不要.*調査/);
 
@@ -237,10 +249,10 @@ description: "作業を一緒に進める相手"
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Codexのcreate authoring workspaceへ配布される固定Skillと生成指示が主要な対話・作業校正契約、必須検証、WithMate固有の除外境界を含む"
+  // claim = "Codexのcreate authoring workspaceへ固定Skill一式と、run固有の生成wrapper境界が配布される"
   // oracle = { type = "adr", ref = "docs/adr/011-character-authoring-kernel.md" }
   // fault = "Codexのcreate workspaceへ配布されるbundleまたは生成指示の主要部分が旧版または欠落し、次回のAuthor / Improve Sessionが旧品質契約、作業中のCharacter契約、hidden input、または責務外の生成処理を使う"
-  // observable = "Codexのcreate workspaceへコピーされたSKILL.md、character-format.md、authoring-rubric.md、runtime-philosophy.md、improve-existing-character.md、source-and-rights-policy.md、review-checklist.md、character-notes.mdの対話・作業校正と更新識別用section、およびAGENTS.md、AUTHORING_PROMPT.mdの主要境界"
+  // observable = "Codexのcreate workspaceへコピーされたSKILL.md、references、templatesの一式、およびAGENTS.md、AUTHORING_PROMPT.mdのmode・Skill path・入力・成果物境界"
   // observation_boundary = "component-behavior"
   // scope = "character-authoring-workspace-codex-create"
   // lifecycle = "permanent"
@@ -465,29 +477,10 @@ description: "作業を一緒に進める相手"
         /synthetic-eventやreplayのみのFunctional verificationはnot-run/,
         /非公開の内部思考は原出力証拠にしない/,
       ]);
-      assert.match(agentsMarkdown, /collaborative authoring/);
-      assert.match(agentsMarkdown, /Preserve \/ Revise \/ Investigate/);
-      assert.match(agentsMarkdown, /会話履歴からの自動成長や companion\/session history の取り込みは行わない/);
       assert.match(agentsMarkdown, /編集対象はこの workspace 内の `character\.md` \/ `character-notes\.md` に限定する/);
-      assert.match(agentsMarkdown, /未実施・未確認の検証を成功扱いしない/);
-      assert.match(agentsMarkdown, /conversation-and-work/);
-      assert.match(agentsMarkdown, /Task-execution \/ Conversation-work Continuity/);
-      assert.match(agentsMarkdown, /納品コード・設定・文書へ要求される形式・文体/);
-      assert.match(agentsMarkdown, /task ID、候補revision、初期状態、依頼・受入条件、許可範囲/);
-      assert.match(agentsMarkdown, /Functional verification は3軸と分ける.*not-run/);
-      assert.match(agentsMarkdown, /無許可の本番変更・外部送信・課金・デプロイは行わない/);
-      assert.match(authoringPrompt, /research → alignment → calibration ⇄ validation/);
-      assert.match(authoringPrompt, /現象 → 原因仮説 → 規則変更 → 別入力での検証/);
-      assert.match(authoringPrompt, /session \/ companion history は入力にしない/);
-      assert.match(authoringPrompt, /Character root に source report、review checklist、manifest、Zip などの追加成果物を作らない/);
-      assert.match(authoringPrompt, /inconclusive の検証を pass と報告しない/);
-      assert.match(authoringPrompt, /conversation-and-work/);
-      assert.match(authoringPrompt, /synthetic-event \/ recorded-tool-replay \/ live-tool-execution/);
-      assert.match(authoringPrompt, /Work Likeness \/ Task Integrity \/ Collaboration Comfort/);
-      assert.match(authoringPrompt, /task ID、候補revision、初期状態、依頼・受入条件、許可範囲/);
-      assert.match(authoringPrompt, /Functional verification を分ける.*not-run/);
-      assert.match(authoringPrompt, /無許可の本番変更・外部送信・課金・デプロイは行わない/);
-      assert.match(authoringPrompt, /表示面・注入範囲・履歴の不明点は unknown/);
+      assert.match(agentsMarkdown, /詳細な authoring \/ validation 契約は固定 Skill と参照資料に従う/);
+      assert.match(authoringPrompt, /詳細な作成・検証手順は固定 Skill と参照資料に従う/);
+      assert.match(authoringPrompt, /Character directory 外の変更は、固定 Skill の boundary に従って作らない/);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }

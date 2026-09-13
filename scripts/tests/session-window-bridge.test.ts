@@ -546,11 +546,12 @@ describe("SessionWindowBridge", () => {
     });
 
     await bridge.openSessionWindow(session.id);
-    bridge.requestCloseSessionWindow(session.id);
+    const closeResult = bridge.requestCloseSessionWindow(session.id);
 
     assert.equal(confirmCount, 1);
     assert.equal(window.destroyed, true);
     assert.equal(window.closeCount, 2);
+    assert.equal(await closeResult, true);
   });
 
   // @test-value v2
@@ -592,12 +593,13 @@ describe("SessionWindowBridge", () => {
     });
 
     await bridge.openSessionWindow(session.id);
-    bridge.requestCloseSessionWindow(session.id);
+    const closeResult = bridge.requestCloseSessionWindow(session.id);
 
     assert.equal(confirmCount, 1);
     assert.equal(window.destroyed, false);
     assert.equal(window.closeCount, 1);
     assert.deepEqual(bridge.listOpenSessionWindowIds(), [session.id]);
+    assert.equal(await closeResult, false);
   });
 
   it("idle の window close では Memory hook を起動せず window registry だけ更新する", async () => {

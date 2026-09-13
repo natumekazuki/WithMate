@@ -12,6 +12,8 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 
 ## Current State
 
+この文書は 2026-06-12 時点の作業記録であり、以下の `進行中` 表記や個別の `着手` 記録は当時の計画・履歴を示す。現在の実装状態を示す作業一覧としては扱わない。
+
 完了済み:
 
 - 共通 chat projection / window props: `chat-window-adapter.ts`、`live-session-projection.tsx`、`live-session-window-props.tsx`、`session-chat-projection.tsx`、`companion-chat-projection.tsx`、`mate-talk-chat-projection.tsx`。

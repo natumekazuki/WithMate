@@ -56,8 +56,8 @@ export class MainWindowFacade {
     this.deps.getSessionWindowBridge().closeSessionWindow(sessionId);
   }
 
-  requestCloseSessionWindow(sessionId: string): void {
-    this.deps.getSessionWindowBridge().requestCloseSessionWindow(sessionId);
+  requestCloseSessionWindow(sessionId: string): Promise<boolean> {
+    return this.deps.getSessionWindowBridge().requestCloseSessionWindow(sessionId);
   }
 
   async openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {

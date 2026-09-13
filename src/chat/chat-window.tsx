@@ -7,10 +7,14 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type KeyboardEventHandler,
   type MouseEventHandler,
   type PointerEventHandler,
+  type ReactNode,
   type SetStateAction,
 } from "react";
+
+import { clampAuxiliaryWidthRatio } from "./use-auxiliary-workspace.js";
 
 import type { MessageViewMode } from "../MessageRichText.js";
 import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
@@ -23,6 +27,8 @@ import {
   SESSION_LEFT_PANE_ID,
   SessionActionDockCompactRow,
   SessionChatScreen,
+  SessionContextPane,
+  SessionPaneErrorBoundary,
   SessionComposerExpanded,
   SessionHeader,
   SessionHeaderHandle,
@@ -31,13 +37,24 @@ import {
   type SessionComposerExpandedProps,
   type SessionHeaderProps,
   type SessionMessageColumnProps,
+  type SessionContextPaneProps,
   type SessionSelectOption,
   type SessionSkillItem,
 } from "../session-components.js";
+import { SessionSwitcher, type SessionSwitcherOption } from "./session-switcher.js";
+import {
+  ConversationMessageColumn,
+  type ConversationColumnSession,
+  type ConversationMessageColumnApi,
+  type ConversationColumnCache,
+  type ConversationColumnControls,
+} from "./conversation-message-column.js";
+import { createMessageCollapseHeaderAction } from "./chat-header-actions.js";
 import { focusRovingItemByKey } from "../a11y.js";
 import {
   SHORTCUT_COMMAND_IDS,
   useShortcutCommandHandler,
+  useShortcutScope,
 } from "../shortcut-registry.js";
 
 type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
@@ -64,6 +81,7 @@ export type ChatErrorNotice = {
 export type ChatWindowProps = Omit<
   ChatScreenProps,
   "header" | "messageColumn" | "actionDock" | "isHeaderVisible" | "supportingSurface" | "errorSurface"
+  | "auxiliaryMessageColumn" | "auxiliarySplitter" | "isAuxiliaryVisible" | "auxiliaryWidthRatio" | "concurrentTarget"
 > & {
   isHeaderExpanded: boolean;
   headerProps: SessionHeaderProps;
@@ -75,8 +93,100 @@ export type ChatWindowProps = Omit<
   additionalDirectoryListProps?: ChatAdditionalDirectoryListProps;
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
+  rightPaneProps?: SessionContextPaneProps;
   mainContent?: ChatScreenProps["mainContent"];
+  concurrentChats?: ConcurrentChatWindowProps;
 };
+
+export type ConcurrentChatWindowProps = {
+  main: SessionMessageColumnProps;
+  auxiliary: SessionMessageColumnProps | null;
+  mainSession?: ConversationColumnSession | null;
+  auxiliarySession?: ConversationColumnSession | null;
+  api?: ConversationMessageColumnApi;
+  mainLiveRun?: import("../runtime-state.js").LiveSessionRunState | null;
+  auxiliaryLiveRun?: import("../runtime-state.js").LiveSessionRunState | null;
+  selectedAuxiliaryId: string | null;
+  auxiliaryItems: readonly SessionSwitcherOption[];
+  target: "main" | "auxiliary";
+  widthRatio: number;
+  scrollToLatestOnSend?: boolean;
+  onSelectAuxiliary: (id: string) => void;
+  onTargetChange: (target: "main" | "auxiliary") => void;
+  onWidthRatioChange: (ratio: number) => void;
+  loading?: boolean;
+  error?: string | null;
+};
+
+export function ConcurrentChatSplitter({
+  widthRatio,
+  onWidthRatioChange,
+}: Pick<ConcurrentChatWindowProps, "widthRatio" | "onWidthRatioChange">) {
+  const dragRef = useRef<{ width: number; minRatio: number; maxRatio: number; startingRatio: number } | null>(null);
+  const getRatioBounds = (splitter: HTMLButtonElement) => {
+    const parent = splitter.parentElement;
+    if (!parent) return null;
+    const width = parent.getBoundingClientRect().width - splitter.getBoundingClientRect().width;
+    if (width <= 0) return null;
+    const main = parent.querySelector<HTMLElement>(".session-concurrent-chat-main");
+    const auxiliary = parent.querySelector<HTMLElement>(".session-concurrent-chat-auxiliary");
+    const readMinimum = (element: HTMLElement | null) => {
+      const value = element ? Number.parseFloat(window.getComputedStyle(element).getPropertyValue("--session-region-min-width")) : Number.NaN;
+      return Number.isFinite(value) ? Math.max(0, value) : 0;
+    };
+    const minRatio = readMinimum(auxiliary) / width;
+    const maxRatio = 1 - readMinimum(main) / width;
+    if (minRatio > maxRatio) return null;
+    return { width, minRatio, maxRatio };
+  };
+  const handlePointerDown: PointerEventHandler<HTMLButtonElement> = (event) => {
+    dragRef.current = null;
+    if (widthRatio <= 0 || widthRatio >= 1) return;
+    const bounds = getRatioBounds(event.currentTarget);
+    if (!bounds) return;
+    dragRef.current = { ...bounds, startingRatio: Math.min(bounds.maxRatio, Math.max(bounds.minRatio, widthRatio)) };
+  };
+
+  return (
+    <ChatDockSplitter
+      edge={widthRatio >= 1 ? "left" : "right"}
+      className="concurrent-chat-splitter"
+      isPanelExpanded={widthRatio > 0 && widthRatio < 1}
+      onPointerDown={handlePointerDown}
+      onDrag={(_event, delta) => {
+        const bounds = dragRef.current;
+        if (!bounds) return;
+        const next = bounds.startingRatio - delta.x / bounds.width;
+        onWidthRatioChange(next < bounds.minRatio / 2 ? 0
+          : next > (1 + bounds.maxRatio) / 2 ? 1
+            : Math.min(bounds.maxRatio, Math.max(bounds.minRatio, next)));
+      }}
+      onTogglePanel={() => onWidthRatioChange(widthRatio > 0 && widthRatio < 1 ? 0 : 0.5)}
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        if (widthRatio <= 0 || widthRatio >= 1) return;
+        event.preventDefault();
+        const bounds = getRatioBounds(event.currentTarget);
+        if (!bounds) return;
+        const current = Math.min(bounds.maxRatio, Math.max(bounds.minRatio, widthRatio));
+        const next = current + (event.key === "ArrowLeft" ? 0.02 : -0.02);
+        onWidthRatioChange(next < bounds.minRatio ? 0 : next > bounds.maxRatio ? 1 : next);
+      }}
+      ariaLabel={widthRatio >= 1 ? "Mainを開く" : widthRatio > 0 ? "Auxiliaryを折りたたむ" : "Auxiliaryを開く"}
+      ariaControls={widthRatio >= 1 ? "session-main-chat-pane" : "session-auxiliary-chat-pane"}
+      title="クリックで開閉、ドラッグまたは矢印キーでサイズ調整。端まで寄せると片側を全幅表示"
+    />
+  );
+}
+
+function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps }) {
+  return (
+    <div className="concurrent-chat-target-dock" role="group" aria-label="操作対象チャット">
+      <button type="button" className={chats.target === "main" ? "is-active" : ""} onClick={() => chats.onTargetChange("main")}>Main</button>
+      <button type="button" className={chats.target === "auxiliary" ? "is-active" : ""} onClick={() => chats.onTargetChange("auxiliary")}>Auxiliary</button>
+    </div>
+  );
+}
 
 export type ChatSkillPickerPanelProps = {
   isOpen: boolean;
@@ -101,13 +211,17 @@ export type ChatRightPaneShellProps = {
 
 export type ChatDockSplitterProps = {
   edge: "top" | "right" | "bottom" | "left";
+  className?: string;
   isActive?: boolean;
   isPanelExpanded?: boolean;
   canCollapse?: boolean;
   onActivate?: () => void;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  onDrag?: (event: React.PointerEvent<HTMLButtonElement>, delta: { x: number; y: number }) => void;
+  onKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
   onTogglePanel?: MouseEventHandler<HTMLButtonElement>;
   ariaLabel?: string;
+  ariaControls?: string;
   title?: string;
 };
 
@@ -343,9 +457,22 @@ export function ChatWindow({
   additionalDirectoryListProps,
   skillPickerProps,
   compactActionDockProps,
+  concurrentChats,
   ...screenProps
 }: ChatWindowProps) {
   const [messageViewMode, setMessageViewMode] = useState<MessageViewMode>("preview");
+  const conversationStateCacheRef = useRef(new Map<string, ConversationColumnCache>());
+  const mainColumnControlsRef = useRef<ConversationColumnControls | null>(null);
+  const auxiliaryColumnControlsRef = useRef<ConversationColumnControls | null>(null);
+  const [, setColumnControlsRevision] = useState(0);
+  const handleMainColumnControls = useCallback((controls: ConversationColumnControls) => {
+    mainColumnControlsRef.current = controls;
+    setColumnControlsRevision((revision) => revision + 1);
+  }, []);
+  const handleAuxiliaryColumnControls = useCallback((controls: ConversationColumnControls) => {
+    auxiliaryColumnControlsRef.current = controls;
+    setColumnControlsRevision((revision) => revision + 1);
+  }, []);
   const errorSurfaceId = useId();
   const skillButtonRef = useRef<HTMLButtonElement | null>(null);
   const wasSkillPickerOpenRef = useRef(false);
@@ -361,6 +488,18 @@ export function ChatWindow({
       return true;
     },
     showMessageViewModeControls,
+  );
+  useShortcutScope("session", Boolean(concurrentChats));
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.conversationToggleTarget,
+    () => {
+      if (!concurrentChats || concurrentChats.auxiliaryItems.length === 0) {
+        return false;
+      }
+      concurrentChats.onTargetChange(concurrentChats.target === "main" ? "auxiliary" : "main");
+      return true;
+    },
+    Boolean(concurrentChats),
   );
 
   useEffect(() => {
@@ -380,11 +519,57 @@ export function ChatWindow({
     .filter((notice) => notice.relatedControl === "composer")
     .map((notice) => notice.domId)
     .join(" ");
+  const resolvedMessageColumnProps = concurrentChats?.main ?? messageColumnProps;
+  const rawTargetColumnControls = concurrentChats?.target === "auxiliary"
+    ? auxiliaryColumnControlsRef.current
+    : mainColumnControlsRef.current;
+  const targetSessionId = concurrentChats?.target === "auxiliary"
+    ? concurrentChats.auxiliarySession?.id ?? concurrentChats.auxiliary?.sessionId
+    : concurrentChats?.mainSession?.id ?? concurrentChats?.main?.sessionId;
+  const targetColumnControls = rawTargetColumnControls?.sessionId === targetSessionId
+    ? rawTargetColumnControls
+    : null;
+  const targetComposerSend = concurrentChats && targetColumnControls
+    ? () => {
+      if (!composerProps.isRunning && !composerProps.isSendDisabled) {
+        targetColumnControls.handleMessageListSend(concurrentChats.scrollToLatestOnSend ?? true);
+      }
+      composerProps.onSendOrCancel();
+    }
+    : composerProps.onSendOrCancel;
+  const resolvedHeaderProps = concurrentChats
+    ? {
+      ...headerProps,
+      actions: (
+        <>
+          {createMessageCollapseHeaderAction({
+            allMessagesCollapsed: targetColumnControls?.allMessagesCollapsed ?? false,
+            disabled: !targetColumnControls?.messageCollapseTargetKeys.length,
+            onToggle: () => targetColumnControls?.onToggleAllMessageCollapse(),
+          })}
+          {headerProps.actions}
+        </>
+      ),
+    }
+    : headerProps;
+
+  const resolvedRightPaneProps = concurrentChats && screenProps.rightPaneProps
+    ? {
+      ...screenProps.rightPaneProps,
+      messageNavigatorEntries: targetColumnControls?.messageNavigatorEntries ?? screenProps.rightPaneProps.messageNavigatorEntries,
+      onJumpToMessage: targetColumnControls?.onJumpToMessage ?? screenProps.rightPaneProps.onJumpToMessage,
+    }
+    : screenProps.rightPaneProps;
 
   return (
     <SessionChatScreen
       {...screenProps}
-      header={<SessionHeader {...headerProps} />}
+      rightPane={resolvedRightPaneProps ? (
+        <SessionPaneErrorBoundary>
+          <SessionContextPane {...resolvedRightPaneProps} />
+        </SessionPaneErrorBoundary>
+      ) : screenProps.rightPane}
+      header={<SessionHeader {...resolvedHeaderProps} />}
       isHeaderVisible={isHeaderExpanded}
       isActionDockExpanded={isActionDockExpanded}
       errorSurface={renderedErrorNotices.length > 0 ? (
@@ -429,13 +614,97 @@ export function ChatWindow({
       ) : null}
       workSurfaceOverlay={skillPickerProps ? <ChatSkillPickerPanel {...skillPickerProps} /> : null}
       messageColumn={(
-        <StableSessionMessageColumn
-          {...messageColumnProps}
-          messageViewMode={messageViewMode}
-        />
+        <div id="session-main-chat-pane" className="concurrent-chat-column-content">
+          {concurrentChats ? (
+            <ConversationMessageColumn
+              session={concurrentChats.mainSession ?? { id: resolvedMessageColumnProps.sessionId }}
+              baseProps={{
+                ...resolvedMessageColumnProps,
+                isContentActive: (resolvedMessageColumnProps.isContentActive ?? true)
+                  && concurrentChats.target === "main",
+                messageViewMode,
+              }}
+              enabled
+              api={concurrentChats.api}
+              liveRun={concurrentChats.mainLiveRun}
+              stateCache={conversationStateCacheRef.current}
+              onColumnControls={handleMainColumnControls}
+            />
+          ) : (
+            <StableSessionMessageColumn
+              {...resolvedMessageColumnProps}
+              messageViewMode={messageViewMode}
+            />
+          )}
+          {concurrentChats && concurrentChats.target !== "main" ? (
+            <div className="concurrent-chat-target-overlay" aria-hidden="true" />
+          ) : null}
+        </div>
       )}
+      auxiliaryMessageColumn={concurrentChats ? (
+        <>
+          {concurrentChats.auxiliaryItems.length > 0 ? (
+            <SessionSwitcher
+              ariaLabel="Auxiliary会話切り替え"
+              className="concurrent-chat-session-switcher"
+              options={concurrentChats.auxiliaryItems}
+              selectedId={concurrentChats.selectedAuxiliaryId ?? ""}
+              searchable
+              onMove={(direction) => {
+                const items = concurrentChats.auxiliaryItems;
+                const current = items.findIndex((item) => item.id === concurrentChats.selectedAuxiliaryId);
+                if (current < 0 || items.length < 2) return;
+                concurrentChats.onSelectAuxiliary(items[(current + direction + items.length) % items.length].id);
+              }}
+              onSelect={concurrentChats.onSelectAuxiliary}
+            />
+          ) : null}
+          <div id="session-auxiliary-chat-pane" className="concurrent-chat-column-content">
+            {concurrentChats.auxiliaryItems.length === 0 ? null : concurrentChats.loading ? (
+              <div className="concurrent-chat-state" role="status" aria-label="Auxiliaryを読み込み中">
+                <span className="concurrent-chat-loading-spinner" aria-hidden="true" />
+              </div>
+            ) : concurrentChats.error ? (
+              <div className="concurrent-chat-state" role="alert">{concurrentChats.error}</div>
+            ) : concurrentChats.auxiliary ? (
+              <>
+                <ConversationMessageColumn
+                  session={concurrentChats.auxiliarySession ?? { id: concurrentChats.auxiliary.sessionId }}
+                  baseProps={{
+                    ...concurrentChats.auxiliary,
+                    isContentActive: (concurrentChats.auxiliary.isContentActive ?? true)
+                      && concurrentChats.target === "auxiliary",
+                    messageViewMode,
+                  }}
+                  enabled={concurrentChats.widthRatio > 0 || concurrentChats.target === "auxiliary"}
+                  api={concurrentChats.api}
+                  liveRun={concurrentChats.auxiliaryLiveRun}
+                  stateCache={conversationStateCacheRef.current}
+                  onColumnControls={handleAuxiliaryColumnControls}
+                />
+              </>
+            ) : (
+              <div className="concurrent-chat-state" role="status">Auxiliaryを選択してください。</div>
+            )}
+          </div>
+          {concurrentChats.target !== "auxiliary" ? (
+            <div className="concurrent-chat-target-overlay" aria-hidden="true" />
+          ) : null}
+        </>
+      ) : null}
+      auxiliarySplitter={concurrentChats ? (
+        <ConcurrentChatSplitter
+          widthRatio={concurrentChats.widthRatio}
+          onWidthRatioChange={concurrentChats.onWidthRatioChange}
+        />
+      ) : null}
+      isAuxiliaryVisible={Boolean(concurrentChats)}
+      auxiliaryWidthRatio={concurrentChats
+        ? concurrentChats.widthRatio
+        : undefined}
+      concurrentTarget={concurrentChats?.target}
       actionDock={(
-        <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
+          <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
           <div
             className={`session-action-dock-content session-action-dock-expanded-content${
               isActionDockExpanded ? " is-active" : ""
@@ -446,10 +715,14 @@ export function ChatWindow({
             <SessionComposerExpanded
               {...composerProps}
               externalErrorDescriptionIds={composerErrorDescriptionIds || undefined}
+              showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
+              onJumpToBottom={targetColumnControls?.followLatest ?? composerProps.onJumpToBottom}
+              onSendOrCancel={targetComposerSend}
               skillButtonRef={skillButtonRef}
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}
               onMessageViewModeChange={handleMessageViewModeChange}
+              targetDock={concurrentChats ? <ConcurrentChatTargetDock chats={concurrentChats} /> : null}
             />
           </div>
           <div
@@ -461,9 +734,12 @@ export function ChatWindow({
           >
             <SessionActionDockCompactRow
               {...compactActionDockProps}
+              onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}
+              showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}
               onMessageViewModeChange={handleMessageViewModeChange}
+              targetDock={concurrentChats ? <ConcurrentChatTargetDock chats={concurrentChats} /> : null}
             />
           </div>
         </div>
@@ -488,18 +764,29 @@ export function ChatWindowStatusScreen({ message, className = "" }: ChatWindowSt
 
 export function ChatDockSplitter({
   edge,
+  className = "",
   isActive = false,
   isPanelExpanded = true,
   canCollapse = true,
   onActivate,
   onPointerDown,
+  onDrag,
+  onKeyDown,
   onTogglePanel,
   ariaLabel,
+  ariaControls,
   title,
 }: ChatDockSplitterProps) {
+  const pointerStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  const draggedRef = useRef(false);
   const effectiveTogglePanel = isPanelExpanded && !canCollapse ? undefined : onTogglePanel;
-  if (!onPointerDown && !onTogglePanel && !onActivate) {
-    return <div className={`session-dock-splitter edge-${edge} is-static`} aria-hidden="true" />;
+  if (!onPointerDown && !onDrag && !onTogglePanel && !onActivate) {
+    return (
+      <div
+        className={`session-dock-splitter edge-${edge} is-static${className ? ` ${className}` : ""}`}
+        aria-hidden="true"
+      />
+    );
   }
 
   const panelLabel = edge === "top"
@@ -547,26 +834,56 @@ export function ChatDockSplitter({
     if (event.button !== 0) {
       return;
     }
+    pointerStartRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    draggedRef.current = false;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     onActivate?.();
-    if (isPanelExpanded) {
-      onPointerDown?.(event);
+    onPointerDown?.(event);
+  };
+  const handlePointerMove: PointerEventHandler<HTMLButtonElement> = (event) => {
+    const start = pointerStartRef.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
     }
+    const distance = Math.max(Math.abs(event.clientX - start.x), Math.abs(event.clientY - start.y));
+    if (distance > 4) {
+      draggedRef.current = true;
+    }
+    if (draggedRef.current) onDrag?.(event, { x: event.clientX - start.x, y: event.clientY - start.y });
+  };
+  const handlePointerEnd = () => {
+    pointerStartRef.current = null;
+  };
+  const handlePointerCancel = () => {
+    pointerStartRef.current = null;
+    draggedRef.current = false;
   };
   const handleClick: MouseEventHandler<HTMLButtonElement> = (event) => {
     onActivate?.();
+    if (draggedRef.current) {
+      draggedRef.current = false;
+      return;
+    }
     effectiveTogglePanel?.(event);
   };
 
   return (
     <button
-      className={`session-dock-splitter edge-${edge}${!onPointerDown ? " is-toggle-only" : ""}${isActive ? " is-active" : ""}${
+      className={`session-dock-splitter edge-${edge}${className ? ` ${className}` : ""}${!onPointerDown ? " is-toggle-only" : ""}${isActive ? " is-active" : ""}${
         isPanelExpanded ? "" : " is-collapsed"
       }`}
       type="button"
       onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerCancel}
       onClick={handleClick}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (event.defaultPrevented) onActivate?.();
+      }}
       aria-label={resolvedAriaLabel}
-      aria-controls={effectiveTogglePanel ? controlledId : undefined}
+      aria-controls={effectiveTogglePanel ? (ariaControls ?? controlledId) : undefined}
       aria-expanded={effectiveTogglePanel ? isPanelExpanded : undefined}
       title={resolvedTitle}
     >

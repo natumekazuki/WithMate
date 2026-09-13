@@ -1,5 +1,9 @@
 # Character Storage
 
+## Auxiliary Character Snapshot (Issue #710)
+
+新規AuxiliaryはMain Processでactive候補からMainのstable IDを除外してCharacterをweighted random選択し、`characterId`と`CharacterRuntimeSnapshot`を会話作成時に固定保存する。他Auxiliaryとの同一Characterは許容する。既存会話の切り替え、再表示、retry、再起動で再抽選・catalog再生成を行わない。snapshotがない旧形式行だけは親の保存済みidentityを互換利用し、不正な新形式snapshotは親へfallbackせず失敗として扱う。
+
 - 作成日: 2026-03-12
 - 更新日: 2026-07-30
 - 対象: V5 Core の Character catalog / storage / snapshot 境界

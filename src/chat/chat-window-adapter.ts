@@ -25,10 +25,6 @@ type ChatMessageColumnProps = ChatWindowProps["messageColumnProps"];
 type ChatComposerProps = ChatWindowProps["composerProps"];
 type ChatCompactActionDockProps = ChatWindowProps["compactActionDockProps"];
 
-export function resolveAuxiliaryModeLabel(isAuxiliaryMode?: boolean): string | undefined {
-  return isAuxiliaryMode ? "Auxiliary" : undefined;
-}
-
 type StaticChatCharacterInput = {
   id: string;
   name: string;
@@ -275,6 +271,7 @@ export type LiveSessionSplitterProps = {
   isContextRailResizing: boolean;
   isContextRailVisible: boolean;
   onStartContextRailResize?: PointerEventHandler<HTMLButtonElement>;
+  onKeyDownContextRailResize?: import("react").KeyboardEventHandler<HTMLButtonElement>;
   onToggleContextRailVisibility: MouseEventHandler<HTMLButtonElement>;
 };
 
@@ -325,7 +322,6 @@ export function buildLiveSessionComposerDockProps(
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
-      modeLabel: input.modeLabel,
       chatNotice: input.chatNotice,
       showJumpToBottom,
       cancelButtonTitle: input.sendButtonTitle,
@@ -415,12 +411,18 @@ export function buildLiveSessionSplitterProps(
   isActive: boolean;
   isPanelExpanded: boolean;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  onKeyDown?: import("react").KeyboardEventHandler<HTMLButtonElement>;
+  title: string;
+  ariaLabel: string;
   onTogglePanel: MouseEventHandler<HTMLButtonElement>;
 } {
   return {
     isActive: input.isContextRailResizing,
     isPanelExpanded: input.isContextRailVisible,
-    onPointerDown: input.isContextRailVisible ? input.onStartContextRailResize : undefined,
+    onPointerDown: input.onStartContextRailResize,
+    onKeyDown: input.onKeyDownContextRailResize,
+    title: "クリックで右ペインを開閉し、展開中はドラッグまたは矢印キーでサイズを調整",
+    ariaLabel: input.isContextRailVisible ? "右ペインを折りたたむ" : "右ペインを開く",
     onTogglePanel: input.onToggleContextRailVisibility,
   };
 }

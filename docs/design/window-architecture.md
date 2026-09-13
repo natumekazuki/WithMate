@@ -1,5 +1,9 @@
 # Window Architecture
 
+## Auxiliary Session (Issue #710)
+
+Auxiliaryは専用Windowを作らず、Session Window内の共通chat shellでMainと並行利用する。親配下の複数Auxiliaryを保存し、表示するAuxiliaryはstable IDで1件選択する。Window close、親削除、runtime集計は表示中だけでなく親配下の全Auxiliaryを対象にする。
+
 - 作成日: 2026-03-12
 - 対象: `Home Window` / `Character Editor Window` / `Session Window` / `Diff Window` / `Settings Window` / `Session Monitor Window` の責務分離
 

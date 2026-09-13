@@ -8,7 +8,7 @@ import type {
 type SessionMonitorContextMenu = Pick<Menu, "popup">;
 
 export type SessionMonitorContextMenuServiceDeps = {
-  requestCloseSessionWindow(sessionId: string): void;
+  requestCloseSessionWindow(sessionId: string): Promise<boolean>;
   closeCompanionReviewWindow(sessionId: string): void;
   writeText(value: string): void;
   buildMenu(template: MenuItemConstructorOptions[]): SessionMonitorContextMenu;
@@ -38,12 +38,11 @@ export class SessionMonitorContextMenuService {
         settled = true;
         resolve(result);
       };
-      const closeTarget = () => {
+      const closeTarget = (): void | Promise<boolean> => {
         if (request.kind === "agent") {
-          this.deps.requestCloseSessionWindow(request.sessionId);
-        } else {
-          this.deps.closeCompanionReviewWindow(request.sessionId);
+          return this.deps.requestCloseSessionWindow(request.sessionId);
         }
+        return this.deps.closeCompanionReviewWindow(request.sessionId);
       };
       const copySessionId = () => {
         if (settled || selectionStarted) {
@@ -64,12 +63,12 @@ export class SessionMonitorContextMenuService {
             return;
           }
           selectionStarted = true;
-          try {
-            closeTarget();
-            settle({ status: "closed" });
-          } catch {
-            settle({ status: "failed", message: MENU_FAILED_MESSAGE });
-          }
+          void Promise.resolve()
+            .then(async () => await closeTarget())
+            .then((closed) => {
+              settle(closed === false ? { status: "dismissed" } : { status: "closed" });
+            })
+            .catch(() => settle({ status: "failed", message: MENU_FAILED_MESSAGE }));
         },
       }, { type: "separator" }, {
         label: "Session IDをコピー",

@@ -1,5 +1,9 @@
 # 実機テスト項目表
 
+## Issue #710 Auxiliary Session
+
+複数Auxiliaryを追加して作成順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、preview用Provider呼び出しがないことを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
+
 ## 目的
 
 - Electron 実行時の現行機能を人手で確認するためのチェックリスト
@@ -110,11 +114,11 @@ npm run electron:start
 | MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 中央に `message list または preview`、左右に Window 上端から下端まで続く File Explorer / Context pane の splitter が配置される。Header hidden、ActionDock compact、side pane none、side pane 優先で開始する |
 | MT-023B | Session splitter resize | wide desktop 状態で左右境界をドラッグする | message list 面と `Latest Command` pane の幅が追従し、極端に寄せても chat の最小可読幅と右 pane の最小幅を下回らない |
 | MT-023B1 | Session side pane toggle / persistence | Agent Session で File Explorer と Context pane の splitter を順に操作し、別の Session Window も開く | File Explorer と Context pane は同時表示されず、同じ pane の再操作で `none` に戻る。操作済み Window の状態は別 Window の変更に追従せず、新しい Window は利用可能な永続値を初期値として使う |
-| MT-023B2A | Session splitter layout priority | wide desktop で左右 splitter、上下 splitter、左右 splitterの順に click または drag し、キーボードでも splitter を操作する | 左右操作後は active side pane / 左右 splitter が Window 高を占有し、上下操作後は Header / ActionDock と上下 splitter が Window 幅を占有する。追加の priority button はなく、開閉と resize は同じ操作で継続する。最後の priority は新しい Session Window の初期配置へ反映される |
+| MT-023B2A | Session splitter full-width layout | wide desktop で左右 splitter、上下 splitter を click または drag し、キーボードでも splitter を操作する | Header / ActionDock は常に Window 幅を占有し、active side pane と中央 surface は横に配置される。追加の切替ボタンはなく、開閉と resize は同じ操作で継続する |
 | MT-023B2 | Session splitter breakpoint | Session Window の viewport を `1399px`、`1400px` の順に変更し、splitter をクリックおよびドラッグする | `1399px` では縦 stack と click 切り替えだけになり、drag cursor や選択抑止は出ない。`1400px` では横分割になり、drag と click の両方が使える |
 | MT-023B3 | Session right pane / Settings draft isolation | Settings Window で API key または設定値を未保存のまま編集し、別の Session Window で right pane を切り替える | Settings Window の未保存内容が変化せず、保存操作を続行できる |
-| MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る。続けて設定群が折り返す幅と最小幅まで Window を狭める | これらは下 `ActionDock` にまとまり、上下 dock 優先では full-width、左右 pane 優先では左右 splitter の間を占有する。expanded 時だけ full editor と設定群が表示される。textarea は Send に幅を取られず横幅いっぱいに表示される。`Send` は設定群の枠外で下端が揃い、中幅では approval / model / depth が設定群内で先に折り返し、最小幅では設定群の下へ移る。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
-| MT-023C1 | Session narrow layout reachability | viewport を `1400px` 未満まで狭めた Session Window を開く | 保存された layout priority にかかわらず、Header、File Explorer（active 時）、中央 surface、Context pane（active 時）、ActionDock の順で縦 stack になり、`Latest Command` と provider に応じた `Tasks` / `Context` へ到達できる |
+| MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る。続けて設定群が折り返す幅と最小幅まで Window を狭める | これらは下 `ActionDock` にまとまり、wide layout では full-width で表示される。expanded 時だけ full editor と設定群が表示される。textarea は Send に幅を取られず横幅いっぱいに表示される。`Send` は設定群の枠外で下端が揃い、中幅では approval / model / depth が設定群内で先に折り返し、最小幅では設定群の下へ移る。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
+| MT-023C1 | Session narrow layout reachability | viewport を `1400px` 未満まで狭めた Session Window を開く | Header、File Explorer（active 時）、中央 surface、Context pane（active 時）、ActionDock の順で縦 stack になり、`Latest Command` と provider に応じた `Tasks` / `Context` へ到達できる |
 | MT-023C2 | Session minimum width guardrail | Session Window を最小幅近くまで縮める | Header、中央 surface、active side pane、ActionDock へ scroll を含めて到達でき、最小幅でも window が不自然に固定されない |
 | MT-023D | Session header hidden state | Session Window を開いて上 splitter を見る | 通常 state では Header が hidden で、中央 surface の上に再表示用 splitter だけが残る |
 | MT-023D1 | Session header expanded state | 上 splitter を押して Header を展開し、splitter をドラッグする | Header が1行分の固定高の full-width strip として表示され、Workspace / Session 操作と `Session actions` の `⋯` menuへ到達できる。`Close` は出ず、drag しても高さは変わらない |

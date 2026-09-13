@@ -104,25 +104,34 @@ describe("approval mode helpers", () => {
     assert.equal(getProviderAppSettings(normalized, "codex").skillRootPath, "C:/skills/codex");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "session side pane は canonical enum と既定値へ normalize される"
+  // oracle = { type = "contract", ref = "Session side pane normalization" }
+  // fault = "削除済み priority または不正 pane 値が設定へ残る"
+  // observable = "normalized chatLayoutPreference"
+  // observation_boundary = "public-boundary"
+  // scope = "session-side-pane-settings"
+  // lifecycle = "permanent"
+  // impact = "session window の pane 初期状態が不正になる"
+  // distinction = "side pane enum と layout preference 形状を確認する"
+  // @end-test-value
   it("session side pane は初期値を none とし、列挙値だけを受け入れる", () => {
     assert.deepEqual(createDefaultAppSettings().chatLayoutPreference, {
       header: "hidden",
       actionDock: "compact",
       sidePane: "none",
-      priority: "side-pane-first",
     });
     assert.deepEqual(normalizeAppSettings({
       chatLayoutPreference: {
         header: "visible",
         actionDock: "expanded",
         sidePane: "files",
-        priority: "dock-first",
       },
     }).chatLayoutPreference, {
       header: "visible",
       actionDock: "expanded",
       sidePane: "files",
-      priority: "dock-first",
     });
     assert.deepEqual(normalizeAppSettings({
       chatLayoutPreference: { header: "shown", actionDock: "open", sidePane: true },
@@ -130,7 +139,6 @@ describe("approval mode helpers", () => {
       header: "hidden",
       actionDock: "compact",
       sidePane: "none",
-      priority: "side-pane-first",
     });
   });
 });

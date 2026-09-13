@@ -31,7 +31,6 @@ import {
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
-import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { CodexSpeed } from "./codex-speed.js";
 import { isCodexReviewerControlDisabled, type CodexReviewer } from "./codex-reviewer.js";
@@ -52,6 +51,7 @@ import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
 import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
 import { resolveSelectionActionOverlayPosition } from "./chat/selection-action-overlay.js";
+import { SessionSwitcher, type SessionSwitcherOption } from "./chat/session-switcher.js";
 import {
   isMessageRenderedSearchTextNode,
   projectMessageRenderedSearchText,
@@ -871,6 +871,11 @@ export type SessionChatScreenProps = {
   headerSplitter: ReactNode;
   isHeaderVisible: boolean;
   messageColumn: ReactNode;
+  auxiliaryMessageColumn?: ReactNode;
+  auxiliarySplitter?: ReactNode;
+  isAuxiliaryVisible?: boolean;
+  auxiliaryWidthRatio?: number;
+  concurrentTarget?: "main" | "auxiliary";
   mainContent?: ReactNode;
   workSurfaceOverlay?: ReactNode;
   supportingSurface?: ReactNode;
@@ -879,7 +884,6 @@ export type SessionChatScreenProps = {
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
   isActionDockExpanded: boolean;
-  layoutPriority: ChatLayoutPriority;
   leftPane?: ReactNode;
   leftSplitter?: ReactNode;
   rightPane: ReactNode;
@@ -918,6 +922,11 @@ export function SessionChatScreen({
   headerSplitter,
   isHeaderVisible,
   messageColumn,
+  auxiliaryMessageColumn = null,
+  auxiliarySplitter = null,
+  isAuxiliaryVisible = false,
+  auxiliaryWidthRatio = 0.5,
+  concurrentTarget = "main",
   mainContent,
   workSurfaceOverlay = null,
   supportingSurface = null,
@@ -926,7 +935,6 @@ export function SessionChatScreen({
   actionDock,
   actionDockSplitter,
   isActionDockExpanded,
-  layoutPriority,
   leftPane = null,
   leftSplitter = null,
   rightPane,
@@ -940,7 +948,11 @@ export function SessionChatScreen({
   workbenchStyle,
   modals,
 }: SessionChatScreenProps) {
+  const ownLayoutRef = useRef<HTMLDivElement | null>(null);
+  const centralRef = useRef<HTMLElement | null>(null);
+  const [isCentralCollapsed, setIsCentralCollapsed] = useState(false);
   const setLayoutElementRefs = useCallback((node: HTMLDivElement | null) => {
+    ownLayoutRef.current = node;
     if (layoutRef) {
       layoutRef.current = node;
     }
@@ -949,17 +961,73 @@ export function SessionChatScreen({
     }
   }, [layoutRef, workbenchRef]);
   const layoutStyle = useMemo(() => ({ ...style, ...workbenchStyle }), [style, workbenchStyle]);
+  useLayoutEffect(() => {
+    const layout = ownLayoutRef.current;
+    const central = centralRef.current;
+    if (!layout || !central) return;
+    const measure = () => {
+      const view = layout.ownerDocument.defaultView!;
+      const css = view.getComputedStyle(layout);
+      const pixel = (value: string) => Number.parseFloat(value) || 0;
+      const height = layout.clientHeight - pixel(css.paddingTop) - pixel(css.paddingBottom);
+      const narrow = view.innerWidth < 1400;
+      const sideHeight = narrow
+        ? pixel(css.getPropertyValue("--session-left-pane-track-width"))
+          + pixel(css.getPropertyValue("--session-right-pane-track-width")) : 0;
+      const remaining = height - sideHeight
+        - pixel(css.getPropertyValue("--session-header-dock-row-height"))
+        - pixel(css.getPropertyValue("--session-dock-splitter-size")) * (narrow ? 4 : 2)
+        - pixel(css.getPropertyValue("--session-action-dock-height"));
+      const minimum = pixel(view.getComputedStyle(central).getPropertyValue("--session-region-min-height"));
+      setIsCentralCollapsed(isActionDockExpanded && remaining < minimum);
+    };
+    measure();
+    const Observer = layout.ownerDocument.defaultView?.ResizeObserver;
+    const observer = Observer ? new Observer(measure) : null;
+    observer?.observe(layout);
+    window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, [layoutStyle, isActionDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible]);
+  const columnsRef = useRef<HTMLDivElement | null>(null);
+  const [columnSizes, setColumnSizes] = useState({ width: 0, main: 0, auxiliary: 0, splitter: 0 });
+  useLayoutEffect(() => {
+    const columns = columnsRef.current;
+    if (!columns || !isAuxiliaryVisible) return;
+    const measure = () => {
+      const minimum = (selector: string) => {
+        const element = columns.querySelector<HTMLElement>(selector);
+        return element ? Number.parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).getPropertyValue("--session-region-min-width")) || 0 : 0;
+      };
+      const next = {
+        width: columns.getBoundingClientRect().width,
+        main: minimum(".session-concurrent-chat-main"),
+        auxiliary: minimum(".session-concurrent-chat-auxiliary"),
+        splitter: Number.parseFloat(columns.ownerDocument.defaultView!.getComputedStyle(columns).getPropertyValue("--session-dock-splitter-size")) || 0,
+      };
+      setColumnSizes((current) => Object.keys(next).every((key) => current[key as keyof typeof next] === next[key as keyof typeof next]) ? current : next);
+    };
+    measure();
+    const Observer = columns.ownerDocument.defaultView?.ResizeObserver;
+    const observer = Observer ? new Observer(measure) : null;
+    observer?.observe(columns);
+    return () => observer?.disconnect();
+  }, [isAuxiliaryVisible, mainContent !== undefined]);
+  const singleChat = auxiliaryWidthRatio > 0 && auxiliaryWidthRatio < 1 && columnSizes.width > 0
+    && columnSizes.width < columnSizes.main + columnSizes.auxiliary + columnSizes.splitter;
+  const contentWidth = columnSizes.width - columnSizes.splitter;
+  const effectiveRatio = auxiliaryWidthRatio <= 0 ? 0 : auxiliaryWidthRatio >= 1 ? 1
+    : contentWidth > 0 && !singleChat
+      ? Math.max(columnSizes.auxiliary / contentWidth, Math.min(1 - columnSizes.main / contentWidth, auxiliaryWidthRatio))
+      : auxiliaryWidthRatio;
 
   return (
     <div
       ref={setLayoutElementRefs}
-      className={`page-shell session-page session-chat-layout layout-priority-${
-        layoutPriority === "side-pane-first" ? "side-pane" : "dock"
-      }${isHeaderVisible ? " is-header-visible" : ""}${
+      className={`page-shell session-page session-chat-layout${isHeaderVisible ? " is-header-visible" : ""}${
         isActionDockExpanded ? " is-action-dock-expanded" : ""
       }${isLeftPaneVisible ? " is-left-pane-visible" : ""}${
         isRightPaneVisible ? " is-right-pane-visible" : ""
-      }${className ? ` ${className}` : ""}`}
+      }${isCentralCollapsed ? " is-central-collapsed" : ""}${className ? ` ${className}` : ""}`}
       style={layoutStyle}
       data-session-mode={mode}
     >
@@ -985,9 +1053,31 @@ export function SessionChatScreen({
       </div>
 
       {leftSplitter}
-      <section className="chat-panel session-work-surface session-message-stack rise-3">
-        <div className="session-central-surface" hidden={mainContent !== undefined}>
-          {messageColumn}
+      <section
+        ref={centralRef}
+        aria-hidden={isCentralCollapsed}
+        inert={isCentralCollapsed}
+        className="chat-panel session-work-surface session-message-stack rise-3"
+        style={isAuxiliaryVisible && mainContent === undefined && columnSizes.main > 0
+          ? { "--session-region-min-width": `${(auxiliaryWidthRatio <= 0 ? columnSizes.main : auxiliaryWidthRatio >= 1 ? columnSizes.auxiliary : columnSizes.main + columnSizes.auxiliary) + columnSizes.splitter}px` } as CSSProperties
+          : undefined}
+      >
+        <div
+          className={`session-central-surface${isAuxiliaryVisible ? ` has-concurrent-chats concurrent-target-${concurrentTarget}` : ""}`}
+          style={isAuxiliaryVisible ? { "--auxiliary-width-ratio": auxiliaryWidthRatio } as CSSProperties : undefined}
+          hidden={mainContent !== undefined}
+        >
+          {isAuxiliaryVisible ? (
+            <div
+              ref={columnsRef}
+              className={`session-concurrent-chat-columns${singleChat ? " is-single-chat" : ""}`}
+              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - effectiveRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0, effectiveRatio)}fr)` }}
+            >
+              <div className={`session-concurrent-chat-column session-concurrent-chat-main${auxiliaryWidthRatio >= 1 ? " is-zero-width" : ""}`} inert={!singleChat && auxiliaryWidthRatio >= 1} aria-hidden={!singleChat && auxiliaryWidthRatio >= 1}>{messageColumn}</div>
+              {auxiliarySplitter}
+              <div className={`session-concurrent-chat-column session-concurrent-chat-auxiliary${auxiliaryWidthRatio <= 0 ? " is-zero-width" : ""}`} inert={!singleChat && auxiliaryWidthRatio <= 0} aria-hidden={!singleChat && auxiliaryWidthRatio <= 0}>{auxiliaryMessageColumn}</div>
+            </div>
+          ) : messageColumn}
         </div>
         <div className="session-central-surface" hidden={mainContent === undefined}>
           {mainContent}
@@ -1651,6 +1741,7 @@ export type SessionContextPaneProps = {
   messageNavigatorCharacter?: CharacterProfile;
   glossaryPaneProps?: SessionGlossaryPaneProps;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onSelectContextPaneTab?: (tab: ContextPaneTabKey) => void;
   onJumpToMessage?: (key: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
 };
@@ -1772,6 +1863,7 @@ export function SessionContextPane({
   messageNavigatorCharacter,
   glossaryPaneProps,
   onCycleContextPaneTab,
+  onSelectContextPaneTab,
   onJumpToMessage,
   onOpenCompanionReview,
 }: SessionContextPaneProps) {
@@ -1779,8 +1871,6 @@ export function SessionContextPane({
   const messageNavigatorButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [messageNavigatorFocusIndex, setMessageNavigatorFocusIndex] = useState(0);
   const taskEntries = backgroundTasks ?? [];
-  const availableTabCount = availableContextPaneTabs.length;
-  const canCycleContextPaneTab = availableTabCount > 1;
   const glossaryContentSignature = [
     glossaryPaneProps?.projection?.scopeRevision ?? "",
     glossaryPaneProps?.projection?.state.revision ?? "",
@@ -1930,31 +2020,16 @@ export function SessionContextPane({
     <aside className="session-context-pane session-context-pane-header-expanded">
       <section className={`command-monitor-shell ${activeContextPaneTab}`} aria-label="右ペイン">
         <div className="command-monitor-head">
-          <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
-            <button
-              type="button"
-              className="command-monitor-switcher-button"
-              onClick={() => onCycleContextPaneTab(-1)}
-              disabled={!canCycleContextPaneTab}
-              aria-label="前の表示へ切り替え"
-            >
-              ‹
-            </button>
-            <div className={`command-monitor-switcher-current ${contextPaneProjection.toneClassName}`}>
-              <span className="command-monitor-switcher-label">
-                {contextPaneTabLabel(activeContextPaneTab)}
-              </span>
-            </div>
-            <button
-              type="button"
-              className="command-monitor-switcher-button"
-              onClick={() => onCycleContextPaneTab(1)}
-              disabled={!canCycleContextPaneTab}
-              aria-label="次の表示へ切り替え"
-            >
-              ›
-            </button>
-          </div>
+          <SessionSwitcher
+            ariaLabel="右ペイン表示切り替え"
+            options={availableContextPaneTabs.map((tab): SessionSwitcherOption => ({
+              id: tab,
+              label: contextPaneTabLabel(tab),
+            }))}
+            selectedId={activeContextPaneTab}
+            onMove={onCycleContextPaneTab}
+            onSelect={(tab) => onSelectContextPaneTab?.(tab as ContextPaneTabKey)}
+          />
         </div>
 
         <div ref={contentRef} className="command-monitor-content">
@@ -2340,6 +2415,7 @@ export type SessionMessageColumnProps = {
   pendingMessageGroupId?: string | null;
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
+  onJumpToBottom?: () => void;
   onToggleMessageCollapse?: (key: string) => void;
   onToggleAllMessageCollapse?: () => void;
   onToggleArtifact: (artifactKey: string) => void;
@@ -2662,6 +2738,7 @@ export function SessionMessageColumn({
   pendingMessageGroupId = null,
   isMessageListFollowing,
   onMessageListScroll,
+  onJumpToBottom,
   onToggleMessageCollapse,
   onToggleAllMessageCollapse,
   onToggleArtifact,
@@ -3229,6 +3306,19 @@ export function SessionMessageColumn({
         onNext={() => navigateFindMatch(1)}
         onClose={() => setFindOpen(false)}
       />
+      {onJumpToBottom ? (
+        <button
+          className="message-list-jump-bottom-button"
+          type="button"
+          onClick={onJumpToBottom}
+          aria-label="末尾へ移動"
+          title="末尾へ移動"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M8 2v9M3.5 7.5 8 12l4.5-4.5M3 14h10" />
+          </svg>
+        </button>
+      ) : null}
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
         {messages.length > 0 || isRunning ? (
           <div className="session-message-list-window">
@@ -3514,7 +3604,7 @@ export type SessionActionDockCompactRowProps = {
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
-  modeLabel?: string;
+  targetDock?: ReactNode;
   chatNotice?: string;
   showJumpToBottom: boolean;
   showMessageViewModeControls?: boolean;
@@ -3531,7 +3621,7 @@ export function SessionActionDockCompactRow({
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
-  modeLabel,
+  targetDock = null,
   chatNotice,
   showJumpToBottom,
   showMessageViewModeControls = false,
@@ -3543,8 +3633,7 @@ export function SessionActionDockCompactRow({
   onMessageViewModeChange = () => {},
 }: SessionActionDockCompactRowProps) {
   return (
-    <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}${modeLabel ? " has-mode-label" : ""}`}>
-      {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
+    <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}`}>
       {isRunning ? (
         <button
           className="session-action-dock-compact-progress session-action-dock-compact-progress-button"
@@ -3573,6 +3662,7 @@ export function SessionActionDockCompactRow({
         </button>
       )}
       <div className="session-action-dock-compact-actions">
+        {targetDock ? <div className="session-action-dock-target-slot">{targetDock}</div> : null}
         {isRunning && chatNotice ? (
           <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
         ) : null}
@@ -3667,7 +3757,7 @@ export type SessionComposerExpandedProps = {
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
-  modeLabel?: string;
+  targetDock?: ReactNode;
   chatNotice?: string;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
@@ -3749,7 +3839,7 @@ export function SessionComposerExpanded({
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
-  modeLabel,
+  targetDock = null,
   chatNotice,
   composerBlocked,
   canSelectCustomAgent,
@@ -3855,7 +3945,7 @@ export function SessionComposerExpanded({
     showAdditionalDirectoryControls ||
     showMessageViewModeControls ||
     showJumpToBottom ||
-    !!modeLabel ||
+    !!targetDock ||
     !!chatNotice ||
     isRunning;
 
@@ -3863,7 +3953,6 @@ export function SessionComposerExpanded({
     <div className="composer">
       {showComposerToolbar ? (
         <div className="composer-attachments-toolbar">
-          {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
           {chatNotice ? (
             <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
           ) : null}
@@ -4020,8 +4109,9 @@ export function SessionComposerExpanded({
                 Cancel
               </button>
           ) : null}
-          {showJumpToBottom || showMessageViewModeControls ? (
+          {showJumpToBottom || showMessageViewModeControls || targetDock ? (
             <div className="composer-toolbar-view-actions">
+              {targetDock ? <div className="composer-target-dock-slot">{targetDock}</div> : null}
               {showJumpToBottom ? (
                 <button
                   className="drawer-toggle compact secondary message-jump-bottom-button"
@@ -4282,6 +4372,7 @@ export function SessionComposerExpanded({
             </div>
           ) : null}
         </div>
+
 
         {isRunning ? null : (
           <button

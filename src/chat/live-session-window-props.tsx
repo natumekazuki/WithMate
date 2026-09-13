@@ -1,10 +1,6 @@
 import type { ComponentProps, ReactNode, RefObject } from "react";
 import { ChatDockSplitter, type ChatWindowProps } from "./chat-window.js";
-import {
-  SessionContextPane,
-  SessionPaneErrorBoundary,
-  type SessionContextPaneProps,
-} from "../session-components.js";
+import type { SessionContextPaneProps } from "../session-components.js";
 
 type LiveSessionWindowShellPropsInput = {
   mode: ChatWindowProps["mode"];
@@ -15,9 +11,6 @@ type LiveSessionWindowShellPropsInput = {
   actionDockRef?: ChatWindowProps["actionDockRef"];
   workbenchRef: RefObject<HTMLDivElement | null>;
   workbenchStyle?: ChatWindowProps["workbenchStyle"];
-  layoutPriority: ChatWindowProps["layoutPriority"];
-  onActivateSidePanePriority: () => void;
-  onActivateDockPriority: () => void;
   headerProps: ChatWindowProps["headerProps"];
   messageColumnProps: ChatWindowProps["messageColumnProps"];
   errorNotices?: ChatWindowProps["errorNotices"];
@@ -39,6 +32,7 @@ type LiveSessionWindowShellPropsInput = {
   modals: ChatWindowProps["modals"];
   baseClassName?: string;
   isAuxiliaryMode?: boolean;
+  concurrentChats?: ChatWindowProps["concurrentChats"];
 };
 
 export function buildLiveSessionWindowShellProps(
@@ -53,7 +47,6 @@ export function buildLiveSessionWindowShellProps(
     actionDockRef: input.actionDockRef,
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
-    layoutPriority: input.layoutPriority,
     isHeaderExpanded: input.isHeaderExpanded,
     headerProps: input.headerProps,
     messageColumnProps: {
@@ -68,24 +61,16 @@ export function buildLiveSessionWindowShellProps(
     additionalDirectoryListProps: input.additionalDirectoryListProps,
     skillPickerProps: input.skillPickerProps,
     compactActionDockProps: input.compactActionDockProps,
-    headerSplitter: (
-      <ChatDockSplitter edge="top" onActivate={input.onActivateDockPriority} {...input.headerSplitterProps} />
-    ),
-    actionDockSplitter: (
-      <ChatDockSplitter edge="bottom" onActivate={input.onActivateDockPriority} {...input.actionDockSplitterProps} />
-    ),
-    splitter: <ChatDockSplitter edge="right" onActivate={input.onActivateSidePanePriority} {...input.splitterProps} />,
+    headerSplitter: <ChatDockSplitter edge="top" {...input.headerSplitterProps} />,
+    actionDockSplitter: <ChatDockSplitter edge="bottom" {...input.actionDockSplitterProps} />,
+    splitter: <ChatDockSplitter edge="right" {...input.splitterProps} />,
     leftPane: input.leftPane,
-    leftSplitter: input.leftSplitterProps ? (
-      <ChatDockSplitter edge="left" onActivate={input.onActivateSidePanePriority} {...input.leftSplitterProps} />
-    ) : null,
+    leftSplitter: input.leftSplitterProps ? <ChatDockSplitter edge="left" {...input.leftSplitterProps} /> : null,
     isLeftPaneVisible: input.isLeftPaneVisible ?? false,
     isRightPaneVisible: input.isRightPaneVisible,
-    rightPane: (
-      <SessionPaneErrorBoundary>
-        <SessionContextPane {...input.rightPaneProps} />
-      </SessionPaneErrorBoundary>
-    ),
+    rightPane: null,
+    rightPaneProps: input.rightPaneProps,
     modals: input.modals,
+    concurrentChats: input.concurrentChats,
   };
 }

@@ -12,7 +12,7 @@ import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
-import type { SessionSummary } from "../../src/session-state.js";
+import type { HomeSessionSummary, SessionSummary } from "../../src/session-state.js";
 import type { CompanionSessionSummary } from "../../src/companion-state.js";
 import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
@@ -917,110 +917,91 @@ describe("HomeRecentSessionsPanel", () => {
 describe("HomeMonitorContent", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
+  const createMonitorSession = (id: string, taskTitle: string): HomeSessionSummary => ({
+    id,
+    taskTitle,
+    status: "idle",
+    updatedAt: "2026-03-30T00:00:00.000Z",
+    isPinned: false,
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 5,
+    characterId: "mate",
+    character: "Solo Mate",
+    characterIconPath: "mate.png",
+    characterThemeColors: { main: "#223344", sub: "#88bbcc" },
+    runState: "idle",
+  });
+
+  const createMonitorCompanion = (id: string, taskTitle: string): CompanionSessionSummary => ({
+    id,
+    groupId: "group-1",
+    taskTitle,
+    status: "active",
+    repoRoot: "C:/workspace/repo",
+    focusPath: "",
+    targetBranch: "main",
+    baseSnapshotRef: "refs/withmate/base/1",
+    baseSnapshotCommit: "base-1",
+    selectedPaths: [],
+    changedFiles: [],
+    siblingWarnings: [],
+    allowedAdditionalDirectories: [],
+    runState: "idle",
+    threadId: "",
+    provider: "codex",
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    approvalMode: "untrusted",
+    codexSandboxMode: "danger-full-access",
+    codexSpeed: "standard",
+    codexReviewer: "none",
+    character: "Solo Mate",
+    characterRoleMarkdown: "",
+    characterIconPath: "mate.png",
+    characterThemeColors: { main: "#223344", sub: "#88bbcc" },
+    updatedAt: "2026-03-30T00:00:00.000Z",
+    latestMergeRun: null,
+  });
+
   // @test-value v2
-  // kind = "contract"
-  // claim = "Monitor row はAgentとCompanionの対象情報を表示する"
-  // oracle = { type = "contract", ref = "HomeMonitorContent monitor row contract" }
-  // fault = "context menu用のhandler追加で対象rowの表示を壊す"
-  // observable = "renderされたrowのラベル、mode、status、avatarを含むHTML"
+  // kind = "invariant"
+  // claim = "Home MonitorのAgent/Companion entryは種別、実行状態、キャラアイコンとセッション情報を表示する"
+  // oracle = { type = "contract", ref = "home-monitor rendering" }
+  // fault = "Monitor entryの種別や実行状態が誤表示される、またはキャラアイコンやセッション情報が欠落する"
+  // observable = "HomeMonitorContentのrender済みHTMLにおけるAgent/Companion/status badge、avatarとセッション情報"
   // observation_boundary = "component-behavior"
-  // scope = "HomeMonitorContent row rendering"
+  // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
-  // impact = "Monitorの既存表示を保つ"
-  // distinction = "context menu interaction testとは別に、row projectionの表示契約を検証する"
   // @end-test-value
   it("Monitor カードはキャラアイコン付きでセッション情報を表示する", () => {
     const entries: HomeMonitorEntry[] = [
       {
         kind: "agent",
-        session: {
-          id: "session-1",
-          taskTitle: "Agent task",
-          workspaceLabel: "workspace",
-          workspacePath: "C:/workspace",
-          character: "Solo Mate",
-          characterIconPath: "mate.png",
-        },
+        session: createMonitorSession("session-1", "Agent task"),
         state: { kind: "running", label: "実行中" },
-      } as HomeMonitorEntry,
+      },
       {
         kind: "agent",
-        session: {
-          id: "session-2",
-          taskTitle: "Auxiliary task",
-          workspaceLabel: "workspace",
-          workspacePath: "C:/workspace",
-          character: "Solo Mate",
-          characterIconPath: "mate.png",
-        },
-        activeAuxiliarySession: {
-          id: "aux-1",
-          parentSessionId: "session-2",
-          status: "active",
-          runState: "running",
-          title: "Auxiliary",
-          provider: "codex",
-          catalogRevision: 1,
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          approvalMode: "untrusted",
-          codexSandboxMode: "danger-full-access",
-          customAgentName: "",
-          allowedAdditionalDirectories: [],
-          threadId: "",
-          displayAfterMessageIndex: null,
-          createdAt: "2026-03-28T00:00:00.000Z",
-          updatedAt: "2026-03-30T00:00:00.000Z",
-          closedAt: "",
-        },
+        session: createMonitorSession("session-2", "Auxiliary task"),
         state: { kind: "running", label: "実行中" },
-      } as HomeMonitorEntry,
+      },
       {
         kind: "companion",
-        session: {
-          id: "companion-1",
-          groupId: "group-1",
-          taskTitle: "Companion task",
-          character: "Solo Mate",
-          characterIconPath: "mate.png",
-        },
+        session: createMonitorCompanion("companion-1", "Companion task"),
         isWindowOpen: true,
         state: { kind: "neutral", label: "待機" },
         groupLabel: "demo",
-      } as HomeMonitorEntry,
+      },
       {
         kind: "companion",
-        session: {
-          id: "companion-2",
-          groupId: "group-1",
-          taskTitle: "Companion Auxiliary task",
-          character: "Solo Mate",
-          characterIconPath: "mate.png",
-        },
-        activeAuxiliarySession: {
-          id: "aux-companion",
-          parentSessionId: "companion-2",
-          status: "active",
-          runState: "running",
-          title: "Auxiliary",
-          provider: "codex",
-          catalogRevision: 1,
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          approvalMode: "untrusted",
-          codexSandboxMode: "danger-full-access",
-          customAgentName: "",
-          allowedAdditionalDirectories: [],
-          threadId: "",
-          displayAfterMessageIndex: null,
-          createdAt: "2026-03-28T00:00:00.000Z",
-          updatedAt: "2026-03-30T00:00:00.000Z",
-          closedAt: "",
-        },
+        session: createMonitorCompanion("companion-2", "Companion Auxiliary task"),
         isWindowOpen: true,
         state: { kind: "running", label: "実行中" },
         groupLabel: "demo",
-      } as HomeMonitorEntry,
+      },
     ];
     const html = renderToStaticMarkup(
       <HomeMonitorContent
@@ -1038,9 +1019,9 @@ describe("HomeMonitorContent", () => {
     assert.ok(html.includes("Companion task"));
     assert.ok(html.includes("Companion Auxiliary task"));
     assert.ok(html.includes("demo"));
-    assert.ok(html.includes(">Agent</span>"));
-    assert.equal(html.match(/>Auxiliary<\/span>/g)?.length, 2);
-    assert.ok(html.includes(">Companion</span>"));
+    assert.equal(html.match(/>Agent<\/span>/g)?.length, 2);
+    assert.equal(html.match(/>Auxiliary<\/span>/g)?.length ?? 0, 0);
+    assert.equal(html.match(/>Companion<\/span>/g)?.length, 2);
     assert.equal(html.match(/class="session-status home-monitor-status running"/g)?.length, 3);
     assert.equal(html.match(/class="session-status home-monitor-status neutral"/g)?.length, 1);
     assert.equal(html.match(/>実行中<\/span>/g)?.length, 3);

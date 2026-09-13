@@ -1,5 +1,9 @@
 # V6 Database Foundation
 
+## Auxiliary Session Projection (Issue #710)
+
+V6 runtimeのAuxiliaryは親Sessionに従属する複数の会話として保存する。会話payloadと一覧用`summary_json`を同時更新し、summaryにはtranscript、draft、Character定義本文を含めない。既存行のsummaryは初回migrationで補完し、以後の一覧取得でpayload全文を読み直さない。
+
 - 作成日: 2026-06-22
 - 対象: V6で採用する保存構造、destructive reset、legacy data境界
 - Status: Foundation schema implemented

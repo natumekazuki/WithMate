@@ -75,6 +75,7 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
     const deps: SessionMonitorContextMenuServiceDeps = {
       requestCloseSessionWindow(sessionId) {
         closedTargets.push(`agent:${sessionId}`);
+        return Promise.resolve(true);
       },
       closeCompanionReviewWindow(sessionId) {
         closedTargets.push(`companion:${sessionId}`);
@@ -101,7 +102,9 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
 
   const harness = createMenuHarness();
   const service = new SessionMonitorContextMenuService({
-    requestCloseSessionWindow() {},
+    requestCloseSessionWindow() {
+      return Promise.resolve(true);
+    },
     closeCompanionReviewWindow() {},
     writeText() {},
     buildMenu: harness.buildMenu,
@@ -113,6 +116,35 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
   });
   harness.getPopupOptions()?.callback?.();
   assert.deepEqual(await dismissedPromise, { status: "dismissed" } satisfies SessionMonitorContextMenuResult);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Session MonitorのAgent close resultは実際のWindow close完了後だけclosedになり、確認取消はdismissedになる"
+// oracle = { type = "contract", ref = "SessionMonitorContextMenuService close completion result" }
+// fault = "close delegateのpreventDefaultや確認取消をclosedとして返し、Monitorに誤った成功表示を出す"
+// observable = "close delegateのresultとmenu result"
+// observation_boundary = "public-boundary"
+// scope = "Session Monitor native context menu close completion"
+// lifecycle = "permanent"
+// impact = "確認取消を利用者に閉じたと誤認させず、Windowの実状態を反映する"
+// distinction = "delegate dispatchの対象kind検証とは分離してclose完了結果を検証する"
+// @end-test-value
+test("Session Monitor context menu はclose delegateの取消をclosedとして返さない", async () => {
+  const harness = createMenuHarness();
+  const service = new SessionMonitorContextMenuService({
+    requestCloseSessionWindow: async () => false,
+    closeCompanionReviewWindow() {},
+    writeText() {},
+    buildMenu: harness.buildMenu,
+  });
+  const resultPromise = service.showContextMenu({} as BrowserWindow, {
+    kind: "agent",
+    sessionId: "cancelled-close",
+    point: { x: 1, y: 2 },
+  });
+  invokeMenuItem(harness.getTemplate()[0]!);
+  assert.deepEqual(await resultPromise, { status: "dismissed" } satisfies SessionMonitorContextMenuResult);
 });
 
 // @test-value v2
@@ -140,6 +172,7 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
     const service = new SessionMonitorContextMenuService({
       requestCloseSessionWindow(sessionId) {
         closedTargets.push(`agent:${sessionId}`);
+        return Promise.resolve(true);
       },
       closeCompanionReviewWindow(sessionId) {
         closedTargets.push(`companion:${sessionId}`);
@@ -166,6 +199,7 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
     const service = new SessionMonitorContextMenuService({
       requestCloseSessionWindow() {
         closedTargets.push("agent");
+        return Promise.resolve(true);
       },
       closeCompanionReviewWindow() {
         closedTargets.push("companion");

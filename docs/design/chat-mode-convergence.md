@@ -1,5 +1,9 @@
 # Chat Mode Convergence
 
+## Auxiliary Session (Issue #710)
+
+Auxiliaryは単一の排他的modeではなく、Mainと同じchat shell内で複数会話を保持・切り替えるmodeである。Main＋選択中Auxiliaryを表示し、非表示Auxiliaryのrun、draft、thread、Character snapshotも会話ID単位で保持する。shell、message list、composer、right paneは共通実装を使い、会話ごとの差はmode/capability/adapterで解決する。Auxiliary一覧は作成順のstable IDと非AI previewを使い、一覧展開でtranscriptやCharacter定義を全件読み直さない。
+
 - 作成日: 2026-05-25
 - 対象: Agent Session、Companion、MateTalk、Auxiliary Session の chat UI / action 境界
 
@@ -24,7 +28,7 @@ V5 preview では legacy MateTalk runtime / window / `mate-talk` mode を curren
 - chat layout、message column、composer、ActionDock は 1 系統を正本にする。
 - Agent / Companion は同じ live coding session UI として扱い、基本機能の差異を持たせない。
 - MateTalk は軽量 mode だが、独自 chat 実装にはしない。不要機能は capability off で隠し、right pane shell 自体は共通 layout に残す。
-- Auxiliary は Agent 限定の feature ではなく、shared chat host 上の disposable / child conversation として扱う。
+- Auxiliary は Agent 限定の feature ではなく、shared chat host 上で複数保持する child conversation として扱う。
 - response action は assistant response 共通機能として扱い、表示面ごとの composer adapter だけ差し替える。
 - retry / edit last message は Agent 固有にしない。recovery action surface は共通 chat layout の message stack が所有し、再送 API と source transcript だけ adapter で差し替える。
 - provider や mode の制約で使えない操作は、個別 UI を作らず capability で非表示または disabled にする。
@@ -36,7 +40,7 @@ V5 preview では legacy MateTalk runtime / window / `mate-talk` mode を curren
 | Agent Session | chat shell、message column、composer、ActionDock、pending / streaming、Copy / Quote、attachments、session files、AddDirectory、model / reasoning、approval / sandbox、retry / edit last message | header actions、workspace actions、session files actions、audit source、delete / rename API、Auxiliary entry | 通常 session lifecycle、history resume、session delete |
 | Companion | Agent と同じ chat shell、message column、composer、ActionDock、pending / streaming、Copy / Quote、attachments、session files、AddDirectory、model / reasoning、approval / sandbox、retry / edit last message | Companion transcript adapter、merge / ready state actions、target branch / stash information、audit source | review / merge workflow、target branch validation、changed files summary |
 | MateTalk | shared chat shell、message column、composer、basic pending / streaming、Copy / Quote、model selection の共通部、empty right pane shell | send adapter、right pane content capability、cancel capability、audit capability、retry capability、attachments capability | SingleMate talk semantics、軽量 right pane content、初期 slice で不要な audit / merge / retry の無効化 |
-| Auxiliary | shared chat shell、message column、composer、ActionDock、pending / streaming、Copy / Quote、attachments、session files、AddDirectory、model / reasoning、approval / sandbox | parent session adapter、Return to main action、quote target composer、source label | parent / child transcript 分離、closed auxiliary rendering、parent delete cascade |
+| Auxiliary | shared chat shell、message column、composer、ActionDock、pending / streaming、Copy / Quote、attachments、session files、AddDirectory、model / reasoning、approval / sandbox | parent session adapter、stable Auxiliary switcher、quote target composer、source label | parent / child transcript 分離、複数会話の保存、parent delete cascade |
 
 ## Shared Contracts
 
@@ -67,8 +71,7 @@ projection は、表示 state がどの conversation に属するかを明示す
 
 通常 Agent ではこれらが同じ session を指す。
 Companion では review / merge workflow の source を指す。
-Auxiliary では parent Session と active Auxiliary を混ぜず、active Auxiliary 表示中は child conversation を指す。
-closed Auxiliary は read-only transcript として描画し、composer / run / audit target にはしない。
+Auxiliary では parent Session と選択中Auxiliaryを混ぜず、表示中はchild conversationを指す。非表示Auxiliaryもrun、draft、composer targetを保持し、一覧から再選択して継続できる。
 
 `pendingMessageText` と optimistic user message は、mode ごとに別実装しない。
 stream 開始直後に「プロンプト」と「レスポンス待機」が見えることは、shared live run contract の責務にする。
@@ -137,7 +140,7 @@ shared UI は次を共通 precondition とする。
 - 現在の `transcriptSource` に retry 対象の user message がある。
 - 現在の `runSource` が実行中ではない。
 - 現在の `composerTarget` が writable。
-- closed Auxiliary など read-only transcript ではない。
+- 親削除処理中など、明示的にread-onlyとなったconversationではない。
 
 対象 message の選択は `transcriptSource` の最後の user-authored message を基本にする。
 Companion の merge 中、Auxiliary の parent / child 切り替え中、MateTalk の retry 未対応など、mode 固有の禁止条件は adapter が capability false または disabled reason として返す。
