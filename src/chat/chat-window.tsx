@@ -682,14 +682,14 @@ export function ChatWindow({
                   stateCache={conversationStateCacheRef.current}
                   onColumnControls={handleAuxiliaryColumnControls}
                 />
-                {concurrentChats.target !== "auxiliary" ? (
-                  <div className="concurrent-chat-target-overlay" aria-hidden="true" />
-                ) : null}
               </>
             ) : (
               <div className="concurrent-chat-state" role="status">Auxiliaryを選択してください。</div>
             )}
           </div>
+          {concurrentChats.target !== "auxiliary" ? (
+            <div className="concurrent-chat-target-overlay" aria-hidden="true" />
+          ) : null}
         </>
       ) : null}
       auxiliarySplitter={concurrentChats ? (

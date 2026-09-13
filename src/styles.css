@@ -4299,10 +4299,6 @@ button:disabled {
   overflow: hidden;
 }
 
-.session-work-surface:has(.session-switcher-popover) {
-  overflow: visible;
-}
-
 .session-left-pane-slot,
 .session-right-pane-slot {
   display: grid;
@@ -4493,6 +4489,10 @@ button:disabled {
   pointer-events: none;
 }
 
+.session-concurrent-chat-auxiliary > .concurrent-chat-target-overlay {
+  z-index: 20;
+}
+
 .concurrent-chat-target-dock {
   display: flex;
   align-items: center;
@@ -4525,7 +4525,8 @@ button:disabled {
 .session-concurrent-chat-auxiliary {
   position: relative;
   grid-template-rows: auto minmax(0, 1fr);
-  overflow: visible;
+  overflow: hidden;
+  container-type: size;
 }
 
 .session-switcher {
@@ -4645,11 +4646,13 @@ button:disabled {
   scrollbar-gutter: stable;
 }
 .concurrent-chat-session-switcher .session-switcher-popover {
-  max-height: min(92dvh, 900px);
+  max-height: max(0px, calc(100cqh - 100% - 14px));
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .concurrent-chat-session-switcher .session-switcher-options {
-  max-height: min(86dvh, 820px);
+  max-height: none;
+  align-content: start;
 }
 .session-switcher-option { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; min-width: 0; padding: 7px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .session-switcher-option:hover, .session-switcher-option[aria-selected="true"] { background: color-mix(in srgb, var(--character-main) 16%, transparent); }
