@@ -273,6 +273,10 @@ export class SessionExternalApplicationService {
   constructor(private readonly deps: SessionExternalApplicationServiceDeps) {
     this.delegationService = deps.delegationStorage ? new DelegationService({
       storage: deps.delegationStorage,
+      authorizeControl: (binding, operation, input) => {
+        try { this.deps.authorityService.authorize(binding, operation, input); }
+        catch (error) { throw new DelegationOperationError(mapApplicationError(error, operation, input).error); }
+      },
       execute: (operation, input, binding) => this.execute(operation, input, binding),
       executeCreatedRoot: (id, index, operation, input, binding) => this.executeCreatedRoot(id, index, operation, input, binding),
     }) : null;
@@ -328,6 +332,7 @@ export class SessionExternalApplicationService {
         case "work.archive": result = this.requireWorkItemService().archive(request.input as SessionRuntimeWorkItemArchiveInput, actor, proof); break;
         case "turn.enqueue": result = await this.enqueue(request.input as SessionRuntimeEnqueueInput, actor, proof); break;
         case "turn.get": result = this.projectExecution(root, fields.executionId as string); break;
+        case "turn.list": result = this.list(request.input as SessionRuntimeListInput); break;
         case "turn.cancel": {
           const cancelInput = request.input as SessionRuntimeCancelInput;
           const execution = await this.deps.executionService.cancel({ ...cancelInput, requestFingerprint: fingerprintCancel(cancelInput), proof });

@@ -11,7 +11,7 @@ import type { DelegationCreateInput } from "../../src/delegation.js";
 import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { DelegationStorage } from "../../src-electron/delegation-storage.js";
-import { DelegationService } from "../../src-electron/delegation-service.js";
+import { DelegationOperationError, DelegationService } from "../../src-electron/delegation-service.js";
 
 const now = "2026-09-13T00:00:00.000Z";
 const binding: ResolvedAgentRuntimeBinding = { bindingId: "test", bindingIdHash: "test", actorSessionId: "root", providerId: "codex", executionGeneration: "generation", authoritySnapshot: {}, operationGrants: ["session.runtime.invoke"], createdAt: now, expiresAt: null };
@@ -36,8 +36,12 @@ async function fixture() {
   let failOnCall = 0;
   let failAfterCommit = false;
   let executionState = "queued";
+  let executionAdmittedAt: string | null = null;
   let workState = "pending";
   let archived = false;
+  let controlRevoked = false;
+  let revokeAfter: string | null = null;
+  let otherExecutions: unknown[] = [];
   const resources = new Map<string, Record<string, unknown>>();
   const attempts: Array<{ operation: string; input: Record<string, unknown> }> = [];
   const execute = async (operation: SessionRuntimeOperation, raw: unknown) => {
@@ -46,7 +50,8 @@ async function fixture() {
     if (operation === failOperation && !failAfterCommit && (failOnCall === 0 || attempts.filter((call) => call.operation === operation).length === failOnCall)) return createSessionRuntimeError({ code: "PROVIDER_DISABLED", message: "Disabled", effect: "not_applied", retryable: true });
     let result: unknown;
     if (operation === "session.get") result = { sessionId: input.sessionId, revision: 11 };
-    else if (operation === "turn.get") result = { id: input.executionId, sessionId: input.sessionId, revision: 2, state: executionState, admittedAt: null };
+    else if (operation === "turn.get") result = { id: input.executionId, sessionId: input.sessionId, revision: 2, state: executionState, admittedAt: executionAdmittedAt };
+    else if (operation === "turn.list") result = { items: otherExecutions };
     else if (operation === "work.get") result = { id: input.workItemId, targetSessionId: "child", state: workState, revision: 1, archivedAt: archived ? now : null };
     else if (operation === "session.delete.manifest") result = { blockers: [], descendants: [], artifacts: [], budgetReservations: [] };
     else {
@@ -64,12 +69,17 @@ async function fixture() {
       if (operation === "work.archive") archived = true;
       if (operation === failOperation && failAfterCommit) throw new Error("Simulated response loss with private detail");
     }
+    if (operation === revokeAfter) controlRevoked = true;
     return { schemaVersion: "withmate-session-result-v2", operation, result } as SessionRuntimeResultEnvelope;
   };
-  const make = () => new DelegationService({ storage, execute, currentTimestamp: () => now });
+  const make = (timestamp = now) => new DelegationService({ storage, execute, authorizeControl: () => { if (controlRevoked) throw new DelegationOperationError({ code: "AUTHORITY_DENIED", message: "Revoked", retryable: false, effect: "not_applied", details: {} }); }, currentTimestamp: () => timestamp });
   return { dir, dbPath, get storage() { return storage; }, make, resources, attempts,
     fail(operation: string | null, afterCommit = false) { failOperation = operation; failAfterCommit = afterCommit; failOnCall = 0; },
     failAt(operation: string | null, call: number) { failOperation = operation; failAfterCommit = false; failOnCall = call; },
+    revokeControlAfter(operation: string) { revokeAfter = operation; },
+    setOtherExecutions(value: unknown[]) { otherExecutions = value; },
+    setExecutionState(value: string) { executionState = value; },
+    setExecutionAdmittedAt(value: string | null) { executionAdmittedAt = value; },
     reopen() { storage.close(); storage = new DelegationStorage(dbPath); return make(); },
     async close() { storage.close(); await rm(dir, { recursive: true, force: true }); },
   };
@@ -79,7 +89,7 @@ async function fixture() {
 // kind = "invariant"
 // claim = "各作成ownerの応答消失後も保存された同じstep入力で再送し、Delegationのresource IDsと予算消費を重複させない"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md" }
-// fault = "step入力保存前に副作用を呼ぶ、再起動後にrevisionやkeyを再生成する、owner errorを成功として扱う"
+// fault = "step入力保存前に副作用を呼ぶ、再起動後にrevisionやkeyを再生成する、commit後の応答消失を正常応答として扱う"
 // observable = "実SQLite再open後の委譲ID、step input、mock ownerの保存resource数、Delegation budget count"
 // observation_boundary = "component-behavior"
 // scope = "DelegationServiceと実SQLite保存。resource ownerはstrict input parser付き再送stubでありProviderの実起動は対象外"
@@ -167,6 +177,8 @@ test("batch keeps earlier resources and retries only the failed item", async () 
     assert.equal(failed.items[0].executionId, "execution");
     assert.equal(failed.items[1].state, "recovery_required");
     assert.equal(failed.items[1].workItemId, null);
+    assert.equal(failed.items[1].pendingStep, "work.create");
+    assert.equal(f.storage.getInternal(failed.id, "root").pending?.itemIndex, 1);
     const before = failed.items[0];
     f.fail(null);
     const retried = await f.make().retry(binding, { delegationId: failed.id, expectedRevision: failed.revision, idempotencyKey: "batch-retry", dispatch: "enqueue" }, proof);
@@ -223,6 +235,36 @@ test("replacement retry reuses the canonical input and dispatches the returned r
     assert.deepEqual(replacementCalls[0].input, replacementCalls[1].input);
     const turnCall = f.attempts.find((call) => call.operation === "turn.enqueue");
     assert.equal(turnCall?.input.workItemId, "replacement-work");
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "admitted済みexecutionを補償するとき、Turn cancel後も開始済みresourceをWork/Session archiveで隠さずrecovery_requiredへ保持する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#公開操作" }
+// fault = "providerへadmit済みのexecutionを未使用と扱い、Work ItemまたはSessionをarchiveして進行中の作業を隠す"
+// observable = "recovery_required state、turn.cancel呼出、work.archive/session.archive未実行、遅延完了後の再補償でもresource ID保持"
+// observation_boundary = "component-behavior"
+// scope = "Delegation compensation after provider admission; provider completion itself is represented by the strict turn.get stub"
+// lifecycle = "permanent"
+// @end-test-value
+test("compensation preserves work after an admitted execution", async () => {
+  const f = await fixture();
+  try {
+    const active = await f.make().create(binding, request, proof);
+    f.setExecutionAdmittedAt(now);
+    const result = await f.make().compensate(binding, { delegationId: active.id, expectedRevision: active.revision, idempotencyKey: "admitted-compensate" }, proof);
+    assert.equal(result.state, "recovery_required");
+    assert.equal(result.items[0].error?.code, "DELEGATION_RESOURCE_IN_USE");
+    assert.equal(f.attempts.filter((call) => call.operation === "turn.cancel").length, 1);
+    assert.equal(f.attempts.filter((call) => call.operation === "work.archive").length, 0);
+    assert.equal(f.attempts.filter((call) => call.operation === "session.archive").length, 0);
+    assert.equal(f.storage.getInternal(result.id, "root").pending, null);
+    f.setExecutionState("completed");
+    const late = await f.reopen().compensate(binding, { delegationId: result.id, expectedRevision: result.revision, idempotencyKey: "late-compensate" }, proof);
+    assert.equal(late.state, "recovery_required");
+    assert.deepEqual([late.items[0].sessionId, late.items[0].workItemId, late.items[0].executionId], ["child", "work", "execution"]);
+    assert.equal(f.attempts.filter((call) => ["work.cancel", "work.archive", "session.archive"].includes(call.operation)).length, 0);
   } finally { await f.close(); }
 });
 
@@ -337,5 +379,134 @@ test("created root dispatch uses its self authority without changing the caller 
     const denied = await app.execute("delegation.create", { ...request, idempotencyKey: "existing-root", items: [{ ...request.items[0], target: { kind: "existing", sessionId: "new-root" }, work: { kind: "existing", workItemId: "root-work" } }] }, binding);
     assert.ok("result" in denied);
     assert.equal((denied as { result: import("../../src/delegation.js").Delegation }).result.items[0].error?.code, "AUTHORITY_FORBIDDEN");
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "応答消失した作成stepのretention超過ではownerを再実行せず、以前のeffect不明と作成済みIDを保持する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#部分成功とstep状態" }
+// fault = "retention拒否を以前の副作用がnot_appliedだった証拠と扱い、不明な作成stepのcleanupを可能にする"
+// observable = "owner呼出回数不変、effect indeterminate、Session/Work IDs保持、空のrecoveryActions"
+// observation_boundary = "component-behavior"
+// scope = "実SQLiteのpending保存とDelegationServiceの時刻境界。owner応答消失はstubで再現"
+// lifecycle = "permanent"
+// @end-test-value
+test("expired uncertain dispatch preserves effect uncertainty without replay", async () => {
+  const f = await fixture();
+  try {
+    f.fail("turn.enqueue", true);
+    const first = await f.make().create(binding, request, proof);
+    const calls = f.attempts.length;
+    f.fail(null);
+    const result = await f.make("2026-09-14T00:00:00.000Z").retry(binding, { delegationId: first.id, expectedRevision: first.revision, idempotencyKey: "expired-retry", dispatch: "enqueue" }, proof);
+    assert.equal(f.attempts.length, calls);
+    assert.equal(result.items[0].error?.effect, "indeterminate");
+    assert.equal(result.items[0].effect, "indeterminate");
+    assert.deepEqual([result.items[0].sessionId, result.items[0].workItemId], ["child", "work"]);
+    assert.deepEqual(result.recoveryActions, []);
+    await assert.rejects(() => f.make().compensate(binding, { delegationId: result.id, expectedRevision: result.revision, idempotencyKey: "cleanup" }, proof), /uncertain creation/);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "Delegation control grantがSession作成後に取り消されると後続のWork/Turn effectを開始しない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
+// fault = "sub-operation grantだけを検証して取り消されたDelegationの後続effectを実行する"
+// observable = "Session ID保持、AUTHORITY_DENIED、work.create/turn.enqueue呼出なし"
+// observation_boundary = "component-behavior"
+// scope = "DelegationServiceのstep間認可。grant評価自体はcallback stub"
+// lifecycle = "permanent"
+// @end-test-value
+test("control revocation stops subsequent delegation effects", async () => {
+  const f = await fixture();
+  try {
+    f.revokeControlAfter("session.create");
+    const result = await f.make().create(binding, request, proof);
+    assert.equal(result.items[0].sessionId, "child");
+    assert.equal(result.items[0].workItemId, null);
+    assert.equal(result.items[0].error?.code, "AUTHORITY_DENIED");
+    assert.equal(f.attempts.filter((call) => ["work.create", "turn.enqueue"].includes(call.operation)).length, 0);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "execution read失敗でも所有DelegationのID一覧を返し、観測したterminal stateは再起動後も保持する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#部分成功とstep状態" }
+// fault = "下位read拒否で全rowを隠す、またはcompleted観測を保存せず後のread拒否で失う"
+// observable = "get/listのresource IDsとread error、再open後completed、追加turn.get呼出なし"
+// observation_boundary = "component-behavior"
+// scope = "Delegation projectionと実SQLite。execution ownerはstub"
+// lifecycle = "permanent"
+// @end-test-value
+test("delegation readback survives execution read failure and persists completion", async () => {
+  const f = await fixture();
+  try {
+    const active = await f.make().create(binding, request, proof);
+    f.fail("turn.get");
+    const read = await f.make().get(binding, { delegationId: active.id });
+    assert.deepEqual(read.items.map((item) => item.executionId), ["execution"]);
+    assert.equal(read.items[0].error?.code, "PROVIDER_DISABLED");
+    assert.equal((await f.make().list(binding, { limit: 50 })).items[0].id, active.id);
+    f.fail(null);
+    f.setExecutionState("completed");
+    const completed = await f.make().get(binding, { delegationId: active.id });
+    assert.equal(completed.state, "completed");
+    f.fail("turn.get");
+    const calls = f.attempts.length;
+    assert.equal((await f.reopen().get(binding, { delegationId: active.id })).state, "completed");
+    assert.equal(f.attempts.length, calls);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "同じ既存Sessionの別Work委譲は取消と補償を妨げず、別executionが使う作成Workは取消前に保護する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#公開操作" }
+// fault = "Session共有を全resource採用と誤認して自executionを停止不能にする、または別executionのWorkをcancelする"
+// observable = "cancelled/compensated、turn.cancel呼出、adopted Workのwork.cancel未実行"
+// observation_boundary = "component-behavior"
+// scope = "実Delegation rowsとowner stubでのcleanup対象判定"
+// lifecycle = "permanent"
+// @end-test-value
+test("shared sessions do not block cleanup but other executions protect adopted work", async () => {
+  for (const adopted of [false, true]) {
+    const f = await fixture();
+    try {
+      const plan = { ...request, items: [{ ...request.items[0], target: { kind: "existing" as const, sessionId: "child" } }] };
+      const first = await f.make().create(binding, plan, proof);
+      await f.make().create(binding, { ...plan, idempotencyKey: "other", dispatch: "prepare", items: [{ ...plan.items[0], work: { kind: "existing", workItemId: "different-work" } }] }, proof);
+      if (adopted) f.setOtherExecutions([{ id: "other-execution", workItemId: "work", state: "running" }]);
+      const canceled = await f.make().cancel(binding, { delegationId: first.id, expectedRevision: first.revision, idempotencyKey: "cancel" }, proof);
+      assert.equal(canceled.state, "cancelled");
+      const result = await f.make().compensate(binding, { delegationId: first.id, expectedRevision: canceled.revision, idempotencyKey: "compensate" }, proof);
+      assert.equal(result.state, adopted ? "recovery_required" : "compensated");
+      assert.equal(f.attempts.filter((call) => call.operation === "work.cancel").length, adopted ? 0 : 1);
+      assert.equal(f.attempts.filter((call) => call.operation === "turn.cancel").length, 1);
+    } finally { await f.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "別mutationを挟んでも使用済みkeyを別payloadへ使うと副作用前にconflictとなる"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#公開操作" }
+// fault = "直近mutationだけのkey検証で古いkeyの別payload再利用を許す"
+// observable = "IDEMPOTENCY_CONFLICTとowner呼出回数不変"
+// observation_boundary = "component-behavior"
+// scope = "Delegation mutationのkey契約と実SQLite保存"
+// lifecycle = "permanent"
+// @end-test-value
+test("older mutation keys cannot be reused for another payload", async () => {
+  const f = await fixture();
+  try {
+    const first = await f.make().create(binding, { ...request, dispatch: "prepare" }, proof);
+    const started = await f.make().retry(binding, { delegationId: first.id, expectedRevision: first.revision, idempotencyKey: "K", dispatch: "enqueue" }, proof);
+    const canceled = await f.make().cancel(binding, { delegationId: first.id, expectedRevision: started.revision, idempotencyKey: "J" }, proof);
+    const calls = f.attempts.length;
+    await assert.rejects(() => f.reopen().compensate(binding, { delegationId: first.id, expectedRevision: canceled.revision, idempotencyKey: "K" }, proof), (error: unknown) => error instanceof DelegationOperationError && error.error.code === "IDEMPOTENCY_CONFLICT");
+    assert.equal(f.attempts.length, calls);
   } finally { await f.close(); }
 });

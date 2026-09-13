@@ -62,7 +62,7 @@ Slice 5では確定済み親結果や上位集約結果に影響する同一root
 
 ## Split、merge、clone
 
-splitは`delegation.create`のbatch inputで複数childを作り、source Work Itemへ`split` eventとchild IDsを保存する。Work Item lifecycle側に重複する`work.split` operationを作らない。sourceをterminalにするかactive coordinatorとして残すかはdelegation inputで指定する。
+splitは`delegation.create`のbatch inputで複数childを作り、各contractの`parentWorkItemId`でsourceへ関連付ける。child IDsと部分成功はDelegation row、各Work Itemの作成は既存履歴に保存する。全childを揃えてからdispatchする場合はprepareを使用する。Work Item lifecycle側に重複する`work.split` operationやsplit専用eventは追加しない。sourceは暗黙にterminal化せず、既存の集約と`work.result`で明示的に確定する。
 
 mergeは複数childのaggregation decisionと親`work.result`によって表す。新しいsuccessorが必要な場合は`work.clone`または`delegation.create`で作成し、sourceごとのresult、decision、unverified item、採用、除外、未解決をparent result provenanceへ記録する。重複する`work.merge` operationは作らない。
 

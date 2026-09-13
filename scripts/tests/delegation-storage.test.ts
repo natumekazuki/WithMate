@@ -48,7 +48,7 @@ describe("DelegationStorage", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "Delegation rowはactor所有とrevision CASを守り、同一timestampの一覧cursorで項目を欠落させず、重複insertをrollbackし、pending入力と他consumer参照を再起動後も保持する"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#Public resource" }
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#目的" }
   // fault = "別actor参照、古いrevision更新、同timestamp pagination、重複idempotency、再起動でpending消失、他consumer見落としによりrowまたはbudget消費が不整合になる"
   // observable = "owner/revision例外、一覧ID、unique replay、reopen後のpending input、consumer判定、delegations committed count"
   // observation_boundary = "component-behavior"

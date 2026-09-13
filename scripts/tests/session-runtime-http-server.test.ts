@@ -227,7 +227,7 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
 
 // @test-value v2
 // kind = "security"
-// claim = "全application operationは有効なruntime bindingから解決したactor Sessionだけをhandler contextへ渡し、work.reassign.expectedContainerRevisionとwork.move.expectedDestinationAggregateRevisionを保持する"
+// claim = "Delegationを含む全application operationは有効なruntime bindingから解決したactor Sessionだけをhandler contextへ渡し、work.reassign.expectedContainerRevisionとwork.move.expectedDestinationAggregateRevisionを保持する"
 // oracle = { type = "contract", ref = "ADR-023 Selection and binding" }
 // fault = "application operationを未検証または別bindingのactor identityでhandlerへ到達させる、またはwork.reassign.expectedContainerRevisionまたはwork.move.expectedDestinationAggregateRevisionを入口で拒否・欠落させる"
 // observable = "handlerが受け取ったoperation、actorSessionId、work.reassign.expectedContainerRevisionとwork.move.expectedDestinationAggregateRevision、および各HTTP status"
@@ -275,7 +275,7 @@ test("ID-01: 全application operationはvalid bindingのtrusted actor contextだ
 
 // @test-value v2
 // kind = "security"
-// claim = "bindingがないrequestは全application operationでhandler前に拒否される"
+// claim = "bindingがないrequestはDelegationを含む全application operationでhandler前に拒否される"
 // oracle = { type = "contract", ref = "ADR-023 Selection and binding" }
 // fault = "bindingがないapplication operationをhandlerへ到達させる"
 // observable = "各HTTP statusとerror code、およびhandler呼び出し回数"

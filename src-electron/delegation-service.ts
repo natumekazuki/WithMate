@@ -16,6 +16,7 @@ export class DelegationService {
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private readonly deps: {
     storage: DelegationStorage;
+    authorizeControl(binding: ResolvedAgentRuntimeBinding, operation: SessionRuntimeOperation, input: unknown): void;
     execute(operation: SessionRuntimeOperation, input: unknown, binding: ResolvedAgentRuntimeBinding): Promise<SessionRuntimeResultEnvelope | SessionRuntimeError>;
     executeCreatedRoot?(delegationId: string, itemIndex: number, operation: SessionRuntimeOperation, input: unknown, binding: ResolvedAgentRuntimeBinding): Promise<SessionRuntimeResultEnvelope | SessionRuntimeError>;
     currentTimestamp?: () => string;
@@ -67,6 +68,12 @@ export class DelegationService {
       let row = this.deps.storage.get(input.delegationId, actor);
       const previous = this.deps.storage.getInternal(row.id, actor).lastMutation;
       const pending = this.deps.storage.getInternal(row.id, actor).pending;
+      const prior = previous?.prior ?? [];
+      const known = [previous, ...prior].find((entry) => entry && (entry.input as DelegationMutationInput).idempotencyKey === input.idempotencyKey);
+      if (known && (known.operation !== operation || !isDeepStrictEqual(known.input, input))) this.fail("IDEMPOTENCY_CONFLICT", "The key belongs to another delegation mutation.");
+      if (known && known !== previous) throw new DelegationRevisionError(row.id, input.expectedRevision, row.revision);
+      if (known === previous && previous?.result) return previous.result;
+      const nextPrior = previous && known !== previous ? [...prior, { operation: previous.operation, input: previous.input }] : prior;
       if (operation === "delegation.retry" && previous && ["delegation.cancel", "delegation.compensate"].includes(previous.operation)) this.fail("DELEGATION_STATE_CONFLICT", "Cancellation has been requested. Continue cleanup or explicitly reuse the resources.");
       if (operation === "delegation.retry" && (input as DelegationRetryInput).dispatch === "prepare" && pending?.operation === "turn.enqueue") this.fail("DELEGATION_STATE_CONFLICT", "An attempted dispatch must be resolved before returning to a prepared state.");
       const unapplied = pending && row.items[pending.itemIndex].error?.effect === "not_applied";
@@ -76,11 +83,11 @@ export class DelegationService {
         if (previous.result) return previous.result;
       } else {
         if (row.revision !== input.expectedRevision) throw new DelegationRevisionError(row.id, input.expectedRevision, row.revision);
-        row = this.save(binding, row, { lastMutation: { operation, input, result: null }, proof, ...(operation !== "delegation.retry" && unapplied ? { pending: null } : {}) });
+        row = this.save(binding, row, { lastMutation: { operation, input, result: null, prior: nextPrior }, proof, ...(operation !== "delegation.retry" && unapplied ? { pending: null } : {}) });
       }
       row = await action(row);
       const result = { ...row, revision: row.revision + 1, updatedAt: this.now() };
-      return this.save(binding, row, { lastMutation: { operation, input, result }, updatedAt: result.updatedAt });
+      return this.save(binding, row, { lastMutation: { operation, input, result, prior: nextPrior }, updatedAt: result.updatedAt });
     });
   }
 
@@ -153,7 +160,6 @@ export class DelegationService {
       try {
         let item = row.items[index];
         if (item.state === "compensated" || (!compensate && item.state === "cancelled")) continue;
-        if (this.deps.storage.hasOtherConsumer(row.id, item.sessionId, item.workItemId)) this.fail("DELEGATION_RESOURCE_ADOPTED", "Another delegation has adopted this resource.");
         if (item.executionId) {
           let execution = await this.callItem(binding, row, index, "turn.get", { sessionId: item.sessionId!, executionId: item.executionId });
           if (!terminal(execution.state)) {
@@ -166,6 +172,13 @@ export class DelegationService {
           if (compensate && execution.admittedAt !== null) this.fail("DELEGATION_RESOURCE_IN_USE", "Execution has started. Preserve its work and explicitly collect or reuse the resources.");
         }
         if (compensate && item.createdWorkItem && item.workItemId) {
+          if (this.deps.storage.hasOtherConsumer(row.id, null, item.workItemId)) this.fail("DELEGATION_RESOURCE_ADOPTED", "Another delegation has adopted this Work Item.");
+          let cursor: string | undefined;
+          do {
+            const page = await this.callItem(binding, row, index, "turn.list", { sessionId: item.sessionId!, limit: 100, ...(cursor ? { cursor } : {}) });
+            if (page.items.some((execution) => execution.workItemId === item.workItemId && execution.id !== item.executionId)) this.fail("DELEGATION_RESOURCE_ADOPTED", "Another execution references this Work Item.");
+            cursor = page.nextCursor;
+          } while (cursor);
           const work = await this.callItem(binding, row, index, "work.get", { workItemId: item.workItemId });
           if (work.targetSessionId !== item.sessionId || !["pending", "canceled"].includes(work.state)) this.fail("DELEGATION_RESOURCE_IN_USE", "The Work Item has progressed or changed ownership.");
           if (work.state === "canceled" && this.deps.storage.getInternal(row.id, binding.actorSessionId).pending?.operation === "work.cancel") row = this.save(binding, row, { pending: null });
@@ -181,6 +194,7 @@ export class DelegationService {
         }
         item = row.items[index];
         if (compensate && item.createdSession && item.sessionId) {
+          if (this.deps.storage.hasOtherConsumer(row.id, item.sessionId, null)) this.fail("DELEGATION_RESOURCE_ADOPTED", "Another delegation has adopted this Session.");
           const manifest = await this.callItem(binding, row, index, "session.delete.manifest", { sessionId: item.sessionId });
           if (manifest.blockers.length || manifest.descendants.length || manifest.artifacts.length || manifest.budgetReservations.some((reservation) => reservation.state === "reserved")) this.fail("DELEGATION_RESOURCE_IN_USE", "The Session still has resources requiring collection or settlement.");
           const session = await this.callItem(binding, row, index, "session.get", { sessionId: item.sessionId });
@@ -207,6 +221,10 @@ export class DelegationService {
   }
   private async callItem<O extends SessionRuntimeOperation>(binding: ResolvedAgentRuntimeBinding, row: Delegation, index: number, operation: O, input: unknown): Promise<SessionRuntimeResultByOperation[O]> {
     const request = JSON.parse(this.deps.storage.getRequestJson(row.id, binding.actorSessionId)) as DelegationCreateInput;
+    if (!["session.get", "work.get", "work.list", "turn.get", "turn.list", "session.delete.manifest"].includes(operation)) {
+      const mutation = this.deps.storage.getInternal(row.id, binding.actorSessionId).lastMutation;
+      this.deps.authorizeControl(binding, (mutation?.operation ?? "delegation.create") as SessionRuntimeOperation, mutation?.input ?? request);
+    }
     if (row.items[index].createdSession && request.items[index].work.kind === "root") {
       if (!this.deps.executeCreatedRoot) this.fail("DELEGATION_RECOVERY_REQUIRED", "Created-root dispatch is unavailable.");
       const response = await this.deps.executeCreatedRoot(row.id, index, operation, input, binding);
@@ -224,9 +242,10 @@ export class DelegationService {
   }
   private failure(binding: ResolvedAgentRuntimeBinding, original: Delegation, index: number, error: unknown) {
     const row = this.deps.storage.get(original.id, binding.actorSessionId);
-    const detail = error instanceof DelegationOperationError ? error.error : { code: "DELEGATION_STEP_FAILED", message: "The delegation step requires read-back before retry.", retryable: true, effect: "indeterminate" as const, details: {} };
+    let detail = error instanceof DelegationOperationError ? error.error : { code: "DELEGATION_STEP_FAILED", message: "The delegation step requires read-back before retry.", retryable: true, effect: "indeterminate" as const, details: {} };
     const item = row.items[index];
     const internal = this.deps.storage.getInternal(row.id, binding.actorSessionId);
+    if (internal.pending && item.error && item.error.effect !== "not_applied" && detail.effect === "not_applied") detail = { ...detail, effect: item.error.effect };
     const cleanup = ["delegation.cancel", "delegation.compensate"].includes(internal.lastMutation?.operation ?? "");
     const uncertainCreation = internal.pending && ["session.create", "work.create", "work.aggregation.retry", "turn.enqueue"].includes(internal.pending.operation) && detail.effect !== "not_applied";
     const expired = internal.pending && Date.parse(this.now()) - Date.parse(internal.pending.startedAt) >= 24 * 60 * 60 * 1000;
@@ -237,16 +256,25 @@ export class DelegationService {
   }
   private async refresh(binding: ResolvedAgentRuntimeBinding, row: Delegation): Promise<Delegation> {
     if (row.state !== "active") return row;
+    const projectedErrors = new Map<number, SessionRuntimeError["error"]>();
     const items = await Promise.all(row.items.map(async (item, index) => {
-      if (!item.executionId || !item.sessionId) return item;
-      const execution = await this.callItem(binding, row, index, "turn.get", { sessionId: item.sessionId, executionId: item.executionId });
-      return { ...item, state: terminal(execution.state) ? "completed" as const : "active" as const,
-        error: terminal(execution.state) && execution.state !== "completed"
-          ? { code: execution.errorCode || "DELEGATION_EXECUTION_STOPPED", message: execution.reason || "The execution ended without success. Read its result before explicit reuse.", effect: "applied" as const, retryable: false, details: { executionId: execution.id } }
-          : item.error };
+      if (!item.executionId || !item.sessionId || item.state === "completed") return item;
+      try {
+        const execution = await this.callItem(binding, row, index, "turn.get", { sessionId: item.sessionId, executionId: item.executionId });
+        return { ...item, state: terminal(execution.state) ? "completed" as const : "active" as const,
+          error: terminal(execution.state) && execution.state !== "completed"
+            ? { code: execution.errorCode || "DELEGATION_EXECUTION_STOPPED", message: execution.reason || "The execution ended without success. Read its result before explicit reuse.", effect: "applied" as const, retryable: false, details: { executionId: execution.id } }
+            : item.error };
+      } catch (error) {
+        projectedErrors.set(index, error instanceof DelegationOperationError ? error.error : { code: "DELEGATION_READ_FAILED", message: "Execution state is unavailable. The saved resource references are retained.", effect: "not_applied", retryable: true, details: {} });
+        return item;
+      }
     }));
-    return { ...row, items, state: items.every((item) => item.state === "completed") ? "completed" : "active" };
+    const state = items.every((item) => item.state === "completed") ? "completed" : "active";
+    if (state !== row.state || !isDeepStrictEqual(items, row.items)) row = this.save(binding, row, { items, state });
+    return { ...row, items: row.items.map((item, index) => projectedErrors.has(index) ? { ...item, error: projectedErrors.get(index)! } : item) };
   }
+
   private item(binding: ResolvedAgentRuntimeBinding, row: Delegation, index: number, patch: Partial<DelegationItem>, clearPending = false) {
     return this.save(binding, row, { items: row.items.map((item, i) => i === index ? { ...item, ...patch, error: null } : item), ...(clearPending ? { pending: null } : {}) });
   }

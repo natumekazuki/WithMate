@@ -13,7 +13,7 @@ import { assertGrantProofCurrent } from "./session-authority-storage.js";
 import { ResourceBudgetStorage } from "./resource-budget-storage.js";
 
 export type DelegationPending = { itemIndex: number; operation: SessionRuntimeOperation; input: unknown; startedAt: string };
-export type DelegationLastMutation = { operation: string; input: unknown; result: Delegation | null };
+export type DelegationLastMutation = { operation: string; input: unknown; result: Delegation | null; prior?: Array<{ operation: string; input: unknown }> };
 
 type DelegationRow = {
   id: string;
