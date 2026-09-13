@@ -765,7 +765,7 @@ test("SessionChatScreen は左右ペインを mounted のまま非表示・操�
     }),
   );
 
-  assert.match(html, /class="page-shell session-page session-chat-layout layout-priority-dock/);
+  assert.match(html, /class="page-shell session-page session-chat-layout/);
   assert.match(html, /id="session-header-dock"[^>]*class="session-header-dock-slot is-hidden"[^>]*aria-hidden="true"/);
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
   assert.match(html, /id="session-left-pane" class="session-left-pane-slot is-hidden" aria-hidden="true" inert=""/);

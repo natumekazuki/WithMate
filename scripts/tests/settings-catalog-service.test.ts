@@ -217,6 +217,18 @@ describe("SettingsCatalogService", () => {
     );
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "通常 settings 更新は並行保存された chat layout を巻き戻さない"
+  // oracle = { type = "contract", ref = "Concurrent settings projection" }
+  // fault = "stale snapshot が最新 layout を上書きする"
+  // observable = "settings 更新後の chatLayoutPreference"
+  // observation_boundary = "public-boundary"
+  // scope = "settings-catalog-layout-concurrency"
+  // lifecycle = "permanent"
+  // impact = "別 window の layout 操作が失われる"
+  // distinction = "storage update と catalog projection の race を確認する"
+  // @end-test-value
   it("待機中の通常 settings 更新は並行して保存された chat layout を巻き戻さない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -284,7 +296,6 @@ describe("SettingsCatalogService", () => {
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
-      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
       resumeAuxiliarySessions.resolve();
 
       const updated = await updating;
@@ -294,7 +305,6 @@ describe("SettingsCatalogService", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "context",
-        priority: "dock-first",
       });
       assert.deepEqual(storage.getSettings().chatLayoutPreference, updated.chatLayoutPreference);
     } finally {
@@ -303,6 +313,18 @@ describe("SettingsCatalogService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "通常 settings 保存後の layout 更新を最新 projection へ反映する"
+  // oracle = { type = "contract", ref = "Settings catalog latest projection" }
+  // fault = "保存待機中の layout 更新が broadcast projection から欠落する"
+  // observable = "updated/broadcast chatLayoutPreference"
+  // observation_boundary = "public-boundary"
+  // scope = "settings-catalog-latest-layout"
+  // lifecycle = "permanent"
+  // impact = "新しい Session Window が古い layout を受け取る"
+  // distinction = "保存完了後の最新 layout 反映を確認する"
+  // @end-test-value
   it("通常 settings 保存後の待機中に更新された chat layout を最新の projection へ反映する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -381,7 +403,6 @@ describe("SettingsCatalogService", () => {
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
-      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
       resumeSessionReplacement.resolve();
 
       const updated = await updating;
@@ -391,7 +412,6 @@ describe("SettingsCatalogService", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "files",
-        priority: "dock-first",
       });
       assert.ok(broadcastSettings);
       assert.deepEqual(broadcastSettings.chatLayoutPreference, updated.chatLayoutPreference);
@@ -402,6 +422,18 @@ describe("SettingsCatalogService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "通常 settings 更新の rollback は並行保存された chat layout を巻き戻さない"
+  // oracle = { type = "contract", ref = "Settings catalog rollback boundary" }
+  // fault = "失敗 rollback が最新 layout まで復元前値へ戻す"
+  // observable = "rollback 後の chatLayoutPreference"
+  // observation_boundary = "public-boundary"
+  // scope = "settings-catalog-layout-rollback"
+  // lifecycle = "permanent"
+  // impact = "layout 操作が失敗した settings 保存に巻き込まれる"
+  // distinction = "settings failure と独立した layout persistence を確認する"
+  // @end-test-value
   it("通常 settings 更新の rollback は並行して保存された chat layout を巻き戻さない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -481,7 +513,6 @@ describe("SettingsCatalogService", () => {
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
-      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
       rejectFirstSessionReplacement.resolve();
 
       await assert.rejects(() => updating, /session replacement failed/);
@@ -490,7 +521,6 @@ describe("SettingsCatalogService", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "context",
-        priority: "dock-first",
       });
     } finally {
       storage.close();

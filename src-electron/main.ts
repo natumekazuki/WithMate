@@ -1834,11 +1834,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionBackgroundActivity: (sessionId, kind) => getSessionBackgroundActivity(sessionId, kind),
                 resolveLiveApproval,
                 resolveLiveElicitation,
-                createSession: async (input) => {
-                  const session = await requireMainSessionCommandFacade().createSessionFromRequest(input);
-                  await ensureDefaultAuxiliarySession(session);
-                  return session;
-                },
+                createSession: (input) => requireMainSessionCommandFacade().createSessionFromRequest(input),
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
                 setSessionPinned: (request) => requireMainSessionCommandFacade().setSessionPinned(request),
                 deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
@@ -2025,6 +2021,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
+      initializeCreatedSession: ensureDefaultAuxiliarySession,
       createSessionId: () => `launch-${crypto.randomUUID()}`,
       createSessionFilesDirectory: (sessionId) =>
         createSessionFilesDirectory(app.getPath("userData"), sessionId),

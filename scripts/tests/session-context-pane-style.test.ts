@@ -99,7 +99,7 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
 
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?grid-template-columns:[\s\S]*?var\(--session-left-pane-track-width\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-right-pane-track-width\)[\s\S]*?}/,
+    /\.session-chat-layout\s*{[\s\S]*?grid-template-columns:[\s\S]*?var\(--session-left-pane-track-width\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-right-pane-track-width\)[\s\S]*?}/,
   );
   assert.match(
     stylesSource,
@@ -115,7 +115,7 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
   );
   assert.match(
     stylesSource,
-    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-pane"\s*"left-split"\s*"main"\s*"right-split"\s*"right-pane"\s*"bottom-split"\s*"action-dock";/,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-chat-layout\s*{[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-pane"\s*"left-split"\s*"main"\s*"right-split"\s*"right-pane"\s*"bottom-split"\s*"action-dock";/,
   );
   assert.match(
     stylesSource,
@@ -130,7 +130,7 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
 // fault = "wide layoutのfull-width dock gridまたはActionDock rowが崩れるか、中央最小高を失う"
 // observable = "wide layoutのfull-width dock class・grid、Header visibility boundary、expanded ActionDock rowのCSS宣言"
 // observation_boundary = "declaration"
-// scope = "wide-session-chat-layout-priority-and-action-dock-css"
+// scope = "wide-session-chat-layout-and-action-dock-css"
 // lifecycle = "permanent"
 // impact = "ドラッグ値と表示されるgrid rowがずれて、ActionDockまたは中央surfaceが画面外へはみ出す"
 // distinction = "hookの数値clampやpointer経路、narrow layoutの縦stack、full-width ActionDock内のcomposer制約とは分け、wide layoutの固定dockとexpanded rowのCSS境界を確認する"
@@ -143,11 +143,11 @@ test("wide layout はHeaderとActionDockを全幅dockとして表示する", asy
     readFile("src/styles.css", "utf8"),
   ]);
 
-  assert.match(componentSource, /session-chat-layout layout-priority-dock/);
+  assert.match(componentSource, /session-chat-layout/);
   assert.match(componentSource, /session-chat-layout[\s\S]*?is-left-pane-visible[\s\S]*?is-right-pane-visible/);
   assert.match(componentSource, /session-header-dock-slot.*?is-hidden[\s\S]*?aria-hidden={!isHeaderVisible}/);
   assert.doesNotMatch(componentSource, /className="session-header-dock-slot"\s+hidden=/);
-  assert.match(stylesSource, /\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?"header header header header header"[\s\S]*?"action-dock action-dock action-dock action-dock action-dock"/);
+  assert.match(stylesSource, /\.session-chat-layout\s*{[\s\S]*?"header header header header header"[\s\S]*?"action-dock action-dock action-dock action-dock action-dock"/);
   assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
   assert.match(stylesSource, /--session-central-min-height:\s*160px;/);
   assert.match(
@@ -179,7 +179,7 @@ test("splitter の枠は各 track に収まり、modal より背面に残る", a
   );
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?grid-template-columns:[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?var\(--session-right-pane-track-width\);/,
+    /\.session-chat-layout\s*{[\s\S]*?grid-template-columns:[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?var\(--session-right-pane-track-width\);/,
   );
   assert.match(
     stylesSource,
@@ -216,12 +216,12 @@ test("splitter の枠は各 track に収まり、modal より背面に残る", a
 // claim = "wide layoutの全幅ActionDockのCSSはgridとcomposerの固定操作群・可変入力領域をdock内へ収める"
 // oracle = { type = "contract", ref = "ActionDock full-width layout CSS bounds" }
 // fault = "expanded ActionDockの固定操作群・可変入力行・textareaのoverflow制約が崩れ、入力や送信操作へ到達できない"
-// observable = "wide layoutのlayout-priority-dock grid宣言とActionDock内のoverflow・composer flex・textarea宣言"
+// observable = "wide layoutのchat layout grid宣言とActionDock内のoverflow・composer flex・textarea宣言"
 // observation_boundary = "declaration"
 // scope = "wide-session-action-dock-full-width-css"
 // lifecycle = "permanent"
 // impact = "全幅ActionDockでtextareaまたは操作群がdock外へ押し出される"
-// distinction = "expanded rowの残余高計算とside-pane priority gridは別recordで検証し、wide layoutのfull-width dock gridとcontent containment、composerの固定・可変flex制約、textareaの高さ・scroll・resizeだけを確認する"
+// distinction = "expanded rowの残余高計算とside-pane gridは別recordで検証し、wide layoutのfull-width dock gridとcontent containment、composerの固定・可変flex制約、textareaの高さ・scroll・resizeだけを確認する"
 // @end-test-value
 test("Header と ActionDock は中央・左右ペインの外側に全幅 dock として配置する", async () => {
   const [chatWindowSource, stylesSource] = await Promise.all([
@@ -229,7 +229,7 @@ test("Header と ActionDock は中央・左右ペインの外側に全幅 dock �
     readFile("src/styles.css", "utf8"),
   ]);
 
-  assert.match(stylesSource, /\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?"header header header header header"[\s\S]*?"action-dock action-dock action-dock action-dock action-dock"/);
+  assert.match(stylesSource, /\.session-chat-layout\s*{[\s\S]*?"header header header header header"[\s\S]*?"action-dock action-dock action-dock action-dock action-dock"/);
   assert.match(chatWindowSource, /session-action-dock-content session-action-dock-expanded-content/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded > \.session-action-dock\s*{\s*overflow:\s*hidden;/);

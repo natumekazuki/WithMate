@@ -100,7 +100,7 @@ current UI では表示しない。legacy v1 では `character reflection cycle`
 ### Narrow Width
 
 - main split は縦 stack に戻す
-- layout priority にかかわらず、right pane は message list の下、`Action Dock` の上で縦 stack にする
+- right pane は message list の下、`Action Dock` の上で縦 stack にする
 - `Action Dock` は引き続き最下段に固定面として扱う
 
 ## Data Mapping

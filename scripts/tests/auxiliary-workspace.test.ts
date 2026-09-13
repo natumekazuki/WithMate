@@ -304,3 +304,56 @@ test("hidden A/Bの同時terminalは会話ごとに独立して反映される",
   assert.equal(bindingB.sessionRef.current?.id, "b");
   await view.unmount();
 });
+
+// @test-value v2
+// kind = "invariant"
+// claim = "完了後も保持されるlive stateは永続化runStateをrunningへ誤変換しない"
+// oracle = { type = "contract", ref = "issue-710-live-state-persistence" }
+// fault = "background taskまたはreasoning保持用のlive stateだけで送信をブロックし続ける"
+// observable = "hookのsummaries.runState"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-run-state"
+// lifecycle = "permanent"
+// @end-test-value
+test("保持されたlive stateは永続化runStateを正本として扱う", async () => {
+  const idle = session("idle", "2026-01-01");
+  const running = session("running", "2026-01-02", { runState: "running" });
+  const latest = new Map([[idle.id, idle], [running.id, running]]);
+  let listener: ((id: string, state: object | null) => void) | null = null;
+  const api: AuxiliaryWorkspaceApi = {
+    listAuxiliarySessions: async () => [idle, running],
+    getAuxiliarySession: async (id) => latest.get(id) ?? null,
+    subscribeLiveSessionRun: (nextListener) => {
+      listener = nextListener as (id: string, state: object | null) => void;
+      return () => { listener = null; };
+    },
+  };
+  const view = setup(api);
+  await view.render();
+  assert.ok(listener);
+  const retainedLiveState = { errorMessage: "", backgroundTasks: [{ id: "task-1" }] };
+  await act(async () => {
+    listener?.(idle.id, retainedLiveState);
+    await Promise.resolve();
+  });
+  assert.equal(view.current.summaries.find((summary) => summary.id === idle.id)?.runState, "idle");
+  await act(async () => {
+    listener?.(running.id, retainedLiveState);
+    await Promise.resolve();
+  });
+  assert.equal(view.current.summaries.find((summary) => summary.id === running.id)?.runState, "running");
+  await act(async () => { view.current.selectSession(running.id); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  const runningBinding = view.current.getBinding(running.id);
+  await act(async () => {
+    runningBinding.setSession((current) => current ? { ...current, composerDraft: "未保存draft" } : current);
+  });
+  latest.set(running.id, { ...running, runState: "idle" });
+  await act(async () => {
+    listener?.(running.id, retainedLiveState);
+    await Promise.resolve();
+  });
+  assert.equal(view.current.summaries.find((summary) => summary.id === running.id)?.runState, "idle");
+  assert.equal(runningBinding.sessionRef.current?.composerDraft, "未保存draft");
+  await view.unmount();
+});

@@ -247,7 +247,7 @@ button:disabled {
   pointer-events: none;
 }
 
-.session-chat-layout.layout-priority-dock {
+.session-chat-layout {
   grid-template-columns:
     var(--session-left-pane-track-width)
     var(--session-dock-splitter-size)
@@ -262,15 +262,15 @@ button:disabled {
     "action-dock action-dock action-dock action-dock action-dock";
 }
 
-.session-chat-layout.layout-priority-dock.is-left-pane-visible {
+.session-chat-layout.is-left-pane-visible {
   --session-left-pane-track-width: var(--session-file-explorer-width, 320px);
 }
 
-.session-chat-layout.layout-priority-dock.is-right-pane-visible {
+.session-chat-layout.is-right-pane-visible {
   --session-right-pane-track-width: var(--session-context-rail-width, 420px);
 }
 
-.session-chat-layout.layout-priority-dock.is-left-pane-visible.is-right-pane-visible {
+.session-chat-layout.is-left-pane-visible.is-right-pane-visible {
   --session-left-pane-track-width: var(--session-file-explorer-width, 320px);
   --session-right-pane-track-width: var(--session-context-rail-width, 420px);
 }
@@ -13121,7 +13121,7 @@ button:disabled {
 }
 
 @media (max-width: 1399.98px) {
-  .session-chat-layout.layout-priority-dock {
+  .session-chat-layout {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows:
       var(--session-header-dock-row-height) var(--session-dock-splitter-size)

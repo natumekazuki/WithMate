@@ -4304,8 +4304,8 @@ export default function AgentSessionWindowApp() {
           mainSession: selectedSession,
           auxiliarySession: auxiliaryWorkspace.selectedSession ? selectedAuxiliaryRuntimeSession : null,
           api: withmateApi ?? undefined,
-          mainLiveRun: activeAuxiliarySession ? undefined : selectedSessionLiveRun,
-          auxiliaryLiveRun: activeAuxiliarySession ? selectedSessionLiveRun : undefined,
+          mainLiveRun: auxiliaryWorkspace.target === "auxiliary" ? undefined : selectedSessionLiveRun,
+          auxiliaryLiveRun: auxiliaryWorkspace.target === "auxiliary" ? selectedSessionLiveRun : undefined,
           main: {
             ...chatWindowProps.messageColumnProps,
             sessionId: selectedSession.id,

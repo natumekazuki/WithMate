@@ -1023,7 +1023,7 @@ export function SessionChatScreen({
   return (
     <div
       ref={setLayoutElementRefs}
-      className={`page-shell session-page session-chat-layout layout-priority-dock${isHeaderVisible ? " is-header-visible" : ""}${
+      className={`page-shell session-page session-chat-layout${isHeaderVisible ? " is-header-visible" : ""}${
         isActionDockExpanded ? " is-action-dock-expanded" : ""
       }${isLeftPaneVisible ? " is-left-pane-visible" : ""}${
         isRightPaneVisible ? " is-right-pane-visible" : ""

@@ -217,6 +217,18 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "app settings と chat layout projection が再読込後も一致する"
+  // oracle = { type = "contract", ref = "AppSettingsStorage persisted settings" }
+  // fault = "layout preference または provider settings が再読込で失われる"
+  // observable = "保存・再読込後の AppSettings"
+  // observation_boundary = "public-boundary"
+  // scope = "app-settings-persistence"
+  // lifecycle = "permanent"
+  // impact = "設定変更が次回起動へ反映されない"
+  // distinction = "provider settings と layout projection の保存境界を確認する"
+  // @end-test-value
   it("coding provider settings を canonical key で保存して再読込できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -236,7 +248,6 @@ describe("AppSettingsStorage", () => {
           header: "visible",
           actionDock: "expanded",
           sidePane: "context",
-          priority: "dock-first",
         },
         keyboardShortcuts: {
           overrides: {
@@ -374,6 +385,18 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "chat layout の単一項目更新は他の app settings を維持する"
+  // oracle = { type = "contract", ref = "Chat layout preference update boundary" }
+  // fault = "layout 更新で他設定が巻き戻るか再読込結果が変わる"
+  // observable = "更新後と再読込後の chatLayoutPreference"
+  // observation_boundary = "public-boundary"
+  // scope = "chat-layout-persistence"
+  // lifecycle = "permanent"
+  // impact = "window 初期 layout が保存値と乖離する"
+  // distinction = "専用 update 経路と通常 settings 保存の干渉を確認する"
+  // @end-test-value
   it("chat layout の対象1項目だけを更新し、他の app settings と再読込結果を維持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -384,7 +407,6 @@ describe("AppSettingsStorage", () => {
         header: "hidden",
         actionDock: "compact",
         sidePane: "none",
-        priority: "side-pane-first",
       });
 
       storage.updateSettings({
@@ -393,8 +415,7 @@ describe("AppSettingsStorage", () => {
       });
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
-      storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
-      const updated = storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
+      const updated = storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
       storage.close();
 
       const reopened = new AppSettingsStorage(dbPath);
@@ -405,7 +426,6 @@ describe("AppSettingsStorage", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "files",
-        priority: "dock-first",
       });
       assert.equal(updated.memoryGenerationEnabled, false);
       assert.deepEqual(loaded.chatLayoutPreference, updated.chatLayoutPreference);
@@ -415,6 +435,18 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "chat layout 専用更新は対象 storage key だけを UPSERT する"
+  // oracle = { type = "contract", ref = "Chat layout storage key isolation" }
+  // fault = "専用更新が無関係な storage key を変更する"
+  // observable = "app_settings の対象 key 値"
+  // observation_boundary = "public-boundary"
+  // scope = "chat-layout-storage-isolation"
+  // lifecycle = "permanent"
+  // impact = "並行 settings 更新で保存値が破壊される"
+  // distinction = "header 更新時の他 layout key 保持を確認する"
+  // @end-test-value
   it("chat layout 専用更新は指定された storage key だけを UPSERT する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -428,23 +460,19 @@ describe("AppSettingsStorage", () => {
       directDatabase
         .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
         .run("sentinel-side-pane", "session_side_pane");
-      directDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
-        .run("sentinel-priority", "session_layout_priority");
 
       const updated = storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       const rows = directDatabase
         .prepare(`
           SELECT setting_key, setting_value
           FROM app_settings
-          WHERE setting_key IN (?, ?, ?, ?)
+          WHERE setting_key IN (?, ?, ?)
           ORDER BY setting_key
         `)
         .all(
           "session_header_visibility",
           "session_action_dock_presentation",
           "session_side_pane",
-          "session_layout_priority",
         ) as Array<{
           setting_key: string;
           setting_value: string;
@@ -453,14 +481,12 @@ describe("AppSettingsStorage", () => {
       assert.deepEqual(rows.map((row) => ({ ...row })), [
         { setting_key: "session_action_dock_presentation", setting_value: "sentinel-action-dock" },
         { setting_key: "session_header_visibility", setting_value: "visible" },
-        { setting_key: "session_layout_priority", setting_value: "sentinel-priority" },
         { setting_key: "session_side_pane", setting_value: "sentinel-side-pane" },
       ]);
       assert.deepEqual(updated.chatLayoutPreference, {
         header: "visible",
         actionDock: "compact",
         sidePane: "none",
-        priority: "side-pane-first",
       });
     } finally {
       directDatabase.close();
@@ -469,6 +495,18 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "通常 settings 更新は先行する chat layout 更新を stale snapshot で巻き戻さない"
+  // oracle = { type = "contract", ref = "Concurrent app settings update boundary" }
+  // fault = "stale settings snapshot が最新 layout を上書きする"
+  // observable = "通常更新後の chatLayoutPreference"
+  // observation_boundary = "public-boundary"
+  // scope = "chat-layout-concurrent-update"
+  // lifecycle = "permanent"
+  // impact = "別 window の layout 操作が失われる"
+  // distinction = "layout 専用保存と通常 settings 保存の ordering を確認する"
+  // @end-test-value
   it("通常の settings 更新は先に保存された chat layout を stale snapshot で巻き戻さない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -480,7 +518,6 @@ describe("AppSettingsStorage", () => {
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
-      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
       const updated = storage.updateSettings({
         ...staleSettings,
         launchAtLoginEnabled: true,
@@ -496,7 +533,6 @@ describe("AppSettingsStorage", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "context",
-        priority: "dock-first",
       });
       assert.deepEqual(loaded.chatLayoutPreference, updated.chatLayoutPreference);
     } finally {
@@ -504,6 +540,18 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "resetSettings は priority なしの canonical app settings を再生成する"
+  // oracle = { type = "contract", ref = "AppSettingsStorage reset" }
+  // fault = "reset 後に廃止済み priority または旧 layout key が復活する"
+  // observable = "resetSettings 後の settings と再読込結果"
+  // observation_boundary = "public-boundary"
+  // scope = "app-settings-reset"
+  // lifecycle = "permanent"
+  // impact = "設定リセット後の Session layout が不整合になる"
+  // distinction = "reset と default projection の canonical shape を確認する"
+  // @end-test-value
   it("resetSettings で app settings を canonical default へ戻し、再読込後も維持される", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -581,7 +629,6 @@ describe("AppSettingsStorage", () => {
         },
       });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
-      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
 
       const reset = storage.resetSettings();
       storage.close();

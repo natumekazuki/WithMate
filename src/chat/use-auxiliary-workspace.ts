@@ -233,50 +233,49 @@ export function useAuxiliaryWorkspace(input: {
   useEffect(() => {
     if (!api?.subscribeLiveSessionRun) return;
     const subscriptionGeneration = workspaceGenerationRef.current;
+    const applySession = (id: string, session: AuxiliarySession, terminalRevision: number, terminalEpoch: number, fullSession: boolean) => {
+      if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
+        || terminalRevision !== terminalRevisionRef.current.get(id)
+        || terminalEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
+      const nextSummaries = fullSession
+        ? sortByCreation([
+          ...summariesRef.current.filter((summary) => summary.id !== id),
+          projectAuxiliarySessionSummary(session),
+        ])
+        : summariesRef.current.map((summary) => summary.id === id
+          ? { ...summary, runState: session.runState }
+          : summary);
+      summariesRef.current = nextSummaries;
+      setSummaries(nextSummaries);
+      if (fullSession) {
+        detailsRef.current.set(id, session);
+        const binding = bindingsRef.current.get(id);
+        if (binding) binding.sessionRef.current = session;
+        if (selectedIdRef.current === id) setSelectedSession(session);
+      } else {
+        const currentDetail = detailsRef.current.get(id);
+        if (currentDetail && currentDetail.runState !== session.runState) {
+          const nextDetail = { ...currentDetail, runState: session.runState };
+          detailsRef.current.set(id, nextDetail);
+          const binding = bindingsRef.current.get(id);
+          if (binding) binding.sessionRef.current = nextDetail;
+          if (selectedIdRef.current === id) setSelectedSession(nextDetail);
+        }
+      }
+    };
     return api.subscribeLiveSessionRun((id, state) => {
       if (subscriptionGeneration !== workspaceGenerationRef.current) return;
       if (!summariesRef.current.some((summary) => summary.id === id)) return;
       if (!api) return;
       const terminalRevision = (terminalRevisionRef.current.get(id) ?? 0) + 1;
       terminalRevisionRef.current.set(id, terminalRevision);
-      if (state !== null) {
-        const nextRunState: AuxiliarySession["runState"] = state.errorMessage ? "error" : "running";
-        const currentSummary = summariesRef.current.find((summary) => summary.id === id);
-        if (currentSummary?.runState !== nextRunState) {
-          const nextSummaries = summariesRef.current.map((summary) => summary.id === id
-            ? { ...summary, runState: nextRunState }
-            : summary);
-          summariesRef.current = nextSummaries;
-          setSummaries(nextSummaries);
-        }
-        const currentDetail = detailsRef.current.get(id);
-        if (currentDetail && currentDetail.runState !== nextRunState) {
-          const nextDetail = { ...currentDetail, runState: nextRunState };
-          detailsRef.current.set(id, nextDetail);
-          const binding = bindingsRef.current.get(id);
-          if (binding) binding.sessionRef.current = nextDetail;
-          if (selectedIdRef.current === id) setSelectedSession(nextDetail);
-        }
-        return;
-      }
-      if (!detailsRef.current.has(id)) {
+      if (state === null && !detailsRef.current.has(id)) {
         void refreshSummaries();
         return;
       }
       const terminalEpoch = detailMutationEpochRef.current.get(id) ?? 0;
       void api.getAuxiliarySession(id).then((session) => {
-        if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current || terminalRevision !== terminalRevisionRef.current.get(id) || !session) return;
-        if (terminalEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
-        detailsRef.current.set(id, session);
-        const binding = bindingsRef.current.get(id);
-        if (binding) binding.sessionRef.current = session;
-        const nextSummaries = sortByCreation([
-          ...summariesRef.current.filter((summary) => summary.id !== id),
-          projectAuxiliarySessionSummary(session),
-        ]);
-        summariesRef.current = nextSummaries;
-        setSummaries(nextSummaries);
-        if (selectedIdRef.current === id) setSelectedSession(session);
+        if (session) applySession(id, session, terminalRevision, terminalEpoch, state === null);
       }).catch((cause) => {
         if (mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
           && terminalRevision === terminalRevisionRef.current.get(id)) {
