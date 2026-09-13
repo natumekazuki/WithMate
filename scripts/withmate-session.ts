@@ -68,6 +68,12 @@ class SessionCliUsageError extends Error {
 
 const commandMap = new Map<string, SessionRuntimeOperation>([
   ["runtime catalog", "runtime.catalog"],
+  ["delegation create", "delegation.create"],
+  ["delegation get", "delegation.get"],
+  ["delegation list", "delegation.list"],
+  ["delegation retry", "delegation.retry"],
+  ["delegation cancel", "delegation.cancel"],
+  ["delegation compensate", "delegation.compensate"],
   ["budget get", "budget.get"],
   ["budget list", "budget.list"],
   ["budget configure", "budget.configure"],

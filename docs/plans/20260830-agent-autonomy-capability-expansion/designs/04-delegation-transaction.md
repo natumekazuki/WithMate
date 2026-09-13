@@ -1,111 +1,41 @@
 # Delegation transaction
 
-## 担当する能力
+## 目的
 
-- child Session、Work Item、初回Turnの一括作成
-- delegation retry、compensate、cancel
-- response loss、process crash、provider failureからの再開
-- 部分成功resourceのreuse、resume、rollback
+Delegationは、Session、Work Item、Turnの既存操作を一つの依頼として相関させる通常のdomain resourceである。Delegation固有のrowにはstable ID、actor Session、request、revision、itemごとのresource IDと状態、未完了stepの入力、直近mutation、recovery actionを保存する。
 
-## Public resource
+独自のhash、署名、event ledger、recovery verifier、汎用reuse registryは追加しない。Session、Work Item、aggregation retry、Turn、authority、budget、manifest、cancel、archiveの既存ownerとidempotency、transaction、revisionを再利用する。
 
-Delegationを一時的なhelperではなく、複数resource mutationの相関と回復を所有するapplication resourceとして扱う。stable delegation IDとstateを持たせる。
+## 作成
 
-```text
-preparing -> prepared -> dispatching -> active -> settling -> completed
-                          |             |          |
-                          +-----------> compensating -> compensated
-                                        |
-                                        +---------> recovery_required
-```
+`delegation.create`は1〜20 itemを受け付ける。各itemは、既存または新規のtarget Session、既存・新規・root・aggregation replacementのWork Item、Turn入力を持つ。
 
-単一database transactionでSession、Work Item、Turn executionを全てcommitできる場合でも、provider起動やWorkspace副作用はtransaction外に残る。したがって、operation recordとrecovery stateは必要である。
+- `dispatch: prepare`はSessionとWork Itemまで作成または解決し、Turn入力をrowへ保存する。Turnはenqueueしない。
+- `dispatch: enqueue`は同じ順序で処理し、既存の`turn.enqueue` ownerへ保存済み入力を渡す。
+- 新規Session、Work Item、Turnのidempotency keyはitemとstepごとに固定する。
+- root Work Itemは作成済みのactor所有rootを再利用する。Delegationがroot successorを作成することはない。
+- replacement Work Itemは既存の`work.aggregation.retry` ownerで作成する。既存Sessionと既存Work Itemの再利用は、新しいDelegationのinputで明示する。
 
-## 公開操作候補
+最初にactor、Delegation操作のauthority、budget、requestを検証し、Delegation rowを作成してから副作用stepへ進む。Delegationの作成数は既存budgetの`delegations` dimensionへ同じDB transactionで記録する。canonical ownerは各stepでruntime bindingとcurrent grantを再検証する。
 
-- `delegation.create`
-- `delegation.get`
-- `delegation.list`
-- `delegation.retry`
-- `delegation.compensate`
-- `delegation.cancel`
+## 部分成功とstep状態
 
-create inputは次のstrict unionとする。
+itemはSession、Work Item、Turnの順に処理する。各stepの開始前に、step名・固定input・開始時刻をrowのpendingとして保存し、ownerの応答直後にresource ID、state、effect certaintyを保存する。最初の失敗でbatchを止め、先行itemの結果、失敗itemのpending input、後続itemの未開始状態を返す。
 
-- existing SessionへWork ItemとTurnを作る
-- new child Session、Work Item、Turnを作る
-- new root Session、predecessorを持たないRoot WorkItem、Turnを作る
-- prepareだけ行い、dispatchを後で開始する
+DB commit後に応答が失われても、`delegation.get`または`delegation.list`でrowを読み直せる。uncertainな作成stepは同じinputと同じowner idempotency keyでのみ再送し、ownerが保存した応答を回収する。cleanupはcanonical stateを読み直してから再開する。既存retention boundaryを過ぎた不明stepをblind retryしない。起動時に自動dispatchや自動補償は行わない。
 
-既存の`session.create`、`work.create`、`turn.enqueue`は単体操作として維持する。delegation serviceはこれらのstorage ownerを迂回せず、共有transaction helperまたは明示的なsaga stepとして呼ぶ。
+`dispatch: enqueue`の受付成功はproviderのterminal成功を意味しない。Turnは既存のadmission、queue、provider dispatch、settlementで処理され、Delegationはexecutionのterminal観測までactiveとして扱う。Delegationのcompletedはexecutionの終了を表し、成功とは区別する。providerの成功・失敗と詳細は返却されたexecution IDでturn.getから取得する。
 
-## Create semantics
+## 公開操作
 
-createは先にoperation recordとrequest fingerprintを確定し、各stepのresource IDをserver側で予約する。
+- `delegation.get` / `delegation.list`はactorが所有するrowだけを返す。
+- `delegation.retry`はcurrent revisionと新しいmutation idempotency keyを要求し、保存済みpending inputを再開する。prepare後のTurn開始はretry enqueueで行う。
+- `delegation.cancel`は新しいdispatchを止め、既存のTurn cancel ownerとstate guardを使う。
+- `delegation.compensate`はTurn、Work Item、child Sessionの順に既存ownerへ接続する。未使用resourceは既存policyの範囲でcancelまたはarchiveする。
+- 同じmutation keyで異なるpayloadを送った場合はidempotency conflict、古いrevisionはrevision conflictとして拒否する。
 
-1. actor、grant、budget、target planを検証する。
-2. delegation recordとreserved IDsを保存する。
-3. Sessionが必要ならcanonical create ownerで作成する。
-4. Work Itemを作成し、Sessionと関連付ける。
-5. Turn optionsをcurrent catalogから解決し、executionをenqueueする。
-6. stateを`active`へ更新し、resource manifestを返す。
+他consumerが採用したresource、開始済みWork Item、active provider effect、別Delegationから参照されたresourceは、既存guardにより無理に削除せず`recovery_required`へ遷移する。temporary artifactの新規作成や、既存manifest・grantの無断削除は行わない。
 
-step 3から5の間で失敗した場合、callerへ単純な失敗だけを返さず、committed resource、pending step、選択可能なrecovery actionを返す。
+## 対応範囲
 
-## Recovery policy
-
-Agentは次から自律的に選べる。
-
-- resume: 同じresourceを使って未完了stepを続行する。
-- reuse: SessionまたはWork Itemを別delegationへ明示的に引き継ぐ。
-- retry: retryable stepだけを同じdelegation IDで再実行する。
-- compensate: このdelegationが作成し、他consumerが採用していないresourceを逆順に戻す。
-- cancel: 新しいdispatchを止め、active resourceをcancelまたはhandoffする。
-
-自動compensationを唯一のpolicyにしない。作成済みSessionで有用な調査が始まっている場合、削除よりresumeまたはreuseが適切なためである。
-
-## Compensation
-
-compensationはresource取得の逆順を基本とする。
-
-1. queued／running Turnをcancelし、terminal effectを確認する。
-2. Work Itemをcancel、archive、またはdeleteする。
-3. child Sessionをdiscard、archive、またはreuse待ちにする。
-4. budget reservationとtemporary grantをreleaseまたはrevokeする。
-5. temporary artifactをretention policyに従って処理する。
-
-各stepは独立したidempotency recordを持ち、process crash後に続きから再開できる。compensation中に外部consumerがresourceを採用した場合は`recovery_required`へ遷移し、無理に削除しない。
-
-## Retry
-
-retryは同じdelegationの未確定stepを再試行する。別target、別goal、別authorityへ変更する場合はdelegation revisionまたはnew delegationとする。同じidempotency keyでrequest内容を変えない。
-
-Work Item resultに対する再実行はaggregation retryと連携し、replacement Work Item、Session reuse／new create、Turn dispatchを一つのdelegation retry manifestへまとめる。
-
-## 必要な schema と service
-
-- delegation operation table、state event、resource manifest
-- reserved identityとstep-level idempotency
-- Session、Work Item、Turn、grant、budgetのshared transaction／saga adapter
-- recovery action projection
-- compensation executorとstartup reconciliation
-- runtime catalogとmanaged Skillのdelegation workflow
-
-## Direct validation
-
-- createの各step failureでcommitted resourceとnext actionが正確に返る。
-- commit後response lossから同じkeyで同じdelegation IDへ収束する。
-- process crash後にprepared、dispatching、compensatingを列挙して再開できる。
-- compensationがresource取得の逆順で進み、他consumer採用後に削除しない。
-- resume／reuse／retry／compensateを別payloadで同じkeyへ混在させない。
-- duplicate Session、Work Item、Turn executionを作らない。
-- budget reserveとrelease、grant issueとrevokeがresource manifestと一致する。
-- replacement Work Item作成後にTurnが未dispatchのまま隠れない。
-
-## Review lens
-
-- database transactionと外部side effectの境界
-- effect certaintyを`none`へ誤分類するfailure path
-- compensation中の遅延Turn／provider event
-- resource adoptionとcleanupの競合
-- startup reconciliationが別generationのoperationを誤回収しないか
+Delegationは既存操作のcompositionと相関保存を提供する。汎用のwork split/merge操作、grant baselineの拡張、起動時の自動再dispatch、provider effectの自動cleanup、累積budgetの返却はこの機能の責務にしない。未完了rowはget/listで確認し、canonical ownerが再送可能と判断できる場合だけretry、または明示的なcancel/compensateを行う。

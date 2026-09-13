@@ -94,6 +94,12 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
 
 export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "runtime.catalog", title: "Get runtime catalog", description: "Read the current public Provider and model catalog.", readOnly: true, destructive: false },
+  { name: "delegation.create", title: "Create delegation", description: "Prepare or dispatch a batch through the canonical Session, Work Item and Turn owners. Inspect each item's state and committed IDs.", readOnly: false, destructive: true },
+  { name: "delegation.get", title: "Get delegation", description: "Read one delegation owned by the current actor, including partial effects and recovery actions.", readOnly: true, destructive: false },
+  { name: "delegation.list", title: "List delegations", description: "List the current actor's delegations, including unfinished requests.", readOnly: true, destructive: false },
+  { name: "delegation.retry", title: "Resume delegation", description: "Resume unfinished steps with the same resources, or dispatch a prepared delegation.", readOnly: false, destructive: true },
+  { name: "delegation.cancel", title: "Cancel delegation", description: "Stop dispatch and cancel associated execution through its owner.", readOnly: false, destructive: true },
+  { name: "delegation.compensate", title: "Compensate delegation", description: "Cancel execution and archive unused created resources through their owners. Conflicts remain visible.", readOnly: false, destructive: true },
   { name: "budget.get", title: "Get resource budget", description: "Read the resource budget account for one visible Session.", readOnly: true, destructive: false },
   { name: "budget.list", title: "List resource budgets", description: "List resource budget accounts visible within the bound actor's root.", readOnly: true, destructive: false },
   { name: "budget.configure", title: "Configure resource budget", description: "Configure limits within the actor's existing allocation; increasing a root hard limit requires trusted user authority.", readOnly: false, destructive: false },
@@ -272,6 +278,12 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: createSessionRuntimeAdvertisedInputSchema("runtime.catalog"),
     outputSchema: createSessionRuntimeOutputSchema("runtime.catalog"),
   }, async (input) => executeOperation("runtime.catalog", input, deps));
+  for (const operation of ["delegation.create", "delegation.get", "delegation.list", "delegation.retry", "delegation.cancel", "delegation.compensate"] as const) {
+    server.registerTool(operation, {
+      ...definitions.get(operation)!, annotations: annotations(definitions.get(operation)!),
+      inputSchema: createSessionRuntimeAdvertisedInputSchema(operation), outputSchema: createSessionRuntimeOutputSchema(operation),
+    }, async (input) => executeOperation(operation, input, deps));
+  }
   server.registerTool("budget.get", {
     ...definitions.get("budget.get")!,
     annotations: annotations(definitions.get("budget.get")!),

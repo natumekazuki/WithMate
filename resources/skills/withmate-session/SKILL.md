@@ -64,6 +64,12 @@ WithMate derives the actor, Role, permitted child Role, root, parent, depth, and
 
 Do not infer provider support, model, reasoning effort, approval mode, sandbox, custom agent, or provider options from local configuration or prior Sessions.
 
+## Delegation transaction
+
+Use `delegation.create` for a concrete batch of one to twenty items. `dispatch: prepare` saves the target Session, Work Item, and exact Turn input without enqueueing; `delegation.retry` with `dispatch: enqueue` starts that saved input. The first failed item stops the batch while committed resource IDs, pending step, and effect certainty remain visible.
+
+Delegation reuses canonical Session, Work Item, aggregation retry, Turn, cancel, archive, authority, budget, and idempotency owners. Its normal domain row is not a hash, signature, event ledger, recovery verifier, generic reuse registry, or split/merge API. After an uncertain step, read the canonical owner and resend unchanged input only when it can reconcile it. Enqueue acknowledgement leaves the Delegation active until terminal execution observation.
+
 ## Preserve idempotency and effect certainty
 
 - Generate and retain a separate idempotency key for every effect-bearing operation. Its scope is the operation name plus key.

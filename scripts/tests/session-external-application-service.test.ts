@@ -1023,7 +1023,7 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
           constraints: [
             "Token, monetary cost and provider usage are metered observations, not hard-limit dimensions.",
             "Increasing a root hard limit or the per-execution retry limit requires trusted user or issuer authority.",
-            "Delegation budget enforcement is introduced with the later delegation capability slice.",
+            "Delegation creation consumes the actor root's existing cumulative delegation budget; same-request replay does not consume another unit.",
             "Child allocations must set storageBytes to zero; storage is enforced only by the shared root account.",
             "Provider paths without a canonical executionId, including auxiliary and companion executions, are outside the root Turn, retry and generation ledger.",
             "Direct SessionFolder writes bypass pre-reservation; storage is reconciled before dispatch, and unknown or exceeded usage blocks new dispatch.",
@@ -1073,6 +1073,16 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
           defaultListLimit: 50,
           maxListLimit: 200,
         },
+      },
+      delegation: {
+        operations: ["create", "get", "list", "retry", "cancel", "compensate"], maxItems: 20, prepareStartOperation: "delegation.retry",
+        constraints: [
+          "Each batch item reports its own committed resources. Processing stops at the first failing item; retry continues the same request.",
+          "Prepare creates Session and Work Item resources only. Retry with dispatch=enqueue starts the prepared work.",
+          "Reuse explicitly selects an existing Session and Work Item in a new delegation. Each canonical operation still requires its own active grant.",
+          "Compensation preserves adopted resources and work whose execution has started. It archives unused resources through their owners.",
+          "An uncertain step beyond its owner's 24-hour replay retention requires inspection and explicit reuse; it is not blindly re-created.",
+        ],
       },
       sessionLifecycle: {
         operations: ["create", "configure", "rename", "move.manifest", "move", "clone", "restore", "archive", "delete.manifest", "delete"],

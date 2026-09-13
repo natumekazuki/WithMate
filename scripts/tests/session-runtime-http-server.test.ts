@@ -83,6 +83,15 @@ const turnInput = {
 } as const;
 
 const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[number], unknown> = {
+  "delegation.create": {
+    idempotencyKey: "delegate-key", dispatch: "prepare",
+    items: [{ target: { kind: "existing", sessionId: "session-1" }, work: { kind: "existing", workItemId: "work-1" }, turn: { catalogRevision: 4, turn: turnInput } }],
+  },
+  "delegation.get": { delegationId: "delegation-1" },
+  "delegation.list": { limit: 50 },
+  "delegation.retry": { delegationId: "delegation-1", expectedRevision: 1, idempotencyKey: "retry-key", dispatch: "enqueue" },
+  "delegation.cancel": { delegationId: "delegation-1", expectedRevision: 1, idempotencyKey: "cancel-key" },
+  "delegation.compensate": { delegationId: "delegation-1", expectedRevision: 1, idempotencyKey: "compensate-key" },
   "runtime.catalog": {},
   "session.self": {},
   "session.create": {

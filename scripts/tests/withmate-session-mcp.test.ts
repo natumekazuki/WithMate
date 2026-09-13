@@ -189,18 +189,24 @@ describe("WithMate Session MCP contract", () => {
   });
   // @test-value v2
   // kind = "contract"
-  // claim = "MCPはbudget三操作を含む全58 toolをdotted name、generic strict envelope schema、read/write annotation付きで公開する"
+  // claim = "MCPはbudget三操作を含む全公開toolをdotted name、generic strict envelope schema、read/write annotation付きで公開する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-public-api-migration-and-review.md#public-surface-parity" }
   // fault = "HTTPまたはCLIにあるoperationがMCP tool一覧から欠落するか、generic envelope required fieldまたはreadOnly/destructive分類が分岐する"
-  // observable = "MCP tools/listの58 tool名、generic input/output schema strictness、effect annotation"
+  // observable = "MCP tools/listの公開tool名、generic input/output schema strictness、effect annotation"
   // observation_boundary = "public-boundary"
   // scope = "WithMate Session MCP tool catalog"
   // lifecycle = "permanent"
-  // distinction = "operation固有payloadのruntime validationではなく、全58件の独立した期待表でtool集合、generic envelope schema、readOnly/destructive annotationを横断検証する"
+  // distinction = "operation固有payloadのruntime validationではなく、独立した期待表でtool集合、generic envelope schema、readOnly/destructive annotationを横断検証する"
   // @end-test-value
-  it("全58 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("全公開toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     const expectedEffectAnnotations: Record<string, { readOnlyHint: boolean; destructiveHint: boolean }> = {
       "runtime.catalog": { readOnlyHint: true, destructiveHint: false },
+      "delegation.create": { readOnlyHint: false, destructiveHint: true },
+      "delegation.get": { readOnlyHint: true, destructiveHint: false },
+      "delegation.list": { readOnlyHint: true, destructiveHint: false },
+      "delegation.retry": { readOnlyHint: false, destructiveHint: true },
+      "delegation.cancel": { readOnlyHint: false, destructiveHint: true },
+      "delegation.compensate": { readOnlyHint: false, destructiveHint: true },
       "budget.get": { readOnlyHint: true, destructiveHint: false },
       "budget.list": { readOnlyHint: true, destructiveHint: false },
       "budget.configure": { readOnlyHint: false, destructiveHint: false },

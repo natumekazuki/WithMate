@@ -45,6 +45,7 @@ export const REQUIRED_V6_TABLES = [
   "work_item_result_revisions_v6",
   "work_item_tombstones_v6",
   "session_execution_public_progress_v6",
+  "delegations_v6",
   "session_turn_public_context_v6",
   "session_interactions_v6",
   "session_interaction_idempotency_v6",
@@ -94,6 +95,7 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_session_turn_interims_turn_seq",
   "idx_v6_session_turn_provider_outputs_turn_kind_seq",
   "idx_v6_session_execution_public_progress_updated",
+  "idx_v6_delegations_actor_updated",
   "idx_v6_session_execution_origins_source_sequence",
   "idx_v6_work_items_root_sequence",
   "idx_v6_work_items_creator_sequence",
@@ -292,6 +294,10 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "assistant_text",
     "truncated",
     "updated_at",
+  ],
+  delegations_v6: [
+    "id", "revision", "actor_session_id", "idempotency_key", "state", "request_json", "items_json", "pending_json",
+    "recovery_actions_json", "last_mutation_json", "created_at", "updated_at",
   ],
   session_turn_public_context_v6: [
     "turn_id",
@@ -2035,6 +2041,29 @@ export const CREATE_V6_SESSION_EXECUTION_PUBLIC_PROGRESS_TABLE_SQL = `
     ON session_execution_public_progress_v6(updated_at);
 `;
 
+export const CREATE_V6_DELEGATIONS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS delegations_v6 (
+    id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    actor_session_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    state TEXT NOT NULL,
+    request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+    items_json TEXT NOT NULL CHECK (json_valid(items_json)),
+    pending_json TEXT CHECK (pending_json IS NULL OR json_valid(pending_json)),
+    recovery_actions_json TEXT NOT NULL CHECK (json_valid(recovery_actions_json)),
+    last_mutation_json TEXT NOT NULL CHECK (json_valid(last_mutation_json)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (actor_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_delegations_actor_updated
+    ON delegations_v6(actor_session_id, updated_at DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_delegations_actor_idempotency
+    ON delegations_v6(actor_session_id, idempotency_key);
+`;
+
 export const CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_turn_public_context_v6 (
     turn_id INTEGER PRIMARY KEY,
@@ -2907,6 +2936,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSION_SCHEDULE_FIRES_TABLE_SQL,
   CREATE_V6_SESSION_TERMINAL_FAILURE_NOTIFICATION_DELIVERIES_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTION_PUBLIC_PROGRESS_TABLE_SQL,
+  CREATE_V6_DELEGATIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL,
   CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL,
   CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL,

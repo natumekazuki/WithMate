@@ -194,7 +194,7 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは計58操作で、Session lifecycleのmanifest read、configure、move、clone、restore、archive、deleteとWork Item lifecycleを含む。Work Itemの`work.result.correct`、および集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`、`work.aggregation.correct`も含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは計64操作で、Session lifecycleのmanifest read、configure、move、clone、restore、archive、deleteとWork Item lifecycleを含む。Work Itemの`work.result.correct`、および集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`、`work.aggregation.correct`も含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
 
 ## Coordination event
 
@@ -211,3 +211,11 @@ withmate-session coordination event consume --json '{"eventId":"EVENT_ID","expec
 ```
 
 回答を確認しただけの場合、Turnが失敗した場合、またはまだ作業へ反映していない場合はconsumeしない。同じconsumeのresponseを失った場合は、同一inputと同一keyを再送する。
+# Delegation transaction runbook
+
+1. `session.self`でactorを解決し、`budget.get`を確認してから、canonical readでtarget SessionとWork Itemを選ぶ。
+2. Turnを確認してから開始する場合は`dispatch: "prepare"`、すぐに開始する場合は`dispatch: "enqueue"`で`delegation.create`を呼ぶ。
+3. 部分成功ではDelegation IDと返されたresource IDを保持する。`delegation.retry`の前にcanonical ownerを読み、保存済みのpending inputを同じkeyで再送する。
+4. 未使用resourceに限り、current revisionを付けて`delegation.cancel`または`delegation.compensate`を呼ぶ。既存ownerが採用済み、開始済み、active、外部参照中と判定したresourceは`recovery_required`に残る。
+
+Delegationは専用ledger、署名、hash、汎用reuse endpoint、split/merge command、自動artifact cleanupを持たない。authority、budget、idempotency、revision、manifest、effect certaintyは既存ownerを正本とする。

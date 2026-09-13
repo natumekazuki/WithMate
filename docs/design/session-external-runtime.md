@@ -691,3 +691,10 @@ provider実行がterminalの`failed`へ到達した場合、operationの受付�
 - `docs/design/session-local-files.md`
 - `docs/design/session-run-lifecycle.md`
 - `docs/design/session-turn-storage-v6.md`
+# Delegation transaction boundary
+
+runtimeは`delegation.create`、`get`、`list`、`retry`、`cancel`、`compensate`を、既存のSession、Work Item、aggregation retry、Turn ownerのcompositionとして提供する。Delegation rowにはstable ID、actor owner、request、revision、itemごとのresource IDと状態、pending input、last mutation、recovery actionを保存する。通常domain stateとして扱い、hash、署名、event ledger、recovery verifier、新しいsplit/merge操作は追加しない。
+
+1〜20 itemを作成できる。`prepare`はtarget SessionとWork Itemまで保存してTurnをdispatchせず、`enqueue`は保存済みTurn inputを既存ownerへ渡す。enqueueの受付成功だけではterminal完了とせず、canonical executionのterminal観測までDelegationをactiveとして扱う。batchは最初の失敗で停止し、commit済みIDとeffect certaintyを保持する。retryはcanonical ownerを再読してから保存済みの同一inputを再送する。get/listはactor所有projectionで、mutationはcurrent revisionとidempotency keyを要求する。
+
+authority、budget、idempotency、transaction、manifest、cancel、archive、aggregation replacement、provider effectのguardは既存ownerを正本とする。起動時に自動dispatchや自動補償は行わず、get/listで未完了rowを確認してretry、cancel、compensateを選ぶ。採用済み・開始済み・active・他Delegation参照中のresourceは無理に削除せず`recovery_required`へ残す。

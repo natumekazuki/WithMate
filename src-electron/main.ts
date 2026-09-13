@@ -257,6 +257,7 @@ import { WindowEntryLoader } from "./window-entry-loader.js";
 import { AuxWindowService } from "./aux-window-service.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
 import { ResourceBudgetStorage, ResourceBudgetError } from "./resource-budget-storage.js";
+import { DelegationStorage } from "./delegation-storage.js";
 import type { ResourceBudgetConfigureInput } from "../src/resource-budget.js";
 import { SessionFolderResourceBudget } from "./resource-budget-files.js";
 import {
@@ -560,6 +561,7 @@ let sessionAuthorityService: SessionAuthorityService | null = null;
 let sessionExternalApplicationService: SessionExternalApplicationService | null = null;
 let workItemStorage: WorkItemStorageV6 | null = null;
 let resourceBudgetStorage: ResourceBudgetStorage | null = null;
+let delegationStorage: DelegationStorage | null = null;
 let sessionFolderResourceBudget: SessionFolderResourceBudget | null = null;
 let workItemService: WorkItemService | null = null;
 let sessionExternalRuntime: SessionExternalRuntimeHandle | null = null;
@@ -3564,7 +3566,10 @@ function requireSessionAuthorityService(): SessionAuthorityService {
 
 function requireSessionExternalApplicationService(): SessionExternalApplicationService {
   if (!sessionExternalApplicationService) {
+    if (!dbPath) throw new Error("Delegation requires the initialized database.");
+    delegationStorage ??= new DelegationStorage(dbPath);
     sessionExternalApplicationService = new SessionExternalApplicationService({
+      delegationStorage,
       authorityService: requireSessionAuthorityService(),
       budgetStorage: requireResourceBudgetStorage(),
       executionService: requireSessionExecutionService(),
@@ -4615,6 +4620,8 @@ function closeSessionExecutionRuntime(): void {
   workItemStorage?.close();
   resourceBudgetStorage?.close();
   resourceBudgetStorage = null;
+  delegationStorage?.close();
+  delegationStorage = null;
   sessionFolderResourceBudget = null;
   sessionInteractionStorage?.close();
   coordinationEventInvalidationPublisher?.dispose();

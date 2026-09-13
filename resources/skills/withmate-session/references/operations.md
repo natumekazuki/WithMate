@@ -1,5 +1,13 @@
 # WithMate Session operation reference
 
+## Delegation operations
+
+`delegation.create` accepts `items` (1–20) and `dispatch: "prepare" | "enqueue"`. `prepare` persists Session and Work Item results and the exact Turn input without enqueueing it. `delegation.retry` resumes that saved pending input with `dispatch: "enqueue"`.
+
+The first failed item stops the batch. The response keeps earlier resource IDs, the failed item’s pending step, and effect certainty; later items remain unstarted. `get` and `list` are actor-owned. `retry`, `cancel`, and `compensate` require the current Delegation revision. Same-key different-payload requests are conflicts.
+
+Delegation is a composition over existing owners and adds only an ordinary domain row. It does not add hashes, signatures, event ledgers, recovery verifiers, startup reconciliation, split/merge operations, or a generic reuse API.
+
 ## Runtime and schema
 
 WithMate owns the Session database, provider adapters, loopback runtime, discovery, credentials, and cleanup. Keep the desktop app running for all commands except `schema`.
@@ -37,9 +45,10 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 58 operations:
+The CLI and MCP expose the same 64 operations:
 
 - Runtime: `runtime.catalog`
+- Delegation: `delegation.create`, `delegation.get`, `delegation.list`, `delegation.retry`, `delegation.cancel`, `delegation.compensate`
 - Budget: `budget.get`, `budget.list`, `budget.configure`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.configure`, `session.rename`, `session.move.manifest`, `session.move`, `session.clone`, `session.restore`, `session.archive`, `session.delete.manifest`, `session.delete`
 - SessionFolder: `session.files.list`, `session.files.read_text`, `session.files.write_text`
