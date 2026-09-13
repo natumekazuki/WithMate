@@ -8,6 +8,8 @@ import { createRoot, type Root } from "react-dom/client";
 import type {
   FileRootGitChangeEntry,
   FileRootGitHistoryCommit,
+  FileRootGitHistoryCommitsRequest,
+  FileRootGitHistoryCommitsResult,
   FileRootGitHistoryDiffRequest,
   FileRootGitHistoryRepository,
 } from "../../src/file-explorer/file-explorer-contract.js";
@@ -16,8 +18,9 @@ type ObserverEntry = { isIntersecting: boolean };
 
 class TestIntersectionObserver {
   static instances: TestIntersectionObserver[] = [];
-  readonly root: Element | null;
+  readonly root: Element | Document | null;
   readonly callback: (entries: ObserverEntry[]) => void;
+  readonly observedElements: Element[] = [];
 
   constructor(callback: (entries: ObserverEntry[]) => void, options?: IntersectionObserverInit) {
     this.callback = callback;
@@ -25,7 +28,9 @@ class TestIntersectionObserver {
     TestIntersectionObserver.instances.push(this);
   }
 
-  observe(): void {}
+  observe(element: Element): void {
+    this.observedElements.push(element);
+  }
   disconnect(): void {}
   unobserve(): void {}
   trigger(isIntersecting: boolean): void {
@@ -53,12 +58,16 @@ const repositoryA: FileRootGitHistoryRepository = {
   rootId: "workspace",
   label: "withmate",
   displayPath: "C:/withmate",
+  branches: ["main", "feature/history"],
+  currentBranch: "main",
 };
 const repositoryB: FileRootGitHistoryRepository = {
   repositoryId: "git:bbbbbbbbbbbbbbbbbbbbbbbb",
   rootId: "additional:repo",
   label: "other",
   displayPath: "C:/other",
+  branches: ["other"],
+  currentBranch: "other",
 };
 
 function commit(id: string, subject: string): FileRootGitHistoryCommit {
@@ -199,21 +208,32 @@ async function flush(): Promise<void> {
   });
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "History paginationは専用scroll rootのsentinelから次pageを一度だけ取得し、完了後sentinelを隠す"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "Load more buttonへの依存、scroll rootの誤り、同じcursorの重複取得、またはhasMore false後もsentinelが残る"
+// observable = "DOMのLoad more button・sentinel・IntersectionObserver rootとobserved sentinel、public listFileRootGitHistoryCommits request"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane pagination"
+// lifecycle = "permanent"
+// distinction = "intersection triggerを連続して与え、in-flight guardとnextCursor、完了時のDOMを同時に観測する"
+// @end-test-value
 test("History pagination は Load more buttonを出さず sentinel と専用scroll rootで次pageを一度だけ取得する", async () => {
   const { dom, restore } = installDom();
-  const pageRequests: Array<{ sessionId: string; repositoryId: string; rootId: string; cursor: string | null }> = [];
-  const pendingPages: Array<(result: unknown) => void> = [];
+  const pageRequests: FileRootGitHistoryCommitsRequest[] = [];
+  const pendingPages: Array<(result: FileRootGitHistoryCommitsResult) => void> = [];
   const first = commit("a", "first commit");
   const second = commit("b", "second commit");
   const third = commit("c", "third commit");
   const api = {
     listFileRootGitHistoryRepositories: async () => ({ status: "ok" as const, repositories: [repositoryA] }),
-    listFileRootGitHistoryCommits: (request: { sessionId: string; repositoryId: string; rootId: string; cursor: string | null }) => {
+    listFileRootGitHistoryCommits: (request: FileRootGitHistoryCommitsRequest) => {
       pageRequests.push(request);
-      return new Promise((resolve) => pendingPages.push(resolve));
+      return new Promise<FileRootGitHistoryCommitsResult>((resolve) => pendingPages.push(resolve));
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: first, entries: [] }),
-    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, relativePath: null, patch: "", previewResource: null }),
   };
   let root: Root | null = null;
   try {
@@ -231,7 +251,7 @@ test("History pagination は Load more buttonを出さず sentinel と専用scro
       await Promise.resolve();
     });
     await flush();
-    assert.deepEqual(pageRequests, [{ sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, cursor: null }]);
+    assert.deepEqual(pageRequests, [{ sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, branch: "main", cursor: null }]);
     await act(async () => {
       pendingPages.shift()?.({
         status: "ok",
@@ -239,11 +259,16 @@ test("History pagination は Load more buttonを出さず sentinel と専用scro
       });
       await Promise.resolve();
     });
-    assert.equal(dom.window.document.querySelector("button")?.textContent?.includes("Load more"), false);
+    assert.equal(
+      Array.from(dom.window.document.querySelectorAll("button"))
+        .some((button) => button.textContent?.includes("Load more") ?? false),
+      false,
+    );
     assert.ok(dom.window.document.querySelector(".file-history-list-sentinel"));
     const observer = TestIntersectionObserver.instances.at(-1);
     assert.ok(observer);
     assert.equal(observer?.root, dom.window.document.querySelector(".file-history-commit-list"));
+    assert.equal(observer?.observedElements.at(-1), dom.window.document.querySelector(".file-history-list-sentinel"));
     await act(async () => observer?.trigger(false));
     await flush();
     assert.equal(pageRequests.length, 1);
@@ -253,8 +278,8 @@ test("History pagination は Load more buttonを出さず sentinel と専用scro
     });
     await flush();
     assert.deepEqual(pageRequests, [
-      { sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, cursor: null },
-      { sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, cursor: "100" },
+      { sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, branch: "main", cursor: null },
+      { sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, branch: "main", cursor: "100" },
     ]);
     pendingPages.at(-1)?.({
       status: "ok",
@@ -389,18 +414,40 @@ test("History はrepository 0件とcommit 0件を別のempty stateで表示す�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "History repository切替は古いpageを破棄し、選択repositoryのcurrent branchから取得する"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "古い非同期pageが新repository一覧に混入する、またはrepository切替後も古い一覧を表示する"
+// observable = "repository select value、commit list、public listFileRootGitHistoryCommits request"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane repository selection"
+// lifecycle = "permanent"
+// distinction = "初回pageを表示した後、同じrepositoryのrefresh中に別repositoryを選択し、旧page表示を即時破棄するとともに遅延した旧page結果を無視して新repositoryのcursor nullから始めることを確認する"
+// @end-test-value
 test("History repository切り替えは古いpageを捨てて新repositoryの先頭から開始する", async () => {
   const { dom, restore } = installDom();
-  const pageRequests: Array<{ sessionId: string; repositoryId: string; rootId: string; cursor: string | null }> = [];
-  const pendingPages: Array<(result: unknown) => void> = [];
+  const switchRepositoryB: FileRootGitHistoryRepository = {
+    ...repositoryB,
+    branches: ["other-shadow", "other"],
+    currentBranch: "other",
+  };
+  const pageRequests: FileRootGitHistoryCommitsRequest[] = [];
+  const pendingPages: Array<(result: FileRootGitHistoryCommitsResult) => void> = [];
   const api = {
-    listFileRootGitHistoryRepositories: async () => ({ status: "ok" as const, repositories: [repositoryA, repositoryB] }),
-    listFileRootGitHistoryCommits: (request: { sessionId: string; repositoryId: string; rootId: string; cursor: string | null }) => {
+    listFileRootGitHistoryRepositories: async () => ({ status: "ok" as const, repositories: [repositoryA, switchRepositoryB] }),
+    listFileRootGitHistoryCommits: (request: FileRootGitHistoryCommitsRequest) => {
       pageRequests.push(request);
-      return new Promise((resolve) => pendingPages.push(resolve));
+      if (pageRequests.length === 1) {
+        return Promise.resolve({
+          status: "ok" as const,
+          page: { entries: [commit("d", "old repository")], nextCursor: null, hasMore: false },
+        });
+      }
+      return new Promise<FileRootGitHistoryCommitsResult>((resolve) => pendingPages.push(resolve));
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: commit("d", "detail"), entries: [] }),
-    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: commit("d", "detail").id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: commit("d", "detail").id, relativePath: null, patch: "", previewResource: null }),
   };
   let root: Root | null = null;
   try {
@@ -418,19 +465,35 @@ test("History repository切り替えは古いpageを捨てて新repositoryの先
       await Promise.resolve();
     });
     await flush();
+    assert.match(dom.window.document.body.textContent ?? "", /old repository/);
+    await act(async () => {
+      root?.render(React.createElement(FileRootGitHistoryPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        refreshRevision: 1,
+        onOpenDiff: async () => null,
+      }));
+      await Promise.resolve();
+    });
+    await flush();
     const select = dom.window.document.querySelector("select") as HTMLSelectElement;
     assert.ok(select);
-    assert.equal(pageRequests.length, 1);
+    assert.equal(pageRequests.length, 2);
     await act(async () => {
       select.value = repositoryB.repositoryId;
       select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
       await Promise.resolve();
     });
     await flush();
+    assert.equal(select.value, switchRepositoryB.repositoryId);
     assert.deepEqual(pageRequests, [
-      { sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, cursor: null },
-      { sessionId: "session-1", repositoryId: repositoryB.repositoryId, rootId: repositoryB.rootId, cursor: null },
+      { sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, branch: "main", cursor: null },
+      { sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, branch: "main", cursor: null },
+      { sessionId: "session-1", repositoryId: switchRepositoryB.repositoryId, rootId: switchRepositoryB.rootId, branch: "other", cursor: null },
     ]);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /old repository/);
     pendingPages[0]?.({
       status: "ok",
       page: { entries: [commit("e", "stale old repository")], nextCursor: null, hasMore: false },
@@ -512,6 +575,210 @@ test("History repository一覧の再読込開始時に旧Diffを即座に失効�
       resolveReload?.({ status: "failed", message: "repository reload failed" });
       await Promise.resolve();
     });
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restore();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Historyは対象rootのcurrent branchを初期選択し、明示したbranchの選択を同一rootのrefreshで保持し、root変更で新repositoryのcurrent branchへ戻す"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "全branchの履歴を表示する、normal refreshや再描画で選択branchをcurrent branchへ戻す、root変更でbranches先頭を誤選択する、または削除された選択branchを別branchとして成功表示する"
+// observable = "History branch selectのvalue、commit list、listFileRootGitHistoryCommits request"
+// observation_boundary = "consumer"
+// scope = "FileRootGitHistoryPane branch selection"
+// lifecycle = "permanent"
+// impact = "利用者が見ているbranchの履歴がnormal refreshやroot切替のたびに別branchへすり替わらない"
+// distinction = "serviceのbranch到達性検証とは別に、非先頭のcurrentBranchを含むcomponentのcurrentBranch、user selection、refresh、root変更、削除branchの表示をどう投影するかをDOMとpublic API requestで確認する"
+// @end-test-value
+test("History branch選択は同一rootのrefreshで保持しroot変更でcurrent branchへ戻す", async () => {
+  const { dom, restore } = installDom();
+  const branchRepositoryA: FileRootGitHistoryRepository = {
+    ...repositoryA,
+    branches: ["feature/history", "main"],
+    currentBranch: "main",
+  };
+  const deletedRepository: FileRootGitHistoryRepository = {
+    ...branchRepositoryA,
+    branches: ["main"],
+    currentBranch: "main",
+  };
+  const branchRepositoryB: FileRootGitHistoryRepository = {
+    ...repositoryB,
+    branches: ["other-shadow", "other"],
+    currentBranch: "other",
+  };
+  const repositoryResponses = [
+    { status: "ok" as const, repositories: [branchRepositoryA] },
+    { status: "ok" as const, repositories: [branchRepositoryA] },
+    { status: "ok" as const, repositories: [deletedRepository] },
+    { status: "ok" as const, repositories: [branchRepositoryB] },
+  ];
+  const pageRequests: FileRootGitHistoryCommitsRequest[] = [];
+  let repositoryRequests = 0;
+  let resolveInitialMainPage: ((result: FileRootGitHistoryCommitsResult) => void) | null = null;
+  const api = {
+    listFileRootGitHistoryRepositories: async () => {
+      const response = repositoryResponses[Math.min(repositoryRequests, repositoryResponses.length - 1)]!;
+      repositoryRequests += 1;
+      return response;
+    },
+    listFileRootGitHistoryCommits: async (request: FileRootGitHistoryCommitsRequest) => {
+      pageRequests.push(request);
+      if (request.branch === "main" && pageRequests.length === 1) {
+        return new Promise<FileRootGitHistoryCommitsResult>((resolve) => {
+          resolveInitialMainPage = resolve;
+        });
+      }
+      if (request.branch === "feature/history" && repositoryRequests === 3) {
+        return { status: "branch-not-found" as const, message: "The selected Git branch is no longer available." };
+      }
+      const selectedCommit = request.repositoryId === branchRepositoryB.repositoryId
+        ? commit("c", "other branch commit")
+        : request.branch === "feature/history"
+          ? commit("b", "feature branch commit")
+          : commit("a", "main branch commit");
+      return {
+        status: "ok" as const,
+        page: { entries: [selectedCommit], nextCursor: null, hasMore: false },
+      };
+    },
+    getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "none" }),
+    getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "none" }),
+  };
+  let root: Root | null = null;
+  try {
+    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootGitHistoryPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        refreshRevision: 0,
+        onOpenDiff: async () => null,
+      }));
+      await Promise.resolve();
+    });
+    await flush();
+    const branchSelect = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='History branch']");
+    assert.ok(branchSelect);
+    assert.equal(branchSelect.value, "main");
+    assert.deepEqual(pageRequests, [{ sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, branch: "main", cursor: null }]);
+
+    await act(async () => {
+      branchSelect.value = "feature/history";
+      branchSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flush();
+    const selectedBranchAfterSelection = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='History branch']");
+    assert.ok(selectedBranchAfterSelection);
+    assert.equal(selectedBranchAfterSelection.value, "feature/history");
+    assert.deepEqual(pageRequests.at(-1), {
+      sessionId: "session-1",
+      repositoryId: repositoryA.repositoryId,
+      rootId: repositoryA.rootId,
+      branch: "feature/history",
+      cursor: null,
+    });
+    assert.match(dom.window.document.body.textContent ?? "", /feature branch commit/);
+    await act(async () => {
+      resolveInitialMainPage?.({
+        status: "ok",
+        page: { entries: [commit("stale-main", "stale main branch commit")], nextCursor: null, hasMore: false },
+      });
+      await Promise.resolve();
+    });
+    await flush();
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /stale main branch commit/);
+    assert.match(dom.window.document.body.textContent ?? "", /feature branch commit/);
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootGitHistoryPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        refreshRevision: 0,
+        onOpenDiff: async () => null,
+      }));
+      await Promise.resolve();
+    });
+    await flush();
+    assert.equal(repositoryRequests, 1);
+    const selectedBranchAfterRerender = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='History branch']");
+    assert.ok(selectedBranchAfterRerender);
+    assert.equal(selectedBranchAfterRerender.value, "feature/history");
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootGitHistoryPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        refreshRevision: 1,
+        onOpenDiff: async () => null,
+      }));
+      await Promise.resolve();
+    });
+    await flush();
+    const selectedBranchAfterRefresh = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='History branch']");
+    assert.ok(selectedBranchAfterRefresh);
+    assert.equal(selectedBranchAfterRefresh.value, "feature/history");
+    assert.deepEqual(pageRequests.at(-1), {
+      sessionId: "session-1",
+      repositoryId: repositoryA.repositoryId,
+      rootId: repositoryA.rootId,
+      branch: "feature/history",
+      cursor: null,
+    });
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootGitHistoryPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        refreshRevision: 2,
+        onOpenDiff: async () => null,
+      }));
+      await Promise.resolve();
+    });
+    await flush();
+    const selectedBranchAfterDeletion = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='History branch']");
+    assert.ok(selectedBranchAfterDeletion);
+    assert.equal(selectedBranchAfterDeletion.value, "feature/history");
+    assert.ok([...selectedBranchAfterDeletion.options].some((option) => option.disabled && option.value === "feature/history"));
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootGitHistoryPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-2",
+        refreshRevision: 2,
+        onOpenDiff: async () => null,
+      }));
+      await Promise.resolve();
+    });
+    await flush();
+    const nextBranchSelect = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='History branch']");
+    assert.ok(nextBranchSelect);
+    assert.equal(nextBranchSelect.value, branchRepositoryB.currentBranch);
+    assert.deepEqual(pageRequests.at(-1), {
+      sessionId: "session-1",
+      repositoryId: branchRepositoryB.repositoryId,
+      rootId: branchRepositoryB.rootId,
+      branch: "other",
+      cursor: null,
+    });
+    assert.match(dom.window.document.body.textContent ?? "", /other branch commit/);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

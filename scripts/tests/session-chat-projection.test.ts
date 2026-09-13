@@ -7,6 +7,7 @@ import {
   buildAgentSessionChatWindowProps,
   type AgentSessionChatProjectionInput,
 } from "../../src/chat/session-chat-projection.js";
+import { ChatWindow } from "../../src/chat/chat-window.js";
 import type { CharacterProfile } from "../../src/app-state.js";
 import { SessionComposerExpanded, type SessionContextPaneProps } from "../../src/session-components.js";
 import type { Session } from "../../src/session-state.js";
@@ -450,6 +451,16 @@ test("buildAgentSessionChatWindowProps はglossary annotation projectionとactiv
   assert.equal(props.messageColumnProps.onActivateGlossaryEntry, onActivateGlossaryEntry);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "buildAgentSessionChatWindowPropsはright paneの選択callbackと表示内容をChatWindowへ転送する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "projectionがrightPanePropsを欠落させるか、ChatWindowが共通paneを描画しない"
+// observable = "buildAgentSessionChatWindowPropsのrightPanePropsとChatWindow描画結果に現れる共通paneの内容"
+// observation_boundary = "public-boundary"
+// scope = "session-chat-projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildAgentSessionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {
   const onToggleHeaderExpanded = () => {};
   const onCycleContextPaneTab = () => {};
@@ -461,16 +472,15 @@ test("buildAgentSessionChatWindowProps は Header から独立した right pane 
     onCycleContextPaneTab,
     onOpenCompanionReview,
   }));
-  const rightPane = props.rightPane as React.ReactElement<{
-    children: React.ReactElement<SessionContextPaneProps>;
-  }>;
-  const paneProps = rightPane.props.children.props;
+  const paneProps = props.rightPaneProps as SessionContextPaneProps;
 
   assert.equal(paneProps.contextEmptyText, "Agent context empty");
   assert.equal(paneProps.latestCommandEmptyText, "Agent latest command empty");
   assert.equal("onToggleHeaderExpanded" in paneProps, false);
   assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
   assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+  assert.match(html, /Agent latest command empty/);
 });
 
 test("buildAgentSessionChatWindowProps は right pane visibility と toggle を共通 shell に渡す", () => {

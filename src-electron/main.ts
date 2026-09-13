@@ -94,7 +94,10 @@ import type {
 } from "../src/prompt-template.js";
 import { resolveAuxiliaryParentSession } from "./auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "./auxiliary-session-service.js";
-import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
+import {
+  AuxiliarySessionStorage,
+  resolveLegacyAuxiliaryPreviewFromAuditEntries,
+} from "./auxiliary-session-storage.js";
 import { CharacterService } from "./character-service.js";
 import { CharacterStorage } from "./character-storage.js";
 import {
@@ -165,6 +168,7 @@ import { SessionFileExplorerService, type SessionFileExplorerContext } from "./s
 import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
 import { SessionFileObjectCopyService } from "./session-file-object-copy-service.js";
 import { SessionFileTreeContextMenuService } from "./session-file-tree-context-menu-service.js";
+import { SessionMonitorContextMenuService } from "./session-monitor-context-menu-service.js";
 import { MarkdownLinkContextMenuService } from "./markdown-link-context-menu-service.js";
 import { WindowsFileDropClipboardWriter } from "./windows-file-drop-clipboard-writer.js";
 import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
@@ -347,6 +351,12 @@ const sessionFileTreeContextMenuService = new SessionFileTreeContextMenuService(
   createAuthorizationBoundary: createSessionFileExplorerService,
   writeText: (targetPath) => clipboard.writeText(targetPath),
   copyFileObject: (resource) => sessionFileObjectCopyService.copyTreeResource(resource),
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+});
+const sessionMonitorContextMenuService = new SessionMonitorContextMenuService({
+  requestCloseSessionWindow: (sessionId) => requireMainWindowFacade().requestCloseSessionWindow(sessionId),
+  closeCompanionReviewWindow: (sessionId) => requireMainWindowFacade().closeCompanionReviewWindow(sessionId),
+  writeText: (value) => clipboard.writeText(value),
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
 const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({
@@ -1298,10 +1308,11 @@ function isSessionRunInFlight(sessionId: string): boolean {
     return false;
   }
 
-  const activeAuxiliarySession = requireAuxiliarySessionService().getActiveAuxiliarySession(sessionId);
-  return activeAuxiliarySession
-    ? requireAuxiliarySessionRuntimeService().isRunInFlight(activeAuxiliarySession.id)
-    : false;
+  // A parent can own more than one Auxiliary.  Run guards and deletion must
+  // inspect every child instead of whichever row happens to be newest.
+  return requireAuxiliarySessionService()
+    .listAuxiliarySessions(sessionId)
+    .some((auxiliary) => requireAuxiliarySessionRuntimeService().isRunInFlight(auxiliary.id));
 }
 
 function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly string[]): Set<string> {
@@ -1311,8 +1322,10 @@ function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly s
   }
 
   for (const parentSessionId of parentSessionIds) {
-    const activeAuxiliarySession = requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId);
-    if (activeAuxiliarySession && requireAuxiliarySessionRuntimeService().isRunInFlight(activeAuxiliarySession.id)) {
+    const hasRunningAuxiliary = requireAuxiliarySessionService()
+      .listAuxiliarySessions(parentSessionId)
+      .some((auxiliary) => requireAuxiliarySessionRuntimeService().isRunInFlight(auxiliary.id));
+    if (hasRunningAuxiliary) {
       runningParentSessionIds.add(parentSessionId);
     }
   }
@@ -1416,7 +1429,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createSessionMemoryStorage: (nextDbPath) => new SessionMemoryStorage(nextDbPath),
           createProjectMemoryStorage: (nextDbPath) => new ProjectMemoryStorage(nextDbPath),
           createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
-          createAuxiliarySessionStorage: (nextDbPath) => new AuxiliarySessionStorage(nextDbPath),
+          createAuxiliarySessionStorage: (nextDbPath) => new AuxiliarySessionStorage(
+            nextDbPath,
+            (auxiliarySessionId) => {
+              const entries = auditLogStorage?.listSessionAuditLogs(auxiliarySessionId);
+              return entries && !(entries instanceof Promise)
+                ? resolveLegacyAuxiliaryPreviewFromAuditEntries(entries)
+                : null;
+            },
+          ),
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
           createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
           ensureV2Schema: (nextDbPath) => {
@@ -1519,12 +1540,18 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveCompanionReviewWindow: (sessionId) =>
                   requireMainWindowFacade().getCompanionReviewWindow(sessionId),
                 openSessionWindow,
+                showSessionMonitorContextMenu: (event, request) =>
+                  sessionMonitorContextMenuService.showContextMenu(
+                    BrowserWindow.fromWebContents(event.sender) ?? null,
+                    request,
+                  ),
                 getSessionWindowRestoreSet: () => requireSessionWindowRestoreService().getSnapshot(),
                 restoreSessionWindows: () => requireSessionWindowRestoreService().restoreSnapshot(),
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
                 openMemoryV6ReviewWindow,
+                isSessionMonitorWindow: (window) => requireMainWindowFacade().isSessionMonitorWindow(window),
                 isSettingsWindow: (window) => requireMainWindowFacade().isSettingsWindow(window),
                 isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
                 openCharacterEditorWindow,
@@ -1994,6 +2021,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
+      initializeCreatedSession: ensureDefaultAuxiliarySession,
       createSessionId: () => `launch-${crypto.randomUUID()}`,
       createSessionFilesDirectory: (sessionId) =>
         createSessionFilesDirectory(app.getPath("userData"), sessionId),
@@ -2071,6 +2099,10 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
       getParentSession: getAuxiliaryParentSession,
       getStorage: () => requireAuxiliarySessionStorage(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
+      listActiveCharacters: () => requireCharacterService().listCharacters(),
+      createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
+      runCharacterAffectTurnOwnershipExclusive: (operation) =>
+        characterAffectTurnOwnershipCoordinator.runExclusive(operation),
       resolveSessionLaunchSelection: (providerId) =>
         requireSessionLaunchSelectionService().resolve(providerId),
       runProviderRuntimeOperationExclusive: (operation) =>
@@ -2079,6 +2111,20 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
   }
 
   return auxiliarySessionService;
+}
+
+async function ensureDefaultAuxiliarySession(session: Session): Promise<void> {
+  const service = requireAuxiliarySessionService();
+  if (service.listAuxiliarySessions(session.id).length > 0) {
+    return;
+  }
+
+  await service.createAuxiliarySession({
+    parentSessionId: session.id,
+    provider: session.provider,
+    runtimeSelection: "latest-session",
+    clientRequestId: `default:${session.id}`,
+  });
 }
 
 function requireAuditLogStorageForWrite(): AuditLogStorage {
@@ -2837,9 +2883,9 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
   if (!auxiliarySessionRuntimeService) {
     auxiliarySessionRuntimeService = new SessionRuntimeService({
       getSession: (sessionId) => requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId),
-      upsertSession: async (session) => {
+      upsertSession: async (session, options) => {
         const auxiliaryService = requireAuxiliarySessionService();
-        auxiliaryService.upsertAuxiliaryRuntimeSession(session);
+        auxiliaryService.upsertAuxiliaryRuntimeSession(session, options);
         const storedSession = await auxiliaryService.getAuxiliaryRuntimeSession(session.id);
         if (!storedSession) {
           throw new Error("Auxiliary Session の保存結果を読み戻せなかったよ。");
@@ -2873,6 +2919,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       endProviderAgentRuntimeTurn: (handle) =>
         glossaryRuntimeService.endProviderTurn(handle as import("./glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
       resetProviderSessionThread,
+      isAuxiliarySession: (sessionId) => Boolean(requireAuxiliarySessionService().getAuxiliarySession(sessionId)),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,

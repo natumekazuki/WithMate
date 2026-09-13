@@ -25,7 +25,6 @@ import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js
 import {
   buildLiveSessionChatBodyProps,
   buildLiveSessionComposerDockProps,
-  resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
 import { buildLiveSessionHeaderProps } from "./chat-header-actions.js";
 import {
@@ -61,9 +60,6 @@ export type AgentSessionChatProjectionInput = {
   sessionDockLayoutStyle: CSSProperties;
   sessionWorkbenchRef: RefObject<HTMLDivElement | null>;
   sessionWorkbenchStyle: CSSProperties | undefined;
-  layoutPriority: ChatWindowProps["layoutPriority"];
-  onActivateSidePanePriority: () => void;
-  onActivateDockPriority: () => void;
   isSessionHeaderExpanded: boolean;
   isEditingTitle: boolean;
   titleDraft: string;
@@ -219,12 +215,15 @@ export type AgentSessionChatProjectionInput = {
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
+  onKeyDownContextRailResize?: import("react").KeyboardEventHandler<HTMLButtonElement>;
   onStartFilesPaneResize: PointerEventHandler<HTMLButtonElement>;
+  onKeyDownFilesPaneResize?: import("react").KeyboardEventHandler<HTMLButtonElement>;
   onStartActionDockResize: PointerEventHandler<HTMLButtonElement>;
   onToggleActionDock: () => void;
   onToggleContextRailVisibility: () => void;
   onToggleFilesPaneVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onSelectContextPaneTab?: SessionContextPaneProps["onSelectContextPaneTab"];
   onOpenCompanionReview: (sessionId: string) => void;
   onCloseDiff: () => void;
   onOpenDiffWindow: (payload: DiffPreviewPayload) => void;
@@ -282,7 +281,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isRunning: input.isSelectedSessionRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
-      modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       composerBlocked: input.composerBlocked,
       canSelectCustomAgent: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
       showCustomAgentPicker: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
@@ -402,6 +400,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isContextRailResizing: input.isContextRailResizing,
       isContextRailVisible: input.isContextRailVisible,
       onStartContextRailResize: input.onStartContextRailResize,
+      onKeyDownContextRailResize: input.onKeyDownContextRailResize,
       onToggleContextRailVisibility: input.onToggleContextRailVisibility,
     },
   });
@@ -429,6 +428,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     glossaryPaneProps: input.glossaryPaneProps,
     onJumpToMessage: input.onJumpToMessage,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
+    onSelectContextPaneTab: input.onSelectContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,
   });
 
@@ -441,9 +441,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     isHeaderExpanded: input.isSessionHeaderExpanded,
     workbenchRef: input.sessionWorkbenchRef,
     workbenchStyle: input.sessionWorkbenchStyle,
-    layoutPriority: input.layoutPriority,
-    onActivateSidePanePriority: input.onActivateSidePanePriority,
-    onActivateDockPriority: input.onActivateDockPriority,
     headerProps,
     messageColumnProps: {
       ...chatBodyProps.messageColumnProps,
@@ -481,7 +478,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isActive: input.isActionDockResizing,
       isPanelExpanded: input.isActionDockExpanded,
       canCollapse: input.canCollapseActionDock,
-      onPointerDown: input.isActionDockExpanded ? input.onStartActionDockResize : undefined,
+      onPointerDown: input.onStartActionDockResize,
       onTogglePanel: input.onToggleActionDock,
     },
     composerProps: chatBodyProps.composerProps,
@@ -505,10 +502,11 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     leftSplitterProps: {
       isActive: input.isFilesPaneResizing,
       isPanelExpanded: input.isFilesPaneVisible,
-      onPointerDown: input.isFilesPaneVisible ? input.onStartFilesPaneResize : undefined,
+      onPointerDown: input.onStartFilesPaneResize,
+      onKeyDown: input.onKeyDownFilesPaneResize,
       onTogglePanel: input.onToggleFilesPaneVisibility,
-      ariaLabel: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
-      title: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
+      ariaLabel: input.isFilesPaneVisible ? "File Explorer を折りたたむ" : "File Explorer を開く",
+      title: "クリックでFile Explorerを開閉し、展開中はドラッグまたは矢印キーでサイズを調整",
     },
     isLeftPaneVisible: input.isFilesPaneVisible,
     isRightPaneVisible: input.isContextRailVisible,

@@ -173,6 +173,17 @@ test("Git history parser はcommit metadata、HEAD/local branch/tag、rename/cop
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "FileRootGitChangesServiceは異なるrootPathから同じcanonical repositoryへ解決した複数root contextを一つのrepositoryへまとめ、commit detail、diff、binary preview metadataを返す"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "canonical repositoryの重複排除、root commitの扱い、rename・binary・gitlinkの分類を誤り、preview可能性や取得bytesを誤って返す"
+// observable = "history repositories、commit page、commit detail、diff result、preview resource、file descriptor、read chunk"
+// observation_boundary = "public-boundary"
+// scope = "FileRootGitChangesService history and preview"
+// lifecycle = "permanent"
+// distinction = "top-levelとnestedの異なるrootPathを持つ複数root contextから実Git repositoryを解決して一つへ統合し、binaryのmetadata-only admissionとrevision付きchunk読出しまで確認する"
+// @end-test-value
 test("FileRootGitChangesService はcanonical repository単位のhistory、root/parent diff、binary metadataを返す", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-"));
   try {
@@ -194,12 +205,13 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
       "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
       "commit", "--quiet", "-m", "binary",
     ])).exitCode, 0);
+    await mkdir(path.join(repositoryPath, "nested"));
 
     const service = new FileRootGitChangesService({
       resolveRootContext: async () => ({ rootPath: repositoryPath }),
       resolveHistoryRootContexts: async () => [
         { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
-        { rootId: "additional:repo", label: "repo", displayPath: repositoryPath, rootPath: repositoryPath },
+        { rootId: "additional:repo", label: "repo", displayPath: path.join(repositoryPath, "nested"), rootPath: path.join(repositoryPath, "nested") },
       ],
       resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
     });
@@ -214,6 +226,7 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
       sessionId: "session-1",
       repositoryId: repository.repositoryId,
       rootId: repository.rootId,
+      branch: repository.currentBranch,
     });
     assert.equal(page.status, "ok");
     if (page.status !== "ok") {
@@ -358,7 +371,7 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
     });
     assert.equal(rootDetail.status, "ok");
     if (rootDetail.status === "ok") {
-      assert.ok(rootDetail.entries.some((entry) => entry.relativePath === "tracked.txt"));
+      assert.deepEqual(rootDetail.entries.map((entry) => entry.relativePath), ["tracked.txt"]);
     }
     const invalidCommit = await service.getHistoryCommitDetail({
       sessionId: "session-1",
@@ -368,6 +381,153 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
     });
     assert.equal(invalidCommit.status, "failed");
   } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Git履歴のrepository情報は対象rootのcurrent branchとlocal branch一覧を返し、remote-tracking branchを含めず、選択branchの到達履歴だけを返す"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "commit一覧が全local branchの履歴を混ぜる、同名tagでbranch名が変化する、remote-tracking branchをlocal branchとして公開する、またはdetached HEAD・branch削除・未commit repositoryを暗黙に別状態として表示する"
+// observable = "listHistoryRepositoriesとlistHistoryCommitsのpublic result"
+// observation_boundary = "public-boundary"
+// scope = "FileRootGitChangesService.listHistoryRepositories/listHistoryCommits"
+// lifecycle = "permanent"
+// impact = "History利用者が選択したbranch以外のcommitを誤って参照せず、現在のroot状態を判断できる"
+// distinction = "parserやgit commandの引数静的検査ではなく、実Gitで分岐履歴、remote-tracking refの除外、対象rootのcurrent branch、detached HEAD、削除branch、空repositoryのresultを確認する"
+// @end-test-value
+test("FileRootGitChangesService は対象rootのbranch状態と選択branchの到達履歴を返す", async () => {
+  const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-branch-"));
+  const emptyRepositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-empty-branch-"));
+  try {
+    await initializeRepository(repositoryPath);
+    const mainBranch = (await runGitForTest(repositoryPath, ["branch", "--show-current"])).stdout
+      .toString("utf8").trim();
+    assert.ok(mainBranch);
+    assert.equal((await runGitForTest(repositoryPath, ["checkout", "-b", "history-side"])).exitCode, 0);
+    await writeFile(path.join(repositoryPath, "side.txt"), "side\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", "side.txt"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "side-only",
+    ])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, ["checkout", mainBranch])).exitCode, 0);
+    await writeFile(path.join(repositoryPath, "main.txt"), "main\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", "main.txt"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "main-only",
+    ])).exitCode, 0);
+    const mainCommitId = (await runGitForTest(repositoryPath, ["rev-parse", mainBranch])).stdout.toString("utf8").trim();
+    assert.equal((await runGitForTest(repositoryPath, ["tag", mainBranch])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, ["tag", "history-side"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "update-ref", "refs/remotes/origin/remote-only", mainCommitId,
+    ])).exitCode, 0);
+
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
+      ],
+      resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+    });
+    const repositories = await service.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(repositories.status, "ok");
+    if (repositories.status !== "ok") {
+      return;
+    }
+    const repository = repositories.repositories[0];
+    assert.ok(repository);
+    assert.equal(repository.currentBranch, mainBranch);
+    assert.deepEqual([...repository.branches].sort(), [mainBranch, "history-side"].sort());
+
+    const mainPage = await service.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      branch: mainBranch,
+    });
+    const sidePage = await service.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      branch: "history-side",
+    });
+    assert.equal(mainPage.status, "ok");
+    assert.equal(sidePage.status, "ok");
+    if (mainPage.status !== "ok" || sidePage.status !== "ok") {
+      return;
+    }
+    const mainSubjects = mainPage.page.entries.map((entry) => entry.subject);
+    const sideSubjects = sidePage.page.entries.map((entry) => entry.subject);
+    assert.ok(mainSubjects.includes("main-only"));
+    assert.ok(!mainSubjects.includes("side-only"));
+    assert.ok(sideSubjects.includes("side-only"));
+    assert.ok(!sideSubjects.includes("main-only"));
+
+    assert.equal((await runGitForTest(repositoryPath, ["checkout", "--detach", "HEAD"])).exitCode, 0);
+    const detachedRepositories = await service.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(detachedRepositories.status, "ok");
+    if (detachedRepositories.status !== "ok") {
+      return;
+    }
+    const detachedRepository = detachedRepositories.repositories[0];
+    assert.ok(detachedRepository);
+    assert.equal(detachedRepository.currentBranch, null);
+    const detachedPage = await service.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: detachedRepository.repositoryId,
+      rootId: detachedRepository.rootId,
+      branch: null,
+    });
+    assert.deepEqual(detachedPage, {
+      status: "detached-head",
+      message: "Git HEAD is detached. Select a branch to view its history.",
+    });
+
+    assert.equal((await runGitForTest(repositoryPath, ["branch", "-D", "history-side"])).exitCode, 0);
+    const deletedBranchPage = await service.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: detachedRepository.repositoryId,
+      rootId: detachedRepository.rootId,
+      branch: "history-side",
+    });
+    assert.deepEqual(deletedBranchPage, {
+      status: "branch-not-found",
+      message: "The selected Git branch is no longer available.",
+    });
+
+    await runGitForTest(emptyRepositoryPath, ["init", "--quiet"]);
+    const emptyService = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: emptyRepositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: emptyRepositoryPath, rootPath: emptyRepositoryPath },
+      ],
+      resolveHistoryRootContext: async () => ({ rootPath: emptyRepositoryPath }),
+    });
+    const emptyRepositories = await emptyService.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(emptyRepositories.status, "ok");
+    if (emptyRepositories.status !== "ok") {
+      return;
+    }
+    const emptyRepository = emptyRepositories.repositories[0];
+    assert.ok(emptyRepository);
+    assert.deepEqual(emptyRepository.branches, []);
+    assert.equal(emptyRepository.currentBranch, null);
+    const emptyPage = await emptyService.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: emptyRepository.repositoryId,
+      rootId: emptyRepository.rootId,
+      branch: null,
+    });
+    assert.deepEqual(emptyPage, {
+      status: "empty-repository",
+      message: "The Git repository has no committed branches.",
+    });
+  } finally {
+    await rm(emptyRepositoryPath, { recursive: true, force: true });
     await rm(repositoryPath, { recursive: true, force: true });
   }
 });
@@ -465,6 +625,17 @@ test("FileRootGitChangesService はglobal改行設定を維持してHistoryの�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "merge commitのdetailとdiffはfirst parentから追加された変更を返す"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "merge commit detailまたはfile diffがsecond parentまたはmerge前後の全差分として扱われ、first parentにない変更以外の内容を返す"
+// observable = "merge commit detailのentries relativePathとhistory diffのpatch"
+// observation_boundary = "public-boundary"
+// scope = "FileRootGitChangesService.getHistoryCommitDetail/getHistoryDiff"
+// lifecycle = "permanent"
+// distinction = "2親のmerge commitを作成し、通常commitとは異なるfirst parent基準のdetailとrelativePath指定diffを確認する"
+// @end-test-value
 test("FileRootGitChangesService はmerge commitをfirst parentと比較する", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-merge-"));
   try {
@@ -509,6 +680,7 @@ test("FileRootGitChangesService はmerge commitをfirst parentと比較する", 
       sessionId: "session-1",
       repositoryId: repository.repositoryId,
       rootId: repository.rootId,
+      branch: repository.currentBranch,
     });
     assert.equal(page.status, "ok");
     if (page.status !== "ok") {
@@ -525,12 +697,35 @@ test("FileRootGitChangesService はmerge commitをfirst parentと比較する", 
     assert.equal(detail.status, "ok");
     if (detail.status === "ok") {
       assert.deepEqual(detail.entries.map((entry) => entry.relativePath), ["side.txt"]);
+      const diff = await service.getHistoryDiff({
+        sessionId: "session-1",
+        repositoryId: repository.repositoryId,
+        rootId: repository.rootId,
+        commitId: mergeCommit.id,
+        relativePath: "side.txt",
+      });
+      assert.equal(diff.status, "ok", JSON.stringify(diff));
+      if (diff.status === "ok") {
+        assert.equal(diff.relativePath, "side.txt");
+        assert.match(diff.patch, /\+side/);
+      }
     }
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Git history discoveryとcommit listはnon-Git・missing rootと、serviceが受け取ったhistory stdoutの上限超過を明示したresultへ投影する"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "non-Gitまたはmissing rootをrepositoryとして公開する、またはserviceが受け取った上限超過のhistory outputを成功扱いする"
+// observable = "listHistoryRepositoriesとlistHistoryCommitsのresult statusとmessage"
+// observation_boundary = "public-boundary"
+// scope = "FileRootGitChangesService history discovery and pagination"
+// lifecycle = "permanent"
+// distinction = "repositoryが存在しない場合の空集合と、runGit resultとして渡された履歴出力の上限超過を別々に確認する"
+// @end-test-value
 test("FileRootGitChangesService は空のrepository集合とhistory stdout上限を結果へ投影する", async () => {
   const nonGitPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-empty-"));
   const missingPath = path.join(nonGitPath, "missing");
@@ -579,6 +774,7 @@ test("FileRootGitChangesService は空のrepository集合とhistory stdout上限
       sessionId: "session-1",
       repositoryId: repository.repositoryId,
       rootId: repository.rootId,
+      branch: repository.currentBranch,
     });
     assert.equal(page.status, "failed");
     if (page.status === "failed") {

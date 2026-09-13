@@ -7,6 +7,7 @@ import type { Message } from "./session-state.js";
 import type { CompanionSession } from "./companion-state.js";
 import type { Session } from "./session-state.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import type { CharacterRuntimeSnapshot } from "./character/character-catalog.js";
 
 type AuxiliaryRuntimeProjectionMode = "main" | "companion";
 
@@ -28,9 +29,15 @@ export type AuxiliaryRuntimeProjectionInput = Pick<
   | "threadId"
   | "messages"
   | "updatedAt"
+  | "characterId"
+  | "characterRuntimeSnapshot"
+  | "characterRuntimeSnapshotInvalid"
 >;
 
 type AuxiliaryRuntimeSessionProjectionCommon = {
+  characterId: string;
+  characterRuntimeSnapshot: CharacterRuntimeSnapshot | null | undefined;
+  characterRuntimeSnapshotInvalid?: boolean;
   provider: string;
   catalogRevision: number;
   runState: AuxiliarySession["runState"];
@@ -51,6 +58,9 @@ function buildAuxiliaryRuntimeSessionProjectionCommon(
   options: { cloneAdditionalDirectories: boolean },
 ): AuxiliaryRuntimeSessionProjectionCommon {
   return {
+    characterId: auxiliary.characterId ?? "",
+    characterRuntimeSnapshot: auxiliary.characterRuntimeSnapshot,
+    characterRuntimeSnapshotInvalid: auxiliary.characterRuntimeSnapshotInvalid,
     provider: auxiliary.provider,
     catalogRevision: auxiliary.catalogRevision,
     runState: auxiliary.runState,
@@ -88,6 +98,10 @@ export function buildAuxiliaryRuntimeSessionProjection(
     auxiliary,
     { cloneAdditionalDirectories: mode === "companion" },
   );
+  if (auxiliary.characterRuntimeSnapshotInvalid) {
+    throw new Error("Auxiliary Character runtime snapshot is invalid.");
+  }
+  const snapshot = auxiliary.characterRuntimeSnapshot;
 
   if (mode === "main") {
     const sessionParent = parent as Session;
@@ -98,6 +112,11 @@ export function buildAuxiliaryRuntimeSessionProjection(
       status: auxiliary.runState === "running" ? "running" : "idle",
       updatedAt: auxiliary.updatedAt,
       ...baseProjection,
+      characterId: auxiliary.characterId || sessionParent.characterId,
+      character: snapshot?.name ?? sessionParent.character,
+      characterIconPath: snapshot?.iconFilePath ?? sessionParent.characterIconPath,
+      characterThemeColors: snapshot?.theme ?? sessionParent.characterThemeColors,
+      characterRuntimeSnapshot: snapshot ?? sessionParent.characterRuntimeSnapshot,
       stream: [],
     };
     return projection;
@@ -110,6 +129,11 @@ export function buildAuxiliaryRuntimeSessionProjection(
     taskTitle: auxiliary.title,
     status: "active",
     ...baseProjection,
+    characterId: auxiliary.characterId || companionParent.characterId,
+    character: snapshot?.name ?? companionParent.character,
+    characterIconPath: snapshot?.iconFilePath ?? companionParent.characterIconPath,
+    characterThemeColors: snapshot?.theme ?? companionParent.characterThemeColors,
+    characterRuntimeSnapshot: snapshot ?? companionParent.characterRuntimeSnapshot,
     updatedAt: auxiliary.updatedAt,
   };
   return projection;

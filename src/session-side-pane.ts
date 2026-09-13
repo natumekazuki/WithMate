@@ -7,5 +7,5 @@ export function isSessionSidePane(value: unknown): value is SessionSidePane {
 }
 
 export function normalizeSessionSidePane(value: unknown): SessionSidePane {
-  return isSessionSidePane(value) ? value : "none";
+  return value === "both" ? "context" : isSessionSidePane(value) ? value : "none";
 }

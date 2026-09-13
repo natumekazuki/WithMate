@@ -1,5 +1,9 @@
 # Desktop UI
 
+## Auxiliary Session (Issue #710)
+
+Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、Headerの`New Auxiliary`は既存会話を閉じず末尾へ追加する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。折りたたみ時はAuxiliary面と内部境界を隠し、ActionDock対象をMainへ戻す。
+
 - 作成日: 2026-03-14
 - 対象: Electron 版 WithMate の現在 UI
 
@@ -106,7 +110,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - Agent Mode の workspace は既存 directory を選ぶ `Browse` と、WithMate 管理下の directory を開始時に作る `SessionFolder` から選ぶ
   - enabled provider の選択
   - Character selector は開くたびにランダムを初期選択する。明示選択したactive Characterはそのまま使い、Characterが0件の場合はneutral fallbackを使う。詳細はADR 004を参照する
-  - model / depth / approval / sandbox / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
+  - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
   - open 時は dialog 内の最初の主要入力へ focus し、`Escape` で閉じる
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
   - provider の single-select chip は矢印キーで選択を移動できる
@@ -189,35 +193,34 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
 - wide desktop (`1920x1080` baseline) では Session 本体を、中央の `message list または preview` と上下左右の dock に分ける
-  - 既定では左右 pane と splitter を Window 上端から下端まで通し、Header と ActionDock は中央列を占有する
-  - 上下 splitter を操作した後は full-width Header / ActionDock を優先し、左右 splitter を操作すると左右 pane 優先へ戻す
-  - ActionDock を expanded から閉じた時は、優先度を左右 pane 優先へ戻す
-  - File Explorer と Context pane は左右を同時には表示しない
-  - Header、ActionDock、左右 pane は対応する splitter の click で切り替える。左右 pane と ActionDock は展開中の drag でサイズを調整する
+  - HeaderとActionDockは常に全幅を使う。左右paneはその間で中央surfaceと並び、splitter操作やdockの開閉で配置を変更しない
+  - HeaderとActionDockはclickで開閉する。左右paneは排他表示とし、clickで開閉する。閉じた領域からのdrag展開は行わない。開いた領域のdragと矢印キーによる調整は、領域側が定義する最小サイズと中央領域に必要なサイズを守る。ActionDockはHeaderとsplitter以外の残余高を使い、中央領域が160px未満になる場合は中央を高さ0で非表示にし、160px以上に戻ると会話stateとスクロール位置を保って再表示する
   - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
-  - Header、ActionDock、side pane、layout priority の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
+  - Header、ActionDock、side pane の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
   - title 編集などの強制表示は保存済み preference を変更しない
-  - 中央 surface の最小高を優先し、ActionDock の高さは layout 高の40%までとする
+  - wide layout では中央 surface の最小高さを160pxとし、中央が160px未満になるサイズでは中央を高さ0で非表示にする。ActionDockの高さはHeaderとsplitter以外の残余高まで使用できる。narrow layoutではactive side paneとwork surfaceの縦stackを維持する
   - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
-  - splitter の click で対応する pane を切り替える。wide layout では左右 splitter の drag による幅調整も受け付ける
+  - 左右splitterはclickで開閉し、開いた領域をdragと矢印キーでサイズ調整する。幅0でもclick用の操作領域を残す
+  - 中央が高さ0の間はHeaderとActionDockのsplitterだけを表示し、それ以外のsplitterは操作不可とする
+  - ActionDockの展開時最小高さは320pxとし、実行設定は常時表示する。展開時も入力欄は最低100pxを保ち、高さが不足する場合は内部スクロールで設定と送信操作へ到達できるようにする
+  - 最小サイズは各領域のCSS custom propertyで所有し、レイアウト側が読み取る。File Explorerの最小幅は260px、Context paneは360px、縦stack時は各200px、中央の最小高さは160pxとする。Main／Auxiliaryは各360pxで、両側表示中に中央の実幅が両者とsplitterの合計未満なら送信対象側だけを表示する。中央splitterは1本とし、端へ寄せて片側の要求幅が最小幅の半分未満になるとその側を閉じ、反対側を全幅表示する。閉じた側はclickで両側表示へ戻す。表示比率と送信対象は独立して保持する
   - pane を隠した時も splitter は再表示 affordance として残す
-  - side pane の表示状態は `files | context | none` の単一値として app 共通設定へ保存し、初期値は `none` とする。新しく開く Window は利用可能な永続値を初期値として使う
+  - side pane の表示状態は `files | context | none` の値として app 共通設定へ保存し、初期値は `none` とする。新しく開く Window は利用可能な永続値を初期値として使う
   - 開いている Window の表示状態は renderer local state とし、別 Window での切り替えには追従させない
-  - `side-pane-first` では side pane が Header と ActionDock の外側を縦断し、`dock-first` では side pane が Header と ActionDock の間で中央 surface と並ぶ
-  - viewport が `1400px` 未満の narrow width では active side pane と work surface を縦 stack にし、splitter の click 操作だけを維持する。`1400px` 以上では左右 pane の drag と各 splitter の click を使う
-  - current minimum は split-screen を考慮し、`900px` 台の window 幅でも縦 stack のまま到達性を維持する
+  - viewport が `1400px` 未満では表示中の左右paneとwork surfaceを縦stackにし、左右splitterは縦方向のdragと上下矢印キーで高さを調整する。`1400px` 以上では横方向のdragと左右矢印キーで幅を調整する。サイズはWindow内で保持し、領域の最小サイズと利用可能領域に合わせて補正する
+  - Session / Companion Windowの最小サイズは1100x720 DIPとし、current minimumはsplit-screenを考慮して到達性を維持する
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
 - `Top Bar`
   - default は hidden とする
-  - 上 splitter を押すと `dock-first` に切り替わり、Header の表示と `Rename / Audit Log / Terminal / Delete` を切り替える
+  - 上 splitter を押すと Header の表示と `Rename / Audit Log / Terminal / Delete` を切り替える
   - Header は1行分の固定高とし、splitter の drag による高さ変更は行わない
   - `More` と `Close` は使わない
   - title 編集中は effective state として表示を維持する
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
-  - `dock-first` では full-width、`side-pane-first` では左右 pane の間の下 dock として置く
+  - 常に全幅の下dockとして置く
   - compact でも draft preview、添付数、run 状態、末尾移動、`Send / Cancel` を残す
   - 開閉は下 splitter に集約し、dock 内に `Hide` や reopen hit area を置かない
   - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる

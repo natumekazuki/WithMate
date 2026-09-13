@@ -12,7 +12,7 @@ import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
-import type { SessionSummary } from "../../src/session-state.js";
+import type { HomeSessionSummary, SessionSummary } from "../../src/session-state.js";
 import type { CompanionSessionSummary } from "../../src/companion-state.js";
 import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
@@ -495,7 +495,6 @@ describe("HomeLaunchDialog", () => {
       open={true}
       title="demo"
       sessionFolderSelected={false}
-      launchWorkspacePathLabel="workspace"
       workspacePathInput="C:\\work space\\"
       workspaceValidation={workspaceValidation}
       workspaceValidationMessage={workspaceValidation === "invalid" ? "Path not found." : ""}
@@ -918,96 +917,91 @@ describe("HomeRecentSessionsPanel", () => {
 describe("HomeMonitorContent", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
+  const createMonitorSession = (id: string, taskTitle: string): HomeSessionSummary => ({
+    id,
+    taskTitle,
+    status: "idle",
+    updatedAt: "2026-03-30T00:00:00.000Z",
+    isPinned: false,
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 5,
+    characterId: "mate",
+    character: "Solo Mate",
+    characterIconPath: "mate.png",
+    characterThemeColors: { main: "#223344", sub: "#88bbcc" },
+    runState: "idle",
+  });
+
+  const createMonitorCompanion = (id: string, taskTitle: string): CompanionSessionSummary => ({
+    id,
+    groupId: "group-1",
+    taskTitle,
+    status: "active",
+    repoRoot: "C:/workspace/repo",
+    focusPath: "",
+    targetBranch: "main",
+    baseSnapshotRef: "refs/withmate/base/1",
+    baseSnapshotCommit: "base-1",
+    selectedPaths: [],
+    changedFiles: [],
+    siblingWarnings: [],
+    allowedAdditionalDirectories: [],
+    runState: "idle",
+    threadId: "",
+    provider: "codex",
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    approvalMode: "untrusted",
+    codexSandboxMode: "danger-full-access",
+    codexSpeed: "standard",
+    codexReviewer: "none",
+    character: "Solo Mate",
+    characterRoleMarkdown: "",
+    characterIconPath: "mate.png",
+    characterThemeColors: { main: "#223344", sub: "#88bbcc" },
+    updatedAt: "2026-03-30T00:00:00.000Z",
+    latestMergeRun: null,
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Home MonitorのAgent/Companion entryは種別、実行状態、キャラアイコンとセッション情報を表示する"
+  // oracle = { type = "contract", ref = "home-monitor rendering" }
+  // fault = "Monitor entryの種別や実行状態が誤表示される、またはキャラアイコンやセッション情報が欠落する"
+  // observable = "HomeMonitorContentのrender済みHTMLにおけるAgent/Companion/status badge、avatarとセッション情報"
+  // observation_boundary = "component-behavior"
+  // scope = "home-monitor-rendering"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Monitor カードはキャラアイコン付きでセッション情報を表示する", () => {
     const entries: HomeMonitorEntry[] = [
       {
         kind: "agent",
-        session: {
-          id: "session-1",
-          taskTitle: "Agent task",
-          workspaceLabel: "workspace",
-          workspacePath: "C:/workspace",
-          character: "Solo Mate",
-          characterIconPath: "mate.png",
-        },
+        session: createMonitorSession("session-1", "Agent task"),
         state: { kind: "running", label: "実行中" },
-      } as HomeMonitorEntry,
+      },
       {
         kind: "agent",
-        session: {
-          id: "session-2",
-          taskTitle: "Auxiliary task",
-          workspaceLabel: "workspace",
-          workspacePath: "C:/workspace",
-          character: "Solo Mate",
-          characterIconPath: "mate.png",
-        },
-        activeAuxiliarySession: {
-          id: "aux-1",
-          parentSessionId: "session-2",
-          status: "active",
-          runState: "running",
-          title: "Auxiliary",
-          provider: "codex",
-          catalogRevision: 1,
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          approvalMode: "untrusted",
-          codexSandboxMode: "danger-full-access",
-          customAgentName: "",
-          allowedAdditionalDirectories: [],
-          threadId: "",
-          displayAfterMessageIndex: null,
-          createdAt: "2026-03-28T00:00:00.000Z",
-          updatedAt: "2026-03-30T00:00:00.000Z",
-          closedAt: "",
-        },
+        session: createMonitorSession("session-2", "Auxiliary task"),
         state: { kind: "running", label: "実行中" },
-      } as HomeMonitorEntry,
+      },
       {
         kind: "companion",
-        session: {
-          id: "companion-1",
-          groupId: "group-1",
-          taskTitle: "Companion task",
-          character: "Solo Mate",
-          characterIconPath: "mate.png",
-        },
+        session: createMonitorCompanion("companion-1", "Companion task"),
+        isWindowOpen: true,
         state: { kind: "neutral", label: "待機" },
         groupLabel: "demo",
-      } as HomeMonitorEntry,
+      },
       {
         kind: "companion",
-        session: {
-          id: "companion-2",
-          groupId: "group-1",
-          taskTitle: "Companion Auxiliary task",
-          character: "Solo Mate",
-          characterIconPath: "mate.png",
-        },
-        activeAuxiliarySession: {
-          id: "aux-companion",
-          parentSessionId: "companion-2",
-          status: "active",
-          runState: "running",
-          title: "Auxiliary",
-          provider: "codex",
-          catalogRevision: 1,
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          approvalMode: "untrusted",
-          codexSandboxMode: "danger-full-access",
-          customAgentName: "",
-          allowedAdditionalDirectories: [],
-          threadId: "",
-          displayAfterMessageIndex: null,
-          createdAt: "2026-03-28T00:00:00.000Z",
-          updatedAt: "2026-03-30T00:00:00.000Z",
-          closedAt: "",
-        },
+        session: createMonitorCompanion("companion-2", "Companion Auxiliary task"),
+        isWindowOpen: true,
         state: { kind: "running", label: "実行中" },
         groupLabel: "demo",
-      } as HomeMonitorEntry,
+      },
     ];
     const html = renderToStaticMarkup(
       <HomeMonitorContent
@@ -1015,6 +1009,7 @@ describe("HomeMonitorContent", () => {
         nonRunningEntries={[]}
         onOpenSession={noOp}
         onOpenCompanionReview={noOp}
+        onShowContextMenu={noOp}
       />,
     );
 
@@ -1024,15 +1019,250 @@ describe("HomeMonitorContent", () => {
     assert.ok(html.includes("Companion task"));
     assert.ok(html.includes("Companion Auxiliary task"));
     assert.ok(html.includes("demo"));
-    assert.ok(html.includes(">Agent</span>"));
-    assert.equal(html.match(/>Auxiliary<\/span>/g)?.length, 2);
-    assert.ok(html.includes(">Companion</span>"));
+    assert.equal(html.match(/>Agent<\/span>/g)?.length, 2);
+    assert.equal(html.match(/>Auxiliary<\/span>/g)?.length ?? 0, 0);
+    assert.equal(html.match(/>Companion<\/span>/g)?.length, 2);
     assert.equal(html.match(/class="session-status home-monitor-status running"/g)?.length, 3);
     assert.equal(html.match(/class="session-status home-monitor-status neutral"/g)?.length, 1);
     assert.equal(html.match(/>実行中<\/span>/g)?.length, 3);
     assert.ok(html.includes(">待機</span>"));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 4);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 4);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "開いているAgent/CompanionのMonitor rowは右クリックとContextMenu/Shift+F10を対象entryと座標へ変換し、閉じているCompanion rowはmenu対象外としてbrowser default menuを抑止する"
+  // oracle = { type = "contract", ref = "HomeMonitorContent session monitor context menu contract" }
+  // fault = "Agent/Companionの種別またはkeyboard context menuの分岐が別entryへ送られる、keyboard座標が原点に固定される、または閉じたCompanion rowからmenu操作が送られる"
+  // observable = "callbackへ渡されたkind、sessionId、point、非ゼロgetBoundingClientRectから生成されたkeyboard座標、aria-haspopup、およびcontext menu eventのdefaultPrevented"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent context menu interaction"
+  // lifecycle = "permanent"
+  // impact = "誤ったSession Windowを閉じる操作やbrowser menuとの競合を防ぐ"
+  // distinction = "native menuのselectionやMain IPCのrequest validationとは分離してrendererのentry mappingを検証する"
+  // @end-test-value
+  it("Monitor row は右クリックとkeyboard context menuを対象entryへ渡す", async () => {
+    const previousGlobals = {
+      window: globalThis.window,
+      document: globalThis.document,
+      Node: globalThis.Node,
+      HTMLElement: globalThis.HTMLElement,
+      Event: globalThis.Event,
+      MouseEvent: globalThis.MouseEvent,
+      KeyboardEvent: globalThis.KeyboardEvent,
+      PointerEvent: globalThis.PointerEvent,
+    };
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+      pretendToBeVisual: true,
+    });
+    const container = dom.window.document.getElementById("root") as HTMLElement;
+    const root = createRoot(container);
+    const requests: unknown[] = [];
+    const entry: HomeMonitorEntry = {
+      kind: "agent",
+      session: {
+        id: "session-context-menu",
+        taskTitle: "Context menu task",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        character: "Solo Mate",
+        characterIconPath: "mate.png",
+      },
+      state: { kind: "neutral", label: "待機" },
+    } as HomeMonitorEntry;
+    const companionEntry: HomeMonitorEntry = {
+      kind: "companion",
+      session: {
+        id: "companion-context-menu",
+        groupId: "group-context-menu",
+        taskTitle: "Companion context menu task",
+        character: "Solo Mate",
+        characterIconPath: "mate.png",
+      },
+      isWindowOpen: true,
+      state: { kind: "neutral", label: "待機" },
+      groupLabel: "context menu",
+    } as HomeMonitorEntry;
+    const closedCompanionEntry: HomeMonitorEntry = {
+      kind: "companion",
+      session: {
+        id: "companion-context-menu-closed",
+        groupId: "group-context-menu",
+        taskTitle: "Closed Companion context menu task",
+        character: "Solo Mate",
+        characterIconPath: "mate.png",
+      },
+      isWindowOpen: false,
+      state: { kind: "neutral", label: "待機" },
+      groupLabel: "context menu",
+    } as HomeMonitorEntry;
+
+    Object.defineProperties(globalThis, {
+      window: { configurable: true, value: dom.window },
+      document: { configurable: true, value: dom.window.document },
+      Node: { configurable: true, value: dom.window.Node },
+      HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+      Event: { configurable: true, value: dom.window.Event },
+      MouseEvent: { configurable: true, value: dom.window.MouseEvent },
+      KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
+      PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+    });
+
+    try {
+      await act(async () => root.render(
+        <HomeMonitorContent
+          runningEntries={[entry, companionEntry, closedCompanionEntry]}
+          nonRunningEntries={[]}
+          onOpenSession={noOp}
+          onOpenCompanionReview={noOp}
+          onShowContextMenu={(kind, sessionId, point) => requests.push({ kind, sessionId, point })}
+        />,
+      ));
+
+      const [row, companionRow, closedCompanionRow] = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-row"));
+      assert.ok(row);
+      assert.ok(companionRow);
+      assert.ok(closedCompanionRow);
+      assert.equal(row.getAttribute("aria-haspopup"), "menu");
+      assert.equal(companionRow.getAttribute("aria-haspopup"), "menu");
+      assert.equal(closedCompanionRow.getAttribute("aria-haspopup"), null);
+      Object.defineProperty(row, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 120.4, bottom: 240.6 }),
+      });
+      Object.defineProperty(companionRow, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 320.4, bottom: 440.6 }),
+      });
+      const contextMenuEvent = new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 24,
+        clientY: 48,
+      });
+      await act(async () => row.dispatchEvent(contextMenuEvent));
+      assert.equal(contextMenuEvent.defaultPrevented, true);
+      assert.deepEqual(requests, [{
+        kind: "agent",
+        sessionId: "session-context-menu",
+        point: { x: 24, y: 48 },
+      }]);
+
+      const companionContextMenuEvent = new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 72,
+        clientY: 96,
+      });
+      await act(async () => companionRow.dispatchEvent(companionContextMenuEvent));
+      assert.equal(companionContextMenuEvent.defaultPrevented, true);
+      assert.deepEqual(requests.at(-1), {
+        kind: "companion",
+        sessionId: "companion-context-menu",
+        point: { x: 72, y: 96 },
+      });
+
+      const contextMenuKeyEvent = new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "ContextMenu",
+      });
+      await act(async () => row.dispatchEvent(contextMenuKeyEvent));
+      assert.equal(contextMenuKeyEvent.defaultPrevented, true);
+      assert.deepEqual(requests.at(-1), {
+        kind: "agent",
+        sessionId: "session-context-menu",
+        point: { x: 120, y: 241 },
+      });
+
+      const shiftF10Event = new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "F10",
+        shiftKey: true,
+      });
+      await act(async () => companionRow.dispatchEvent(shiftF10Event));
+      assert.equal(shiftF10Event.defaultPrevented, true);
+      assert.deepEqual(requests.at(-1), {
+        kind: "companion",
+        sessionId: "companion-context-menu",
+        point: { x: 320, y: 441 },
+      });
+
+      const requestsBeforeClosedCompanion = requests.length;
+      const closedCompanionContextMenuEvent = new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 144,
+        clientY: 288,
+      });
+      await act(async () => closedCompanionRow.dispatchEvent(closedCompanionContextMenuEvent));
+      assert.equal(closedCompanionContextMenuEvent.defaultPrevented, true);
+      assert.equal(requests.length, requestsBeforeClosedCompanion);
+
+      const closedCompanionContextMenuKeyEvent = new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "ContextMenu",
+      });
+      await act(async () => closedCompanionRow.dispatchEvent(closedCompanionContextMenuKeyEvent));
+      assert.equal(closedCompanionContextMenuKeyEvent.defaultPrevented, true);
+      assert.equal(requests.length, requestsBeforeClosedCompanion);
+    } finally {
+      await act(async () => root.unmount());
+      dom.window.close();
+      Object.defineProperties(globalThis, {
+        window: { configurable: true, value: previousGlobals.window },
+        document: { configurable: true, value: previousGlobals.document },
+        Node: { configurable: true, value: previousGlobals.Node },
+        HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
+        Event: { configurable: true, value: previousGlobals.Event },
+        MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
+        KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
+        PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+      });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Session Monitorのcontext menu失敗feedbackはMonitor contentのpolite live statusへ表示され、空のfeedbackでは表示されない"
+  // oracle = { type = "contract", ref = "HomeMonitorContent session monitor feedback" }
+  // fault = "native menuやclipboardの失敗結果が利用者へ見えない、または正常系でも空でないfeedbackが残る"
+  // observable = "feedback文字列のDOM表示、role=status、aria-live=polite、および空feedback時の要素不在"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent context menu feedback rendering"
+  // lifecycle = "permanent"
+  // impact = "Session Monitor操作の失敗を利用者と支援技術へ伝える"
+  // distinction = "context menuのentry mappingやnative menu resultではなく、失敗結果のvisible projectionを検証する"
+  // @end-test-value
+  it("Monitor feedbackは失敗時だけpoliteなlive statusを表示する", () => {
+    const emptyHtml = renderToStaticMarkup(
+      <HomeMonitorContent
+        runningEntries={[]}
+        nonRunningEntries={[]}
+        onOpenSession={noOp}
+        onOpenCompanionReview={noOp}
+        onShowContextMenu={noOp}
+      />,
+    );
+    const failureHtml = renderToStaticMarkup(
+      <HomeMonitorContent
+        runningEntries={[]}
+        nonRunningEntries={[]}
+        feedback="Session IDをコピーできませんでした。"
+        onOpenSession={noOp}
+        onOpenCompanionReview={noOp}
+        onShowContextMenu={noOp}
+      />,
+    );
+
+    assert.doesNotMatch(emptyHtml, /role="status"/);
+    assert.match(
+      failureHtml,
+      /role="status" aria-live="polite">Session IDをコピーできませんでした。<\/p>/,
+    );
   });
 });
 
@@ -1055,6 +1285,7 @@ describe("HomeRightPane", () => {
     sessionWindowRestoreIds: readonly string[] = [],
     sessionWindowRestorePending = false,
     sessionWindowRestoreFeedback = "",
+    sessionMonitorFeedback = "",
   ) => renderToStaticMarkup(
     <HomeRightPane
       rightPaneView={rightPaneView}
@@ -1071,10 +1302,12 @@ describe("HomeRightPane", () => {
       onEditCharacter={noOp}
       onOpenSession={noOp}
       onOpenCompanionReview={noOp}
+      onShowSessionMonitorContextMenu={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
       sessionWindowRestoreIds={sessionWindowRestoreIds}
       sessionWindowRestorePending={sessionWindowRestorePending}
       sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
+      sessionMonitorFeedback={sessionMonitorFeedback}
     />,
   );
 
@@ -1223,6 +1456,36 @@ describe("HomeRightPane", () => {
     assert.match(failureHtml, /session-b（削除済み）/);
     assert.match(failureHtml, /role="status" aria-live="polite"/);
     assert.doesNotMatch(failureHtml, /件のSessionを開きました/);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "HomeのMonitor tabはSession Monitor context menuの失敗feedbackを利用者向けlive statusへ表示する"
+  // oracle = { type = "contract", ref = "HomeRightPane Session Monitor feedback" }
+  // fault = "HomeAppから渡されたcontext menu失敗messageがright paneで欠落するか、支援技術へ通知されない"
+  // observable = "Monitor tab内のfeedback文字列、role=status、aria-live=polite"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeRightPane Session Monitor feedback rendering"
+  // lifecycle = "permanent"
+  // impact = "HomeからのSession Monitor操作失敗を利用者へ伝える"
+  // distinction = "session restore feedbackやCharacters feedbackではなく、Session Monitor context menu専用の表示経路を検証する"
+  // @end-test-value
+  it("Session Monitor feedbackをMonitor tab内へ表示する", () => {
+    const html = renderHomeRightPane(
+      "monitor",
+      undefined,
+      true,
+      "",
+      [],
+      false,
+      "",
+      "Session IDをコピーできませんでした。",
+    );
+
+    const monitorPanel = html.match(/<section class="home-monitor-panel" role="tabpanel" aria-label="Session Monitor">[\s\S]*?<\/section>/);
+    assert.ok(monitorPanel);
+    assert.match(monitorPanel[0], /Session IDをコピーできませんでした。/);
+    assert.match(monitorPanel[0], /role="status" aria-live="polite"/);
   });
 
   it("Character icon 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {

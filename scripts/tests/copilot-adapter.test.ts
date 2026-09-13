@@ -1219,6 +1219,42 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     ]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Copilotのstable raw assistant itemはsub-agentのagentId markerを保持する"
+  // oracle = { type = "contract", ref = "issue-710-preview-legacy-audit-backfill" }
+  // fault = "agentId markerを落とし、legacy resolverがsub-agent messageをtop-level応答と誤認できるraw itemを保存する"
+  // observable = "buildCopilotStableRawItemsのassistant.message data.agentId"
+  // observation_boundary = "public-boundary"
+  // scope = "copilot-stable-raw-sub-agent-marker"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("stable raw assistant item は sub-agent の agentId を保持する", () => {
+    const items = buildCopilotStableRawItems([
+      {
+        type: "assistant.message",
+        agentId: "subagent-1",
+        timestamp: "2026-03-23T00:00:00.000Z",
+        data: {
+          content: "sub-agent report",
+          parentToolCallId: null,
+        },
+      } as never,
+    ], "F:/repo");
+
+    assert.deepEqual(items, [
+      {
+        type: "assistant.message",
+        timestamp: "2026-03-23T00:00:00.000Z",
+        data: {
+          content: "sub-agent report",
+          parentToolCallId: null,
+          agentId: "subagent-1",
+        },
+      },
+    ]);
+  });
+
   it("assistant.reasoning / reasoning_delta は rawItems に残さない", () => {
     const items = buildCopilotStableRawItems([
       {

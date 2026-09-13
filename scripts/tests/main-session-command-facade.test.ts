@@ -35,6 +35,7 @@ function createLaunchSelection(
     approvalMode: "untrusted",
     codexSandboxMode: "workspace-write",
     codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "",
     ...overrides,
   };
@@ -59,17 +60,18 @@ function createSessionRequest(workspace: Record<string, unknown>): Record<string
 type MainSessionCommandFacadeTestDeps =
   Omit<
     ConstructorParameters<typeof MainSessionCommandFacade>[0],
-    "dismissSessionTurnNotification" | "validateWorkspaceDirectory"
+    "dismissSessionTurnNotification" | "validateWorkspaceDirectory" | "initializeCreatedSession"
   >
   & Partial<Pick<
     ConstructorParameters<typeof MainSessionCommandFacade>[0],
-    "dismissSessionTurnNotification" | "validateWorkspaceDirectory"
+    "dismissSessionTurnNotification" | "validateWorkspaceDirectory" | "initializeCreatedSession"
   >>;
 
 function createMainSessionCommandFacade(
   deps: MainSessionCommandFacadeTestDeps,
 ): MainSessionCommandFacade {
   return new MainSessionCommandFacade({
+    initializeCreatedSession: async () => undefined,
     dismissSessionTurnNotification: () => undefined,
     validateWorkspaceDirectory: async () => ({ valid: true }),
     ...deps,
@@ -270,6 +272,188 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
       approvalMode: "never",
       codexSandboxMode: "danger-full-access",
       customAgentName: "reviewer",
+    },
+  );
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main Sessionの永続化後に行う初期Auxiliary作成はprovider runtime lockの外で実行し、同じlockを使う初期化処理を完了できる"
+// oracle = { type = "contract", ref = "accepted behavior: created session initialization runs after provider-exclusive creation" }
+// fault = "初期Auxiliary作成がprovider runtime lockを再取得してdeadlockする、または初期化前に作成結果を返す"
+// observable = "initializeCreatedSession内のprovider runtime lock再取得とcreateSessionFromRequestの完了"
+// observation_boundary = "public-boundary"
+// scope = "main-session-create"
+// lifecycle = "permanent"
+// @end-test-value
+test("MainSessionCommandFacade は Main Session 作成後の初期化を provider runtime lock の外で完了する", async () => {
+  const coordinator = new ProviderRuntimeOperationCoordinator();
+  const events: string[] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive: (operation) => coordinator.runExclusive(operation),
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () =>
+      ({
+        createSession(input) {
+          events.push(`persist:${input.id}`);
+          return input as never;
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    initializeCreatedSession: async (session) => {
+      events.push(`initialize:start:${session.id}`);
+      await coordinator.runExclusive(() => {
+        events.push(`initialize:lock:${session.id}`);
+      });
+      events.push(`initialize:end:${session.id}`);
+    },
+    createSessionId: () => "launch-initialized",
+    createSessionFilesDirectory: () => "C:/WithMate/session-files/launch-initialized",
+    isSessionFilesWorkspace: () => false,
+  });
+
+  const result = await facade.createSessionFromRequest(
+    createSessionRequest({ kind: "directory", label: "repo", path: "C:/repo", branch: "main" }) as never,
+  );
+
+  assert.equal(result.id, "launch-initialized");
+  assert.deepEqual(events, [
+    "persist:launch-initialized",
+    "initialize:start:launch-initialized",
+    "initialize:lock:launch-initialized",
+    "initialize:end:launch-initialized",
+  ]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "初期Auxiliary作成に失敗した場合、今回作成したMain SessionとSessionFolderだけを削除し、既存Sessionを保持する"
+// oracle = { type = "contract", ref = "accepted behavior: failed created-session initialization is rolled back" }
+// fault = "初期化失敗後に新規Main SessionまたはSessionFolderが残る、または既存Sessionまで削除する"
+// observable = "deleteSessionの対象IDと作成済みSessionFolder cleanupの対象ID"
+// observation_boundary = "public-boundary"
+// scope = "main-session-create"
+// lifecycle = "permanent"
+// @end-test-value
+test("MainSessionCommandFacade は初期化失敗時に今回作成した Main Session と SessionFolder だけを後始末する", async () => {
+  const calls: string[] = [];
+  const existingSession = { id: "existing-session", workspacePath: "C:/existing" } as never;
+  const createdSession = {
+    id: "launch-initialize-failed",
+    workspacePath: "C:/WithMate/session-files/launch-initialize-failed",
+  } as never;
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [existingSession, createdSession],
+    getStoredSessionSummaries: () => [existingSession],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () =>
+      ({
+        createSession() {
+          calls.push("persist");
+          return createdSession;
+        },
+        deleteSession(sessionId) {
+          calls.push(`delete:${sessionId}`);
+          return { deletedSessionIds: [sessionId], skippedRunningSessionIds: [] };
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    initializeCreatedSession: async () => {
+      calls.push("initialize");
+      throw new Error("default Auxiliary を作成できない");
+    },
+    createSessionId: () => "launch-initialize-failed",
+    createSessionFilesDirectory: () => "C:/WithMate/session-files/launch-initialize-failed",
+    isSessionFilesWorkspace: (session) => session.id === createdSession.id,
+    dismissSessionTurnNotification(sessionId) {
+      calls.push(`dismiss:${sessionId}`);
+    },
+    cleanupSessionFilesDirectory(sessionId) {
+      calls.push(`cleanup:${sessionId}`);
+      return Promise.resolve();
+    },
+  });
+
+  await assert.rejects(
+    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
+    /default Auxiliary を作成できない/,
+  );
+  assert.deepEqual(calls, [
+    "persist",
+    "initialize",
+    "delete:launch-initialize-failed",
+    "dismiss:launch-initialize-failed",
+    "cleanup:launch-initialize-failed",
+  ]);
+  assert.equal(calls.includes("delete:existing-session"), false);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "初期化失敗後の後始末にも失敗した場合、初期化原因と後始末原因をAggregateErrorで保持する"
+// oracle = { type = "contract", ref = "accepted behavior: rollback failure is reported without masking initialization failure" }
+// fault = "後始末失敗で初期化原因が失われる、または成功として扱われる"
+// observable = "返却されたAggregateErrorのcauseとerrors"
+// observation_boundary = "public-boundary"
+// scope = "main-session-create"
+// lifecycle = "permanent"
+// @end-test-value
+test("MainSessionCommandFacade は初期化失敗と後始末失敗をともに報告する", async () => {
+  const initializationError = new Error("Auxiliary initialization failed");
+  const cleanupError = new Error("Session cleanup failed");
+  const createdSession = {
+    id: "launch-cleanup-failed",
+    workspacePath: "C:/WithMate/session-files/launch-cleanup-failed",
+  } as never;
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [createdSession],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () =>
+      ({
+        createSession() {
+          return createdSession;
+        },
+        deleteSession() {
+          return { deletedSessionIds: [createdSession.id], skippedRunningSessionIds: [] };
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    initializeCreatedSession: async () => {
+      throw initializationError;
+    },
+    createSessionId: () => createdSession.id,
+    createSessionFilesDirectory: () => "C:/WithMate/session-files/launch-cleanup-failed",
+    isSessionFilesWorkspace: () => true,
+    dismissSessionTurnNotification: () => undefined,
+    cleanupSessionFilesDirectory: async () => {
+      throw cleanupError;
+    },
+  });
+
+  await assert.rejects(
+    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.cause, initializationError);
+      assert.deepEqual(error.errors, [initializationError, cleanupError]);
+      return true;
     },
   );
 });
@@ -553,11 +737,13 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
   );
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "Main Session作成時のMain-owned runtime optionsはIPC payloadではなくlaunch selectionから保存する"
-// oracle = { type = "contract", ref = "accepted behavior: new Session defaults and Main-owned runtime selection" }
-// failure_mode = "型境界を迂回したIPC payloadのruntime値が新規Sessionへ混入する"
+// claim = "Main Session作成はlaunch selectionのCodex speedとReviewerをPersistence Serviceへ渡し、IPC payloadで上書きさせない"
+// oracle = { type = "contract", ref = "accepted behavior: new Session runtime selection inheritance" }
+// fault = "IPC payloadのspeedまたはReviewerがlaunch selectionの値を上書きする、または解決値がPersistence Serviceへの入力から欠落する"
+// observable = "Session persistence serviceへ渡された作成入力のcodexSpeedとcodexReviewer"
+// observation_boundary = "public-boundary"
 // scope = "main-session-create"
 // lifecycle = "permanent"
 // @end-test-value
@@ -573,6 +759,8 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
       reasoningEffort: "xhigh",
       approvalMode: "on-request",
       codexSandboxMode: "read-only",
+      codexSpeed: "fast",
+      codexReviewer: "auto-review",
       customAgentName: "stored-agent",
     }),
     getSessionPersistenceService: () =>
@@ -609,7 +797,8 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
     reasoningEffort: "low",
     approvalMode: "never",
     codexSandboxMode: "danger-full-access",
-    codexSpeed: "fast",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     customAgentName: "forged-agent",
   };
 
@@ -626,6 +815,7 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
       approvalMode: persistedInput?.approvalMode,
       codexSandboxMode: persistedInput?.codexSandboxMode,
       codexSpeed: persistedInput?.codexSpeed,
+      codexReviewer: persistedInput?.codexReviewer,
       customAgentName: persistedInput?.customAgentName,
     },
     {
@@ -637,7 +827,8 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
       reasoningEffort: "xhigh",
       approvalMode: "on-request",
       codexSandboxMode: "read-only",
-      codexSpeed: "standard",
+      codexSpeed: "fast",
+      codexReviewer: "auto-review",
       customAgentName: "stored-agent",
     },
   );

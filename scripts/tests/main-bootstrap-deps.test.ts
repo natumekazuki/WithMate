@@ -3,9 +3,22 @@ import test from "node:test";
 
 import { createMainBootstrapDeps } from "../../src-electron/main-bootstrap-deps.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "main bootstrapのgrouped window IPC depsはSession Monitor context menu delegateをregistration depsへ渡す"
+// oracle = { type = "contract", ref = "createMainBootstrapDeps grouped window dependencies" }
+// fault = "Session Monitor context menu delegateがbootstrap境界で欠落し、Main IPC registrationへ到達しない"
+// observable = "registerMainIpcHandlersへ渡されたwindow registration depsのdelegate"
+// observation_boundary = "public-boundary"
+// scope = "main bootstrap grouped window IPC deps"
+// lifecycle = "permanent"
+// impact = "Session Monitorの右クリック操作をMain IPCへ配線する"
+// distinction = "window delegateのgroupingだけを検証し、IPC channel登録とnative menu selectionは別testで扱う"
+// @end-test-value
 test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMainIpcHandlers に渡す", async () => {
   const calls: string[] = [];
   let receivedDeps: unknown = null;
+  const showSessionMonitorContextMenu = async () => ({ status: "dismissed" as const });
 
   const deps = createMainBootstrapDeps({
     ipcMain: {} as never,
@@ -38,6 +51,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         openSessionWindow: async () => ({}) as never,
         openHomeWindow: async () => ({}) as never,
         openSessionMonitorWindow: async () => ({}) as never,
+        isSessionMonitorWindow: () => false,
+        showSessionMonitorContextMenu,
         openSettingsWindow: async () => ({}) as never,
         openMemoryV6ReviewWindow: async () => ({}) as never,
         isSettingsWindow: () => false,
@@ -186,5 +201,9 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
   deps.broadcastModelCatalog(snapshot);
 
   assert.equal((receivedDeps as { openHomeWindow(): Promise<void> }).openHomeWindow instanceof Function, true);
+  assert.equal(
+    (receivedDeps as { showSessionMonitorContextMenu: typeof showSessionMonitorContextMenu }).showSessionMonitorContextMenu,
+    showSessionMonitorContextMenu,
+  );
   assert.deepEqual(calls, ["initialize", "registerIpcHandlers", "openHome", "broadcast:1"]);
 });

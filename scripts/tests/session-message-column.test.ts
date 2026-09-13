@@ -531,7 +531,6 @@ async function mountSessionMessageColumn(options: {
         actionDock: null,
         actionDockSplitter: null,
         isActionDockExpanded: false,
-        layoutPriority: "dock-first",
         splitter: null,
         rightPane: null,
       }));

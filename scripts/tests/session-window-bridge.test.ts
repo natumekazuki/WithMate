@@ -507,6 +507,101 @@ describe("SessionWindowBridge", () => {
     assert.equal(window.closeCount, 2);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Session MonitorからのSession Window close requestも通常closeと同じrunning確認を経て、承認時だけ閉じる"
+  // oracle = { type = "contract", ref = "SessionWindowBridge requestCloseSessionWindow and running close contract" }
+  // fault = "Monitorからのclose requestが実行中確認を飛ばす、確認後のcloseを二重化する、または対象Windowを閉じない"
+  // observable = "確認回数、Windowのdestroyed state、close呼出し回数"
+  // observation_boundary = "public-boundary"
+  // scope = "Session Window normal close request"
+  // lifecycle = "permanent"
+  // impact = "Monitorの閉じる操作が削除用force closeにならず、既存の実行中確認を維持する"
+  // distinction = "削除用closeSessionWindowのforce close経路やrenderer/native menu dispatchとは分離してbridgeの通常close契約を検証する"
+  // @end-test-value
+  it("requestCloseSessionWindow は通常closeの確認経路を使う", async () => {
+    const session = createSession();
+    const window = new StubWindow();
+    let confirmCount = 0;
+
+    const bridge = new SessionWindowBridge({
+      createWindow() {
+        return window;
+      },
+      async loadChatEntry() {},
+      getSession() {
+        return session;
+      },
+      isRunInFlight() {
+        return true;
+      },
+      getAllowQuitWithInFlightRuns() {
+        return false;
+      },
+      confirmCloseWhileRunning() {
+        confirmCount += 1;
+        return true;
+      },
+      broadcastOpenSessionWindowIds() {},
+    });
+
+    await bridge.openSessionWindow(session.id);
+    const closeResult = bridge.requestCloseSessionWindow(session.id);
+
+    assert.equal(confirmCount, 1);
+    assert.equal(window.destroyed, true);
+    assert.equal(window.closeCount, 2);
+    assert.equal(await closeResult, true);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Session MonitorからのSession Window close requestを実行中確認で取消すると、対象Windowとregistryを維持する"
+  // oracle = { type = "contract", ref = "SessionWindowBridge requestCloseSessionWindow cancellation contract" }
+  // fault = "確認取消後にWindowが閉じる、registryから消える、または確認が重複する"
+  // observable = "確認回数、Windowのdestroyed state、close呼出し回数、open session IDs"
+  // observation_boundary = "public-boundary"
+  // scope = "Session Window normal close cancellation"
+  // lifecycle = "permanent"
+  // impact = "実行中SessionをMonitorの誤操作で失わず、既存の通常close取消を維持する"
+  // distinction = "menu取消とは分離して、閉じる項目選択後のWindowClose確認取消を検証する"
+  // @end-test-value
+  it("running 中の close request取消ではWindowとregistryを維持する", async () => {
+    const session = createSession();
+    const window = new StubWindow();
+    let confirmCount = 0;
+
+    const bridge = new SessionWindowBridge({
+      createWindow() {
+        return window;
+      },
+      async loadChatEntry() {},
+      getSession() {
+        return session;
+      },
+      isRunInFlight() {
+        return true;
+      },
+      getAllowQuitWithInFlightRuns() {
+        return false;
+      },
+      confirmCloseWhileRunning() {
+        confirmCount += 1;
+        return false;
+      },
+      broadcastOpenSessionWindowIds() {},
+    });
+
+    await bridge.openSessionWindow(session.id);
+    const closeResult = bridge.requestCloseSessionWindow(session.id);
+
+    assert.equal(confirmCount, 1);
+    assert.equal(window.destroyed, false);
+    assert.equal(window.closeCount, 1);
+    assert.deepEqual(bridge.listOpenSessionWindowIds(), [session.id]);
+    assert.equal(await closeResult, false);
+  });
+
   it("idle の window close では Memory hook を起動せず window registry だけ更新する", async () => {
     const session = createSession();
     const broadcasts: string[][] = [];

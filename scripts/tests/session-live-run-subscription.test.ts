@@ -151,6 +151,16 @@ test("startLiveSessionRunSubscription は cleanup 後の初回取得結果を反
   assert.deepEqual(refreshedSessionIds, []);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Appは有効なselected sessionとactive runだけにlive subscriptionを作成し、購読前に表示状態をresetする"
+// oracle = { type = "contract", ref = "issue-710 concurrent live-run ownership" }
+// fault = "無効な選択状態で購読を開始する、または前の会話のlive stateを新しいsessionへ表示する"
+// observable = "App.tsxのguardとsubscription前reset"
+// observation_boundary = "declaration"
+// scope = "app-live-run-subscription-guard"
+// lifecycle = "permanent"
+// @end-test-value
 test("App の live run subscription 呼び出し前に session guard が残る", async () => {
   const source = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
   const guardIndex = source.indexOf("if (!withmateApi || !selectedSession || !activeRunSessionId)");
@@ -165,16 +175,23 @@ test("App の live run subscription 呼び出し前に session guard が残る",
   );
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "CompanionReviewはmerge viewまたはsession未選択時にlive run subscriptionを開始しない"
+// oracle = { type = "contract", ref = "issue-710 Companion live-run ownership" }
+// fault = "merge viewや無効なsessionで購読を開始し、別表示へlive runを混入させる"
+// observable = "CompanionReviewAppのsubscription guardとstart呼出し順"
+// observation_boundary = "declaration"
+// scope = "companion-live-run-subscription-guard"
+// lifecycle = "permanent"
+// @end-test-value
 test("CompanionReview の live run subscription 呼び出し前に session / merge guard が残る", async () => {
   const source = await readFile(new URL("../../src/CompanionReviewApp.tsx", import.meta.url), "utf8");
-  const guardIndex = source.indexOf("if (!withmateApi || !sessionId || isMergeView)");
+  const guardIndex = source.indexOf("if (!withmateApi || !activeRunSessionId || isMergeView)");
   const subscriptionIndex = source.indexOf("startLiveSessionRunSubscription({");
 
   assert.notEqual(guardIndex, -1);
   assert.notEqual(subscriptionIndex, -1);
   assert.ok(guardIndex < subscriptionIndex);
-  assert.match(
-    source.slice(guardIndex, subscriptionIndex),
-    /setLiveRunState\(\{ ownerSessionId: sessionId, state: null \}\);/,
-  );
+  assert.match(source.slice(guardIndex, subscriptionIndex), /return;/);
 });
