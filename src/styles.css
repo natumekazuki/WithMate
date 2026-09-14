@@ -277,11 +277,6 @@ button:disabled {
 
 .session-header-dock-slot {
   grid-area: header;
-  overflow-x: auto;
-}
-
-.session-header-dock-slot:has(.session-header-more[open]) {
-  overflow: visible;
 }
 
 .session-chat-layout > .session-dock-splitter.edge-top {
