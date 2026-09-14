@@ -76,10 +76,13 @@ export class DelegationService {
       if (known && (known.operation !== operation || !isDeepStrictEqual(known.input, input))) this.fail("IDEMPOTENCY_CONFLICT", "The key belongs to another delegation mutation.");
       if (known && known !== previous) throw new DelegationRevisionError(row.id, input.expectedRevision, row.revision);
       if (known === previous && previous?.result) return previous.result;
-      if (row.state === "compensated"
+      const completedMutation = known === previous && previous !== null
+        && ((operation === "delegation.cancel" && row.state === "cancelled")
+          || (operation === "delegation.compensate" && row.state === "compensated"));
+      if (!completedMutation && (row.state === "compensated"
         || (operation === "delegation.retry" && ["completed", "cancelled", "cancelling", "compensating"].includes(row.state))
         || (operation === "delegation.cancel" && ["completed", "cancelled", "compensating"].includes(row.state))
-        || (operation === "delegation.cancel" && previous?.operation === "delegation.compensate")) {
+        || (operation === "delegation.cancel" && previous?.operation === "delegation.compensate"))) {
         this.fail("DELEGATION_STATE_CONFLICT", "This operation cannot change the delegation's terminal or cleanup state.");
       }
       const nextPrior = previous && known !== previous ? [...prior, { operation: previous.operation, input: previous.input }] : prior;
@@ -94,7 +97,7 @@ export class DelegationService {
         if (row.revision !== input.expectedRevision) throw new DelegationRevisionError(row.id, input.expectedRevision, row.revision);
         row = this.save(binding, row, { lastMutation: { operation, input, result: null, prior: nextPrior }, proof, ...(operation !== "delegation.retry" && unapplied ? { pending: null } : {}) });
       }
-      row = await action(row);
+      if (!completedMutation) row = await action(row);
       const result = { ...row, revision: row.revision + 1, updatedAt: this.now() };
       return this.save(binding, row, { lastMutation: { operation, input, result, prior: nextPrior }, updatedAt: result.updatedAt });
     });

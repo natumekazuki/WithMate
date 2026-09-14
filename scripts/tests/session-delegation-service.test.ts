@@ -721,3 +721,35 @@ test("created root archive recovery keeps source authority and canonical root ch
     } finally { await f.close(); }
   }
 });
+
+// @test-value v2
+// kind = "invariant"
+// claim = "cleanup完了状態の保存後に応答保存前でcrashしても、直近の同一要求はownerを再実行せず結果を確定して再送できる"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md" }
+// fault = "完了状態guardが保存途中の同一cancel/compensateを拒否して結果を回収不能にする"
+// observable = "再open後のterminal状態、owner呼出数不変、lastMutation.result確定、次の同key再送一致"
+// observation_boundary = "component-behavior"
+// scope = "実SQLiteへ応答保存前のcrash状態を設定するDelegationService検証"
+// lifecycle = "permanent"
+// @end-test-value
+test("cleanup can finish its response snapshot after the terminal state was committed", async () => {
+  for (const method of ["cancel", "compensate"] as const) {
+    const f = await fixture();
+    try {
+      const prepared = await f.make().create(binding, { ...request, dispatch: "prepare" }, proof);
+      const input = { delegationId: prepared.id, expectedRevision: prepared.revision, idempotencyKey: method };
+      const finished = await f.make()[method](binding, input, proof);
+      assert.equal(finished.state, method === "cancel" ? "cancelled" : "compensated");
+      const mutation = f.storage.getInternal(finished.id, "root").lastMutation!;
+      f.storage.update({ id: finished.id, actorSessionId: "root", expectedRevision: finished.revision, updatedAt: now, lastMutation: { ...mutation, result: null } });
+      const attempts = f.attempts.length;
+      const service = f.reopen();
+      const recovered = await service[method](binding, input, proof);
+      assert.equal(recovered.state, finished.state);
+      assert.deepEqual(recovered.items, finished.items);
+      assert.equal(f.attempts.length, attempts);
+      assert.deepEqual(f.storage.getInternal(finished.id, "root").lastMutation?.result, recovered);
+      assert.deepEqual(await service[method](binding, input, proof), recovered);
+    } finally { await f.close(); }
+  }
+});
