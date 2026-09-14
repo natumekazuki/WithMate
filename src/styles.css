@@ -280,6 +280,10 @@ button:disabled {
   overflow-x: auto;
 }
 
+.session-header-dock-slot:has(.session-header-more[open]) {
+  overflow: visible;
+}
+
 .session-chat-layout > .session-dock-splitter.edge-top {
   grid-area: top-split;
 }
