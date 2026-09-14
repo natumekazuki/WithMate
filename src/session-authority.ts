@@ -216,6 +216,12 @@ const definition = <T extends SessionRuntimeOperation>(
 ): AuthorityOperationDefinition => ({ action, resourceKind, scopeSource, effectClass, decisionClass });
 
 export const SESSION_AUTHORITY_OPERATION_DEFINITIONS = {
+  "delegation.create": definition("delegation.create", "session", "actor", "external_side_effect"),
+  "delegation.get": definition("delegation.get", "session", "actor", "read"),
+  "delegation.list": definition("delegation.list", "session", "actor", "read"),
+  "delegation.retry": definition("delegation.retry", "session", "actor", "external_side_effect"),
+  "delegation.cancel": definition("delegation.cancel", "session", "actor", "external_side_effect"),
+  "delegation.compensate": definition("delegation.compensate", "session", "actor", "external_side_effect"),
   "budget.get": definition("budget.get", "budget", "session", "read"),
   "budget.list": definition("budget.list", "budget", "session", "read"),
   "budget.configure": definition("budget.configure", "budget", "session", "local_mutation"),

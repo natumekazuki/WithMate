@@ -191,7 +191,15 @@ import {
   WorkItemAggregationConflictError,
 } from "./work-item-storage-v6.js";
 
+import { DelegationOperationError, DelegationService } from "./delegation-service.js";
+import { isDeepStrictEqual } from "node:util";
+import { DelegationNotFoundError, DelegationOwnerError, DelegationRevisionError } from "./delegation-storage.js";
+import type { DelegationStorage } from "./delegation-storage.js";
+import type { DelegationCreateInput, DelegationGetInput, DelegationListInput, DelegationMutationInput, DelegationRetryInput } from "../src/delegation.js";
+import { DELEGATION_MAX_ITEMS } from "../src/delegation.js";
+
 export type SessionExternalApplicationServiceDeps = {
+  delegationStorage?: DelegationStorage;
   lifecycleService?: Pick<SessionLifecycleService, "configure" | "move" | "clone" | "restore" | "archive" | "delete" | "deleteManifest" | "moveManifest">;
   authorityService: Pick<SessionAuthorityService, "authorize" | "authorizeSessionAct" | "canSessionAct">;
   executionService: Pick<
@@ -230,6 +238,7 @@ export type SessionExternalApplicationServiceDeps = {
     "create" | "get" | "resolveListScope" | "iterateList" | "transition" | "reportResult" | "cancel" | "requireExecutionAssociation"
     | "getAggregation" | "listAggregation" | "decideAggregation" | "retryAggregation" | "correctResult" | "correctAggregation" | "revise" | "appendHistory" | "iterateHistory"
     | "reassign" | "move" | "clone" | "reopen" | "archive" | "restore" | "delete"
+    | "getRootWorkItem"
   >;
   getExecutionWorkItemId?(executionId: string): string | null;
   invalidateSession?(sessionId: string): void;
@@ -260,11 +269,87 @@ const WORK_ITEM_MUTATION_OPERATIONS = new Set<SessionRuntimeOperation>([
 export class SessionExternalApplicationService {
   private accepting = true;
 
-  constructor(private readonly deps: SessionExternalApplicationServiceDeps) {}
+  private readonly delegationService: DelegationService | null;
+
+  constructor(private readonly deps: SessionExternalApplicationServiceDeps) {
+    this.delegationService = deps.delegationStorage ? new DelegationService({
+      storage: deps.delegationStorage,
+      authorizeControl: (binding, operation, input) => {
+        try { this.deps.authorityService.authorize(binding, operation, input); }
+        catch (error) { throw new DelegationOperationError(mapApplicationError(error, operation, input).error); }
+      },
+      execute: (operation, input, binding, compensation) => this.execute(operation, input, binding, compensation),
+      executeCreatedRoot: (id, index, operation, input, binding) => this.executeCreatedRoot(id, index, operation, input, binding),
+    }) : null;
+  }
 
   private requireLifecycleService() {
     if (!this.deps.lifecycleService) throw new SessionCrudError("RUNTIME_UNAVAILABLE", "The Session lifecycle owner is unavailable.");
     return this.deps.lifecycleService;
+  }
+
+  private async executeCreatedRoot(delegationId: string, index: number, operation: SessionRuntimeOperation, input: unknown, binding: ResolvedAgentRuntimeBinding): Promise<SessionExternalApplicationResponse> {
+    try {
+      const storage = this.deps.delegationStorage;
+      if (!storage) throw new SessionCrudError("RUNTIME_UNAVAILABLE", "The delegation owner is unavailable.");
+      const saved = storage.getInternal(delegationId, binding.actorSessionId);
+      const item = saved.delegation.items[index];
+      const plan = (JSON.parse(storage.getRequestJson(delegationId, binding.actorSessionId)) as DelegationCreateInput).items[index];
+      if (!item?.createdSession || !item.sessionId || plan?.target.kind !== "create" || plan.target.session.placement.kind !== "root") {
+        throw new SessionCrudError("DELEGATION_TARGET_CONFLICT", "The resource is not a root created by this delegation.");
+      }
+      this.deps.authorityService.authorize(binding, "session.self", {});
+      const request = parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation, input });
+      const fields = request.input as Record<string, unknown>;
+      const root = item.sessionId;
+      const session = operation === "session.archive" ? undefined : await this.deps.crudService.get(root);
+      if ((session !== undefined && (session.rootSessionId !== root || session.parentSessionId !== null))
+        || (fields.sessionId !== undefined && fields.sessionId !== root)
+        || (fields.workItemId !== undefined && fields.workItemId !== item.workItemId)
+        || (fields.executionId !== undefined && fields.executionId !== item.executionId)) {
+        throw new SessionCrudError("DELEGATION_TARGET_CONFLICT", "The created root or resource association has changed.");
+      }
+      if (isMutationOperation(operation, input) && (!saved.pending || saved.pending.operation !== operation || !isDeepStrictEqual(saved.pending.input, input))) {
+        throw new SessionCrudError("DELEGATION_TARGET_CONFLICT", "The mutation is not the saved delegation step.");
+      }
+      if (isMutationOperation(operation, input)) {
+        const control = saved.lastMutation?.operation ?? "delegation.create";
+        if (!["delegation.create", "delegation.retry", "delegation.cancel", "delegation.compensate"].includes(control)) throw new SessionCrudError("DELEGATION_TARGET_CONFLICT", "The delegation has no active control operation.");
+        this.deps.authorityService.authorize(binding, control as SessionRuntimeOperation, saved.lastMutation?.input ?? JSON.parse(storage.getRequestJson(delegationId, binding.actorSessionId)));
+      }
+      const actor = { actorSessionId: root };
+      const proof = this.deps.authorityService.authorizeSessionAct(root, operation, request.input).proof;
+      if (proof.resolvedScope.rootSessionId !== root) {
+        throw new SessionCrudError("DELEGATION_TARGET_CONFLICT", "The authority proof does not belong to the created root.");
+      }
+      let result: SessionRuntimeResultByOperation[SessionRuntimeOperation];
+      switch (operation) {
+        case "session.get": result = session!; break;
+        case "work.list": {
+          if (fields.creatorSessionId !== root || fields.targetSessionId !== root) throw new SessionCrudError("DELEGATION_TARGET_CONFLICT", "Only the created root's own Work Item can be resolved.");
+          const work = this.requireWorkItemService().getRootWorkItem(root, actor);
+          result = { items: work && work.predecessorWorkItemId === null ? [work] : [] };
+          break;
+        }
+        case "work.get": result = this.requireWorkItemService().get(fields.workItemId as string, actor, proof); break;
+        case "work.cancel": result = this.requireWorkItemService().cancel(request.input as SessionRuntimeWorkItemCancelInput, actor, proof, { executionId: item.executionId }); break;
+        case "work.archive": result = this.requireWorkItemService().archive(request.input as SessionRuntimeWorkItemArchiveInput, actor, proof); break;
+        case "turn.enqueue": result = await this.enqueue(request.input as SessionRuntimeEnqueueInput, actor, proof); break;
+        case "turn.get": result = this.projectExecution(root, fields.executionId as string); break;
+        case "turn.list": result = this.list(request.input as SessionRuntimeListInput); break;
+        case "turn.cancel": {
+          const cancelInput = request.input as SessionRuntimeCancelInput;
+          const execution = await this.deps.executionService.cancel({ ...cancelInput, requestFingerprint: fingerprintCancel(cancelInput), proof });
+          result = this.projectExecution(root, execution.id, execution);
+          break;
+        }
+        case "session.delete.manifest": result = this.requireLifecycleService().deleteManifest(root); break;
+        case "session.archive": result = await this.requireLifecycleService().archive(request.input as SessionRuntimeArchiveInput, proof); break;
+        default: throw new SessionCrudError("DELEGATION_TARGET_CONFLICT", "This operation is not part of created-root delegation.");
+      }
+      this.invalidateWorkItemMutation(operation, root);
+      return createSessionRuntimeResult<SessionRuntimeOperation>(operation, result);
+    } catch (error) { return mapApplicationError(error, operation, input); }
   }
 
   beginShutdown(): void {
@@ -276,6 +361,7 @@ export class SessionExternalApplicationService {
     operation: SessionRuntimeOperation | string,
     input: unknown,
     agentRuntimeBinding: ResolvedAgentRuntimeBinding | null,
+    compensation?: { executionId: string | null },
   ): Promise<SessionExternalApplicationResponse> {
     if (!this.accepting) {
       return createSessionRuntimeError({
@@ -298,7 +384,7 @@ export class SessionExternalApplicationService {
       }
       const authorized = this.deps.authorityService.authorize(agentRuntimeBinding, request.operation, request.input);
       const additionalProofs = this.authorizeWorkItemAdditionalProofs(request.operation, request.input, agentRuntimeBinding);
-      const result = await this.executeValidated(request.operation, authorized.input, agentRuntimeBinding, authorized.proof, additionalProofs);
+      const result = await this.executeValidated(request.operation, authorized.input, agentRuntimeBinding, authorized.proof, additionalProofs, compensation);
       this.invalidateWorkItemMutation(request.operation, agentRuntimeBinding.actorSessionId);
       const response = createSessionRuntimeResult(request.operation, result);
       assertApplicationResponseSize(request.operation, result, response);
@@ -314,7 +400,18 @@ export class SessionExternalApplicationService {
     agentRuntimeBinding: ResolvedAgentRuntimeBinding,
     proof: MutationAdmissionProof,
     additionalProofs: readonly MutationAuthorityProof[] = [],
+    compensation?: { executionId: string | null },
   ): Promise<SessionRuntimeResultByOperation[SessionRuntimeOperation]> {
+    if (operation.startsWith("delegation.")) {
+      const service = this.delegationService;
+      if (!service) throw new SessionCrudError("RUNTIME_UNAVAILABLE", "The delegation owner is unavailable.");
+      if (operation === "delegation.create") return service.create(agentRuntimeBinding, input as DelegationCreateInput, proof);
+      if (operation === "delegation.get") return service.get(agentRuntimeBinding, input as DelegationGetInput);
+      if (operation === "delegation.list") return service.list(agentRuntimeBinding, input as DelegationListInput);
+      if (operation === "delegation.retry") return service.retry(agentRuntimeBinding, input as DelegationRetryInput, proof);
+      if (operation === "delegation.cancel") return service.cancel(agentRuntimeBinding, input as DelegationMutationInput, proof);
+      return service.compensate(agentRuntimeBinding, input as DelegationMutationInput, proof);
+    }
     if (operation === "runtime.catalog") {
       return projectRuntimeCatalog(
         this.requireCurrentModelCatalog(),
@@ -423,7 +520,7 @@ export class SessionExternalApplicationService {
       return this.requireWorkItemService().correctResult(input as SessionRuntimeWorkItemResultCorrectionInput, agentRuntimeBinding, proof);
     }
     if (operation === "work.cancel") {
-      return this.requireWorkItemService().cancel(input as SessionRuntimeWorkItemCancelInput, agentRuntimeBinding, proof);
+      return this.requireWorkItemService().cancel(input as SessionRuntimeWorkItemCancelInput, agentRuntimeBinding, proof, compensation);
     }
     if (operation === "work.aggregation.get") {
       return this.requireWorkItemService().getAggregation(input as SessionRuntimeWorkItemAggregationGetInput, agentRuntimeBinding, proof);
@@ -599,7 +696,7 @@ export class SessionExternalApplicationService {
 
   private async enqueue(
     input: SessionRuntimeEnqueueInput,
-    agentRuntimeBinding: ResolvedAgentRuntimeBinding,
+    agentRuntimeBinding: Pick<ResolvedAgentRuntimeBinding, "actorSessionId">,
     proof: MutationAdmissionProof,
   ): Promise<SessionRuntimePublicExecution> {
     const initiatorIdentity = sessionInitiatorIdentity(agentRuntimeBinding.actorSessionId);
@@ -953,7 +1050,7 @@ export class SessionExternalApplicationService {
 
   private resolveWorkItemAssociation(
     input: SessionRuntimeEnqueueInput,
-    binding: ResolvedAgentRuntimeBinding,
+    binding: Pick<ResolvedAgentRuntimeBinding, "actorSessionId">,
   ): { workItemId?: string } {
     if (!input.workItemId) return {};
     this.requireWorkItemService().requireExecutionAssociation(
@@ -1163,7 +1260,7 @@ function projectRuntimeCatalog(
         constraints: [
           "Token, monetary cost and provider usage are metered observations, not hard-limit dimensions.",
           "Increasing a root hard limit or the per-execution retry limit requires trusted user or issuer authority.",
-          "Delegation budget enforcement is introduced with the later delegation capability slice.",
+          "Delegation creation consumes the actor root's existing cumulative delegation budget; same-request replay does not consume another unit.",
           "Child allocations must set storageBytes to zero; storage is enforced only by the shared root account.",
           "Provider paths without a canonical executionId, including auxiliary and companion executions, are outside the root Turn, retry and generation ledger.",
           "Direct SessionFolder writes bypass pre-reservation; storage is reconciled before dispatch, and unknown or exceeded usage blocks new dispatch.",
@@ -1208,6 +1305,16 @@ function projectRuntimeCatalog(
         defaultListLimit: WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT,
         maxListLimit: WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
       },
+    },
+    delegation: {
+      operations: ["create", "get", "list", "retry", "cancel", "compensate"], maxItems: DELEGATION_MAX_ITEMS, prepareStartOperation: "delegation.retry",
+      constraints: [
+        "Each batch item reports its own committed resources. Processing stops at the first failing item; retry continues the same request.",
+        "Prepare creates Session and Work Item resources only. Retry with dispatch=enqueue starts the prepared work.",
+        "Reuse explicitly selects an existing Session and Work Item in a new delegation. Each canonical operation still requires its own active grant.",
+        "Compensation preserves adopted resources and work whose execution has started. It archives unused resources through their owners.",
+        "An uncertain step beyond its owner's 24-hour replay retention requires inspection and explicit reuse; it is not blindly re-created.",
+      ],
     },
     sessionLifecycle: {
       operations: ["create", "configure", "rename", "move.manifest", "move", "clone", "restore", "archive", "delete.manifest", "delete"],
@@ -1278,6 +1385,7 @@ function projectionResourceDetails(
       ...(executionId ? { executionId } : {}),
     };
   }
+  if (operation.startsWith("delegation.")) return executionId ? { delegationId: executionId } : {};
   if (operation === "session.files.write_text") {
     return {
       ...(fileSessionId ? { sessionId: fileSessionId } : {}),
@@ -1514,6 +1622,9 @@ function isTerminalOrPending(execution: SessionExecution, pending: unknown): boo
 }
 
 function mapApplicationError(error: unknown, operation: SessionRuntimeOperation | string, input?: unknown): SessionRuntimeError {
+  if (error instanceof DelegationOperationError) return createSessionRuntimeError(error.error);
+  if (error instanceof DelegationRevisionError) return createSessionRuntimeError({ code: error.code, message: error.message, effect: "not_applied", details: { delegationId: error.delegationId, currentRevision: error.actualRevision, expectedRevision: error.expectedRevision } });
+  if (error instanceof DelegationNotFoundError || error instanceof DelegationOwnerError) return createSessionRuntimeError({ code: "DELEGATION_NOT_FOUND", message: "The delegation is not available to this actor.", effect: "not_applied" });
   if (error instanceof SessionLifecycleRecoveryError) {
     return createSessionRuntimeError({ code: error.code, message: error.message, retryable: true, effect: error.effect,
       details: { operationId: error.operationId, ...(error.sessionId ? { sessionId: error.sessionId } : {}) } });
@@ -1585,7 +1696,8 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
     return createSessionRuntimeError({
       code: error.code,
       message: error.message,
-      effect: operation === "session.create"
+      effect: ["delegation.create", "delegation.retry", "delegation.cancel", "delegation.compensate"].includes(operation)
+        || operation === "session.create"
         || operation === "session.rename"
         || operation === "session.configure"
         || operation === "session.move"
@@ -1765,6 +1877,7 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
 }
 
 function isMutationOperation(operation: SessionRuntimeOperation | string, input?: unknown): boolean {
+  if (operation.startsWith("delegation.")) return operation !== "delegation.get" && operation !== "delegation.list";
   return operation === "budget.configure"
     || operation === "session.create"
     || operation === "session.rename"

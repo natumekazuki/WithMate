@@ -1,5 +1,15 @@
 # WithMate Session operation reference
 
+## Delegation operations
+
+Delegation replaces manual Session/Work/Turn creation for the same child; never apply both paths. Reuse already created resources with target/work `kind: "existing"` and their canonical IDs.
+
+`delegation.create` accepts `items` (1–20) and `dispatch: "prepare" | "enqueue"`. `prepare` persists Session and Work Item results and the exact Turn input without enqueueing it. `delegation.retry` resumes that saved pending input with `dispatch: "enqueue"`.
+
+The first failed item stops the batch. The response keeps earlier resource IDs, the failed item’s pending step, and effect certainty; later items remain unstarted. `get` and `list` are actor-owned. `retry`, `cancel`, and `compensate` require the current Delegation revision. Same-key different-payload requests are conflicts.
+
+Delegation is a composition over existing owners and adds only an ordinary domain row. It does not add hashes, signatures, event ledgers, recovery verifiers, startup reconciliation, split/merge operations, or a generic reuse API.
+
 ## Runtime and schema
 
 WithMate owns the Session database, provider adapters, loopback runtime, discovery, credentials, and cleanup. Keep the desktop app running for all commands except `schema`.
@@ -37,9 +47,10 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 58 operations:
+The CLI and MCP expose the same 64 operations:
 
 - Runtime: `runtime.catalog`
+- Delegation: `delegation.create`, `delegation.get`, `delegation.list`, `delegation.retry`, `delegation.cancel`, `delegation.compensate`
 - Budget: `budget.get`, `budget.list`, `budget.configure`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.configure`, `session.rename`, `session.move.manifest`, `session.move`, `session.clone`, `session.restore`, `session.archive`, `session.delete.manifest`, `session.delete`
 - SessionFolder: `session.files.list`, `session.files.read_text`, `session.files.write_text`
@@ -78,7 +89,7 @@ Work Item lifecycle mutations use the actor's active grants and canonical resour
 
 `work.move` records departure from the old parent and adoption by the new parent atomically. If an old decision exists, its supersede is recorded in the same transaction. Adoption changes membership only: the new parent must explicitly assess and decide the result. A standalone Work Item move across roots is not connected in this slice and is not an available capability. `work.result.correct` appends a new result revision and propagates stale state to accepted parent aggregates; `work.aggregation.correct` uses a strict `revise | withdraw | replace` union. `work.aggregation.list` accepts bounded depth, cursor, state, decision, and field projections. Full result payloads are retrieved separately with `work.get`.
 
-Split remains the planned batch delegation composition for Slice 6. Merge uses explicit child decisions and the parent's `work.result`; there is no separate split or merge operation. Do not describe a sequence of individual creates as an atomic batch.
+Split uses `delegation.create` with multiple items and an explicit `parentWorkItemId` in each new Work Item contract. Use `dispatch: "prepare"` to establish every planned child before starting any execution. The batch preserves partial success and is not atomic. Merge uses explicit child decisions and the parent's `work.result`; there is no separate split or merge operation. Do not describe a sequence of individual creates as an atomic batch.
 
 `work.list` cursors are valid only for the same root Session, runtime actor, visibility scope, and explicit filters that created them. A valid list may stop before the requested item limit to stay within the 8 MiB public response limit advertised by `runtime.catalog`; continue with `nextCursor` until it is absent.
 
@@ -97,6 +108,8 @@ A root overall coordinator keeps one active self-owned Root Work Item; resolve i
 If a migrated idempotency ledger reports `IDEMPOTENCY_RESPONSE_UNAVAILABLE` with `effect: applied`, do not retry the same mutation with a new key. Read the current Work Item identified by `details.workItemId` and reconcile from that state.
 
 Use this sequence for a tracked decomposition:
+
+Choose one resource-creation and dispatch path per child: either `delegation.create/retry` or the manual `session.create → work.create → turn.run/turn.enqueue` sequence below. Delegation replaces the manual creation/dispatch steps; do not apply both to the same child. To adopt resources already created manually, use Delegation target/work `kind: "existing"` with their canonical IDs, and do not enqueue a Turn already dispatched manually. Preparation, dependency checks, result collection, and aggregation still apply.
 
 1. Read `session.self` and `runtime.catalog`. If the incoming delegation prompt names a Work Item ID, call `work.get` and verify that its canonical target matches the actor and that its goal, scope, completion criteria, authority, and source identity match the delegation. Do not infer the current Work Item from other active items.
 2. For a root `standalone` or `overall-coordinator`, call `work.list` across every page with `kind: "root"` and prefer the active self-owned root; if no active root exists, use the latest terminal self-owned root. Do not infer the root from an active delegated item. If the current Work Item is `pending`, start it with `work.transition` to `in_progress`. If it is `waiting` and the blocker is resolved, resume it with a separate `work.transition` to `in_progress`. Pass the current `expectedRevision` and an operation-specific idempotency key for either mutation, then read the Work Item back before creating children. Turn association does not transition Work Item state. Evaluate the no-decomposition choice before creating children.

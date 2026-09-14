@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DELEGATION_MAX_ITEMS, DELEGATION_STATES } from "./delegation.js";
 
 import { APPROVAL_MODE_VALUES } from "./approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES } from "./codex-sandbox-mode.js";
@@ -949,7 +950,22 @@ const budgetSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 }).strict();
+const delegationSchema = z.object({
+  id: nonEmptyStringSchema, revision: z.number().int().positive(), state: z.enum(DELEGATION_STATES),
+  items: z.array(z.object({
+    index: z.number().int().nonnegative(), sessionId: z.string().nullable(), workItemId: z.string().nullable(), executionId: z.string().nullable(),
+    createdSession: z.boolean(), createdWorkItem: z.boolean(), state: z.enum(DELEGATION_STATES), pendingStep: z.string().nullable(),
+    effect: z.enum(["not_applied", "applied", "indeterminate"]), error: errorSchema.shape.error.nullable(),
+  }).strict()).max(DELEGATION_MAX_ITEMS),
+  recoveryActions: z.array(z.enum(["retry", "cancel", "compensate"])), createdAt: z.string(), updatedAt: z.string(),
+}).strict();
 const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
+  "delegation.create": delegationSchema,
+  "delegation.get": delegationSchema,
+  "delegation.list": z.object({ items: z.array(delegationSchema), nextCursor: z.string().optional() }).strict(),
+  "delegation.retry": delegationSchema,
+  "delegation.cancel": delegationSchema,
+  "delegation.compensate": delegationSchema,
   "runtime.catalog": z.object({
     revision: z.number().int(),
     authority: z.object({
@@ -1046,6 +1062,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       defaultReasoningEffort: reasoningEffortSchema,
       models: z.array(modelSchema),
     }).strict()),
+    delegation: z.object({ operations: z.array(z.string()), maxItems: z.number().int().positive(), prepareStartOperation: z.literal("delegation.retry"), constraints: z.array(z.string()) }).strict().optional(),
     sessionLifecycle: z.object({
       operations: z.tuple([z.literal("create"), z.literal("configure"), z.literal("rename"), z.literal("move.manifest"), z.literal("move"), z.literal("clone"), z.literal("restore"), z.literal("archive"), z.literal("delete.manifest"), z.literal("delete")]),
       placement: z.tuple([z.literal("root"), z.literal("child")]),
@@ -1159,7 +1176,30 @@ export function createSessionRuntimeOutputSchema(operation: SessionRuntimeOperat
 }
 
 
+const delegationItemInputSchema = z.object({
+  target: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("existing"), sessionId: nonEmptyStringSchema }).strict(),
+    z.object({ kind: z.literal("create"), session: sessionCreateInputSchema.omit({ idempotencyKey: true }) }).strict(),
+  ]),
+  work: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("root") }).strict(),
+    z.object({ kind: z.literal("existing"), workItemId: nonEmptyStringSchema }).strict(),
+    z.object({ kind: z.literal("create"), contract: workItemCreateInputSchema.omit({ targetSessionId: true, expectedContainerRevision: true, idempotencyKey: true }) }).strict(),
+    z.object({ kind: z.literal("replacement"), request: workItemAggregationRetryInputSchema.omit({ targetSessionId: true, idempotencyKey: true }) }).strict(),
+  ]),
+  turn: enqueueInputSchema.omit({ sessionId: true, workItemId: true, idempotencyKey: true, expectedContainerRevision: true }),
+}).strict().refine((item) => (item.target.kind === "create" && item.target.session.placement.kind === "root") === (item.work.kind === "root"), "A new root Session requires its canonical Root Work Item.");
+const delegationGetInputSchema = z.object({ delegationId: nonEmptyStringSchema }).strict();
+const delegationMutationInputSchema = delegationGetInputSchema.extend({
+  expectedRevision: z.number().int().positive(), idempotencyKey: nonEmptyStringSchema,
+});
 const inputSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
+  "delegation.create": z.object({ idempotencyKey: nonEmptyStringSchema, dispatch: z.enum(["prepare", "enqueue"]), items: z.array(delegationItemInputSchema).min(1).max(DELEGATION_MAX_ITEMS) }).strict(),
+  "delegation.get": delegationGetInputSchema,
+  "delegation.list": z.object({ limit: z.number().int().positive().max(SESSION_RUNTIME_MAX_LIST_LIMIT), cursor: nonEmptyStringSchema.optional() }).strict(),
+  "delegation.retry": delegationMutationInputSchema.extend({ dispatch: z.enum(["prepare", "enqueue"]) }),
+  "delegation.cancel": delegationMutationInputSchema,
+  "delegation.compensate": delegationMutationInputSchema,
   "runtime.catalog": runtimeCatalogInputSchema,
   "budget.get": budgetGetInputSchema,
   "budget.list": budgetListInputSchema,

@@ -567,6 +567,7 @@ export class WorkItemStorageV6 {
     expiresAt: string;
     expectedAggregateRevision?: number;
     expectedResultRevision?: number;
+    compensationExecutionId?: string | null;
     proof: MutationAuthorityProof;
   }): WorkItem {
     if (
@@ -597,6 +598,11 @@ export class WorkItemStorageV6 {
         throw new WorkItemAggregationConflictError("WORK_ITEM_ARCHIVED", "Restore the Work Item before mutation.");
       if (current.revision !== input.expectedRevision) {
         throw new WorkItemRevisionConflictError(input.workItemId, input.expectedRevision, current.revision);
+      }
+      if (input.operation === "work.cancel" && input.compensationExecutionId !== undefined) {
+        const adopted = this.db.prepare("SELECT 1 FROM work_item_execution_associations_v6 WHERE work_item_id = ? AND execution_id IS NOT ? LIMIT 1").get(current.id, input.compensationExecutionId);
+        if (adopted) throw new WorkItemAggregationConflictError("WORK_ITEM_IN_USE", "Another execution references the Work Item.");
+        this.requireLifecycleIdle(current, true);
       }
       const repeatTerminalResult = input.operation === "work.result"
         && isWorkItemResultState(current.state)

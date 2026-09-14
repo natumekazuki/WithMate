@@ -1,4 +1,5 @@
 import type { AuthorityOperationDefinition } from "./session-authority.js";
+import { DELEGATION_MAX_ITEMS, type Delegation, type DelegationCreateInput, type DelegationItemInput, type DelegationListResult } from "./delegation.js";
 import { APPROVAL_MODE_VALUES, type ApprovalMode } from "./approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES, type CodexSandboxMode } from "./codex-sandbox-mode.js";
 import { isModelReasoningEffort, type ModelReasoningEffort } from "./model-catalog.js";
@@ -104,6 +105,7 @@ export const SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 300_000;
 export const SESSION_RUNTIME_MAX_TURN_ATTACHMENTS = 32;
 
 export const SESSION_RUNTIME_OPERATIONS = [
+  "delegation.create", "delegation.get", "delegation.list", "delegation.retry", "delegation.cancel", "delegation.compensate",
   "runtime.catalog",
   "budget.get",
   "budget.list",
@@ -236,6 +238,7 @@ export type SessionRuntimeCatalogResult = {
       reasoningEfforts: ModelReasoningEffort[];
     }>;
   }>;
+  delegation?: { operations: string[]; maxItems: number; prepareStartOperation: "delegation.retry"; constraints: string[] };
   sessionLifecycle?: {
     operations: readonly ["create", "configure", "rename", "move.manifest", "move", "clone", "restore", "archive", "delete.manifest", "delete"];
     placement: readonly ["root", "child"];
@@ -763,6 +766,12 @@ export type SessionRuntimeBudgetListResult = ResourceBudgetListResult;
 export type SessionRuntimeBudgetConfigureResult = ResourceBudget;
 
 export type SessionRuntimeResultByOperation = {
+  "delegation.create": Delegation;
+  "delegation.get": Delegation;
+  "delegation.list": DelegationListResult;
+  "delegation.retry": Delegation;
+  "delegation.cancel": Delegation;
+  "delegation.compensate": Delegation;
   "runtime.catalog": SessionRuntimeCatalogResult;
   "budget.get": SessionRuntimeBudgetGetResult;
   "budget.list": SessionRuntimeBudgetListResult;
@@ -872,6 +881,7 @@ export function sessionRuntimeOperationMayHaveEffect(
   operation: SessionRuntimeOperation,
   input?: unknown,
 ): boolean {
+  if (operation.startsWith("delegation.")) return operation !== "delegation.get" && operation !== "delegation.list";
   if (operation === "transcript.export") {
     return input === undefined
       || (input as { destination?: { kind?: string } }).destination?.kind !== "inline";
@@ -955,6 +965,7 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) {
     throw invalid("operation", "Unsupported Session runtime operation.");
   }
+  if (operation.startsWith("delegation.")) return parseDelegationInput(operation, value);
   if (operation === "runtime.catalog" || operation === "session.self") {
     const record = requireObject(value, "input");
     assertKeys(record, [], "input");
@@ -2202,6 +2213,70 @@ function requireObject(value: unknown, field: string): Record<string, unknown> {
     throw invalid(field, `${field} must be an object.`);
   }
   return value as Record<string, unknown>;
+}
+
+function parseDelegationInput(operation: string, value: unknown): unknown {
+  const record = requireObject(value, "input");
+  if (operation === "delegation.list") {
+    assertKeys(record, ["limit", "cursor"], "input");
+    return { limit: requireInteger(record.limit, "limit", 1, SESSION_RUNTIME_MAX_LIST_LIMIT),
+      ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }) };
+  }
+  if (operation !== "delegation.create") {
+    assertKeys(record, operation === "delegation.get" ? ["delegationId"]
+      : operation === "delegation.retry" ? ["delegationId", "expectedRevision", "idempotencyKey", "dispatch"]
+        : ["delegationId", "expectedRevision", "idempotencyKey"], "input");
+    const delegationId = requireNonEmptyString(record.delegationId, "delegationId");
+    if (operation === "delegation.get") return { delegationId };
+    return { delegationId, expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+      idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+      ...(operation === "delegation.retry" ? { dispatch: requireEnum(record.dispatch, ["prepare", "enqueue"], "dispatch") } : {}) };
+  }
+  assertKeys(record, ["idempotencyKey", "dispatch", "items"], "input");
+  if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > DELEGATION_MAX_ITEMS) throw invalid("items", `Expected 1 to ${DELEGATION_MAX_ITEMS} delegation items.`);
+  const items = record.items.map((value): DelegationItemInput => {
+    const item = requireObject(value, "item");
+    assertKeys(item, ["target", "work", "turn"], "item");
+    const targetInput = requireObject(item.target, "target");
+    const targetKind = requireEnum(targetInput.kind, ["existing", "create"], "target.kind");
+    assertKeys(targetInput, targetKind === "existing" ? ["kind", "sessionId"] : ["kind", "session"], "target");
+    let target: DelegationItemInput["target"];
+    if (targetKind === "existing") target = { kind: "existing", sessionId: requireNonEmptyString(targetInput.sessionId, "sessionId") };
+    else {
+      const session = requireObject(targetInput.session, "session");
+      if ("idempotencyKey" in session) throw invalid("session.idempotencyKey", "The delegation owns step idempotency keys.");
+      const { idempotencyKey: _key, ...parsed } = parseSessionCreateInput({ ...session, idempotencyKey: "delegation-step" });
+      target = { kind: "create", session: parsed };
+    }
+    const workInput = requireObject(item.work, "work");
+    const workKind = requireEnum(workInput.kind, ["create", "existing", "root", "replacement"], "work.kind");
+    let work: DelegationItemInput["work"];
+    if (workKind === "root") { assertKeys(workInput, ["kind"], "work"); work = { kind: "root" }; }
+    else if (workKind === "existing") {
+      assertKeys(workInput, ["kind", "workItemId"], "work");
+      work = { kind: "existing", workItemId: requireNonEmptyString(workInput.workItemId, "workItemId") };
+    } else {
+      const field = workKind === "create" ? "contract" : "request";
+      assertKeys(workInput, ["kind", field], "work");
+      const nested = requireObject(workInput[field], field);
+      for (const key of ["targetSessionId", "idempotencyKey", ...(workKind === "create" ? ["expectedContainerRevision"] : [])]) {
+        if (key in nested) throw invalid(`${field}.${key}`, "The delegation resolves this field.");
+      }
+      if (workKind === "create") {
+        const { targetSessionId: _target, idempotencyKey: _key, expectedContainerRevision: _revision, ...contract } = parseWorkItemCreateInput({ ...nested, targetSessionId: "delegation-target", expectedContainerRevision: 1, idempotencyKey: "delegation-step" });
+        work = { kind: "create", contract };
+      } else {
+        const { targetSessionId: _target, idempotencyKey: _key, ...request } = parseWorkItemAggregationRetryInput({ ...nested, targetSessionId: "delegation-target", idempotencyKey: "delegation-step" });
+        work = { kind: "replacement", request };
+      }
+    }
+    if ((target.kind === "create" && target.session.placement.kind === "root") !== (work.kind === "root")) throw invalid("work.kind", "A new root Session requires its canonical Root Work Item.");
+    const turnInput = requireObject(item.turn, "turn");
+    for (const key of ["sessionId", "workItemId", "idempotencyKey", "expectedContainerRevision"]) if (key in turnInput) throw invalid(`turn.${key}`, "The delegation resolves this field.");
+    const { sessionId: _session, workItemId: _work, idempotencyKey: _key, expectedContainerRevision: _revision, ...turn } = parseTurnEnqueueInput({ ...turnInput, sessionId: "delegation-target", expectedContainerRevision: 1, idempotencyKey: "delegation-step" });
+    return { target, work, turn };
+  });
+  return { idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"), dispatch: requireEnum(record.dispatch, ["prepare", "enqueue"], "dispatch"), items } satisfies DelegationCreateInput;
 }
 
 function assertKeys(record: Record<string, unknown>, allowed: readonly string[], field: string): void {

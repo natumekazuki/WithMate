@@ -49,6 +49,20 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __hasOwnProp.call(mod, "module.exports") ? mod["module.exports"] : __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __require = /* #__PURE__ */ (() => createRequire(import.meta.url))();
 //#endregion
+//#region src/delegation.ts
+var DELEGATION_STATES = [
+	"preparing",
+	"prepared",
+	"dispatching",
+	"active",
+	"completed",
+	"cancelling",
+	"cancelled",
+	"compensating",
+	"compensated",
+	"recovery_required"
+];
+//#endregion
 //#region src/approval-mode.ts
 var APPROVAL_MODE_VALUES = [
 	"never",
@@ -415,6 +429,12 @@ var SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES = 1048576;
 var SESSION_RUNTIME_MAX_FILE_TEXT_BYTES = 8388608;
 var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
 var SESSION_RUNTIME_OPERATIONS = [
+	"delegation.create",
+	"delegation.get",
+	"delegation.list",
+	"delegation.retry",
+	"delegation.cancel",
+	"delegation.compensate",
 	"runtime.catalog",
 	"budget.get",
 	"budget.list",
@@ -476,6 +496,7 @@ var SESSION_RUNTIME_OPERATIONS = [
 ];
 var SESSION_RUNTIME_PROVIDER_IDS = ["codex", "copilot"];
 function sessionRuntimeOperationMayHaveEffect(operation, input) {
+	if (operation.startsWith("delegation.")) return operation !== "delegation.get" && operation !== "delegation.list";
 	if (operation === "transcript.export") return input === void 0 || input.destination?.kind !== "inline";
 	return operation === "session.create" || operation === "session.rename" || operation === "session.configure" || operation === "session.move" || operation === "session.clone" || operation === "session.restore" || operation === "session.archive" || operation === "session.delete" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "work.create" || operation === "work.transition" || operation === "work.revise" || operation === "work.history.append" || operation === "work.reassign" || operation === "work.move" || operation === "work.clone" || operation === "work.reopen" || operation === "work.archive" || operation === "work.restore" || operation === "work.delete" || operation === "work.result" || operation === "work.result.correct" || operation === "work.cancel" || operation === "work.aggregation.decide" || operation === "work.aggregation.retry" || operation === "work.aggregation.correct" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct";
 }
@@ -499,6 +520,7 @@ function assertSessionRuntimeRequestBodySize(actualBytes, field = "requestBody")
 }
 function parseSessionRuntimeOperationInput(operation, value) {
 	if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) throw invalid("operation", "Unsupported Session runtime operation.");
+	if (operation.startsWith("delegation.")) return parseDelegationInput(operation, value);
 	if (operation === "runtime.catalog" || operation === "session.self") {
 		assertKeys(requireObject(value, "input"), [], "input");
 		return {};
@@ -2059,6 +2081,143 @@ function parseElicitationValue(value, field) {
 function requireObject(value, field) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid(field, `${field} must be an object.`);
 	return value;
+}
+function parseDelegationInput(operation, value) {
+	const record = requireObject(value, "input");
+	if (operation === "delegation.list") {
+		assertKeys(record, ["limit", "cursor"], "input");
+		return {
+			limit: requireInteger(record.limit, "limit", 1, 500),
+			...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+		};
+	}
+	if (operation !== "delegation.create") {
+		assertKeys(record, operation === "delegation.get" ? ["delegationId"] : operation === "delegation.retry" ? [
+			"delegationId",
+			"expectedRevision",
+			"idempotencyKey",
+			"dispatch"
+		] : [
+			"delegationId",
+			"expectedRevision",
+			"idempotencyKey"
+		], "input");
+		const delegationId = requireNonEmptyString(record.delegationId, "delegationId");
+		if (operation === "delegation.get") return { delegationId };
+		return {
+			delegationId,
+			expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+			idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+			...operation === "delegation.retry" ? { dispatch: requireEnum(record.dispatch, ["prepare", "enqueue"], "dispatch") } : {}
+		};
+	}
+	assertKeys(record, [
+		"idempotencyKey",
+		"dispatch",
+		"items"
+	], "input");
+	if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > 20) throw invalid("items", `Expected 1 to 20 delegation items.`);
+	const items = record.items.map((value) => {
+		const item = requireObject(value, "item");
+		assertKeys(item, [
+			"target",
+			"work",
+			"turn"
+		], "item");
+		const targetInput = requireObject(item.target, "target");
+		const targetKind = requireEnum(targetInput.kind, ["existing", "create"], "target.kind");
+		assertKeys(targetInput, targetKind === "existing" ? ["kind", "sessionId"] : ["kind", "session"], "target");
+		let target;
+		if (targetKind === "existing") target = {
+			kind: "existing",
+			sessionId: requireNonEmptyString(targetInput.sessionId, "sessionId")
+		};
+		else {
+			const session = requireObject(targetInput.session, "session");
+			if ("idempotencyKey" in session) throw invalid("session.idempotencyKey", "The delegation owns step idempotency keys.");
+			const { idempotencyKey: _key, ...parsed } = parseSessionCreateInput({
+				...session,
+				idempotencyKey: "delegation-step"
+			});
+			target = {
+				kind: "create",
+				session: parsed
+			};
+		}
+		const workInput = requireObject(item.work, "work");
+		const workKind = requireEnum(workInput.kind, [
+			"create",
+			"existing",
+			"root",
+			"replacement"
+		], "work.kind");
+		let work;
+		if (workKind === "root") {
+			assertKeys(workInput, ["kind"], "work");
+			work = { kind: "root" };
+		} else if (workKind === "existing") {
+			assertKeys(workInput, ["kind", "workItemId"], "work");
+			work = {
+				kind: "existing",
+				workItemId: requireNonEmptyString(workInput.workItemId, "workItemId")
+			};
+		} else {
+			const field = workKind === "create" ? "contract" : "request";
+			assertKeys(workInput, ["kind", field], "work");
+			const nested = requireObject(workInput[field], field);
+			for (const key of [
+				"targetSessionId",
+				"idempotencyKey",
+				...workKind === "create" ? ["expectedContainerRevision"] : []
+			]) if (key in nested) throw invalid(`${field}.${key}`, "The delegation resolves this field.");
+			if (workKind === "create") {
+				const { targetSessionId: _target, idempotencyKey: _key, expectedContainerRevision: _revision, ...contract } = parseWorkItemCreateInput({
+					...nested,
+					targetSessionId: "delegation-target",
+					expectedContainerRevision: 1,
+					idempotencyKey: "delegation-step"
+				});
+				work = {
+					kind: "create",
+					contract
+				};
+			} else {
+				const { targetSessionId: _target, idempotencyKey: _key, ...request } = parseWorkItemAggregationRetryInput({
+					...nested,
+					targetSessionId: "delegation-target",
+					idempotencyKey: "delegation-step"
+				});
+				work = {
+					kind: "replacement",
+					request
+				};
+			}
+		}
+		if ((target.kind === "create" && target.session.placement.kind === "root") !== (work.kind === "root")) throw invalid("work.kind", "A new root Session requires its canonical Root Work Item.");
+		const turnInput = requireObject(item.turn, "turn");
+		for (const key of [
+			"sessionId",
+			"workItemId",
+			"idempotencyKey",
+			"expectedContainerRevision"
+		]) if (key in turnInput) throw invalid(`turn.${key}`, "The delegation resolves this field.");
+		const { sessionId: _session, workItemId: _work, idempotencyKey: _key, expectedContainerRevision: _revision, ...turn } = parseTurnEnqueueInput({
+			...turnInput,
+			sessionId: "delegation-target",
+			expectedContainerRevision: 1,
+			idempotencyKey: "delegation-step"
+		});
+		return {
+			target,
+			work,
+			turn
+		};
+	});
+	return {
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+		dispatch: requireEnum(record.dispatch, ["prepare", "enqueue"], "dispatch"),
+		items
+	};
 }
 function assertKeys(record, allowed, field) {
 	const unknownKey = Object.keys(record).find((key) => !allowed.includes(key));
@@ -11102,7 +11261,44 @@ var budgetSchema = object$1({
 	createdAt: string(),
 	updatedAt: string()
 }).strict();
+var delegationSchema = object$1({
+	id: nonEmptyStringSchema,
+	revision: number().int().positive(),
+	state: _enum(DELEGATION_STATES),
+	items: array(object$1({
+		index: number().int().nonnegative(),
+		sessionId: string().nullable(),
+		workItemId: string().nullable(),
+		executionId: string().nullable(),
+		createdSession: boolean(),
+		createdWorkItem: boolean(),
+		state: _enum(DELEGATION_STATES),
+		pendingStep: string().nullable(),
+		effect: _enum([
+			"not_applied",
+			"applied",
+			"indeterminate"
+		]),
+		error: errorSchema.shape.error.nullable()
+	}).strict()).max(20),
+	recoveryActions: array(_enum([
+		"retry",
+		"cancel",
+		"compensate"
+	])),
+	createdAt: string(),
+	updatedAt: string()
+}).strict();
 var resultSchemas = {
+	"delegation.create": delegationSchema,
+	"delegation.get": delegationSchema,
+	"delegation.list": object$1({
+		items: array(delegationSchema),
+		nextCursor: string().optional()
+	}).strict(),
+	"delegation.retry": delegationSchema,
+	"delegation.cancel": delegationSchema,
+	"delegation.compensate": delegationSchema,
 	"runtime.catalog": object$1({
 		revision: number().int(),
 		authority: object$1({
@@ -11232,6 +11428,12 @@ var resultSchemas = {
 			defaultReasoningEffort: reasoningEffortSchema,
 			models: array(modelSchema)
 		}).strict()),
+		delegation: object$1({
+			operations: array(string()),
+			maxItems: number().int().positive(),
+			prepareStartOperation: literal("delegation.retry"),
+			constraints: array(string())
+		}).strict().optional(),
 		sessionLifecycle: object$1({
 			operations: tuple([
 				literal("create"),
@@ -11404,7 +11606,62 @@ function createSessionRuntimeResultEnvelopeSchema(operation) {
 function createSessionRuntimeOutputSchema(operation) {
 	return createSessionRuntimeResultEnvelopeSchema(operation);
 }
+var delegationItemInputSchema = object$1({
+	target: discriminatedUnion("kind", [object$1({
+		kind: literal("existing"),
+		sessionId: nonEmptyStringSchema
+	}).strict(), object$1({
+		kind: literal("create"),
+		session: sessionCreateInputSchema.omit({ idempotencyKey: true })
+	}).strict()]),
+	work: discriminatedUnion("kind", [
+		object$1({ kind: literal("root") }).strict(),
+		object$1({
+			kind: literal("existing"),
+			workItemId: nonEmptyStringSchema
+		}).strict(),
+		object$1({
+			kind: literal("create"),
+			contract: workItemCreateInputSchema.omit({
+				targetSessionId: true,
+				expectedContainerRevision: true,
+				idempotencyKey: true
+			})
+		}).strict(),
+		object$1({
+			kind: literal("replacement"),
+			request: workItemAggregationRetryInputSchema.omit({
+				targetSessionId: true,
+				idempotencyKey: true
+			})
+		}).strict()
+	]),
+	turn: enqueueInputSchema.omit({
+		sessionId: true,
+		workItemId: true,
+		idempotencyKey: true,
+		expectedContainerRevision: true
+	})
+}).strict().refine((item) => (item.target.kind === "create" && item.target.session.placement.kind === "root") === (item.work.kind === "root"), "A new root Session requires its canonical Root Work Item.");
+var delegationGetInputSchema = object$1({ delegationId: nonEmptyStringSchema }).strict();
+var delegationMutationInputSchema = delegationGetInputSchema.extend({
+	expectedRevision: number().int().positive(),
+	idempotencyKey: nonEmptyStringSchema
+});
 var inputSchemas = {
+	"delegation.create": object$1({
+		idempotencyKey: nonEmptyStringSchema,
+		dispatch: _enum(["prepare", "enqueue"]),
+		items: array(delegationItemInputSchema).min(1).max(20)
+	}).strict(),
+	"delegation.get": delegationGetInputSchema,
+	"delegation.list": object$1({
+		limit: number().int().positive().max(500),
+		cursor: nonEmptyStringSchema.optional()
+	}).strict(),
+	"delegation.retry": delegationMutationInputSchema.extend({ dispatch: _enum(["prepare", "enqueue"]) }),
+	"delegation.cancel": delegationMutationInputSchema,
+	"delegation.compensate": delegationMutationInputSchema,
 	"runtime.catalog": runtimeCatalogInputSchema,
 	"budget.get": budgetGetInputSchema,
 	"budget.list": budgetListInputSchema,
@@ -27541,6 +27798,48 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		destructive: false
 	},
 	{
+		name: "delegation.create",
+		title: "Create delegation",
+		description: "Prepare or dispatch a batch through the canonical Session, Work Item and Turn owners. Inspect each item's state and committed IDs.",
+		readOnly: false,
+		destructive: true
+	},
+	{
+		name: "delegation.get",
+		title: "Get delegation",
+		description: "Read one delegation owned by the current actor, including partial effects and recovery actions.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "delegation.list",
+		title: "List delegations",
+		description: "List the current actor's delegations, including unfinished requests.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "delegation.retry",
+		title: "Resume delegation",
+		description: "Resume unfinished steps with the same resources, or dispatch a prepared delegation.",
+		readOnly: false,
+		destructive: true
+	},
+	{
+		name: "delegation.cancel",
+		title: "Cancel delegation",
+		description: "Stop dispatch and cancel associated execution through its owner.",
+		readOnly: false,
+		destructive: true
+	},
+	{
+		name: "delegation.compensate",
+		title: "Compensate delegation",
+		description: "Cancel execution and archive unused created resources through their owners. Conflicts remain visible.",
+		readOnly: false,
+		destructive: true
+	},
+	{
 		name: "budget.get",
 		title: "Get resource budget",
 		description: "Read the resource budget account for one visible Session.",
@@ -27945,7 +28244,7 @@ function annotations(definition) {
 		readOnlyHint: definition.readOnly,
 		destructiveHint: definition.destructive,
 		idempotentHint: true,
-		openWorldHint: definition.name === "turn.run" || definition.name === "turn.enqueue" || definition.name === "interaction.respond" || definition.name === "transcript.export"
+		openWorldHint: definition.name === "turn.run" || definition.name === "turn.enqueue" || definition.name === "delegation.create" || definition.name === "delegation.retry" || definition.name === "interaction.respond" || definition.name === "transcript.export"
 	};
 }
 function toolResult(value, isError) {
@@ -28035,6 +28334,19 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: createSessionRuntimeAdvertisedInputSchema("runtime.catalog"),
 		outputSchema: createSessionRuntimeOutputSchema("runtime.catalog")
 	}, async (input) => executeOperation("runtime.catalog", input, deps));
+	for (const operation of [
+		"delegation.create",
+		"delegation.get",
+		"delegation.list",
+		"delegation.retry",
+		"delegation.cancel",
+		"delegation.compensate"
+	]) server.registerTool(operation, {
+		...definitions.get(operation),
+		annotations: annotations(definitions.get(operation)),
+		inputSchema: createSessionRuntimeAdvertisedInputSchema(operation),
+		outputSchema: createSessionRuntimeOutputSchema(operation)
+	}, async (input) => executeOperation(operation, input, deps));
 	server.registerTool("budget.get", {
 		...definitions.get("budget.get"),
 		annotations: annotations(definitions.get("budget.get")),
@@ -28376,6 +28688,12 @@ var SessionCliUsageError = class extends Error {
 };
 var commandMap = /* @__PURE__ */ new Map([
 	["runtime catalog", "runtime.catalog"],
+	["delegation create", "delegation.create"],
+	["delegation get", "delegation.get"],
+	["delegation list", "delegation.list"],
+	["delegation retry", "delegation.retry"],
+	["delegation cancel", "delegation.cancel"],
+	["delegation compensate", "delegation.compensate"],
 	["budget get", "budget.get"],
 	["budget list", "budget.list"],
 	["budget configure", "budget.configure"],
@@ -28547,9 +28865,9 @@ async function parseArgs(args, deps) {
 	const workAggregationCommand = args[0] === "work" && args[1] === "aggregation";
 	const workResultCommand = args[0] === "work" && args[1] === "result" && args[2] === "correct";
 	const workHistoryCommand = args[0] === "work" && args[1] === "history";
-	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "budget" || args[0] === "session" || args[0] === "work" || args[0] === "interaction" || args[0] === "transcript";
+	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "budget" || args[0] === "session" || args[0] === "work" || args[0] === "delegation" || args[0] === "interaction" || args[0] === "transcript";
 	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand || workAggregationCommand || workHistoryCommand || workResultCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|budget get|list|configure|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work result correct|work aggregation get|list|decide|retry|correct|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|budget get|list|configure|delegation create|get|list|retry|cancel|compensate|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work result correct|work aggregation get|list|decide|retry|correct|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
 	const optionStart = fileCommand || coordinationCommand || workAggregationCommand || workHistoryCommand || workResultCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;
