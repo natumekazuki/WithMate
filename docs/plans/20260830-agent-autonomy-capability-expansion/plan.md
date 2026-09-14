@@ -590,3 +590,7 @@ crash保存状態からの3種類の拒否とcancel／compensate保護、後続S
 関連108 test（Delegation service 17、Work取消1、schema/parser 2、schema/bootstrap/contract/storage/CLI 42、application 46）、型検査、本番buildが成功した。新規Rootの既存testではauthority stubのRoot scopeを実際の契約に合わせて補正した。全suite、実Provider起動、GUI目視は今回未実施。開始baseから8 tests／8 transitionsをdiagnostic／warning 0で抽出し、test-valueと5指摘に限定した独立確認を実施する。
 
 独立確認で、cleanupの終端状態保存後・応答snapshot保存前のcrash時に同一要求まで拒否する点を追加修正した。直近の同一cancel/compensateと一致する終端状態に限り、ownerを再実行せず応答snapshotを確定する。新規mutationの終端guardは維持する。crash状態からの再openと同key再送を追加し、Delegation service 18 testと型検査が成功した。本番buildはこの小修正前に成功しており、修正後は関連testと型検査を適用した。
+
+最終production修正は `f2c469cb56fa831f1559575a40d40937205b0e39`。clean detached worktreeで5指摘の限定確認と追加snapshot修正のclosureを完了し、未解決findingはない。review用worktreeはHEAD・cleanliness・SessionFolder内の絶対pathを確認して削除した。
+
+最終抽出は開始baseから9 tests／9 transitions、diagnostic／warning 0。通常のread-only general_lunaが全recordのmetadata、本文、production path、恒久保持価値を確認し、未解決指摘・context不足はない。依頼範囲を追加commit済み。pushは実施していない。
