@@ -50,14 +50,14 @@ function serviceWithOwnerFailure(): SessionExternalApplicationService {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "public grant ownerのresponse lossはmutationをindeterminate、readをnot_appliedとして外部contractへ写像する"
+// claim = "public grant ownerの例外はmutationをindeterminate、readをnot_appliedとして外部contractへ写像する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Mutation envelope" }
-// fault = "grant.create/revokeのowner failureを未適用と誤報する、またはgrant.get/listのread failureを不確実な副作用として報告する"
+// fault = "grant.create/revokeのowner例外を未適用と誤報する、またはgrant.get/listのread例外を不確実な副作用として報告する"
 // observable = "SessionExternalApplicationServiceのpublic error effectとstable code"
 // observation_boundary = "public-boundary"
 // scope = "grant owner response-loss effect projection"
 // lifecycle = "permanent"
-// distinction = "実際のexecute operationを通し、grant owner methodの例外をapplication error mappingで観測する"
+// distinction = "実際のexecute operationにstub owner例外を渡し、application error mappingのoperation別effectを観測する"
 // @end-test-value
 test("grant owner response loss distinguishes mutation from read effects", async () => {
   const service = serviceWithOwnerFailure();

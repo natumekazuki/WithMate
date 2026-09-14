@@ -551,6 +551,13 @@ export function issueTrustedGrantPolicy(db: DatabaseSync, input: {
       throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The policy child ceiling exceeds its own scope.");
     }
   }
+  if (input.resourceIds && (input.resourceIds.length === 0 || new Set(input.resourceIds).size !== input.resourceIds.length)) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The policy resources must be unique and nonempty.");
+  }
+  validateGrantBudget(input.budget, { provenance: {} });
+  const provenance = { source: "trusted-grant-policy", resourceIds: input.resourceIds, budgetAccountId: input.budgetAccountId, budget: input.budget, policyRootSessionId: input.rootSessionId };
+  const resourceOwners = input.resourceIds?.map((id) => requireGrantResourceOwner(db, input.resourceKind, id, input.rootSessionId, input.actions));
+  for (const owner of resourceOwners ?? [input.rootSessionId]) assertGrantBudgetAccount(db, { rootSessionId: input.rootSessionId, provenance }, owner);
   const id = insertGrant(db, {
     rootSessionId: input.rootSessionId, issuerKind: trusted.kind,
     issuerId: trusted.kind === "user" ? trusted.receiptId : trusted.service,
@@ -559,7 +566,7 @@ export function issueTrustedGrantPolicy(db: DatabaseSync, input: {
     permission: { mode: input.delegable ? "delegate" : "exercise", action: input.actions[0]!, resourceKind: input.resourceKind, relationSelector: input.relationSelector, effectClass: input.effectClass, targetSessionRoles: input.targetSessionRoles },
     childCeiling: input.childCeiling, issuedAt: input.issuedAt, expiresAt: input.expiresAt,
     eventKind: "delegated", eventPrincipalKind: trusted.kind, eventActorSessionId: null,
-    provenance: { source: "trusted-grant-policy", resourceIds: input.resourceIds, budgetAccountId: input.budgetAccountId, budget: input.budget, policyRootSessionId: input.rootSessionId },
+    provenance,
   });
   return [requireGrant(db, id)];
 }
@@ -931,6 +938,7 @@ export function transferSessionAuthority(db: DatabaseSync, input: {
   const now = new Date(input.transferredAt);
   for (const grant of sourceGrants) {
     assertGrantActive(grant, grant.granteeSessionId, grant.revision, now);
+    assertIssuerChainCurrent(db, grant, now);
     if (!grant.actions.every((action) => destinationIssuer.childCeiling.some((ceiling) =>
       samePermission(ceiling, { mode: grant.delegable ? "delegate" : "exercise", action,
         resourceKind: grant.resourceKind, relationSelector: grant.relationSelector,
@@ -1416,7 +1424,7 @@ function relationCanNarrow(parent: SessionAuthorityRelationSelector, child: Sess
   return parent === "root_member" || parent === "visible_root";
 }
 
-function validateGrantBudget(budget: Readonly<Record<string, number>> | undefined, parent: SessionAuthorityGrant): void {
+function validateGrantBudget(budget: Readonly<Record<string, number>> | undefined, parent: Pick<SessionAuthorityGrant, "provenance">): void {
   const parentBudget = parent.provenance.budget;
   if (budget === undefined) {
     if (parentBudget !== undefined) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "A child grant must declare its bounded budget.");

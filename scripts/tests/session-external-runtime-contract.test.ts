@@ -974,12 +974,15 @@ test("Session runtime validator rejects unknown fields and enqueue response mode
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "run/enqueueはtarget revisionを含む同じstrict通知inputとrevision付きpublic execution projectionを使う"
+// claim = "run/enqueueはtarget revisionを含む同じstrict通知inputを受理し、通知付きpublic execution projectionを使う"
 // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05/TN-PROJ-06" }
-// failure_mode = "operation間でcontainer revisionかexecution revisionが欠落し通知付きTurnの公開契約が分岐する"
+// fault = "operation間でcontainer revisionまたは通知inputのstrict shapeが分岐する"
+// observable = "run/enqueue parserの通知inputとterminal notification projection"
+// observation_boundary = "component-behavior"
 // scope = "Session Runtime Turn input and execution projection"
+// distinction = "parserの共通strict inputとpublic notification projectionを同じfixtureで観測する"
 // lifecycle = "permanent"
 // @end-test-value
 test("TN-AUTH-01/TN-PROJ-06: run/enqueueは同じstrict通知inputとpublic state projectionを使う", () => {

@@ -47,7 +47,7 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 72 operations:
+The CLI and MCP expose the same 68 operations:
 
 - Runtime: `runtime.catalog`
 - Authority grants: `grant.create`, `grant.get`, `grant.list`, `grant.revoke`
@@ -88,7 +88,7 @@ The target Session owns `pending` to `in_progress` or `waiting` transitions, res
 
 Work Item lifecycle mutations use the actor's active grants and canonical resource relations. Contract authority text does not issue a grant. New lifecycle capabilities are not added to existing baseline grants automatically; only an actor explicitly granted the capability through the trusted grant owner issuance path may execute it. `grant.create` requires an active delegable parent and cannot widen its ceiling. Use `work.history.list` to inspect the contract and lifecycle events before retrying a conflicting change. `work.reopen` creates a successor while preserving the predecessor's result, decisions, and membership history. `work.clone` copies a contract template with a source link; it does not copy results, decisions, executions, history, or retry identity.
 
-`work.move` records departure from the old parent and adoption by the new parent atomically. If an old decision exists, its supersede is recorded in the same transaction. Adoption changes membership only: the new parent must explicitly assess and decide the result. A standalone Work Item move across roots is not connected in this slice and is not an available capability. `work.result.correct` appends a new result revision and propagates stale state to accepted parent aggregates; `work.aggregation.correct` uses a strict `revise | withdraw | replace` union. `work.aggregation.list` accepts bounded depth, cursor, state, decision, and field projections. Full result payloads are retrieved separately with `work.get`.
+`work.move` records departure from the old parent and adoption by the new parent atomically. If an old decision exists, its supersede is recorded in the same transaction. Adoption changes membership only: the new parent must explicitly assess and decide the result. Cross-root Work Item moves are available when `destinationTargetSessionId` and `expectedDestinationTargetRevision` are supplied. `work.result.correct` appends a new result revision and propagates stale state to accepted parent aggregates; `work.aggregation.correct` uses a strict `revise | withdraw | replace` union. `work.aggregation.list` accepts bounded depth, cursor, state, decision, and field projections. Full result payloads are retrieved separately with `work.get`.
 
 Split uses `delegation.create` with multiple items and an explicit `parentWorkItemId` in each new Work Item contract. Use `dispatch: "prepare"` to establish every planned child before starting any execution. The batch preserves partial success and is not atomic. Merge uses explicit child decisions and the parent's `work.result`; there is no separate split or merge operation. Do not describe a sequence of individual creates as an atomic batch.
 

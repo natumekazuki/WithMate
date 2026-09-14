@@ -11,13 +11,14 @@ import { buildNewSession, type Session } from "../../src/session-state.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { applySessionMove } from "../../src-electron/session-lifecycle-move.js";
-import { issueTrustedCrossRootTransferCapability, listActiveSessionAuthorityGrants } from "../../src-electron/session-authority-storage.js";
+import { issueTrustedCrossRootTransferCapability, listActiveSessionAuthorityGrants, revokeSessionAuthorityGrant } from "../../src-electron/session-authority-storage.js";
 import { ResourceBudgetStorage, bootstrapRootResourceBudget } from "../../src-electron/resource-budget-storage.js";
 import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
 import { RESOURCE_BUDGET_DIMENSIONS } from "../../src/resource-budget.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import { appendWorkItemEventHeader, verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 import { SessionCrudError } from "../../src-electron/session-crud-service.js";
+import { SessionAuthorityError } from "../../src/session-authority.js";
 
 const NOW = "2026-09-05T12:00:00.000Z";
 
@@ -631,6 +632,85 @@ describe("Session lifecycle move", () => {
           .get("terminal-child"), beforeWork);
       } finally { db.close(); }
     } finally { service.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "移動対象Sessionの未解決resource reservationはmoveを拒否しtopologyを変更しない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "未解決reservationを残したままSession bindingを移動する"
+  // observable = "拒否結果、Session binding/revision、reservation state"
+  // observation_boundary = "component-behavior"
+  // scope = "session-lifecycle-move resource reservation guard"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("未解決resource reservationを拒否する", async () => {
+    const ctx = await setup();
+    const service = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    try {
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        bootstrapRootResourceBudget(db, { rootSessionId: ctx.sourceRoot.id, rootCreatedAt: NOW, createdAt: NOW });
+        const budget = new ResourceBudgetStorage(db);
+        const proof = service.authorize(runtimeBinding(ctx.sourceRoot.id), "budget.configure", { sessionId: ctx.sourceRoot.id }).proof;
+        budget.allocateChild({ accountId: "reservation-target", accountKind: "session", rootSessionId: ctx.sourceRoot.id,
+          ownerSessionId: ctx.target.id, parentAccountId: ctx.sourceRoot.id,
+          hardLimits: Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, dimension === "storageBytes" ? 0 : 2])),
+          authorityGrantId: proof.grantId, authorityGrantRevision: proof.grantRevision, expiresAt: null,
+          deadlineAt: "2026-10-01T00:00:00.000Z", idempotencyKey: "allocate-reservation-target", proof, createdAt: NOW });
+        budget.reconcileCommitted({ sessionId: ctx.target.id, dimension: "storageBytes", absoluteAmount: 0, idempotencyKey: "known-storage", reconciledAt: NOW });
+        const reservation = budget.reserve({ sessionId: ctx.target.id, reservationId: "move-reservation", dimension: "concurrentTurns", amount: 1, kind: "running_turn", idempotencyKey: "move-reservation-key", createdAt: NOW });
+        const beforeBinding = db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id);
+        const moveGrant = provisionMoveGrant(db, ctx.sourceRoot.id)[0];
+        assert.throws(() => applySessionMove(db, { sessionId: ctx.target.id, expectedRevision: 1, kind: "same_root",
+          destinationParentSessionId: ctx.destinationParent.id, destinationExpectedRevision: 1 }, moveProof(ctx.sourceRoot.id, moveGrant), NOW, "move-reservation"), /reservation/i);
+        assert.deepEqual(db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id), beforeBinding);
+        assert.equal((db.prepare("SELECT state FROM resource_budget_reservations_v6 WHERE reservation_id = 'move-reservation'").get() as { state: string }).state, "reserved");
+        budget.releaseReservation(reservation.reservationId, NOW);
+        const storageReservation = budget.reserveStorage({ sessionId: ctx.target.id, bytes: 1, operationId: "moving-folder", createdAt: NOW });
+        assert.equal(storageReservation.accountId, budget.get(ctx.sourceRoot.id).accountId);
+        budget.markReservationForReconciliation(storageReservation.reservationId, NOW);
+        assert.throws(() => applySessionMove(db, { sessionId: ctx.target.id, expectedRevision: 1, kind: "same_root",
+          destinationParentSessionId: ctx.destinationParent.id, destinationExpectedRevision: 1 }, moveProof(ctx.sourceRoot.id, moveGrant), NOW, "move-storage-reservation"), /reservation/i);
+        assert.deepEqual(db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id), beforeBinding);
+      } finally { db.close(); }
+    } finally { service.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "失効したissuerに依存するgrantをSession移管で再発行せず、外側transactionがtopology変更をrollbackする"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
+  // fault = "revoked parentの子grantをdestination issuerへ付け替えて権限を復活させる"
+  // observable = "move拒否、rollback後のSession root/revisionと移管先grant件数"
+  // observation_boundary = "component-behavior"
+  // scope = "SQLite applySessionMove inside caller transaction with real grant revocation"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("失効issuer chainを移管で復活させない", async () => {
+    const ctx = await setup();
+    const db = new DatabaseSync(ctx.dbPath);
+    try {
+      const sourceGrant = provisionMoveGrant(db, ctx.sourceRoot.id)[0];
+      const destinationGrant = provisionMoveGrant(db, ctx.sourceRoot.id, ctx.destinationRoot.id)[0];
+      const selfGrant = listActiveSessionAuthorityGrants(db, ctx.target.id, new Date(NOW)).find((grant) => grant.actions.includes("session.self"))!;
+      revokeSessionAuthorityGrant(db, { grantId: selfGrant.grantId, expectedRevision: selfGrant.revision,
+        principal: { kind: "system", service: "test-policy" }, revokedAt: NOW });
+      const before = db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id);
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        assert.throws(() => applySessionMove(db, { sessionId: ctx.target.id, expectedRevision: 1, kind: "cross_root",
+          descendants: [], destinationRootSessionId: ctx.destinationRoot.id, destinationParentSessionId: ctx.destinationRoot.id,
+          destinationExpectedRevision: 1, transferManifestRevision: 1, transferPolicy: "full",
+          destinationProof: moveProof(ctx.sourceRoot.id, destinationGrant, ctx.destinationRoot.id) },
+        moveProof(ctx.sourceRoot.id, sourceGrant), NOW, "revoked-chain-transfer"),
+        (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_GRANT_REVISION_CONFLICT");
+      } finally { db.exec("ROLLBACK"); }
+      assert.deepEqual(db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id), before);
+      assert.equal((db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?").get(ctx.target.id) as { resource_revision: number }).resource_revision, 1);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE grantee_session_id = ? AND root_session_id = ?").get(ctx.target.id, ctx.destinationRoot.id) as { count: number }).count, 0);
+    } finally { db.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
   });
 
 });

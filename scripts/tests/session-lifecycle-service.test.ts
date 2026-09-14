@@ -150,9 +150,9 @@ function completeRootWorkItem(dbPath: string, sessionId: string): void {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "session.move.manifestは実在するcanonical SessionFolderだけを移動manifestへ投影する"
+// claim = "session.move.manifestは実在するcanonical SessionFolderを移動manifestへ投影する"
 // oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeSessionMoveManifestResult" }
-// fault = "存在しないpathやworkspace pathをSessionFolderとして公開し、移動対象の実体境界を誤る"
+// fault = "実在するSessionFolderがmanifestへ投影されない"
 // observable = "moveManifestのsessionFoldersに含まれるsessionIdとcanonical directory path"
 // observation_boundary = "component-behavior"
 // scope = "SessionLifecycleService.moveManifest SessionFolder enrichment"

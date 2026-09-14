@@ -355,7 +355,7 @@ describe("Work Item contract", () => {
   // claim = "aggregation decisionはterminal childだけを対象とし、canceledはacceptedを拒否しつつexcluded、failedとpartially_completedはexcludedを許可する"
   // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md#Work Item contract" }
   // fault = "未完了または取消済みchildを採用するか、除外可能なterminal結果を集約から外せずparentの完了判定が不正になる"
-  // observable = "serviceの集約件数、authority/conflict error、子result summary、一覧decision"
+  // observable = "excludedCount、authority/conflict error、子result summary、一覧decision"
   // observation_boundary = "component-behavior"
   // scope = "WorkItemService.decideAggregationのchild state別decision matrix"
   // lifecycle = "permanent"
@@ -479,9 +479,9 @@ describe("Work Item contract", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "trusted principalのWork Item idempotency ledgerは24時間後だけ削除され、同じprincipalとkeyの新規要求へ再利用できる"
+  // claim = "trusted principalのWork Item idempotency ledgerは期限後にcleanupされ、同じprincipalとkeyの要求を再利用できる"
   // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-IDEM-07-idempotency-retention" }
-  // fault = "principal namespace変更で期限内ledgerを見失うか、期限後の同じkeyを永久に拒否する"
+  // fault = "期限後のledgerがcleanupされず、同じprincipalとkeyの新規要求を拒否する"
   // observable = "idempotency rowの保持/cleanupと同一key replay結果"
   // observation_boundary = "component-behavior"
   // scope = "WorkItemStorageV6 idempotency retention"
@@ -545,16 +545,16 @@ describe("Work Item contract", () => {
 
   // @test-value v2
   // kind = "security"
-  // claim = "baseline active grantを持つcoordinatorの直属Work Item作成を許可し、canonical Session tree外またはactive parentなしの委譲を拒否する"
+  // claim = "active grantを持つcoordinatorの直属Work Item作成を許可し、canonical Session tree外またはparent target不一致の委譲を拒否する"
   // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-AUTH-02-authority" }
-  // fault = "正規なactive grantの直属委譲を拒否するか、cross-rootまたはinactive parentへの委譲を保存する"
+  // fault = "正規なactive grantの直属委譲を拒否するか、cross-rootまたはparent target不一致の委譲を保存する"
   // observable = "Work Itemの保存結果とauthority/parent error"
   // observation_boundary = "component-behavior"
   // scope = "SessionAuthorityService and WorkItemService delegation admission"
   // lifecycle = "permanent"
   // distinction = "許可pathはbaseline active grantのproofを使い、拒否pathはcanonical parent/target graphの各境界を対比する"
   // @end-test-value
-  it("WORK-AUTH-02: active grantの直属targetを許可しroot外とinactive parentを拒否する", () => {
+  it("WORK-AUTH-02: active grantの直属targetを許可しroot外とparent target不一致を拒否する", () => {
     const parentInput = {
       targetSessionId: "task",
       goal: "Delegate a task",
@@ -587,6 +587,16 @@ describe("Work Item contract", () => {
     };
     const child = createWithActiveGrant(childInput, binding("task"));
     assert.equal(child.parentWorkItemId, parent.id);
+    assert.throws(() => service.create({
+      expectedContainerRevision: currentSessionResourceRevision("task"),
+      targetSessionId: "task",
+      goal: "self delegation",
+      scope: "scope",
+      completionCriteria: "done",
+      authority: "local",
+      sourceIdentity,
+      idempotencyKey: "self-delegation",
+    }, binding("task")), WorkItemAuthorityError);
     assert.throws(() => service.create({
       expectedContainerRevision: currentSessionResourceRevision("executor"),
       targetSessionId: "executor",

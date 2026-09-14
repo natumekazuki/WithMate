@@ -375,14 +375,14 @@ describe("SessionExecutionService", () => {
 
   // @test-value v2
   // kind = "regression"
-  // claim = "stale runtime generationのqueued executionはadmission transaction内の再検証に失敗し、dispatchせずterminal failureへ収束する"
+  // claim = "queued executionのadmission validator拒否はdispatchせずterminal failureへ収束する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Revoke-と実行中operation" }
-  // fault = "stale runtime generationのqueued executionを実行し、予算予約だけを残す"
-  // observable = "同一executionのfailed state、admission callback回数、dispatch回数、budget reservedの解放"
+  // fault = "admission validatorの拒否を無視してqueued executionをdispatchする"
+  // observable = "同一executionのfailed state、admission callback回数、dispatch回数、admission前のbudget reserved"
   // observation_boundary = "component-behavior"
   // scope = "session-execution-queued-authority-revalidation"
   // lifecycle = "permanent"
-  // distinction = "enqueue時のauthority検証を通過したexecutionでも、admission時の再検証拒否を明示的failureへ収束させる"
+  // distinction = "enqueue後のqueued admission callback拒否を明示的failureへ収束させる"
   // @end-test-value
   it("queued admissionのauthority再検証拒否はdispatchせずfailureへ収束する", async () => {
     let validationCalls = 0;
@@ -415,14 +415,14 @@ describe("SessionExecutionService", () => {
 
   // @test-value v2
   // kind = "security"
-  // claim = "enqueue時に有効だったgrantを親側でrevokeしたqueued executionはadmissionされず、予約budgetをsettleする"
+  // claim = "保存済みgrant proofを持つqueued executionがadmission時のgrant再検証に失敗するとdispatchされない"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Revoke-と実行中operation" }
-  // fault = "revoke後の保存済みgrant revisionをadmissionが再検証せずdispatchし、concurrent budget reservationを残す"
-  // observable = "実SQLite grant revoked_at、execution failed、dispatchなし、budget reserved=0"
+  // fault = "失効後の保存済みgrant revisionをadmissionが再検証せずdispatchする"
+  // observable = "execution failed、dispatchなし、budget reserved=0"
   // observation_boundary = "component-behavior"
   // scope = "session-execution-grant-revoke-admission"
   // lifecycle = "permanent"
-  // distinction = "stub callbackではなくSessionAuthorityServiceが発行したagent proofと実grant revokeを使用する"
+  // distinction = "canonical revoke経路は使用するが、admission proof自体はtest fixtureで構成し、executionの失効grant再検証結果を観測する"
   // @end-test-value
   it("revoke済みgrantのqueued executionをadmissionしない", async () => {
     const fixture = await createFixture({

@@ -1730,10 +1730,10 @@ test("I-01: canonical replayはcatalog revision更新後もstale validationよ�
 
 // @test-value v2
 // kind = "contract"
-// claim = "actorとtargetを分離し同一actor入力のfingerprintを維持してspoofとconsultationなしcross-root送信を拒否する"
+// claim = "同一actor・同一入力の再送ではcharacter snapshotが変化してもrequest fingerprintを維持する"
 // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md" }
-// fault = "Character snapshot変更で再送identityが変化する、callerのactor偽装を受け入れる、追跡なしのcross-root要求がdispatchされる"
-// observable = "execution port呼出数・fingerprint・initiator identityとpublic error"
+// fault = "character snapshotの更新で同一actorの再送fingerprintが変化し、canonical replay identityが失われる"
+// observable = "同一actorによるrun/enqueueのexecution port入力fingerprintとinitiator identity"
 // observation_boundary = "component-behavior"
 // scope = "application actor identity and trace validation; grant evaluator is stubbed"
 // lifecycle = "permanent"
@@ -1972,6 +1972,7 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
   assert.equal(mutations[0].request.terminalFailureNotification.sourceSession.character.name,
     "Character source-session");
   assert.equal(mutations[0].terminalFailureNotificationProof.principal.actorSessionId, "source-session");
+  assert.equal(mutations[0].terminalFailureNotificationProof.operation, "turn.enqueue");
   assert.equal(mutations[0].terminalFailureNotificationProof.resolvedScope.resourceId, "target-session");
   assert.equal(mutations[0].proof.principal.actorSessionId, "actor-session");
   assert.deepEqual(resolvedSessions, []);

@@ -46,10 +46,10 @@ test("Session lifecycle manifestは空closureを実在DBから返す", () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "manifestはrunning/queued execution、active grant、reservation、artifact、open interaction/coordinationを対象subtreeから列挙し、DB全体のevent追加をstale検知する"
+// claim = "manifestは対象subtreeのexecution、active grant、reservation、artifact、open interaction/coordinationを列挙し、event追加をstale検知する"
 // oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeSessionMoveManifestResult" }
-// fault = "resourceの存在がfake zero値または同root siblingの混入で隠れる"
-// observable = "各resourceの件数、state、revision、owner、grant chain、resource history、parent relation、event identity"
+// fault = "対象subtreeのresourceが欠落する、または同root siblingのeventでrevision変化を見落とす"
+// observable = "execution/work/grant/reservation/artifact/interaction/coordinationの件数とstate、grant chain、resource history、event identity"
 // observation_boundary = "implementation"
 // scope = "session-lifecycle-manifest"
 // lifecycle = "permanent"
@@ -71,13 +71,15 @@ test("Session lifecycle manifestはrunning/queuedと保護resourceを列挙す�
   db.exec(`INSERT INTO session_authority_grants_v6 (grant_id, root_session_id, issuer_kind, issuer_id, issuer_grant_id, issuer_grant_revision, grantee_session_id, actions_json, resource_kind, relation_selector, target_session_roles_json, effect_class, delegable, child_ceiling_json, issued_at, effective_at, expires_at, revoked_at, revision, mapping_revision, provenance_json)
     VALUES ('grant-parent', 'root', 'system', 'root', NULL, NULL, 'root', '[]', 'session', 'self', '[]', 'read', 1, '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, 4, 1, '{}'),
       ('grant-child', 'root', 'system', 'root', 'grant-parent', 4, 'child', '[]', 'session', 'self', '[]', 'read', 0, '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, 5, 1, '{}'),
-      ('grant-revoked-descendant', 'root', 'system', 'root', 'grant-child', 5, 'child', '[]', 'session', 'self', '[]', 'read', 0, '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP, 6, 1, '{}')`);
+      ('grant-revoked-descendant', 'root', 'system', 'root', 'grant-child', 5, 'child', '[]', 'session', 'self', '[]', 'read', 0, '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP, 6, 1, '{}'),
+      ('grant-sibling', 'root', 'system', 'root', 'grant-parent', 4, 'sibling', '[]', 'session', 'self', '[]', 'read', 0, '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, 1, 1, '{}')`);
   db.exec("INSERT INTO session_authority_grant_events_v6 (event_id, grant_id, event_kind, grant_revision, principal_kind, payload_json, occurred_at) VALUES ('grant-event', 'grant-child', 'baseline_issued', 5, 'system', '{}', CURRENT_TIMESTAMP), ('grant-revoked-event', 'grant-revoked-descendant', 'revoked', 6, 'system', '{}', CURRENT_TIMESTAMP)");
   db.exec(`INSERT INTO resource_budget_accounts_v6 (account_id, account_kind, root_session_id, owner_session_id, parent_account_id, deadline_at, retry_per_execution_limit, revision, created_at, updated_at)
     VALUES ('account-root', 'root', 'root', 'root', NULL, CURRENT_TIMESTAMP, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
       ('account-child', 'session', 'root', 'child', 'account-root', CURRENT_TIMESTAMP, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
-  db.exec("INSERT INTO resource_budget_dimensions_v6 (account_id, dimension, hard_limit, committed, reserved) VALUES ('account-child', 'queuedTurns', 10, 0, 1)");
+  db.exec("INSERT INTO resource_budget_dimensions_v6 (account_id, dimension, hard_limit, committed, reserved) VALUES ('account-child', 'queuedTurns', 10, 0, 1), ('account-root', 'storageBytes', 10, 0, 1)");
   db.exec("INSERT INTO resource_budget_reservations_v6 (reservation_id, account_id, dimension, amount, state, reservation_kind, execution_id, idempotency_key, created_at, updated_at) VALUES ('reservation-child', 'account-child', 'queuedTurns', 1, 'reserved', 'queued_turn', 'queue', 'key', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
+  db.exec("INSERT INTO resource_budget_reservations_v6 (reservation_id, account_id, dimension, amount, state, reservation_kind, idempotency_key, created_at, updated_at) VALUES ('reservation-root-storage', 'account-root', 'storageBytes', 1, 'reconciliation_required', 'storage', 'storage-key', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO resource_budget_events_v6 (event_id, account_id, account_revision, event_kind, principal_kind, operation_id, payload_json, projection_json, occurred_at) VALUES ('budget-event', 'account-child', 1, 'reserved', 'system', 'op', '{}', '{}', CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at) VALUES ('child', 0, 'assistant', 'body', '{\"title\":\"artifact\"}', CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO session_interactions_v6 (id, execution_id, kind, state, public_payload_json, created_at, updated_at) VALUES ('interaction-child', 'run', 'approval', 'pending', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
@@ -95,7 +97,8 @@ test("Session lifecycle manifestはrunning/queuedと保護resourceを列挙す�
   assert.deepEqual(manifest.grantChains.map(({ id }) => id), ["grant-child", "grant-parent", "grant-revoked-descendant"]);
   assert.equal(manifest.grantChains.find(({ id }) => id === "grant-parent")?.issuerGrantId, null);
   assert.equal(manifest.grantChains.find(({ id }) => id === "grant-revoked-descendant")?.revokedAt !== null, true);
-  assert.deepEqual(manifest.budgetReservations, [{ id: "reservation-child", state: "reserved" }]);
+  assert.deepEqual(manifest.budgetReservations, [{ id: "reservation-child", state: "reserved" }, { id: "reservation-root-storage", state: "reconciliation_required" }]);
+  assert.deepEqual(manifest.budgetAccounts.map((account) => account.id), ["account-child", "account-root"]);
   assert.deepEqual(manifest.artifacts, [{ id: "1", ownerSessionId: "child" }]);
   assert.equal(manifest.openInteractions, 1);
   assert.equal(manifest.openCoordinationEvents, 1);

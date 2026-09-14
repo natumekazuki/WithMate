@@ -132,7 +132,7 @@ test("temporary cross-root communication remains bounded through replay expiry a
 // claim = "same-rootの非parent Sessionはactiveなexplicit grantのresource scopeでroutingでき、grant unionとrevokeを正しく評価する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Same-root routing" }
 // fault = "parent matrixがないtargetを拒否する、または一方のgrant revokeで別の有効grantまで無効化する"
-// observable = "実SQLite grant revisionとauthorize proofのgrantId、対象Sessionのresource scope"
+// observable = "実SQLiteを使ったauthorize proofのgrantIdと許可・拒否結果、trusted policyの不正resource/account拒否"
 // observation_boundary = "component-behavior"
 // scope = "same-root grant routing evaluator"
 // lifecycle = "permanent"
@@ -151,6 +151,8 @@ test("same-root non-parent routing uses explicit grant union", async () => {
   try {
     const common = { rootSessionId: root.id, granteeSessionId: parent.id, actions: ["turn.enqueue"] as const, resourceKind: "execution" as const, relationSelector: "root_member" as const, targetSessionRoles: ["executor"] as const, effectClass: "external_side_effect" as const, delegable: false, childCeiling: [] as const, resourceIds: [sibling.id] as const, expiresAt: "2026-09-15T00:00:00.000Z", principal: { kind: "system" as const, service: "routing-test" }, proof: { principal: { kind: "system" as const, service: "routing-test" }, operation: "turn.enqueue" as const, mappingRevision: 2, action: "turn.enqueue" as const, resolvedScope: { resourceKind: "execution" as const, resourceId: sibling.id, rootSessionId: root.id, ownerKind: "session" as const, ownerId: root.id, relation: "self" as const }, effectClass: "external_side_effect" as const, grantId: null, grantRevision: null, evaluatedAt: NOW }, issuedAt: NOW };
     assert.throws(() => authority.authorize(binding(parent.id), "turn.enqueue", { sessionId: sibling.id }));
+    assert.throws(() => issueTrustedGrantPolicy(db, { ...common, resourceIds: ["missing-session"] }), /resource/i);
+    assert.throws(() => issueTrustedGrantPolicy(db, { ...common, budgetAccountId: "wrong-account" }), /account/i);
     const first = issueTrustedGrantPolicy(db, { ...common })[0]!;
     const second = issueTrustedGrantPolicy(db, { ...common, resourceIds: [sibling.id], proof: common.proof })[0]!;
     const input = { sessionId: sibling.id };

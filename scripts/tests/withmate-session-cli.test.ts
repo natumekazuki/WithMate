@@ -1336,6 +1336,16 @@ describe("withmate-session CLI", () => {
     assert.equal(stdout.text().includes(connection.adapterSecret), false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "CLI schemaは公開Work Item lifecycle commandとexit codeをruntime接続なしでadvertiseする"
+  // oracle = { type = "contract", ref = "scripts/withmate-session.ts#commandMap" }
+  // fault = "CLI command mappingがschemaから欠落し、MCP/runtimeに存在するWork Item操作をCLI利用者が発見できない"
+  // observable = "schema command一覧とexitCodes"
+  // observation_boundary = "public-boundary"
+  // scope = "withmate-session CLI schema command catalog"
+  // lifecycle = "permanent"
+  // @end-test-value
   test("schemaはruntimeなしでcommandとexit codeを返す", async () => {
     const stdout = capture();
     const exitCode = await runWithMateSessionCli(["schema"], { stdout: stdout.stream });
@@ -1343,6 +1353,9 @@ describe("withmate-session CLI", () => {
     assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
     assert.deepEqual(stdout.json().result.exitCodes, WITHMATE_SESSION_CLI_EXIT_CODES);
     assert.ok(stdout.json().result.commands.includes("turn enqueue"));
+    for (const command of ["work reassign", "work move", "work clone", "work reopen", "work archive", "work restore", "work delete"]) {
+      assert.ok(stdout.json().result.commands.includes(command), `schema must advertise ${command}`);
+    }
   });
 
   test("mcp-server commandはstdio server entryへ委譲する", async () => {

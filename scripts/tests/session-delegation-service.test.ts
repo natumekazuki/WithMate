@@ -163,11 +163,11 @@ test("prepared work starts only with an admitted retry and cancels through the o
 // claim = "DelegationのTurn stepはtemporary consultation grant identityを保存済みrequestとowner enqueue inputへ同一値で伝播する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Cross-root-consultation" }
 // fault = "consultationGrantIdをparserまたはstep compositionで失い、cross-root dispatchのprovenanceを追跡不能にする"
-// observable = "実SQLite request_json、pending/owner enqueue inputのconsultationGrantId"
+// observable = "実SQLite request_jsonとowner enqueue inputのconsultationGrantId"
 // observation_boundary = "component-behavior"
 // scope = "Delegation consultation composition"
 // lifecycle = "permanent"
-// distinction = "既存resource owner stub上で、保存されたDelegation requestとcanonical turn.enqueue入力の一致を確認する"
+// distinction = "既存resource owner stub上で、保存されたrequestとcanonical turn.enqueue入力の一致を確認する"
 // @end-test-value
 test("consultation grant identity is preserved through the saved delegation turn step", async () => {
   const f = await fixture();

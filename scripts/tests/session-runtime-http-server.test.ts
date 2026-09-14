@@ -716,14 +716,16 @@ test("Session runtime status proves the discovered runtime identity", async () =
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
-// claim = "Session Runtime HTTPは上限を超えるread success envelopeを上限内のCONTENT_TOO_LARGE/not_applied errorへ置換する"
+// claim = "Session Runtimeのapplication projection size guardはHTTP E2Eでも上限内のCONTENT_TOO_LARGE/not_applied errorへ到達する"
 // oracle = { type = "contract", ref = "SESSION_RUNTIME_MAX_RESPONSE_BYTES" }
-// failure_mode = "上限超過responseを送信するか、read失敗を適用済みまたは適用不明と誤報する"
-// scope = "Session Runtime HTTP response byte limit"
+// fault = "上限超過responseを送信するか、read失敗を適用済みまたは適用不明と誤報する"
+// observable = "HTTP status、CONTENT_TOO_LARGE/not_applied error、serialized response byte length"
+// scope = "Session Runtime application projection size guard through HTTP"
 // lifecycle = "permanent"
-// distinction = "schema不正ではなく正しいturn.get resultのserialized byte上限を観測する"
+// observation_boundary = "public-boundary"
+// distinction = "application projectionの上限超過をHTTP transport経由のstatus、error effect、body byte lengthで観測する"
 // @end-test-value
 test("RL-01: Session runtime replaces an oversized success response with a stable error", async () => {
   const server = createSessionRuntimeHttpServer({

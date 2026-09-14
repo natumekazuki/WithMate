@@ -190,9 +190,9 @@ describe("WithMate Session MCP contract", () => {
   });
   // @test-value v2
   // kind = "contract"
-  // claim = "MCPはbudget三操作を含む全公開toolをdotted name、generic strict envelope schema、read/writeおよびDelegationのProvider実行可能性を含むopenWorld annotation付きで公開する"
+  // claim = "MCPはbudget三操作を含む全公開toolをdotted name、required field付きstrict envelope schema、read/write annotation付きで公開する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-public-api-migration-and-review.md#public-surface-parity" }
-  // fault = "MCPの期待tool表にあるoperationが公開一覧から欠落するか、generic envelope required fieldまたはreadOnly/destructive分類が期待表と一致しないか、Delegation create/retryの外部効果をopenWorldHintへ反映しない"
+  // fault = "MCPの期待tool表にあるoperationが欠落するか、generic envelope required fieldまたはreadOnly/destructive分類が期待表と一致しない"
   // observable = "MCP tools/listの公開tool名、generic input/output schema strictness、effect annotation"
   // observation_boundary = "public-boundary"
   // scope = "WithMate Session MCP tool catalog"

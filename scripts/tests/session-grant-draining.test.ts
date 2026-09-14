@@ -41,12 +41,12 @@ function assertDenied(authority: SessionAuthorityService, actor: string): void {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "進行中のcross-root session.moveはsourceとdestination rootのauthority mutationをdraining中拒否する"
+// claim = "進行中のcross-root session.moveはsourceとdestination rootのsession.rename authorityをdraining中拒否する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#L70" }
-// fault = "pending moveの片側rootだけを検査し、他方のrootでgrant mutationを許可する"
-// observable = "実SQLite authority判定の拒否結果と非関係rootの許可結果"
+// fault = "pending moveの片側rootだけを検査し、他方のrootでsession.renameを許可する"
+// observable = "実SQLite authority判定のsession.rename拒否結果と非関係rootの許可結果"
 // observation_boundary = "component-behavior"
-// scope = "session grant draining admission"
+// scope = "session authority draining admission"
 // lifecycle = "permanent"
 // distinction = "lifecycle ownerのprepareで保存したpending operationをauthority storageが再読する"
 // @end-test-value
@@ -74,12 +74,12 @@ test("pending cross-root move drains both roots while leaving unrelated roots av
 
 // @test-value v2
 // kind = "invariant"
-// claim = "session.moveの完了はdrainingを解除し、sourceとdestination rootのmutationを再開できる"
+// claim = "session.moveの完了はdrainingを解除し、sourceとdestination rootのsession.renameを再開できる"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#L70" }
-// fault = "completed moveをpendingとして扱い続け、正当なgrant mutationを恒久拒否する"
-// observable = "lifecycle complete後の両root authority判定"
+// fault = "completed moveをpendingとして扱い続け、正当なsession.renameを恒久拒否する"
+// observable = "lifecycle complete後の両root session.rename authority判定"
 // observation_boundary = "component-behavior"
-// scope = "session grant draining completion"
+// scope = "session authority draining completion"
 // lifecycle = "permanent"
 // distinction = "preparedからrunningを経た既存lifecycle operationをcompleteし、両rootを再判定する"
 // @end-test-value

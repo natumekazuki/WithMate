@@ -141,18 +141,19 @@ export function buildSessionLifecycleManifest(
     ORDER BY grant_id
   `).all(...ids) as GrantRow[];
   const grantChains = db.prepare(`
-    WITH RECURSIVE grant_chain(grant_id) AS (
+    WITH RECURSIVE affected_grants(grant_id) AS (
       SELECT grant_id FROM session_authority_grants_v6
       WHERE grantee_session_id IN (${marks}) OR (issuer_kind = 'agent' AND issuer_id IN (${marks}))
+      UNION
+      SELECT grant.grant_id FROM session_authority_grants_v6 AS grant
+      INNER JOIN affected_grants AS issuer ON issuer.grant_id = grant.issuer_grant_id
+    ), grant_chain(grant_id) AS (
+      SELECT grant_id FROM affected_grants
       UNION
       SELECT grant.issuer_grant_id
       FROM session_authority_grants_v6 AS grant
       INNER JOIN grant_chain AS child ON child.grant_id = grant.grant_id
       WHERE grant.issuer_grant_id IS NOT NULL
-      UNION
-      SELECT grant.grant_id
-      FROM session_authority_grants_v6 AS grant
-      INNER JOIN grant_chain AS issuer ON issuer.grant_id = grant.issuer_grant_id
     )
     SELECT grant.grant_id, grant.revision, grant.issuer_grant_id, grant.issuer_grant_revision,
       grant.grantee_session_id, grant.revoked_at, grant.expires_at
@@ -164,10 +165,11 @@ export function buildSessionLifecycleManifest(
     SELECT reservation.reservation_id, reservation.state
     FROM resource_budget_reservations_v6 AS reservation
     INNER JOIN resource_budget_accounts_v6 AS account ON account.account_id = reservation.account_id
-    WHERE (account.owner_session_id IN (${marks}) OR reservation.execution_id IN (${executionIds.length ? executionIds.map(() => "?").join(", ") : "NULL"}))
+    WHERE (account.owner_session_id IN (${marks}) OR reservation.execution_id IN (${executionIds.length ? executionIds.map(() => "?").join(", ") : "NULL"})
+      OR (account.root_session_id = ? AND account.account_kind = 'root' AND reservation.dimension = 'storageBytes'))
       AND reservation.state IN ('reserved', 'reconciliation_required')
     ORDER BY reservation.reservation_id
-  `).all(...ids, ...executionIds) as ReservationRow[];
+  `).all(...ids, ...executionIds, root.root_session_id) as ReservationRow[];
   const artifacts = db.prepare(`
     SELECT id, session_id AS owner_session_id FROM session_messages_v6
     WHERE session_id IN (${marks}) AND artifact_body IS NOT NULL AND length(artifact_body) > 0
@@ -190,9 +192,10 @@ export function buildSessionLifecycleManifest(
   const coordinationEventIds = (db.prepare(`SELECT id FROM coordination_events_v6 WHERE actor_session_id IN (${marks}) OR target_session_id IN (${marks}) OR parent_session_id IN (${marks}) ORDER BY id`).all(...ids, ...ids, ...ids) as Array<{ id: string }>).map((row) => row.id);
   const interactionIds = executionIds.length === 0 ? [] : (db.prepare(`SELECT id FROM session_interactions_v6 WHERE execution_id IN (${executionIds.map(() => "?").join(", ")}) ORDER BY id`).all(...executionIds) as Array<{ id: string }>).map((row) => row.id);
   const workItemIds = workItems.map((row) => row.id);
-  const budgetAccounts = db.prepare(`SELECT account_id, owner_session_id, root_session_id, revision FROM resource_budget_accounts_v6 WHERE root_session_id IN (${marks}) OR owner_session_id IN (${marks}) ORDER BY account_id`).all(...ids, ...ids) as Array<{ account_id: string; owner_session_id: string; root_session_id: string; revision: number }>;
+  const budgetAccounts = db.prepare(`SELECT account_id, owner_session_id, root_session_id, revision FROM resource_budget_accounts_v6 WHERE root_session_id IN (${marks}) OR owner_session_id IN (${marks}) OR (root_session_id = ? AND account_kind = 'root') ORDER BY account_id`).all(...ids, ...ids, root.root_session_id) as Array<{ account_id: string; owner_session_id: string; root_session_id: string; revision: number }>;
   const budgetAccountIds = budgetAccounts.map((row) => row.account_id);
-  const budgetUsage = budgetAccountIds.length === 0 ? [] : db.prepare(`SELECT usage_id, account_id, execution_id, amount, usage_unit, confidence FROM resource_budget_metered_usage_v6 WHERE account_id IN (${budgetAccountIds.map(() => "?").join(", ")}) ORDER BY usage_id`).all(...budgetAccountIds) as Array<{ usage_id: string; account_id: string; execution_id: string | null; amount: number; usage_unit: string; confidence: string }>;
+  const budgetUsage = budgetAccountIds.length === 0 ? [] : db.prepare(`SELECT usage_id, account_id, execution_id, amount, usage_unit, confidence FROM resource_budget_metered_usage_v6 WHERE account_id IN (${budgetAccountIds.map(() => "?").join(", ")})
+    AND (execution_id IS NULL OR execution_id IN (${executionIds.length ? executionIds.map(() => "?").join(", ") : "NULL"})) ORDER BY usage_id`).all(...budgetAccountIds, ...executionIds) as Array<{ usage_id: string; account_id: string; execution_id: string | null; amount: number; usage_unit: string; confidence: string }>;
   const delegationRows = db.prepare(`SELECT id, actor_session_id, revision, state FROM delegations_v6 WHERE actor_session_id IN (${marks}) ORDER BY id`).all(...ids) as Array<{ id: string; actor_session_id: string; revision: number; state: string }>;
   const historyKeys = new Map<string, { resourceKind: string; resourceId: string }>();
   const addHistoryKey = (resourceKind: string, resourceId: string): void => { historyKeys.set(`${resourceKind}:${resourceId}`, { resourceKind, resourceId }); };

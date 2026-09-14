@@ -106,6 +106,19 @@ function assertInactiveResources(db: DatabaseSync, sourceRoot: string, sessionId
     WHERE session_id IN (${placeholders}) AND state IN ('running', 'queued') LIMIT 1`)
     .get(...sessionIds) as { id: string } | undefined;
   if (execution) fail(`An active Session execution prevents moving the Session subtree: ${execution.id}.`);
+  const pendingInteraction = db.prepare(`SELECT interaction.id FROM session_interactions_v6 AS interaction
+    INNER JOIN session_executions_v6 AS execution ON execution.id = interaction.execution_id
+    WHERE interaction.state = 'pending' AND execution.session_id IN (${placeholders}) LIMIT 1`)
+    .get(...sessionIds) as { id: string } | undefined;
+  if (pendingInteraction) fail(`A pending Session interaction prevents moving the Session subtree: ${pendingInteraction.id}.`);
+  const reservation = db.prepare(`SELECT reservation.reservation_id FROM resource_budget_reservations_v6 AS reservation
+    INNER JOIN resource_budget_accounts_v6 AS account ON account.account_id = reservation.account_id
+    LEFT JOIN session_executions_v6 AS execution ON execution.id = reservation.execution_id
+    WHERE reservation.state IN ('reserved', 'reconciliation_required')
+      AND (account.owner_session_id IN (${placeholders}) OR execution.session_id IN (${placeholders})
+        OR (account.root_session_id = ? AND account.account_kind = 'root' AND reservation.dimension = 'storageBytes'))
+    LIMIT 1`).get(...sessionIds, ...sessionIds, sourceRoot) as { reservation_id: string } | undefined;
+  if (reservation) fail(`An open resource reservation prevents moving the Session subtree: ${reservation.reservation_id}.`);
   const openCoordination = db.prepare(`SELECT event.id FROM coordination_events_v6 AS event
     WHERE (event.actor_session_id IN (${placeholders}) OR event.target_session_id IN (${placeholders}) OR event.parent_session_id IN (${placeholders}))
       AND event.kind IN ('escalation', 'user_decision_required', 'blocker')
@@ -158,6 +171,9 @@ export function applySessionMove(
   const destinationRootBinding = binding(db, destinationRoot);
   if (destinationRootBinding.root_session_id !== destinationRoot || destinationRootBinding.parent_session_id !== null) {
     fail("The destination root must be an actual root Session.");
+  }
+  if (input.kind === "cross_root" && input.destinationParentSessionId === null && destinationRoot !== input.sessionId) {
+    fail("A cross-root move without a destination parent must move the actual root Session itself.");
   }
   const rows = assertManifest(db, input, source.root_session_id);
   const ids = rows.map((row) => row.session_id);
@@ -247,7 +263,10 @@ export function applySessionMove(
   if (input.kind === "cross_root") {
     const destinationGrantId = input.destinationProof!.grantId as string;
     const destinationGrantRevision = input.destinationProof!.grantRevision as number;
-    for (const id of ids) {
+    for (const id of rows
+      .slice()
+      .sort((left, right) => right.delegation_depth - left.delegation_depth)
+      .map((row) => row.session_id)) {
       transferSessionAuthority(db, { sessionId: id, sourceRootSessionId: source.root_session_id, destinationRootSessionId: destinationRoot,
         destinationIssuerGrantId: destinationGrantId, destinationIssuerGrantRevision: destinationGrantRevision, operationId, transferredAt: now });
     }
