@@ -16,6 +16,7 @@ import {
   type SessionMessageColumnProps,
 } from "../../src/session-components.js";
 import { StableSessionMessageColumn } from "../../src/chat/chat-window.js";
+import { ConversationMessageColumn } from "../../src/chat/conversation-message-column.js";
 import { useCompanionCharacterProfile } from "../../src/companion-character-profile.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
@@ -107,6 +108,23 @@ function CompanionDraftMessageColumn(props: SessionMessageColumnProps) {
       `draft:${draft}`,
     ),
   );
+}
+
+const conversationTestThemeColors = {};
+
+function ConversationBackedMessageColumn(props: SessionMessageColumnProps) {
+  return React.createElement(ConversationMessageColumn, {
+    session: {
+      id: props.sessionId,
+      messages: props.messages,
+      characterId: "character",
+      character: "Test Character",
+      characterIconPath: "",
+      characterThemeColors: conversationTestThemeColors,
+    },
+    baseProps: props,
+    enabled: true,
+  });
 }
 
 function createMessages(count: number): Message[] {
@@ -349,6 +367,7 @@ async function mountSessionMessageColumn(options: {
   const originalClientHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientHeight");
   const originalScrollHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "scrollHeight");
   const originalScrollTo = dom.window.HTMLElement.prototype.scrollTo;
+  const originalScrollIntoView = dom.window.HTMLElement.prototype.scrollIntoView;
   const originalResizeObserver = dom.window.ResizeObserver;
   const messageRowHeights = new Map<number, number>();
   const resizeObservers: Array<{
@@ -413,6 +432,7 @@ async function mountSessionMessageColumn(options: {
       this.scrollTop = optionsOrX.top;
     }
   };
+  dom.window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
 
   dom.window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
     if (this.classList.contains("session-selection-action-overlay")) {
@@ -609,6 +629,7 @@ async function mountSessionMessageColumn(options: {
         value: originalResizeObserver,
       });
       dom.window.HTMLElement.prototype.scrollTo = originalScrollTo;
+      dom.window.HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
       dom.window.close();
       Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
       Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
@@ -1374,6 +1395,18 @@ test("SessionMessageColumn は非表示から復帰したとき独自に末尾�
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "StableSessionMessageColumnはcallbackの再生成だけで既存messageを再描画しない"
+// oracle = { type = "contract", ref = "Issue #714: 親callback更新時も既存Markdown画像を保持する" }
+// fault = "callback参照の更新だけでmemoized message columnが再描画され、既存messageの本文評価や画像lifecycleがやり直される"
+// observable = "既存Message.text getterの読み取り回数"
+// observation_boundary = "component-behavior"
+// scope = "StableSessionMessageColumnのcallback安定化境界"
+// lifecycle = "permanent"
+// impact = "composer入力時の無関係な親更新で表示済み会話の画像が再mountされる"
+// distinction = "ConversationMessageColumnのprojection生成を通した回帰とは別に、共通stable boundary単体のmemo動作を観測する"
+// @end-test-value
 test("StableSessionMessageColumn は callback の再生成だけでは既存 message を再描画しない", async () => {
   let messageTextReadCount = 0;
   const message = {
@@ -1386,6 +1419,45 @@ test("StableSessionMessageColumn は callback の再生成だけでは既存 mes
   const mounted = await mountSessionMessageColumn({
     messages: [message],
     component: StableSessionMessageColumn,
+    onCopyMessageText() {},
+  });
+
+  try {
+    const initialReadCount = messageTextReadCount;
+    assert.ok(initialReadCount > 0);
+
+    await mounted.rerender({ onCopyMessageText() {} });
+
+    assert.equal(messageTextReadCount, initialReadCount);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "ConversationMessageColumnは親callbackの再生成だけで既存messageの本文を再評価しない"
+// oracle = { type = "contract", ref = "Issue #714: ConversationMessageColumnから共通SessionMessageColumnへの既存Markdown保持" }
+// fault = "ConversationMessageColumnが生成するcharacter・Set・callbackが親更新だけでSessionMessageColumnへ伝播し、既存messageのMarkdown処理が再実行される"
+// observable = "既存Message.text getterの読み取り回数"
+// observation_boundary = "component-behavior"
+// scope = "ConversationMessageColumnの共通stable boundary"
+// lifecycle = "permanent"
+// impact = "composer入力時に表示済み会話のMarkdown画像が再mountされ、loading状態や表示位置が失われる"
+// distinction = "StableSessionMessageColumn単体の確認とは別に、実際のConversationMessageColumn componentでprojection・character・Set生成を通した親更新を観測する"
+// @end-test-value
+test("ConversationMessageColumn は callback 再生成だけでは既存 message を再評価しない", async () => {
+  let messageTextReadCount = 0;
+  const message = {
+    role: "assistant" as const,
+    get text() {
+      messageTextReadCount += 1;
+      return "stable conversation message";
+    },
+  };
+  const mounted = await mountSessionMessageColumn({
+    messages: [message],
+    component: ConversationBackedMessageColumn,
     onCopyMessageText() {},
   });
 

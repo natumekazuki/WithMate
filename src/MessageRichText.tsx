@@ -1,13 +1,16 @@
 import {
   Children,
+  createContext,
   isValidElement,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useMemo,
   useRef,
   useState,
+  type ComponentPropsWithoutRef,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -95,6 +98,21 @@ type MessageCopyFeedback = {
   message: string;
   tone: "error" | "success";
 };
+
+type MarkdownRenderContextValue = {
+  enableMermaid: boolean;
+  markdown: string;
+  onCodeBlockCopyResult?: (feedback: MessageCopyFeedback) => void;
+  onLinkContextMenuResult?: (result: MarkdownLinkContextMenuResult) => void;
+  linkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
+  onOpenPath?: (target: string) => void;
+  resolveImageSource?: (target: string) => Promise<string | null>;
+};
+
+const MarkdownRenderContext = createContext<MarkdownRenderContextValue>({
+  enableMermaid: true,
+  markdown: "",
+});
 
 const htmlLineBreakPattern = /^<br[ \t]*\/?>$/i;
 
@@ -484,6 +502,75 @@ function MermaidDiagram({ source }: { source: string }) {
   );
 }
 
+type MarkdownPreComponentProps = ComponentPropsWithoutRef<"pre"> & { node?: unknown };
+type MarkdownLinkComponentProps = ComponentPropsWithoutRef<"a"> & { node?: unknown };
+type MarkdownImageComponentProps = ComponentPropsWithoutRef<"img"> & { node?: unknown };
+
+function MarkdownPre({ children, node, ...props }: MarkdownPreComponentProps) {
+  const { enableMermaid, markdown, onCodeBlockCopyResult } = useContext(MarkdownRenderContext);
+  const isFenced = isFencedCodeBlock(node as HastNode | undefined, markdown);
+  const child = Children.toArray(children)[0];
+  if (enableMermaid && isValidElement<{ className?: string; children?: ReactNode }>(child)) {
+    const language = resolveCodeLanguage(child.props.className);
+    if (language === "mermaid") {
+      return (
+        <MermaidDiagram
+          source={extractTextContent(child.props.children)}
+        />
+      );
+    }
+  }
+
+  const content = (
+    <pre {...props} className={mergeClassName("message-code-block", props.className)}>
+      {children}
+    </pre>
+  );
+  return isFenced && onCodeBlockCopyResult ? (
+    <CodeBlockShell
+      code={resolveCodeBlockText(children)}
+      onCopyResult={onCodeBlockCopyResult}
+    >
+      {content}
+    </CodeBlockShell>
+  ) : content;
+}
+
+function MarkdownLink({ children, href, node, ...props }: MarkdownLinkComponentProps) {
+  const { onOpenPath, linkFileContext, onLinkContextMenuResult } = useContext(MarkdownRenderContext);
+  const target = href?.trim() ?? "";
+  const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    handleMarkdownLinkClick(event, target, onOpenPath);
+  };
+  const handleContextMenu = (event: MouseEvent<HTMLAnchorElement>) => {
+    void handleMarkdownLinkContextMenu(event, target, undefined, linkFileContext).then((result) => {
+      if (result && result.status !== "dismissed") {
+        onLinkContextMenuResult?.(result);
+      }
+    });
+  };
+
+  return (
+    <a {...props} href={href} onClick={handleClick} onContextMenu={handleContextMenu}>
+      {children}
+    </a>
+  );
+}
+
+function MarkdownImageComponent({ src, alt, title, node }: MarkdownImageComponentProps) {
+  const { resolveImageSource } = useContext(MarkdownRenderContext);
+  const source = typeof src === "string" ? src.trim() : "";
+  return source ? (
+    <MarkdownImage
+      key={`${resolveImageSource ? "resolved" : "direct"}:${source}`}
+      source={source}
+      alt={alt}
+      title={title}
+      resolveImageSource={resolveImageSource}
+    />
+  ) : null;
+}
+
 const markdownComponents: Components = {
   h1: ({ children, className: headingClassName, node, ...props }) => (
     <h1 {...props} className={mergeClassName("message-heading level-1", headingClassName)}>
@@ -563,6 +650,10 @@ const markdownComponents: Components = {
       {children}
     </strong>
   ),
+  span: GlossaryAnnotationSpan,
+  pre: MarkdownPre,
+  a: MarkdownLink,
+  img: MarkdownImageComponent,
 };
 
 function renderMarkdownFrontmatter(_state: unknown, node: Node) {
@@ -623,6 +714,8 @@ type MarkdownImageProps = {
   resolveImageSource?: (target: string) => Promise<string | null>;
 };
 
+const MARKDOWN_IMAGE_LOADING_DELAY_MS = 1_000;
+
 type MessageImageLightboxProps = {
   source: string;
   alt: string;
@@ -672,14 +765,36 @@ function MessageImageLightbox({ source, alt, onClose }: MessageImageLightboxProp
   );
 }
 
-function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImageProps) {
+const MarkdownImage = memo(function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImageProps) {
   const canLoadDirectly = !resolveImageSource && isDirectMarkdownImageSource(source);
   const shouldLoadEagerly = shouldLoadMarkdownImageEagerly(source);
   const [resolvedSource, setResolvedSource] = useState(canLoadDirectly ? source : "");
   const [loadStatus, setLoadStatus] = useState<"resolving" | "loading" | "ready" | "error">(
     resolveImageSource ? "resolving" : canLoadDirectly ? "loading" : "error",
   );
+  const [isLoadingIndicatorVisible, setIsLoadingIndicatorVisible] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const loadingIndicatorTimeoutRef = useRef<number | null>(null);
+  const clearLoadingIndicatorTimer = useCallback(() => {
+    if (loadingIndicatorTimeoutRef.current === null) {
+      return;
+    }
+    window.clearTimeout(loadingIndicatorTimeoutRef.current);
+    loadingIndicatorTimeoutRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!resolveImageSource && !canLoadDirectly) {
+      return;
+    }
+    setIsLoadingIndicatorVisible(false);
+    const timeout = window.setTimeout(() => {
+      loadingIndicatorTimeoutRef.current = null;
+      setIsLoadingIndicatorVisible(true);
+    }, MARKDOWN_IMAGE_LOADING_DELAY_MS);
+    loadingIndicatorTimeoutRef.current = timeout;
+    return () => window.clearTimeout(timeout);
+  }, [canLoadDirectly, resolveImageSource, source]);
 
   useEffect(() => {
     if (!resolveImageSource) {
@@ -700,6 +815,7 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
           return;
         }
         if (!resolved) {
+          clearLoadingIndicatorTimer();
           setLoadStatus("error");
           return;
         }
@@ -711,6 +827,7 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
       })
       .catch(() => {
         if (active) {
+          clearLoadingIndicatorTimer();
           setResolvedSource("");
           setLoadStatus("error");
         }
@@ -722,12 +839,16 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
         URL.revokeObjectURL(ownedObjectUrl);
       }
     };
-  }, [resolveImageSource, source]);
+  }, [clearLoadingIndicatorTimer, resolveImageSource, source]);
+
+  const isLoading = loadStatus === "resolving" || loadStatus === "loading";
+  const showLoadingIndicator = isLoading && isLoadingIndicatorVisible;
+  const isResolvingWithoutSource = loadStatus === "resolving" && !resolvedSource;
 
   return (
-    <span className="message-image-shell">
-      {loadStatus === "resolving" || loadStatus === "loading" ? (
-        <span className="message-image-loading" role="status">Image loading…</span>
+    <span className={`message-image-shell${isResolvingWithoutSource ? " is-resolving" : ""}`}>
+      {showLoadingIndicator ? (
+        <span className="message-image-loading" role="status" aria-label="画像を読み込み中" />
       ) : null}
       {loadStatus === "error" ? (
         <span className="message-image-error" role="alert" title={source}>Image could not be loaded.</span>
@@ -747,8 +868,14 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
             title={title}
             loading={shouldLoadEagerly ? "eager" : "lazy"}
             fetchPriority={shouldLoadEagerly ? "high" : "auto"}
-            onLoad={() => setLoadStatus("ready")}
-            onError={() => setLoadStatus("error")}
+            onLoad={() => {
+              clearLoadingIndicatorTimer();
+              setLoadStatus("ready");
+            }}
+            onError={() => {
+              clearLoadingIndicatorTimer();
+              setLoadStatus("error");
+            }}
           />
         </button>
       ) : null}
@@ -761,7 +888,7 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
       ) : null}
     </span>
   );
-}
+});
 
 function shouldDeferRichMarkdownRender(): boolean {
   return typeof window !== "undefined";
@@ -801,83 +928,6 @@ function scheduleFullMarkdownRender(callback: () => void): () => void {
     if (frameId !== null) {
       browserWindow.cancelAnimationFrame(frameId);
     }
-  };
-}
-
-function createMarkdownComponents(
-  onOpenPath?: (target: string) => void,
-  options?: {
-    enableMermaid?: boolean;
-    markdown?: string;
-    onCodeBlockCopyResult?: (feedback: MessageCopyFeedback) => void;
-    onLinkContextMenuResult?: (result: MarkdownLinkContextMenuResult) => void;
-    linkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
-    resolveImageSource?: (target: string) => Promise<string | null>;
-  },
-): Components {
-  const enableMermaid = options?.enableMermaid ?? true;
-  return {
-    ...markdownComponents,
-    span: GlossaryAnnotationSpan,
-    pre: ({ children, node, ...props }) => {
-      const isFenced = isFencedCodeBlock(node, options?.markdown ?? "");
-      const child = Children.toArray(children)[0];
-      if (enableMermaid && isValidElement<{ className?: string; children?: ReactNode }>(child)) {
-        const language = resolveCodeLanguage(child.props.className);
-        if (language === "mermaid") {
-          return (
-            <MermaidDiagram
-              source={extractTextContent(child.props.children)}
-            />
-          );
-        }
-      }
-
-      const content = (
-        <pre {...props} className={mergeClassName("message-code-block", props.className)}>
-          {children}
-        </pre>
-      );
-      return isFenced && options?.onCodeBlockCopyResult ? (
-        <CodeBlockShell
-          code={resolveCodeBlockText(children)}
-          onCopyResult={options.onCodeBlockCopyResult}
-        >
-          {content}
-        </CodeBlockShell>
-      ) : content;
-    },
-    a: ({ children, href, node, ...props }) => {
-      const target = href?.trim() ?? "";
-      const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
-        handleMarkdownLinkClick(event, target, onOpenPath);
-      };
-      const handleContextMenu = (event: MouseEvent<HTMLAnchorElement>) => {
-        void handleMarkdownLinkContextMenu(event, target, undefined, options?.linkFileContext).then((result) => {
-          if (result && result.status !== "dismissed") {
-            options?.onLinkContextMenuResult?.(result);
-          }
-        });
-      };
-
-      return (
-        <a {...props} href={href} onClick={handleClick} onContextMenu={handleContextMenu}>
-          {children}
-        </a>
-      );
-    },
-    img: ({ src, alt, title }) => {
-      const source = typeof src === "string" ? src.trim() : "";
-      return source ? (
-        <MarkdownImage
-          key={`${options?.resolveImageSource ? "resolved" : "direct"}:${source}`}
-          source={source}
-          alt={alt}
-          title={title}
-          resolveImageSource={options?.resolveImageSource}
-        />
-      ) : null;
-    },
   };
 }
 
@@ -924,13 +974,14 @@ function MessageMarkdownPreview({
   const handleCodeBlockCopyResult = useCallback((feedback: MessageCopyFeedback) => {
     setCopyFeedback(feedback);
   }, []);
-  const components = useMemo(
-    () => createMarkdownComponents(onOpenPath, {
+  const markdownRenderContext = useMemo<MarkdownRenderContextValue>(
+    () => ({
       enableMermaid: isFullRender,
       markdown: text,
       onCodeBlockCopyResult: handleCodeBlockCopyResult,
       onLinkContextMenuResult: handleLinkContextMenuResult,
       linkFileContext: markdownLinkFileContext,
+      onOpenPath,
       resolveImageSource,
     }),
     [
@@ -986,18 +1037,20 @@ function MessageMarkdownPreview({
   return (
     <div className={`${className} rich-text`.trim()} data-markdown-render-mode={renderMode}>
       <MessageGlossaryAnnotationProvider controller={glossaryAnnotations.controller}>
-        <ReactMarkdown
-          components={components}
-          rehypePlugins={rehypePlugins}
-          urlTransform={markdownUrlTransform}
-          remarkPlugins={remarkPlugins}
-          remarkRehypeOptions={{
-            clobberPrefix: footnotePrefix,
-            handlers: { yaml: renderMarkdownFrontmatter },
-          }}
-        >
-          {text}
-        </ReactMarkdown>
+        <MarkdownRenderContext.Provider value={markdownRenderContext}>
+          <ReactMarkdown
+            components={markdownComponents}
+            rehypePlugins={rehypePlugins}
+            urlTransform={markdownUrlTransform}
+            remarkPlugins={remarkPlugins}
+            remarkRehypeOptions={{
+              clobberPrefix: footnotePrefix,
+              handlers: { yaml: renderMarkdownFrontmatter },
+            }}
+          >
+            {text}
+          </ReactMarkdown>
+        </MarkdownRenderContext.Provider>
       </MessageGlossaryAnnotationProvider>
       {copyFeedback ? (
         <span
