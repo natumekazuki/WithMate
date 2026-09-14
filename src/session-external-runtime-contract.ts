@@ -962,10 +962,10 @@ export function parseSessionRuntimeOperationInput(
 ): SessionRuntimeWorkItemHistoryAppendInput;
 export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOperation, value: unknown): unknown;
 export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOperation, value: unknown): unknown {
-  if (operation.startsWith("delegation.")) return parseDelegationInput(operation, value);
   if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) {
     throw invalid("operation", "Unsupported Session runtime operation.");
   }
+  if (operation.startsWith("delegation.")) return parseDelegationInput(operation, value);
   if (operation === "runtime.catalog" || operation === "session.self") {
     const record = requireObject(value, "input");
     assertKeys(record, [], "input");

@@ -519,8 +519,8 @@ function assertSessionRuntimeRequestBodySize(actualBytes, field = "requestBody")
 	}, "CONTENT_TOO_LARGE");
 }
 function parseSessionRuntimeOperationInput(operation, value) {
-	if (operation.startsWith("delegation.")) return parseDelegationInput(operation, value);
 	if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) throw invalid("operation", "Unsupported Session runtime operation.");
+	if (operation.startsWith("delegation.")) return parseDelegationInput(operation, value);
 	if (operation === "runtime.catalog" || operation === "session.self") {
 		assertKeys(requireObject(value, "input"), [], "input");
 		return {};

@@ -10,7 +10,6 @@ export class DelegationOperationError extends Error {
   constructor(readonly error: SessionRuntimeError["error"]) { super(error.message); }
 }
 const terminal = (state: string) => !["queued", "running"].includes(state);
-const stopped = (state: string) => ["cancelled", "compensated", "cancelling", "compensating"].includes(state);
 
 export class DelegationService {
   private queue: Promise<unknown> = Promise.resolve();
@@ -51,7 +50,6 @@ export class DelegationService {
   }
   retry(binding: ResolvedAgentRuntimeBinding, input: DelegationRetryInput, proof: MutationAuthorityProof) {
     return this.mutate(binding, "delegation.retry", input, proof, async (row) => {
-      if (stopped(row.state)) this.fail("DELEGATION_STATE_CONFLICT", "A stopped delegation cannot dispatch. Reuse its resources in a new delegation.");
       const pending = this.deps.storage.getInternal(row.id, binding.actorSessionId).pending;
       if (input.dispatch === "enqueue" && pending && ["session.create", "work.create", "work.aggregation.retry"].includes(pending.operation)) {
         row = await this.advance(binding, row, "prepare");
@@ -78,6 +76,12 @@ export class DelegationService {
       if (known && (known.operation !== operation || !isDeepStrictEqual(known.input, input))) this.fail("IDEMPOTENCY_CONFLICT", "The key belongs to another delegation mutation.");
       if (known && known !== previous) throw new DelegationRevisionError(row.id, input.expectedRevision, row.revision);
       if (known === previous && previous?.result) return previous.result;
+      if (row.state === "compensated"
+        || (operation === "delegation.retry" && ["completed", "cancelled", "cancelling", "compensating"].includes(row.state))
+        || (operation === "delegation.cancel" && ["completed", "cancelled", "compensating"].includes(row.state))
+        || (operation === "delegation.cancel" && previous?.operation === "delegation.compensate")) {
+        this.fail("DELEGATION_STATE_CONFLICT", "This operation cannot change the delegation's terminal or cleanup state.");
+      }
       const nextPrior = previous && known !== previous ? [...prior, { operation: previous.operation, input: previous.input }] : prior;
       if (operation === "delegation.retry" && previous && ["delegation.cancel", "delegation.compensate"].includes(previous.operation)) this.fail("DELEGATION_STATE_CONFLICT", "Cancellation has been requested. Continue cleanup or explicitly reuse the resources.");
       if (operation === "delegation.retry" && (input as DelegationRetryInput).dispatch === "prepare" && pending?.operation === "turn.enqueue") this.fail("DELEGATION_STATE_CONFLICT", "An attempted dispatch must be resolved before returning to a prepared state.");
@@ -161,10 +165,16 @@ export class DelegationService {
       return this.failure(binding, row, pending.itemIndex, new DelegationOperationError({ code: "DELEGATION_RECOVERY_REQUIRED", message: "Resume the uncertain creation step before cleanup.", retryable: true, effect: "indeterminate", details: {} }));
     }
     row = this.save(binding, row, { state: compensate ? "compensating" : "cancelling" });
+    if (compensate && pending?.operation === "session.archive") {
+      try {
+        const step = await this.step(binding, row, pending.itemIndex, "session.archive", () => pending.input);
+        row = this.item(binding, step.row, pending.itemIndex, { state: "compensated", pendingStep: null }, true);
+      } catch (error) { return this.failure(binding, row, pending.itemIndex, error); }
+    }
     for (let index = row.items.length - 1; index >= 0; index--) {
       try {
         let item = row.items[index];
-        if (item.state === "compensated" || (!compensate && item.state === "cancelled")) continue;
+        if (item.state === "compensated" || (!compensate && ["cancelled", "completed"].includes(item.state))) continue;
         if (item.executionId) {
           let execution = await this.callItem(binding, row, index, "turn.get", { sessionId: item.sessionId!, executionId: item.executionId });
           if (!terminal(execution.state)) {
@@ -263,7 +273,7 @@ export class DelegationService {
     const cleanup = ["delegation.cancel", "delegation.compensate"].includes(internal.lastMutation?.operation ?? "");
     const uncertainCreation = internal.pending && ["session.create", "work.create", "work.aggregation.retry", "turn.enqueue"].includes(internal.pending.operation) && detail.effect !== "not_applied";
     const expired = internal.pending && Date.parse(this.now()) - Date.parse(internal.pending.startedAt) >= 24 * 60 * 60 * 1000;
-    const recoveryActions: Delegation["recoveryActions"] = uncertainCreation ? (expired ? [] : ["retry"]) : cleanup ? ["cancel", "compensate"] : ["retry", "cancel", "compensate"];
+    const recoveryActions: Delegation["recoveryActions"] = uncertainCreation ? (expired ? [] : ["retry"]) : internal.lastMutation?.operation === "delegation.compensate" ? ["compensate"] : cleanup ? ["cancel", "compensate"] : ["retry", "cancel", "compensate"];
     return this.save(binding, row, { state: "recovery_required", recoveryActions,
       items: row.items.map((value, i) => i === index ? { ...value, state: "recovery_required", error: detail,
         effect: detail.effect === "indeterminate" ? "indeterminate" : item.effect === "applied" || detail.effect === "applied" ? "applied" : "not_applied" } : value) });
@@ -285,7 +295,7 @@ export class DelegationService {
       }
     }));
     const state = items.every((item) => item.state === "completed") ? "completed" : "active";
-    if (state !== row.state || !isDeepStrictEqual(items, row.items)) row = this.save(binding, row, { items, state });
+    if (state !== row.state || !isDeepStrictEqual(items, row.items)) row = this.save(binding, row, { items, state, ...(state === "completed" ? { recoveryActions: ["compensate"] } : {}) });
     return { ...row, items: row.items.map((item, index) => projectedErrors.has(index) ? { ...item, error: projectedErrors.get(index)! } : item) };
   }
 

@@ -576,3 +576,15 @@ crash保存状態からの3種類の拒否とcancel／compensate保護、後続S
 
 
 追加3指摘の修正を `e2d70a358d7ace813126adc9755465007048b805` に固定した。clean detached worktreeで3指摘のtargeted closureを完了し、取りこぼし・追加findingはない。review用worktreeはHEAD、cleanliness、SessionFolder内のpathを確認して削除した。今回baseからの抽出は4 transitions（新規3件、変更のない既存1件）、diagnostic／warning 0。通常のread-only general_lunaが新規3件のmetadata・assertion・production pathを確認し、既存recordが変更なしであることも確認した。未解決の審査指摘はない。
+
+### Slice 6 追加レビュー対応（2026-09-14）
+
+開始baseは `18c0541f1b23d0db18f9d4f1a8ac095847a32ed1`。操作別に終端状態を保存前に検査し、完了済みのretry/cancelと補償済みへの新規操作を拒否する。同keyの保存応答は維持し、取消後の補償は許可する。部分取消では完了itemを保持する。
+
+補償のsession.archive pendingは保存済み入力とkeyでownerへ先に再送する。既存DB検証へDelegationのactor FKとunique index検査を加え、未知delegation operationは公開一覧検証で拒否する。catalogの件数上限は既存定数を参照する。
+
+以前の記録にある「実SQLiteの補償競合test」は、取消呼出前に別接続でassociationをcommitした保存状態の検証であり、処理途中の実interleaveを再現したものではない。test metadataと名称をこの観測範囲へ限定した。Work Item取消transaction内の検査は変更しない。
+
+新規Rootのarchive経路も通常CRUD取得に依存させず、保存step照合・source control認可・canonical authority proofのRoot所属検査を維持した。公開application経由で取得不能Rootの再送、所属変更拒否、権限拒否を確認した。
+
+関連108 test（Delegation service 17、Work取消1、schema/parser 2、schema/bootstrap/contract/storage/CLI 42、application 46）、型検査、本番buildが成功した。新規Rootの既存testではauthority stubのRoot scopeを実際の契約に合わせて補正した。全suite、実Provider起動、GUI目視は今回未実施。開始baseから8 tests／8 transitionsをdiagnostic／warning 0で抽出し、test-valueと5指摘に限定した独立確認を実施する。

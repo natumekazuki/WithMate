@@ -589,6 +589,9 @@ export function isValidV6Database(dbPath: string): boolean {
     if (!hasRequiredForeignKeys(db)) {
       return false;
     }
+    if (!hasValidDelegationSchema(db)) {
+      return false;
+    }
     if (!hasRequiredCheckConstraints(db)) {
       return false;
     }
@@ -873,6 +876,11 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
       "id",
       "SET NULL",
     );
+}
+
+function hasValidDelegationSchema(db: DatabaseSync): boolean {
+  return hasForeignKey(db, "delegations_v6", "actor_session_id", "sessions_v6", "id", "CASCADE")
+    && hasUniqueIndexForColumns(db, "delegations_v6", ["actor_session_id", "idempotency_key"]);
 }
 
 function tableSql(db: DatabaseSync, tableName: string): string {

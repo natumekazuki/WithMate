@@ -39,6 +39,7 @@ async function fixture() {
   let executionAdmittedAt: string | null = null;
   let workState = "pending";
   let archived = false;
+  let sessionArchived = false;
   let controlRevoked = false;
   let revokeAfter: string | null = null;
   let otherExecutions: unknown[] = [];
@@ -49,6 +50,7 @@ async function fixture() {
     attempts.push({ operation, input: structuredClone(input) });
     if (operation === failOperation && !failAfterCommit && (failOnCall === 0 || attempts.filter((call) => call.operation === operation).length === failOnCall)) return createSessionRuntimeError({ code: "PROVIDER_DISABLED", message: "Disabled", effect: "not_applied", retryable: true });
     let result: unknown;
+    if (sessionArchived && ["session.get", "session.delete.manifest"].includes(operation)) throw new Error("Session is archived");
     if (operation === "session.get") result = { sessionId: input.sessionId, revision: 11 };
     else if (operation === "turn.get") result = { id: input.executionId, sessionId: input.sessionId, revision: 2, state: executionState, admittedAt: executionAdmittedAt };
     else if (operation === "turn.list") result = { items: otherExecutions };
@@ -67,6 +69,7 @@ async function fixture() {
       if (operation === "turn.cancel") executionState = "canceled";
       if (operation === "work.cancel") workState = "canceled";
       if (operation === "work.archive") archived = true;
+      if (operation === "session.archive") sessionArchived = true;
       if (operation === failOperation && failAfterCommit) throw new Error("Simulated response loss with private detail");
     }
     if (operation === revokeAfter) controlRevoked = true;
@@ -337,7 +340,7 @@ test("created root dispatch uses its self authority without changing the caller 
         },
         authorizeSessionAct(actorSessionId, operation, input) {
           seenActors.push(actorSessionId);
-          return { input, proof: { ...proof, principal: { kind: "agent", agent: "session-runtime", actorSessionId, runtimeGeneration: "internal" }, operation, action: operation } as never };
+          return { input, proof: { ...proof, principal: { kind: "agent", agent: "session-runtime", actorSessionId, runtimeGeneration: "internal" }, resolvedScope: { ...proof.resolvedScope, rootSessionId: actorSessionId }, operation, action: operation } as never };
         },
         canSessionAct() { return true; },
       },
@@ -579,6 +582,142 @@ test("enqueue retry resolves the later prepare pending before dispatch", async (
       assert.ok(result.items.every((item) => item.state === "active" && item.executionId));
       assert.equal(f.resources.size, 6);
       assert.equal(mutations.filter((call) => call.operation === "turn.enqueue").length, 2);
+    } finally { await f.close(); }
+  }
+});
+// @test-value v2
+// kind = "invariant"
+// claim = "完了・補償済みの委譲を新しい取消やretryで後退させず、部分完了itemと同keyの結果再送を保持し、取消後の補償を許可する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md" }
+// fault = "終端への新規操作が状態とmutation記録を上書きし、完了itemを取消済みと誤表示する"
+// observable = "公開状態、item状態、拒否後の保存revisionとmutation不変、同key再送結果、取消後の補償成功"
+// observation_boundary = "component-behavior"
+// scope = "DelegationServiceとSQLite。ownerはstub、部分完了は保存状態で設定"
+// lifecycle = "permanent"
+// @end-test-value
+test("terminal delegation controls preserve completed items and replay results", async () => {
+  const f = await fixture();
+  try {
+    const service = f.make();
+    const active = await service.create(binding, request, proof);
+    f.setExecutionState("completed");
+    const completed = await service.get(binding, { delegationId: active.id });
+    assert.equal(completed.state, "completed");
+    assert.deepEqual(completed.recoveryActions, ["compensate"]);
+    for (const method of ["retry", "cancel"] as const) {
+      await assert.rejects(() => service[method](binding, { delegationId: completed.id, expectedRevision: completed.revision, idempotencyKey: method, dispatch: "enqueue" }, proof), /terminal or cleanup/);
+    }
+    assert.deepEqual(f.storage.get(completed.id, "root"), completed);
+    assert.equal(f.storage.getInternal(completed.id, "root").lastMutation, null);
+
+    const batch = await service.create(binding, { ...request, idempotencyKey: "batch", items: [request.items[0], request.items[0]] }, proof);
+    const partial = f.storage.update({ id: batch.id, actorSessionId: "root", expectedRevision: batch.revision, updatedAt: now, items: batch.items.map((item, index) => ({ ...item, state: index === 0 ? "completed" : "active" })) });
+    f.setExecutionState("queued");
+    const cancelInput = { delegationId: partial.id, expectedRevision: partial.revision, idempotencyKey: "cancel-partial" };
+    const canceled = await service.cancel(binding, cancelInput, proof);
+    assert.deepEqual(canceled.items.map((item) => item.state), ["completed", "cancelled"]);
+    assert.deepEqual(await service.cancel(binding, cancelInput, proof), canceled);
+
+    const prepared = await service.create(binding, { ...request, idempotencyKey: "cleanup", dispatch: "prepare", items: [{ ...request.items[0], target: { kind: "existing", sessionId: "child" }, work: { kind: "existing", workItemId: "existing-work" } }] }, proof);
+    const stopped = await service.cancel(binding, { delegationId: prepared.id, expectedRevision: prepared.revision, idempotencyKey: "stop" }, proof);
+    const compensated = await service.compensate(binding, { delegationId: stopped.id, expectedRevision: stopped.revision, idempotencyKey: "cleanup" }, proof);
+    assert.equal(compensated.state, "compensated");
+    for (const method of ["retry", "cancel", "compensate"] as const) {
+      await assert.rejects(() => service[method](binding, { delegationId: compensated.id, expectedRevision: compensated.revision, idempotencyKey: method, dispatch: "enqueue" }, proof), /terminal or cleanup/);
+    }
+    assert.deepEqual(f.storage.get(compensated.id, "root"), compensated);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "session.archiveの応答消失後、取得不能なSessionでも保存入力の再送で補償を完了し、途中でcancelへ切り替えない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md" }
+// fault = "archive済みSessionを先に取得して再送不能になる、補償途中をcancelで取消済みと上書きする"
+// observable = "再open後の同一archive入力、compensated状態、pending解除、cancel拒否と保存状態保持"
+// observation_boundary = "component-behavior"
+// scope = "実SQLiteとarchive後のreadを拒否する冪等owner stub"
+// lifecycle = "permanent"
+// @end-test-value
+test("compensation replays a lost archive response before reading archived resources", async () => {
+  const f = await fixture();
+  try {
+    const prepared = await f.make().create(binding, { ...request, dispatch: "prepare" }, proof);
+    f.fail("session.archive", true);
+    const failed = await f.make().compensate(binding, { delegationId: prepared.id, expectedRevision: prepared.revision, idempotencyKey: "archive" }, proof);
+    assert.equal(failed.state, "recovery_required");
+    const pending = f.storage.getInternal(failed.id, "root").pending;
+    assert.equal(pending?.operation, "session.archive");
+    assert.deepEqual(failed.recoveryActions, ["compensate"]);
+    const service = f.reopen();
+    await assert.rejects(() => service.cancel(binding, { delegationId: failed.id, expectedRevision: failed.revision, idempotencyKey: "cancel" }, proof), /terminal or cleanup/);
+    assert.deepEqual(f.storage.get(failed.id, "root"), failed);
+    f.fail(null);
+    const offset = f.attempts.length;
+    const result = await service.compensate(binding, { delegationId: failed.id, expectedRevision: failed.revision, idempotencyKey: "resume" }, proof);
+    assert.equal(result.state, "compensated");
+    assert.deepEqual(f.attempts.slice(offset), [{ operation: "session.archive", input: pending!.input }]);
+    assert.equal(f.storage.getInternal(result.id, "root").pending, null);
+    assert.equal(f.resources.size, 5);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "作成Rootのarchive再送は通常取得不能でも保存入力でownerへ届き、Root所属変更とsource権限拒否ではownerを呼ばない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md" }
+// fault = "archive再送前の通常取得が回復を妨げる、取得省略がRoot所属またはsource権限検査を迂回する"
+// observable = "公開compensate結果、同じarchive input、owner呼出数、pending保持"
+// observation_boundary = "public-boundary"
+// scope = "実application/delegation/SQLiteへarchive応答消失状態を設定。authorityとlifecycleはstub"
+// lifecycle = "permanent"
+// @end-test-value
+test("created root archive recovery keeps source authority and canonical root checks", async () => {
+  const { SessionExternalApplicationService } = await import("../../src-electron/session-external-application-service.js");
+  const { SessionAuthorityError } = await import("../../src/session-authority.js");
+  for (const scenario of ["replay", "moved", "denied"]) {
+    const f = await fixture();
+    try {
+      const target = request.items[0].target;
+      if (target.kind !== "create") throw new Error("fixture");
+      const rootRequest: DelegationCreateInput = { ...request, dispatch: "prepare", items: [{ ...request.items[0], target: { kind: "create", session: { ...target.session, placement: { kind: "root", rootKind: "standalone" } } }, work: { kind: "root" } }] };
+      const saved = f.storage.create({ id: "delegation-archive", actorSessionId: "root", idempotencyKey: rootRequest.idempotencyKey, request: rootRequest, proof, state: "compensating", items: [{ index: 0, sessionId: "archived-root", workItemId: "root-work", executionId: null, createdSession: true, createdWorkItem: true, state: "recovery_required", pendingStep: "session.archive", effect: "indeterminate", error: null }], recoveryActions: ["compensate"], createdAt: new Date().toISOString() });
+      const archiveInput = { sessionId: "archived-root", expectedRevision: 4, reason: "Delegation compensation", descendantPolicy: "retain", idempotencyKey: "saved-archive" };
+      const pending = { itemIndex: 0, operation: "session.archive", input: archiveInput, startedAt: new Date().toISOString() };
+      const row = f.storage.update({ id: saved.id, actorSessionId: "root", expectedRevision: saved.revision, updatedAt: new Date().toISOString(), pending });
+      const calls: unknown[] = [];
+      const app = new SessionExternalApplicationService({
+        delegationStorage: f.storage,
+        authorityService: {
+          authorize(_actor: unknown, operation: string, input: unknown) {
+            if (scenario === "denied") throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Denied");
+            return { input, proof: { ...proof, operation } };
+          },
+          authorizeSessionAct(actor: string, operation: string, input: unknown) {
+            assert.equal(actor, "archived-root");
+            return { input, proof: { ...proof, operation, resolvedScope: { ...proof.resolvedScope, rootSessionId: scenario === "moved" ? "other-root" : actor } } };
+          },
+        },
+        crudService: { async get() { throw new Error("Archived Session unavailable"); } },
+        lifecycleService: { async archive(input: unknown) { calls.push(input); return { sessionId: "archived-root" }; } },
+      } as never);
+      const response = await app.execute("delegation.compensate", { delegationId: row.id, expectedRevision: row.revision, idempotencyKey: "resume" }, binding);
+      if (scenario === "replay") {
+        assert.ok("result" in response);
+        assert.equal((response.result as import("../../src/delegation.js").Delegation).state, "compensated");
+        assert.deepEqual(calls, [archiveInput]);
+        assert.equal(f.storage.getInternal(row.id, "root").pending, null);
+      } else {
+        assert.deepEqual(calls, []);
+        assert.deepEqual(f.storage.getInternal(row.id, "root").pending, pending);
+        if (scenario === "moved") {
+          assert.ok("result" in response);
+          assert.equal((response.result as import("../../src/delegation.js").Delegation).items[0].error?.code, "DELEGATION_TARGET_CONFLICT");
+        } else {
+          assert.ok("error" in response);
+          assert.equal(response.error.code, "AUTHORITY_FORBIDDEN");
+        }
+      }
     } finally { await f.close(); }
   }
 });

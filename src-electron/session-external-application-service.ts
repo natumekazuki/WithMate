@@ -196,6 +196,7 @@ import { isDeepStrictEqual } from "node:util";
 import { DelegationNotFoundError, DelegationOwnerError, DelegationRevisionError } from "./delegation-storage.js";
 import type { DelegationStorage } from "./delegation-storage.js";
 import type { DelegationCreateInput, DelegationGetInput, DelegationListInput, DelegationMutationInput, DelegationRetryInput } from "../src/delegation.js";
+import { DELEGATION_MAX_ITEMS } from "../src/delegation.js";
 
 export type SessionExternalApplicationServiceDeps = {
   delegationStorage?: DelegationStorage;
@@ -301,8 +302,8 @@ export class SessionExternalApplicationService {
       const request = parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation, input });
       const fields = request.input as Record<string, unknown>;
       const root = item.sessionId;
-      const session = await this.deps.crudService.get(root);
-      if (session.rootSessionId !== root || session.parentSessionId !== null
+      const session = operation === "session.archive" ? undefined : await this.deps.crudService.get(root);
+      if ((session !== undefined && (session.rootSessionId !== root || session.parentSessionId !== null))
         || (fields.sessionId !== undefined && fields.sessionId !== root)
         || (fields.workItemId !== undefined && fields.workItemId !== item.workItemId)
         || (fields.executionId !== undefined && fields.executionId !== item.executionId)) {
@@ -318,9 +319,12 @@ export class SessionExternalApplicationService {
       }
       const actor = { actorSessionId: root };
       const proof = this.deps.authorityService.authorizeSessionAct(root, operation, request.input).proof;
+      if (proof.resolvedScope.rootSessionId !== root) {
+        throw new SessionCrudError("DELEGATION_TARGET_CONFLICT", "The authority proof does not belong to the created root.");
+      }
       let result: SessionRuntimeResultByOperation[SessionRuntimeOperation];
       switch (operation) {
-        case "session.get": result = session; break;
+        case "session.get": result = session!; break;
         case "work.list": {
           if (fields.creatorSessionId !== root || fields.targetSessionId !== root) throw new SessionCrudError("DELEGATION_TARGET_CONFLICT", "Only the created root's own Work Item can be resolved.");
           const work = this.requireWorkItemService().getRootWorkItem(root, actor);
@@ -1302,7 +1306,7 @@ function projectRuntimeCatalog(
       },
     },
     delegation: {
-      operations: ["create", "get", "list", "retry", "cancel", "compensate"], maxItems: 20, prepareStartOperation: "delegation.retry",
+      operations: ["create", "get", "list", "retry", "cancel", "compensate"], maxItems: DELEGATION_MAX_ITEMS, prepareStartOperation: "delegation.retry",
       constraints: [
         "Each batch item reports its own committed resources. Processing stops at the first failing item; retry continues the same request.",
         "Prepare creates Session and Work Item resources only. Retry with dispatch=enqueue starts the prepared work.",

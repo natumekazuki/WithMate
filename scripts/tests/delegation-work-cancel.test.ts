@@ -25,15 +25,15 @@ function session(id: string, role?: RootSessionRole, parent?: Session): Session 
 
 // @test-value v2
 // kind = "invariant"
-// claim = "compensation cancelが別executionのassociation commit raceを検出した場合、Work Itemのstateとrevisionを変更せず、同一executionのterminal associationだけならcancelを許可する"
+// claim = "compensation cancelが取消開始前に保存済みの別execution associationを検出した場合、Work Itemのstateとrevisionを変更せず、同一executionのterminal associationだけならcancelを許可する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#公開操作" }
-// fault = "一覧確認後に別DB接続から採用executionがcommitされても、補償がWork Itemをcancelして進行中作業を隠す"
+// fault = "別DB接続から採用executionが保存済みでも、補償がWork Itemをcancelして進行中作業を隠す"
 // observable = "別接続commit後の補償拒否、state/revision不変、terminal own associationの成功"
 // observation_boundary = "component-behavior"
-// scope = "WorkItemService.cancel compensation race with real SQLite association storage"
+// scope = "WorkItemService.cancel existing association guard with real SQLite storage"
 // lifecycle = "permanent"
 // @end-test-value
-test("compensation cancel rejects an association committed after the precheck", async () => {
+test("compensation cancel rejects an existing association owned by another execution", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "delegation-work-cancel-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(dir);
   const sessions = new SessionStorageV6(dbPath);
