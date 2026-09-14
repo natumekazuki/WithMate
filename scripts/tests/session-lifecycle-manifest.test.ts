@@ -49,7 +49,7 @@ test("Session lifecycle manifestは空closureを実在DBから返す", () => {
 // claim = "manifestは対象subtreeのexecution、active grant、reservation、artifact、open interaction/coordinationを列挙し、event追加をstale検知する"
 // oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeSessionMoveManifestResult" }
 // fault = "対象subtreeのresourceが欠落する、または同root siblingのeventでrevision変化を見落とす"
-// observable = "execution/work/grant/reservation/artifact/interaction/coordinationの件数とstate、grant chain、resource history、event identity"
+// observable = "execution/work/grant/reservation/usage/artifact/interaction/coordinationの件数とstate、grant chain、resource history、event identity"
 // observation_boundary = "implementation"
 // scope = "session-lifecycle-manifest"
 // lifecycle = "permanent"
@@ -81,6 +81,8 @@ test("Session lifecycle manifestはrunning/queuedと保護resourceを列挙す�
   db.exec("INSERT INTO resource_budget_reservations_v6 (reservation_id, account_id, dimension, amount, state, reservation_kind, execution_id, idempotency_key, created_at, updated_at) VALUES ('reservation-child', 'account-child', 'queuedTurns', 1, 'reserved', 'queued_turn', 'queue', 'key', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO resource_budget_reservations_v6 (reservation_id, account_id, dimension, amount, state, reservation_kind, idempotency_key, created_at, updated_at) VALUES ('reservation-root-storage', 'account-root', 'storageBytes', 1, 'reconciliation_required', 'storage', 'storage-key', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO resource_budget_events_v6 (event_id, account_id, account_revision, event_kind, principal_kind, operation_id, payload_json, projection_json, occurred_at) VALUES ('budget-event', 'account-child', 1, 'reserved', 'system', 'op', '{}', '{}', CURRENT_TIMESTAMP)");
+  db.exec("INSERT INTO resource_budget_metered_usage_v6 (usage_id, account_id, execution_id, usage_unit, amount, confidence, idempotency_key, observed_at) VALUES ('usage-child-sibling', 'account-child', 'sibling-run', 'tokens', 12, 'reported', 'usage-sibling', CURRENT_TIMESTAMP)");
+  db.exec("INSERT INTO resource_budget_metered_usage_v6 (usage_id, account_id, execution_id, usage_unit, amount, confidence, idempotency_key, observed_at) VALUES ('usage-root-sibling', 'account-root', 'sibling-run', 'tokens', 99, 'reported', 'usage-root-sibling', CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at) VALUES ('child', 0, 'assistant', 'body', '{\"title\":\"artifact\"}', CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO session_interactions_v6 (id, execution_id, kind, state, public_payload_json, created_at, updated_at) VALUES ('interaction-child', 'run', 'approval', 'pending', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO coordination_events_v6 (id, actor_session_id, creation_principal_kind, session_role, role_contract_revision, root_session_id, parent_session_id, delegation_depth, kind, summary, payload_json, options_json, created_at) VALUES ('event-child', 'child', 'system', 'executor', 1, 'root', 'root', 1, 'blocker', 'blocked', '{}', '[]', CURRENT_TIMESTAMP), ('event-sibling', 'sibling', 'system', 'executor', 1, 'root', 'root', 1, 'blocker', 'blocked', '{}', '[]', CURRENT_TIMESTAMP)");
@@ -99,6 +101,7 @@ test("Session lifecycle manifestはrunning/queuedと保護resourceを列挙す�
   assert.equal(manifest.grantChains.find(({ id }) => id === "grant-revoked-descendant")?.revokedAt !== null, true);
   assert.deepEqual(manifest.budgetReservations, [{ id: "reservation-child", state: "reserved" }, { id: "reservation-root-storage", state: "reconciliation_required" }]);
   assert.deepEqual(manifest.budgetAccounts.map((account) => account.id), ["account-child", "account-root"]);
+  assert.deepEqual(manifest.budgetUsage, [{ id: "usage-child-sibling", accountId: "account-child", executionId: "sibling-run", amount: 12, unit: "tokens", confidence: "reported" }]);
   assert.deepEqual(manifest.artifacts, [{ id: "1", ownerSessionId: "child" }]);
   assert.equal(manifest.openInteractions, 1);
   assert.equal(manifest.openCoordinationEvents, 1);

@@ -194,8 +194,12 @@ export function buildSessionLifecycleManifest(
   const workItemIds = workItems.map((row) => row.id);
   const budgetAccounts = db.prepare(`SELECT account_id, owner_session_id, root_session_id, revision FROM resource_budget_accounts_v6 WHERE root_session_id IN (${marks}) OR owner_session_id IN (${marks}) OR (root_session_id = ? AND account_kind = 'root') ORDER BY account_id`).all(...ids, ...ids, root.root_session_id) as Array<{ account_id: string; owner_session_id: string; root_session_id: string; revision: number }>;
   const budgetAccountIds = budgetAccounts.map((row) => row.account_id);
-  const budgetUsage = budgetAccountIds.length === 0 ? [] : db.prepare(`SELECT usage_id, account_id, execution_id, amount, usage_unit, confidence FROM resource_budget_metered_usage_v6 WHERE account_id IN (${budgetAccountIds.map(() => "?").join(", ")})
-    AND (execution_id IS NULL OR execution_id IN (${executionIds.length ? executionIds.map(() => "?").join(", ") : "NULL"})) ORDER BY usage_id`).all(...budgetAccountIds, ...executionIds) as Array<{ usage_id: string; account_id: string; execution_id: string | null; amount: number; usage_unit: string; confidence: string }>;
+  const budgetUsage = budgetAccountIds.length === 0 ? [] : db.prepare(`SELECT usage.usage_id, usage.account_id, usage.execution_id, usage.amount, usage.usage_unit, usage.confidence
+    FROM resource_budget_metered_usage_v6 AS usage
+    INNER JOIN resource_budget_accounts_v6 AS account ON account.account_id = usage.account_id
+    WHERE usage.account_id IN (${budgetAccountIds.map(() => "?").join(", ")})
+      AND (account.owner_session_id IN (${marks}) OR (account.account_kind = 'root' AND usage.execution_id IN (${executionIds.length ? executionIds.map(() => "?").join(", ") : "NULL"})))
+    ORDER BY usage.usage_id`).all(...budgetAccountIds, ...ids, ...executionIds) as Array<{ usage_id: string; account_id: string; execution_id: string | null; amount: number; usage_unit: string; confidence: string }>;
   const delegationRows = db.prepare(`SELECT id, actor_session_id, revision, state FROM delegations_v6 WHERE actor_session_id IN (${marks}) ORDER BY id`).all(...ids) as Array<{ id: string; actor_session_id: string; revision: number; state: string }>;
   const historyKeys = new Map<string, { resourceKind: string; resourceId: string }>();
   const addHistoryKey = (resourceKind: string, resourceId: string): void => { historyKeys.set(`${resourceKind}:${resourceId}`, { resourceKind, resourceId }); };

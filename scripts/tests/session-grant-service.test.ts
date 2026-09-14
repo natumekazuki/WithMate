@@ -5,6 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 
+import { SessionAuthorityError } from "../../src/session-authority.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import { issueTrustedGrantPolicy, revokeSessionAuthorityGrant } from "../../src-electron/session-authority-storage.js";
@@ -153,6 +154,7 @@ test("same-root non-parent routing uses explicit grant union", async () => {
     assert.throws(() => authority.authorize(binding(parent.id), "turn.enqueue", { sessionId: sibling.id }));
     assert.throws(() => issueTrustedGrantPolicy(db, { ...common, resourceIds: ["missing-session"] }), /resource/i);
     assert.throws(() => issueTrustedGrantPolicy(db, { ...common, budgetAccountId: "wrong-account" }), /account/i);
+    assert.throws(() => issueTrustedGrantPolicy(db, { ...common, issuedAt: "invalid-date" }), (error: unknown) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_SCOPE_INVALID");
     const first = issueTrustedGrantPolicy(db, { ...common })[0]!;
     const second = issueTrustedGrantPolicy(db, { ...common, resourceIds: [sibling.id], proof: common.proof })[0]!;
     const input = { sessionId: sibling.id };

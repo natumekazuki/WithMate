@@ -542,7 +542,7 @@ export function issueTrustedGrantPolicy(db: DatabaseSync, input: {
       throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The trusted grant policy does not match operation definitions.");
     }
   }
-  if (input.actions.length === 0 || (input.expiresAt !== null && (!Number.isFinite(Date.parse(input.expiresAt)) || Date.parse(input.expiresAt) <= Date.parse(input.issuedAt)))) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant policy actions or expiry are invalid.");
+  if (!Number.isFinite(Date.parse(input.issuedAt)) || input.actions.length === 0 || (input.expiresAt !== null && (!Number.isFinite(Date.parse(input.expiresAt)) || Date.parse(input.expiresAt) <= Date.parse(input.issuedAt)))) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant policy actions or timestamps are invalid.");
   if (!input.delegable && input.childCeiling.length > 0) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "A non-delegable policy cannot carry a child ceiling.");
   for (const item of input.childCeiling) {
     if (!input.actions.includes(item.action) || item.resourceKind !== input.resourceKind || item.effectClass !== input.effectClass
