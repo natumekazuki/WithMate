@@ -47,9 +47,10 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 64 operations:
+The CLI and MCP expose the same 72 operations:
 
 - Runtime: `runtime.catalog`
+- Authority grants: `grant.create`, `grant.get`, `grant.list`, `grant.revoke`
 - Delegation: `delegation.create`, `delegation.get`, `delegation.list`, `delegation.retry`, `delegation.cancel`, `delegation.compensate`
 - Budget: `budget.get`, `budget.list`, `budget.configure`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.configure`, `session.rename`, `session.move.manifest`, `session.move`, `session.clone`, `session.restore`, `session.archive`, `session.delete.manifest`, `session.delete`
@@ -60,7 +61,7 @@ The CLI and MCP expose the same 64 operations:
 - Transcript: `transcript.export`
 - Coordination: `coordination.event.create`, `coordination.event.list`, `coordination.event.get`, `coordination.event.resolve`, `coordination.event.consume`, `coordination.event.cancel`, `coordination.event.correct`
 
-CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`.
+CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`. Grant issuance is bounded by the parent grant's action, resource, budget, and expiry ceiling; it does not expand baseline authority.
 Coordination commands use `coordination event <verb>`.
 
 Session lifecycle operations use a read-only manifest before a move or delete mutation. `session.move.manifest` requires the target `sessionId` and `destinationRootSessionId`; pass its `manifestRevision` and the unchanged transfer plan to `session.move`. `session.delete.manifest` is a read-only precondition for `session.delete`. In Slice 3, `session.delete` creates a tombstone and retains Session history, budget ledger, retry identity, and the SessionFolder workspace. The existing cleanup path for a SessionFolder attached to a directory workspace remains in effect. Physical purge requires a later retention and purge-scope contract.
@@ -85,7 +86,7 @@ A Work Item is the stable identity of one delegation. It is separate from a Sess
 
 The target Session owns `pending` to `in_progress` or `waiting` transitions, resumption, and terminal result reporting. The creator owns cancellation while the Work Item is nonterminal. Every existing-item mutation requires the current `expectedRevision` and an idempotency key. Terminal states are `completed`, `partially_completed`, `failed`, and `canceled`; a terminal row is never overwritten to resume work. A terminal result is submitted explicitly with its matching outcome and is not copied from an execution's assistant text or raw log.
 
-Work Item lifecycle mutations use the actor's active grants and canonical resource relations. Contract authority text does not issue a grant. New lifecycle capabilities are not added to existing baseline grants automatically; only an actor explicitly granted the capability through the existing trusted grant owner issuance path may execute it. Grants are not reissued to expand access, and a general Agent grant API remains a Slice 7 capability. Use `work.history.list` to inspect the contract and lifecycle events before retrying a conflicting change. `work.reopen` creates a successor while preserving the predecessor's result, decisions, and membership history. `work.clone` copies a contract template with a source link; it does not copy results, decisions, executions, history, or retry identity.
+Work Item lifecycle mutations use the actor's active grants and canonical resource relations. Contract authority text does not issue a grant. New lifecycle capabilities are not added to existing baseline grants automatically; only an actor explicitly granted the capability through the trusted grant owner issuance path may execute it. `grant.create` requires an active delegable parent and cannot widen its ceiling. Use `work.history.list` to inspect the contract and lifecycle events before retrying a conflicting change. `work.reopen` creates a successor while preserving the predecessor's result, decisions, and membership history. `work.clone` copies a contract template with a source link; it does not copy results, decisions, executions, history, or retry identity.
 
 `work.move` records departure from the old parent and adoption by the new parent atomically. If an old decision exists, its supersede is recorded in the same transaction. Adoption changes membership only: the new parent must explicitly assess and decide the result. A standalone Work Item move across roots is not connected in this slice and is not an available capability. `work.result.correct` appends a new result revision and propagates stale state to accepted parent aggregates; `work.aggregation.correct` uses a strict `revise | withdraw | replace` union. `work.aggregation.list` accepts bounded depth, cursor, state, decision, and field projections. Full result payloads are retrieved separately with `work.get`.
 

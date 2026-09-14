@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { MutationAuthorityProof } from "../src/session-authority.js";
 import { assertGrantProofCurrent, transferSessionAuthority } from "./session-authority-storage.js";
 import { ResourceBudgetStorage } from "./resource-budget-storage.js";
+import { WorkItemStorageV6 } from "./work-item-storage-v6.js";
 import { appendSessionResourceEvent, getSessionResourceRevision } from "./resource-history-schema.js";
 import { SessionCrudError } from "./session-crud-service.js";
 import { requireChildSessionRoleAllowed, requireSessionRoleBinding, SessionRoleBindingError } from "../src/session-role-binding.js";
@@ -73,15 +74,20 @@ function assertManifest(db: DatabaseSync, input: SessionMoveInput, sourceRoot: s
     assertRevision(db, id, index === 0 ? input.expectedRevision : descendants[index - 1].revision);
     return row;
   });
-  const actualChildren = (db.prepare(`SELECT session_id FROM session_role_bindings_v6
-    WHERE root_session_id = ? ORDER BY session_id`).all(sourceRoot) as Array<{ session_id: string }>).map((row) => row.session_id);
-  if (input.kind === "cross_root" && descendants.length > 0) {
-    for (const id of actualChildren) {
-      if (id !== input.sessionId && !ids.includes(id)) {
-        const child = binding(db, id);
-        if (ids.includes(child.parent_session_id ?? "")) fail("The move manifest omits a descendant Session.");
-      }
-    }
+  const actualChildren = (db.prepare(`WITH RECURSIVE subtree(session_id) AS (
+      SELECT session_id FROM session_role_bindings_v6 WHERE session_id = ? AND root_session_id = ?
+      UNION ALL
+      SELECT child.session_id FROM session_role_bindings_v6 AS child
+      INNER JOIN subtree AS parent ON parent.session_id = child.parent_session_id
+      WHERE child.root_session_id = ?
+    ) SELECT session_id FROM subtree ORDER BY session_id`).all(input.sessionId, sourceRoot, sourceRoot) as Array<{ session_id: string }>).map((row) => row.session_id);
+  const actualSet = new Set(actualChildren);
+  const requestedSet = new Set(ids);
+  if (input.kind === "cross_root" && (actualSet.size !== requestedSet.size || actualChildren.some((id) => !requestedSet.has(id)))) {
+    fail("The move manifest does not exactly match the Session subtree.");
+  }
+  if (input.kind === "cross_root") {
+    for (const id of ids) if (!actualSet.has(id)) fail("The move manifest contains a Session outside the target subtree.");
   }
   return rows;
 }
@@ -110,6 +116,26 @@ function assertInactiveResources(db: DatabaseSync, sourceRoot: string, sessionId
   if (openCoordination) fail(`An open coordination event prevents moving the Session subtree: ${openCoordination.id}.`);
 }
 
+function assertNoPendingLifecycleOperations(
+  db: DatabaseSync,
+  sessionIds: readonly string[],
+  operationId: string,
+  sourceRootSessionId: string,
+  destinationRootSessionId: string,
+): void {
+  const marks = sessionIds.map(() => "?").join(", ");
+  const pending = db.prepare(`SELECT operation_id FROM session_lifecycle_operations_v6
+    WHERE operation_id <> ?
+      AND operation = 'session.move'
+      AND state IN ('prepared', 'running', 'recovery-required')
+      AND (source_root_session_id IN (?, ?)
+        OR destination_root_session_id IN (?, ?)
+        OR target_session_id IN (${marks}))
+    LIMIT 1`).get(operationId, sourceRootSessionId, destinationRootSessionId,
+      sourceRootSessionId, destinationRootSessionId, ...sessionIds) as { operation_id: string } | undefined;
+  if (pending) fail(`A pending lifecycle operation prevents transfer: ${pending.operation_id}.`);
+}
+
 /**
  * Applies the relational part of a Session move inside the caller's transaction.
  * It intentionally does not BEGIN or COMMIT; lifecycle storage owns atomicity.
@@ -135,6 +161,7 @@ export function applySessionMove(
   }
   const rows = assertManifest(db, input, source.root_session_id);
   const ids = rows.map((row) => row.session_id);
+  assertNoPendingLifecycleOperations(db, ids, operationId, source.root_session_id, destinationRoot);
   assertInactiveResources(db, source.root_session_id, ids);
 
   const parent = input.destinationParentSessionId === null ? null : binding(db, input.destinationParentSessionId);
@@ -178,6 +205,14 @@ export function applySessionMove(
       WHERE root_session_id = ? AND kind = 'root' AND state IN ('pending', 'in_progress', 'waiting') LIMIT 1`)
       .get(source.root_session_id) as { id: string } | undefined : undefined;
     if (rootWork) fail(`The source root Work Item prevents a cross-root move: ${rootWork.id}.`);
+  }
+  if (input.kind === "cross_root") {
+    const workItems = new WorkItemStorageV6(db);
+    try {
+      workItems.transferSessionOwnershipWithinTransaction({ sourceRootSessionId: source.root_session_id,
+        destinationRootSessionId: destinationRoot, movedSessionIds: ids, transferRoot: input.sessionId === source.root_session_id,
+        proof, operationId, transferredAt: now });
+    } finally { workItems.close(); }
   }
 
   const revisions: Record<string, number> = {};

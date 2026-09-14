@@ -492,7 +492,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
       'transcript', 'interaction', 'coordination_event')
   `).all() as StoredHeaderRow[];
   const actualById = new Map(actual.map((row) => [row.event_id, row]));
-  const movesBySession = new Map<string, Array<{ sequence: number; source_root: string }>>();
+  const movesBySession = new Map<string, Array<{ sequence: number; source_root: string; source_owner?: string }>>();
   const moves = db.prepare(`
     SELECT event.session_id, header.sequence,
       json_extract(event.payload_json, '$.sourceRootSessionId') AS source_root
@@ -507,6 +507,22 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     history.push(move);
     movesBySession.set(move.session_id, history);
   }
+  const workMovesByItem = new Map<string, Array<{ sequence: number; source_root: string; source_owner: string }>>();
+  const workMoves = db.prepare(`
+    SELECT event.work_item_id, header.sequence,
+      json_extract(event.payload_json, '$.beforeRootSessionId') AS source_root
+      ,json_extract(event.payload_json, '$.beforeTargetSessionId') AS source_owner
+    FROM work_item_events_v6 AS event
+    INNER JOIN resource_event_headers_v6 AS header ON header.event_id = 'work-item:' || event.work_item_id || ':revision:' || event.revision
+    WHERE event.event_type = 'parent_changed'
+      AND json_type(event.payload_json, '$.beforeRootSessionId') = 'text'
+    ORDER BY header.sequence
+  `).all() as Array<{ work_item_id: string; sequence: number; source_root: string; source_owner: string }>;
+  for (const move of workMoves) {
+    const history = workMovesByItem.get(move.work_item_id) ?? [];
+    history.push({ sequence: move.sequence, source_root: move.source_root, source_owner: move.source_owner });
+    workMovesByItem.set(move.work_item_id, history);
+  }
   if (actualById.size !== expected.length || actual.length !== expected.length) {
     throw new Error("Resource event header coverage does not match the typed event history.");
   }
@@ -517,7 +533,9 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     // A later move's source root identifies that interval without rewriting history.
     const nextMove = ["session", "session_files", "transcript", "interaction"].includes(row.resource_kind)
       ? movesBySession.get(row.owner_id)?.find((move) => move.sequence > header.sequence)
-      : undefined;
+      : row.resource_kind === "work_item"
+        ? workMovesByItem.get(row.resource_id)?.find((move) => move.sequence > header.sequence)
+        : undefined;
     const comparable = {
       resourceKind: header.resource_kind,
       resourceId: header.resource_id,
@@ -535,7 +553,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
       resourceId: row.resource_id,
       rootId: nextMove?.source_root ?? row.root_id,
       ownerKind: "session",
-      ownerId: row.owner_id,
+      ownerId: nextMove?.source_owner ?? row.owner_id,
       eventKind: row.event_kind,
       resourceRevision: row.resource_revision,
       supersedesEventId: row.supersedes_event_id,
@@ -674,6 +692,16 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
             throw new Error(`Work Item creator event cannot replay from its predecessor: ${item.id}`);
           }
           replay.creatorSessionId = payload.afterCreatorSessionId;
+        }
+        if (payload.beforeTargetSessionId !== undefined) {
+          if (payload.beforeTargetSessionId !== replay.targetSessionId)
+            throw new Error(`Work Item target event cannot replay from its predecessor: ${item.id}`);
+          replay.targetSessionId = payload.afterTargetSessionId;
+        }
+        if (payload.beforeRootSessionId !== undefined) {
+          if (payload.beforeRootSessionId !== replay.rootSessionId)
+            throw new Error(`Work Item root event cannot replay from its predecessor: ${item.id}`);
+          replay.rootSessionId = payload.afterRootSessionId;
         }
       } else if (event.event_type === "archived") {
         replay.archivedAt = payload.archivedAt;

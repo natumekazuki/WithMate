@@ -49,7 +49,7 @@ test("Session lifecycle manifestは空closureを実在DBから返す", () => {
 // claim = "manifestはrunning/queued execution、active grant、reservation、artifact、open interaction/coordinationを対象subtreeから列挙し、DB全体のevent追加をstale検知する"
 // oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeSessionMoveManifestResult" }
 // fault = "resourceの存在がfake zero値または同root siblingの混入で隠れる"
-// observable = "各resourceの件数、state、revision、owner"
+// observable = "各resourceの件数、state、revision、owner、grant chain、resource history、parent relation、event identity"
 // observation_boundary = "implementation"
 // scope = "session-lifecycle-manifest"
 // lifecycle = "permanent"
@@ -68,9 +68,11 @@ test("Session lifecycle manifestはrunning/queuedと保護resourceを列挙す�
     VALUES ('run', 'child', 'turn.run', 'running', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
       ('queue', 'child', 'turn.enqueue', 'queued', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
       ('sibling-run', 'sibling', 'turn.run', 'running', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
-  db.exec(`INSERT INTO session_authority_grants_v6 (grant_id, root_session_id, issuer_kind, issuer_id, grantee_session_id, actions_json, resource_kind, relation_selector, target_session_roles_json, effect_class, delegable, child_ceiling_json, issued_at, effective_at, revision, mapping_revision, provenance_json)
-    VALUES ('grant-child', 'root', 'system', 'root', 'child', '[]', 'session', 'self', '[]', 'read', 0, '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 5, 1, '{}')`);
-  db.exec("INSERT INTO session_authority_grant_events_v6 (event_id, grant_id, event_kind, grant_revision, principal_kind, payload_json, occurred_at) VALUES ('grant-event', 'grant-child', 'baseline_issued', 5, 'system', '{}', CURRENT_TIMESTAMP)");
+  db.exec(`INSERT INTO session_authority_grants_v6 (grant_id, root_session_id, issuer_kind, issuer_id, issuer_grant_id, issuer_grant_revision, grantee_session_id, actions_json, resource_kind, relation_selector, target_session_roles_json, effect_class, delegable, child_ceiling_json, issued_at, effective_at, expires_at, revoked_at, revision, mapping_revision, provenance_json)
+    VALUES ('grant-parent', 'root', 'system', 'root', NULL, NULL, 'root', '[]', 'session', 'self', '[]', 'read', 1, '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, 4, 1, '{}'),
+      ('grant-child', 'root', 'system', 'root', 'grant-parent', 4, 'child', '[]', 'session', 'self', '[]', 'read', 0, '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, 5, 1, '{}'),
+      ('grant-revoked-descendant', 'root', 'system', 'root', 'grant-child', 5, 'child', '[]', 'session', 'self', '[]', 'read', 0, '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP, 6, 1, '{}')`);
+  db.exec("INSERT INTO session_authority_grant_events_v6 (event_id, grant_id, event_kind, grant_revision, principal_kind, payload_json, occurred_at) VALUES ('grant-event', 'grant-child', 'baseline_issued', 5, 'system', '{}', CURRENT_TIMESTAMP), ('grant-revoked-event', 'grant-revoked-descendant', 'revoked', 6, 'system', '{}', CURRENT_TIMESTAMP)");
   db.exec(`INSERT INTO resource_budget_accounts_v6 (account_id, account_kind, root_session_id, owner_session_id, parent_account_id, deadline_at, retry_per_execution_limit, revision, created_at, updated_at)
     VALUES ('account-root', 'root', 'root', 'root', NULL, CURRENT_TIMESTAMP, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
       ('account-child', 'session', 'root', 'child', 'account-root', CURRENT_TIMESTAMP, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
@@ -81,17 +83,28 @@ test("Session lifecycle manifestはrunning/queuedと保護resourceを列挙す�
   db.exec("INSERT INTO session_interactions_v6 (id, execution_id, kind, state, public_payload_json, created_at, updated_at) VALUES ('interaction-child', 'run', 'approval', 'pending', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO coordination_events_v6 (id, actor_session_id, creation_principal_kind, session_role, role_contract_revision, root_session_id, parent_session_id, delegation_depth, kind, summary, payload_json, options_json, created_at) VALUES ('event-child', 'child', 'system', 'executor', 1, 'root', 'root', 1, 'blocker', 'blocked', '{}', '[]', CURRENT_TIMESTAMP), ('event-sibling', 'sibling', 'system', 'executor', 1, 'root', 'root', 1, 'blocker', 'blocked', '{}', '[]', CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO resource_event_headers_v6 (event_id, resource_kind, resource_id, root_id, owner_kind, owner_id, event_kind, principal_kind, operation_id, occurred_at, committed_at, payload_schema_revision, effect) VALUES ('header', 'execution', 'run', 'root', 'session', 'child', 'started', 'system', 'op', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed')");
+  db.exec("INSERT INTO resource_event_headers_v6 (event_id, resource_kind, resource_id, root_id, owner_kind, owner_id, event_kind, resource_revision, principal_kind, operation_id, occurred_at, committed_at, payload_schema_revision, effect) VALUES ('header-work', 'work_item', 'work-child', 'root', 'session', 'child', 'created', 7, 'system', 'op-work', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed'), ('header-sibling-work', 'work_item', 'work-sibling', 'root', 'session', 'sibling', 'created', 2, 'system', 'op-sibling-work', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed'), ('header-2', 'execution', 'run', 'root', 'session', 'child', 'updated', 2, 'system', 'op-2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed')");
   const manifest = buildSessionLifecycleManifest(db, "child", "root");
   assert.equal(manifest.destinationRootSessionId, "root");
   assert.equal(manifest.sessionId, "child");
   assert.deepEqual(manifest.descendants, []);
-  assert.deepEqual(manifest.workItems, [{ workItemId: "work-child", state: "in_progress", revision: 7 }]);
+  assert.deepEqual(manifest.workItems, [{ workItemId: "work-child", state: "in_progress", revision: 7, parentWorkItemId: null }]);
   assert.deepEqual(manifest.executions, { running: 1, queued: 1 });
   assert.deepEqual(manifest.grants, [{ id: "grant-child", revision: 5, state: "active" }]);
+  assert.equal(manifest.grantChains.length, 3);
+  assert.deepEqual(manifest.grantChains.map(({ id }) => id), ["grant-child", "grant-parent", "grant-revoked-descendant"]);
+  assert.equal(manifest.grantChains.find(({ id }) => id === "grant-parent")?.issuerGrantId, null);
+  assert.equal(manifest.grantChains.find(({ id }) => id === "grant-revoked-descendant")?.revokedAt !== null, true);
   assert.deepEqual(manifest.budgetReservations, [{ id: "reservation-child", state: "reserved" }]);
   assert.deepEqual(manifest.artifacts, [{ id: "1", ownerSessionId: "child" }]);
   assert.equal(manifest.openInteractions, 1);
   assert.equal(manifest.openCoordinationEvents, 1);
+  assert.deepEqual(manifest.interactionIds, ["interaction-child"]);
+  assert.deepEqual(manifest.coordinationEventIds, ["event-child"]);
+  assert.deepEqual(manifest.resourceHistory, [
+    { resourceKind: "execution", resourceId: "run", eventCount: 2, latestRevision: 2 },
+    { resourceKind: "work_item", resourceId: "work-child", eventCount: 1, latestRevision: 7 },
+  ]);
   assert.deepEqual([...manifest.blockers].sort(), [
     "budget_reservations_present",
     "open_coordination_events",
@@ -104,7 +117,7 @@ test("Session lifecycle manifestはrunning/queuedと保護resourceを列挙す�
   assert.equal("deletable" in deletion && deletion.deletable, false);
   assert.ok(deletion.blockers.includes("work_items_present"));
   assert.ok(deletion.blockers.includes("budget_reservations_present"));
-  db.exec("INSERT INTO resource_event_headers_v6 (event_id, resource_kind, resource_id, root_id, owner_kind, owner_id, event_kind, principal_kind, operation_id, occurred_at, committed_at, payload_schema_revision, effect) VALUES ('header-2', 'execution', 'run', 'root', 'session', 'child', 'updated', 'system', 'op-2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed')");
+  db.exec("INSERT INTO resource_event_headers_v6 (event_id, resource_kind, resource_id, root_id, owner_kind, owner_id, event_kind, resource_revision, principal_kind, operation_id, occurred_at, committed_at, payload_schema_revision, effect) VALUES ('header-3', 'execution', 'run', 'root', 'session', 'child', 'updated', 3, 'system', 'op-3', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed')");
   const changedReference = buildSessionLifecycleManifest(db, "child", "root");
   assert.ok(changedReference.manifestRevision > manifest.manifestRevision);
   db.prepare("UPDATE resource_budget_reservations_v6 SET state = 'consumed' WHERE reservation_id = 'reservation-child'").run();

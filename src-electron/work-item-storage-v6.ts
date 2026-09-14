@@ -348,10 +348,12 @@ export function restoreRootWorkItemWithinTransaction(
 export class WorkItemStorageV6 {
   private readonly db: DatabaseSync;
   private readonly resourceBudgetStorage: ResourceBudgetStorage;
+  private readonly ownsDatabase: boolean;
 
-  constructor(dbPath: string) {
-    this.db = openAppDatabase(dbPath);
-    ensureV6Schema(this.db);
+  constructor(dbPathOrDatabase: string | DatabaseSync) {
+    this.ownsDatabase = typeof dbPathOrDatabase === "string";
+    this.db = typeof dbPathOrDatabase === "string" ? openAppDatabase(dbPathOrDatabase) : dbPathOrDatabase;
+    if (this.ownsDatabase) ensureV6Schema(this.db);
     this.resourceBudgetStorage = new ResourceBudgetStorage(this.db);
   }
 
@@ -867,6 +869,8 @@ export class WorkItemStorageV6 {
       destinationParentWorkItemId: string | null;
       expectedAggregateRevision?: number;
       expectedDestinationAggregateRevision?: number;
+      destinationTargetSessionId?: string;
+      expectedDestinationTargetRevision?: number;
     },
   ): WorkItem {
     return this.lifecycleTransaction("work.move", input, (current) => {
@@ -877,7 +881,7 @@ export class WorkItemStorageV6 {
         );
       this.requireLifecycleIdle(current, true);
       const parentId = input.destinationParentWorkItemId;
-      if (parentId === current.parentWorkItemId)
+      if (parentId === current.parentWorkItemId && input.destinationTargetSessionId === undefined)
         throw new WorkItemAggregationConflictError(
           "WORK_ITEM_MOVE_UNCHANGED",
           "The destination is the current parent.",
@@ -897,16 +901,37 @@ export class WorkItemStorageV6 {
       for (const child of subtree) this.requireLifecycleIdle(this.getRequired(child.id), true);
       const oldParent = current.parentWorkItemId ? this.getRequired(current.parentWorkItemId) : null;
       const newParent = parentId ? this.getRequired(parentId) : null;
+      const destinationTargetSessionId = input.destinationTargetSessionId;
+      const destinationTarget = destinationTargetSessionId
+        ? this.db.prepare("SELECT s.id, s.resource_revision, s.deleted_at, s.state, b.root_session_id FROM sessions_v6 AS s INNER JOIN session_role_bindings_v6 AS b ON b.session_id = s.id WHERE s.id = ?").get(destinationTargetSessionId) as { id: string; resource_revision: number; deleted_at: string | null; state: string; root_session_id: string } | undefined
+        : undefined;
+      const crossRoot = destinationTarget !== undefined && destinationTarget.root_session_id !== current.rootSessionId;
+      if (destinationTargetSessionId !== undefined) {
+        if (!destinationTarget || destinationTarget.deleted_at !== null || destinationTarget.state === "archived")
+          throw new WorkItemAggregationConflictError("WORK_ITEM_TARGET_INVALID", "The destination target Session is not active.");
+        if (input.expectedDestinationTargetRevision === undefined || destinationTarget.resource_revision !== input.expectedDestinationTargetRevision)
+          throw new WorkItemAggregationConflictError("WORK_ITEM_TARGET_REVISION_CONFLICT", "The destination target Session revision is stale.");
+        if (!crossRoot)
+          throw new WorkItemAggregationConflictError("WORK_ITEM_TARGET_UNCHANGED", "The destination target is unchanged.");
+        if (subtree.length > 1)
+          throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_TRANSFER_UNSUPPORTED", "A Work Item with aggregation descendants cannot cross roots.");
+      }
       if (newParent && (newParent.kind !== "delegated" || newParent.rootSessionId !== current.rootSessionId || newParent.archivedAt || newParent.deletedAt || newParent.state === "canceled")) {
+        if (!(crossRoot && newParent.kind === "delegated" && newParent.rootSessionId === destinationTarget!.root_session_id
+          && !newParent.archivedAt && !newParent.deletedAt && newParent.state !== "canceled")) {
         throw new WorkItemAggregationConflictError(
           "WORK_ITEM_PARENT_INVALID",
-          "The destination must be a delegated parent in the same root. Cross-root Work Item transfer is not connected.",
+          "The destination must be a live delegated parent in the destination root.",
         );
+        }
       }
+      if (crossRoot && newParent && newParent.rootSessionId !== destinationTarget!.root_session_id)
+        throw new WorkItemAggregationConflictError("WORK_ITEM_PARENT_INVALID", "The destination parent must belong to the destination target root.");
       if (oldParent) this.requireAggregateRevision(oldParent.id, input.expectedAggregateRevision);
       if (newParent) this.requireAggregateRevision(newParent.id, input.expectedDestinationAggregateRevision);
-      const creatorSessionId = newParent?.targetSessionId ?? current.rootSessionId;
-      this.requireLifecycleTarget(current.rootSessionId, creatorSessionId, current.targetSessionId);
+      const creatorSessionId = crossRoot ? (newParent?.targetSessionId ?? destinationTarget!.root_session_id) : (newParent?.targetSessionId ?? current.rootSessionId);
+      this.requireLifecycleTarget(crossRoot ? destinationTarget!.root_session_id : current.rootSessionId,
+        creatorSessionId, crossRoot ? destinationTarget!.id : current.targetSessionId);
       const decision = this.getDecision(current.id);
       if (
         decision?.replacementWorkItemId ||
@@ -936,9 +961,10 @@ export class WorkItemStorageV6 {
       }
       this.db
         .prepare(
-          "UPDATE work_items_v6 SET parent_work_item_id=?, creator_session_id=?, revision=revision+1, updated_at=? WHERE id=?",
+          "UPDATE work_items_v6 SET parent_work_item_id=?, creator_session_id=?, target_session_id=?, root_session_id=?, revision=revision+1, updated_at=? WHERE id=?",
         )
-        .run(parentId, creatorSessionId, input.updatedAt, current.id);
+        .run(parentId, creatorSessionId, crossRoot ? destinationTarget!.id : current.targetSessionId,
+          crossRoot ? destinationTarget!.root_session_id : current.rootSessionId, input.updatedAt, current.id);
       if (newParent)
         this.appendLifecycleAggregation(input, newParent.id, this.getRequired(current.id), "child_adopted", {
           childWorkItemId: current.id,
@@ -959,9 +985,69 @@ export class WorkItemStorageV6 {
         afterParentWorkItemId: parentId,
         beforeCreatorSessionId: current.creatorSessionId,
         afterCreatorSessionId: creatorSessionId,
+        ...(crossRoot ? {
+          beforeTargetSessionId: current.targetSessionId,
+          afterTargetSessionId: destinationTarget!.id,
+          beforeRootSessionId: current.rootSessionId,
+          afterRootSessionId: destinationTarget!.root_session_id,
+        } : {}),
         supersededDecision: decision !== null,
       });
     });
+  }
+
+  /** Transfers current Work Item ownership while the enclosing Session move transaction is open. */
+  transferSessionOwnershipWithinTransaction(input: {
+    sourceRootSessionId: string;
+    destinationRootSessionId: string;
+    movedSessionIds: readonly string[];
+    transferRoot: boolean;
+    proof: MutationAuthorityProof;
+    operationId: string;
+    transferredAt: string;
+  }): void {
+    const moved = new Set(input.movedSessionIds);
+    if (input.transferRoot) {
+      const destinationRootWork = this.db.prepare(`SELECT id FROM work_items_v6
+        WHERE kind = 'root' AND root_session_id = ? LIMIT 1`)
+        .get(input.destinationRootSessionId) as { id: string } | undefined;
+      if (destinationRootWork) {
+        throw new WorkItemAggregationConflictError(
+          "WORK_ITEM_TRANSFER_ROOT_CONFLICT",
+          "A root Work Item already exists in the destination root Session.",
+          { workItemId: destinationRootWork.id },
+        );
+      }
+    }
+    const rows = this.db.prepare(`SELECT id FROM work_items_v6
+      WHERE root_session_id = ? AND (creator_session_id IN (${input.movedSessionIds.map(() => "?").join(",") || "NULL"})
+        OR target_session_id IN (${input.movedSessionIds.map(() => "?").join(",") || "NULL"}) OR (? = 1 AND kind = 'root'))
+      ORDER BY id`).all(input.sourceRootSessionId, ...input.movedSessionIds, ...input.movedSessionIds, input.transferRoot ? 1 : 0) as Array<{ id: string }>;
+    for (const row of rows) {
+      const current = this.getRequired(row.id);
+      const nextCreator = input.transferRoot && current.creatorSessionId === input.sourceRootSessionId
+        ? input.destinationRootSessionId : current.creatorSessionId;
+      const nextTarget = input.transferRoot && current.targetSessionId === input.sourceRootSessionId
+        ? input.destinationRootSessionId : current.targetSessionId;
+      if (!moved.has(current.creatorSessionId) && nextCreator === current.creatorSessionId)
+        throw new WorkItemAggregationConflictError("WORK_ITEM_TRANSFER_OWNER_INVALID", "A Work Item creator is outside the transferred Session closure.");
+      if (!moved.has(current.targetSessionId) && nextTarget === current.targetSessionId)
+        throw new WorkItemAggregationConflictError("WORK_ITEM_TRANSFER_OWNER_INVALID", "A Work Item target is outside the transferred Session closure.");
+      if (current.parentWorkItemId !== null) {
+        const parent = this.getRequired(current.parentWorkItemId);
+        if (parent.rootSessionId !== input.sourceRootSessionId || !rows.some((candidate) => candidate.id === parent.id))
+          throw new WorkItemAggregationConflictError("WORK_ITEM_TRANSFER_AGGREGATION_INVALID", "A Work Item aggregation parent is outside the transferred closure.");
+      }
+      const nextRevision = current.revision + 1;
+      this.db.prepare(`UPDATE work_items_v6 SET root_session_id = ?, creator_session_id = ?, target_session_id = ?, revision = ?, updated_at = ?
+        WHERE id = ? AND revision = ?`).run(input.destinationRootSessionId, nextCreator, nextTarget, nextRevision, input.transferredAt, current.id, current.revision);
+      this.insertEvent({ workItemId: current.id, revision: nextRevision, type: "parent_changed", actorSessionId: input.proof.principal.kind === "agent" ? input.proof.principal.actorSessionId : input.sourceRootSessionId,
+        payload: { beforeParentWorkItemId: current.parentWorkItemId, afterParentWorkItemId: current.parentWorkItemId,
+          beforeCreatorSessionId: current.creatorSessionId, afterCreatorSessionId: nextCreator,
+          beforeRootSessionId: current.rootSessionId, afterRootSessionId: input.destinationRootSessionId,
+          beforeTargetSessionId: current.targetSessionId, afterTargetSessionId: nextTarget, supersededDecision: false },
+        createdAt: input.transferredAt, proof: input.proof, operationId: input.operationId, idempotencyKey: null });
+    }
   }
 
   clone(
@@ -1974,7 +2060,7 @@ export class WorkItemStorageV6 {
   }
 
   close(): void {
-    this.db.close();
+    if (this.ownsDatabase) this.db.close();
   }
 
   private getRequired(workItemId: string): WorkItem {

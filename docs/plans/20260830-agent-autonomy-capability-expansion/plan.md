@@ -604,3 +604,17 @@ crash保存状態からの3種類の拒否とcancel／compensate保護、後続S
 修正を `a6f275e535abb1f3b532623ca7240950a053526b` に固定し、clean detached worktreeで今回の3指摘とBudget記述の限定確認を完了した。追加findingはない。review用worktreeはHEAD・cleanliness・SessionFolder内のpathを確認して削除した。
 
 開始baseから3 tests／3 transitionsをdiagnostic／warning 0で抽出し、read-only general_lunaが全recordを確認した。MCP testのfaultに含まれていたHTTP/CLI集合との直接parityという過大な主張を、実際のMCP期待表との照合へ限定した。本文・実装は変更せず、最終再抽出も成功した。隣接する既存cleanup testは変更なし。未解決指摘はない。pushは実施していない。
+
+### Slice 7 実装（2026-09-14）
+
+開始baseは `e3e20e99e5e284a18d90024f391670615725855e`。`grant.create/get/list/revoke`を既存authority row/eventへ接続した。親grantのcurrent revision、chain、action、resource、再委譲mode、expiry、既存budget accountの制約を評価し、同一keyの異なる入力を拒否する。期限延長は新grantで行い、revoke後も旧revisionとprovenanceを保持する。baseline権限は拡張せず、親policyはtrusted ownerの明示的な`issueTrustedGrantPolicy`で発行する。新しいGUI設定画面は今回追加しない。
+
+same-root Turnのroutingはactive grantで評価し、直接dispatchにはWork Itemまたはconsultation grant IDを要求する。Work Item関連付けはtargetとactive state、Work参照権限も確認する。cross-root consultationは限定resource、action、expiry、返却先、purpose、completion criteria、既存budget accountへ束縛し、Delegationの保存済みTurn入力にも同じIDを保持する。readと外部副作用は別effect classのgrantで表す。返却先は契約として保存し、結果配送は呼出側が既存Turn操作で行う。completion criteriaの自動判定や自動revokeは追加せず、明示revokeまたはexpiryでaccessを終了する。
+
+queued admissionでは保存済みgrant revisionとactor runtime generationを再検証する。runningはallow-to-settleを採用し、cancelは既存Turn cancel、handoffはidle化後の既存移管操作を使う。新しいpolicy切替設定は追加しない。cross-root Session moveのprepared/running/recovery-requiredを既存lifecycle行から判定し、両rootの新規mutationを制限する。read、cancel、同じmove要求の回復は維持する。
+
+Session移管はmanifestと実subtreeの完全一致を確認し、Work current ownershipも同じtransactionで移す。manifestは関連Work/aggregation、grant chain、budget account/reservation/usage、artifact、Coordination/interaction、既存headerの履歴集約、actor所有Delegationを列挙し、serviceがcanonical resolverで既存SessionFolderを確認する。Session IDとFolder pathを維持し、過去履歴のrootを上書きしない。Work単体のcross-root moveは移管先targetと両側grantを要求し、以後の実行は移管先accountを使う。累積消費は返却しない。外部aggregation辺、Work集約subtreeの単体移管、移管先に既存root Workがあるroot Work統合は拒否し、結果の暗黙採用を行わない。root management全体はSlice 9、artifact管理全体はSlice 8の範囲を維持する。
+
+公開TS/schema/application/HTTP/CLI/MCP/catalog/managed Skill/runbookを更新した。関連直接検証、型検査、本番buildは成功。全体shard、変更test価値審査、commit固定のcomplete-diff reviewの最終結果は後段へ記録する。GUI描画と実Provider dispatchは未確認であり、owner/SQLite/公開境界の検証と区別する。
+
+最終全体shardは3,640件中3,638 pass、1 fail、1 skip。失敗は変更外の`runtime-discovery-registry.test.ts`のowner unpublish結果で、同file単独再実行は13/13成功した。全suite成功とは扱わない。skipはWindows対象外のPOSIX検証。型検査と本番buildが成功し、buildには既存のchunk size warningがある。固定baseから27 tests／27 transitionsをdiagnostic 0で抽出し、通常のread-only general_lunaへ3 batchで全recordの価値審査を依頼した。

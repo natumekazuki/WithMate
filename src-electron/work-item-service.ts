@@ -141,7 +141,7 @@ export type WorkItemCancelInput = {
 };
 
 export type WorkItemReassignInput = { workItemId: string; targetSessionId: string; expectedRevision: number; expectedContainerRevision?: number; transferPolicy: "handoff" | "successor"; idempotencyKey: string };
-export type WorkItemMoveInput = { workItemId: string; destinationParentWorkItemId: string | null; expectedRevision: number; expectedAggregateRevision?: number; expectedDestinationAggregateRevision?: number; idempotencyKey: string };
+export type WorkItemMoveInput = { workItemId: string; destinationParentWorkItemId: string | null; expectedRevision: number; expectedAggregateRevision?: number; expectedDestinationAggregateRevision?: number; destinationTargetSessionId?: string; expectedDestinationTargetRevision?: number; idempotencyKey: string };
 export type WorkItemCloneInput = { workItemId: string; expectedRevision: number; expectedContainerRevision: number; targetSessionId: string; parentWorkItemId?: string | null; goal: string; scope: string; completionCriteria: string; authority: string; sourceIdentity: WorkItemSourceIdentity; idempotencyKey: string };
 export type WorkItemReopenInput = { workItemId: string; expectedRevision: number; strategy: "successor"; expectedContainerRevision?: number; destinationParentWorkItemId?: string | null; goal: string; scope: string; completionCriteria: string; authority: string; sourceIdentity: WorkItemSourceIdentity; idempotencyKey: string };
 export type WorkItemArchiveInput = { workItemId: string; expectedRevision: number; reason: string; idempotencyKey: string };
@@ -234,7 +234,7 @@ export class WorkItemService {
     }
     const target = this.requireSession(input.targetSessionId);
     const targetBinding = requireSessionRoleBinding(target.sessionId, target);
-    if (targetBinding.parentSessionId !== actor.sessionId || targetBinding.rootSessionId !== actorBinding.rootSessionId) {
+    if (targetBinding.rootSessionId !== actorBinding.rootSessionId) {
       throw new WorkItemAuthorityError("The actor Session cannot delegate to the target Session.", {
         actorSessionId: actor.sessionId,
         targetSessionId: target.sessionId,
@@ -320,21 +320,30 @@ export class WorkItemService {
   }
 
   move(input: WorkItemMoveInput, binding: Pick<ResolvedAgentRuntimeBinding, "actorSessionId">, proof: MutationAuthorityProof, additionalProofs: readonly MutationAuthorityProof[] = []): WorkItem {
-    if (input.destinationParentWorkItemId !== null && additionalProofs.length === 0) throw new WorkItemAuthorityError("Move requires an independently authorized destination parent proof.", { workItemId: input.workItemId });
+    if ((input.destinationParentWorkItemId !== null || input.destinationTargetSessionId !== undefined) && additionalProofs.length === 0) throw new WorkItemAuthorityError("Move requires an independently authorized destination proof.", { workItemId: input.workItemId });
     const metadata = this.mutationMetadata(input, binding, proof, "work.move", additionalProofs);
     const replay = this.deps.storage.resolveIdempotency("work.move", proof, input.idempotencyKey, metadata.requestFingerprint, metadata.createdAt);
     if (replay) return replay;
     const item = this.requireVisibleItem(input.workItemId, binding, false, proof, "work.move");
     this.requireExpectedRevision(item, input.expectedRevision);
-    const rootManage = isAgentMutationProof(proof) && proof.resolvedScope.relation === "root_member" && item.rootSessionId === binding.actorSessionId;
-    if (item.kind !== "delegated" || (item.creatorSessionId !== binding.actorSessionId && !rootManage)) {
+    if (item.kind !== "delegated") {
       throw new WorkItemAuthorityError("Only the canonical Work Item creator can move a delegated Work Item.", { workItemId: item.id, actorSessionId: binding.actorSessionId });
     }
+    if (input.destinationTargetSessionId !== undefined) {
+      const target = this.requireSession(input.destinationTargetSessionId);
+      if (input.expectedDestinationTargetRevision === undefined) throw new WorkItemAuthorityError("Cross-root move requires the destination target revision.", { targetSessionId: target.sessionId });
+      if (target.rootSessionId === item.rootSessionId) throw new WorkItemAuthorityError("A same-root move cannot specify a destination target.", { workItemId: item.id });
+      const destinationProof = additionalProofs.find((candidate) => candidate.operation === "work.create" && candidate.resolvedScope.resourceKind === "work_item" && candidate.resolvedScope.resourceId === target.sessionId);
+      if (!destinationProof || !isAgentMutationProof(destinationProof) || destinationProof.principal.actorSessionId !== binding.actorSessionId || destinationProof.resolvedScope.rootSessionId !== target.rootSessionId) throw new WorkItemAuthorityError("The destination target requires an independently authorized move proof.", { targetSessionId: target.sessionId });
+    }
     if (input.destinationParentWorkItemId !== null) {
-      const parent = this.requireVisibleItem(input.destinationParentWorkItemId, binding, true);
+      const parent = input.destinationTargetSessionId === undefined
+        ? this.requireVisibleItem(input.destinationParentWorkItemId, binding, true)
+        : this.deps.storage.get(input.destinationParentWorkItemId);
+      if (!parent) throw new WorkItemNotFoundError(input.destinationParentWorkItemId);
       if (parent.kind !== "delegated" || (!isWorkItemActive(parent.state) && !isWorkItemResultState(parent.state))) throw new WorkItemParentError(parent.id);
       this.requireDestinationProof(additionalProofs, parent, binding);
-    } else if (binding.actorSessionId !== item.rootSessionId) {
+    } else if (input.destinationTargetSessionId === undefined && binding.actorSessionId !== item.rootSessionId) {
       throw new WorkItemAuthorityError("Only the root owner can adopt a top-level Work Item.", { workItemId: item.id });
     }
     return this.deps.storage.move({ ...input, ...metadata });
@@ -674,6 +683,7 @@ export class WorkItemService {
     workItemId: string,
     actorSessionId: string,
     targetSessionId: string,
+    proof?: MutationAuthorityProof,
   ): WorkItem {
     const item = this.deps.storage.get(workItemId);
     if (!item) throw new WorkItemNotFoundError(workItemId);
@@ -681,17 +691,24 @@ export class WorkItemService {
     const target = this.requireSession(targetSessionId);
     const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
     const targetBinding = requireSessionRoleBinding(target.sessionId, target);
+    const grantBoundRoute = proof !== undefined && isAgentMutationProof(proof)
+      && proof.principal.actorSessionId === actorSessionId
+      && (proof.operation === "turn.run" || proof.operation === "turn.enqueue")
+      && proof.resolvedScope.resourceKind === "execution"
+      && proof.resolvedScope.resourceId === target.sessionId
+      && proof.resolvedScope.ownerId === target.sessionId
+      && proof.resolvedScope.rootSessionId === targetBinding.rootSessionId;
     const allowed = item.kind === "root"
       ? item.creatorSessionId === actor.sessionId
         && item.targetSessionId === actor.sessionId
         && target.sessionId === actor.sessionId
       : item.targetSessionId === target.sessionId
-        && (item.creatorSessionId === actor.sessionId || item.targetSessionId === actor.sessionId)
-        && (actor.sessionId === target.sessionId
+        && (grantBoundRoute || item.creatorSessionId === actor.sessionId || item.targetSessionId === actor.sessionId)
+        && (grantBoundRoute || actor.sessionId === target.sessionId
           || targetBinding.parentSessionId === actor.sessionId
           || actorBinding.parentSessionId === target.sessionId);
     if (
-      item.rootSessionId !== actorBinding.rootSessionId
+      (!grantBoundRoute && item.rootSessionId !== actorBinding.rootSessionId)
       || item.rootSessionId !== targetBinding.rootSessionId
       || !isWorkItemActive(item.state)
       || !allowed
@@ -937,12 +954,7 @@ export class WorkItemService {
         && item.creatorSessionId === actor.sessionId
         && item.targetSessionId === actor.sessionId
       ) relations.add("owned_root");
-      if (
-        item.rootSessionId === actor.rootSessionId
-        && actor.rootSessionId === actor.sessionId
-        && actor.parentSessionId === null
-        && actor.delegationDepth === 0
-      ) relations.add("root_member");
+      relations.add("root_member");
       const scope = proof.resolvedScope;
       if (
         scope.resourceKind !== "work_item"

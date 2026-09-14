@@ -49,6 +49,30 @@ test("RUNTIME-CATALOG-01: runtime.catalog accepts only an explicit empty input",
 });
 
 // @test-value v2
+// kind = "security"
+// claim = "grant公開入力はresource・relation・effectの未分類値と未知fieldをparser/schemaの両境界で拒否する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
+// fault = "公開grant入力が不明なscope分類または未知fieldを通過し、issuer ceiling外の権限発行へ到達する"
+// observable = "grant.createのcanonical parserとZod input schemaの拒否結果"
+// observation_boundary = "component-behavior"
+// scope = "session-runtime-grant-contract"
+// lifecycle = "permanent"
+// @end-test-value
+test("GRANT-CONTRACT-01: grant.create rejects unknown classification and fields", () => {
+  const valid = {
+    parentGrantId: "parent", parentGrantRevision: 1, granteeSessionId: "child", actions: ["turn.run"],
+    resourceKind: "execution", relationSelector: "self", targetSessionRoles: ["executor"], effectClass: "external_side_effect",
+    delegable: false, expiresAt: null, idempotencyKey: "grant-1",
+  };
+  for (const [field, value] of [["resourceKind", "unknown"], ["relationSelector", "unknown"], ["effectClass", "unknown"], ["actions", ["*"]]] as const) {
+    const input = { ...valid, [field]: value };
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input }));
+    assert.throws(() => createSessionRuntimeInputSchema("grant.create").parse(input));
+  }
+  assert.throws(() => createSessionRuntimeInputSchema("grant.create").parse({ ...valid, extra: true }), /extra/);
+});
+
+// @test-value v2
 // kind = "contract"
 // claim = "budget公開操作はUTC正規化timestampとroot共有storageを二重配分しないstrictな子配分、およびroot管理dimensionを明示するstrict responseだけを受理する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#公開操作候補" }

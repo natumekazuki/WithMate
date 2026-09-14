@@ -150,6 +150,32 @@ function completeRootWorkItem(dbPath: string, sessionId: string): void {
 
 // @test-value v2
 // kind = "invariant"
+// claim = "session.move.manifestは実在するcanonical SessionFolderだけを移動manifestへ投影する"
+// oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeSessionMoveManifestResult" }
+// fault = "存在しないpathやworkspace pathをSessionFolderとして公開し、移動対象の実体境界を誤る"
+// observable = "moveManifestのsessionFoldersに含まれるsessionIdとcanonical directory path"
+// observation_boundary = "component-behavior"
+// scope = "SessionLifecycleService.moveManifest SessionFolder enrichment"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionLifecycleService moveManifestは実在SessionFolderだけを返す", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-lifecycle-manifest-folder-"));
+  const dbPath = path.join(root, "app.db");
+  const { service, close } = await makeService(dbPath);
+  try {
+    await service.create(createInput("manifest-folder-create"), proof("session.create", "session-created"));
+    const folder = path.join(root, "session-files", "session-created");
+    await mkdir(folder, { recursive: true });
+    const manifest = service.moveManifest("session-created", "session-created");
+    assert.deepEqual(manifest.sessionFolders, [{ sessionId: "session-created", path: folder }]);
+  } finally {
+    close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "SessionLifecycleService configure/archive/restore persists runtime settings while preserving an existing SessionFolder in the real V6 database."
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Direct validation" }
 // fault = "Lifecycle operations update an in-memory projection without atomically persisting the Session state."

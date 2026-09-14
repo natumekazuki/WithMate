@@ -60,6 +60,7 @@ const publicExecution = {
   pendingInteraction: null,
   partialOutput: null,
   terminalFailureNotification: null,
+  consultationGrantId: null,
   workItemId: null,
   workItemRevision: null,
   plannedSourceIdentity: null,
@@ -201,6 +202,10 @@ describe("WithMate Session MCP contract", () => {
   it("全公開toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     const expectedEffectAnnotations: Record<string, { readOnlyHint: boolean; destructiveHint: boolean }> = {
       "runtime.catalog": { readOnlyHint: true, destructiveHint: false },
+      "grant.create": { readOnlyHint: false, destructiveHint: false },
+      "grant.get": { readOnlyHint: true, destructiveHint: false },
+      "grant.list": { readOnlyHint: true, destructiveHint: false },
+      "grant.revoke": { readOnlyHint: false, destructiveHint: false },
       "delegation.create": { readOnlyHint: false, destructiveHint: true },
       "delegation.get": { readOnlyHint: true, destructiveHint: false },
       "delegation.list": { readOnlyHint: true, destructiveHint: false },

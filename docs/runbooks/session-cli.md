@@ -30,6 +30,26 @@ current model catalogを確認する。入力JSONは不要である。
 withmate-session runtime catalog
 ```
 
+## Authority grant操作
+
+`grant create`は親grantのcurrent revisionを指定し、issuerのaction、scope、budget、expiryを超えない範囲だけを発行する。`grant list`と`grant get`は現在のactorから可視なgrantを返し、`grant revoke`はcurrent revisionを要求する。consultation用途では`purpose`、`completionCriteria`、`resourceIds`、`budgetAccountId`、`returnSessionId`、`expiresAt`を明示し、Turn dispatchの`consultationGrantId`へ同じgrantを関連付ける。
+
+cross-root consultationは、先に既存の`budgetAccountId`へ`budget configure`で必要なallocationを設定し、responder root ownerがrequesterへ限定grantを発行する。grant発行時に新しいquota台帳は作らず、既存accountのcurrent limitがgrantのbudget ceiling内かを再評価する。requesterはgrantの`returnSessionId`を返却先としてTurnを実行し、完了後に`grant revoke`でtemporary accessを終了する。結果とartifact provenanceは保持され、granteeのaccessだけが失効する。
+
+親となるpolicy grantは、trusted ownerの`issueTrustedGrantPolicy`で明示的に発行する。既存Sessionへの自動付与とGUIのgrant編集画面は追加していない。readと外部副作用は別effect classのgrantとして発行する。`returnSessionId`は返却先の契約として保存し、結果の自動配送は行わない。呼出側が既存Turn操作で返却を行う。
+
+`delegation.create`でも各itemの`turn.consultationGrantId`へ同じ一時grant IDを指定できる。existing Work Itemを関連付ける場合は、そのWork Itemの`work.get`権限も必要になる。
+
+cross-rootのWork Item単体移管は`work.move`へ`destinationTargetSessionId`と`expectedDestinationTargetRevision`を指定する。移管先parentがある場合はそのrevisionと権限も必要で、集約descendantを持つWorkは単体移管できない。過去の結果・execution・履歴は保持し、以後の実行は移管先Sessionのbudgetを使う。
+
+cross-root Session移管のpreparedからpublication完了またはrecovery終端までは両rootの新規mutationを制限する。read、cancel、同じ要求による移管回復は維持する。running Turnはallow-to-settleとし、移管はqueued/runningが解消してから行う。grantのrevokeまたはexpiry後はqueuedの新規admissionを拒否し、開始済みTurnの結果を未実行へ変更しない。
+
+```powershell
+withmate-session grant get --json '{"grantId":"GRANT_ID"}'
+withmate-session grant list --json '{"limit":50,"includeRevoked":false}'
+withmate-session grant revoke --json '{"grantId":"GRANT_ID","expectedRevision":2,"idempotencyKey":"grant-revoke-001"}'
+```
+
 ## Resource budget操作
 
 対象Sessionのbudgetを取得する。root配下の可視account一覧は`budget list`で取得する。
@@ -194,7 +214,7 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは計64操作で、Session lifecycleのmanifest read、configure、move、clone、restore、archive、deleteとWork Item lifecycleを含む。Work Itemの`work.result.correct`、および集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`、`work.aggregation.correct`も含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは計68操作で、Authority grant、Session lifecycleのmanifest read、configure、move、clone、restore、archive、deleteとWork Item lifecycleを含む。Work Itemの`work.result.correct`、および集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`、`work.aggregation.correct`も含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
 
 ## Coordination event
 

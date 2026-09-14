@@ -13,9 +13,10 @@ import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { applySessionMove } from "../../src-electron/session-lifecycle-move.js";
 import { issueTrustedCrossRootTransferCapability, listActiveSessionAuthorityGrants } from "../../src-electron/session-authority-storage.js";
 import { ResourceBudgetStorage, bootstrapRootResourceBudget } from "../../src-electron/resource-budget-storage.js";
+import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
 import { RESOURCE_BUDGET_DIMENSIONS } from "../../src/resource-budget.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
-import { verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
+import { appendWorkItemEventHeader, verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 import { SessionCrudError } from "../../src-electron/session-crud-service.js";
 
 const NOW = "2026-09-05T12:00:00.000Z";
@@ -503,6 +504,36 @@ describe("Session lifecycle move", () => {
         if (scenario === "owned") allocate(destination, "destination-budget", ctx.destinationRoot.id, 3);
         const destinationAccountId = scenario === "owned" ? "destination-budget" : ctx.destinationRoot.id;
         assert.equal(budget.get(destination.id).accountId, destinationAccountId);
+        if (scenario === "subtree") {
+          db.prepare(`INSERT INTO work_items_v6
+            (id, kind, contract_revision, root_session_id, creator_session_id, target_session_id,
+             parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority,
+             source_identity_json, state, revision, progress_summary, blockers_json, next_action,
+             result_json, created_at, updated_at)
+          VALUES ('subtree-terminal-work', 'delegated', 2, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'pending', 1, '', '[]', '', NULL, ?, ?)`)
+            .run(ctx.sourceRoot.id, moving.id, descendant!.id, "terminal work", "scope", "done", "local",
+              JSON.stringify({ workspace: null, repository: null, branch: null, base: null, head: null }), NOW, NOW);
+          const terminalResult = {
+            outcome: "completed", summary: "", changes: [], verificationResults: [], findings: [],
+            unverifiedItems: [], remainingWork: [], reportingSessionId: moving.id, reportedAt: NOW,
+          };
+          db.prepare("UPDATE work_items_v6 SET state = 'completed', result_json = ? WHERE id = ?")
+            .run(JSON.stringify(terminalResult), "subtree-terminal-work");
+          db.prepare(`INSERT INTO work_item_events_v6
+            (work_item_id, revision, event_type, actor_session_id, principal_kind, payload_json, created_at)
+            VALUES ('subtree-terminal-work', 1, 'created', ?, 'agent', ?, ?)`)
+            .run(ctx.sourceRoot.id, JSON.stringify({
+              kind: "delegated", rootSessionId: ctx.sourceRoot.id, creatorSessionId: moving.id,
+              targetSessionId: descendant!.id, parentWorkItemId: null,
+              sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
+              contract: { goal: "terminal work", scope: "scope", completionCriteria: "done", authority: "local" },
+              progress: { progressSummary: "", blockers: [], nextAction: "" }, state: "completed", result: terminalResult,
+            }), NOW);
+          appendWorkItemEventHeader(db, {
+            workItemId: "subtree-terminal-work", revision: 1, eventKind: "created", proof: sourceProof,
+            operationId: "seed-subtree-terminal-work", idempotencyKey: null, occurredAt: NOW,
+          });
+        }
         applySessionMove(db, { sessionId: moving.id, expectedRevision: 1, kind: "cross_root",
           descendants: descendant ? [{ sessionId: descendant.id, revision: 1 }] : [],
           destinationRootSessionId: ctx.destinationRoot.id, destinationParentSessionId: destination.id,
@@ -518,6 +549,28 @@ describe("Session lifecycle move", () => {
           assert.equal(account.parentAccountId, parentAccountId);
           assert.equal((db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(session.id) as { root_session_id: string }).root_session_id, ctx.destinationRoot.id);
         }
+        if (scenario === "subtree") {
+          const reopenedDb = new DatabaseSync(ctx.dbPath);
+          const reopened = new WorkItemStorageV6(reopenedDb);
+          try {
+            const movedWork = reopened.get("subtree-terminal-work");
+            assert.ok(movedWork);
+            assert.equal(movedWork.rootSessionId, ctx.destinationRoot.id);
+            assert.equal(movedWork.creatorSessionId, moving.id);
+            assert.equal(movedWork.targetSessionId, descendant!.id);
+            assert.equal(movedWork.revision, 2);
+          } finally { reopened.close(); reopenedDb.close(); }
+          const header = db.prepare(`SELECT root_id FROM resource_event_headers_v6
+            WHERE resource_kind = 'work_item' AND resource_id = ? AND resource_revision = 2`)
+            .get("subtree-terminal-work") as { root_id: string } | undefined;
+          assert.ok(header);
+          assert.equal(header.root_id, ctx.destinationRoot.id);
+          const oldEvent = db.prepare(`SELECT payload_json FROM work_item_events_v6
+            WHERE work_item_id = ? AND revision = 2`).get("subtree-terminal-work") as { payload_json: string };
+          const payload = JSON.parse(oldEvent.payload_json) as { beforeRootSessionId: string; afterRootSessionId: string };
+          assert.equal(payload.beforeRootSessionId, ctx.sourceRoot.id);
+          assert.equal(payload.afterRootSessionId, ctx.destinationRoot.id);
+        }
         ensureV6Schema(db);
         verifyResourceHistoryProjections(db);
       } finally {
@@ -525,6 +578,59 @@ describe("Session lifecycle move", () => {
         await rm(ctx.directory, { recursive: true, force: true });
       }
     }
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "cross-root Session moveは移動対象外のWork Item aggregation parentを検出し、SessionとWorkの更新を一件もcommitしない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "移動対象のterminal Workだけを先に移し、外部parentとのaggregation境界を壊す"
+  // observable = "拒否結果、Session binding/revision、Work root/revision/creator/target"
+  // observation_boundary = "component-behavior"
+  // scope = "Session lifecycle cross-root Work ownership transfer"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("外部aggregation parentを含むWork移管を原子的に拒否する", async () => {
+    const ctx = await setup();
+    const service = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    try {
+      const movedDescendant = child("moved-descendant", ctx.target, "executor");
+      ctx.storage.insertSession(movedDescendant);
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        const sourceGrant = provisionMoveGrant(db, ctx.sourceRoot.id)[0];
+        const destinationGrant = provisionMoveGrant(db, ctx.sourceRoot.id, ctx.destinationRoot.id)[0];
+        const sourceProof = moveProof(ctx.sourceRoot.id, sourceGrant);
+        const destinationProof = moveProof(ctx.sourceRoot.id, destinationGrant, ctx.destinationRoot.id);
+        const insert = db.prepare(`INSERT INTO work_items_v6
+          (id, kind, contract_revision, root_session_id, creator_session_id, target_session_id,
+           parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority,
+           source_identity_json, state, revision, progress_summary, blockers_json, next_action,
+           result_json, created_at, updated_at)
+          VALUES (?, 'delegated', 2, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 1, '', '[]', '', ?, ?, ?)`);
+        const sourceIdentity = JSON.stringify({ workspace: null, repository: null, branch: null, base: null, head: null });
+        insert.run("external-parent", ctx.sourceRoot.id, ctx.sourceRoot.id, ctx.destinationRoot.id, null,
+          "external parent", "scope", "done", "local", sourceIdentity, "pending", null, NOW, NOW);
+        insert.run("terminal-child", ctx.sourceRoot.id, ctx.target.id, movedDescendant.id, "external-parent",
+          "terminal child", "scope", "done", "local", sourceIdentity, "completed",
+          JSON.stringify({ outcome: "completed" }), NOW, NOW);
+        const beforeSession = db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?")
+          .get(ctx.target.id);
+        const beforeWork = db.prepare("SELECT root_session_id, creator_session_id, target_session_id, revision FROM work_items_v6 WHERE id = ?")
+          .get("terminal-child");
+        assert.throws(() => applySessionMove(db, {
+          sessionId: ctx.target.id, expectedRevision: 1, kind: "cross_root",
+          descendants: [{ sessionId: movedDescendant.id, revision: 1 }], destinationRootSessionId: ctx.destinationRoot.id,
+          destinationParentSessionId: ctx.destinationRoot.id, destinationExpectedRevision: 1,
+          transferManifestRevision: 1, transferPolicy: "full", destinationProof,
+        }, sourceProof, NOW, "move-external-parent"), /aggregation parent/i);
+        assert.deepEqual(db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?")
+          .get(ctx.target.id), beforeSession);
+        assert.deepEqual(db.prepare("SELECT root_session_id, creator_session_id, target_session_id, revision FROM work_items_v6 WHERE id = ?")
+          .get("terminal-child"), beforeWork);
+      } finally { db.close(); }
+    } finally { service.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
   });
 
 });

@@ -557,7 +557,14 @@ export class SessionExecutionStorageV6 {
     return row?.work_item_id ?? null;
   }
 
-  admitNextQueued(sessionId: string, admittedAt: string): SessionExecutionStorageRecord | null {
+  admitNextQueued(
+    sessionId: string,
+    admittedAt: string,
+    validateAdmission?: (input: {
+      execution: SessionExecutionStorageRecord;
+      proof: MutationAuthorityProof;
+    }) => void,
+  ): SessionExecutionStorageRecord | null {
     return this.transaction(() => {
       const running = this.db.prepare(`
         SELECT id
@@ -581,6 +588,10 @@ export class SessionExecutionStorageV6 {
       }
 
       this.assertQueuedWorkItemAssociation(next.id, sessionId);
+      const queued = this.getRequired(next.id);
+      const proof = decodeExecutionMutationProof(this.db, this.getExecutionRow(next.id), admittedAt);
+      assertGrantProofCurrent(this.db, proof, new Date(admittedAt));
+      validateAdmission?.({ execution: queued, proof });
 
       new ResourceBudgetStorage(this.db).startQueuedTurn({
         sessionId,
@@ -905,6 +916,13 @@ export class SessionExecutionStorageV6 {
       | undefined;
     if (!row) throw new Error(`Session execution not found: ${executionId}`);
     return row.revision;
+  }
+
+  private getExecutionRow(executionId: string): SessionExecutionRow {
+    const row = this.db.prepare("SELECT * FROM session_executions_v6 WHERE id = ?")
+      .get(executionId) as SessionExecutionRow | undefined;
+    if (!row) throw new Error(`Session execution not found: ${executionId}`);
+    return row;
   }
 
   private findIdempotency(

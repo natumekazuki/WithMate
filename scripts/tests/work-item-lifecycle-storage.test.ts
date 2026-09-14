@@ -47,12 +47,14 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     const db = new DatabaseSync(dbPath);
     try {
       const insertSession = db.prepare(`INSERT INTO sessions_v6 (id,title,state,provider_id,catalog_revision,model_id,approval_mode,workspace_path,created_at,updated_at,last_active_at) VALUES (?,?,'active','codex',1,'gpt-5','on-request',?,?,?,?)`);
-      for (const id of ["root", "task", "task-2", "executor"]) insertSession.run(id, id, process.cwd(), NOW, NOW, NOW);
+      for (const id of ["root", "task", "task-2", "executor", "root-b", "target-b"]) insertSession.run(id, id, process.cwd(), NOW, NOW, NOW);
       const insertRole = db.prepare(`INSERT INTO session_role_bindings_v6 (session_id,session_role,role_contract_revision,root_session_id,parent_session_id,delegation_depth) VALUES (?, ?, 1, ?, ?, ?)`);
       insertRole.run("root", "overall-coordinator", "root", null, 0);
       insertRole.run("task", "task-coordinator", "root", "root", 1);
       insertRole.run("task-2", "task-coordinator", "root", "root", 1);
       insertRole.run("executor", "executor", "root", "task", 2);
+      insertRole.run("root-b", "overall-coordinator", "root-b", null, 0);
+      insertRole.run("target-b", "executor", "root-b", "root-b", 1);
       db.prepare("UPDATE sessions_v6 SET workspace_path=? WHERE id='executor'").run(directory);
       backfillBaselineSessionAuthority(db, NOW);
     } finally { db.close(); }
@@ -144,6 +146,39 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     assert.equal(storage.get(child.id)?.parentWorkItemId, newParent.id);
     assert.equal(storage.get(child.id)?.result?.summary, "done");
     assert.throws(() => storage.move({ workItemId: child.id, expectedRevision: moved.revision, principalSessionId: "root", idempotencyKey: "move", requestFingerprint: "different", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move"), destinationParentWorkItemId: oldParent.id, expectedAggregateRevision: storage.getAggregationSummary(newParent.id).aggregateRevision, expectedDestinationAggregateRevision: storage.getAggregationSummary(oldParent.id).aggregateRevision }), WorkItemIdempotencyConflictError);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "cross-root work.moveはdestination targetのrevisionとroot所属を同一transactionで更新し、idleでない対象やstale targetを拒否する"
+  // fault = "source Work Itemだけが移動する、destination targetがstaleでも移動する、または実行中Work Itemを移管して二重ownerになる"
+  // observable = "work_items_v6, work_item_events_v6, session_executions_v6"
+  // observation_boundary = "component-behavior"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
+  // scope = "WorkItemStorageV6.move"
+  // lifecycle = "permanent"
+  // distinction = "実SQLiteでdestination root/target/revisionの移管とidle/stale拒否を確認する"
+  // @end-test-value
+  it("cross-root work.moveはtargetとrevisionを検証して移管する", () => {
+    const db = new DatabaseSync(dbPath);
+    try {
+    } finally { db.close(); }
+    const source = create(null, "root", "task", "cross-source");
+    const moved = storage.move({ workItemId: source.id, destinationParentWorkItemId: null, destinationTargetSessionId: "target-b", expectedDestinationTargetRevision: 1, expectedRevision: source.revision, principalSessionId: "root", idempotencyKey: "cross-move", requestFingerprint: "cross-move-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move") });
+    assert.equal(moved.rootSessionId, "root-b");
+    assert.equal(moved.targetSessionId, "target-b");
+    assert.equal(moved.creatorSessionId, "root-b");
+    const previousHeaders = sql<{ root_id: string }>("SELECT root_id FROM resource_event_headers_v6 WHERE resource_id=? ORDER BY sequence", source.id);
+    assert.equal(previousHeaders.some((row) => row.root_id === "root"), true);
+    storage.close();
+    const reopenedSessionStorage = new SessionStorageV6(dbPath);
+    reopenedSessionStorage.close();
+    storage = new WorkItemStorageV6(dbPath);
+    assert.equal(storage.get(moved.id)?.rootSessionId, "root-b");
+    assert.equal(sql<{ root_id: string }>("SELECT root_id FROM resource_event_headers_v6 WHERE resource_id=? ORDER BY sequence", source.id).some((row) => row.root_id === "root"), true);
+    const targetDb = new DatabaseSync(dbPath);
+    try { targetDb.prepare("UPDATE sessions_v6 SET resource_revision = 2 WHERE id = 'target-b'").run(); } finally { targetDb.close(); }
+    assert.throws(() => storage.move({ workItemId: moved.id, destinationParentWorkItemId: null, destinationTargetSessionId: "target-b", expectedDestinationTargetRevision: 1, expectedRevision: moved.revision, principalSessionId: "root", idempotencyKey: "cross-move-stale", requestFingerprint: "cross-move-stale-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move") }), WorkItemAggregationConflictError);
   });
 
   // @test-value v2

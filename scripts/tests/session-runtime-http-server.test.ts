@@ -66,6 +66,7 @@ function publicExecution(operation: "turn.run" | "turn.enqueue" = "turn.run", as
     partialOutput: null,
     terminalFailureNotification: null,
     workItemId: null,
+    consultationGrantId: null,
     workItemRevision: null,
     plannedSourceIdentity: null,
     actualStartSourceIdentity: null,
@@ -83,6 +84,14 @@ const turnInput = {
 } as const;
 
 const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[number], unknown> = {
+  "grant.create": {
+    parentGrantId: "grant-parent", parentGrantRevision: 1, granteeSessionId: "session-2", actions: ["turn.run"],
+    resourceKind: "execution", relationSelector: "direct_child", targetSessionRoles: ["executor"], effectClass: "external_side_effect",
+    delegable: false, expiresAt: null, idempotencyKey: "grant-create-key",
+  },
+  "grant.get": { grantId: "grant-1" },
+  "grant.list": { limit: 50 },
+  "grant.revoke": { grantId: "grant-1", expectedRevision: 1, idempotencyKey: "grant-revoke-key" },
   "delegation.create": {
     idempotencyKey: "delegate-key", dispatch: "prepare",
     items: [{ target: { kind: "existing", sessionId: "session-1" }, work: { kind: "existing", workItemId: "work-1" }, turn: { catalogRevision: 4, turn: turnInput } }],
@@ -800,6 +809,7 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
   const renameResult = createBoundarySessionResult("session-1");
   const executionBase = {
     id: "execution-1",
+    revision: 1,
     sessionId: "session-1",
     operation: "turn.run" as const,
     state: "completed" as const,
@@ -810,6 +820,16 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
     admittedAt: "2026-08-11T00:00:00.000Z",
     completedAt: "2026-08-11T00:00:01.000Z",
     updatedAt: "2026-08-11T00:00:01.000Z",
+    effectiveTurn: null,
+    attachments: [],
+    pendingInteraction: null,
+    partialOutput: null,
+    terminalFailureNotification: null,
+    workItemId: null,
+    consultationGrantId: null,
+    workItemRevision: null,
+    plannedSourceIdentity: null,
+    actualStartSourceIdentity: null,
   };
   const execution = {
     ...executionBase,
@@ -832,8 +852,10 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
   }
   const application = new SessionExternalApplicationService({
     lifecycleService: { configure: async () => renameResult as never } as any,
+    workItemService: { requireExecutionAssociation() {} } as any,
     authorityService: {
       authorize(_binding, _operation, input) { return { input, proof: {} as never }; },
+      authorizeSessionAct(_actor, _operation, input) { return { input, proof: {} as never }; },
       canSessionAct() { return true; },
     },
     resolveTurnInitiator: async (actorSessionId) => ({
@@ -943,6 +965,7 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
           sessionId: "session-1",
           catalogRevision: 4,
           idempotencyKey: "run-key",
+          workItemId: "work-1",
           responseMode: "deferred",
           turn: {
             provider: "codex",

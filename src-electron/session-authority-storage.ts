@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
@@ -18,6 +19,14 @@ import {
 import { SESSION_RUNTIME_OPERATIONS, type SessionRuntimeOperation } from "../src/session-external-runtime-contract.js";
 import { SESSION_ROLE_VALUES, type SessionRole } from "../src/session-role-binding.js";
 import { ensureSessionAuthoritySchema } from "./session-authority-schema.js";
+import { ResourceBudgetStorage, ResourceBudgetError } from "./resource-budget-storage.js";
+import { RESOURCE_BUDGET_DIMENSIONS } from "../src/resource-budget.js";
+import type {
+  SessionGrantCreateInput,
+  SessionGrantGetInput,
+  SessionGrantListInput,
+  SessionGrantRevokeInput,
+} from "../src/session-grant.js";
 
 type RoleBindingRow = {
   session_role: SessionRole;
@@ -348,6 +357,235 @@ export function createDelegatedChildAuthority(db: DatabaseSync, input: {
     throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The parent construction grant does not provide a child authority ceiling.");
   }
   ensureBudgetSessionAuthority(db, input.childSessionId, input.createdAt);
+}
+
+/** Canonical owner for the public grant.create operation. */
+export function createSessionAuthorityGrant(db: DatabaseSync, input: {
+  issuerSessionId: string;
+  parentProof?: MutationAuthorityProof;
+  grant: SessionGrantCreateInput;
+  issuedAt: string;
+}): SessionAuthorityGrant {
+  const { grant } = input;
+  if (grant.idempotencyKey.trim() === "") {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "Grant creation requires an idempotency key.");
+  }
+  const parent = requireGrant(db, grant.parentGrantId);
+  if (input.parentProof) {
+    if (input.parentProof.principal.kind !== "agent" || input.parentProof.principal.actorSessionId !== input.issuerSessionId
+      || input.parentProof.grantId !== grant.parentGrantId || input.parentProof.grantRevision !== grant.parentGrantRevision) {
+      throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Grant creation requires the admitted parent grant.");
+    }
+    assertGrantProofCurrent(db, input.parentProof, new Date(input.issuedAt));
+  }
+  assertGrantActive(parent, input.issuerSessionId, grant.parentGrantRevision, new Date(input.issuedAt));
+  assertIssuerChainCurrent(db, parent, new Date(input.issuedAt));
+  if (!parent.delegable || parent.granteeSessionId !== input.issuerSessionId) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The parent grant is not delegable by this issuer.");
+  }
+  const child = requireRoleBinding(db, grant.granteeSessionId);
+  const issuer = requireRoleBinding(db, input.issuerSessionId);
+  assertSessionMutationNotDraining(db, [issuer.root_session_id, parent.rootSessionId, child.root_session_id]);
+  if (issuer.root_session_id !== parent.rootSessionId && !Array.isArray(parent.provenance.resourceIds)) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The issuer is outside the parent root.");
+  }
+  const crossRoot = child.root_session_id !== parent.rootSessionId;
+  if (crossRoot && (grant.resourceIds === undefined || grant.resourceIds.length === 0 || grant.expiresAt === null
+    || grant.purpose === undefined || grant.completionCriteria === undefined || grant.returnSessionId === undefined || grant.budgetAccountId === undefined)) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "Cross-root grants require exact resources, expiry, purpose, completion criteria, and return destination.");
+  }
+  if (grant.actions.length === 0 || new Set(grant.actions).size !== grant.actions.length) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "A grant must contain unique actions.");
+  }
+  const ceiling = parent.childCeiling;
+  if (parent.provenance.source !== "role-baseline" && parent.provenance.source !== "child-construction"
+    && grant.actions.some((action) => !parent.actions.includes(action))) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Delegation cannot add actions to the issuer grant.");
+  }
+  if (parent.provenance.source !== "role-baseline" && parent.provenance.source !== "child-construction"
+    && (parent.resourceKind !== grant.resourceKind || parent.effectClass !== grant.effectClass
+      || !relationCanNarrow(parent.relationSelector, grant.relationSelector)
+      || !grant.targetSessionRoles.every((role) => parent.targetSessionRoles.includes(role)))) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Delegation cannot widen the issuer resource scope.");
+  }
+  if (input.issuerSessionId !== grant.granteeSessionId
+    && !["root_member", "visible_root"].includes(parent.relationSelector)) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Relative grants cannot be rebound to a different grantee; issue an explicit root policy first.");
+  }
+  for (const action of grant.actions) {
+    const definition = SESSION_AUTHORITY_OPERATION_DEFINITIONS[action];
+    if (!definition) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant contains an unknown operation.", { action });
+    if (!ceiling.some((item) => item.action === action
+      && (!grant.delegable || item.mode === "delegate")
+      && item.resourceKind === grant.resourceKind
+      && item.effectClass === grant.effectClass
+      && relationCanNarrow(item.relationSelector, grant.relationSelector)
+      && grant.targetSessionRoles.every((role) => item.targetSessionRoles.includes(role)))) {
+      throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The delegated grant exceeds its parent ceiling.", { action });
+    }
+    if (definition.resourceKind !== grant.resourceKind || definition.effectClass !== grant.effectClass) {
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant scope does not match the operation definition.", { action });
+    }
+  }
+  const issuedMs = Date.parse(input.issuedAt);
+  const requestedExpiry = grant.expiresAt === null ? null : Date.parse(grant.expiresAt);
+  if (!Number.isFinite(issuedMs) || (requestedExpiry !== null && (!Number.isFinite(requestedExpiry) || requestedExpiry <= issuedMs))) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant timestamps are invalid.");
+  }
+  if (parent.expiresAt !== null && (requestedExpiry === null || requestedExpiry > Date.parse(parent.expiresAt))) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The delegated grant cannot outlive its parent.");
+  }
+  const childCeiling = grant.childCeiling ?? [];
+  if (!grant.delegable && childCeiling.length > 0) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "A non-delegable grant cannot carry a child ceiling.");
+  }
+  for (const item of childCeiling) {
+    if (!grant.actions.includes(item.action) || item.resourceKind !== grant.resourceKind || item.effectClass !== grant.effectClass
+      || !relationCanNarrow(grant.relationSelector, item.relationSelector)
+      || !item.targetSessionRoles.every((role) => grant.targetSessionRoles.includes(role))
+      || !ceiling.some((candidate) => samePermission(candidate, item) && (item.mode !== "delegate" || candidate.mode === "delegate"))) {
+      throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The child ceiling exceeds its parent ceiling.");
+    }
+  }
+  validateGrantBudget(grant.budget, parent);
+  const requestJson = JSON.stringify(grant);
+  const replayRows = db.prepare("SELECT * FROM session_authority_grants_v6 WHERE issuer_kind = 'agent' AND issuer_id = ?").all(input.issuerSessionId) as GrantRow[];
+  const replay = replayRows.map(decodeGrant).find((candidate) => candidate.provenance.source === "agent-grant"
+    && candidate.provenance.idempotencyKey === grant.idempotencyKey);
+  if (replay) {
+    if (typeof replay.provenance.requestJson !== "string" || !isDeepStrictEqual(JSON.parse(replay.provenance.requestJson), grant)) {
+      throw new SessionAuthorityError("AUTHORITY_GRANT_REVISION_CONFLICT", "The idempotency key was used with different grant input.", { grantId: replay.grantId });
+    }
+    const event = db.prepare("SELECT payload_json FROM session_authority_grant_events_v6 WHERE grant_id = ? AND grant_revision = 1 ORDER BY sequence LIMIT 1").get(replay.grantId) as { payload_json: string };
+    return { ...replay, revision: 1, revokedAt: null, provenance: JSON.parse(event.payload_json) };
+  }
+  const parentResourceIds = parent.provenance.resourceIds;
+  if (parent.provenance.budgetAccountId !== undefined && parent.provenance.budgetAccountId !== grant.budgetAccountId) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Delegation cannot change the budget account.");
+  if (parentResourceIds !== undefined) {
+    if (!Array.isArray(parentResourceIds) || grant.resourceIds === undefined
+      || grant.resourceIds.some((resourceId) => !parentResourceIds.includes(resourceId))) {
+      throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The resource scope exceeds its parent scope.");
+    }
+  }
+  const provenance: Record<string, unknown> = { source: "agent-grant", parentGrantId: parent.grantId, parentGrantRevision: parent.revision, idempotencyKey: grant.idempotencyKey, requestJson };
+  if (grant.budget !== undefined) provenance.budget = grant.budget;
+  if (grant.resourceIds !== undefined) {
+    if (grant.resourceIds.length === 0 || new Set(grant.resourceIds).size !== grant.resourceIds.length) {
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The resource scope must contain unique resource IDs.");
+    }
+    provenance.resourceIds = [...grant.resourceIds];
+  }
+  if (grant.purpose !== undefined) provenance.purpose = grant.purpose;
+  if (grant.completionCriteria !== undefined) provenance.completionCriteria = grant.completionCriteria;
+  if (grant.returnSessionId !== undefined) provenance.returnSessionId = grant.returnSessionId;
+  if (grant.budgetAccountId !== undefined) provenance.budgetAccountId = grant.budgetAccountId;
+  if (grant.returnSessionId !== undefined) {
+    const destination = requireRoleBinding(db, grant.returnSessionId);
+    if (destination.root_session_id !== child.root_session_id) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The return destination must belong to the requester root.");
+  }
+  const resourceOwners = grant.resourceIds?.map((id) => requireGrantResourceOwner(db, grant.resourceKind, id, parent.rootSessionId, grant.actions));
+  for (const owner of resourceOwners ?? [parent.rootSessionId]) {
+    assertGrantBudgetAccount(db, { rootSessionId: parent.rootSessionId, provenance }, owner);
+  }
+  const createdGrantId = insertGrant(db, {
+    rootSessionId: parent.rootSessionId,
+    issuerKind: "agent", issuerId: input.issuerSessionId,
+    issuerGrantId: parent.grantId, issuerGrantRevision: parent.revision,
+    granteeSessionId: grant.granteeSessionId, actions: grant.actions,
+    permission: { mode: grant.delegable ? "delegate" : "exercise", action: grant.actions[0]!, resourceKind: grant.resourceKind, relationSelector: grant.relationSelector, effectClass: grant.effectClass, targetSessionRoles: grant.targetSessionRoles },
+    childCeiling, issuedAt: input.issuedAt, expiresAt: grant.expiresAt,
+    eventKind: "delegated", eventPrincipalKind: "agent", eventActorSessionId: input.issuerSessionId, provenance,
+  });
+  const created = requireGrant(db, createdGrantId);
+  if (!created) throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "The delegated grant was not persisted.");
+  return created;
+}
+
+/** Trusted policy path for explicitly provisioning a grant to a root/session. */
+export function issueTrustedGrantPolicy(db: DatabaseSync, input: {
+  rootSessionId: string;
+  granteeSessionId: string;
+  actions: readonly SessionRuntimeOperation[];
+  resourceKind: SessionAuthorityResourceKind;
+  relationSelector: SessionAuthorityRelationSelector;
+  targetSessionRoles: readonly SessionRole[];
+  effectClass: SessionAuthorityGrant["effectClass"];
+  delegable: boolean;
+  childCeiling: readonly SessionAuthorityPermission[];
+  resourceIds?: readonly string[];
+  budgetAccountId?: string;
+  budget?: Readonly<Record<string, number>>;
+  expiresAt: string | null;
+  principal: Extract<SessionAuthorityPrincipal, { kind: "user" | "system" }>;
+  proof: MutationAuthorityProof;
+  issuedAt: string;
+}): readonly SessionAuthorityGrant[] {
+  const trusted = input.principal;
+  const proofPrincipal = input.proof.principal;
+  const matching = trusted.kind === "user"
+    ? proofPrincipal.kind === "user" && proofPrincipal.receiptId === trusted.receiptId
+    : proofPrincipal.kind === "system" && proofPrincipal.service === trusted.service;
+  if (!matching) {
+    throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Trusted grant policy requires matching authority.");
+  }
+  const root = requireRoleBinding(db, input.rootSessionId);
+  const grantee = requireRoleBinding(db, input.granteeSessionId);
+  if (root.root_session_id !== input.rootSessionId || grantee.root_session_id !== input.rootSessionId) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The trusted grant policy is outside the root scope.");
+  }
+  const seen = new Set<string>();
+  for (const action of input.actions) {
+    if (seen.has(action)) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The trusted grant policy contains duplicate actions.");
+    seen.add(action);
+    const definition = SESSION_AUTHORITY_OPERATION_DEFINITIONS[action];
+    if (!definition || definition.resourceKind !== input.resourceKind || definition.effectClass !== input.effectClass) {
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The trusted grant policy does not match operation definitions.");
+    }
+  }
+  if (input.actions.length === 0 || (input.expiresAt !== null && (!Number.isFinite(Date.parse(input.expiresAt)) || Date.parse(input.expiresAt) <= Date.parse(input.issuedAt)))) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant policy actions or expiry are invalid.");
+  if (!input.delegable && input.childCeiling.length > 0) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "A non-delegable policy cannot carry a child ceiling.");
+  for (const item of input.childCeiling) {
+    if (!input.actions.includes(item.action) || item.resourceKind !== input.resourceKind || item.effectClass !== input.effectClass
+      || !relationCanNarrow(input.relationSelector, item.relationSelector)
+      || !item.targetSessionRoles.every((role) => input.targetSessionRoles.includes(role))) {
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The policy child ceiling exceeds its own scope.");
+    }
+  }
+  const id = insertGrant(db, {
+    rootSessionId: input.rootSessionId, issuerKind: trusted.kind,
+    issuerId: trusted.kind === "user" ? trusted.receiptId : trusted.service,
+    issuerGrantId: null, issuerGrantRevision: null, granteeSessionId: input.granteeSessionId,
+    actions: input.actions,
+    permission: { mode: input.delegable ? "delegate" : "exercise", action: input.actions[0]!, resourceKind: input.resourceKind, relationSelector: input.relationSelector, effectClass: input.effectClass, targetSessionRoles: input.targetSessionRoles },
+    childCeiling: input.childCeiling, issuedAt: input.issuedAt, expiresAt: input.expiresAt,
+    eventKind: "delegated", eventPrincipalKind: trusted.kind, eventActorSessionId: null,
+    provenance: { source: "trusted-grant-policy", resourceIds: input.resourceIds, budgetAccountId: input.budgetAccountId, budget: input.budget, policyRootSessionId: input.rootSessionId },
+  });
+  return [requireGrant(db, id)];
+}
+
+export function getSessionAuthorityGrant(db: DatabaseSync, issuerSessionId: string, input: SessionGrantGetInput): SessionAuthorityGrant {
+  const grant = requireGrant(db, input.grantId);
+  if (grant.granteeSessionId !== issuerSessionId && !(grant.issuerKind === "agent" && grant.issuerId === issuerSessionId)) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The grant is outside the actor scope.");
+  return grant;
+}
+
+export function listSessionAuthorityGrants(db: DatabaseSync, issuerSessionId: string, input: SessionGrantListInput = {}): SessionAuthorityGrant[] {
+  const grantee = input.granteeSessionId ?? issuerSessionId;
+  const rows = db.prepare("SELECT * FROM session_authority_grants_v6 WHERE (grantee_session_id = ? OR (issuer_kind = 'agent' AND issuer_id = ?)) ORDER BY grant_id").all(issuerSessionId, issuerSessionId) as GrantRow[];
+  return rows.map(decodeGrant).filter((grant) => (input.granteeSessionId === undefined || grant.granteeSessionId === grantee) && (input.includeRevoked === true || grant.revokedAt === null));
+}
+
+export function revokeSessionAuthorityGrantByActor(db: DatabaseSync, issuerSessionId: string, input: SessionGrantRevokeInput, revokedAt: string): SessionAuthorityGrant {
+  const grant = requireGrant(db, input.grantId);
+  if (!(grant.issuerKind === "agent" && grant.issuerId === issuerSessionId) && grant.granteeSessionId !== issuerSessionId) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The actor cannot revoke this grant.");
+  const replay = db.prepare("SELECT grant_id, payload_json FROM session_authority_grant_events_v6 WHERE event_kind = 'revoked' AND actor_session_id = ? AND json_extract(payload_json, '$.idempotencyKey') = ?").get(issuerSessionId, input.idempotencyKey) as { grant_id: string; payload_json: string } | undefined;
+  if (replay) {
+    if (!isDeepStrictEqual(JSON.parse(replay.payload_json).request, input)) throw new SessionAuthorityError("AUTHORITY_GRANT_REVISION_CONFLICT", "The revoke key belongs to another request.");
+    return requireGrant(db, replay.grant_id);
+  }
+  if (grant.revokedAt !== null) throw new SessionAuthorityError("AUTHORITY_GRANT_REVOKED", "The grant is already revoked; retrieve its current state.");
+  return revokeSessionAuthorityGrant(db, { grantId: input.grantId, expectedRevision: input.expectedRevision, principal: { kind: "agent", agent: "session-runtime", actorSessionId: issuerSessionId, runtimeGeneration: "grant-owner" }, revokedAt, payload: { idempotencyKey: input.idempotencyKey, request: input } });
 }
 
 /** Trusted Settings/lifecycle owner only. This is intentionally not an Agent grant API. */
@@ -718,6 +956,7 @@ export function transferSessionAuthority(db: DatabaseSync, input: {
       issuerGrantId: destinationIssuer.grantId,
       issuerGrantRevision: destinationIssuer.revision,
       granteeSessionId: input.sessionId,
+      actions: grant.actions,
       permission: {
         mode: grant.delegable ? "delegate" : "exercise",
         action: grant.actions[0],
@@ -733,6 +972,8 @@ export function transferSessionAuthority(db: DatabaseSync, input: {
       eventPrincipalKind: "system",
       eventActorSessionId: null,
       provenance: {
+        ...Object.fromEntries(Object.entries(grant.provenance).filter(([key]) =>
+          ["resourceIds", "purpose", "completionCriteria", "returnSessionId", "budgetAccountId", "budget"].includes(key))),
         source: "session-transfer",
         operationId: input.operationId,
         supersedesGrantId: grant.grantId,
@@ -774,6 +1015,10 @@ export function assertGrantProofCurrent(
   now = new Date(),
   targetSessionRole?: SessionRole,
 ): void {
+  if (proof.effectClass !== "read" && !["session.move", "turn.cancel", "work.cancel", "coordination.event.cancel", "delegation.cancel", "delegation.compensate", "grant.revoke"].includes(proof.operation)) {
+    const actor = proof.principal.kind === "agent" ? requireRoleBinding(db, proof.principal.actorSessionId) : null;
+    assertSessionMutationNotDraining(db, [proof.resolvedScope.rootSessionId, ...(actor ? [actor.root_session_id] : [])]);
+  }
   if (proof.principal.kind !== "agent") return;
   requireRoleBinding(db, proof.principal.actorSessionId);
   if (proof.resolvedScope.ownerKind === "session") {
@@ -790,9 +1035,26 @@ export function assertGrantProofCurrent(
     throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "The authority grant mapping revision is stale.");
   }
   assertGrantActive(grant, proof.principal.actorSessionId, proof.grantRevision, now);
+  assertGrantBudgetAccount(db, grant, proof.resolvedScope.ownerId);
   if (grant.rootSessionId !== proof.resolvedScope.rootSessionId || !grantAllows(grant, proof, targetSessionRole)) {
     throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The authority proof no longer matches the canonical resource scope.");
   }
+  assertIssuerChainCurrent(db, grant, now);
+}
+
+/** A pending move already records both roots; its existing recovery operation releases the drain. */
+function assertSessionMutationNotDraining(db: DatabaseSync, roots: readonly string[]): void {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_lifecycle_operations_v6'").get()) return;
+  const placeholders = roots.map(() => "?").join(",");
+  const pending = db.prepare(`SELECT operation_id FROM session_lifecycle_operations_v6
+    WHERE operation = 'session.move' AND state IN ('prepared', 'running', 'recovery-required')
+      AND source_root_session_id <> destination_root_session_id
+      AND (source_root_session_id IN (${placeholders}) OR destination_root_session_id IN (${placeholders})) LIMIT 1`)
+    .get(...roots, ...roots) as { operation_id: string } | undefined;
+  if (pending) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The root is draining for an ownership transfer; read, cancel, and transfer recovery remain available.", { operationId: pending.operation_id });
+}
+
+function assertIssuerChainCurrent(db: DatabaseSync, grant: SessionAuthorityGrant, now: Date): void {
   let current = grant;
   const visited = new Set<string>();
   while (current.issuerGrantId !== null) {
@@ -810,8 +1072,9 @@ export function assertGrantProofCurrent(
 export function revokeSessionAuthorityGrant(db: DatabaseSync, input: {
   grantId: string;
   expectedRevision: number;
-  principal: Extract<SessionAuthorityPrincipal, { kind: "user" | "system" }>;
+  principal: SessionAuthorityPrincipal;
   revokedAt: string;
+  payload?: Record<string, unknown>;
 }): SessionAuthorityGrant {
   const current = requireGrant(db, input.grantId);
   if (current.revision !== input.expectedRevision) {
@@ -827,8 +1090,8 @@ export function revokeSessionAuthorityGrant(db: DatabaseSync, input: {
   db.prepare(`
     INSERT INTO session_authority_grant_events_v6 (
       event_id, grant_id, event_kind, grant_revision, principal_kind, actor_session_id, payload_json, occurred_at
-    ) VALUES (?, ?, 'revoked', ?, ?, NULL, ?, ?)
-  `).run(`authority-event:${randomUUID()}`, input.grantId, nextRevision, input.principal.kind, JSON.stringify({}), input.revokedAt);
+    ) VALUES (?, ?, 'revoked', ?, ?, ?, ?, ?)
+  `).run(`authority-event:${randomUUID()}`, input.grantId, nextRevision, input.principal.kind, input.principal.kind === "agent" ? input.principal.actorSessionId : null, JSON.stringify(input.payload ?? {}), input.revokedAt);
   return requireGrant(db, input.grantId);
 }
 
@@ -885,6 +1148,7 @@ export function verifySessionAuthorityMigration(db: DatabaseSync): void {
     const transferredRows = activeRows.filter((row) => grantProvenanceSource(row) === "session-transfer");
     const transferCapabilityRows = activeRows.filter((row) => grantProvenanceSource(row) === "trusted-cross-root-transfer");
     const lifecycleCapabilityRows = activeRows.filter((row) => grantProvenanceSource(row) === "trusted-work-item-lifecycle");
+    const publicGrantRows = activeRows.filter((row) => ["agent-grant", "trusted-grant-policy"].includes(String(grantProvenanceSource(row))));
     if (baselineRows.length === 0 && delegatedRows.length === 0 && transferredRows.length === 0 && transferCapabilityRows.length === 0 && lifecycleCapabilityRows.length === 0) {
       throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "A Session has no recognized authority grant provenance.", {
         sessionId: binding.session_id,
@@ -894,7 +1158,7 @@ export function verifySessionAuthorityMigration(db: DatabaseSync): void {
     verifyBudgetAuthorityGrantSet(binding.session_id, budgetRows, rows.filter((row) => row.root_session_id === binding.root_session_id),
       transferredRows.length > 0 ? transferredRows : undefined);
     const revokedBaselineRows = baselineRows.filter((row) => row.revoked_at !== null);
-    if (baselineRows.length + delegatedRows.length + budgetRows.length + transferredRows.length + transferCapabilityRows.length + lifecycleCapabilityRows.length
+    if (baselineRows.length + delegatedRows.length + budgetRows.length + transferredRows.length + transferCapabilityRows.length + lifecycleCapabilityRows.length + publicGrantRows.length
       !== activeRows.length + revokedBaselineRows.length) {
       throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "A Session authority grant has unknown provenance.", {
         sessionId: binding.session_id,
@@ -1026,6 +1290,7 @@ function insertGrant(db: DatabaseSync, input: {
   issuerGrantId: string | null;
   issuerGrantRevision: number | null;
   granteeSessionId: string;
+  actions?: readonly SessionRuntimeOperation[];
   permission: SessionAuthorityPermission;
   childCeiling: readonly SessionAuthorityPermission[];
   issuedAt: string;
@@ -1034,7 +1299,7 @@ function insertGrant(db: DatabaseSync, input: {
   eventPrincipalKind: SessionAuthorityPrincipal["kind"];
   eventActorSessionId: string | null;
   provenance: Readonly<Record<string, unknown>>;
-}): void {
+}): string {
   const grantId = `authority-grant:${randomUUID()}`;
   db.prepare(`
     INSERT INTO session_authority_grants_v6 (
@@ -1045,7 +1310,7 @@ function insertGrant(db: DatabaseSync, input: {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?)
   `).run(
     grantId, input.rootSessionId, input.issuerKind, input.issuerId, input.issuerGrantId,
-    input.issuerGrantRevision, input.granteeSessionId, JSON.stringify([input.permission.action]),
+    input.issuerGrantRevision, input.granteeSessionId, JSON.stringify(input.actions ?? [input.permission.action]),
     input.permission.resourceKind, input.permission.relationSelector,
     JSON.stringify(input.permission.targetSessionRoles), input.permission.effectClass,
     input.permission.mode === "delegate" || input.childCeiling.length > 0 ? 1 : 0,
@@ -1060,6 +1325,7 @@ function insertGrant(db: DatabaseSync, input: {
     `authority-event:${randomUUID()}`, grantId, input.eventKind, input.eventPrincipalKind,
     input.eventActorSessionId, JSON.stringify(input.provenance), input.issuedAt,
   );
+  return grantId;
 }
 
 function requireGrant(db: DatabaseSync, grantId: string): SessionAuthorityGrant {
@@ -1117,7 +1383,12 @@ export function grantAllows(
   request: Pick<MutationAuthorityProof, "action" | "effectClass" | "resolvedScope">,
   targetRole?: SessionRole,
 ): boolean {
-  return grant.actions.includes(request.action)
+  const scopedResourceIds = grant.provenance.resourceIds;
+  const resourceAllowed = scopedResourceIds === undefined
+    || (Array.isArray(scopedResourceIds) && request.resolvedScope.resourceId !== null
+      && scopedResourceIds.includes(grant.resourceKind === "execution" ? request.resolvedScope.ownerId : request.resolvedScope.resourceId));
+  return resourceAllowed
+    && grant.actions.includes(request.action)
     && grant.resourceKind === request.resolvedScope.resourceKind
     && grant.effectClass === request.effectClass
     && relationIncludes(grant.relationSelector, request.resolvedScope.relation)
@@ -1138,4 +1409,74 @@ function samePermission(left: SessionAuthorityPermission, right: SessionAuthorit
     && left.relationSelector === right.relationSelector
     && left.effectClass === right.effectClass
     && right.targetSessionRoles.every((role) => left.targetSessionRoles.includes(role));
+}
+
+function relationCanNarrow(parent: SessionAuthorityRelationSelector, child: SessionAuthorityRelationSelector): boolean {
+  if (parent === child) return true;
+  return parent === "root_member" || parent === "visible_root";
+}
+
+function validateGrantBudget(budget: Readonly<Record<string, number>> | undefined, parent: SessionAuthorityGrant): void {
+  const parentBudget = parent.provenance.budget;
+  if (budget === undefined) {
+    if (parentBudget !== undefined) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "A child grant must declare its bounded budget.");
+    return;
+  }
+  for (const [key, value] of Object.entries(budget)) {
+    if (!RESOURCE_BUDGET_DIMENSIONS.includes(key as typeof RESOURCE_BUDGET_DIMENSIONS[number]) || !Number.isSafeInteger(value) || value < 0) {
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant budget is invalid.", { dimension: key });
+    }
+  }
+  if (!parentBudget || typeof parentBudget !== "object" || Array.isArray(parentBudget)) return;
+  for (const [key, value] of Object.entries(budget)) {
+    const maximum = (parentBudget as Record<string, unknown>)[key];
+    if (typeof maximum !== "number" || value > maximum) {
+      throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The grant budget exceeds its parent allocation.", { dimension: key });
+    }
+  }
+  for (const key of Object.keys(parentBudget)) if (!(key in budget)) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The child omits a constrained budget dimension.");
+}
+
+function assertGrantBudgetAccount(db: DatabaseSync, grant: Pick<SessionAuthorityGrant, "rootSessionId" | "provenance">, ownerId?: string): void {
+  const accountId = grant.provenance.budgetAccountId;
+  const ceiling = grant.provenance.budget;
+  if (accountId === undefined && ceiling === undefined) return;
+  if (typeof accountId !== "string") throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "A bounded grant requires an existing budget account.");
+  const budget = (() => {
+    try { return new ResourceBudgetStorage(db).get(ownerId ?? grant.rootSessionId); }
+    catch (error) {
+      if (!(error instanceof ResourceBudgetError)) throw error;
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant budget account cannot be resolved.");
+    }
+  })();
+  if (budget.accountId !== accountId || budget.rootSessionId !== grant.rootSessionId || budget.revokedAt !== null) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant budget is not the target's current account.");
+  if (ceiling && typeof ceiling === "object" && !Array.isArray(ceiling)) {
+    for (const [key, maximum] of Object.entries(ceiling)) {
+      const dimension = budget.dimensions[key as typeof RESOURCE_BUDGET_DIMENSIONS[number]];
+      if (!dimension || typeof maximum !== "number" || dimension.hardLimit > maximum) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Configure a budget allocation within the grant ceiling before admission.");
+    }
+  }
+}
+
+function requireGrantResourceOwner(db: DatabaseSync, kind: SessionAuthorityResourceKind, id: string, rootSessionId: string, actions: readonly SessionRuntimeOperation[]): string {
+  let row: { root_session_id: string; owner_session_id: string } | undefined;
+  if (kind === "work_item") {
+    row = db.prepare("SELECT root_session_id, target_session_id AS owner_session_id FROM work_items_v6 WHERE id = ?").get(id) as typeof row;
+  } else if (kind === "interaction") {
+    row = db.prepare(`SELECT binding.root_session_id, binding.session_id AS owner_session_id FROM session_interactions_v6 interaction
+      JOIN session_executions_v6 execution ON execution.id = interaction.execution_id
+      JOIN session_role_bindings_v6 binding ON binding.session_id = execution.session_id WHERE interaction.id = ?`).get(id) as typeof row;
+  } else if (kind === "coordination_event") {
+    row = db.prepare("SELECT root_session_id, actor_session_id AS owner_session_id FROM coordination_events_v6 WHERE id = ?").get(id) as typeof row;
+  } else {
+    // Execution grants bind the target Session so the same bounded grant can admit and inspect a Turn.
+    row = db.prepare(`SELECT binding.root_session_id, binding.session_id AS owner_session_id FROM session_role_bindings_v6 binding
+      JOIN sessions_v6 session ON session.id = binding.session_id WHERE binding.session_id = ? AND session.deleted_at IS NULL`).get(id) as typeof row;
+  }
+  if (!row && actions.some((action) => ["session", "target_session"].includes(SESSION_AUTHORITY_OPERATION_DEFINITIONS[action].scopeSource))) {
+    row = db.prepare(`SELECT binding.root_session_id, binding.session_id AS owner_session_id FROM session_role_bindings_v6 binding
+      JOIN sessions_v6 session ON session.id = binding.session_id WHERE binding.session_id = ? AND session.deleted_at IS NULL`).get(id) as typeof row;
+  }
+  if (!row || row.root_session_id !== rootSessionId) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "A resource must exist in the grant root.");
+  return row.owner_session_id;
 }

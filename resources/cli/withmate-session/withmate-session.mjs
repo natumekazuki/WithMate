@@ -49,6 +49,43 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __hasOwnProp.call(mod, "module.exports") ? mod["module.exports"] : __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __require = /* #__PURE__ */ (() => createRequire(import.meta.url))();
 //#endregion
+//#region src/session-authority.ts
+var SESSION_AUTHORITY_EFFECT_CLASSES = [
+	"read",
+	"local_mutation",
+	"external_side_effect"
+];
+var SESSION_AUTHORITY_DECISION_CLASSES = [
+	"agent_delegable",
+	"user_only",
+	"deny_or_cancel"
+];
+var SESSION_AUTHORITY_RESOURCE_KINDS = [
+	"runtime",
+	"session",
+	"session_namespace",
+	"session_files",
+	"work_item",
+	"execution",
+	"interaction",
+	"coordination_event",
+	"transcript",
+	"budget"
+];
+var SESSION_AUTHORITY_RELATION_SELECTORS = [
+	"self",
+	"parent",
+	"direct_child",
+	"sibling",
+	"root_owner",
+	"root_member",
+	"owned_root",
+	"assigned",
+	"created",
+	"creator_or_target",
+	"visible_root"
+];
+//#endregion
 //#region src/delegation.ts
 var DELEGATION_STATES = [
 	"preparing",
@@ -429,6 +466,10 @@ var SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES = 1048576;
 var SESSION_RUNTIME_MAX_FILE_TEXT_BYTES = 8388608;
 var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
 var SESSION_RUNTIME_OPERATIONS = [
+	"grant.create",
+	"grant.get",
+	"grant.list",
+	"grant.revoke",
 	"delegation.create",
 	"delegation.get",
 	"delegation.list",
@@ -496,6 +537,7 @@ var SESSION_RUNTIME_OPERATIONS = [
 ];
 var SESSION_RUNTIME_PROVIDER_IDS = ["codex", "copilot"];
 function sessionRuntimeOperationMayHaveEffect(operation, input) {
+	if (operation === "grant.create" || operation === "grant.revoke") return true;
 	if (operation.startsWith("delegation.")) return operation !== "delegation.get" && operation !== "delegation.list";
 	if (operation === "transcript.export") return input === void 0 || input.destination?.kind !== "inline";
 	return operation === "session.create" || operation === "session.rename" || operation === "session.configure" || operation === "session.move" || operation === "session.clone" || operation === "session.restore" || operation === "session.archive" || operation === "session.delete" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "work.create" || operation === "work.transition" || operation === "work.revise" || operation === "work.history.append" || operation === "work.reassign" || operation === "work.move" || operation === "work.clone" || operation === "work.reopen" || operation === "work.archive" || operation === "work.restore" || operation === "work.delete" || operation === "work.result" || operation === "work.result.correct" || operation === "work.cancel" || operation === "work.aggregation.decide" || operation === "work.aggregation.retry" || operation === "work.aggregation.correct" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct";
@@ -520,6 +562,10 @@ function assertSessionRuntimeRequestBodySize(actualBytes, field = "requestBody")
 }
 function parseSessionRuntimeOperationInput(operation, value) {
 	if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) throw invalid("operation", "Unsupported Session runtime operation.");
+	if (operation === "grant.create") return parseSessionGrantCreateInput(value);
+	if (operation === "grant.get") return parseSessionGrantGetInput(value);
+	if (operation === "grant.list") return parseSessionGrantListInput(value);
+	if (operation === "grant.revoke") return parseSessionGrantRevokeInput(value);
 	if (operation.startsWith("delegation.")) return parseDelegationInput(operation, value);
 	if (operation === "runtime.catalog" || operation === "session.self") {
 		assertKeys(requireObject(value, "input"), [], "input");
@@ -1282,17 +1328,21 @@ function parseWorkItemMoveInput(value) {
 	assertKeys(r, [
 		"workItemId",
 		"destinationParentWorkItemId",
+		"destinationTargetSessionId",
 		"expectedRevision",
 		"expectedAggregateRevision",
 		"expectedDestinationAggregateRevision",
+		"expectedDestinationTargetRevision",
 		"idempotencyKey"
 	], "input");
 	return {
 		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
 		destinationParentWorkItemId: r.destinationParentWorkItemId === null ? null : requireNonEmptyString(r.destinationParentWorkItemId, "destinationParentWorkItemId"),
+		...r.destinationTargetSessionId === void 0 ? {} : { destinationTargetSessionId: requireNonEmptyString(r.destinationTargetSessionId, "destinationTargetSessionId") },
 		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
 		...r.expectedAggregateRevision === void 0 ? {} : { expectedAggregateRevision: requireInteger(r.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER) },
 		...r.expectedDestinationAggregateRevision === void 0 ? {} : { expectedDestinationAggregateRevision: requireInteger(r.expectedDestinationAggregateRevision, "expectedDestinationAggregateRevision", 0, Number.MAX_SAFE_INTEGER) },
+		...r.expectedDestinationTargetRevision === void 0 ? {} : { expectedDestinationTargetRevision: requireInteger(r.expectedDestinationTargetRevision, "expectedDestinationTargetRevision", 1, Number.MAX_SAFE_INTEGER) },
 		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
 	};
 }
@@ -1812,7 +1862,8 @@ function parseTurnRunInput(value) {
 		"waitTimeoutMs",
 		"turn",
 		"terminalFailureNotification",
-		"workItemId"
+		"workItemId",
+		"consultationGrantId"
 	], "input");
 	const responseMode = requireEnum(record.responseMode, ["wait", "deferred"], "responseMode");
 	if (responseMode === "deferred" && record.waitTimeoutMs !== void 0) throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
@@ -1831,7 +1882,8 @@ function parseTurnEnqueueInput(value) {
 		"idempotencyKey",
 		"turn",
 		"terminalFailureNotification",
-		"workItemId"
+		"workItemId",
+		"consultationGrantId"
 	], "input");
 	return parseTurnMutationBase(record);
 }
@@ -1843,7 +1895,95 @@ function parseTurnMutationBase(record) {
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
 		turn: parseTurnRequest(record.turn),
 		...record.terminalFailureNotification === void 0 ? {} : { terminalFailureNotification: parseTerminalFailureNotificationInput(record.terminalFailureNotification) },
-		...record.workItemId === void 0 ? {} : { workItemId: requireNonEmptyString(record.workItemId, "workItemId") }
+		...record.workItemId === void 0 ? {} : { workItemId: requireNonEmptyString(record.workItemId, "workItemId") },
+		...record.consultationGrantId === void 0 ? {} : { consultationGrantId: requireNonEmptyString(record.consultationGrantId, "consultationGrantId") }
+	};
+}
+function parseSessionGrantCreateInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"parentGrantId",
+		"parentGrantRevision",
+		"granteeSessionId",
+		"actions",
+		"resourceKind",
+		"relationSelector",
+		"targetSessionRoles",
+		"effectClass",
+		"delegable",
+		"childCeiling",
+		"expiresAt",
+		"budget",
+		"resourceIds",
+		"purpose",
+		"completionCriteria",
+		"returnSessionId",
+		"budgetAccountId",
+		"idempotencyKey"
+	], "input");
+	if (!Array.isArray(r.actions) || r.actions.length === 0 || !r.actions.every((v) => typeof v === "string" && SESSION_RUNTIME_OPERATIONS.includes(v))) throw invalid("actions", "actions must contain known runtime operations.");
+	if (!Array.isArray(r.targetSessionRoles) || r.targetSessionRoles.length === 0 || !r.targetSessionRoles.every((v) => [
+		"standalone",
+		"overall-coordinator",
+		"task-coordinator",
+		"executor"
+	].includes(v))) throw invalid("targetSessionRoles", "targetSessionRoles must contain known Session roles.");
+	if (r.expiresAt !== null && typeof r.expiresAt !== "string" || typeof r.expiresAt === "string" && Number.isNaN(Date.parse(r.expiresAt))) throw invalid("expiresAt", "expiresAt must be an ISO timestamp or null.");
+	if (r.resourceIds !== void 0 && (!Array.isArray(r.resourceIds) || !r.resourceIds.every((v) => typeof v === "string" && v.length > 0))) throw invalid("resourceIds", "resourceIds must be a string array.");
+	if (r.budget !== void 0 && (!r.budget || typeof r.budget !== "object" || Array.isArray(r.budget) || Object.values(r.budget).some((v) => typeof v !== "number" || !Number.isSafeInteger(v) || v < 0))) throw invalid("budget", "budget values must be non-negative safe integers.");
+	return {
+		parentGrantId: requireNonEmptyString(r.parentGrantId, "parentGrantId"),
+		parentGrantRevision: requireInteger(r.parentGrantRevision, "parentGrantRevision", 1, Number.MAX_SAFE_INTEGER),
+		granteeSessionId: requireNonEmptyString(r.granteeSessionId, "granteeSessionId"),
+		actions: r.actions,
+		resourceKind: requireEnum(r.resourceKind, SESSION_AUTHORITY_RESOURCE_KINDS, "resourceKind"),
+		relationSelector: requireEnum(r.relationSelector, SESSION_AUTHORITY_RELATION_SELECTORS, "relationSelector"),
+		targetSessionRoles: r.targetSessionRoles,
+		effectClass: requireEnum(r.effectClass, SESSION_AUTHORITY_EFFECT_CLASSES, "effectClass"),
+		delegable: r.delegable === true,
+		...r.childCeiling === void 0 ? {} : { childCeiling: r.childCeiling },
+		expiresAt: r.expiresAt === null ? null : requireNonEmptyString(r.expiresAt, "expiresAt"),
+		...r.budget === void 0 ? {} : { budget: requireObject(r.budget, "budget") },
+		...r.resourceIds === void 0 ? {} : { resourceIds: r.resourceIds.map((v) => requireNonEmptyString(v, "resourceIds")) },
+		...r.purpose === void 0 ? {} : { purpose: requireNonEmptyString(r.purpose, "purpose") },
+		...r.completionCriteria === void 0 ? {} : { completionCriteria: requireNonEmptyString(r.completionCriteria, "completionCriteria") },
+		...r.returnSessionId === void 0 ? {} : { returnSessionId: requireNonEmptyString(r.returnSessionId, "returnSessionId") },
+		...r.budgetAccountId === void 0 ? {} : { budgetAccountId: requireNonEmptyString(r.budgetAccountId, "budgetAccountId") },
+		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseSessionGrantGetInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, ["grantId"], "input");
+	return { grantId: requireNonEmptyString(r.grantId, "grantId") };
+}
+function parseSessionGrantListInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"granteeSessionId",
+		"includeRevoked",
+		"limit",
+		"cursor"
+	], "input");
+	if (r.includeRevoked !== void 0 && typeof r.includeRevoked !== "boolean") throw invalid("includeRevoked", "includeRevoked must be boolean.");
+	return {
+		...r.granteeSessionId === void 0 ? {} : { granteeSessionId: requireNonEmptyString(r.granteeSessionId, "granteeSessionId") },
+		...r.includeRevoked === void 0 ? {} : { includeRevoked: r.includeRevoked },
+		limit: requireInteger(r.limit, "limit", 1, 500),
+		...r.cursor === void 0 ? {} : { cursor: requireNonEmptyString(r.cursor, "cursor") }
+	};
+}
+function parseSessionGrantRevokeInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"grantId",
+		"expectedRevision",
+		"idempotencyKey"
+	], "input");
+	return {
+		grantId: requireNonEmptyString(r.grantId, "grantId"),
+		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
 	};
 }
 function parseTerminalFailureNotificationInput(value) {
@@ -9738,30 +9878,6 @@ function datetime(params) {
 	return /* @__PURE__ */ _isoDateTime(ZodISODateTime, params);
 }
 //#endregion
-//#region src/session-authority.ts
-var SESSION_AUTHORITY_EFFECT_CLASSES = [
-	"read",
-	"local_mutation",
-	"external_side_effect"
-];
-var SESSION_AUTHORITY_DECISION_CLASSES = [
-	"agent_delegable",
-	"user_only",
-	"deny_or_cancel"
-];
-var SESSION_AUTHORITY_RESOURCE_KINDS = [
-	"runtime",
-	"session",
-	"session_namespace",
-	"session_files",
-	"work_item",
-	"execution",
-	"interaction",
-	"coordination_event",
-	"transcript",
-	"budget"
-];
-//#endregion
 //#region src/session-external-runtime-schema.ts
 var reasoningEffortSchema = _enum([
 	"minimal",
@@ -9859,7 +9975,8 @@ var mutationBaseShape = {
 	idempotencyKey: nonEmptyStringSchema,
 	turn: turnSchema,
 	terminalFailureNotification: object$1({ targetSessionId: nonEmptyStringSchema }).strict().optional(),
-	workItemId: nonEmptyStringSchema.optional()
+	workItemId: nonEmptyStringSchema.optional(),
+	consultationGrantId: nonEmptyStringSchema.optional()
 };
 var runInputSchema = object$1({
 	...mutationBaseShape,
@@ -10122,7 +10239,8 @@ var sessionManifestResultSchema = object$1({
 	workItems: array(object$1({
 		workItemId: nonEmptyStringSchema,
 		state: nonEmptyStringSchema,
-		revision: number().int().min(1)
+		revision: number().int().min(1),
+		parentWorkItemId: string().nullable()
 	}).strict()),
 	artifacts: array(object$1({
 		id: nonEmptyStringSchema,
@@ -10141,6 +10259,52 @@ var sessionManifestResultSchema = object$1({
 		revision: number().int().min(1),
 		state: nonEmptyStringSchema
 	}).strict()),
+	budgetAccounts: array(object$1({
+		id: nonEmptyStringSchema,
+		ownerSessionId: nonEmptyStringSchema,
+		rootSessionId: nonEmptyStringSchema,
+		revision: number().int().min(1)
+	}).strict()).optional(),
+	budgetUsage: array(object$1({
+		id: nonEmptyStringSchema,
+		accountId: nonEmptyStringSchema,
+		executionId: string().nullable(),
+		amount: number(),
+		unit: nonEmptyStringSchema,
+		confidence: nonEmptyStringSchema
+	}).strict()).optional(),
+	sessionFolders: array(object$1({
+		sessionId: nonEmptyStringSchema,
+		path: nonEmptyStringSchema
+	}).strict()).optional(),
+	rootWorkItems: array(object$1({
+		id: nonEmptyStringSchema,
+		state: nonEmptyStringSchema,
+		revision: number().int().min(1)
+	}).strict()).optional(),
+	delegationRows: array(object$1({
+		id: nonEmptyStringSchema,
+		actorSessionId: nonEmptyStringSchema,
+		revision: number().int().min(1),
+		state: nonEmptyStringSchema
+	}).strict()).optional(),
+	grantChains: array(object$1({
+		id: nonEmptyStringSchema,
+		issuerGrantId: string().nullable(),
+		issuerGrantRevision: number().int().min(1).nullable(),
+		granteeSessionId: nonEmptyStringSchema,
+		revision: number().int().min(1),
+		revokedAt: string().nullable(),
+		expiresAt: string().nullable()
+	}).strict()),
+	resourceHistory: array(object$1({
+		resourceKind: nonEmptyStringSchema,
+		resourceId: nonEmptyStringSchema,
+		eventCount: number().int().nonnegative(),
+		latestRevision: number().int().min(1).nullable()
+	}).strict()),
+	coordinationEventIds: array(nonEmptyStringSchema),
+	interactionIds: array(nonEmptyStringSchema),
 	openInteractions: number().int().nonnegative(),
 	openCoordinationEvents: number().int().nonnegative(),
 	blockers: array(string())
@@ -10245,9 +10409,11 @@ var workItemReassignInputSchema = object$1({
 var workItemMoveInputSchema = object$1({
 	workItemId: nonEmptyStringSchema,
 	destinationParentWorkItemId: nonEmptyStringSchema.nullable(),
+	destinationTargetSessionId: nonEmptyStringSchema.optional(),
 	expectedRevision: number().int().min(1),
 	expectedAggregateRevision: number().int().min(0).optional(),
 	expectedDestinationAggregateRevision: number().int().min(0).optional(),
+	expectedDestinationTargetRevision: number().int().min(1).optional(),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var workItemCloneInputSchema = object$1({
@@ -10442,6 +10608,10 @@ var workItemEventSchema = discriminatedUnion("type", [
 			afterParentWorkItemId: string().nullable(),
 			beforeCreatorSessionId: string().optional(),
 			afterCreatorSessionId: string().optional(),
+			beforeRootSessionId: string().optional(),
+			afterRootSessionId: string().optional(),
+			beforeTargetSessionId: string().optional(),
+			afterTargetSessionId: string().optional(),
 			supersededDecision: boolean()
 		}).strict()
 	}).strict(),
@@ -10821,6 +10991,7 @@ function createExecutionSchema(operation) {
 			updatedAt: string()
 		}).strict().nullable(),
 		workItemId: string().nullable(),
+		consultationGrantId: string().nullable(),
 		workItemRevision: number().int().positive().nullable(),
 		plannedSourceIdentity: workItemSourceIdentitySchema.nullable(),
 		actualStartSourceIdentity: actualStartSourceIdentitySchema.nullable()
@@ -11289,7 +11460,53 @@ var delegationSchema = object$1({
 	createdAt: string(),
 	updatedAt: string()
 }).strict();
+var grantPermissionSchema = object$1({
+	mode: _enum(["exercise", "delegate"]),
+	action: _enum(SESSION_RUNTIME_OPERATIONS),
+	resourceKind: _enum(SESSION_AUTHORITY_RESOURCE_KINDS),
+	relationSelector: _enum(SESSION_AUTHORITY_RELATION_SELECTORS),
+	effectClass: _enum(SESSION_AUTHORITY_EFFECT_CLASSES),
+	targetSessionRoles: array(sessionRoleSchema)
+}).strict();
+var grantSchema = object$1({
+	grantId: nonEmptyStringSchema,
+	rootSessionId: nonEmptyStringSchema,
+	issuerKind: _enum([
+		"agent",
+		"user",
+		"system"
+	]),
+	issuerId: nonEmptyStringSchema,
+	issuerGrantId: string().nullable(),
+	issuerGrantRevision: number().int().positive().nullable(),
+	granteeSessionId: nonEmptyStringSchema,
+	actions: array(_enum(SESSION_RUNTIME_OPERATIONS)),
+	resourceKind: _enum(SESSION_AUTHORITY_RESOURCE_KINDS),
+	relationSelector: _enum(SESSION_AUTHORITY_RELATION_SELECTORS),
+	targetSessionRoles: array(sessionRoleSchema),
+	effectClass: _enum(SESSION_AUTHORITY_EFFECT_CLASSES),
+	delegable: boolean(),
+	childCeiling: array(grantPermissionSchema),
+	issuedAt: string(),
+	effectiveAt: string(),
+	expiresAt: string().nullable(),
+	revokedAt: string().nullable(),
+	revision: number().int().positive(),
+	mappingRevision: number().int().positive(),
+	provenance: record(string(), unknown())
+}).strict();
+var grantResultSchema = object$1({
+	contractRevision: literal(1),
+	grant: grantSchema
+}).strict();
 var resultSchemas = {
+	"grant.create": grantResultSchema,
+	"grant.get": grantResultSchema,
+	"grant.list": object$1({
+		items: array(grantResultSchema),
+		nextCursor: string().optional()
+	}).strict(),
+	"grant.revoke": grantResultSchema,
 	"delegation.create": delegationSchema,
 	"delegation.get": delegationSchema,
 	"delegation.list": object$1({
@@ -11432,6 +11649,16 @@ var resultSchemas = {
 			operations: array(string()),
 			maxItems: number().int().positive(),
 			prepareStartOperation: literal("delegation.retry"),
+			constraints: array(string())
+		}).strict().optional(),
+		grants: object$1({
+			contractRevision: literal(1),
+			operations: tuple([
+				literal("create"),
+				literal("get"),
+				literal("list"),
+				literal("revoke")
+			]),
 			constraints: array(string())
 		}).strict().optional(),
 		sessionLifecycle: object$1({
@@ -11644,11 +11871,47 @@ var delegationItemInputSchema = object$1({
 	})
 }).strict().refine((item) => (item.target.kind === "create" && item.target.session.placement.kind === "root") === (item.work.kind === "root"), "A new root Session requires its canonical Root Work Item.");
 var delegationGetInputSchema = object$1({ delegationId: nonEmptyStringSchema }).strict();
+var grantCreateInputSchema = object$1({
+	parentGrantId: nonEmptyStringSchema,
+	parentGrantRevision: number().int().positive(),
+	granteeSessionId: nonEmptyStringSchema,
+	actions: array(_enum(SESSION_RUNTIME_OPERATIONS)).min(1),
+	resourceKind: _enum(SESSION_AUTHORITY_RESOURCE_KINDS),
+	relationSelector: _enum(SESSION_AUTHORITY_RELATION_SELECTORS),
+	targetSessionRoles: array(sessionRoleSchema).min(1),
+	effectClass: _enum(SESSION_AUTHORITY_EFFECT_CLASSES),
+	delegable: boolean(),
+	childCeiling: array(grantPermissionSchema).optional(),
+	expiresAt: string().nullable(),
+	budget: record(string(), number()).optional(),
+	resourceIds: array(nonEmptyStringSchema).optional(),
+	purpose: nonEmptyStringSchema.optional(),
+	completionCriteria: nonEmptyStringSchema.optional(),
+	returnSessionId: nonEmptyStringSchema.optional(),
+	budgetAccountId: nonEmptyStringSchema.optional(),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
+var grantGetInputSchema = object$1({ grantId: nonEmptyStringSchema }).strict();
+var grantListInputSchema = object$1({
+	granteeSessionId: nonEmptyStringSchema.optional(),
+	includeRevoked: boolean().optional(),
+	limit: number().int().positive().max(500),
+	cursor: nonEmptyStringSchema.optional()
+}).strict();
+var grantRevokeInputSchema = object$1({
+	grantId: nonEmptyStringSchema,
+	expectedRevision: number().int().positive(),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
 var delegationMutationInputSchema = delegationGetInputSchema.extend({
 	expectedRevision: number().int().positive(),
 	idempotencyKey: nonEmptyStringSchema
 });
 var inputSchemas = {
+	"grant.create": grantCreateInputSchema,
+	"grant.get": grantGetInputSchema,
+	"grant.list": grantListInputSchema,
+	"grant.revoke": grantRevokeInputSchema,
 	"delegation.create": object$1({
 		idempotencyKey: nonEmptyStringSchema,
 		dispatch: _enum(["prepare", "enqueue"]),
@@ -27798,6 +28061,34 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		destructive: false
 	},
 	{
+		name: "grant.create",
+		title: "Create authority grant",
+		description: "Issue a bounded authority grant within an existing issuer grant ceiling.",
+		readOnly: false,
+		destructive: false
+	},
+	{
+		name: "grant.get",
+		title: "Get authority grant",
+		description: "Read one authority grant and its durable provenance.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "grant.list",
+		title: "List authority grants",
+		description: "List authority grants visible to the current actor.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "grant.revoke",
+		title: "Revoke authority grant",
+		description: "Revoke an authority grant at its current revision.",
+		readOnly: false,
+		destructive: false
+	},
+	{
 		name: "delegation.create",
 		title: "Create delegation",
 		description: "Prepare or dispatch a batch through the canonical Session, Work Item and Turn owners. Inspect each item's state and committed IDs.",
@@ -28335,6 +28626,17 @@ function createWithMateSessionMcpServer(deps = {}) {
 		outputSchema: createSessionRuntimeOutputSchema("runtime.catalog")
 	}, async (input) => executeOperation("runtime.catalog", input, deps));
 	for (const operation of [
+		"grant.create",
+		"grant.get",
+		"grant.list",
+		"grant.revoke"
+	]) server.registerTool(operation, {
+		...definitions.get(operation),
+		annotations: annotations(definitions.get(operation)),
+		inputSchema: createSessionRuntimeAdvertisedInputSchema(operation),
+		outputSchema: createSessionRuntimeOutputSchema(operation)
+	}, async (input) => executeOperation(operation, input, deps));
+	for (const operation of [
 		"delegation.create",
 		"delegation.get",
 		"delegation.list",
@@ -28687,6 +28989,10 @@ var SessionCliUsageError = class extends Error {
 	}
 };
 var commandMap = /* @__PURE__ */ new Map([
+	["grant create", "grant.create"],
+	["grant get", "grant.get"],
+	["grant list", "grant.list"],
+	["grant revoke", "grant.revoke"],
 	["runtime catalog", "runtime.catalog"],
 	["delegation create", "delegation.create"],
 	["delegation get", "delegation.get"],
@@ -28865,9 +29171,9 @@ async function parseArgs(args, deps) {
 	const workAggregationCommand = args[0] === "work" && args[1] === "aggregation";
 	const workResultCommand = args[0] === "work" && args[1] === "result" && args[2] === "correct";
 	const workHistoryCommand = args[0] === "work" && args[1] === "history";
-	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "budget" || args[0] === "session" || args[0] === "work" || args[0] === "delegation" || args[0] === "interaction" || args[0] === "transcript";
+	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "budget" || args[0] === "grant" || args[0] === "session" || args[0] === "work" || args[0] === "delegation" || args[0] === "interaction" || args[0] === "transcript";
 	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand || workAggregationCommand || workHistoryCommand || workResultCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|budget get|list|configure|delegation create|get|list|retry|cancel|compensate|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work result correct|work aggregation get|list|decide|retry|correct|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|grant create|get|list|revoke|budget get|list|configure|delegation create|get|list|retry|cancel|compensate|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work result correct|work aggregation get|list|decide|retry|correct|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
 	const optionStart = fileCommand || coordinationCommand || workAggregationCommand || workHistoryCommand || workResultCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;

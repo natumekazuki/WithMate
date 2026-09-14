@@ -191,6 +191,10 @@ export type WorkItemParentChangedEventPayload = Readonly<{
   afterParentWorkItemId: string | null;
   beforeCreatorSessionId?: string;
   afterCreatorSessionId?: string;
+  beforeRootSessionId?: string;
+  afterRootSessionId?: string;
+  beforeTargetSessionId?: string;
+  afterTargetSessionId?: string;
   supersededDecision: boolean;
 }>;
 export type WorkItemArchivedEventPayload = Readonly<{ archivedAt: string; reason?: string }>;
