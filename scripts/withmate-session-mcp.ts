@@ -165,6 +165,7 @@ function annotations(definition: (typeof SESSION_MCP_TOOL_DEFINITIONS)[number]) 
     destructiveHint: definition.destructive,
     idempotentHint: true,
     openWorldHint: definition.name === "turn.run" || definition.name === "turn.enqueue"
+      || definition.name === "delegation.create" || definition.name === "delegation.retry"
       || definition.name === "interaction.respond" || definition.name === "transcript.export",
   };
 }

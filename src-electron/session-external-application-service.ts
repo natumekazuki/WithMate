@@ -347,6 +347,7 @@ export class SessionExternalApplicationService {
         case "session.archive": result = await this.requireLifecycleService().archive(request.input as SessionRuntimeArchiveInput, proof); break;
         default: throw new SessionCrudError("DELEGATION_TARGET_CONFLICT", "This operation is not part of created-root delegation.");
       }
+      this.invalidateWorkItemMutation(operation, root);
       return createSessionRuntimeResult<SessionRuntimeOperation>(operation, result);
     } catch (error) { return mapApplicationError(error, operation, input); }
   }

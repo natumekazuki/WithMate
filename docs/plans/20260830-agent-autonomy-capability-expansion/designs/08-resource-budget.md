@@ -23,7 +23,7 @@ tokenと費用は今回の上限管理から除外し、取得可能な使用量
 
 保存容量はRoot共有枠を使用し、子accountへの独立した容量配分は提供しない。`childAllocation.hardLimits.storageBytes` は0のみ受理する。実ファイル総量と子への予約枠を二重計上せず、Rootの容量上限を適用する。
 
-delegation resource、Session move、root transfer、artifact transferは後続Sliceの接続対象とし、このSliceで実装済みとは扱わない。
+Slice 2時点ではdelegation resource、Session move、root transfer、artifact transferは後続Sliceの接続対象だった。現行のDelegationはSlice 6で累積作成数の消費とruntime catalogへの投影を接続済み。同一要求のreplayは追加消費しない。現行契約は[Delegation transaction](04-delegation-transaction.md)を参照する。その他の後続能力の実装状況は各設計とplanを参照する。
 
 Slice 1 は 2026-09-05 のユーザー承認に基づき、budget 未実装を runtime catalog へ明示し、既存操作別の上限だけを維持する。本 slice で ledger と admission を接続し、その validation gap を解消する。Slice 1 の grant migration に架空の allocation や無制限値は置かず、ここで実際の root policy と既存上限から budget を生成する。
 

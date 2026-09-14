@@ -2,6 +2,8 @@
 
 ## Delegation operations
 
+Delegation replaces manual Session/Work/Turn creation for the same child; never apply both paths. Reuse already created resources with target/work `kind: "existing"` and their canonical IDs.
+
 `delegation.create` accepts `items` (1–20) and `dispatch: "prepare" | "enqueue"`. `prepare` persists Session and Work Item results and the exact Turn input without enqueueing it. `delegation.retry` resumes that saved pending input with `dispatch: "enqueue"`.
 
 The first failed item stops the batch. The response keeps earlier resource IDs, the failed item’s pending step, and effect certainty; later items remain unstarted. `get` and `list` are actor-owned. `retry`, `cancel`, and `compensate` require the current Delegation revision. Same-key different-payload requests are conflicts.
@@ -106,6 +108,8 @@ A root overall coordinator keeps one active self-owned Root Work Item; resolve i
 If a migrated idempotency ledger reports `IDEMPOTENCY_RESPONSE_UNAVAILABLE` with `effect: applied`, do not retry the same mutation with a new key. Read the current Work Item identified by `details.workItemId` and reconcile from that state.
 
 Use this sequence for a tracked decomposition:
+
+Choose one resource-creation and dispatch path per child: either `delegation.create/retry` or the manual `session.create → work.create → turn.run/turn.enqueue` sequence below. Delegation replaces the manual creation/dispatch steps; do not apply both to the same child. To adopt resources already created manually, use Delegation target/work `kind: "existing"` with their canonical IDs, and do not enqueue a Turn already dispatched manually. Preparation, dependency checks, result collection, and aggregation still apply.
 
 1. Read `session.self` and `runtime.catalog`. If the incoming delegation prompt names a Work Item ID, call `work.get` and verify that its canonical target matches the actor and that its goal, scope, completion criteria, authority, and source identity match the delegation. Do not infer the current Work Item from other active items.
 2. For a root `standalone` or `overall-coordinator`, call `work.list` across every page with `kind: "root"` and prefer the active self-owned root; if no active root exists, use the latest terminal self-owned root. Do not infer the root from an active delegated item. If the current Work Item is `pending`, start it with `work.transition` to `in_progress`. If it is `waiting` and the blocker is resolved, resume it with a separate `work.transition` to `in_progress`. Pass the current `expectedRevision` and an operation-specific idempotency key for either mutation, then read the Work Item back before creating children. Turn association does not transition Work Item state. Evaluate the no-decomposition choice before creating children.

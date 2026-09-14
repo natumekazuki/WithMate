@@ -189,9 +189,9 @@ describe("WithMate Session MCP contract", () => {
   });
   // @test-value v2
   // kind = "contract"
-  // claim = "MCPはbudget三操作を含む全公開toolをdotted name、generic strict envelope schema、read/write annotation付きで公開する"
+  // claim = "MCPはbudget三操作を含む全公開toolをdotted name、generic strict envelope schema、read/writeおよびDelegationのProvider実行可能性を含むopenWorld annotation付きで公開する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/09-public-api-migration-and-review.md#public-surface-parity" }
-  // fault = "HTTPまたはCLIにあるoperationがMCP tool一覧から欠落するか、generic envelope required fieldまたはreadOnly/destructive分類が分岐する"
+  // fault = "HTTPまたはCLIにあるoperationがMCP tool一覧から欠落するか、generic envelope required fieldまたはreadOnly/destructive分類が分岐するか、Delegation create/retryの外部効果をopenWorldHintへ反映しない"
   // observable = "MCP tools/listの公開tool名、generic input/output schema strictness、effect annotation"
   // observation_boundary = "public-boundary"
   // scope = "WithMate Session MCP tool catalog"
@@ -290,7 +290,7 @@ describe("WithMate Session MCP contract", () => {
         assert.ok(tool.description?.trim());
         assert.equal(
           tool.annotations?.openWorldHint,
-          tool.name === "turn.run" || tool.name === "turn.enqueue" || tool.name === "interaction.respond" || tool.name === "transcript.export",
+          tool.name === "turn.run" || tool.name === "turn.enqueue" || tool.name === "delegation.create" || tool.name === "delegation.retry" || tool.name === "interaction.respond" || tool.name === "transcript.export",
         );
         assert.equal(tool.annotations?.idempotentHint, true);
         assert.equal(tool.annotations?.readOnlyHint, expectedEffect.readOnlyHint, `${tool.name} readOnlyHint`);

@@ -753,3 +753,54 @@ test("cleanup can finish its response snapshot after the terminal state was comm
     } finally { await f.close(); }
   }
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "created-rootの補償でWork cancel/archiveが成功すると、各更新を作成先RootのSession無効化通知へ伝える"
+// oracle = { type = "contract", ref = "src-electron/main.ts:invalidateSession" }
+// fault = "特殊dispatchが共通の更新通知を省略し、GUIのWork Item投影が再読込まで古い状態になる"
+// observable = "公開compensate成功と、取消後・archive後それぞれのcreated-root ID付き無効化callback"
+// observation_boundary = "public-boundary"
+// scope = "実application/delegation/SQLite、Work/lifecycle/authority ownerと通知受信はstub。GUI描画は対象外"
+// lifecycle = "permanent"
+// @end-test-value
+test("created root compensation invalidates Work Item updates on its own root", async () => {
+  const { SessionExternalApplicationService } = await import("../../src-electron/session-external-application-service.js");
+  const f = await fixture();
+  try {
+    const target = request.items[0].target;
+    if (target.kind !== "create") throw new Error("fixture");
+    const rootRequest: DelegationCreateInput = { ...request, dispatch: "prepare", items: [{ ...request.items[0], target: { kind: "create", session: { ...target.session, placement: { kind: "root", rootKind: "standalone" } } }, work: { kind: "root" } }] };
+    const row = f.storage.create({ id: "delegation-cleanup", actorSessionId: "root", idempotencyKey: rootRequest.idempotencyKey, request: rootRequest, proof, state: "prepared", items: [{ index: 0, sessionId: "created-root", workItemId: "root-work", executionId: null, createdSession: true, createdWorkItem: true, state: "prepared", pendingStep: null, effect: "applied", error: null }], recoveryActions: ["compensate"], createdAt: new Date().toISOString() });
+    const root = { sessionId: "created-root", rootSessionId: "created-root", parentSessionId: null, revision: 1 };
+    let work = { id: "root-work", targetSessionId: root.sessionId, state: "pending", revision: 1, archivedAt: null as string | null };
+    const notifications: unknown[] = [];
+    const app = new SessionExternalApplicationService({
+      delegationStorage: f.storage,
+      authorityService: {
+        authorize(_actor: unknown, _operation: string, input: unknown) { return { input, proof }; },
+        authorizeSessionAct(_actor: string, _operation: string, input: unknown) { return { input, proof: { ...proof, resolvedScope: { ...proof.resolvedScope, rootSessionId: root.sessionId } } }; },
+      },
+      crudService: { async get() { return root; } },
+      executionService: { listPage() { return []; } },
+      workItemService: {
+        get() { return work; },
+        cancel() { work = { ...work, state: "canceled", revision: 2 }; return work; },
+        archive() { work = { ...work, archivedAt: now, revision: 3 }; return work; },
+      },
+      lifecycleService: {
+        deleteManifest() { return { blockers: [], descendants: [], artifacts: [], budgetReservations: [] }; },
+        async archive() { return root; },
+      },
+      getTurnAuthoritySession(id: string) { assert.equal(id, root.sessionId); return root; },
+      invalidateSession(id: string) { notifications.push({ id, state: work.state, archivedAt: work.archivedAt }); },
+    } as never);
+    const response = await app.execute("delegation.compensate", { delegationId: row.id, expectedRevision: row.revision, idempotencyKey: "cleanup" }, binding);
+    assert.ok("result" in response);
+    assert.equal((response.result as import("../../src/delegation.js").Delegation).state, "compensated");
+    assert.deepEqual(notifications, [
+      { id: "created-root", state: "canceled", archivedAt: null },
+      { id: "created-root", state: "canceled", archivedAt: now },
+    ]);
+  } finally { await f.close(); }
+});

@@ -28244,7 +28244,7 @@ function annotations(definition) {
 		readOnlyHint: definition.readOnly,
 		destructiveHint: definition.destructive,
 		idempotentHint: true,
-		openWorldHint: definition.name === "turn.run" || definition.name === "turn.enqueue" || definition.name === "interaction.respond" || definition.name === "transcript.export"
+		openWorldHint: definition.name === "turn.run" || definition.name === "turn.enqueue" || definition.name === "delegation.create" || definition.name === "delegation.retry" || definition.name === "interaction.respond" || definition.name === "transcript.export"
 	};
 }
 function toolResult(value, isError) {

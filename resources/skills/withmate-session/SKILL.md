@@ -43,6 +43,8 @@ WithMate derives the actor, Role, permitted child Role, root, parent, depth, and
 
 ## Execute a tracked decomposition
 
+Choose one resource-creation and dispatch path per child: either `delegation.create/retry` or the manual `session.create → work.create → turn.run/turn.enqueue` sequence below. Delegation replaces the manual creation/dispatch steps; do not apply both to the same child. To adopt resources already created manually, use Delegation target/work `kind: "existing"` with their canonical IDs, and do not enqueue a Turn already dispatched manually. Preparation, dependency checks, result collection, and aggregation still apply.
+
 1. Call `session.self`, `runtime.catalog`, and `budget.get` to establish the actor, Role, permitted capabilities, and current account capacity. Use `budget.list` when a coordinator needs the visible root and child allocations.
 2. Resolve the current Work Item. For a delegated Session, use the exact ID in the incoming delegation prompt. For a root `standalone` or `overall-coordinator`, call `work.list` across every page with `kind: "root"` and prefer the active self-owned root; if no active root exists, use the latest terminal self-owned root. Do not infer the root from an active delegated item. Call `work.get`, confirm that its canonical target is the actor from `session.self`, and verify its goal, scope, completion criteria, authority, and source identity before mutation. If it is `pending`, start it with `work.transition` to `in_progress`; if it is `waiting` and the blocker is resolved, resume it with a separate `work.transition` to `in_progress`. In either case, pass the current `expectedRevision` and an operation-specific idempotency key, then read the Work Item back before decomposing.
 3. For every necessary child, choose its Role, goal, scope, completion criteria, authority, source identity, and dependency order before creating resources.
@@ -66,7 +68,7 @@ Do not infer provider support, model, reasoning effort, approval mode, sandbox, 
 
 ## Delegation transaction
 
-Use `delegation.create` for a concrete batch of one to twenty items. `dispatch: prepare` saves the target Session, Work Item, and exact Turn input without enqueueing; `delegation.retry` with `dispatch: enqueue` starts that saved input. The first failed item stops the batch while committed resource IDs, pending step, and effect certainty remain visible.
+As an alternative to the manual creation/dispatch sequence, use `delegation.create` for a concrete batch of one to twenty items. `dispatch: prepare` saves the target Session, Work Item, and exact Turn input without enqueueing; `delegation.retry` with `dispatch: enqueue` starts that saved input. The first failed item stops the batch while committed resource IDs, pending step, and effect certainty remain visible.
 
 Delegation reuses canonical Session, Work Item, aggregation retry, Turn, cancel, archive, authority, budget, and idempotency owners. Its normal domain row is not a hash, signature, event ledger, recovery verifier, generic reuse registry, or split/merge API. After an uncertain step, read the canonical owner and resend unchanged input only when it can reconcile it. Enqueue acknowledgement leaves the Delegation active until terminal execution observation.
 

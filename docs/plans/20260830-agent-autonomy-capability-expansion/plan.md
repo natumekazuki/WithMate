@@ -594,3 +594,9 @@ crash保存状態からの3種類の拒否とcancel／compensate保護、後続S
 最終production修正は `f2c469cb56fa831f1559575a40d40937205b0e39`。clean detached worktreeで5指摘の限定確認と追加snapshot修正のclosureを完了し、未解決findingはない。review用worktreeはHEAD・cleanliness・SessionFolder内の絶対pathを確認して削除した。
 
 最終抽出は開始baseから9 tests／9 transitions、diagnostic／warning 0。通常のread-only general_lunaが全recordのmetadata、本文、production path、恒久保持価値を確認し、未解決指摘・context不足はない。依頼範囲を追加commit済み。pushは実施していない。
+
+### Slice 6 通知・公開手順レビュー対応（2026-09-14）
+
+開始baseは `a883d63d452dcddae07ccc3e84b15764c24f1e27`。created-rootのowner操作成功後にも既存のWork Item mutation後処理を呼び、作成先RootのSession無効化通知へ接続した。Delegation create/retryのMCP openWorldHintをtrueにし、配布CLIを再生成した。手順書は子ごとにDelegationか手動Session/Work/Turn作成を選択し、両手順を重ねないことと既存資源のexisting指定を明記した。Resource Budget設計はSlice 2時点の記述と、Slice 6で接続済みのDelegation累積消費・catalog投影を区別した。
+
+関連120 test、型検査、配布CLI build、差分checkが成功した。GUI描画や実Provider起動は未実施で、通知は公開application経由のinvalidateSession callbackまで検証した。全suite・本番buildは今回反復していない。変更testの価値審査と今回の指摘に限った独立確認を実施する。
