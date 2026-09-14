@@ -1486,21 +1486,23 @@ test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使
 
 // @test-value v2
 // kind = "contract"
-// claim = "Markdown画像の遅延spinnerはCSS上で画像領域へ重なり、通常animationとreduced-motion無効化を持つ"
+// claim = "Markdown画像の遅延spinnerはCSS上で画像領域へ重なり、通常animationと後続のreduced-motion無効化を持つ"
 // oracle = { type = "contract", ref = "Issue #714: spinnerは周辺高さを変えず、prefers-reduced-motionに配慮する" }
 // fault = "spinnerが本文へ一行を追加して画像周囲を押し下げる、またはreduced-motionでも回転し続ける"
-// observable = "message-image-loadingとmessage-image-shellのCSS declaration"
+// observable = "message-image-loadingとmessage-image-shellのCSS declarationと適用順"
 // observation_boundary = "declaration"
 // scope = "MessageRichText画像loading UIのstylesheet declaration"
 // lifecycle = "permanent"
 // impact = "遅延表示の出入りで会話スクロールを揺らさず、動きを抑えたい利用者の設定を尊重する"
-// distinction = "DOMでは算出できないoverlay配置、pointer event、spinner animation、reduced-motion overrideをstylesheet declarationから観測する"
+// distinction = "DOMでは算出できないoverlay配置、pointer event、spinner animation、通常ruleより後ろにあるreduced-motion overrideの適用順をstylesheet declarationから観測する"
 // @end-test-value
 test("MessageRichText の画像 spinner は領域内 overlay と reduced-motion を持つ", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
   const loadingRule = styles.match(/\.message-image-loading\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const shellRule = styles.match(/\.message-image-shell\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
-  const spinnerRule = styles.match(/\.message-image-loading::before\s*{(?<body>[^}]*animation:\s*message-image-loading-spin[^}]*)}/)?.groups?.body ?? "";
+  const spinnerRuleMatch = /\.message-image-loading::before\s*{(?=[^}]*animation:\s*message-image-loading-spin)[^}]*}/.exec(styles);
+  const spinnerRule = spinnerRuleMatch?.[0] ?? "";
+  const reducedMotionRuleMatch = /\.message-image-loading::before\s*{(?=[^}]*animation:\s*none;)[^}]*}/.exec(styles);
 
   assert.match(loadingRule, /position:\s*absolute;/);
   assert.match(loadingRule, /inset:\s*[^;]+;/);
@@ -1508,6 +1510,9 @@ test("MessageRichText の画像 spinner は領域内 overlay と reduced-motion 
   assert.match(shellRule, /position:\s*relative;/);
   assert.match(spinnerRule, /animation:\s*message-image-loading-spin/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*{[\s\S]*?\.message-image-loading::before\s*{[\s\S]*?animation:\s*none;/);
+  assert.ok(spinnerRuleMatch);
+  assert.ok(reducedMotionRuleMatch);
+  assert.ok(reducedMotionRuleMatch.index > spinnerRuleMatch.index);
 });
 
 // @test-value v1
