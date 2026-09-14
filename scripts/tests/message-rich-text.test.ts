@@ -101,6 +101,47 @@ function waitForAnimationFrame(window: Window): Promise<void> {
   });
 }
 
+type ControlledTimer = {
+  callback: () => void;
+  delay: number;
+};
+
+function installControlledTimers(window: Window): {
+  pending: Map<number, ControlledTimer>;
+  restore: () => void;
+} {
+  const previousSetTimeout = window.setTimeout;
+  const previousClearTimeout = window.clearTimeout;
+  const pending = new Map<number, ControlledTimer>();
+  let nextTimerId = 1;
+
+  Object.defineProperty(window, "setTimeout", {
+    configurable: true,
+    value: (callback: TimerHandler, delay?: number) => {
+      const timerId = nextTimerId++;
+      pending.set(timerId, {
+        callback: typeof callback === "function" ? callback as () => void : () => undefined,
+        delay: delay ?? 0,
+      });
+      return timerId;
+    },
+  });
+  Object.defineProperty(window, "clearTimeout", {
+    configurable: true,
+    value: (timerId: number) => {
+      pending.delete(timerId);
+    },
+  });
+
+  return {
+    pending,
+    restore: () => {
+      Object.defineProperty(window, "setTimeout", { configurable: true, value: previousSetTimeout });
+      Object.defineProperty(window, "clearTimeout", { configurable: true, value: previousClearTimeout });
+    },
+  };
+}
+
 test("MessageRichText は **bold** を strong として render する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1154,12 +1195,25 @@ test("MessageRichText は local image を優先読込し external image は遅�
   assert.equal(images[2]?.getAttribute("fetchpriority"), "auto");
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "高速に完了するMarkdown画像はloading補助UIを表示せず、load完了後も通常表示を維持する"
+// oracle = { type = "contract", ref = "Issue #714: 画像loading表示は遅延し、完了時に除去する" }
+// fault = "画像が閾値未満で完了してもloading表示が一瞬出る、または完了後にloading状態が残る"
+// observable = "画像DOM、message-image-loading要素、setTimeoutの保留状態"
+// observation_boundary = "component-behavior"
+// scope = "MessageRichTextの直接Markdown画像loading境界"
+// lifecycle = "permanent"
+// impact = "短時間の画像表示で会話本文へ不要な文字・高さ変化を持ち込む"
+// distinction = "画像のsrcやload eventだけでなく、閾値前のloading UI不在と完了時のtimer破棄を観測する"
+// @end-test-value
 test("MessageRichText は直接 image を表示しながら load 完了後に loading 表示を消す", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
     url: "http://localhost/",
   });
   const restoreGlobals = installDomGlobals(dom);
+  const timers = installControlledTimers(dom.window);
   const container = dom.window.document.getElementById("root");
   let root: Root | null = null;
 
@@ -1175,14 +1229,252 @@ test("MessageRichText は直接 image を表示しながら load 完了後に lo
 
     const image = container.querySelector("img");
     assert.ok(image);
-    assert.equal(image.hidden, false);
-    assert.notEqual(container.querySelector(".message-image-loading"), null);
+    assert.equal(container.querySelector(".message-image-loading"), null);
+    assert.deepEqual(Array.from(timers.pending.values()).map((timer) => timer.delay), [1_000]);
 
     await act(async () => {
       image.dispatchEvent(new dom.window.Event("load"));
     });
 
     assert.equal(container.querySelector(".message-image-loading"), null);
+    assert.equal(timers.pending.size, 0);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    timers.restore();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "未完了の直接Markdown画像だけが閾値後に画像領域内のspinnerを表示し、完了時に除去する"
+// oracle = { type = "contract", ref = "Issue #714: 高速loadでは非表示、遅いloadでは遅延spinner" }
+// fault = "遅い画像の待機中にspinnerが出ない、spinnerが本文の高さを占有する、またはload後も残る"
+// observable = "message-image-shellの状態、画像DOM、message-image-loadingのrole・aria-label"
+// observation_boundary = "component-behavior"
+// scope = "MessageRichTextの直接Markdown画像遅延表示境界"
+// lifecycle = "permanent"
+// impact = "入力中の会話表示へ不要なloading文字やレイアウト変化を持ち込まず、遅いresourceだけを識別可能にする"
+// distinction = "高速loadのtimer破棄とは別に、保留timer発火後のspinner表示とload eventによる除去を観測する"
+// @end-test-value
+test("MessageRichText は遅い直接 image だけに領域内 spinner を表示する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const timers = installControlledTimers(dom.window);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: "![slow](data:image/png;base64,AAAA)",
+      }));
+    });
+
+    const image = container.querySelector<HTMLImageElement>(".message-image");
+    const timerEntry = Array.from(timers.pending.entries())[0];
+    const shell = container.querySelector<HTMLElement>(".message-image-shell");
+    assert.ok(image);
+    assert.ok(timerEntry);
+    assert.ok(shell);
+    assert.equal(container.querySelector(".message-image-loading"), null);
+    assert.equal(timerEntry[1].delay, 1_000);
+
+    timers.pending.delete(timerEntry[0]);
+    await act(async () => {
+      timerEntry[1].callback();
+    });
+
+    const loading = container.querySelector<HTMLElement>(".message-image-loading");
+    assert.equal(container.querySelector<HTMLImageElement>(".message-image"), image);
+    assert.ok(loading);
+    assert.equal(loading.getAttribute("role"), "status");
+    assert.equal(loading.getAttribute("aria-label"), "画像を読み込み中");
+    assert.equal(loading.textContent, "");
+    assert.equal(loading.parentElement, shell);
+    assert.doesNotMatch(container.textContent ?? "", /Image loading/);
+
+    await act(async () => {
+      image.dispatchEvent(new dom.window.Event("load"));
+    });
+
+    assert.equal(container.querySelector(".message-image-loading"), null);
+    assert.equal(timers.pending.size, 0);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    timers.restore();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "resolverのresolvingからloadingへの同一resource遷移では画像loadingの待機タイマーを継続する"
+// oracle = { type = "contract", ref = "Issue #714: resolving→loadingは連続した待ちとして扱う" }
+// fault = "resolver完了時にtimerを再開始して遅い画像のspinner表示が遅れ続ける、または完了後に表示が残る"
+// observable = "resolver完了前後のmessage-image-loading、resolved image DOM、保留timer"
+// observation_boundary = "component-behavior"
+// scope = "MessageRichTextのresolver付きMarkdown画像lifecycle"
+// lifecycle = "permanent"
+// impact = "local image previewが遅延しているときも待機状態を正しく示し、resource完了後に操作可能な画像へ戻す"
+// distinction = "直接画像のload eventとは別に、制御可能なresolver Promiseと同一timerを跨ぐ状態遷移を観測する"
+// @end-test-value
+test("MessageRichText は resolver の resolving から loading へ spinner 待機を継続する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const timers = installControlledTimers(dom.window);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  let resolveImage: ((source: string | null) => void) | undefined;
+  const resolver = () => new Promise<string | null>((resolve) => {
+    resolveImage = resolve;
+  });
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: "![slow local](images/sample.png)",
+        resolveImageSource: resolver,
+      }));
+    });
+
+    const timerEntry = Array.from(timers.pending.entries())[0];
+    assert.ok(timerEntry);
+    assert.equal(container.querySelector(".message-image"), null);
+    assert.equal(container.querySelector(".message-image-loading"), null);
+
+    timers.pending.delete(timerEntry[0]);
+    await act(async () => {
+      timerEntry[1].callback();
+    });
+    assert.ok(container.querySelector(".message-image-loading"));
+
+    await act(async () => {
+      resolveImage?.("data:image/png;base64,AAAA");
+      await Promise.resolve();
+    });
+
+    const image = container.querySelector<HTMLImageElement>(".message-image");
+    assert.ok(image);
+    assert.ok(container.querySelector(".message-image-loading"));
+    assert.equal(timers.pending.size, 0);
+
+    await act(async () => {
+      image.dispatchEvent(new dom.window.Event("load"));
+    });
+    assert.equal(container.querySelector(".message-image-loading"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    timers.restore();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Markdownの同じ位置にある画像はcallback更新、本文末尾追記、light/full切替で同じDOMとready状態を保持し、link操作は最新callbackを使う"
+// oracle = { type = "contract", ref = "Issue #714: Markdown component identityとcallback contextの安定化" }
+// fault = "renderごとにimg component typeが変わって画像が再mountされる、ready stateが初期化される、またはlinkが古いclosureを呼ぶ"
+// observable = "画像HTMLElementのidentity、loading表示、link callbackの受信値、Markdown render mode"
+// observation_boundary = "component-behavior"
+// scope = "MessageRichTextのMarkdown component identity境界"
+// lifecycle = "permanent"
+// impact = "入力に伴う親更新で既存会話画像が点滅・再取得されず、操作対象だけは最新session contextを維持する"
+// distinction = "親callbackだけを安定化するcolumn testとは別に、Markdown renderer自身のcomponent identityとlight/full更新を直接観測する"
+// @end-test-value
+test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使う", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  const opened: string[] = [];
+  const initialText = "[open](C:/workspace/old.txt)\n\n![cached](data:image/png;base64,AAAA)";
+  const appendedText = `${initialText}\n\nappended text`;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: initialText,
+        onOpenPath: (target: string) => opened.push(`old:${target}`),
+      }));
+    });
+
+    const image = container.querySelector<HTMLImageElement>(".message-image");
+    const link = container.querySelector<HTMLAnchorElement>("a");
+    const trigger = image?.closest<HTMLButtonElement>(".message-image-trigger");
+    assert.ok(image);
+    assert.ok(link);
+    assert.ok(trigger);
+    await act(async () => {
+      image.dispatchEvent(new dom.window.Event("load"));
+    });
+    assert.equal(container.querySelector(".message-image-loading"), null);
+    assert.equal(trigger.disabled, false);
+
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: initialText,
+        onOpenPath: (target: string) => opened.push(`new:${target}`),
+      }));
+    });
+    link.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    assert.deepEqual(opened, ["new:C:/workspace/old.txt"]);
+    assert.equal(container.querySelector<HTMLImageElement>(".message-image"), image);
+    assert.equal(container.querySelector(".message-image-loading"), null);
+    assert.equal(trigger.disabled, false);
+
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        text: appendedText,
+        onOpenPath: (target: string) => opened.push(`latest:${target}`),
+      }));
+    });
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "light");
+    assert.equal(container.querySelector<HTMLImageElement>(".message-image"), image);
+    assert.equal(container.querySelector(".message-image-loading"), null);
+    link.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    assert.deepEqual(opened, ["new:C:/workspace/old.txt", "latest:C:/workspace/old.txt"]);
+    assert.equal(trigger.disabled, false);
+
+    await act(async () => {
+      await waitForAnimationFrame(dom.window);
+      await waitForAnimationFrame(dom.window);
+    });
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
+    assert.equal(container.querySelector<HTMLImageElement>(".message-image"), image);
+    assert.equal(container.querySelector(".message-image-loading"), null);
+    link.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    assert.deepEqual(opened, ["new:C:/workspace/old.txt", "latest:C:/workspace/old.txt", "latest:C:/workspace/old.txt"]);
+    assert.equal(container.querySelector<HTMLButtonElement>(".message-image-trigger"), trigger);
+    assert.equal(trigger.disabled, false);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -1190,6 +1482,32 @@ test("MessageRichText は直接 image を表示しながら load 完了後に lo
     restoreGlobals();
     dom.window.close();
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Markdown画像の遅延spinnerはCSS上で画像領域へ重なり、通常animationとreduced-motion無効化を持つ"
+// oracle = { type = "contract", ref = "Issue #714: spinnerは周辺高さを変えず、prefers-reduced-motionに配慮する" }
+// fault = "spinnerが本文へ一行を追加して画像周囲を押し下げる、またはreduced-motionでも回転し続ける"
+// observable = "message-image-loadingとmessage-image-shellのCSS declaration"
+// observation_boundary = "declaration"
+// scope = "MessageRichText画像loading UIのstylesheet declaration"
+// lifecycle = "permanent"
+// impact = "遅延表示の出入りで会話スクロールを揺らさず、動きを抑えたい利用者の設定を尊重する"
+// distinction = "DOMでは算出できないoverlay配置、pointer event、spinner animation、reduced-motion overrideをstylesheet declarationから観測する"
+// @end-test-value
+test("MessageRichText の画像 spinner は領域内 overlay と reduced-motion を持つ", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const loadingRule = styles.match(/\.message-image-loading\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const shellRule = styles.match(/\.message-image-shell\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const spinnerRule = styles.match(/\.message-image-loading::before\s*{(?<body>[^}]*animation:\s*message-image-loading-spin[^}]*)}/)?.groups?.body ?? "";
+
+  assert.match(loadingRule, /position:\s*absolute;/);
+  assert.match(loadingRule, /inset:\s*[^;]+;/);
+  assert.match(loadingRule, /pointer-events:\s*none;/);
+  assert.match(shellRule, /position:\s*relative;/);
+  assert.match(spinnerRule, /animation:\s*message-image-loading-spin/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*{[\s\S]*?\.message-image-loading::before\s*{[\s\S]*?animation:\s*none;/);
 });
 
 // @test-value v1

@@ -1,5 +1,4 @@
 import {
-  memo,
   useCallback,
   useEffect,
   useId,
@@ -32,7 +31,6 @@ import {
   SessionComposerExpanded,
   SessionHeader,
   SessionHeaderHandle,
-  SessionMessageColumn,
   type SessionActionDockCompactRowProps,
   type SessionComposerExpandedProps,
   type SessionHeaderProps,
@@ -49,6 +47,8 @@ import {
   type ConversationColumnCache,
   type ConversationColumnControls,
 } from "./conversation-message-column.js";
+import { StableSessionMessageColumn } from "./stable-session-message-column.js";
+export { StableSessionMessageColumn } from "./stable-session-message-column.js";
 import { createMessageCollapseHeaderAction } from "./chat-header-actions.js";
 import { focusRovingItemByKey } from "../a11y.js";
 import {
@@ -225,23 +225,6 @@ export type ChatDockSplitterProps = {
   title?: string;
 };
 
-type Callback = (...args: any[]) => any;
-
-function useStableOptionalCallback<T extends Callback>(callback: T | undefined): T | undefined {
-  const callbackRef = useRef(callback);
-  callbackRef.current = callback;
-  const hasCallback = callback !== undefined;
-
-  return useMemo(
-    () => hasCallback
-      ? ((...args: Parameters<T>) => callbackRef.current?.(...args)) as T
-      : undefined,
-    [hasCallback],
-  );
-}
-
-const MemoizedSessionMessageColumn = memo(SessionMessageColumn);
-
 export function filterChatSkillItems(items: SessionSkillItem[], searchQuery: string): SessionSkillItem[] {
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
   if (!normalizedQuery) {
@@ -368,36 +351,6 @@ export function ChatSkillPickerPanel({
         </div>
       </div>
     </div>
-  );
-}
-
-export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
-  const onMessageListScroll = useStableOptionalCallback(props.onMessageListScroll);
-  const onToggleArtifact = useStableOptionalCallback(props.onToggleArtifact);
-  const onLoadArtifactDetail = useStableOptionalCallback(props.onLoadArtifactDetail);
-  const onOpenDiff = useStableOptionalCallback(props.onOpenDiff);
-  const onResolveLiveApproval = useStableOptionalCallback(props.onResolveLiveApproval);
-  const onResolveLiveElicitation = useStableOptionalCallback(props.onResolveLiveElicitation);
-  const onOpenPath = useStableOptionalCallback(props.onOpenPath);
-  const onCopyMessageText = useStableOptionalCallback(props.onCopyMessageText);
-  const onQuoteMessageText = useStableOptionalCallback(props.onQuoteMessageText);
-  const onActivateGlossaryEntry = useStableOptionalCallback(props.onActivateGlossaryEntry);
-
-  return (
-    <MemoizedSessionMessageColumn
-      {...props}
-      onMessageListScroll={onMessageListScroll!}
-      onToggleArtifact={onToggleArtifact!}
-      onLoadArtifactDetail={onLoadArtifactDetail}
-      onOpenDiff={onOpenDiff!}
-      onResolveLiveApproval={onResolveLiveApproval!}
-      onResolveLiveElicitation={onResolveLiveElicitation!}
-      onOpenPath={onOpenPath}
-      getChangedFilesEmptyText={props.getChangedFilesEmptyText}
-      onCopyMessageText={onCopyMessageText}
-      onQuoteMessageText={onQuoteMessageText}
-      onActivateGlossaryEntry={onActivateGlossaryEntry}
-    />
   );
 }
 

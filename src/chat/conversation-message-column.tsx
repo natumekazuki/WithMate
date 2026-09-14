@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
 
-import { SessionMessageColumn, type SessionMessageColumnProps } from "../session-components.js";
+import { type SessionMessageColumnProps } from "../session-components.js";
 import { useSessionMessageListFollowing } from "../session-chat-layout-hooks.js";
+import { StableSessionMessageColumn } from "./stable-session-message-column.js";
 import { buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "../auxiliary-session-message-projection.js";
 import { buildMessageCollapseTargets, buildMessageNavigatorEntries, type MessageCollapseStateEntry, type MessageJumpRequest, type MessageNavigatorEntry } from "../session-message-collapse.js";
 import { DEFAULT_CHARACTER_SESSION_COPY } from "../character-state.js";
@@ -120,13 +121,35 @@ export function useConversationMessageColumn({
   );
   const projection = useMemo(() => buildMessageListProjection(messages, [], sessionId, { liveAssistant: bridge }),
     [messages, sessionId, bridge?.threadId, bridge?.messageIndex, bridge?.text]);
+  const messageScrollSignature = useMemo(
+    () => `${projection.keys.join("\u001f")}:${projection.messages.map((message) => message.text.length).join(",")}`,
+    [projection],
+  );
   const previousTargets = useRef<SessionMessageColumnProps["messageCollapseTargets"]>([]);
   const collapseTargets = useMemo(() => buildMessageCollapseTargets(projection.messages, projection.sources, projection.keys, previousTargets.current),
     [projection]);
+  const columnCharacter = useMemo(() => session?.characterId ? {
+    id: session.characterId,
+    name: session.character ?? "",
+    iconPath: session.characterIconPath ?? "",
+    description: "",
+    roleMarkdown: "",
+    notesMarkdown: "",
+    updatedAt: "",
+    themeColors: session.characterThemeColors ?? baseProps.character.themeColors,
+    sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
+  } : baseProps.character, [
+    baseProps.character,
+    session?.character,
+    session?.characterIconPath,
+    session?.characterId,
+    session?.characterThemeColors,
+  ]);
+  const collapsedMessageKeys = useMemo(() => new Set(conversation.collapsedMessageKeys), [conversation.collapsedMessageKeys]);
   previousTargets.current = collapseTargets;
   const following = useSessionMessageListFollowing({
     ownerKey: sessionId,
-    scrollSignature: `${projection.keys.join("\u001f")}:${projection.messages.map((message) => message.text.length).join(",")}`,
+    scrollSignature: messageScrollSignature,
     enabled: enabled && session !== null,
     savedScrollState: conversation.scrollState,
     onScrollStateChange: (state) => { conversation.scrollState = state; },
@@ -225,17 +248,12 @@ export function useConversationMessageColumn({
   return {
     ...baseProps,
     sessionId,
-    character: session.characterId ? {
-      id: session.characterId, name: session.character ?? "", iconPath: session.characterIconPath ?? "",
-      description: "", roleMarkdown: "", notesMarkdown: "", updatedAt: "",
-      themeColors: session.characterThemeColors ?? baseProps.character.themeColors,
-      sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
-    } : baseProps.character,
+    character: columnCharacter,
     messages: projection.messages,
     messageKeys: projection.keys,
     messageGroups: projection.groups,
     messageCollapseTargets: collapseTargets,
-    collapsedMessageKeys: new Set(conversation.collapsedMessageKeys),
+    collapsedMessageKeys,
     messageJumpRequest: conversation.messageJumpRequest,
     isRunning: session.runState === "running" || !!liveRun,
     liveRunAssistantText: assistantText,
@@ -269,7 +287,7 @@ export function ConversationMessageColumn(props: ConversationMessageColumnProps)
   const columnProps = useConversationMessageColumn(props);
   return columnProps ? (
     <div className="conversation-message-column" style={props.session?.characterThemeColors ? buildCharacterThemeStyle(props.session.characterThemeColors) : undefined}>
-      <SessionMessageColumn {...columnProps} />
+      <StableSessionMessageColumn {...columnProps} />
     </div>
   ) : null;
 }
