@@ -112,6 +112,51 @@ function createChatWindowProps(
   };
 }
 
+function ConcurrentImageChatHarness({ baseProps }: { baseProps: ChatWindowProps }) {
+  const [draft, setDraft] = React.useState("");
+  const mainMessageListRef = React.useRef<HTMLDivElement>(null);
+  const auxiliaryMessageListRef = React.useRef<HTMLDivElement>(null);
+  const messages = baseProps.messageColumnProps.messages;
+  const createColumnProps = (
+    sessionId: string,
+    messageListRef: React.RefObject<HTMLDivElement | null>,
+  ) => ({
+    ...baseProps.messageColumnProps,
+    sessionId,
+    messages,
+    messageListRef,
+    onOpenPath: (_target: string) => undefined,
+  });
+
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement("output", { "data-draft-state": true }, draft),
+    React.createElement(ChatWindow, {
+      ...baseProps,
+      composerProps: {
+        ...baseProps.composerProps,
+        draft,
+        onDraftChange: (value: string) => setDraft(value),
+      },
+      concurrentChats: {
+        mainSession: { id: "main", messages },
+        auxiliarySession: { id: "auxiliary", messages },
+        main: createColumnProps("main", mainMessageListRef),
+        auxiliary: createColumnProps("auxiliary", auxiliaryMessageListRef),
+        selectedAuxiliaryId: "auxiliary",
+        auxiliaryItems: [{ id: "auxiliary", label: "Auxiliary", preview: "Auxiliary" }],
+        target: "main",
+        widthRatio: 0.5,
+        scrollToLatestOnSend: true,
+        onSelectAuxiliary() {},
+        onTargetChange() {},
+        onWidthRatioChange() {},
+      },
+    }),
+  );
+}
+
 test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレンダリングする", () => {
   const html = renderToStaticMarkup(React.createElement(ChatWindowStatusScreen, { message: "準備しています。" }));
 
@@ -1496,6 +1541,198 @@ test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示�
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
     Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
     Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "ChatWindowのMain/Auxiliary会話経路はcomposer入力による親更新後も表示済み画像のDOMとready状態を保持する"
+// oracle = { type = "contract", ref = "Issue #714: 入力中もMain/Auxiliaryの既存画像を保持する" }
+// fault = "composer入力でConversationMessageColumnが既存画像を再mountし、画像DOMまたはready状態が失われてloadingへ戻る"
+// observable = "Main/Auxiliaryのmessage-image HTMLElement identity、画像buttonのdisabled状態、親draft state marker、message-image-loadingの不在"
+// observation_boundary = "component-behavior"
+// scope = "ChatWindowのMain/Auxiliary ConversationMessageColumn会話経路"
+// lifecycle = "permanent"
+// impact = "入力中に表示済み会話が点滅せず、画像の再読込と周辺レイアウトの揺れを防ぐ"
+// distinction = "getter評価回数やstable boundary単体ではなく、ChatWindowからMain/Auxiliary両列を通した実画像DOMとload後の状態を親draft更新前後で観測する"
+// @end-test-value
+test("ChatWindow はcomposer入力後もMain/Auxiliaryの表示済み画像DOMとready状態を保持する", async () => {
+  const props = createChatWindowProps({
+    messages: [{ role: "mate", text: "![cached](data:image/png;base64,AAAA)" }],
+  });
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousInputEvent = globalThis.InputEvent;
+  const previousEvent = globalThis.Event;
+  const previousNavigator = globalThis.navigator;
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const previousResizeObserver = globalThis.ResizeObserver;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
+  const originalGetBoundingClientRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const originalOffsetHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "offsetHeight");
+  const originalClientHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientHeight");
+  const originalScrollHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "scrollHeight");
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.addEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.removeEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { configurable: true, value() {} });
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.classList.contains("session-message-list")) {
+      return {
+        left: 0,
+        top: 0,
+        width: 960,
+        height: 720,
+        right: 960,
+        bottom: 720,
+        x: 0,
+        y: 0,
+        toJSON() { return this; },
+      } as DOMRect;
+    }
+    if (this.classList.contains("session-message-virtual-row")) {
+      return {
+        left: 0,
+        top: 0,
+        width: 960,
+        height: 168,
+        right: 960,
+        bottom: 168,
+        x: 0,
+        y: 0,
+        toJSON() { return this; },
+      } as DOMRect;
+    }
+    return originalGetBoundingClientRect.call(this);
+  };
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get() {
+      if (this.classList.contains("session-message-list")) return 720;
+      if (this.classList.contains("session-message-virtual-row")) return 168;
+      return 0;
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get() {
+      return this.classList.contains("session-message-list") ? 720 : 0;
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get() {
+      if (!this.classList.contains("session-message-list")) return 0;
+      const items = this.querySelector(".session-message-list-window-items") as HTMLElement | null;
+      return Number.parseFloat(items?.style.height ?? "0") || 0;
+    },
+  });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "InputEvent", { configurable: true, value: dom.window.InputEvent });
+  Object.defineProperty(globalThis, "Event", { configurable: true, value: dom.window.Event });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  Object.defineProperty(dom.window, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => dom.window.setTimeout(callback, 0) });
+  let root: Root | null = null;
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(ConcurrentImageChatHarness, { baseProps: props }));
+    });
+
+    const mainImage = dom.window.document.querySelector<HTMLImageElement>(".session-concurrent-chat-main .message-image");
+    const auxiliaryImage = dom.window.document.querySelector<HTMLImageElement>(".session-concurrent-chat-auxiliary .message-image");
+    const mainButton = mainImage?.closest<HTMLButtonElement>(".message-image-trigger");
+    const auxiliaryButton = auxiliaryImage?.closest<HTMLButtonElement>(".message-image-trigger");
+    assert.ok(mainImage);
+    assert.ok(auxiliaryImage);
+    assert.ok(mainButton);
+    assert.ok(auxiliaryButton);
+
+    await act(async () => {
+      mainImage.dispatchEvent(new dom.window.Event("load"));
+      auxiliaryImage.dispatchEvent(new dom.window.Event("load"));
+    });
+    assert.equal(mainButton.disabled, false);
+    assert.equal(auxiliaryButton.disabled, false);
+
+    const draft = dom.window.document.querySelector<HTMLTextAreaElement>("textarea");
+    const setDraftValue = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(draft);
+    assert.ok(setDraftValue);
+    draft.focus();
+    await act(async () => {
+      setDraftValue.call(draft, "typed prompt");
+      const propertyChange = new dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      draft.dispatchEvent(propertyChange);
+      draft.dispatchEvent(new dom.window.InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: "typed prompt",
+      }));
+    });
+
+    assert.equal(draft.value, "typed prompt");
+    assert.equal(dom.window.document.querySelector("[data-draft-state]")?.textContent, "typed prompt");
+    assert.equal(dom.window.document.querySelector<HTMLImageElement>(".session-concurrent-chat-main .message-image"), mainImage);
+    assert.equal(dom.window.document.querySelector<HTMLImageElement>(".session-concurrent-chat-auxiliary .message-image"), auxiliaryImage);
+    assert.equal(mainButton.disabled, false);
+    assert.equal(auxiliaryButton.disabled, false);
+    assert.equal(dom.window.document.querySelector(".session-concurrent-chat-main .message-image-loading"), null);
+    assert.equal(dom.window.document.querySelector(".session-concurrent-chat-auxiliary .message-image-loading"), null);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "InputEvent", { configurable: true, value: previousInputEvent });
+    Object.defineProperty(globalThis, "Event", { configurable: true, value: previousEvent });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
+    Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    dom.window.HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    if (originalOffsetHeight) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
+    } else {
+      delete (dom.window.HTMLElement.prototype as unknown as { offsetHeight?: number }).offsetHeight;
+    }
+    if (originalClientHeight) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", originalClientHeight);
+    } else {
+      delete (dom.window.HTMLElement.prototype as unknown as { clientHeight?: number }).clientHeight;
+    }
+    if (originalScrollHeight) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+    } else {
+      delete (dom.window.HTMLElement.prototype as unknown as { scrollHeight?: number }).scrollHeight;
+    }
   }
 });
 
