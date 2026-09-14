@@ -152,16 +152,14 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
   // kind = "invariant"
   // claim = "cross-root work.moveはdestination targetのrevisionとroot所属を同一transactionで更新し、stale targetを拒否する"
   // fault = "source Work Itemだけが移動する、destination targetがstaleでも移動する"
-  // observable = "work_items_v6, work_item_events_v6, session_executions_v6"
+  // observable = "Work root/creator/target projection、再open後root、旧resource header root、stale target error"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
   // scope = "WorkItemStorageV6.move"
   // lifecycle = "permanent"
-  // distinction = "実SQLiteでdestination root/target/revisionの移管とidle/stale拒否を確認する"
+  // distinction = "実SQLiteでdestination root/target/revisionの移管とstale拒否を確認する"
   // @end-test-value
   it("cross-root work.moveはtargetとrevisionを検証して移管する", () => {
-    const db = new DatabaseSync(dbPath);
-    db.close();
     const source = create(null, "root", "task", "cross-source");
     const moved = storage.move({ workItemId: source.id, destinationParentWorkItemId: null, destinationTargetSessionId: "target-b", expectedDestinationTargetRevision: 1, expectedRevision: source.revision, principalSessionId: "root", idempotencyKey: "cross-move", requestFingerprint: "cross-move-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move") });
     assert.equal(moved.rootSessionId, "root-b");

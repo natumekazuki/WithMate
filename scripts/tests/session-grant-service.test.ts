@@ -130,10 +130,10 @@ test("temporary cross-root communication remains bounded through replay expiry a
 
 // @test-value v2
 // kind = "security"
-// claim = "same-rootの非parent Sessionはactiveなexplicit grantのresource scopeでroutingでき、grant unionとrevokeを正しく評価する"
+// claim = "same-rootの非parent Sessionはactiveなexplicit grantのresource scopeでroutingでき、grant unionとrevokeを正しく評価し、trusted policyの不正な発行日時を拒否する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Same-root routing" }
-// fault = "parent matrixがないtargetを拒否する、または一方のgrant revokeで別の有効grantまで無効化する"
-// observable = "実SQLiteを使ったauthorize proofのgrantIdと許可・拒否結果、trusted policyの不正resource/account拒否"
+// fault = "parent matrixがないtargetを拒否する、または一方のgrant revokeで別の有効grantまで無効化する、または不正日時のpolicyを保存する"
+// observable = "実SQLiteを使ったauthorize proofのgrantIdと許可・拒否結果、trusted policyの不正resource/account拒否、不正issuedAtのAUTHORITY_SCOPE_INVALID"
 // observation_boundary = "component-behavior"
 // scope = "same-root grant routing evaluator"
 // lifecycle = "permanent"

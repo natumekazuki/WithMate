@@ -355,7 +355,7 @@ describe("Work Item contract", () => {
   // claim = "aggregation decisionはterminal childだけを対象とし、canceledはacceptedを拒否しつつexcluded、failedとpartially_completedはexcludedを許可する"
   // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md#Work Item contract" }
   // fault = "未完了または取消済みchildを採用するか、除外可能なterminal結果を集約から外せずparentの完了判定が不正になる"
-  // observable = "excludedCount、authority/conflict error、子result summary、一覧decision"
+  // observable = "excludedCount、authority/conflict error"
   // observation_boundary = "component-behavior"
   // scope = "WorkItemService.decideAggregationのchild state別decision matrix"
   // lifecycle = "permanent"

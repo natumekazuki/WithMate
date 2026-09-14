@@ -66,9 +66,10 @@ test("GRANT-CONTRACT-01: grant.create rejects unknown classification and fields"
   };
   for (const [field, value] of [["resourceKind", "unknown"], ["relationSelector", "unknown"], ["effectClass", "unknown"], ["actions", ["*"]]] as const) {
     const input = { ...valid, [field]: value };
-    assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input }));
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input }), (error) => error instanceof SessionRuntimeValidationError && error.code === "INVALID_INPUT" && error.details.field === field);
     assert.throws(() => createSessionRuntimeInputSchema("grant.create").parse(input));
   }
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input: { ...valid, extra: true } }), (error) => error instanceof SessionRuntimeValidationError && error.details.field === "input.extra");
   assert.throws(() => createSessionRuntimeInputSchema("grant.create").parse({ ...valid, extra: true }), /extra/);
 });
 
@@ -976,9 +977,9 @@ test("Session runtime validator rejects unknown fields and enqueue response mode
 
 // @test-value v2
 // kind = "contract"
-// claim = "run/enqueueはtarget revisionを含む同じstrict通知inputを受理し、通知付きpublic execution projectionを使う"
+// claim = "run/enqueueは同じstrict通知inputを受理し、通知付きpublic execution projectionを使う"
 // oracle = { type = "contract", ref = "AUTONOMY-MUTATION-05/TN-PROJ-06" }
-// fault = "operation間でcontainer revisionまたは通知inputのstrict shapeが分岐する"
+// fault = "operation間で通知inputのstrict shapeが分岐する"
 // observable = "run/enqueue parserの通知inputとterminal notification projection"
 // observation_boundary = "component-behavior"
 // scope = "Session Runtime Turn input and execution projection"

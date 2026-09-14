@@ -583,16 +583,16 @@ describe("Session lifecycle move", () => {
 
   // @test-value v2
   // kind = "security"
-  // claim = "cross-root Session moveは移動対象外のWork Item aggregation parentを検出し、SessionとWorkの更新を一件もcommitしない"
+  // claim = "cross-root Session moveは移動対象外のWork Item aggregation parentを検出し、SessionとWorkの更新前に拒否する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
   // fault = "移動対象のterminal Workだけを先に移し、外部parentとのaggregation境界を壊す"
-  // observable = "拒否結果、Session binding/revision、Work root/revision/creator/target"
+  // observable = "拒否結果、Session binding、Work root/revision/creator/target"
   // observation_boundary = "component-behavior"
   // scope = "Session lifecycle cross-root Work ownership transfer"
   // lifecycle = "permanent"
   // risk_tags = ["authorization"]
   // @end-test-value
-  it("外部aggregation parentを含むWork移管を原子的に拒否する", async () => {
+  it("外部aggregation parentを含むWork移管を更新前に拒否する", async () => {
     const ctx = await setup();
     const service = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
     try {
@@ -639,7 +639,7 @@ describe("Session lifecycle move", () => {
   // claim = "移動対象Sessionの未解決resource reservationはmoveを拒否しtopologyを変更しない"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
   // fault = "未解決reservationを残したままSession bindingを移動する"
-  // observable = "拒否結果、Session binding/revision、reservation state"
+  // observable = "拒否結果、Session binding、最初のrunning reservation state"
   // observation_boundary = "component-behavior"
   // scope = "session-lifecycle-move resource reservation guard"
   // lifecycle = "permanent"

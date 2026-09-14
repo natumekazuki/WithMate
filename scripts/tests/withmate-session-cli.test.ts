@@ -1338,7 +1338,7 @@ describe("withmate-session CLI", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "CLI schemaは公開Work Item lifecycle commandとexit codeをruntime接続なしでadvertiseする"
+  // claim = "CLI schemaは今回追加したWork Item lifecycle 7 commandとexit codeをruntime接続なしでadvertiseする"
   // oracle = { type = "contract", ref = "scripts/withmate-session.ts#commandMap" }
   // fault = "CLI command mappingがschemaから欠落し、MCP/runtimeに存在するWork Item操作をCLI利用者が発見できない"
   // observable = "schema command一覧とexitCodes"
