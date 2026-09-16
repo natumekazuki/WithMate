@@ -11,7 +11,7 @@ Auxiliaryは監査専用ではなく、通常のprovider chat/coding sessionと�
 
 ## Scope
 
-- Headerからの新規Auxiliary追加（既存会話を終了、置換、削除しない）。
+- Auxiliary切り替えUIからの新規Auxiliary追加（既存会話を終了、置換、削除しない）。
 - 作成順の一覧、stable Session IDによる選択、左右矢印による前後移動。
 - Main左／選択Auxiliary右の共通chat shellと共有ActionDock。
 - Auxiliaryごとの会話、draft、runtime option、Character ID／snapshot、provider threadの保存。
@@ -44,7 +44,7 @@ Shared ActionDock ──┘
 
 ## UI flow
 
-通常Sessionの新規作成時は初期Auxiliaryを1件作成する。既存SessionにAuxiliaryがない場合も共通chat shellのAuxiliary領域だけを空で表示し、特別な状態文言は表示しない。追加のAuxiliaryはHeaderの`New Auxiliary`から行う。対象会話の`Collapse`をその前に置き、メッセージがない場合もdisabledで表示する。ActionDockの対象切り替えは`Preview / Source`の直前に並べる。作成中でも既存Auxiliaryの会話、draft、実行状態を変更しない。同じclientRequestIdの再送は同じ保存行を返し、明示的に別IDを発行した追加は別会話になる。
+通常Sessionの新規作成時は初期Auxiliaryを1件作成する。既存SessionにAuxiliaryがない場合も共通chat shellのAuxiliary領域だけを空で表示し、特別な状態文言は表示しない。追加のAuxiliaryはAuxiliary切り替えUIのタイトル枠内にある`＋`から行う。Auxiliaryが0件の場合もタイトル枠と追加ボタンを表示する。対象会話の`Collapse`はSession Header actionとしてメッセージがない場合もdisabledで表示する。ActionDockの対象切り替えは`Preview / Source`の直前に並べる。作成中でも既存Auxiliaryの会話、draft、実行状態を変更しない。同じclientRequestIdの再送は同じ保存行を返し、明示的に別IDを発行した追加は別会話になる。
 
 Companion modeは新規Auxiliary作成とprovider実行を退役させている。既存の保存済みAuxiliaryがある場合に限り、一覧の閲覧と切り替えを許可する。
 

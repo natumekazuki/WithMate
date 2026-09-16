@@ -24,6 +24,8 @@ export type SessionSwitcherProps = {
   onMove: (direction: -1 | 1) => void;
   searchable?: boolean;
   className?: string;
+  currentAction?: ReactNode;
+  emptyLabel?: string;
 };
 
 function focusOption(list: HTMLElement | null, index: number) {
@@ -39,6 +41,8 @@ export function SessionSwitcher({
   onMove,
   searchable = false,
   className = "",
+  currentAction,
+  emptyLabel,
 }: SessionSwitcherProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -52,6 +56,7 @@ export function SessionSwitcher({
       .toLocaleLowerCase().includes(normalizedQuery))
     : options;
   const canMove = options.length > 1;
+  const canOpen = options.length > 0;
 
   const close = useCallback((restoreFocus = true) => {
     setIsOpen(false);
@@ -109,7 +114,36 @@ export function SessionSwitcher({
     }
   };
 
-  const currentLabel = selectedOption?.label ?? "選択なし";
+  const currentLabel = selectedOption?.label ?? emptyLabel ?? "選択なし";
+  const currentButton = (
+    <button
+      ref={triggerRef}
+      type="button"
+      className="session-switcher-current"
+      disabled={!canOpen}
+      aria-haspopup="listbox"
+      aria-expanded={canOpen && isOpen}
+      aria-controls={canOpen ? listId : undefined}
+      onClick={() => {
+        if (canOpen) {
+          setIsOpen((current) => !current);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing) {
+          return;
+        }
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          event.preventDefault();
+          onMove(event.key === "ArrowLeft" ? -1 : 1);
+        }
+      }}
+    >
+      {selectedOption?.icon ? <span className="session-switcher-icon" aria-hidden="true">{selectedOption.icon}</span> : null}
+      <span className="session-switcher-label">{currentLabel}</span>
+      {selectedOption?.preview ? <span className="session-switcher-preview">{selectedOption.preview}</span> : null}
+    </button>
+  );
   return (
     <div className={`session-switcher${className ? ` ${className}` : ""}`} aria-label={ariaLabel}>
       <button
@@ -119,28 +153,12 @@ export function SessionSwitcher({
         disabled={!canMove}
         aria-label="前へ"
       >‹</button>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="session-switcher-current"
-        aria-haspopup="listbox"
-        aria-expanded={isOpen}
-        aria-controls={listId}
-        onClick={() => setIsOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing) {
-            return;
-          }
-          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-            event.preventDefault();
-            onMove(event.key === "ArrowLeft" ? -1 : 1);
-          }
-        }}
-      >
-        {selectedOption?.icon ? <span className="session-switcher-icon" aria-hidden="true">{selectedOption.icon}</span> : null}
-        <span className="session-switcher-label">{currentLabel}</span>
-        {selectedOption?.preview ? <span className="session-switcher-preview">{selectedOption.preview}</span> : null}
-      </button>
+      {currentAction ? (
+        <div className="session-switcher-current-group">
+          {currentButton}
+          <div className="session-switcher-current-action">{currentAction}</div>
+        </div>
+      ) : currentButton}
       <button
         type="button"
         className="session-switcher-button"

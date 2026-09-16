@@ -110,9 +110,6 @@ import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialo
 import { useAuxiliaryWorkspace } from "./chat/use-auxiliary-workspace.js";
 import { useConversationComposerState } from "./chat/use-conversation-composer-state.js";
 import {
-  createAuxiliaryHeaderActions,
-} from "./chat/chat-header-actions.js";
-import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
   resolveComposerSendabilityState,
@@ -3793,16 +3790,6 @@ export default function AgentSessionWindowApp() {
   const renderedComposerButtonTitle = activeAuxiliarySession
     ? getComposerSendButtonTitle(auxiliaryComposerSendability)
     : composerSendButtonTitle;
-  const auxiliaryHeaderActions = createAuxiliaryHeaderActions({
-    startDisabled: isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable || isAuxiliaryActionPending,
-    onStart: handleOpenAuxiliaryLaunchDialog,
-  });
-  const sessionHeaderActions = (
-    <>
-      {auxiliaryHeaderActions}
-    </>
-  );
-
   if (!desktopRuntime) {
     return <ChatWindowStatusScreen message="Session Window は Electron から開いてね。" />;
   }
@@ -4112,7 +4099,6 @@ export default function AgentSessionWindowApp() {
         auditLogsTotal,
         auditLogsErrorMessage,
         onToggleHeaderSplitter: handleToggleHeaderSplitter,
-        headerActions: sessionHeaderActions,
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
         onOpenSessionFilesTerminal: () => void handleOpenSessionFilesTerminal(),
@@ -4327,6 +4313,8 @@ export default function AgentSessionWindowApp() {
             searchText: summary.preview ?? "新しい会話",
             icon: <CharacterAvatar key={summary.id} character={{ name: "", iconPath: summary.characterIconPath ?? "" }} size="tiny" />,
           })),
+          onAddAuxiliary: handleOpenAuxiliaryLaunchDialog,
+          isAddAuxiliaryDisabled: isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable || isAuxiliaryActionPending,
           target: auxiliaryWorkspace.target,
           widthRatio: auxiliaryWorkspace.widthRatio,
           scrollToLatestOnSend: appSettings.scrollToLatestOnSend,

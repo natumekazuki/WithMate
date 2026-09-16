@@ -24,49 +24,8 @@ import {
 } from "../../src/chat/chat-window-adapter.js";
 import { SessionActionDockCompactRow, SessionChatScreen } from "../../src/session-components.js";
 import { SessionSwitcher } from "../../src/chat/session-switcher.js";
-import { createAuxiliaryHeaderActions } from "../../src/chat/chat-header-actions.js";
 
 const noop = () => {};
-
-// @test-value v2
-// kind = "contract"
-// claim = "既存Auxiliaryがあっても新規追加ボタンは終了処理を呼ばず追加処理を呼ぶ"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 新規追加" }
-// fault = "既存会話の終了制約を新規追加のdisabled条件に流用する"
-// observable = "active時のNew Auxiliaryクリック後の追加／終了callback呼出し"
-// observation_boundary = "component-behavior"
-// scope = "auxiliary-header"
-// lifecycle = "permanent"
-// @end-test-value
-test("createAuxiliaryHeaderActions は active 時も新規追加を呼ぶ", async () => {
-  const dom = new JSDOM("<div id='root'></div>");
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  Object.defineProperties(globalThis, {
-    window: { configurable: true, value: dom.window },
-    document: { configurable: true, value: dom.window.document },
-  });
-  const container = dom.window.document.getElementById("root")!;
-  const root = createRoot(container);
-  const calls: string[] = [];
-  try {
-    await act(async () => root.render(createAuxiliaryHeaderActions({
-      onStart: () => calls.push("start"),
-    })));
-    const button = [...container.querySelectorAll("button")].find((entry) => entry.textContent === "New Auxiliary");
-    assert.ok(button);
-    assert.equal(button.disabled, false);
-    await act(async () => button.click());
-    assert.deepEqual(calls, ["start"]);
-  } finally {
-    await act(async () => root.unmount());
-    dom.window.close();
-    Object.defineProperties(globalThis, {
-      window: { configurable: true, value: previousWindow },
-      document: { configurable: true, value: previousDocument },
-    });
-  }
-});
 
 function createChatWindowProps(
   overrides: Partial<ChatWindowProps["messageColumnProps"]> = {},
@@ -1198,12 +1157,12 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Concurrent ChatのCollapseは折りたたみ対象がない間はdisabledで、対象messageが追加されるとenabledになり、クリックで全対象を縮小する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: message collapse" }
-// fault = "対象messageがない状態でCollapseを操作できる、対象追加後もdisabledのままになる、またはクリックしても対象messageが縮小されない"
-// observable = "Collapse buttonのdisabled状態、New Auxiliaryとの順序、click後のmessage card縮小状態とExpand label"
+// claim = "Concurrent ChatのCollapseは折りたたみ対象がない間はdisabledで、Auxiliary追加は切り替えUI内に表示され既存Auxiliaryの有無に関係なく作成不可ならdisabledになり、対象messageが追加されるとCollapseがenabledになって対象messageを縮小する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "対象messageがない状態でCollapseを操作できる、Auxiliary追加が切り替えUIから欠落する、作成不可でも追加buttonが有効になる、対象追加後もCollapseがdisabledのままになる、またはクリックしても対象messageが縮小されない"
+// observable = "Collapse buttonのdisabled状態、Auxiliary切り替えUI内の追加buttonの表示・disabled状態、click後のmessage card縮小状態とExpand label"
 // observation_boundary = "component-behavior"
-// scope = "ChatWindow concurrent message collapse action"
+// scope = "ChatWindow concurrent collapse and Auxiliary switcher add action"
 // lifecycle = "permanent"
 // impact = "利用可能な操作だけを有効化し、Main/Auxiliaryの表示内容をActionDockから一貫して操作できる"
 // distinction = "静的render確認では列側の非同期control projectionとclick後のmessage縮小状態を同時に確認できない"
@@ -1240,16 +1199,22 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
 
   let root: Root | null = null;
   const props = createChatWindowProps({ messages: [] });
-  props.headerProps.actions = createAuxiliaryHeaderActions({ onStart: noop });
-  const buildConcurrentChats = (messages: ChatWindowProps["messageColumnProps"]["messages"]) => ({
+  const auxiliaryActions: string[] = [];
+  const buildConcurrentChats = (
+    messages: ChatWindowProps["messageColumnProps"]["messages"],
+    isAddAuxiliaryDisabled = false,
+    auxiliaryItems: readonly { id: string; label: string }[] = [],
+  ) => ({
     mainSession: { id: "main", messages },
     auxiliarySession: null,
     main: { ...props.messageColumnProps, messages },
     auxiliary: null,
     selectedAuxiliaryId: null,
-    auxiliaryItems: [],
+    auxiliaryItems,
     target: "main" as const,
     widthRatio: 0.45,
+    onAddAuxiliary: () => auxiliaryActions.push("add"),
+    isAddAuxiliaryDisabled,
     onSelectAuxiliary() {},
     onTargetChange() {},
     onWidthRatioChange() {},
@@ -1268,10 +1233,34 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
       .find((button) => button.textContent === "Collapse");
     assert.ok(collapseButton);
     assert.equal(collapseButton.disabled, true);
-    const newAuxiliaryButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "New Auxiliary");
-    assert.ok(newAuxiliaryButton);
-    assert.ok(collapseButton.compareDocumentPosition(newAuxiliaryButton) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    const auxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
+    assert.ok(auxiliaryAddButton);
+    assert.ok(auxiliaryAddButton.closest(".session-switcher-current-group"));
+    assert.equal(auxiliaryAddButton.disabled, false);
+    await act(async () => auxiliaryAddButton.click());
+    assert.deepEqual(auxiliaryActions, ["add"]);
+
+    await act(async () => {
+      root?.render(React.createElement(ChatWindow, {
+        ...props,
+        concurrentChats: buildConcurrentChats([], false, [{ id: "aux-a", label: "Auxiliary A" }]),
+      }));
+    });
+    const existingAuxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
+    assert.ok(existingAuxiliaryAddButton);
+    assert.equal(existingAuxiliaryAddButton.disabled, false);
+    await act(async () => existingAuxiliaryAddButton.click());
+    assert.deepEqual(auxiliaryActions, ["add", "add"]);
+
+    await act(async () => {
+      root?.render(React.createElement(ChatWindow, {
+        ...props,
+        concurrentChats: buildConcurrentChats([], true),
+      }));
+    });
+    const disabledAuxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
+    assert.ok(disabledAuxiliaryAddButton);
+    assert.equal(disabledAuxiliaryAddButton.disabled, true);
 
     const messages = [{ role: "assistant" as const, text: "完了したmessage" }];
     await act(async () => {

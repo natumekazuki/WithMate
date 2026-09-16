@@ -708,13 +708,6 @@ button:disabled {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.auxiliary-session-control-group {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
 .session-window-control-group-label {
   padding: 0 2px;
   color: var(--muted);
@@ -4587,6 +4580,62 @@ button:disabled {
   background: rgba(255, 255, 255, 0.06);
 }
 
+.session-switcher-current-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.concurrent-chat-session-switcher .session-switcher-current-group {
+  min-height: 36px;
+  border-color: rgba(203, 213, 225, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.session-switcher-current-group > .session-switcher-current {
+  border: 0;
+  border-radius: 999px 0 0 999px;
+  background: transparent;
+}
+
+.session-switcher-current-action {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  border-left: 1px solid rgba(203, 213, 225, 0.14);
+}
+
+.session-switcher-add-button {
+  min-width: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 0 999px 999px 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.session-switcher-add-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--character-main) 18%, transparent);
+}
+
+.session-switcher-add-button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid color-mix(in srgb, var(--character-main) 64%, transparent);
+  outline-offset: -2px;
+}
+
+.session-switcher-add-button:disabled {
+  cursor: default;
+  opacity: 0.36;
+}
+
 .session-switcher-label,
 .session-switcher-preview,
 .session-switcher-option-label,
@@ -7895,10 +7944,6 @@ button:disabled {
   background: rgba(30, 41, 59, 0.42);
 }
 
-
-.auxiliary-session-control-group {
-  border-color: color-mix(in srgb, var(--character-sub) 36%, rgba(148, 163, 184, 0.28));
-}
 
 .message-speaker {
   display: grid;

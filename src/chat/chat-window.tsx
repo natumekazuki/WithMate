@@ -111,6 +111,8 @@ export type ConcurrentChatWindowProps = {
   widthRatio: number;
   scrollToLatestOnSend?: boolean;
   onSelectAuxiliary: (id: string) => void;
+  onAddAuxiliary?: () => void;
+  isAddAuxiliaryDisabled?: boolean;
   onTargetChange: (target: "main" | "auxiliary") => void;
   onWidthRatioChange: (ratio: number) => void;
   loading?: boolean;
@@ -595,12 +597,25 @@ export function ChatWindow({
       )}
       auxiliaryMessageColumn={concurrentChats ? (
         <>
-          {concurrentChats.auxiliaryItems.length > 0 ? (
+          {concurrentChats.auxiliaryItems.length > 0 || concurrentChats.onAddAuxiliary ? (
             <SessionSwitcher
               ariaLabel="Auxiliary会話切り替え"
               className="concurrent-chat-session-switcher"
               options={concurrentChats.auxiliaryItems}
               selectedId={concurrentChats.selectedAuxiliaryId ?? ""}
+              emptyLabel="Auxiliary"
+              currentAction={concurrentChats.onAddAuxiliary ? (
+                <button
+                  type="button"
+                  className="session-switcher-add-button"
+                  aria-label="Auxiliaryを追加"
+                  title="Auxiliaryを追加"
+                  onClick={concurrentChats.onAddAuxiliary}
+                  disabled={concurrentChats.isAddAuxiliaryDisabled}
+                >
+                  +
+                </button>
+              ) : null}
               searchable
               onMove={(direction) => {
                 const items = concurrentChats.auxiliaryItems;
