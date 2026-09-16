@@ -6243,6 +6243,7 @@ button:disabled {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .file-history-repository-selector {
@@ -6339,23 +6340,29 @@ button:disabled {
 }
 
 .file-history-commit-row-wrapper {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
   position: relative;
   border-bottom: 1px solid rgba(148, 163, 184, 0.08);
 }
 
 .file-history-commit-row-wrapper .file-history-commit-row {
-  padding-right: 76px;
+  padding-right: 9px;
   border-bottom: 0;
 }
 
 .file-history-commit-compare {
-  position: absolute;
-  top: 50%;
-  right: 8px;
-  padding: 4px 6px;
-  transform: translateY(-50%);
+  display: grid;
+  width: 26px;
+  height: 26px;
+  align-self: center;
+  margin: 0 8px 0 0;
+  padding: 0;
+  place-items: center;
+  line-height: 1;
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.92rem;
 }
 
 .file-history-commit-row:hover,
@@ -6626,8 +6633,8 @@ button:disabled {
 
 .file-history-comparison-form {
   display: grid;
-  gap: 8px;
-  padding: 10px 9px 9px;
+  gap: 7px;
+  padding: 9px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
 
@@ -6642,18 +6649,14 @@ button:disabled {
 }
 
 .file-history-comparison-form-heading h3 {
+  color: var(--ink);
   font-size: 0.85rem;
-}
-
-.file-history-comparison-form-heading p {
-  color: var(--muted);
-  font-size: 0.69rem;
 }
 
 .file-history-comparison-picker,
 .file-history-comparison-mode {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-columns: 50px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   color: var(--muted);
@@ -6772,7 +6775,16 @@ button:disabled {
 }
 
 .file-history-comparison-result-header > div:first-child {
+  flex-wrap: wrap;
   justify-content: space-between;
+}
+
+.file-history-comparison-result-header > div:first-child strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-history-comparison-result-header > div:first-child span,
@@ -6789,9 +6801,18 @@ button:disabled {
 
 .file-history-comparison-oids code,
 .file-history-comparison-merge-base code {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-history-comparison-oids code {
+  flex: 1 1 0;
+}
+
+.file-history-comparison-oids > span {
+  flex: 0 0 auto;
 }
 
 .file-history-comparison-filter {
@@ -6810,6 +6831,25 @@ button:disabled {
 .file-history-comparison-result-actions .file-history-open-changes {
   width: 100%;
   margin: 0;
+}
+
+@container (max-width: 360px) {
+  .file-history-history-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .file-history-history-toolbar .file-history-repository-selector {
+    flex: 1 1 100%;
+  }
+
+  .file-history-history-toolbar .file-history-compare-trigger {
+    width: calc(100% - 18px);
+    margin: 0 9px 7px;
+  }
+
+  .file-history-detail-actions {
+    flex-direction: column;
+  }
 }
 
 .file-history-changed-files {

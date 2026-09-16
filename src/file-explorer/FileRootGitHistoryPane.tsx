@@ -1031,7 +1031,7 @@ export function FileRootGitHistoryPane({
               type="button"
               onClick={() => openComparison(false, { mode: "branch" })}
             >
-              Compare…
+              Compare
             </button>
           ) : null}
         </div>
@@ -1044,8 +1044,7 @@ export function FileRootGitHistoryPane({
           </button>
           <div className="file-history-comparison-form">
             <div className="file-history-comparison-form-heading">
-              <h3>Compare Git refs</h3>
-              <p>Choose refs or enter a commit SHA. The working tree is not included.</p>
+              <h3>Compare</h3>
             </div>
             {selectedRepository ? (
               <>
@@ -1200,7 +1199,7 @@ export function FileRootGitHistoryPane({
                       mode: "direct",
                     })}
                   >
-                    Compare…
+                    Compare
                   </button>
                 ) : null}
               </div>
@@ -1283,12 +1282,13 @@ export function FileRootGitHistoryPane({
                     className="file-history-commit-compare"
                     type="button"
                     aria-label={`Compare ${commit.shortHash}`}
+                    title={`Compare ${commit.shortHash}`}
                     onClick={() => openComparison(false, {
                       base: { kind: "commit", objectId: commit.id },
                       mode: "direct",
                     })}
                   >
-                    Compare
+                    <span aria-hidden="true">↔</span>
                   </button>
                 ) : null}
               </div>
