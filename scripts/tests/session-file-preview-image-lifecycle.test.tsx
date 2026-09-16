@@ -399,7 +399,7 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
 // @test-value v2
 // kind = "contract"
 // claim = "File PreviewのCopy File結果は操作群内で成功・失敗のtoneとARIA roleを持って表示される"
-// oracle = { type = "contract", ref = "File Preview copy feedback UX contract" }
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8A" }
 // fault = "Copy File結果を下部共通feedbackへ表示する、copiedをerror toneまたはalertとして表示する、または操作群内に表示しない"
 // observable = "Copy File結果のmessage、success/error class、role、操作群内包含関係、下部feedbackの不在"
 // observation_boundary = "component-behavior"
@@ -463,6 +463,7 @@ test("File Preview はWindowsだけCopy Fileを表示しCopy Imageと別contract
     assert.equal(successFeedback?.textContent, "File copied.");
     assert.ok(successFeedback?.classList.contains("success"));
     assert.equal(successFeedback?.getAttribute("role"), "status");
+    assert.equal(successFeedback?.closest(".session-file-preview-actions") !== null, true);
     assert.equal(container.querySelector(".session-file-preview-feedback"), null);
 
     const unavailableApi: PreviewApi = {
@@ -1407,10 +1408,10 @@ test("拡大画像を主ポインターでドラッグするとスクロール�
 
 // @test-value v2
 // kind = "contract"
-// claim = "単体画像previewのCopy Image成功結果は操作群内でsuccess toneとstatus roleを持って表示される"
-// oracle = { type = "contract", ref = "File Preview copy feedback UX contract" }
-// fault = "Copy Image成功結果を下部のerror表示として出す、または操作群から離れた位置に表示する"
-// observable = "Copy Image結果のmessage、success class、status role、操作群内包含関係"
+// claim = "単体画像previewのCopy Image操作（buttonと右クリック）の成功結果は操作群内でsuccess toneとstatus roleを持って表示される"
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8" }
+// fault = "Copy Image操作の成功結果を下部のerror表示として出す、または操作群から離れた位置に表示する"
+// observable = "Copy Image結果のmessage、success class、status role、操作群内包含関係、下部feedbackの不在"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview Copy Image feedback"
 // lifecycle = "permanent"
@@ -1493,20 +1494,44 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
     assert.ok(imageCopyFeedback?.classList.contains("success"));
     assert.equal(imageCopyFeedback?.getAttribute("role"), "status");
     assert.equal(imageCopyFeedback?.closest(".session-file-preview-actions") !== null, true);
+    assert.equal(container.querySelector(".session-file-preview-feedback"), null);
 
+    const contextMenuRequest: SessionFileResourceRequest = {
+      ...IMAGE_DESCRIPTOR,
+      relativePath: "docs/context-menu.png",
+    };
+    await act(async () => {
+      root?.render(React.createElement(SessionFilePreview, {
+        api,
+        request: contextMenuRequest,
+        onClose() {},
+        onCopyText() {},
+        onQuoteText() {},
+      }));
+    });
+    await waitFor(() => container.querySelector<HTMLImageElement>(".session-file-image") !== null);
+    const contextMenuImage = container.querySelector<HTMLImageElement>(".session-file-image");
+    assert.ok(contextMenuImage);
     const contextMenuEvent = new dom.window.MouseEvent("contextmenu", {
       bubbles: true,
       cancelable: true,
       clientX: 44,
       clientY: 55,
     });
-    await act(async () => image.dispatchEvent(contextMenuEvent));
+    await act(async () => contextMenuImage.dispatchEvent(contextMenuEvent));
     await waitFor(() => contextMenuRequests.length === 1);
     assert.equal(contextMenuEvent.defaultPrevented, true);
     assert.deepEqual(contextMenuRequests, [{
       sessionId: "session-1",
       point: { x: 44, y: 55 },
     }]);
+    await waitFor(() => container.querySelector<HTMLElement>(".session-file-preview-copy-feedback")?.textContent === "Image copied.");
+    const contextMenuFeedback = container.querySelector<HTMLElement>(".session-file-preview-copy-feedback");
+    assert.equal(contextMenuFeedback?.textContent, "Image copied.");
+    assert.ok(contextMenuFeedback?.classList.contains("success"));
+    assert.equal(contextMenuFeedback?.getAttribute("role"), "status");
+    assert.equal(contextMenuFeedback?.closest(".session-file-preview-actions") !== null, true);
+    assert.equal(container.querySelector(".session-file-preview-feedback"), null);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
