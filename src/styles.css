@@ -1384,109 +1384,259 @@ button:disabled {
   align-content: start;
 }
 
-.home-page .home-monitor-row {
+.home-page .home-monitor-card {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
+  gap: 0;
   width: 100%;
-  padding: 12px;
+  overflow: hidden;
   border: 1px solid rgba(203, 213, 225, 0.1);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.home-page .home-monitor-card:hover {
+  border-color: rgba(111, 140, 255, 0.24);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.home-page .home-monitor-card.companion {
+  border-left-color: color-mix(in srgb, var(--companion-group-accent, rgba(172, 139, 255, 0.72)) 72%, rgba(203, 213, 225, 0.1) 28%);
+  box-shadow: inset 3px 0 0 var(--companion-group-accent, rgba(172, 139, 255, 0.72));
+}
+
+.home-page .home-monitor-card.companion-group-0 {
+  --companion-group-accent: #8bd3ff;
+}
+
+.home-page .home-monitor-card.companion-group-1 {
+  --companion-group-accent: #ac8bff;
+}
+
+.home-page .home-monitor-card.companion-group-2 {
+  --companion-group-accent: #7dd3a8;
+}
+
+.home-page .home-monitor-card.companion-group-3 {
+  --companion-group-accent: #f4bf75;
+}
+
+.home-page .home-monitor-card.companion-group-4 {
+  --companion-group-accent: #f08faf;
+}
+
+.home-page .home-monitor-card.companion-group-5 {
+  --companion-group-accent: #93c5fd;
+}
+
+.home-page .home-monitor-parent-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+}
+
+.home-page .home-monitor-disclosure,
+.home-page .home-monitor-disclosure-placeholder {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 34px;
+}
+
+.home-page .home-monitor-disclosure {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  font-size: 0.9rem;
+}
+
+.home-page .home-monitor-disclosure:hover {
+  color: var(--ink);
+}
+
+.home-page .home-monitor-parent-button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px 8px 0;
+  border: 0;
+  background: transparent;
   color: var(--ink);
   text-align: left;
   box-shadow: none;
 }
 
-.home-page .home-monitor-avatar {
-  width: 32px;
-  height: 32px;
+.home-page .home-monitor-parent-button:hover {
+  color: var(--ink);
+}
+
+.home-page .home-monitor-parent-button:focus-visible,
+.home-page .home-monitor-disclosure:focus-visible,
+.home-page .home-monitor-auxiliary-row:focus-visible {
+  z-index: 1;
+  outline: 2px solid color-mix(in srgb, var(--card-ink, var(--ink)) 72%, transparent);
+  outline-offset: -2px;
+}
+
+.home-page .home-monitor-avatar,
+.home-page .home-monitor-auxiliary-avatar {
+  width: 28px;
+  height: 28px;
   border-width: 1px;
   box-shadow: none;
 }
 
-.home-page .home-monitor-row:hover {
-  border-color: rgba(111, 140, 255, 0.24);
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.home-page .home-monitor-row.companion {
-  border-left-color: color-mix(in srgb, var(--companion-group-accent, rgba(172, 139, 255, 0.72)) 72%, rgba(203, 213, 225, 0.1) 28%);
-  box-shadow: inset 3px 0 0 var(--companion-group-accent, rgba(172, 139, 255, 0.72));
-}
-
-.home-page .home-monitor-row.companion-group-0,
-.home-page .home-monitor-group-chip.companion-group-0 {
-  --companion-group-accent: #8bd3ff;
-}
-
-.home-page .home-monitor-row.companion-group-1,
-.home-page .home-monitor-group-chip.companion-group-1 {
-  --companion-group-accent: #ac8bff;
-}
-
-.home-page .home-monitor-row.companion-group-2,
-.home-page .home-monitor-group-chip.companion-group-2 {
-  --companion-group-accent: #7dd3a8;
-}
-
-.home-page .home-monitor-row.companion-group-3,
-.home-page .home-monitor-group-chip.companion-group-3 {
-  --companion-group-accent: #f4bf75;
-}
-
-.home-page .home-monitor-row.companion-group-4,
-.home-page .home-monitor-group-chip.companion-group-4 {
-  --companion-group-accent: #f08faf;
-}
-
-.home-page .home-monitor-row.companion-group-5,
-.home-page .home-monitor-group-chip.companion-group-5 {
-  --companion-group-accent: #93c5fd;
-}
-
-.home-page .home-monitor-row-copy {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.home-page .home-monitor-row-copy strong,
-.home-page .home-monitor-row-copy span {
+.home-page .home-monitor-parent-title,
+.home-page .home-monitor-auxiliary-preview {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.home-page .home-monitor-row-copy strong {
+.home-page .home-monitor-parent-title {
   color: #f8fbff;
   font-size: 0.9rem;
 }
 
-.home-page .home-monitor-row-copy span {
-  color: #99a6bb;
-  font-size: 0.76rem;
+.home-page .home-monitor-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 12px 9px 40px;
 }
 
-.home-page .home-monitor-row-badges {
+.home-page .home-monitor-status-cluster {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
-.home-page .home-monitor-group-chip {
+.home-page .home-monitor-status-label {
+  color: #cbd5e1;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.home-page .home-monitor-summary-separator {
+  width: 1px;
+  height: 16px;
+  flex: 0 0 auto;
+  background: rgba(203, 213, 225, 0.24);
+}
+
+.home-page .home-monitor-status-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 12px;
+  color: #cbd5e1;
+}
+
+.home-page .home-monitor-status-icon-mark {
+  display: inline-block;
   width: 10px;
   height: 10px;
   flex: 0 0 auto;
-  border: 1px solid color-mix(in srgb, var(--companion-group-accent) 76%, #ffffff 24%);
-  border-radius: 999px;
-  background: var(--companion-group-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--companion-group-accent) 18%, transparent);
+}
+
+.home-page .home-monitor-status-icon.running {
+  color: #79d4df;
+}
+
+.home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark {
+  border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: home-monitor-status-spin 0.8s linear infinite;
+}
+
+.home-page .home-monitor-status-icon.error,
+.home-page .home-monitor-status-icon.interrupted {
+  color: #ff9b8e;
+}
+
+.home-page .home-monitor-status-icon.error .home-monitor-status-icon-mark,
+.home-page .home-monitor-status-icon.interrupted .home-monitor-status-icon-mark {
+  background: currentColor;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.home-page .home-monitor-status-icon.neutral {
+  color: #aab6c8;
+}
+
+.home-page .home-monitor-status-icon.neutral .home-monitor-status-icon-mark {
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+.home-page .home-monitor-status-icon.loading {
+  color: #aab6c8;
+}
+
+.home-page .home-monitor-status-icon.loading .home-monitor-status-icon-mark {
+  border: 1.5px dashed currentColor;
+  border-radius: 50%;
+  animation: home-monitor-status-spin 1.2s linear infinite;
+}
+
+.home-page .home-monitor-status-icon-count {
+  color: currentColor;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-page .home-monitor-auxiliary-list {
+  display: grid;
+  gap: 2px;
+  padding: 4px 8px 8px 40px;
+  border-top: 1px solid rgba(203, 213, 225, 0.1);
+}
+
+.home-page .home-monitor-auxiliary-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: none;
+}
+
+.home-page .home-monitor-auxiliary-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.home-page .home-monitor-auxiliary-avatar {
+  width: 22px;
+  height: 22px;
+}
+
+.home-page .home-monitor-auxiliary-preview {
+  color: #cbd5e1;
+  font-size: 0.78rem;
+}
+
+@keyframes home-monitor-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .home-page .home-monitor-empty {
@@ -10261,21 +10411,23 @@ button:disabled {
   box-shadow: none;
 }
 
-.home-page.home-page-monitor-window .home-monitor-row {
-  grid-template-columns: auto minmax(0, 1fr);
-  padding: 10px;
+.home-page.home-page-monitor-window .home-monitor-card {
+  border-radius: 10px;
 }
 
-.home-page.home-page-monitor-window .home-monitor-row-badges {
-  grid-column: 2;
-  justify-content: flex-start;
-}
-
-.home-page.home-page-monitor-window .home-monitor-row-copy strong {
+.home-page.home-page-monitor-window .home-monitor-parent-title {
   font-size: 0.86rem;
 }
 
-.home-page.home-page-monitor-window .home-monitor-row-copy span {
+.home-page.home-page-monitor-window .home-monitor-summary-row {
+  padding-left: 40px;
+}
+
+.home-page.home-page-monitor-window .home-monitor-auxiliary-list {
+  padding-left: 40px;
+}
+
+.home-page.home-page-monitor-window .home-monitor-auxiliary-preview {
   font-size: 0.72rem;
 }
 
@@ -13268,6 +13420,11 @@ button:disabled {
   }
 
   .session-file-preview-spinner {
+    animation: none;
+  }
+
+  .home-monitor-status-icon.running .home-monitor-status-icon-mark,
+  .home-monitor-status-icon.loading .home-monitor-status-icon-mark {
     animation: none;
   }
 }

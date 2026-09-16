@@ -2,14 +2,29 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+// @test-value v2
+// kind = "contract"
+// claim = "Home Monitorの状態アイコンはrunning、error、interrupted、neutral、loadingを形とmotion制御付きで表現する"
+// oracle = { type = "contract", ref = "issue-722 monitor status icon styling" }
+// fault = "状態を色だけで表現する、loadingをidle扱いする、またはreduced motion時も回転を続ける"
+// observable = "state別status icon selectorとreduced motion時のanimation無効化CSS"
+// observation_boundary = "implementation"
+// scope = "Home Monitor status icon CSS"
+// lifecycle = "permanent"
+// impact = "実行中・失敗・待機・未確定を視認可能な形で区別し、動きが苦手な環境でも静止表示する"
+// distinction = "既存のHome session共有selectorを維持しつつ、Monitor専用iconの形・状態・motion契約を検証する"
+// @end-test-value
 test("Home Monitor の status badge は Home session と同じ状態 selector で styling される", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
   assert.match(
     stylesSource,
+    /\.home-page \.home-monitor-status-icon\s*{/,
+  );
+  assert.match(
+    stylesSource,
     /\.home-page \.home-session-chip-status,\s*\.home-page \.home-session-status,\s*\.home-page \.home-monitor-status,\s*\.home-page \.session-mode-badge\s*{/,
   );
-
   for (const state of ["running", "interrupted", "error", "neutral"]) {
     assert.match(
       stylesSource,
@@ -20,8 +35,33 @@ test("Home Monitor の status badge は Home session と同じ状態 selector �
       ),
     );
   }
+
+  assert.match(stylesSource, /\.home-page \.home-monitor-status-icon\.running\s*{/);
+  assert.match(stylesSource, /\.home-page \.home-monitor-status-icon\.error,\s*\.home-page \.home-monitor-status-icon\.interrupted\s*{/);
+  assert.match(stylesSource, /\.home-page \.home-monitor-status-icon\.neutral\s*{/);
+  assert.match(stylesSource, /\.home-page \.home-monitor-status-icon\.loading\s*{/);
+  assert.match(stylesSource, /\.home-monitor-status-icon\.running \.home-monitor-status-icon-mark[\s\S]*border-top-color: currentColor;/);
+  assert.match(stylesSource, /\.home-monitor-status-icon\.error \.home-monitor-status-icon-mark[\s\S]*clip-path: polygon\(50% 0, 100% 100%, 0 100%\);/);
+  assert.match(stylesSource, /\.home-monitor-status-icon\.neutral \.home-monitor-status-icon-mark[\s\S]*border: 1\.5px solid currentColor;/);
+  assert.match(stylesSource, /\.home-monitor-status-icon\.loading \.home-monitor-status-icon-mark[\s\S]*border: 1\.5px dashed currentColor;/);
+  assert.match(
+    stylesSource,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.home-monitor-status-icon\.running \.home-monitor-status-icon-mark,\s*\.home-monitor-status-icon\.loading \.home-monitor-status-icon-mark\s*\{\s*animation: none;/s,
+  );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Home Characters panelはright pane内のmonitor bodyをscroll containerとして使う"
+// oracle = { type = "contract", ref = "Home Characters right pane scroll contract" }
+// fault = "panel全体がoverflowせず、right paneの外側へ内容がはみ出すか固定領域が縮まない"
+// observable = "HomeCharactersPanelのmonitor body要素とflex・min-height・overflow-y CSS"
+// observation_boundary = "implementation"
+// scope = "Home Characters panel scroll container"
+// lifecycle = "permanent"
+// impact = "Character一覧がright pane内で収まり、他のHome領域のlayoutを押し広げない"
+// distinction = "Monitor status iconのCSSとは分離して、right pane内のscroll境界だけを検証する"
+// @end-test-value
 test("Home Characters は right pane 内の scroll container を使う", async () => {
   const [componentSource, stylesSource] = await Promise.all([
     readFile("src/home/HomeCharactersPanel.tsx", "utf8"),

@@ -36,6 +36,7 @@ export type AuxiliaryWorkspace = {
   widthRatio: number;
   setWidthRatio(ratio: number): void;
   selectSession(id: string | null): void;
+  requestSessionSelection(id: string): void;
   setTarget(target: AuxiliaryWorkspaceTarget): void;
   addSession(saved: AuxiliarySession): void;
   refreshSummaries(): Promise<void>;
@@ -86,8 +87,10 @@ export function clampAuxiliaryWidthRatio(ratio: number): number {
 export function useAuxiliaryWorkspace(input: {
   parentSessionId: string | null;
   api: AuxiliaryWorkspaceApi | null;
+  initialSelectedId?: string | null;
 }): AuxiliaryWorkspace {
-  const { parentSessionId, api } = input;
+  const { parentSessionId, api, initialSelectedId } = input;
+  const normalizedInitialSelectedId = initialSelectedId?.trim() || null;
   const parentSessionIdRef = useRef(parentSessionId);
   parentSessionIdRef.current = parentSessionId;
   const [summaries, setSummaries] = useState<AuxiliarySessionSummary[]>([]);
@@ -103,6 +106,7 @@ export function useAuxiliaryWorkspace(input: {
   const widthRatioRef = useRef(prefsRef.current.widthRatio);
   const [widthRatio, setWidthRatioState] = useState(widthRatioRef.current);
   const selectedIdRef = useRef<string | null>(null);
+  const requestedSelectionRef = useRef<string | null>(normalizedInitialSelectedId);
   const detailsRef = useRef(new Map<string, AuxiliarySession>());
   const bindingsRef = useRef(new Map<string, AuxiliarySessionBinding>());
   const loadRevisionRef = useRef(0);
@@ -145,9 +149,12 @@ export function useAuxiliaryWorkspace(input: {
       setSummaries(next);
       summariesRef.current = next;
       const preferred = prefsRef.current.selectedId;
-      const nextId = selectedIdRef.current && next.some((summary) => summary.id === selectedIdRef.current)
-        ? selectedIdRef.current
-        : preferred && next.some((summary) => summary.id === preferred) ? preferred : next[0]?.id ?? null;
+      const requested = requestedSelectionRef.current;
+      const nextId = requested !== null
+        ? requested
+        : selectedIdRef.current && next.some((summary) => summary.id === selectedIdRef.current)
+          ? selectedIdRef.current
+          : preferred && next.some((summary) => summary.id === preferred) ? preferred : next[0]?.id ?? null;
       if (nextId !== selectedIdRef.current) {
         selectedIdRef.current = nextId;
         setSelectedId(nextId);
@@ -168,11 +175,12 @@ export function useAuxiliaryWorkspace(input: {
     widthRatioRef.current = prefsRef.current.widthRatio;
     setWidthRatioState(widthRatioRef.current);
     selectedIdRef.current = null;
+    requestedSelectionRef.current = normalizedInitialSelectedId;
     setSelectedId(null);
     setSelectedSession(null);
     summariesRef.current = [];
     setSummaries([]);
-    setTargetState("main");
+    setTargetState(normalizedInitialSelectedId ? "auxiliary" : "main");
     detailsRef.current.clear();
     bindingsRef.current.clear();
     detailMutationEpochRef.current.clear();
@@ -287,11 +295,25 @@ export function useAuxiliaryWorkspace(input: {
 
   const selectSession = useCallback((id: string | null) => {
     if (id !== null && !summaries.some((summary) => summary.id === id)) return;
+    requestedSelectionRef.current = null;
     selectedIdRef.current = id;
     setSelectedId(id);
     setSelectedSession(id ? detailsRef.current.get(id) ?? null : null);
     persistPrefs({ selectedId: id });
   }, [persistPrefs, summaries]);
+
+  const requestSessionSelection = useCallback((id: string) => {
+    const normalizedId = id.trim();
+    if (!normalizedId) {
+      return;
+    }
+    requestedSelectionRef.current = normalizedId;
+    selectedIdRef.current = normalizedId;
+    setSelectedId(normalizedId);
+    setSelectedSession(detailsRef.current.get(normalizedId) ?? null);
+    setTargetState("auxiliary");
+    persistPrefs({ selectedId: normalizedId });
+  }, [persistPrefs]);
 
   const setWidthRatio = useCallback((ratio: number) => {
     const next = clampAuxiliaryWidthRatio(ratio);
@@ -380,9 +402,10 @@ export function useAuxiliaryWorkspace(input: {
     widthRatio,
     setWidthRatio,
     selectSession,
+    requestSessionSelection,
     setTarget,
     addSession,
     refreshSummaries,
     getBinding,
-  }), [addSession, detailError, detailLoading, error, getBinding, loading, refreshSummaries, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, widthRatio]);
+  }), [addSession, detailError, detailLoading, error, getBinding, loading, refreshSummaries, requestSessionSelection, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, widthRatio]);
 }

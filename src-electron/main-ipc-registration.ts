@@ -236,6 +236,7 @@ import {
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
@@ -341,7 +342,7 @@ export type MainIpcRegistrationDeps = {
   resolveHomeWindow(): MaybeWindow;
   resolveSessionWindow(sessionId: string): MaybeWindow;
   resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
-  openSessionWindow(sessionId: string): Promise<void>;
+  openSessionWindow(sessionId: string, auxiliarySessionId?: string): Promise<void>;
   showSessionMonitorContextMenu(
     event: IpcSenderEvent,
     request: SessionMonitorContextMenuRequest,
@@ -360,7 +361,7 @@ export type MainIpcRegistrationDeps = {
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
   getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFilePreviewResourceRequest | null;
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
-  openCompanionReviewWindow(sessionId: string): Promise<void>;
+  openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
@@ -409,6 +410,7 @@ export type MainIpcRegistrationDeps = {
   listOpenCompanionReviewWindowIds(): string[];
   listAuxiliarySessions?(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
   listOpenActiveAuxiliarySessionSummaries?(): Awaitable<AuxiliarySessionSummary[]>;
+  listOpenAuxiliarySessionSummaries?(): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession?(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
   createAuxiliarySession?(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
@@ -577,6 +579,7 @@ type MainIpcWindowDeps = Pick<
   | "resolveHomeWindow"
   | "resolveSessionWindow"
   | "openSessionWindow"
+  | "getAuxiliarySession"
   | "showSessionMonitorContextMenu"
   | "getSessionWindowRestoreSet"
   | "restoreSessionWindows"
@@ -650,6 +653,7 @@ type MainIpcAuxiliaryDeps = Pick<
   | "resolveCompanionReviewWindow"
   | "listAuxiliarySessions"
   | "listOpenActiveAuxiliarySessionSummaries"
+  | "listOpenAuxiliarySessionSummaries"
   | "getActiveAuxiliarySession"
   | "getAuxiliarySession"
   | "createAuxiliarySession"
@@ -662,6 +666,7 @@ type MainIpcAuxiliaryDeps = Pick<
 type MainIpcAuxiliaryDepsRequired = {
   listAuxiliarySessions: (parentSessionId: string) => Awaitable<AuxiliarySessionSummary[]>;
   listOpenActiveAuxiliarySessionSummaries: () => Awaitable<AuxiliarySessionSummary[]>;
+  listOpenAuxiliarySessionSummaries: () => Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession: (parentSessionId: string) => Awaitable<AuxiliarySession | null>;
   getAuxiliarySession: (auxiliarySessionId: string) => Awaitable<AuxiliarySession | null>;
   createAuxiliarySession: (input: CreateAuxiliarySessionInput) => Awaitable<AuxiliarySession>;
@@ -1382,12 +1387,37 @@ async function getAuxiliarySessionForMutation(
   return session;
 }
 
+async function resolveWindowAuxiliarySessionId(
+  deps: Pick<MainIpcRegistrationDeps, "getAuxiliarySession">,
+  parentSessionId: string,
+  value: unknown,
+): Promise<string | undefined> {
+  const auxiliarySessionId = typeof value === "string" ? value.trim() : "";
+  if (!auxiliarySessionId) {
+    return undefined;
+  }
+  if (!deps.getAuxiliarySession) {
+    throw new Error("Auxiliary Session navigation is not wired.");
+  }
+  const auxiliarySession = await deps.getAuxiliarySession(auxiliarySessionId);
+  if (!auxiliarySession) {
+    throw new Error("対象のAuxiliary Sessionが見つからないよ。");
+  }
+  if (auxiliarySession.parentSessionId !== parentSessionId) {
+    throw new Error("Auxiliary Sessionの親が一致しないよ。");
+  }
+  return auxiliarySessionId;
+}
+
 function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindowDeps): void {
-  ipcMain.handle(WITHMATE_OPEN_SESSION_CHANNEL, async (_event, sessionId: string) => {
+  ipcMain.handle(WITHMATE_OPEN_SESSION_CHANNEL, async (_event, sessionId: string, auxiliarySessionId?: string | null) => {
     if (!sessionId) {
       return;
     }
-    await deps.openSessionWindow(sessionId);
+    await deps.openSessionWindow(
+      sessionId,
+      await resolveWindowAuxiliarySessionId(deps, sessionId, auxiliarySessionId),
+    );
   });
   ipcMain.handle(WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL, (event, input: unknown) => {
     assertSessionMonitorContextMenuSender(event, deps);
@@ -1420,9 +1450,15 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   ipcMain.handle(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, async (_event, diffPreview: DiffPreviewPayload) => {
     await deps.openDiffWindow(diffPreview);
   });
-  ipcMain.handle(WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL, async (_event, sessionId: string) => {
-    await deps.openCompanionReviewWindow(sessionId);
-  });
+  ipcMain.handle(
+    WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
+    async (_event, sessionId: string, auxiliarySessionId?: string | null) => {
+      await deps.openCompanionReviewWindow(
+        sessionId,
+        await resolveWindowAuxiliarySessionId(deps, sessionId, auxiliarySessionId),
+      );
+    },
+  );
   ipcMain.handle(WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL, async (_event, sessionId: string) => {
     await deps.openCompanionMergeWindow(sessionId);
   });
@@ -1494,6 +1530,7 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     if (
       !deps.listAuxiliarySessions ||
       !deps.listOpenActiveAuxiliarySessionSummaries ||
+      !deps.listOpenAuxiliarySessionSummaries ||
       !deps.getActiveAuxiliarySession ||
       !deps.getAuxiliarySession ||
       !deps.createAuxiliarySession ||
@@ -1504,6 +1541,7 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     ) {
       throw new Error(
         "Auxiliary session IPC is not wired. listAuxiliarySessions, listOpenActiveAuxiliarySessionSummaries, "
+        + "listOpenAuxiliarySessionSummaries, "
         + "getActiveAuxiliarySession, getAuxiliarySession, createAuxiliarySession, updateAuxiliarySession, "
         + "closeAuxiliarySession, runAuxiliarySessionTurn, and cancelAuxiliarySessionRun are required.",
       );
@@ -1512,6 +1550,7 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     return {
       listAuxiliarySessions: deps.listAuxiliarySessions,
       listOpenActiveAuxiliarySessionSummaries: deps.listOpenActiveAuxiliarySessionSummaries,
+      listOpenAuxiliarySessionSummaries: deps.listOpenAuxiliarySessionSummaries,
       getActiveAuxiliarySession: deps.getActiveAuxiliarySession,
       getAuxiliarySession: deps.getAuxiliarySession,
       createAuxiliarySession: deps.createAuxiliarySession,
@@ -1531,6 +1570,9 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
   });
   ipcMain.handle(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL, () =>
     getAuxiliaryDeps(deps).listOpenActiveAuxiliarySessionSummaries(),
+  );
+  ipcMain.handle(WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL, () =>
+    getAuxiliaryDeps(deps).listOpenAuxiliarySessionSummaries(),
   );
   ipcMain.handle(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, (event, parentSessionId: string) => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);

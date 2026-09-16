@@ -43,6 +43,7 @@ import { startCompanionSessionSummariesSubscription } from "./companion-session-
 import { buildHomeMateProfileHandlers } from "./home/home-mate-profile-handlers.js";
 import {
   buildHomeSessionProjection,
+  type HomeMonitorAuxiliaryDataState,
 } from "./home/home-session-projection.js";
 import { buildHomeLaunchHandlers } from "./home/home-launch-handlers.js";
 import {
@@ -178,6 +179,7 @@ export default function HomeApp() {
   const sessions = sessionSummariesState.summaries;
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [activeAuxiliarySessions, setActiveAuxiliarySessions] = useState<AuxiliarySessionSummary[]>([]);
+  const [auxiliaryDataState, setAuxiliaryDataState] = useState<HomeMonitorAuxiliaryDataState>("loading");
   const [openSessionWindowIdsState, setOpenSessionWindowIdsState] = useState<OpenSessionWindowIdsState>({
     status: "loading",
     sessionIds: [],
@@ -670,27 +672,36 @@ export default function HomeApp() {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
       setActiveAuxiliarySessions([]);
+      setAuxiliaryDataState("ready");
       return;
     }
 
     const refresher = createHomeActiveAuxiliarySessionRefresher({
-      fetchActiveAuxiliarySessions: () => withmateApi.listOpenActiveAuxiliarySessionSummaries(),
+      fetchActiveAuxiliarySessions: () => withmateApi.listOpenAuxiliarySessionSummaries(),
       setActiveAuxiliarySessions: (sessions) => {
         setActiveAuxiliarySessions((current) =>
           resolveHomeActiveAuxiliarySessionsState(current, sessions),
         );
       },
-      onError: (error) => console.error(error),
+      onLoadState: setAuxiliaryDataState,
+      onError: (error) => {
+        console.error(error);
+        setSessionMonitorFeedback(error instanceof Error ? error.message : "Auxiliaryの読み込みに失敗したよ。");
+      },
     });
 
     refresher.refresh();
     const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRun(() => {
       refresher.refresh();
     });
+    const unsubscribeSessionInvalidation = withmateApi.subscribeSessionInvalidation(() => {
+      refresher.refresh();
+    });
 
     return () => {
       refresher.dispose();
       unsubscribeLiveRun();
+      unsubscribeSessionInvalidation();
     };
   }, [openCompanionReviewWindowIds, openSessionWindowIds]);
 
@@ -905,6 +916,24 @@ export default function HomeApp() {
     runSessionMonitorContextMenu(api, { kind, sessionId, point }, setSessionMonitorFeedback);
   };
 
+  const openMonitorSession = async (sessionId: string, auxiliarySessionId?: string) => {
+    setSessionMonitorFeedback("");
+    try {
+      await openSessionWindow(sessionId, auxiliarySessionId);
+    } catch (error) {
+      setSessionMonitorFeedback(error instanceof Error ? error.message : "Session Windowを開けなかったよ。");
+    }
+  };
+
+  const openMonitorCompanionReview = async (sessionId: string, auxiliarySessionId?: string) => {
+    setSessionMonitorFeedback("");
+    try {
+      await openCompanionReviewWindow(sessionId, auxiliarySessionId);
+    } catch (error) {
+      setSessionMonitorFeedback(error instanceof Error ? error.message : "Companion Windowを開けなかったよ。");
+    }
+  };
+
   const { settingsContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
     settingsContent: buildHomeSettingsContentProps(baseSettingsContentProps),
     mateSetupContent: buildHomeMateSetupContentProps({
@@ -924,9 +953,10 @@ export default function HomeApp() {
     monitorContent: buildHomeMonitorContentProps({
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
+      auxiliaryDataState,
       feedback: sessionMonitorFeedback,
-      onOpenSession: (sessionId) => void openSessionWindow(sessionId),
-      onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+      onOpenSession: openMonitorSession,
+      onOpenCompanionReview: openMonitorCompanionReview,
       onShowContextMenu: showSessionMonitorContextMenu,
     }),
   });
@@ -955,6 +985,7 @@ export default function HomeApp() {
       rightPaneView,
       runningMonitorEntries,
       nonRunningMonitorEntries,
+      auxiliaryDataState,
       sessionMonitorFeedback,
       characterEntries,
       characterListFeedback,
@@ -966,8 +997,8 @@ export default function HomeApp() {
         onRestoreSessionWindows: () => void restoreSessionWindows(),
         onCreateCharacter: () => void openCharacterEditorWindow(),
         onEditCharacter: (characterId) => void openCharacterEditorWindow(characterId),
-        onOpenSession: (sessionId) => void openSessionWindow(sessionId),
-        onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+        onOpenSession: openMonitorSession,
+        onOpenCompanionReview: openMonitorCompanionReview,
         onShowSessionMonitorContextMenu: showSessionMonitorContextMenu,
       },
       canUsePrimaryFeatures,

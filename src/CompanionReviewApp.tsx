@@ -46,7 +46,7 @@ import type {
   LiveElicitationRequest,
   LiveElicitationResponse,
 } from "./app-state.js";
-import { currentTimestampLabel } from "./app-state.js";
+import { currentTimestampLabel, getAuxiliarySessionIdFromLocation } from "./app-state.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { CodexSpeed } from "./codex-speed.js";
 import type { CodexReviewer } from "./codex-reviewer.js";
@@ -475,10 +475,23 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
+  const initialAuxiliarySessionId = useMemo(() => getAuxiliarySessionIdFromLocation(), []);
   const auxiliaryWorkspace = useAuxiliaryWorkspace({
     parentSessionId: snapshot?.session.id ?? null,
     api: withmateApi,
+    initialSelectedId: initialAuxiliarySessionId,
   });
+  useEffect(() => {
+    const parentSessionId = snapshot?.session.id ?? companionSessionId;
+    if (!withmateApi || !parentSessionId) {
+      return;
+    }
+    return withmateApi.subscribeAuxiliarySessionSelection((payload) => {
+      if (payload.parentSessionId === parentSessionId) {
+        auxiliaryWorkspace.requestSessionSelection(payload.auxiliarySessionId);
+      }
+    });
+  }, [auxiliaryWorkspace.requestSessionSelection, companionSessionId, snapshot?.session.id, withmateApi]);
   const isAuxiliaryTarget = auxiliaryWorkspace.target === "auxiliary";
   const isAuxiliaryDetailLoading = isAuxiliaryTarget && auxiliaryWorkspace.detailLoading;
   const activeAuxiliarySession = auxiliaryWorkspace.target === "auxiliary"

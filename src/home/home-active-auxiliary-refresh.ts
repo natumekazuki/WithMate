@@ -3,6 +3,7 @@ import type { AuxiliarySessionSummary } from "../auxiliary-session-state.js";
 export type HomeActiveAuxiliarySessionRefresherInput = {
   fetchActiveAuxiliarySessions: () => Promise<AuxiliarySessionSummary[]>;
   setActiveAuxiliarySessions: (sessions: AuxiliarySessionSummary[]) => void;
+  onLoadState?: (state: "loading" | "ready" | "error") => void;
   onError?: (error: unknown) => void;
 };
 
@@ -21,6 +22,7 @@ export function resolveHomeActiveAuxiliarySessionsState(
 export function createHomeActiveAuxiliarySessionRefresher({
   fetchActiveAuxiliarySessions,
   setActiveAuxiliarySessions,
+  onLoadState,
   onError,
 }: HomeActiveAuxiliarySessionRefresherInput): HomeActiveAuxiliarySessionRefresher {
   let active = true;
@@ -39,10 +41,14 @@ export function createHomeActiveAuxiliarySessionRefresher({
 
     refreshInFlight = true;
     refreshRequestedWhileInFlight = false;
+    if (lastAppliedSessions === null) {
+      onLoadState?.("loading");
+    }
     void fetchActiveAuxiliarySessions().then((sessions) => {
       if (!active) {
         return;
       }
+      onLoadState?.("ready");
       if (
         lastAppliedSessions
         && resolveHomeActiveAuxiliarySessionsState(lastAppliedSessions, sessions) === lastAppliedSessions
@@ -55,6 +61,7 @@ export function createHomeActiveAuxiliarySessionRefresher({
       if (!active) {
         return;
       }
+      onLoadState?.("error");
       onError?.(error);
     }).finally(() => {
       refreshInFlight = false;

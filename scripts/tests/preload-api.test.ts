@@ -32,7 +32,7 @@ function createIpcRendererStub() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "preloadのinvoke APIはdomainごとのrequestを対応する専用IPC channelへ変換せず渡す"
+// claim = "preloadのinvoke APIはdomainごとのrequestを対応する専用IPC channelへ変換し、親とAuxiliaryの選択を保持して渡す"
 // oracle = { type = "contract", ref = "WithMateWindowApi invoke methods and withmate-ipc-channels" }
 // fault = "renderer requestが別channelへ送られるか、引数の欠落または変換を受けてMainへ到達する"
 // observable = "ipcRenderer.invokeへ渡されたchannelと引数"
@@ -47,7 +47,19 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
 
   assert.deepEqual(await api.openSession("session-1"), {
     channel: "withmate:open-session",
-    args: ["session-1"],
+    args: ["session-1", null],
+  });
+  assert.deepEqual(await api.openSession("session-1", "aux-1"), {
+    channel: "withmate:open-session",
+    args: ["session-1", "aux-1"],
+  });
+  assert.deepEqual(await api.openCompanionReviewWindow("companion-1"), {
+    channel: "withmate:open-companion-review-window",
+    args: ["companion-1", null],
+  });
+  assert.deepEqual(await api.openCompanionReviewWindow("companion-1", "aux-1"), {
+    channel: "withmate:open-companion-review-window",
+    args: ["companion-1", "aux-1"],
   });
   const sessionMonitorContextMenuRequest = {
     kind: "agent" as const,
@@ -472,14 +484,14 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
 
 // @test-value v2
 // kind = "contract"
-// claim = "preloadの公開API surfaceはWithMateWindowApiの現行keyを過不足なくexposeする"
+// claim = "preloadは明示した現行公開API allowlistのkeyを過不足なくexposeし、廃止済みkeyを公開しない"
 // oracle = { type = "contract", ref = "WithMateWindowApi public surface" }
-// fault = "型に存在するIPC methodがrendererへexposeされないか、廃止済みmethodが公開surfaceへ残る"
+// fault = "明示allowlistに含まれるIPC methodがrendererへexposeされないか、廃止済みmethodが公開surfaceへ残る"
 // observable = "Object.keys(api)の公開key集合とremoved keyの不在"
 // observation_boundary = "public-boundary"
 // scope = "preload public API keys"
 // lifecycle = "permanent"
-// distinction = "tree path context menuを含む公開method集合全体とremoved key不在を検証する"
+// distinction = "tree path context menuを含む手書きallowlistとremoved key不在を検証し、TypeScript interfaceの型key完全性とは分離する"
 // @end-test-value
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -551,6 +563,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listCompanionAuditLogs",
     "listCompanionSessionSummaries",
     "listOpenActiveAuxiliarySessionSummaries",
+    "listOpenAuxiliarySessionSummaries",
     "listOpenCompanionReviewWindowIds",
     "listOpenSessionWindowIds",
     "listPromptTemplates",
@@ -630,6 +643,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
     "subscribeAppBootStatus",
+    "subscribeAuxiliarySessionSelection",
     "subscribeCompanionSessionSummaries",
     "subscribeLiveSessionRun",
     "subscribeModelCatalog",
@@ -758,6 +772,39 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   assert.equal(listeners.has("withmate:app-boot-status"), false);
   assert.equal(listeners.has("withmate:sessions-changed"), false);
   assert.equal(listeners.has("withmate:prompt-templates-changed"), false);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "preloadのAuxiliary selection subscriptionはparentとstable Auxiliary IDが揃ったpayloadだけをrendererへ渡す"
+// oracle = { type = "contract", ref = "issue-722 Auxiliary selection event" }
+// fault = "不正なevent payloadを選択要求として適用するか、正規化したIDを失う"
+// observable = "有効payloadのtrim結果と不正payloadの無視"
+// observation_boundary = "public-boundary"
+// scope = "preload Auxiliary selection subscription"
+// lifecycle = "permanent"
+// impact = "別親・空ID・不正形式のeventで誤ったAuxiliaryを選択しない"
+// distinction = "他のlive event unwrapとは分離して、Window間navigation eventの入力境界を検証する"
+// @end-test-value
+test("createWithMateWindowApi はAuxiliary selection eventを検証してunwrapする", () => {
+  const { ipcRenderer, listeners } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  const received: unknown[] = [];
+  const dispose = api.subscribeAuxiliarySessionSelection((payload) => received.push(payload));
+
+  listeners.get("withmate:auxiliary-session-selection")?.({}, {
+    parentSessionId: "  session-1 ",
+    auxiliarySessionId: " aux-1 ",
+  });
+  listeners.get("withmate:auxiliary-session-selection")?.({}, {
+    parentSessionId: "session-1",
+    auxiliarySessionId: "",
+  });
+  listeners.get("withmate:auxiliary-session-selection")?.({}, null);
+
+  assert.deepEqual(received, [{ parentSessionId: "session-1", auxiliarySessionId: "aux-1" }]);
+  dispose();
+  assert.equal(listeners.has("withmate:auxiliary-session-selection"), false);
 });
 
 test("createWithMateWindowApi は telemetry / background activity の payload も unwrap する", () => {

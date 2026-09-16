@@ -1716,14 +1716,26 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     ...listOpenSessionWindowIds(),
                     ...listOpenCompanionReviewWindowIds(),
                   ]),
+                listOpenAuxiliarySessionSummaries: () => {
+                  const parentSessionIds = Array.from(new Set([
+                    ...listOpenSessionWindowIds(),
+                    ...listOpenCompanionReviewWindowIds(),
+                  ]));
+                  return parentSessionIds.flatMap((parentSessionId) =>
+                    requireAuxiliarySessionService().listAuxiliarySessions(parentSessionId),
+                  );
+                },
                 getActiveAuxiliarySession: (parentSessionId) =>
                   requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId),
                 getAuxiliarySession: (auxiliarySessionId) =>
                   requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId),
-                createAuxiliarySession: (input) =>
-                  requireAuxiliarySessionService().createAuxiliarySession(input),
-                updateAuxiliarySession: (session) =>
-                  updateAuxiliarySessionWithProviderRuntimeLifecycle({
+                createAuxiliarySession: async (input) => {
+                  const created = await requireAuxiliarySessionService().createAuxiliarySession(input);
+                  broadcastSessions([created.parentSessionId]);
+                  return created;
+                },
+                updateAuxiliarySession: async (session) => {
+                  const updated = await updateAuxiliarySessionWithProviderRuntimeLifecycle({
                     session,
                     isRunInFlight: (sessionId) =>
                       requireAuxiliarySessionRuntimeService().isRunInFlight(sessionId),
@@ -1734,13 +1746,17 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     revokeSessionAgentRuntimeBindings: (sessionId) =>
                       agentRuntimeBindingRegistry.revokeSession(sessionId),
                     invalidateProviderSessionThread,
-                  }),
+                  });
+                  broadcastSessions([updated.parentSessionId]);
+                  return updated;
+                },
                 closeAuxiliarySession: async (auxiliarySessionId) => {
                   const current = requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
                   const closed = await requireAuxiliarySessionService().closeAuxiliarySession(auxiliarySessionId);
                   agentRuntimeBindingRegistry.revokeSession(auxiliarySessionId);
                   await invalidateProviderSessionThread(current?.provider ?? closed.provider, auxiliarySessionId);
                   requireMainWindowFacade().closeFilePreviewWindowsForSession(auxiliarySessionId);
+                  broadcastSessions([closed.parentSessionId]);
                   return closed;
                 },
                 runAuxiliarySessionTurn: async (auxiliarySessionId, request) => {
@@ -4270,8 +4286,12 @@ async function openCharacterEditorWindow(characterId?: string | null): Promise<B
   return requireMainWindowFacade().openCharacterEditorWindow(characterId);
 }
 
-async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
-  return requireMainWindowFacade().openSessionWindow(sessionId);
+async function openSessionWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow> {
+  const window = await requireMainWindowFacade().openSessionWindow(sessionId, auxiliarySessionId);
+  if (auxiliarySessionId) {
+    requireMainBroadcastFacade().broadcastAuxiliarySessionSelection(sessionId, auxiliarySessionId);
+  }
+  return window;
 }
 
 async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {
@@ -4357,22 +4377,25 @@ async function openSessionFilePreviewWindow(
   }
 }
 
-async function openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow> {
+async function openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow> {
   writeAppLog({
     level: "info",
     kind: "companion.review-window.open.started",
     process: "main",
     message: "Companion review window open started",
-    data: { sessionId },
+    data: { sessionId, auxiliarySessionId: auxiliarySessionId ?? null },
   });
-  const window = await requireMainWindowFacade().openCompanionReviewWindow(sessionId);
+  const window = await requireMainWindowFacade().openCompanionReviewWindow(sessionId, auxiliarySessionId);
+  if (auxiliarySessionId) {
+    requireMainBroadcastFacade().broadcastAuxiliarySessionSelection(sessionId, auxiliarySessionId);
+  }
   writeAppLog({
     level: "info",
     kind: "companion.review-window.open.completed",
     process: "main",
     message: "Companion review window open completed",
     windowId: window.id,
-    data: { sessionId },
+    data: { sessionId, auxiliarySessionId: auxiliarySessionId ?? null },
   });
   return window;
 }

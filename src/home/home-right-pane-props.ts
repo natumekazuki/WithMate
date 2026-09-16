@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { HomeRightPaneProps } from "./HomeRightPane.js";
-import type { HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
@@ -15,8 +15,8 @@ type HomeRightPaneHandlers = {
   onRestoreSessionWindows: () => void;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
-  onOpenSession: (sessionId: string) => void;
-  onOpenCompanionReview: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
+  onOpenCompanionReview: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowSessionMonitorContextMenu: (
     kind: SessionMonitorEntryKind,
     sessionId: string,
@@ -28,6 +28,7 @@ export type HomeRightPanePropsInput = {
   rightPaneView: HomeRightPaneProps["rightPaneView"];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
+  auxiliaryDataState: HomeMonitorAuxiliaryDataState;
   sessionMonitorFeedback?: string;
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
@@ -43,6 +44,7 @@ export function buildHomeRightPaneProps({
   rightPaneView,
   runningMonitorEntries,
   nonRunningMonitorEntries,
+  auxiliaryDataState,
   sessionMonitorFeedback,
   monitorWindowIcon,
   characterEntries,
@@ -57,6 +59,7 @@ export function buildHomeRightPaneProps({
     rightPaneView,
     runningMonitorEntries,
     nonRunningMonitorEntries,
+    auxiliaryDataState,
     sessionMonitorFeedback,
     monitorWindowIcon,
     characterEntries,

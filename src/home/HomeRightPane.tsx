@@ -5,7 +5,7 @@ import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
 } from "../withmate-window-types.js";
-import type { HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
 import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
 
@@ -13,6 +13,7 @@ export type HomeRightPaneProps = {
   rightPaneView: "monitor" | "characters";
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
+  auxiliaryDataState: HomeMonitorAuxiliaryDataState;
   sessionMonitorFeedback?: string;
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
@@ -23,8 +24,8 @@ export type HomeRightPaneProps = {
   onRestoreSessionWindows: () => void;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
-  onOpenSession: (sessionId: string) => void;
-  onOpenCompanionReview: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
+  onOpenCompanionReview: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowSessionMonitorContextMenu: (
     kind: SessionMonitorEntryKind,
     sessionId: string,
@@ -40,6 +41,7 @@ export function HomeRightPane({
   rightPaneView,
   runningMonitorEntries,
   nonRunningMonitorEntries,
+  auxiliaryDataState,
   sessionMonitorFeedback = "",
   monitorWindowIcon,
   characterEntries,
@@ -64,17 +66,17 @@ export function HomeRightPane({
     }
     onOpenSessionMonitorWindow();
   };
-  const openSession = (sessionId: string) => {
+  const openSession = (sessionId: string, auxiliarySessionId?: string) => {
     if (!canUsePrimaryFeatures) {
       return;
     }
-    onOpenSession(sessionId);
+    onOpenSession(sessionId, auxiliarySessionId);
   };
-  const openCompanionReview = (sessionId: string) => {
+  const openCompanionReview = (sessionId: string, auxiliarySessionId?: string) => {
     if (!canUsePrimaryFeatures) {
       return;
     }
-    onOpenCompanionReview(sessionId);
+    onOpenCompanionReview(sessionId, auxiliarySessionId);
   };
   const showSessionMonitorContextMenu = (
     kind: SessionMonitorEntryKind,
@@ -154,6 +156,7 @@ export function HomeRightPane({
           <HomeMonitorContent
             runningEntries={runningMonitorEntries}
             nonRunningEntries={nonRunningMonitorEntries}
+            auxiliaryDataState={auxiliaryDataState}
             feedback={sessionMonitorFeedback}
             onOpenSession={openSession}
             onOpenCompanionReview={openCompanionReview}

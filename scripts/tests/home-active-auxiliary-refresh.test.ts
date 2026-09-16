@@ -139,6 +139,18 @@ describe("createHomeActiveAuxiliarySessionRefresher", () => {
     assert.equal(current[0], summary);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Home MonitorのAuxiliary summary refreshはdispose後に取得結果や失敗をrenderer stateへ反映しない"
+  // oracle = { type = "contract", ref = "Home Monitor refresh disposal contract" }
+  // fault = "画面破棄後のin-flight結果やerrorがstate更新・feedbackを起こし、閉じたMonitorへ副作用が残る"
+  // observable = "dispose後のsetActiveAuxiliarySessionsとonErrorの呼び出しが空であること"
+  // observation_boundary = "implementation"
+  // scope = "createHomeActiveAuxiliarySessionRefresher dispose guard"
+  // lifecycle = "permanent"
+  // impact = "Homeを閉じた後に古いAuxiliary summaryやエラーが再描画されない"
+  // distinction = "summary load stateの通知契約とは分離して、破棄後の副作用抑止を検証する"
+  // @end-test-value
   it("dispose 後はin-flight完了やerrorで副作用を起こさない", async () => {
     const firstFetch = createDeferred<AuxiliarySessionSummary[]>();
     const errorFetch = createDeferred<AuxiliarySessionSummary[]>();
@@ -174,5 +186,45 @@ describe("createHomeActiveAuxiliarySessionRefresher", () => {
 
     assert.deepEqual(setCalls, []);
     assert.deepEqual(errors, []);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Auxiliary summary refresherは未確定、成功、失敗をload stateへ分離して通知する"
+  // oracle = { type = "contract", ref = "issue-722 unknown Auxiliary data feedback" }
+  // fault = "初期読み込み中や取得失敗を空配列・全停止として扱い、Monitorが誤った集約状態を表示する"
+  // observable = "onLoadStateの通知順序と取得失敗時のonError"
+  // observation_boundary = "implementation"
+  // scope = "createHomeActiveAuxiliarySessionRefresher load state"
+  // lifecycle = "permanent"
+  // impact = "Home側がAuxiliary dataの確定状態を通知に応じて表示へ反映できる"
+  // distinction = "summaryの差分適用やdispose guardとは分離して、データ確定状態を検証する"
+  // @end-test-value
+  it("Auxiliary summary refreshのloading/ready/errorを通知する", async () => {
+    const states: string[] = [];
+    const firstRefresher = createHomeActiveAuxiliarySessionRefresher({
+      fetchActiveAuxiliarySessions: async () => [createAuxiliarySummary("aux-ready")],
+      setActiveAuxiliarySessions: () => undefined,
+      onLoadState: (state) => states.push(state),
+    });
+
+    firstRefresher.refresh();
+    await flushPromises();
+    assert.deepEqual(states, ["loading", "ready"]);
+
+    const errors: unknown[] = [];
+    const secondRefresher = createHomeActiveAuxiliarySessionRefresher({
+      fetchActiveAuxiliarySessions: async () => {
+        throw new Error("summary unavailable");
+      },
+      setActiveAuxiliarySessions: () => undefined,
+      onLoadState: (state) => states.push(state),
+      onError: (error) => errors.push(error),
+    });
+
+    secondRefresher.refresh();
+    await flushPromises();
+    assert.deepEqual(states, ["loading", "ready", "loading", "error"]);
+    assert.equal((errors[0] as Error).message, "summary unavailable");
   });
 });

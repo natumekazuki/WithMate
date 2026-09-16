@@ -1,7 +1,11 @@
 import { withWithMateApi } from "../renderer-withmate-api.js";
 
-export async function openSessionWindow(sessionId: string) {
-  await withWithMateApi((api) => api.openSession(sessionId));
+export async function openSessionWindow(sessionId: string, auxiliarySessionId?: string) {
+  await withWithMateApi((api) =>
+    auxiliarySessionId === undefined
+      ? api.openSession(sessionId)
+      : api.openSession(sessionId, auxiliarySessionId),
+  );
 }
 
 export async function openHomeWindow() {
@@ -24,6 +28,10 @@ export async function openCharacterEditorWindow(characterId?: string | null) {
   await withWithMateApi((api) => api.openCharacterEditorWindow(characterId ?? null));
 }
 
-export async function openCompanionReviewWindow(sessionId: string) {
-  await withWithMateApi((api) => api.openCompanionReviewWindow(sessionId));
+export async function openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string) {
+  await withWithMateApi((api) =>
+    auxiliarySessionId === undefined
+      ? api.openCompanionReviewWindow(sessionId)
+      : api.openCompanionReviewWindow(sessionId, auxiliarySessionId),
+  );
 }

@@ -1,5 +1,5 @@
 import type { HomeMonitorContentProps } from "./HomeMonitorContent.js";
-import type { HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
@@ -8,9 +8,10 @@ import type {
 export type HomeMonitorContentInput = {
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
+  auxiliaryDataState: HomeMonitorAuxiliaryDataState;
   feedback?: string;
-  onOpenSession: (sessionId: string) => void;
-  onOpenCompanionReview: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
+  onOpenCompanionReview: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowContextMenu: (
     kind: SessionMonitorEntryKind,
     sessionId: string,
@@ -21,6 +22,7 @@ export type HomeMonitorContentInput = {
 export function buildHomeMonitorContentProps({
   runningEntries,
   nonRunningEntries,
+  auxiliaryDataState,
   feedback,
   onOpenSession,
   onOpenCompanionReview,
@@ -29,6 +31,7 @@ export function buildHomeMonitorContentProps({
   return {
     runningEntries,
     nonRunningEntries,
+    auxiliaryDataState,
     feedback,
     onOpenSession,
     onOpenCompanionReview,

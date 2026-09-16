@@ -107,7 +107,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     return Array.from(this.sessionWindows.values()).filter((window) => !window.isDestroyed());
   }
 
-  async openSessionWindow(sessionId: string): Promise<TWindow> {
+  async openSessionWindow(sessionId: string, auxiliarySessionId?: string): Promise<TWindow> {
     const openingWindow = this.openingSessionWindows.get(sessionId);
     if (openingWindow) {
       return openingWindow;
@@ -131,7 +131,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     window.on("close", (event) => this.handleWindowClose(sessionId, window, event));
     window.on("closed", () => this.releaseWindowClaim(sessionId, window));
 
-    const openingPromise = this.loadSessionWindow(sessionId, window);
+    const openingPromise = this.loadSessionWindow(sessionId, window, auxiliarySessionId);
     this.openingSessionWindows.set(sessionId, openingPromise);
 
     try {
@@ -217,9 +217,17 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     await this.persistSnapshotBestEffort(true);
   }
 
-  private async loadSessionWindow(sessionId: string, window: TWindow): Promise<TWindow> {
+  private async loadSessionWindow(
+    sessionId: string,
+    window: TWindow,
+    auxiliarySessionId?: string,
+  ): Promise<TWindow> {
     try {
-      await this.deps.loadChatEntry(window, { kind: "agent", sessionId });
+      await this.deps.loadChatEntry(window, {
+        kind: "agent",
+        sessionId,
+        ...(auxiliarySessionId ? { auxiliarySessionId } : {}),
+      });
       return window;
     } catch (error) {
       this.releaseWindowClaim(sessionId, window);

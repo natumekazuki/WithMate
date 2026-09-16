@@ -11,6 +11,7 @@ import {
 
 import {
   currentTimestampLabel,
+  getAuxiliarySessionIdFromLocation,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
   getSessionIdFromLocation,
@@ -610,7 +611,22 @@ export default function AgentSessionWindowApp() {
     onActionDockChange: handleActionDockPreferenceChange,
   });
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
-  const auxiliaryWorkspace = useAuxiliaryWorkspace({ parentSessionId: selectedId, api: withmateApi });
+  const initialAuxiliarySessionId = useMemo(() => getAuxiliarySessionIdFromLocation(), []);
+  const auxiliaryWorkspace = useAuxiliaryWorkspace({
+    parentSessionId: selectedId,
+    api: withmateApi,
+    initialSelectedId: initialAuxiliarySessionId,
+  });
+  useEffect(() => {
+    if (!withmateApi || !selectedId) {
+      return;
+    }
+    return withmateApi.subscribeAuxiliarySessionSelection((payload) => {
+      if (payload.parentSessionId === selectedId) {
+        auxiliaryWorkspace.requestSessionSelection(payload.auxiliarySessionId);
+      }
+    });
+  }, [auxiliaryWorkspace.requestSessionSelection, selectedId, withmateApi]);
   const activeAuxiliarySession = auxiliaryWorkspace.target === "auxiliary" ? auxiliaryWorkspace.selectedSession : null;
   const auxiliaryBinding = auxiliaryWorkspace.getBinding(auxiliaryWorkspace.selectedId);
   const setActiveAuxiliarySession = auxiliaryBinding.setSession;
