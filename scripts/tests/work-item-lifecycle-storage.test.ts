@@ -180,6 +180,73 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
 
   // @test-value v2
   // kind = "invariant"
+  // claim = "Work ownership transferはparentとchildのID辞書順によらず、閉包内の全Workのrootを移管する"
+  // fault = "parentを先に更新するとchildの閉包検査が失敗し、有効な移管を拒否する"
+  // observable = "実SQLiteのparent/child root・creator・targetとrevision"
+  // observation_boundary = "component-behavior"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Ownership transfer" }
+  // scope = "WorkItemStorageV6 transferの更新前閉包検証"
+  // lifecycle = "permanent"
+  // distinction = "Session topology更新を除くWork owner境界で、実createした親子IDの辞書順を両方向に構成する"
+  // @end-test-value
+  it("Work IDが親先と子先のどちらでも閉包を移管する", () => {
+    storage.close();
+    const db = new DatabaseSync(dbPath);
+    storage = new WorkItemStorageV6(db);
+    try {
+      for (const [parentId, childId] of [["a-parent", "z-child"], ["z-parent", "a-child"]]) {
+        const make = (id: string, parent: string | null, creator: string, target: string) => storage.create({
+          id, binding: binding(parent, creator, target), principalSessionId: "root", idempotencyKey: id,
+          requestFingerprint: id, expectedContainerRevision: Number((db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id=?").get(target) as { resource_revision: number }).resource_revision),
+          createdAt: NOW, expiresAt: EXPIRES, proof: proof("work.create"),
+        });
+        const parent = make(parentId, null, "task-2", "task");
+        const child = make(childId, parent.id, "task", "executor");
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          storage.transferSessionOwnershipWithinTransaction({ sourceRootSessionId: "root", destinationRootSessionId: "root-b",
+            movedSessionIds: ["task-2", "task", "executor"], transferRoot: false, proof: proof("work.move"), operationId: parentId, transferredAt: LATER });
+          for (const item of [parent, child]) {
+            const moved = storage.get(item.id)!;
+            assert.equal(moved.rootSessionId, "root-b");
+            assert.equal(moved.creatorSessionId, item.creatorSessionId);
+            assert.equal(moved.targetSessionId, item.targetSessionId);
+            assert.equal(moved.revision, item.revision + 1);
+          }
+        } finally { db.exec("ROLLBACK"); }
+      }
+    } finally { storage.close(); db.close(); storage = new WorkItemStorageV6(dbPath); }
+  });
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Work Itemのassignment_changedとcross-root parent_changedは旧owner headerを保持したまま再open検証を通過する"
+  // fault = "owner変更イベントで旧headerが書き換わる、または再open時のresource history検証が移管後projectionを拒否する"
+  // observable = "実SQLiteのwork event sequence、旧owner header、移管後projection、SessionStorageV6再open"
+  // observation_boundary = "component-behavior"
+  // oracle = { type = "contract", ref = "docs/adr/031-work-item-lifecycle.md#保存と認可の境界" }
+  // scope = "WorkItemStorageV6 assignment/cross-root move history"
+  // lifecycle = "permanent"
+  // distinction = "同一Work Itemでassignment_changedとcross-root parent_changedを連続生成し、再open検証を観測する"
+  // @end-test-value
+  it("assignmentとcross-root parent変更後も旧header ownerを保持して再open検証する", () => {
+    const item = create(null, "root", "task", "history-transfer");
+    const reassigned = storage.reassign({ workItemId: item.id, expectedRevision: item.revision, principalSessionId: "root", idempotencyKey: "history-reassign", requestFingerprint: "history-reassign-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.reassign"), targetSessionId: "task-2", transferPolicy: "handoff" });
+    const moved = storage.move({ workItemId: reassigned.id, destinationParentWorkItemId: null, destinationTargetSessionId: "target-b", expectedDestinationTargetRevision: 1, expectedRevision: reassigned.revision, principalSessionId: "root", idempotencyKey: "history-cross-move", requestFingerprint: "history-cross-move-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.move"), });
+    assert.deepEqual(sql<{ event_type: string }>("SELECT event_type FROM work_item_events_v6 WHERE work_item_id=? ORDER BY revision", item.id).map((row) => row.event_type), ["created", "assignment_changed", "parent_changed"]);
+    const headers = sql<{ owner_id: string; root_id: string }>("SELECT owner_id,root_id FROM resource_event_headers_v6 WHERE resource_id=? ORDER BY sequence", item.id);
+    assert.deepEqual(headers.map((header) => ({ ...header })), [{ owner_id: "task", root_id: "root" }, { owner_id: "task-2", root_id: "root" }, { owner_id: "target-b", root_id: "root-b" }]);
+    assert.equal(moved.rootSessionId, "root-b");
+    assert.equal(moved.targetSessionId, "target-b");
+    storage.close();
+    const reopenedSessionStorage = new SessionStorageV6(dbPath);
+    reopenedSessionStorage.close();
+    storage = new WorkItemStorageV6(dbPath);
+    assert.equal(storage.get(item.id)?.rootSessionId, "root-b");
+    assertPublicHistory(item.id);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "archive/restore は採用済みchildのresultとdecision childRevisionを変更せず、delete は未参照archived canceledのみ物理削除し履歴とretry可能性を保持する"
   // fault = "archive/restoreでdecision snapshotがstale化する、またはdeleteで参照済みWork Itemやeventsを失う"
   // observable = "work_items_v6, work_item_aggregation_decisions_v6, work_item_events_v6, work_item_tombstones_v6, work_item_idempotency_v6"

@@ -67,7 +67,10 @@ test("grant service owner enforces parent ceiling and actor ownership", async ()
     assert.ok(page.items[0]!.grant.grantId < nextPage.items[0]!.grant.grantId);
     assert.equal(new Set([...page.items, ...nextPage.items].map((item) => item.grant.grantId)).size, page.items.length + nextPage.items.length);
     assert.ok(authority.grantList(binding(root.id), {}).items.every((item) => item.grant.revokedAt === null));
-    assert.ok(authority.grantList(binding(root.id), { granteeSessionId: child.id }).items.every((item) => item.grant.granteeSessionId === child.id));
+    assert.ok(authority.grantList(binding(root.id), { includeRevoked: true, limit: 100 }).items.some((item) => item.grant.grantId === parent.grantId && item.grant.revokedAt !== null));
+    const childGrants = authority.grantList(binding(root.id), { granteeSessionId: child.id }).items;
+    assert.ok(childGrants.some((item) => item.grant.grantId === created.grant.grantId));
+    assert.ok(childGrants.every((item) => item.grant.granteeSessionId === child.id));
   } finally {
     authority.close();
     db.close();
@@ -128,9 +131,11 @@ test("temporary cross-root communication remains bounded through replay expiry a
     assert.deepEqual(authority.grantCreate(binding(responder.id), input).grant, created.grant);
     assert.throws(() => authority.grantCreate(binding(responder.id), { ...input, idempotencyKey: "expired-parent" }));
     assert.throws(() => authority.grantCreate(binding(responder.id), { ...input, purpose: "changed after expiry" }));
-    now = "2026-09-14T13:00:00.000Z";
+    now = "2026-09-14T12:30:00.000Z";
+    assert.equal(authority.authorize(binding(requester.id), "turn.enqueue", { sessionId: target.id, consultationGrantId: created.grant.grantId }).proof.grantId, created.grant.grantId);
     const revoke = { grantId: created.grant.grantId, expectedRevision: 1, idempotencyKey: "revoke" };
     assert.equal(authority.grantRevoke(binding(responder.id), revoke).grant.revision, 2);
+    assert.throws(() => authority.authorize(binding(requester.id), "turn.enqueue", { sessionId: target.id, consultationGrantId: created.grant.grantId }), (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_FORBIDDEN");
     assert.equal(authority.grantRevoke(binding(responder.id), revoke).grant.revision, 2);
     const event = db.prepare("SELECT principal_kind, actor_session_id FROM session_authority_grant_events_v6 WHERE grant_id = ? AND event_kind = 'revoked'").get(created.grant.grantId);
     assert.deepEqual({ ...event }, { principal_kind: "agent", actor_session_id: responder.id });
