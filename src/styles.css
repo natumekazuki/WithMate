@@ -5245,6 +5245,31 @@ button:disabled {
   justify-content: flex-end;
 }
 
+.session-file-preview-copy-feedback {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  max-width: min(320px, 100%);
+  padding: 5px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.session-file-preview-copy-feedback.success {
+  border-color: color-mix(in srgb, var(--character-sub) 52%, transparent);
+  background: color-mix(in srgb, var(--character-sub-soft) 60%, rgba(15, 23, 42, 0.66));
+  color: #b5f5ea;
+}
+
+.session-file-preview-copy-feedback.error {
+  border-color: rgba(255, 124, 124, 0.32);
+  background: rgba(127, 29, 29, 0.22);
+  color: var(--session-file-error);
+}
+
 .session-file-preview-actions button,
 .session-file-preview-actions select,
 .session-file-preview-segmented button,

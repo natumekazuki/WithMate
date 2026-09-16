@@ -28,6 +28,7 @@ import {
   isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "./file-explorer-contract.js";
+import { getSessionFileObjectCopyFeedbackTone } from "./session-file-object-copy-contract.js";
 import {
   decodeSessionFileBytes,
   findPreviewTextMatches,
@@ -107,6 +108,11 @@ type SessionFilePreviewProps = {
   diffLoadingScope?: FileRootGitDiffScope | null;
   diffAvailabilityMessage?: string;
   chatNotice?: string;
+};
+
+type SessionFilePreviewCopyFeedback = {
+  message: string;
+  tone: "success" | "error";
 };
 
 type LoadedFile = {
@@ -584,6 +590,7 @@ export function SessionFilePreview({
   const [imageObjectUrl, setImageObjectUrl] = useState("");
   const [roots, setRoots] = useState<SessionFileRoot[]>([]);
   const [feedback, setFeedback] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState<SessionFilePreviewCopyFeedback | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [currentMatch, setCurrentMatch] = useState(0);
@@ -674,6 +681,7 @@ export function SessionFilePreview({
     setStructuredTextProjection({ status: "idle" });
     setImageObjectUrl("");
     setFeedback("");
+    setCopyFeedback(null);
     setFindOpen(false);
     setFindQuery("");
     setCurrentMatch(0);
@@ -962,11 +970,14 @@ export function SessionFilePreview({
     try {
       const result = await api.copySessionFileObject({ resource: request });
       if (loadRevisionRef.current === revision) {
-        setFeedback(result.message);
+        setCopyFeedback({
+          message: result.message,
+          tone: getSessionFileObjectCopyFeedbackTone(result),
+        });
       }
     } catch {
       if (loadRevisionRef.current === revision) {
-        setFeedback("File could not be copied.");
+        setCopyFeedback({ message: "File could not be copied.", tone: "error" });
       }
     }
   }, [api, fileObjectCopyAvailable, request]);
@@ -977,7 +988,7 @@ export function SessionFilePreview({
     }
     const point = resolveVisibleImageCopyPoint(imageViewport.imageRef.current, imageViewport.viewportRef.current);
     if (!point) {
-      setFeedback("The image is not currently visible.");
+      setCopyFeedback({ message: "The image is not currently visible.", tone: "error" });
       return;
     }
     const revision = loadRevisionRef.current;
@@ -987,11 +998,14 @@ export function SessionFilePreview({
         point,
       });
       if (loadRevisionRef.current === revision) {
-        setFeedback(result.status === "copied" ? "Image copied." : result.message);
+        setCopyFeedback({
+          message: result.status === "copied" ? "Image copied." : result.message,
+          tone: result.status === "copied" ? "success" : "error",
+        });
       }
     } catch {
       if (loadRevisionRef.current === revision) {
-        setFeedback("Image could not be copied.");
+        setCopyFeedback({ message: "Image could not be copied.", tone: "error" });
       }
     }
   }, [api, request.sessionId]);
@@ -1013,11 +1027,14 @@ export function SessionFilePreview({
         },
       });
       if (loadRevisionRef.current === revision && result.status !== "dismissed") {
-        setFeedback(result.status === "copied" ? "Image copied." : result.message);
+        setCopyFeedback({
+          message: result.status === "copied" ? "Image copied." : result.message,
+          tone: result.status === "copied" ? "success" : "error",
+        });
       }
     } catch {
       if (loadRevisionRef.current === revision) {
-        setFeedback("Image context menu could not be opened.");
+        setCopyFeedback({ message: "Image context menu could not be opened.", tone: "error" });
       }
     }
   }, [api, request.sessionId]);
@@ -1208,6 +1225,16 @@ export function SessionFilePreview({
           )) : null}
           {currentFileActionsAvailable && fileObjectCopyAvailable ? (
             <button type="button" onClick={() => void copyCurrentFile()}>Copy File</button>
+          ) : null}
+          {copyFeedback ? (
+            <span
+              className={`session-file-preview-copy-feedback ${copyFeedback.tone}`}
+              role={copyFeedback.tone === "success" ? "status" : "alert"}
+              aria-live={copyFeedback.tone === "success" ? "polite" : "assertive"}
+              aria-atomic="true"
+            >
+              {copyFeedback.message}
+            </span>
           ) : null}
           {previewKind === "text" || previewKind === "markdown" ? (
             <button
