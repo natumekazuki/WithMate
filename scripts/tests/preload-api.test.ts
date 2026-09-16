@@ -39,7 +39,7 @@ function createIpcRendererStub() {
 // observation_boundary = "public-boundary"
 // scope = "preload invoke API"
 // lifecycle = "permanent"
-// distinction = "file tree context menuとSession Monitor context menuを含む公開invoke method群のchannelと引数を一括検証し、subscription payload検証とは分離する"
+// distinction = "file tree context menuとSession Monitor context menuを含む公開invoke method群のchannelと引数を一括検証する"
 // @end-test-value
 test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる", async () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -392,6 +392,16 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-file-root-git-history-commit-detail",
     args: [historyDetailRequest],
   });
+  const historyComparisonRequest = {
+    ...historyRequest,
+    base: { kind: "branch" as const, name: "main" },
+    target: { kind: "tag" as const, name: "v1.0" },
+    mode: "direct" as const,
+  };
+  assert.deepEqual(await api.getFileRootGitHistoryComparison(historyComparisonRequest), {
+    channel: "withmate:get-file-root-git-history-comparison",
+    args: [historyComparisonRequest],
+  });
   const historyDiffRequest = { ...historyDetailRequest, relativePath: "src/App.tsx" };
   assert.deepEqual(await api.getFileRootGitHistoryDiff(historyDiffRequest), {
     channel: "withmate:get-file-root-git-history-diff",
@@ -472,14 +482,14 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
 
 // @test-value v2
 // kind = "contract"
-// claim = "preloadの公開API surfaceはWithMateWindowApiの現行keyを過不足なくexposeする"
+// claim = "preloadの公開API surfaceは列挙した現行WithMateWindowApi keyをexposeし、列挙したremoved keyを公開しない"
 // oracle = { type = "contract", ref = "WithMateWindowApi public surface" }
-// fault = "型に存在するIPC methodがrendererへexposeされないか、廃止済みmethodが公開surfaceへ残る"
-// observable = "Object.keys(api)の公開key集合とremoved keyの不在"
+// fault = "列挙した現行IPC methodがrendererへexposeされないか、列挙した廃止済みmethodが公開surfaceへ残る"
+// observable = "Object.keys(api)と列挙したremoved keyの不在"
 // observation_boundary = "public-boundary"
 // scope = "preload public API keys"
 // lifecycle = "permanent"
-// distinction = "tree path context menuを含む公開method集合全体とremoved key不在を検証する"
+// distinction = "tree path context menuを含む列挙済み公開method集合とremoved key不在を検証する"
 // @end-test-value
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -566,6 +576,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listFileRootGitHistoryRepositories",
     "listFileRootGitHistoryCommits",
     "getFileRootGitHistoryCommitDetail",
+    "getFileRootGitHistoryComparison",
     "getFileRootGitHistoryDiff",
     "listWorkspaceCustomAgents",
     "listWorkspaceSkills",

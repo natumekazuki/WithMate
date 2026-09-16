@@ -19,6 +19,7 @@ import test from "node:test";
 
 import {
   parseGitHistoryLog,
+  parseGitHistoryAvailableRefs,
   parseGitHistoryNameStatusZ,
   parseGitPorcelainV1Z,
   FileRootGitChangesService,
@@ -123,6 +124,18 @@ test("parseGitPorcelainV1Z は nested Workspace の path を Workspace-relative 
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Git履歴parserはcommit metadata、HEAD/local branch/tag、rename/copy status、heads/remotes/tagsのref種別をpublic projectionへ変換する"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "Git履歴のmetadataやref種別が欠落する、またはrename/copyのpath順を取り違える"
+// observable = "parseGitHistoryLog、parseGitHistoryNameStatusZ、parseGitHistoryAvailableRefsのresult"
+// observation_boundary = "public-boundary"
+// scope = "Git history parser projections"
+// lifecycle = "permanent"
+// impact = "HistoryとCompareが利用可能なcommit metadata、変更path、ref種別を正しく表示・選択できる"
+// distinction = "commit decoration、rename/copy status、heads/remotes/tagsのref種別をparserのpublic resultで同時に確認する"
+// @end-test-value
 test("Git history parser はcommit metadata、HEAD/local branch/tag、rename/copy statusをprojectionする", () => {
   const firstCommitId = "a".repeat(40);
   const secondCommitId = "b".repeat(40);
@@ -171,6 +184,161 @@ test("Git history parser はcommit metadata、HEAD/local branch/tag、rename/cop
       scopes: ["commit"],
     },
   ]);
+  assert.deepEqual(parseGitHistoryAvailableRefs(Buffer.from(
+    "refs/heads/main\nrefs/remotes/origin/main\nrefs/tags/v1.0\nrefs/heads/main\n",
+    "utf8",
+  )), [
+    { kind: "branch", name: "main" },
+    { kind: "remote", name: "origin/main" },
+    { kind: "tag", name: "v1.0" },
+  ]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Git履歴のCompareはdirectとbranch changesを別の比較範囲として解決し、remote tracking/短縮commitとnested rootの変更・previewを固定OIDで返す"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Compare" }
+// fault = "untracked working-tree fileを比較へ混ぜる、branch changesをbase commitから直接比較する、remote tracking/短縮commitを解決できない、nested rootのscopeを越える、またはref移動後にpatchの対象OIDを差し替える"
+// observable = "available refs、comparison resultのmode/baseCommitId/targetCommitId/mergeBaseCommitId、changed entries、comparison diffのpatchとpreview resources"
+// observation_boundary = "public-boundary"
+// scope = "FileRootGitChangesService history comparison"
+// lifecycle = "permanent"
+// impact = "利用者が選んだ2つのGit ref間の差分を、working treeや別rootのfileを混ぜずに再現できる"
+// distinction = "分岐後にbase側だけ進んだ実Git repositoryを作り、directとmerge-base起点のbranch changes、nested rootのadded-file preview、remote ref、短縮commit、ref移動後のsnapshot固定を同時に確認する"
+// @end-test-value
+test("FileRootGitChangesService はdirectとbranch changesを固定OIDで比較しnested rootのpreviewをscopeする", async () => {
+  const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-comparison-"));
+  try {
+    await initializeRepository(repositoryPath);
+    assert.equal((await runGitForTest(repositoryPath, ["branch", "-M", "main"])).exitCode, 0);
+    const baseCommitId = (await runGitForTest(repositoryPath, ["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+    assert.equal((await runGitForTest(repositoryPath, ["checkout", "-b", "feature/compare"])).exitCode, 0);
+    await mkdir(path.join(repositoryPath, "nested"), { recursive: true });
+    await writeFile(path.join(repositoryPath, "tracked.txt"), "feature\n");
+    await writeFile(path.join(repositoryPath, "feature.txt"), "feature-only\n");
+    await writeFile(path.join(repositoryPath, "nested", "only.txt"), "nested feature\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", "--all"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "feature comparison",
+    ])).exitCode, 0);
+    const featureCommitId = (await runGitForTest(repositoryPath, ["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+    assert.equal((await runGitForTest(repositoryPath, ["checkout", "main"])).exitCode, 0);
+    await mkdir(path.join(repositoryPath, "nested"), { recursive: true });
+    await writeFile(path.join(repositoryPath, "main-only.txt"), "main-only\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", "main-only.txt"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "main comparison",
+    ])).exitCode, 0);
+    const mainCommitId = (await runGitForTest(repositoryPath, ["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "tag", "-a", "v-compare", "-m", "comparison tag", featureCommitId,
+    ])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, ["update-ref", "refs/remotes/origin/feature/compare", featureCommitId])).exitCode, 0);
+    await writeFile(path.join(repositoryPath, "working-tree-only.txt"), "not committed\n");
+
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
+        { rootId: "additional:nested", label: "Nested", displayPath: path.join(repositoryPath, "nested"), rootPath: path.join(repositoryPath, "nested") },
+      ],
+      resolveHistoryRootContext: async (request) => request.rootId === "additional:nested"
+        ? { rootPath: path.join(repositoryPath, "nested") }
+        : { rootPath: repositoryPath },
+    });
+    const repositories = await service.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(repositories.status, "ok");
+    if (repositories.status !== "ok") {
+      return;
+    }
+    const repository = repositories.repositories[0]!;
+    assert.ok(repository.refs.some((ref) => ref.kind === "remote" && ref.name === "origin/feature/compare"));
+    assert.ok(repository.refs.some((ref) => ref.kind === "tag" && ref.name === "v-compare"));
+
+    const branchRequest = {
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: "workspace",
+      base: { kind: "branch" as const, name: "main" },
+      target: { kind: "branch" as const, name: "feature/compare" },
+      mode: "branch" as const,
+    };
+    const branchResult = await service.getHistoryComparison(branchRequest);
+    assert.equal(branchResult.status, "ok");
+    if (branchResult.status !== "ok") {
+      return;
+    }
+    assert.equal(branchResult.comparison.baseCommitId, mainCommitId);
+    assert.equal(branchResult.comparison.targetCommitId, featureCommitId);
+    assert.equal(branchResult.comparison.mergeBaseCommitId, baseCommitId);
+    assert.deepEqual(
+      new Set(branchResult.entries.map((entry) => entry.relativePath)),
+      new Set(["tracked.txt", "feature.txt", "nested/only.txt"]),
+    );
+    assert.equal(branchResult.entries.some((entry) => entry.relativePath === "main-only.txt"), false);
+    assert.equal(branchResult.entries.some((entry) => entry.relativePath === "working-tree-only.txt"), false);
+
+    const directResult = await service.getHistoryComparison({
+      ...branchRequest,
+      mode: "direct",
+      base: { kind: "commit", objectId: mainCommitId.slice(0, 12) },
+      target: { kind: "remote", name: "origin/feature/compare" },
+    });
+    assert.equal(directResult.status, "ok");
+    if (directResult.status !== "ok") {
+      return;
+    }
+    assert.equal(directResult.comparison.baseCommitId, mainCommitId);
+    assert.equal(directResult.comparison.targetCommitId, featureCommitId);
+    assert.equal(directResult.comparison.mergeBaseCommitId, null);
+    assert.equal(directResult.entries.some((entry) => entry.relativePath === "main-only.txt"), true);
+
+    const nestedRequest = {
+      ...branchRequest,
+      rootId: "additional:nested",
+    };
+    const nestedResult = await service.getHistoryComparison(nestedRequest);
+    assert.equal(nestedResult.status, "ok");
+    if (nestedResult.status !== "ok") {
+      return;
+    }
+    assert.deepEqual(nestedResult.entries.map((entry) => entry.relativePath), ["only.txt"]);
+    const nestedDiff = await service.getHistoryDiff({
+      ...nestedRequest,
+      comparison: nestedResult.comparison,
+      relativePath: "only.txt",
+    });
+    assert.equal(nestedDiff.status, "ok");
+    if (nestedDiff.status === "ok") {
+      assert.match(nestedDiff.patch, /nested feature/);
+      assert.equal(nestedDiff.previewBeforeResource, null);
+      assert.deepEqual(nestedDiff.previewAfterResource, {
+        resourceKind: "git-commit-file",
+        sessionId: "session-1",
+        rootId: "additional:nested",
+        repositoryId: repository.repositoryId,
+        commitId: featureCommitId,
+        relativePath: "only.txt",
+      });
+    }
+
+    assert.equal((await runGitForTest(repositoryPath, ["update-ref", "refs/heads/feature/compare", mainCommitId])).exitCode, 0);
+    const fixedDiff = await service.getHistoryDiff({
+      ...branchRequest,
+      comparison: branchResult.comparison,
+      relativePath: "feature.txt",
+    });
+    assert.equal(fixedDiff.status, "ok");
+    if (fixedDiff.status === "ok") {
+      assert.match(fixedDiff.patch, /feature-only/);
+      assert.equal(fixedDiff.comparison.targetCommitId, featureCommitId);
+    }
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
 });
 
 // @test-value v2

@@ -94,6 +94,8 @@ import type {
   FileRootGitHistoryCommitDetailResult,
   FileRootGitHistoryCommitsRequest,
   FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryComparisonRequest,
+  FileRootGitHistoryComparisonResult,
   FileRootGitHistoryDiffRequest,
   FileRootGitHistoryDiffResult,
   FileRootGitHistoryRepositoriesRequest,
@@ -335,6 +337,9 @@ export type MainIpcSessionQueryDepsArgs = {
   getFileRootGitHistoryCommitDetail(
     request: FileRootGitHistoryCommitDetailRequest,
   ): Awaitable<FileRootGitHistoryCommitDetailResult>;
+  getFileRootGitHistoryComparison(
+    request: FileRootGitHistoryComparisonRequest,
+  ): Awaitable<FileRootGitHistoryComparisonResult>;
   getFileRootGitHistoryDiff(
     request: FileRootGitHistoryDiffRequest,
   ): Awaitable<FileRootGitHistoryDiffResult>;
@@ -577,6 +582,7 @@ export function createMainIpcRegistrationDeps(
     listFileRootGitHistoryRepositories: args.sessionQuery.listFileRootGitHistoryRepositories,
     listFileRootGitHistoryCommits: args.sessionQuery.listFileRootGitHistoryCommits,
     getFileRootGitHistoryCommitDetail: args.sessionQuery.getFileRootGitHistoryCommitDetail,
+    getFileRootGitHistoryComparison: args.sessionQuery.getFileRootGitHistoryComparison,
     getFileRootGitHistoryDiff: args.sessionQuery.getFileRootGitHistoryDiff,
     getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,
     getDiffPreview: args.sessionQuery.getDiffPreview,

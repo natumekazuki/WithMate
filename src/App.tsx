@@ -165,6 +165,7 @@ import { FileRootGitHistoryPane } from "./file-explorer/FileRootGitHistoryPane.j
 import type {
   FileRootFileDiffRequest,
   FileRootGitDiffScope,
+  FileRootGitHistoryComparison,
   FileRootGitHistoryDiffRequest,
   SessionFileGitCommitResourceRequest,
   SessionFileRootResourceRequest,
@@ -178,6 +179,7 @@ import { createGlossaryAnnotationMatcher } from "./glossary/glossary-annotation-
 import {
   buildFileRootDiffPreviewWindowRequest,
   buildSessionFileExplorerRootsRevision,
+  isFileRootGitHistoryComparisonDiffRequest,
 } from "./file-explorer/file-explorer-contract.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
@@ -317,6 +319,36 @@ import {
   useShortcutDispatcherSettings,
   useShortcutScope,
 } from "./shortcut-registry.js";
+
+function formatGitHistoryComparisonSelector(
+  selector: FileRootGitHistoryComparison["base"],
+): string {
+  if (selector.kind === "head") {
+    return "HEAD";
+  }
+  if (selector.kind === "commit") {
+    return `Commit ${selector.objectId.slice(0, 7)}`;
+  }
+  return selector.name;
+}
+
+function formatGitHistoryDiffTitle(request: FileRootGitHistoryDiffRequest): string {
+  if (isFileRootGitHistoryComparisonDiffRequest(request)) {
+    return request.relativePath
+      ?? `${formatGitHistoryComparisonSelector(request.comparison.base)} → ${formatGitHistoryComparisonSelector(request.comparison.target)}`;
+  }
+  return request.relativePath ?? `Commit ${request.commitId.slice(0, 7)}`;
+}
+
+function formatGitHistoryDiffContext(request: FileRootGitHistoryDiffRequest): string | undefined {
+  if (!isFileRootGitHistoryComparisonDiffRequest(request)) {
+    return undefined;
+  }
+  const mergeBase = request.comparison.mergeBaseCommitId
+    ? ` · merge-base ${request.comparison.mergeBaseCommitId.slice(0, 7)}`
+    : "";
+  return `${request.comparison.mode === "branch" ? "Branch changes" : "Direct comparison"} · ${request.comparison.baseCommitId.slice(0, 7)} → ${request.comparison.targetCommitId.slice(0, 7)}${mergeBase}`;
+}
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
@@ -531,6 +563,9 @@ export default function AgentSessionWindowApp() {
     generation: number;
     patch: string;
     previewResource: SessionFileGitCommitResourceRequest | null;
+    comparison: FileRootGitHistoryComparison | null;
+    previewBeforeResource: SessionFileGitCommitResourceRequest | null;
+    previewAfterResource: SessionFileGitCommitResourceRequest | null;
   } | null>(null);
   const [fileRootGitHistoryDiffPendingPreview, setFileRootGitHistoryDiffPendingPreview] = useState<{
     request: FileRootGitHistoryDiffRequest;
@@ -1152,10 +1187,17 @@ export default function AgentSessionWindowApp() {
   }, [activeRunSessionId, withmateApi, fileRootDiffPreview]);
   const handleShowFileRootGitHistoryDiff = useCallback((
     request: FileRootGitHistoryDiffRequest,
-    _openInWindow = false,
+    openInWindow = false,
   ): Promise<string | null> => {
     if (!withmateApi || request.sessionId !== activeRunSessionId) {
       return Promise.resolve("Git history diff is not available for this session.");
+    }
+    if (openInWindow) {
+      return withmateApi.openSessionFilePreviewWindow({ kind: "history-diff", request })
+        .then((result) => result.status === "opened" ? null : result.message)
+        .catch((error) => (
+          error instanceof Error ? error.message : "The Git history diff preview could not be opened."
+        ));
     }
     if (!prepareCentralSurfaceOpen()) {
       return Promise.resolve(null);
@@ -1175,7 +1217,10 @@ export default function AgentSessionWindowApp() {
         request,
         generation: revision,
         patch: result.patch,
-        previewResource: result.previewResource,
+        previewResource: "previewResource" in result ? result.previewResource : null,
+        comparison: "comparison" in result ? result.comparison : null,
+        previewBeforeResource: "previewBeforeResource" in result ? result.previewBeforeResource : null,
+        previewAfterResource: "previewAfterResource" in result ? result.previewAfterResource : null,
       });
       setFileRootGitHistoryDiffPendingPreview(null);
       return null;
@@ -1210,7 +1255,10 @@ export default function AgentSessionWindowApp() {
         request: preview.request,
         generation: revision,
         patch: result.patch,
-        previewResource: result.previewResource,
+        previewResource: "previewResource" in result ? result.previewResource : null,
+        comparison: "comparison" in result ? result.comparison : null,
+        previewBeforeResource: "previewBeforeResource" in result ? result.previewBeforeResource : null,
+        previewAfterResource: "previewAfterResource" in result ? result.previewAfterResource : null,
       });
       return null;
     } catch (error) {
@@ -3903,8 +3951,8 @@ export default function AgentSessionWindowApp() {
     />
   ) : fileRootGitHistoryDiffPendingPreview ? (
     <SessionDiffPreview
-      title={fileRootGitHistoryDiffPendingPreview.request.relativePath
-        ?? `Commit ${fileRootGitHistoryDiffPendingPreview.request.commitId.slice(0, 7)}`}
+      title={formatGitHistoryDiffTitle(fileRootGitHistoryDiffPendingPreview.request)}
+      contextLabel={formatGitHistoryDiffContext(fileRootGitHistoryDiffPendingPreview.request)}
       previewRevision={fileRootGitHistoryDiffPendingPreview.generation}
       patch=""
       loading
@@ -3917,15 +3965,21 @@ export default function AgentSessionWindowApp() {
     />
   ) : fileRootGitHistoryDiffPreview ? (
     <SessionDiffPreview
-      title={fileRootGitHistoryDiffPreview.request.relativePath
-        ?? `Commit ${fileRootGitHistoryDiffPreview.request.commitId.slice(0, 7)}`}
+      title={formatGitHistoryDiffTitle(fileRootGitHistoryDiffPreview.request)}
+      contextLabel={formatGitHistoryDiffContext(fileRootGitHistoryDiffPreview.request)}
       previewRevision={fileRootGitHistoryDiffPreview.generation}
       patch={fileRootGitHistoryDiffPreview.patch}
       backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
       onCopyText={handleCopyMessageText}
       onQuoteText={handleQuoteMessageText}
-      onOpenPreview={fileRootGitHistoryDiffPreview.previewResource
+      onOpenPreview={fileRootGitHistoryDiffPreview.previewResource && !fileRootGitHistoryDiffPreview.comparison
         ? () => handleOpenFileRootGitHistoryPreview(fileRootGitHistoryDiffPreview.previewResource!)
+        : undefined}
+      onOpenBeforePreview={fileRootGitHistoryDiffPreview.previewBeforeResource
+        ? () => handleOpenFileRootGitHistoryPreview(fileRootGitHistoryDiffPreview.previewBeforeResource!)
+        : undefined}
+      onOpenAfterPreview={fileRootGitHistoryDiffPreview.previewAfterResource
+        ? () => handleOpenFileRootGitHistoryPreview(fileRootGitHistoryDiffPreview.previewAfterResource!)
         : undefined}
       onReload={handleReloadFileRootGitHistoryDiff}
       reloadPending={fileRootGitHistoryDiffLoading}

@@ -10,6 +10,8 @@ import type {
   FileRootGitHistoryCommit,
   FileRootGitHistoryCommitsRequest,
   FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryComparisonRequest,
+  FileRootGitHistoryComparisonResult,
   FileRootGitHistoryDiffRequest,
   FileRootGitHistoryRepository,
 } from "../../src/file-explorer/file-explorer-contract.js";
@@ -60,6 +62,10 @@ const repositoryA: FileRootGitHistoryRepository = {
   displayPath: "C:/withmate",
   branches: ["main", "feature/history"],
   currentBranch: "main",
+  refs: [
+    { kind: "branch", name: "main" },
+    { kind: "branch", name: "feature/history" },
+  ],
 };
 const repositoryB: FileRootGitHistoryRepository = {
   repositoryId: "git:bbbbbbbbbbbbbbbbbbbbbbbb",
@@ -68,6 +74,7 @@ const repositoryB: FileRootGitHistoryRepository = {
   displayPath: "C:/other",
   branches: ["other"],
   currentBranch: "other",
+  refs: [{ kind: "branch", name: "other" }],
 };
 
 function commit(id: string, subject: string): FileRootGitHistoryCommit {
@@ -879,6 +886,166 @@ test("History detail はref種別、commit metadata、changed file tree、file d
     await act(async () => openChanges.click());
     await flush();
     assert.equal(diffRequests.at(-1)?.relativePath, null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restore();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "HistoryのCompareは履歴entryとbranch toolbarから同じpane内で起動し、branch/remote refとmodeを固定comparisonのdiff callbackへ渡す"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Compare" }
+// fault = "Compare用の別tabを増やす、履歴entryから起動できない、branch/remote refを選べない、modeを失う、またはCtrl+clickをcentralへ固定する"
+// observable = "Compare trigger、picker options、mode select、comparison request、resolved OID header、changed file DOM、onOpenDiff openInWindow"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane comparison"
+// lifecycle = "permanent"
+// impact = "履歴画面から比較条件を指定して、detached diff callbackへ同じcomparisonを渡せる"
+// distinction = "履歴entryのCompare起動後に戻り、toolbarからbase/targetとdirect modeを選択し、fileをCtrl+clickしてpublic callback requestを観測する"
+// @end-test-value
+test("History Compareはentryとtoolbarから起動し、固定comparisonをdetached diff callbackへ渡す", async () => {
+  const { dom, restore } = installDom();
+  const comparisonRepository: FileRootGitHistoryRepository = {
+    ...repositoryA,
+    refs: [
+      { kind: "branch", name: "main" },
+      { kind: "branch", name: "feature/history" },
+      { kind: "remote", name: "origin/feature/history" },
+      { kind: "tag", name: "v6.3.25" },
+    ],
+  };
+  const targetCommit = commit("1", "compare entry");
+  const comparisonRequests: FileRootGitHistoryComparisonRequest[] = [];
+  const diffRequests: Array<{ request: FileRootGitHistoryDiffRequest; openInWindow: boolean }> = [];
+  const comparison: NonNullable<FileRootGitHistoryComparisonResult & { status: "ok" }> = {
+    status: "ok",
+    comparison: {
+      mode: "direct",
+      base: { kind: "branch", name: "feature/history" },
+      target: { kind: "remote", name: "origin/feature/history" },
+      baseCommitId: "a".repeat(40),
+      targetCommitId: "b".repeat(40),
+      mergeBaseCommitId: null,
+    },
+    entries: [changedEntry("src/example.ts")],
+  };
+  const api = {
+    listFileRootGitHistoryRepositories: async () => ({ status: "ok" as const, repositories: [comparisonRepository] }),
+    listFileRootGitHistoryCommits: async () => ({
+      status: "ok" as const,
+      page: { entries: [targetCommit], nextCursor: null, hasMore: false },
+    }),
+    getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: targetCommit, entries: [] }),
+    getFileRootGitHistoryComparison: async (request: FileRootGitHistoryComparisonRequest) => {
+      comparisonRequests.push(request);
+      return comparison;
+    },
+    getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "unused" }),
+  };
+  let root: Root | null = null;
+  try {
+    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootGitHistoryPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        refreshRevision: 0,
+        onOpenDiff: async (request: FileRootGitHistoryDiffRequest, openInWindow: boolean) => {
+          diffRequests.push({ request, openInWindow });
+          return null;
+        },
+      }));
+      await Promise.resolve();
+    });
+    await flush();
+    const entryCompare = dom.window.document.querySelector<HTMLButtonElement>(".file-history-commit-compare");
+    assert.ok(entryCompare);
+    await act(async () => entryCompare.click());
+    await flush();
+    assert.match(
+      dom.window.document.querySelector<HTMLButtonElement>(".file-history-comparison-picker-trigger")?.textContent ?? "",
+      /Commit/,
+    );
+    const comparisonBack = dom.window.document.querySelector<HTMLButtonElement>(".file-history-back");
+    assert.ok(comparisonBack);
+    await act(async () => comparisonBack.click());
+    await flush();
+
+    const compareTrigger = dom.window.document.querySelector<HTMLButtonElement>(".file-history-compare-trigger");
+    assert.ok(compareTrigger);
+    await act(async () => compareTrigger.click());
+    await flush();
+    const pickers = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".file-history-comparison-picker-trigger")];
+    assert.equal(pickers.length, 2);
+    await act(async () => pickers[0]?.click());
+    await flush();
+    const baseOption = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".file-history-comparison-picker-option")]
+      .find((button) => button.textContent?.includes("feature/history") && !button.textContent.includes("origin/"));
+    assert.ok(baseOption);
+    await act(async () => baseOption?.click());
+    await act(async () => pickers[1]?.click());
+    await flush();
+    const targetOption = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".file-history-comparison-picker-option")]
+      .find((button) => button.textContent?.includes("origin/feature/history"));
+    assert.ok(targetOption);
+    await act(async () => targetOption?.click());
+    const modeSelect = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='Comparison mode']");
+    assert.ok(modeSelect);
+    modeSelect.value = "direct";
+    await act(async () => {
+      modeSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+    const submit = dom.window.document.querySelector<HTMLButtonElement>(".file-history-comparison-submit");
+    assert.ok(submit);
+    await act(async () => submit.click());
+    await flush();
+    assert.deepEqual(comparisonRequests.at(-1), {
+      sessionId: "session-1",
+      repositoryId: comparisonRepository.repositoryId,
+      rootId: comparisonRepository.rootId,
+      base: { kind: "branch", name: "feature/history" },
+      target: { kind: "remote", name: "origin/feature/history" },
+      mode: "direct",
+    });
+    const resultHeader = dom.window.document.querySelector<HTMLElement>(".file-history-comparison-result-header");
+    assert.equal(resultHeader?.dataset.baseCommitId, "a".repeat(40));
+    assert.equal(resultHeader?.dataset.targetCommitId, "b".repeat(40));
+    assert.match(resultHeader?.textContent ?? "", /Direct comparison/);
+    const openAllChanges = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Open All Changes");
+    assert.ok(openAllChanges);
+    await act(async () => openAllChanges.click());
+    await flush();
+    assert.equal(diffRequests.at(-1)?.request.relativePath, null);
+    const filter = dom.window.document.querySelector<HTMLInputElement>("input[aria-label='Filter changed files']");
+    assert.ok(filter);
+    filter.value = "example";
+    await act(async () => {
+      filter.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    const fileButton = dom.window.document.querySelector<HTMLButtonElement>(".workspace-change-row[title='src/example.ts']");
+    assert.ok(fileButton);
+    await act(async () => {
+      fileButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+      await Promise.resolve();
+    });
+    await flush();
+    assert.equal(diffRequests.at(-1)?.openInWindow, true);
+    assert.deepEqual(diffRequests.at(-1)?.request, {
+      sessionId: "session-1",
+      repositoryId: comparisonRepository.repositoryId,
+      rootId: comparisonRepository.rootId,
+      comparison: comparison.comparison,
+      relativePath: "src/example.ts",
+    });
   } finally {
     if (root) {
       await act(async () => root?.unmount());

@@ -75,6 +75,7 @@ import type {
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
 import type {
+  SessionFileHistoryDiffWindowPayload,
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
 } from "../src/file-explorer/file-explorer-contract.js";
@@ -1702,6 +1703,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   createFileRootGitChangesService().listHistoryCommits(request),
                 getFileRootGitHistoryCommitDetail: (request) =>
                   createFileRootGitChangesService().getHistoryCommitDetail(request),
+                getFileRootGitHistoryComparison: (request) =>
+                  createFileRootGitChangesService().getHistoryComparison(request),
                 getFileRootGitHistoryDiff: (request) =>
                   createFileRootGitChangesService().getHistoryDiff(request),
                 getSessionMessageArtifact,
@@ -4281,6 +4284,48 @@ async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserW
 async function openSessionFilePreviewWindow(
   request: SessionFilePreviewWindowOpenRequest,
 ): Promise<SessionFilePreviewWindowOpenResult> {
+  if (request.kind === "history-diff") {
+    const result = await createFileRootGitChangesService().getHistoryDiff(request.request);
+    if (result.status !== "ok") {
+      return {
+        status: "failed",
+        targetType: "local-file",
+        target: request.request.relativePath ?? "Git history diff",
+        message: result.message,
+      };
+    }
+    try {
+      const ownerSessionId = await getSessionFileExplorerOwnerSessionId(request.request.sessionId);
+      if (!ownerSessionId) {
+        throw new Error("The owning Session could not be resolved.");
+      }
+      const historyDiff: SessionFileHistoryDiffWindowPayload = {
+        request: request.request,
+        patch: result.patch,
+        previewResource: "previewResource" in result ? result.previewResource : null,
+        previewBeforeResource: "previewBeforeResource" in result ? result.previewBeforeResource : null,
+        previewAfterResource: "previewAfterResource" in result ? result.previewAfterResource : null,
+      };
+      const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({
+        historyDiff,
+        ownerSessionId,
+        windowTitle: resolveSessionFilePreviewWindowTitle(request.request.relativePath ?? "Git Diff"),
+      });
+      return {
+        status: "opened",
+        targetType: "preview-window",
+        disposition,
+        historyDiff: request.request,
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        targetType: "local-file",
+        target: request.request.relativePath ?? "Git history diff",
+        message: error instanceof Error ? error.message : "The Git history diff could not be opened.",
+      };
+    }
+  }
   const explorer = createSessionFileExplorerService();
   let resource = request.kind === "resource" ? request.resource : null;
   if (request.kind === "link") {

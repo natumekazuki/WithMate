@@ -120,6 +120,8 @@ import type {
   FileRootGitHistoryCommitDetailResult,
   FileRootGitHistoryCommitsRequest,
   FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryComparisonRequest,
+  FileRootGitHistoryComparisonResult,
   FileRootGitHistoryDiffRequest,
   FileRootGitHistoryDiffResult,
   FileRootGitHistoryRepositoriesRequest,
@@ -220,6 +222,9 @@ export type WithMateWindowSessionApi = {
   getFileRootGitHistoryCommitDetail(
     request: FileRootGitHistoryCommitDetailRequest,
   ): Promise<FileRootGitHistoryCommitDetailResult>;
+  getFileRootGitHistoryComparison(
+    request: FileRootGitHistoryComparisonRequest,
+  ): Promise<FileRootGitHistoryComparisonResult>;
   getFileRootGitHistoryDiff(
     request: FileRootGitHistoryDiffRequest,
   ): Promise<FileRootGitHistoryDiffResult>;

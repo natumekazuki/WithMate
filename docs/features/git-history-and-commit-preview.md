@@ -21,6 +21,19 @@ Session WindowのFile Explorerから、認可済みGit rootのcommit履歴とcom
 
 履歴やfile一覧はpage単位で読み込み、commit listの追加pageは専用scroll rootの末尾sentinelが表示領域に入ったときに取得します。repositoryの選択を変更した場合は表示中のcommit listをクリアし、以前の非同期取得結果を新しい選択へ反映しません。
 
+## Compare
+
+`Compare`はHistoryの同じpane内で起動し、4つ目のtabや別のdiff実装は追加しません。toolbarまたはcommit entryから開け、commit entryからはそのcommitをbaseの初期値にします。通常のtargetは表示中branchです。
+
+比較対象にはlocal branch、remote-tracking branch、tag、`HEAD`、short/full commit object IDを指定できます。annotated tagはtag refとして解決し、入力されたref名をそのままGitの引数へ渡しません。
+
+- `Direct comparison`は解決したbase commitからtarget commitまでを比較します。
+- `Branch changes`はbaseとtargetのmerge-baseからtargetまでを比較します。merge-baseがない場合や複数ある場合は、空の差分と混同しないエラーとして表示します。
+- 比較開始時に解決したcommit object IDをsnapshotとして保持します。refが移動しても表示中のpatchを別のcommitへ差し替えず、`Compare`の再実行またはrefreshで明示的に更新します。
+- changed file listは既存のChangesと同じtree shell、filter、`Open All Changes`を使います。patchは選択したfileまたは全fileを必要時に取得し、rename、add、deleteでは利用可能なbefore / after previewをそれぞれ表示します。
+- nested rootではrepository全体ではなく、そのrootに認可されたrelative pathだけを比較対象にします。working tree、index、checkout、fetch、worktreeの作成は行いません。
+- 変更なし、invalid selector、commit not found、merge-base unavailable / ambiguous、Gitの上限超過・実行失敗は別の結果として扱います。
+
 ## commit時点のFile Preview
 
 commitに含まれるfileは、中央surfaceまたは独立したFile Preview Windowで開けます。表示形式は通常のFile Previewと同じ判定を使い、text、Markdown、JSON、YAML、画像などを表示します。

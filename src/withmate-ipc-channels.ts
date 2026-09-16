@@ -46,6 +46,8 @@ export const WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL =
   "withmate:list-file-root-git-history-commits";
 export const WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL =
   "withmate:get-file-root-git-history-commit-detail";
+export const WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL =
+  "withmate:get-file-root-git-history-comparison";
 export const WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL =
   "withmate:get-file-root-git-history-diff";
 export const WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL = "withmate:get-session-message-artifact";
