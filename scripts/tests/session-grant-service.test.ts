@@ -22,10 +22,10 @@ const binding = (id: string, generation = "generation-1"): ResolvedAgentRuntimeB
 
 // @test-value v2
 // kind = "security"
-// claim = "grant ownerは親のactive ceilingを守り、同一再送は同じgrantを返し、他actorによる親grant取得を拒否する"
+// claim = "grant ownerは親のactive ceilingを守り、親失効後も同一再送で初回grantを返し、他actorによる親grant取得を拒否する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Direct validation" }
 // fault = "親grantの失効後も子grantを作成する、exercise ceilingから再委譲可能なgrantを発行する、別actorが親grantを取得する"
-// observable = "実SQLiteを使ったservice responseのgrant ID、list結果、owner拒否"
+// observable = "実SQLiteを使ったservice responseのgrant IDと初回snapshot、listのcursor/page順序・重複・revoked/grantee filter、owner拒否"
 // observation_boundary = "component-behavior"
 // scope = "session-grant-service-owner"
 // lifecycle = "permanent"
@@ -56,7 +56,18 @@ test("grant service owner enforces parent ceiling and actor ownership", async ()
     assert.throws(() => authority.grantCreate(binding(root.id), { ...input, idempotencyKey: "expiry-escalation", expiresAt: "2026-09-16T00:00:00.000Z" }));
     assert.throws(() => authority.grantCreate(binding(root.id), { ...input, idempotencyKey: "scope-escalation", relationSelector: "root_member" }));
     revokeSessionAuthorityGrant(db, { grantId: parent.grantId, expectedRevision: parent.revision, principal: { kind: "system", service: "test-policy" }, revokedAt: "2026-09-14T13:00:00.000Z" });
+    assert.deepEqual(authority.grantCreate(binding(root.id), input).grant, created.grant);
+    assert.throws(() => authority.grantCreate(binding(root.id), { ...input, expiresAt: "2026-09-14T22:00:00.000Z" }));
     assert.throws(() => authority.grantCreate(binding(root.id), { ...input, idempotencyKey: "grant-test-2" }));
+    const page = authority.grantList(binding(root.id), { includeRevoked: true, limit: 1 });
+    assert.equal(page.items.length, 1);
+    assert.ok(page.nextCursor);
+    const nextPage = authority.grantList(binding(root.id), { includeRevoked: true, limit: 1, cursor: page.nextCursor });
+    assert.ok(nextPage.items.length >= 1);
+    assert.ok(page.items[0]!.grant.grantId < nextPage.items[0]!.grant.grantId);
+    assert.equal(new Set([...page.items, ...nextPage.items].map((item) => item.grant.grantId)).size, page.items.length + nextPage.items.length);
+    assert.ok(authority.grantList(binding(root.id), {}).items.every((item) => item.grant.revokedAt === null));
+    assert.ok(authority.grantList(binding(root.id), { granteeSessionId: child.id }).items.every((item) => item.grant.granteeSessionId === child.id));
   } finally {
     authority.close();
     db.close();
@@ -67,7 +78,7 @@ test("grant service owner enforces parent ceiling and actor ownership", async ()
 
 // @test-value v2
 // kind = "security"
-// claim = "一時通信grantは指定Sessionと実予算口座に閉じ、失効・古いgeneration・親scope超過を拒否してprovenanceを保持する"
+// claim = "一時通信grantは指定Sessionと実予算口座に閉じ、期限切れ・失効・古いgeneration・親scope超過を拒否しつつ同一再送の初回snapshotを保持する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
 // fault = "別rootの無関係Sessionへの通信を許可する、同一keyの別入力を採用する、失効後のadmissionを許可する"
 // observable = "実SQLiteのgrant service応答、authorizeのproofと拒否、再open後のgrant revision・provenance"
@@ -113,6 +124,11 @@ test("temporary cross-root communication remains bounded through replay expiry a
     assert.equal("requestJson" in created.grant.provenance, false);
     now = "2026-09-14T13:00:00.000Z";
     assert.throws(() => authority.authorize(binding(requester.id), "turn.enqueue", { sessionId: target.id, consultationGrantId: created.grant.grantId }));
+    now = "2026-09-15T00:00:00.000Z";
+    assert.deepEqual(authority.grantCreate(binding(responder.id), input).grant, created.grant);
+    assert.throws(() => authority.grantCreate(binding(responder.id), { ...input, idempotencyKey: "expired-parent" }));
+    assert.throws(() => authority.grantCreate(binding(responder.id), { ...input, purpose: "changed after expiry" }));
+    now = "2026-09-14T13:00:00.000Z";
     const revoke = { grantId: created.grant.grantId, expectedRevision: 1, idempotencyKey: "revoke" };
     assert.equal(authority.grantRevoke(binding(responder.id), revoke).grant.revision, 2);
     assert.equal(authority.grantRevoke(binding(responder.id), revoke).grant.revision, 2);

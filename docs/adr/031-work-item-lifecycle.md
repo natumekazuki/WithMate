@@ -8,7 +8,7 @@ Work Itemの再開は、新しいstable IDを持つsuccessorを作成する。Ro
 
 moveは旧parentからの離脱、新parentへのadoption、必要な旧decisionのsupersedeを既存aggregation ownerの同一transactionで保存する。旧decisionの内容と所属履歴はeventとして残す。adoptionは所属の引受であり、成果の採用ではない。新parentが結果を使用するには別の明示的decisionが必要である。
 
-Slice 4では、2026-09-12のユーザー承認により上記moveの内部処理だけを前倒しした。Slice 5では同一rootの確定済みbranchを訂正workflowへ接続する。移動前の結果・判断・所属履歴を保持し、所属変更により確定結果が依存する集約をstaleにする。新しい所属やsuccessorを新結果の採用として扱わず、必要な判断の再確認、結果訂正、明示的な再確定を要求する。cross-rootのWork Item単体moveはSession・grant・budget移管との後続接続対象として残す。
+Slice 4では、2026-09-12のユーザー承認により上記moveの内部処理だけを前倒しした。Slice 5では同一rootの確定済みbranchを訂正workflowへ接続する。移動前の結果・判断・所属履歴を保持し、所属変更により確定結果が依存する集約をstaleにする。新しい所属やsuccessorを新結果の採用として扱わず、必要な判断の再確認、結果訂正、明示的な再確定を要求する。Slice 7でcross-rootのWork Item単体moveを接続した。移管先targetの所属・revisionと双方のgrantを検証し、以後の実行は移管先Sessionのbudgetを使う。旧履歴・累積消費を保持し、集約descendantを持つWork Itemの単体移管は拒否する。
 
 ## 保存と認可の境界
 
@@ -18,7 +18,7 @@ planned sourceは一つのtupleとして保存する。actual start sourceはcal
 
 archiveは一覧の可視性を変えるrevisionであり、resultやdecisionを書き換えない。restoreは可視性だけを復帰する。物理deleteはarchived terminalで、実行・親子・successor・集約の参照がないWork Itemに限定する。current rowを削除しても、監査と再送に必要な最後のsnapshot、typed event、共通header、期限内のidempotency responseを保持する。これは履歴を含む完全消去のAPIではない。
 
-新しいlifecycle actionを既存baseline grantへ追加しない。既存grant ownerのtrusted内部発行で明示された範囲だけを付与し、Agent向けの汎用grant発行APIはSlice 7へ残す。
+新しいlifecycle actionを既存baseline grantへ追加しない。既存grant ownerのtrusted root policyと、そのceilingを超えないAgent向けgrant.createで明示された範囲だけを付与する。grant.get/list/revokeも同じownerの公開操作とし、権限の再発行による暗黙拡張を行わない。
 
 ## 参照
 

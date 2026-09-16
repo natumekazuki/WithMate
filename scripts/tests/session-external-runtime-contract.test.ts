@@ -50,7 +50,7 @@ test("RUNTIME-CATALOG-01: runtime.catalog accepts only an explicit empty input",
 
 // @test-value v2
 // kind = "security"
-// claim = "grant公開入力はresource・relation・effectの未分類値と未知fieldをparser/schemaの両境界で拒否する"
+// claim = "grant公開入力は必須boolean、permissionの分類値と未知fieldをparser/schemaの両境界で検証する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
 // fault = "公開grant入力が不明なscope分類または未知fieldを通過し、issuer ceiling外の権限発行へ到達する"
 // observable = "grant.createのcanonical parserとZod input schemaの拒否結果"
@@ -64,9 +64,20 @@ test("GRANT-CONTRACT-01: grant.create rejects unknown classification and fields"
     resourceKind: "execution", relationSelector: "self", targetSessionRoles: ["executor"], effectClass: "external_side_effect",
     delegable: false, expiresAt: null, idempotencyKey: "grant-1",
   };
+  const validWithCeiling = { ...valid, childCeiling: [{ mode: "delegate", action: "turn.run", resourceKind: "execution", relationSelector: "self", effectClass: "external_side_effect", targetSessionRoles: [] }] };
+  assert.deepEqual(parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input: validWithCeiling }).input, validWithCeiling);
+  assert.deepEqual(createSessionRuntimeInputSchema("grant.create").parse(validWithCeiling), validWithCeiling);
+  const { delegable: _delegable, ...missingDelegable } = valid;
+  assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input: missingDelegable }), (error) => error instanceof SessionRuntimeValidationError && error.code === "INVALID_INPUT" && error.details.field === "delegable");
+  assert.throws(() => createSessionRuntimeInputSchema("grant.create").parse(missingDelegable), z.ZodError);
   for (const [field, value] of [["resourceKind", "unknown"], ["relationSelector", "unknown"], ["effectClass", "unknown"], ["actions", ["*"]]] as const) {
     const input = { ...valid, [field]: value };
     assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input }), (error) => error instanceof SessionRuntimeValidationError && error.code === "INVALID_INPUT" && error.details.field === field);
+    assert.throws(() => createSessionRuntimeInputSchema("grant.create").parse(input));
+  }
+  for (const [field, value] of [["delegable", "false"], ["childCeiling", [{ mode: "invalid", action: "turn.run", resourceKind: "execution", relationSelector: "self", effectClass: "external_side_effect", targetSessionRoles: [] }]], ["childCeiling", [{ mode: "delegate", action: "turn.run", resourceKind: "execution", relationSelector: "self", effectClass: "external_side_effect", targetSessionRoles: [], extra: true }]]] as const) {
+    const input = { ...valid, [field]: value };
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input }), (error) => error instanceof SessionRuntimeValidationError && error.code === "INVALID_INPUT" && (error.details.field === field || error.details.field.startsWith(`input.${field}`) || error.details.field.startsWith(`${field}.`)));
     assert.throws(() => createSessionRuntimeInputSchema("grant.create").parse(input));
   }
   assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input: { ...valid, extra: true } }), (error) => error instanceof SessionRuntimeValidationError && error.details.field === "input.extra");

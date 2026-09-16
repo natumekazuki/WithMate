@@ -27,6 +27,7 @@ import {
   type WorkItemEvent,
   type WorkItemEventType,
   type WorkItemProgressEventPayload,
+  type WorkItemParentChangedEventPayload,
   type WorkItemResult,
   type RootWorkItemBinding,
   type WorkItemState,
@@ -959,12 +960,12 @@ export class WorkItemStorageV6 {
           childRevision: current.revision,
         });
       }
-      this.db
-        .prepare(
-          "UPDATE work_items_v6 SET parent_work_item_id=?, creator_session_id=?, target_session_id=?, root_session_id=?, revision=revision+1, updated_at=? WHERE id=?",
-        )
-        .run(parentId, creatorSessionId, crossRoot ? destinationTarget!.id : current.targetSessionId,
-          crossRoot ? destinationTarget!.root_session_id : current.rootSessionId, input.updatedAt, current.id);
+      this.updateOwnership(current, {
+        parentWorkItemId: parentId,
+        creatorSessionId,
+        targetSessionId: crossRoot ? destinationTarget!.id : current.targetSessionId,
+        rootSessionId: crossRoot ? destinationTarget!.root_session_id : current.rootSessionId,
+      }, input.updatedAt);
       if (newParent)
         this.appendLifecycleAggregation(input, newParent.id, this.getRequired(current.id), "child_adopted", {
           childWorkItemId: current.id,
@@ -980,19 +981,11 @@ export class WorkItemStorageV6 {
       for (const id of affected) {
         this.markAggregationStaleWithEvent(id, current.id, "work.move", input.proof, input.requestFingerprint, input.idempotencyKey, input.updatedAt, "work.move");
       }
-      return this.finishLifecycleEvent("work.move", input, current, "parent_changed", {
-        beforeParentWorkItemId: current.parentWorkItemId,
-        afterParentWorkItemId: parentId,
-        beforeCreatorSessionId: current.creatorSessionId,
-        afterCreatorSessionId: creatorSessionId,
-        ...(crossRoot ? {
-          beforeTargetSessionId: current.targetSessionId,
-          afterTargetSessionId: destinationTarget!.id,
-          beforeRootSessionId: current.rootSessionId,
-          afterRootSessionId: destinationTarget!.root_session_id,
-        } : {}),
-        supersededDecision: decision !== null,
-      });
+      return this.finishLifecycleEvent("work.move", input, current, "parent_changed", this.ownershipChangePayload(
+        current, { parentWorkItemId: parentId, creatorSessionId,
+          targetSessionId: crossRoot ? destinationTarget!.id : current.targetSessionId,
+          rootSessionId: crossRoot ? destinationTarget!.root_session_id : current.rootSessionId },
+        decision !== null, crossRoot));
     });
   }
 
@@ -1023,8 +1016,17 @@ export class WorkItemStorageV6 {
       WHERE root_session_id = ? AND (creator_session_id IN (${input.movedSessionIds.map(() => "?").join(",") || "NULL"})
         OR target_session_id IN (${input.movedSessionIds.map(() => "?").join(",") || "NULL"}) OR (? = 1 AND kind = 'root'))
       ORDER BY id`).all(input.sourceRootSessionId, ...input.movedSessionIds, ...input.movedSessionIds, input.transferRoot ? 1 : 0) as Array<{ id: string }>;
-    for (const row of rows) {
-      const current = this.getRequired(row.id);
+    const snapshots = rows.map((row) => this.getRequired(row.id));
+    const snapshotIds = new Set(snapshots.map((item) => item.id));
+    for (const current of snapshots) {
+      if (current.parentWorkItemId !== null) {
+        const parent = this.getRequired(current.parentWorkItemId);
+        if (parent.rootSessionId !== input.sourceRootSessionId || !snapshotIds.has(parent.id)) {
+          throw new WorkItemAggregationConflictError("WORK_ITEM_TRANSFER_AGGREGATION_INVALID", "A Work Item aggregation parent is outside the transferred closure.");
+        }
+      }
+    }
+    for (const current of snapshots) {
       const nextCreator = input.transferRoot && current.creatorSessionId === input.sourceRootSessionId
         ? input.destinationRootSessionId : current.creatorSessionId;
       const nextTarget = input.transferRoot && current.targetSessionId === input.sourceRootSessionId
@@ -1033,19 +1035,12 @@ export class WorkItemStorageV6 {
         throw new WorkItemAggregationConflictError("WORK_ITEM_TRANSFER_OWNER_INVALID", "A Work Item creator is outside the transferred Session closure.");
       if (!moved.has(current.targetSessionId) && nextTarget === current.targetSessionId)
         throw new WorkItemAggregationConflictError("WORK_ITEM_TRANSFER_OWNER_INVALID", "A Work Item target is outside the transferred Session closure.");
-      if (current.parentWorkItemId !== null) {
-        const parent = this.getRequired(current.parentWorkItemId);
-        if (parent.rootSessionId !== input.sourceRootSessionId || !rows.some((candidate) => candidate.id === parent.id))
-          throw new WorkItemAggregationConflictError("WORK_ITEM_TRANSFER_AGGREGATION_INVALID", "A Work Item aggregation parent is outside the transferred closure.");
-      }
       const nextRevision = current.revision + 1;
-      this.db.prepare(`UPDATE work_items_v6 SET root_session_id = ?, creator_session_id = ?, target_session_id = ?, revision = ?, updated_at = ?
-        WHERE id = ? AND revision = ?`).run(input.destinationRootSessionId, nextCreator, nextTarget, nextRevision, input.transferredAt, current.id, current.revision);
+      this.updateOwnership(current, { parentWorkItemId: current.parentWorkItemId,
+        rootSessionId: input.destinationRootSessionId, creatorSessionId: nextCreator, targetSessionId: nextTarget }, input.transferredAt);
       this.insertEvent({ workItemId: current.id, revision: nextRevision, type: "parent_changed", actorSessionId: input.proof.principal.kind === "agent" ? input.proof.principal.actorSessionId : input.sourceRootSessionId,
-        payload: { beforeParentWorkItemId: current.parentWorkItemId, afterParentWorkItemId: current.parentWorkItemId,
-          beforeCreatorSessionId: current.creatorSessionId, afterCreatorSessionId: nextCreator,
-          beforeRootSessionId: current.rootSessionId, afterRootSessionId: input.destinationRootSessionId,
-          beforeTargetSessionId: current.targetSessionId, afterTargetSessionId: nextTarget, supersededDecision: false },
+        payload: this.ownershipChangePayload(current, { parentWorkItemId: current.parentWorkItemId,
+          rootSessionId: input.destinationRootSessionId, creatorSessionId: nextCreator, targetSessionId: nextTarget }, false, true),
         createdAt: input.transferredAt, proof: input.proof, operationId: input.operationId, idempotencyKey: null });
     }
   }
@@ -2502,6 +2497,42 @@ export class WorkItemStorageV6 {
       );
     }
     return parent;
+  }
+
+  private updateOwnership(current: WorkItem, next: {
+    parentWorkItemId: string | null;
+    rootSessionId: string;
+    creatorSessionId: string;
+    targetSessionId: string;
+  }, updatedAt: string): number {
+    const nextRevision = current.revision + 1;
+    const changed = this.db.prepare(`UPDATE work_items_v6
+      SET parent_work_item_id = ?, root_session_id = ?, creator_session_id = ?, target_session_id = ?, revision = ?, updated_at = ?
+      WHERE id = ? AND revision = ?`).run(next.parentWorkItemId, next.rootSessionId, next.creatorSessionId,
+      next.targetSessionId, nextRevision, updatedAt, current.id, current.revision);
+    if (changed.changes !== 1) throw new WorkItemRevisionConflictError(current.id, current.revision, this.getRequired(current.id).revision);
+    return nextRevision;
+  }
+
+  private ownershipChangePayload(current: WorkItem, next: {
+    parentWorkItemId: string | null;
+    rootSessionId: string;
+    creatorSessionId: string;
+    targetSessionId: string;
+  }, supersededDecision: boolean, includeRootAndTarget: boolean): WorkItemParentChangedEventPayload {
+    return {
+      beforeParentWorkItemId: current.parentWorkItemId,
+      afterParentWorkItemId: next.parentWorkItemId,
+      beforeCreatorSessionId: current.creatorSessionId,
+      afterCreatorSessionId: next.creatorSessionId,
+      ...(includeRootAndTarget ? {
+        beforeTargetSessionId: current.targetSessionId,
+        afterTargetSessionId: next.targetSessionId,
+        beforeRootSessionId: current.rootSessionId,
+        afterRootSessionId: next.rootSessionId,
+      } : {}),
+      supersededDecision,
+    };
   }
 
   private requireExpectedRevision(item: WorkItem, expectedRevision: number): void {

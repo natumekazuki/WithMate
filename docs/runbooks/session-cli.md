@@ -42,6 +42,8 @@ cross-root consultationは、先に既存の`budgetAccountId`へ`budget configur
 
 cross-rootのWork Item単体移管は`work.move`へ`destinationTargetSessionId`と`expectedDestinationTargetRevision`を指定する。移管先parentがある場合はそのrevisionと権限も必要で、集約descendantを持つWorkは単体移管できない。過去の結果・execution・履歴は保持し、以後の実行は移管先Sessionのbudgetを使う。
 
+移管manifestの`resourceHistory`は既存の共通event headerを持つresourceだけを集計する。budgetの履歴キーはSession IDではなくaccount ID、file writeとtranscript exportはoperation IDである。grant chainとDelegationは専用の保存領域を使い、manifestの`grantChains`と`delegationRows`へ列挙する。共通headerのないresourceについて空の履歴を生成しない。
+
 cross-root Session移管のpreparedからpublication完了またはrecovery終端までは両rootの新規mutationを制限する。read、cancel、同じ要求による移管回復は維持する。running Turnはallow-to-settleとし、移管はqueued/runningが解消してから行う。grantのrevokeまたはexpiry後はqueuedの新規admissionを拒否し、開始済みTurnの結果を未実行へ変更しない。
 
 ```powershell
@@ -109,7 +111,7 @@ root coordinatorは`work aggregation list`の`depth`（1–8）、`fields`（`su
 
 `turn options`は対象Sessionのproviderに応じた候補を返す。Codex Turnは`provider: "codex"`と`codexSandboxMode`、Copilot Turnは`provider: "copilot"`と`customAgentName`を指定する。provider固有fieldを混在させない。
 
-Agent起点の`turn run`と`turn enqueue`は、runtime bindingで確定したactorとtargetのcanonical Role bindingに対して次の送信matrixを適用する。
+Agent起点の`turn run`と`turn enqueue`は、runtime bindingで確定したactorとtargetのcanonical Role bindingに対してactive grantを評価する。次の表は初期grantのRole templateであり、追加grantへの権限上限ではない。
 
 | actor Role | 許可するtarget |
 | --- | --- |
@@ -118,7 +120,7 @@ Agent起点の`turn run`と`turn enqueue`は、runtime bindingで確定したact
 | `task-coordinator` | actor自身、直属の`executor`、rootの`overall-coordinator`、同じrootかつ同じ親の兄弟`task-coordinator` |
 | `executor` | actor自身、直属の親（`overall-coordinator`または`task-coordinator`） |
 
-異なるroot、`overall-coordinator`から孫executor、`executor`から兄弟または別branch、存在しないtargetはexecutionまたはqueue作成前に拒否される。requestへactor Role、root、parent、depthを指定してもauthorityには使われない。GUIからユーザーが直接送信するTurnは別のtrusted invocation境界であり、このAgent間matrixを適用しない。`runtime catalog`の`sessionTurnCommunicationContractRevision`で対応する通信契約revisionを確認する。
+baselineの対象外でも、same-rootの明示communication grantがあれば送信できる。cross-rootには限定consultation grantを必要とし、権限外または存在しないtargetはexecutionまたはqueue作成前に拒否される。requestへactor Role、root、parent、depthを指定してもauthorityには使われない。GUIからユーザーが直接送信するTurnは別のtrusted invocation境界であり、このAgent grantによる認可とは分離する。`runtime catalog`の`sessionTurnCommunicationContractRevision`で対応する通信契約revisionを確認する。
 
 ```powershell
 withmate-session turn run --json '{"expectedContainerRevision":1,"sessionId":"SESSION_ID","catalogRevision":1,"idempotencyKey":"run-codex-001","responseMode":"deferred","turn":{"provider":"codex","userMessage":"確認して","model":"gpt-5.4","reasoningEffort":"high","approvalMode":"on-request","codexSandboxMode":"workspace-write"}}'
@@ -153,7 +155,7 @@ withmate-session session delete-manifest --json '{"sessionId":"SESSION_ID"}'
 
 `session.create`はrootまたはchild placementを明示する。childではparentとRole、rootではrootKindを指定し、Character identity、provider実行tuple、Workspace、initial grant、budgetを省略しない。actor、root、depth、grant上限は保存済みbindingとactive grantから再評価される。新規Sessionのprovider thread continuityは`reset`だけを受理する。
 
-`session.self`、`session.create`、`session.list`、`session.get`は`revision`、`sessionRole`、`roleContractRevision`、`rootSessionId`、`parentSessionId`、`delegationDepth`を同じ形で返す。mutationは対象またはcontainerのcurrent revisionを要求し、各操作へcaller-owned `idempotencyKey`を渡す。`session.move.manifest`と`session.delete.manifest`はread-onlyで、deleteは取得済みmanifest revisionをmutationへ要求する。`runtime catalog`の`baselineChildSessionRoleTemplates`はbaseline grant発行時のtemplateであり、現在のactorに対する認可結果ではない。新しいWork Item lifecycle操作のgrantは既存baselineへ自動追加せず、既存grant ownerのtrusted issuanceで明示付与されたactorだけが実行できる。既存grantの再発行による拡張やAgent向け汎用grant APIはSlice 7まで提供しない。
+`session.self`、`session.create`、`session.list`、`session.get`は`revision`、`sessionRole`、`roleContractRevision`、`rootSessionId`、`parentSessionId`、`delegationDepth`を同じ形で返す。mutationは対象またはcontainerのcurrent revisionを要求し、各操作へcaller-owned `idempotencyKey`を渡す。`session.move.manifest`と`session.delete.manifest`はread-onlyで、deleteは取得済みmanifest revisionをmutationへ要求する。`runtime catalog`の`baselineChildSessionRoleTemplates`はbaseline grant発行時のtemplateであり、現在のactorに対する認可結果ではない。新しいWork Item lifecycle操作のgrantは既存baselineへ自動追加せず、trusted root policyまたはそのceiling内のgrant.createで明示付与されたactorだけが実行できる。grant.get/list/revokeを使って保存済み権限を参照・失効し、baselineの再発行による権限拡張は行わない。
 
 `session.delete`はSlice 3では物理削除ではなくtombstoneへ遷移する。Sessionの履歴、budget ledger、retry identity、SessionFolder workspaceは保持する。directory workspaceに付随するSessionFolderの既存cleanup経路は維持する。retention期間と履歴・ledgerを含むpurge範囲を定義するphysical purgeは後続の別変更とする。
 

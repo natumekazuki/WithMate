@@ -413,9 +413,15 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     UNION ALL
     SELECT 'work-item:' || event.work_item_id || ':revision:' || event.revision,
       'work_item', event.work_item_id, item.root_session_id,
-      COALESCE((SELECT json_extract(next.payload_json, '$.beforeTargetSessionId') FROM work_item_events_v6 next
-        WHERE next.work_item_id=event.work_item_id AND next.event_type='assignment_changed' AND next.revision>event.revision
-        ORDER BY next.revision LIMIT 1),item.target_session_id),
+      COALESCE((SELECT json_extract(change.payload_json, '$.afterTargetSessionId')
+        FROM work_item_events_v6 AS change
+        WHERE change.work_item_id = event.work_item_id
+          AND change.revision <= event.revision
+          AND ((change.event_type = 'assignment_changed' AND json_type(change.payload_json, '$.afterTargetSessionId') = 'text')
+            OR (change.event_type = 'parent_changed' AND json_type(change.payload_json, '$.afterTargetSessionId') = 'text'))
+        ORDER BY change.revision DESC LIMIT 1),
+        json_extract((SELECT initial.payload_json FROM work_item_events_v6 AS initial
+          WHERE initial.work_item_id = event.work_item_id AND initial.revision = 1 LIMIT 1), '$.targetSessionId')),
       event.event_type, event.revision,
       event.principal_kind,
       CASE WHEN event.principal_kind = 'agent' THEN event.actor_session_id ELSE NULL END,
@@ -432,13 +438,17 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     UNION ALL
     SELECT event.event_id, 'work_item', event.parent_work_item_id,
       item.root_session_id,
-      COALESCE((SELECT json_extract(assignment.payload_json, '$.beforeTargetSessionId')
-        FROM work_item_events_v6 assignment
-        JOIN resource_event_headers_v6 assignment_header
-          ON assignment_header.event_id = 'work-item:' || assignment.work_item_id || ':revision:' || assignment.revision
-        WHERE assignment.work_item_id = item.id AND assignment.event_type = 'assignment_changed'
-          AND assignment_header.sequence > (SELECT sequence FROM resource_event_headers_v6 WHERE event_id = event.event_id)
-        ORDER BY assignment.revision LIMIT 1), item.target_session_id), event.event_kind,
+      COALESCE((SELECT json_extract(change.payload_json, '$.afterTargetSessionId')
+        FROM work_item_events_v6 AS change
+        JOIN resource_event_headers_v6 AS change_header
+          ON change_header.event_id = 'work-item:' || change.work_item_id || ':revision:' || change.revision
+        WHERE change.work_item_id = item.id
+          AND change_header.sequence <= (SELECT sequence FROM resource_event_headers_v6 WHERE event_id = event.event_id)
+          AND ((change.event_type = 'assignment_changed' AND json_type(change.payload_json, '$.afterTargetSessionId') = 'text')
+            OR (change.event_type = 'parent_changed' AND json_type(change.payload_json, '$.afterTargetSessionId') = 'text'))
+        ORDER BY change_header.sequence DESC LIMIT 1),
+        json_extract((SELECT initial.payload_json FROM work_item_events_v6 AS initial
+          WHERE initial.work_item_id = item.id AND initial.revision = 1 LIMIT 1), '$.targetSessionId')), event.event_kind,
       event.aggregate_revision, NULL, NULL,
       CASE WHEN event.event_kind = 'decision_corrected' THEN
         'work-item-aggregation:' || event.parent_work_item_id || ':revision:' || json_extract(event.payload_json, '$.supersededDecisionRevision')
@@ -507,20 +517,19 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     history.push(move);
     movesBySession.set(move.session_id, history);
   }
-  const workMovesByItem = new Map<string, Array<{ sequence: number; source_root: string; source_owner: string }>>();
+  const workMovesByItem = new Map<string, Array<{ sequence: number; source_root: string }>>();
   const workMoves = db.prepare(`
     SELECT event.work_item_id, header.sequence,
       json_extract(event.payload_json, '$.beforeRootSessionId') AS source_root
-      ,json_extract(event.payload_json, '$.beforeTargetSessionId') AS source_owner
     FROM work_item_events_v6 AS event
     INNER JOIN resource_event_headers_v6 AS header ON header.event_id = 'work-item:' || event.work_item_id || ':revision:' || event.revision
     WHERE event.event_type = 'parent_changed'
       AND json_type(event.payload_json, '$.beforeRootSessionId') = 'text'
     ORDER BY header.sequence
-  `).all() as Array<{ work_item_id: string; sequence: number; source_root: string; source_owner: string }>;
+  `).all() as Array<{ work_item_id: string; sequence: number; source_root: string }>;
   for (const move of workMoves) {
     const history = workMovesByItem.get(move.work_item_id) ?? [];
-    history.push({ sequence: move.sequence, source_root: move.source_root, source_owner: move.source_owner });
+    history.push({ sequence: move.sequence, source_root: move.source_root });
     workMovesByItem.set(move.work_item_id, history);
   }
   if (actualById.size !== expected.length || actual.length !== expected.length) {
@@ -553,7 +562,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
       resourceId: row.resource_id,
       rootId: nextMove?.source_root ?? row.root_id,
       ownerKind: "session",
-      ownerId: nextMove?.source_owner ?? row.owner_id,
+      ownerId: row.owner_id,
       eventKind: row.event_kind,
       resourceRevision: row.resource_revision,
       supersedesEventId: row.supersedes_event_id,

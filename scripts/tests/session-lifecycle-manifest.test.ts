@@ -88,6 +88,10 @@ test("Session lifecycle manifestはrunning/queuedと保護resourceを列挙す�
   db.exec("INSERT INTO coordination_events_v6 (id, actor_session_id, creation_principal_kind, session_role, role_contract_revision, root_session_id, parent_session_id, delegation_depth, kind, summary, payload_json, options_json, created_at) VALUES ('event-child', 'child', 'system', 'executor', 1, 'root', 'root', 1, 'blocker', 'blocked', '{}', '[]', CURRENT_TIMESTAMP), ('event-sibling', 'sibling', 'system', 'executor', 1, 'root', 'root', 1, 'blocker', 'blocked', '{}', '[]', CURRENT_TIMESTAMP)");
   db.exec("INSERT INTO resource_event_headers_v6 (event_id, resource_kind, resource_id, root_id, owner_kind, owner_id, event_kind, principal_kind, operation_id, occurred_at, committed_at, payload_schema_revision, effect) VALUES ('header', 'execution', 'run', 'root', 'session', 'child', 'started', 'system', 'op', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed')");
   db.exec("INSERT INTO resource_event_headers_v6 (event_id, resource_kind, resource_id, root_id, owner_kind, owner_id, event_kind, resource_revision, principal_kind, operation_id, occurred_at, committed_at, payload_schema_revision, effect) VALUES ('header-work', 'work_item', 'work-child', 'root', 'session', 'child', 'created', 7, 'system', 'op-work', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed'), ('header-sibling-work', 'work_item', 'work-sibling', 'root', 'session', 'sibling', 'created', 2, 'system', 'op-sibling-work', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed'), ('header-2', 'execution', 'run', 'root', 'session', 'child', 'updated', 2, 'system', 'op-2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed')");
+  db.exec(`INSERT INTO resource_event_headers_v6 (event_id, resource_kind, resource_id, root_id, owner_kind, owner_id, event_kind, resource_revision, principal_kind, operation_id, occurred_at, committed_at, payload_schema_revision, effect) VALUES
+    ('budget-event', 'budget', 'account-child', 'root', 'session', 'child', 'reserved', 1, 'system', 'op', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed'),
+    ('file-header', 'session_files', 'file-operation', 'root', 'session', 'child', 'applied', 2, 'system', 'file-operation', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed'),
+    ('transcript-header', 'transcript', 'export-operation', 'root', 'session', 'child', 'applied', 2, 'system', 'export-operation', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed')`);
   const manifest = buildSessionLifecycleManifest(db, "child", "root");
   assert.equal(manifest.destinationRootSessionId, "root");
   assert.equal(manifest.sessionId, "child");
@@ -108,7 +112,10 @@ test("Session lifecycle manifestはrunning/queuedと保護resourceを列挙す�
   assert.deepEqual(manifest.interactionIds, ["interaction-child"]);
   assert.deepEqual(manifest.coordinationEventIds, ["event-child"]);
   assert.deepEqual(manifest.resourceHistory, [
+    { resourceKind: "budget", resourceId: "account-child", eventCount: 1, latestRevision: 1 },
     { resourceKind: "execution", resourceId: "run", eventCount: 2, latestRevision: 2 },
+    { resourceKind: "session_files", resourceId: "file-operation", eventCount: 1, latestRevision: 2 },
+    { resourceKind: "transcript", resourceId: "export-operation", eventCount: 1, latestRevision: 2 },
     { resourceKind: "work_item", resourceId: "work-child", eventCount: 1, latestRevision: 7 },
   ]);
   assert.deepEqual([...manifest.blockers].sort(), [

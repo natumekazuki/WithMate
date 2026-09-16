@@ -2046,6 +2046,23 @@ function parseSessionGrantCreateInput(value: unknown): SessionRuntimeGrantCreate
   if (!Array.isArray(r.targetSessionRoles) || r.targetSessionRoles.length === 0 || !r.targetSessionRoles.every((v) => ["standalone", "overall-coordinator", "task-coordinator", "executor"].includes(v as string))) throw invalid("targetSessionRoles", "targetSessionRoles must contain known Session roles.");
   if (r.expiresAt !== null && typeof r.expiresAt !== "string" || (typeof r.expiresAt === "string" && Number.isNaN(Date.parse(r.expiresAt)))) throw invalid("expiresAt", "expiresAt must be an ISO timestamp or null.");
   if (r.resourceIds !== undefined && (!Array.isArray(r.resourceIds) || !r.resourceIds.every((v) => typeof v === "string" && v.length > 0))) throw invalid("resourceIds", "resourceIds must be a string array.");
+  if (typeof r.delegable !== "boolean") throw invalid("delegable", "delegable must be boolean.");
+  if (r.childCeiling !== undefined) {
+    if (!Array.isArray(r.childCeiling)) throw invalid("childCeiling", "childCeiling must be an array.");
+    r.childCeiling.forEach((value, index) => {
+      const permission = requireObject(value, `childCeiling.${index}`);
+      assertKeys(permission, ["mode", "action", "resourceKind", "relationSelector", "effectClass", "targetSessionRoles"], `childCeiling.${index}`);
+      requireEnum(permission.mode, ["exercise", "delegate"] as const, `childCeiling.${index}.mode`);
+      requireEnum(permission.action, SESSION_RUNTIME_OPERATIONS, `childCeiling.${index}.action`);
+      requireEnum(permission.resourceKind, SESSION_AUTHORITY_RESOURCE_KINDS, `childCeiling.${index}.resourceKind`);
+      requireEnum(permission.relationSelector, SESSION_AUTHORITY_RELATION_SELECTORS, `childCeiling.${index}.relationSelector`);
+      requireEnum(permission.effectClass, SESSION_AUTHORITY_EFFECT_CLASSES, `childCeiling.${index}.effectClass`);
+      if (!Array.isArray(permission.targetSessionRoles)
+        || !permission.targetSessionRoles.every((role) => ["standalone", "overall-coordinator", "task-coordinator", "executor"].includes(role as string))) {
+        throw invalid(`childCeiling.${index}.targetSessionRoles`, "targetSessionRoles must contain known Session roles.");
+      }
+    });
+  }
   if (r.budget !== undefined && (!r.budget || typeof r.budget !== "object" || Array.isArray(r.budget) || Object.values(r.budget as object).some((v) => typeof v !== "number" || !Number.isSafeInteger(v) || v < 0))) throw invalid("budget", "budget values must be non-negative safe integers.");
   return {
     parentGrantId: requireNonEmptyString(r.parentGrantId, "parentGrantId"),
@@ -2055,7 +2072,7 @@ function parseSessionGrantCreateInput(value: unknown): SessionRuntimeGrantCreate
     relationSelector: requireEnum(r.relationSelector, SESSION_AUTHORITY_RELATION_SELECTORS, "relationSelector"),
     targetSessionRoles: r.targetSessionRoles as SessionGrantCreateInput["targetSessionRoles"],
     effectClass: requireEnum(r.effectClass, SESSION_AUTHORITY_EFFECT_CLASSES, "effectClass"),
-    delegable: r.delegable === true,
+    delegable: r.delegable,
     ...(r.childCeiling === undefined ? {} : { childCeiling: r.childCeiling as SessionGrantCreateInput["childCeiling"] }),
     expiresAt: r.expiresAt === null ? null : requireNonEmptyString(r.expiresAt, "expiresAt"),
     ...(r.budget === undefined ? {} : { budget: requireObject(r.budget, "budget") as Record<string, number> }),

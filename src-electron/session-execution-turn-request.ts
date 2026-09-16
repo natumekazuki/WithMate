@@ -13,6 +13,7 @@ export type SessionExecutionTurnRequest = {
   initiator: Extract<TurnInitiator, { kind: "session" }> | null;
   catalogRevision: number;
   providerId: "codex" | "copilot";
+  consultationGrantId?: string;
   turn: RunSessionTurnRequest;
   terminalFailureNotification: SessionExecutionTerminalFailureNotification | null;
 } | {
@@ -38,6 +39,7 @@ export function parseSessionExecutionTurnRequest(request: unknown): SessionExecu
     source?: unknown;
     initiator?: unknown;
     catalogRevision?: unknown;
+    consultationGrantId?: unknown;
     turn?: unknown;
   };
   const initiator = parseInitiator(executionRequest.initiator);
@@ -53,6 +55,10 @@ export function parseSessionExecutionTurnRequest(request: unknown): SessionExecu
   if (!Number.isSafeInteger(executionRequest.catalogRevision) || (executionRequest.catalogRevision as number) < 1) {
     throw new TypeError("Session execution catalogRevision must be a positive integer.");
   }
+  if (executionRequest.consultationGrantId !== undefined
+    && (typeof executionRequest.consultationGrantId !== "string" || !executionRequest.consultationGrantId.trim())) {
+    throw new TypeError("Session execution consultationGrantId must be a non-empty string.");
+  }
   const candidate = requireTurn(executionRequest.turn);
   if (candidate.provider !== "codex" && candidate.provider !== "copilot") {
     throw new TypeError("Session execution provider must be codex or copilot.");
@@ -61,6 +67,7 @@ export function parseSessionExecutionTurnRequest(request: unknown): SessionExecu
     initiator: initiator?.kind === "session" ? initiator : null,
     catalogRevision: executionRequest.catalogRevision as number,
     providerId: candidate.provider,
+    ...(executionRequest.consultationGrantId !== undefined ? { consultationGrantId: executionRequest.consultationGrantId } : {}),
     turn: parseTurn(executionRequest.turn),
     terminalFailureNotification: parseTerminalFailureNotification(
       (executionRequest as { terminalFailureNotification?: unknown }).terminalFailureNotification,
@@ -91,6 +98,7 @@ export async function validateSessionExecutionTurnRequest(
   return {
     ...(parsed.initiator ? { initiator: parsed.initiator } : {}),
     catalogRevision: parsed.catalogRevision,
+    ...(parsed.consultationGrantId ? { consultationGrantId: parsed.consultationGrantId } : {}),
     ...(parsed.terminalFailureNotification
       ? { terminalFailureNotification: parsed.terminalFailureNotification }
       : {}),

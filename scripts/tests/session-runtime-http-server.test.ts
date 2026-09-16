@@ -798,15 +798,15 @@ test("AUTONOMY-PARITY-08: HTTPは不正なhandler responseをoperation別のstab
 
 // @test-value v2
 // kind = "regression"
-// claim = "HTTP最終応答の上限超過時もmutation owner応答をappliedとresource ID付きerrorへ写像する"
+// claim = "application mutation projectionの上限超過時もHTTP経由でappliedとresource ID付きerrorへ写像する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// fault = "応答上限によりmutation owner応答のeffectを未適用へ変換しresource IDを失う"
-// observable = "HTTP status、effect、safe resource ID"
+// fault = "application projectionの応答上限によりmutationのeffectを未適用へ変換しresource IDを失う"
+// observable = "application projection由来のHTTP status、effect、safe resource ID"
 // observation_boundary = "public-boundary"
-// scope = "Session Runtime HTTP effect projection"
+// scope = "Session Runtime application mutation projection through HTTP"
 // lifecycle = "permanent"
 // @end-test-value
-test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectとresource IDを返す", async () => {
+test("APPLIED-ID-01: application projection超過をHTTP経由でもeffectとresource ID付きで返す", async () => {
   const createResult = createBoundarySessionResult("session-created");
   const renameResult = createBoundarySessionResult("session-1");
   const executionBase = {

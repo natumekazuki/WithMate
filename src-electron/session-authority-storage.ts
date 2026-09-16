@@ -370,6 +370,16 @@ export function createSessionAuthorityGrant(db: DatabaseSync, input: {
   if (grant.idempotencyKey.trim() === "") {
     throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "Grant creation requires an idempotency key.");
   }
+  const requestJson = JSON.stringify(grant);
+  const replayRows = db.prepare("SELECT * FROM session_authority_grants_v6 WHERE issuer_kind = 'agent' AND issuer_id = ? AND json_extract(provenance_json, '$.idempotencyKey') = ? ORDER BY revision DESC").all(input.issuerSessionId, grant.idempotencyKey) as GrantRow[];
+  const replay = replayRows.map(decodeGrant).find((candidate) => candidate.provenance.source === "agent-grant");
+  if (replay) {
+    if (typeof replay.provenance.requestJson !== "string" || !isDeepStrictEqual(JSON.parse(replay.provenance.requestJson), grant)) {
+      throw new SessionAuthorityError("AUTHORITY_GRANT_REVISION_CONFLICT", "The idempotency key was used with different grant input.", { grantId: replay.grantId });
+    }
+    const event = db.prepare("SELECT payload_json FROM session_authority_grant_events_v6 WHERE grant_id = ? AND grant_revision = 1 ORDER BY sequence LIMIT 1").get(replay.grantId) as { payload_json: string };
+    return { ...replay, revision: 1, revokedAt: null, provenance: JSON.parse(event.payload_json) };
+  }
   const parent = requireGrant(db, grant.parentGrantId);
   if (input.parentProof) {
     if (input.parentProof.principal.kind !== "agent" || input.parentProof.principal.actorSessionId !== input.issuerSessionId
@@ -448,17 +458,6 @@ export function createSessionAuthorityGrant(db: DatabaseSync, input: {
     }
   }
   validateGrantBudget(grant.budget, parent);
-  const requestJson = JSON.stringify(grant);
-  const replayRows = db.prepare("SELECT * FROM session_authority_grants_v6 WHERE issuer_kind = 'agent' AND issuer_id = ?").all(input.issuerSessionId) as GrantRow[];
-  const replay = replayRows.map(decodeGrant).find((candidate) => candidate.provenance.source === "agent-grant"
-    && candidate.provenance.idempotencyKey === grant.idempotencyKey);
-  if (replay) {
-    if (typeof replay.provenance.requestJson !== "string" || !isDeepStrictEqual(JSON.parse(replay.provenance.requestJson), grant)) {
-      throw new SessionAuthorityError("AUTHORITY_GRANT_REVISION_CONFLICT", "The idempotency key was used with different grant input.", { grantId: replay.grantId });
-    }
-    const event = db.prepare("SELECT payload_json FROM session_authority_grant_events_v6 WHERE grant_id = ? AND grant_revision = 1 ORDER BY sequence LIMIT 1").get(replay.grantId) as { payload_json: string };
-    return { ...replay, revision: 1, revokedAt: null, provenance: JSON.parse(event.payload_json) };
-  }
   const parentResourceIds = parent.provenance.resourceIds;
   if (parent.provenance.budgetAccountId !== undefined && parent.provenance.budgetAccountId !== grant.budgetAccountId) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Delegation cannot change the budget account.");
   if (parentResourceIds !== undefined) {
@@ -578,9 +577,21 @@ export function getSessionAuthorityGrant(db: DatabaseSync, issuerSessionId: stri
 }
 
 export function listSessionAuthorityGrants(db: DatabaseSync, issuerSessionId: string, input: SessionGrantListInput = {}): SessionAuthorityGrant[] {
-  const grantee = input.granteeSessionId ?? issuerSessionId;
-  const rows = db.prepare("SELECT * FROM session_authority_grants_v6 WHERE (grantee_session_id = ? OR (issuer_kind = 'agent' AND issuer_id = ?)) ORDER BY grant_id").all(issuerSessionId, issuerSessionId) as GrantRow[];
-  return rows.map(decodeGrant).filter((grant) => (input.granteeSessionId === undefined || grant.granteeSessionId === grantee) && (input.includeRevoked === true || grant.revokedAt === null));
+  const limit = input.limit ?? 50;
+  const clauses = ["(grantee_session_id = ? OR (issuer_kind = 'agent' AND issuer_id = ?))"];
+  const params: Array<string | number> = [issuerSessionId, issuerSessionId];
+  if (input.granteeSessionId !== undefined) {
+    clauses.push("grantee_session_id = ?");
+    params.push(input.granteeSessionId);
+  }
+  if (input.includeRevoked !== true) clauses.push("revoked_at IS NULL");
+  if (input.cursor !== undefined) {
+    clauses.push("grant_id > ?");
+    params.push(input.cursor);
+  }
+  params.push(limit + 1);
+  const rows = db.prepare(`SELECT * FROM session_authority_grants_v6 WHERE ${clauses.join(" AND ")} ORDER BY grant_id LIMIT ?`).all(...params) as GrantRow[];
+  return rows.map(decodeGrant);
 }
 
 export function revokeSessionAuthorityGrantByActor(db: DatabaseSync, issuerSessionId: string, input: SessionGrantRevokeInput, revokedAt: string): SessionAuthorityGrant {

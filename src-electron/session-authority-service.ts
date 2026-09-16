@@ -96,8 +96,8 @@ export class SessionAuthorityService {
 
   grantList(binding: ResolvedAgentRuntimeBinding, input: SessionGrantListInput = {}): SessionGrantListResult {
     this.validateRuntimeBinding(binding);
-    const grants = listSessionAuthorityGrants(this.db, binding.actorSessionId, input).filter((grant) => input.cursor === undefined || grant.grantId > input.cursor);
     const limit = input.limit ?? 50;
+    const grants = listSessionAuthorityGrants(this.db, binding.actorSessionId, input);
     const items = grants.slice(0, limit).map(projectGrant);
     return { items, ...(grants.length > limit ? { nextCursor: items.at(-1)!.grant.grantId } : {}) };
   }

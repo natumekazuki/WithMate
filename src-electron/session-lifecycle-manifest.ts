@@ -204,22 +204,15 @@ export function buildSessionLifecycleManifest(
   const historyKeys = new Map<string, { resourceKind: string; resourceId: string }>();
   const addHistoryKey = (resourceKind: string, resourceId: string): void => { historyKeys.set(`${resourceKind}:${resourceId}`, { resourceKind, resourceId }); };
   ids.forEach((id) => addHistoryKey("session", id));
-  ids.forEach((id) => {
-    addHistoryKey("budget", id);
-    addHistoryKey("session_namespace", id);
-    addHistoryKey("session_files", id);
-    addHistoryKey("transcript", id);
-  });
   workItemIds.forEach((id) => addHistoryKey("work_item", id));
   executionIds.forEach((id) => addHistoryKey("execution", id));
   interactionIds.forEach((id) => addHistoryKey("interaction", id));
   coordinationEventIds.forEach((id) => addHistoryKey("coordination_event", id));
-  grantChains.forEach((row) => addHistoryKey("grant", row.grant_id));
-  budgetAccounts.forEach((row) => addHistoryKey("budget_account", row.account_id));
-  budgetUsage.forEach((row) => addHistoryKey("budget_usage", row.usage_id));
-  reservations.forEach((row) => addHistoryKey("budget_reservation", row.reservation_id));
-  delegationRows.forEach((row) => addHistoryKey("delegation", row.id));
-  artifacts.forEach((row) => addHistoryKey("session_message", String(row.id)));
+  budgetAccounts.forEach((row) => addHistoryKey("budget", row.account_id));
+  const fileHistory = db.prepare(`SELECT DISTINCT resource_kind, resource_id FROM resource_event_headers_v6
+    WHERE resource_kind IN ('session_files', 'transcript') AND owner_kind = 'session'
+      AND owner_id IN (${marks})`).all(...ids) as Array<{ resource_kind: string; resource_id: string }>;
+  fileHistory.forEach((row) => addHistoryKey(row.resource_kind, row.resource_id));
   const historyClauses = [...historyKeys.values()];
   const historyWhere = historyClauses.length === 0 ? "0" : historyClauses.map(() => "(resource_kind = ? AND resource_id = ?)").join(" OR ");
   const resourceHistory = historyClauses.length === 0 ? [] : db.prepare(`
