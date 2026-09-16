@@ -69,6 +69,20 @@ describe("Session authority root transfer", () => {
         proof: trustedProof("root-b"), expiresAt: null, issuedAt: NOW,
       })[0]!;
 
+      const wrongRootCapability = issueTrustedCrossRootTransferCapability(db, {
+        sourceActorSessionId: "root-c", destinationRootSessionId: "root-c",
+        destinationTargetRoles: ["overall-coordinator"], principal: trustedProof("root-c").principal,
+        proof: trustedProof("root-c"), expiresAt: null, issuedAt: NOW,
+      })[0]!;
+      assert.throws(() => transferSessionAuthority(db, {
+        sessionId: "root-a", sourceRootSessionId: "root-a", destinationRootSessionId: "root-b",
+        destinationIssuerGrantId: destination.grantId, destinationIssuerGrantRevision: destination.revision,
+        operationId: "root-transfer-wrong", transferredAt: NOW,
+        retireSourceTransferCapabilityGrantId: wrongRootCapability.grantId,
+      }), (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_SCOPE_INVALID");
+      for (const grantId of [source.grantId, wrongRootCapability.grantId]) {
+        assert.equal((db.prepare("SELECT revoked_at FROM session_authority_grants_v6 WHERE grant_id = ?").get(grantId) as { revoked_at: string | null }).revoked_at, null);
+      }
       transferSessionAuthority(db, {
         sessionId: "root-a", sourceRootSessionId: "root-a", destinationRootSessionId: "root-b",
         destinationIssuerGrantId: destination.grantId, destinationIssuerGrantRevision: destination.revision,
@@ -81,17 +95,8 @@ describe("Session authority root transfer", () => {
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE json_extract(provenance_json, '$.supersedesGrantId') = ?")
         .get(source.grantId) as { count: number }).count, 0);
 
-      const wrongRootCapability = issueTrustedCrossRootTransferCapability(db, {
-        sourceActorSessionId: "root-c", destinationRootSessionId: "root-c",
-        destinationTargetRoles: ["overall-coordinator"], principal: trustedProof("root-c").principal,
-        proof: trustedProof("root-c"), expiresAt: null, issuedAt: NOW,
-      })[0]!;
-      assert.throws(() => transferSessionAuthority(db, {
-        sessionId: "root-a", sourceRootSessionId: "root-a", destinationRootSessionId: "root-b",
-        destinationIssuerGrantId: destination.grantId, destinationIssuerGrantRevision: destination.revision,
-        operationId: "root-transfer-2", transferredAt: NOW,
-        retireSourceTransferCapabilityGrantId: wrongRootCapability.grantId,
-      }), (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_SCOPE_INVALID");
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE grantee_session_id='root-a' AND root_session_id='root-b' AND revoked_at IS NULL AND EXISTS (SELECT 1 FROM json_each(actions_json) WHERE value='session.move')")
+        .get() as { count: number }).count, 0);
     } finally {
       db.close();
       storage.close();

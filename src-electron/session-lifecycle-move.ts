@@ -326,7 +326,8 @@ export function applySessionMove(
       .map((row) => row.session_id)) {
       transferSessionAuthority(db, { sessionId: id, sourceRootSessionId: source.root_session_id, destinationRootSessionId: destinationRoot,
         destinationIssuerGrantId: destinationGrantId, destinationIssuerGrantRevision: destinationGrantRevision, operationId, transferredAt: now,
-        retireSourceTransferCapabilityGrantId: rootMerge && id === source.root_session_id ? (proof.grantId ?? undefined) : undefined });
+        retireSourceTransferCapabilityGrantId: rootMerge && proof.principal.kind === "agent" && id === proof.principal.actorSessionId
+          ? (proof.grantId ?? undefined) : undefined });
     }
   }
   return { sessionId: input.sessionId, sourceRootSessionId: source.root_session_id, destinationRootSessionId: destinationRoot,

@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   SESSION_AUTHORITY_MAPPING_REVISION,
@@ -51,6 +52,7 @@ type SessionIdentity = {
 type ScopeCandidate = {
   scope: ResolvedSessionAuthorityScope;
   targetRole?: SessionRole;
+  requiredGrantId?: string;
 };
 
 export class SessionAuthorityService {
@@ -231,6 +233,7 @@ export class SessionAuthorityService {
         resolvedScope: candidate.scope,
       };
       for (const grant of grants) {
+      if (candidate.requiredGrantId !== undefined && grant.grantId !== candidate.requiredGrantId) continue;
       if (grant.rootSessionId !== candidate.scope.rootSessionId || !grantAllows(grant, request, candidate.targetRole)) continue;
       if ((actor.rootSessionId !== candidate.scope.rootSessionId && !["session.move", "session.move.manifest", "work.move", "work.create"].includes(operation)) || consultationGrantId !== undefined) {
         if (!Array.isArray(grant.provenance.resourceIds) || grant.expiresAt === null
@@ -358,7 +361,8 @@ function resolveScopes(
         }];
       }
     }
-    return sessionScopes(db, actor, targetSessionId, definition.resourceKind);
+    const replay = operation === "session.move" ? committedRootMoveReplayScope(db, actor, record) : null;
+    return replay ? [replay] : sessionScopes(db, actor, targetSessionId, definition.resourceKind);
   }
   if (definition.scopeSource === "work_item" || definition.scopeSource === "parent_work_item") {
     const key = definition.scopeSource === "parent_work_item" ? "parentWorkItemId" : "workItemId";
@@ -389,6 +393,30 @@ function resolveScopes(
     return coordinationEventScopes(db, actor, eventId);
   }
   throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The operation authority scope cannot be resolved.", { operation });
+}
+
+function committedRootMoveReplayScope(db: DatabaseSync, actor: SessionIdentity, input: Record<string, unknown>): ScopeCandidate | null {
+  if (input.kind !== "cross_root" || input.destinationParentSessionId !== null
+    || typeof input.sessionId !== "string" || typeof input.destinationRootSessionId !== "string"
+    || typeof input.idempotencyKey !== "string") return null;
+  const row = db.prepare(`SELECT manifest_json, effects_json FROM session_lifecycle_operations_v6
+    WHERE operation = 'session.move' AND principal_kind = 'agent' AND principal_id = ? AND idempotency_key = ?
+      AND target_session_id = ? AND source_root_session_id = ? AND destination_root_session_id = ?`)
+    .get(actor.sessionId, input.idempotencyKey, input.sessionId, input.sessionId, input.destinationRootSessionId) as
+    { manifest_json: string; effects_json: string } | undefined;
+  if (!row) return null;
+  const manifest = objectInput(JSON.parse(row.manifest_json));
+  if (objectInput(JSON.parse(row.effects_json)).database !== "committed" || !isDeepStrictEqual(manifest.input, input)) return null;
+  const destinationProof = objectInput(manifest.destinationProof);
+  if (typeof destinationProof.grantId !== "string") return null;
+  const target = requireSessionIdentity(db, input.sessionId);
+  const destination = requireSessionIdentity(db, input.destinationRootSessionId);
+  if (target.rootSessionId !== destination.sessionId || destination.rootSessionId !== destination.sessionId
+    || destination.parentSessionId !== null) return null;
+  return { scope: { resourceKind: "session", resourceId: target.sessionId, rootSessionId: destination.sessionId,
+    ownerKind: "session", ownerId: destination.sessionId, relation: "root_owner" },
+    // The committed move already admitted the original Roles; recovery only settles its remaining effects.
+    requiredGrantId: destinationProof.grantId };
 }
 
 function sessionScopes(
@@ -496,7 +524,7 @@ function coordinationEventScopes(db: DatabaseSync, actor: SessionIdentity, event
 }
 
 function sessionRelations(actor: SessionIdentity, target: SessionIdentity): SessionAuthorityRelationSelector[] {
-  if (actor.sessionId === target.sessionId) return ["self"];
+  if (actor.sessionId === target.sessionId) return actor.sessionId === actor.rootSessionId ? ["self", "root_owner"] : ["self"];
   const values: SessionAuthorityRelationSelector[] = [];
   if (actor.parentSessionId === target.sessionId) values.push("parent");
   if (target.parentSessionId === actor.sessionId) values.push("direct_child");

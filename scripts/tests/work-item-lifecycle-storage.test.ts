@@ -151,14 +151,14 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
 
   // @test-value v2
   // kind = "compatibility"
-  // claim = "旧schemaのRoot Workは空契約・progress・result・履歴・冪等応答を失わずmigration後にtransferred_rootへ移管し再openできる"
+  // claim = "旧schemaのRoot Workは空契約・progress・result・履歴・保存済み冪等応答rowを失わずmigration後にtransferred_rootへ移管し再openできる"
   // fault = "CHECK再構築が既存行や参照を欠落させる、またはroot変換が契約・progressを改変し履歴再生を壊す"
-  // observable = "migration前後の全Work関連table、移管後の公開Workとhistory、再open時の履歴検証"
+  // observable = "migration前後の投入済みWork・履歴・結果・冪等応答row、移管後の公開Workとhistory、再open時の履歴検証"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Ownership transfer" }
   // scope = "populated Work schema migrationとroot所有権変換"
   // lifecycle = "permanent"
-  // distinction = "実SQLiteの旧CHECKを再構成し、有データmigrationと公開projectionの完全保存を確認する。通常delegatedの空契約拒否も検証する"
+  // distinction = "実SQLiteの旧CHECKを再構成し、fixture投入rowと公開projectionの保存を確認する。通常delegatedの空契約拒否も検証する"
   // @end-test-value
   it("旧schemaのRoot Workをprogressと結果を保持して移管する", () => {
     let item = createRoot("source-root-work");

@@ -43,10 +43,10 @@ function child(id: string, parent: Session, role: "task-coordinator" | "executor
 
 // @test-value v2
 // kind = "invariant"
-// claim = "root budget transferはsource account identity、累積storage使用量、子孫の親子関係を保ったままdestination rootへ一度だけ移管する"
-// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Allocation と authority" }
+// claim = "root budget transferはaccount identity、累積storageとconcurrentTurnsの配分合計を保ち、直属allocationをdestinationへ移して孫の親を維持する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Ownership transfer" }
 // fault = "source rootをroot accountのまま二重所有にする、storage committedを落とす、またはdirect childと深い子孫のparent関係を壊す"
-// observable = "resource_budget_accounts_v6のaccount_kind・root_session_id・parent_account_id、両rootのstorage committed、ledger verifier結果"
+// observable = "account_kind・root_session_id・parent_account_id、両rootのstorage committed、source hard_limit、ledger verifier結果"
 // observation_boundary = "component-behavior"
 // scope = "root-budget-transfer"
 // lifecycle = "permanent"
@@ -155,10 +155,10 @@ it("root全体をbudget account identityと累積storageを保って移管する
 
 // @test-value v2
 // kind = "security"
-// claim = "inactiveな子budget allocationをroot transferでdestination authorityへ付け替えて復活させない"
-// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/08-resource-budget.md#Allocation と authority" }
-// fault = "revokedまたはexpiredなsource child accountを移管後にactive allocationとして再利用する"
-// observable = "transfer拒否コード、source root/childのroot_session_idとparent_account_id"
+// claim = "revokedな子budget allocationをroot transferでdestination authorityへ付け替えて復活させない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Ownership transfer" }
+// fault = "revokedなsource child accountを移管後にactive allocationとして再利用する"
+// observable = "transfer拒否コード、source root/childのroot_session_idとparent_account_id、childのrevoked_at"
 // observation_boundary = "component-behavior"
 // scope = "root-budget-transfer-inactive-allocation"
 // lifecycle = "permanent"
@@ -196,6 +196,8 @@ it("inactive child allocationのauthority復活を拒否する", async () => {
     assert.equal(sourceState.root_session_id, sourceRoot.id);
     assert.equal(sourceState.parent_account_id, null);
     assert.equal((db.prepare("SELECT root_session_id FROM resource_budget_accounts_v6 WHERE account_id = ?").get(sourceChild.id) as { root_session_id: string }).root_session_id, sourceRoot.id);
+    assert.deepEqual({ ...db.prepare("SELECT parent_account_id, revoked_at FROM resource_budget_accounts_v6 WHERE account_id = ?").get(sourceChild.id) },
+      { parent_account_id: sourceRoot.id, revoked_at: NOW });
   } finally {
     budget.close();
     db.close();

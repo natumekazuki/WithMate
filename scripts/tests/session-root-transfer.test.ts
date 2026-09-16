@@ -12,6 +12,7 @@ import {
   SESSION_AUTHORITY_OPERATION_DEFINITIONS,
   type MutationAuthorityProof,
   type SessionAuthorityGrant,
+  SessionAuthorityError,
 } from "../../src/session-authority.js";
 import { buildChildSessionRoleBinding, type RootSessionRole, type SessionRole } from "../../src/session-role-binding.js";
 import { buildNewSession, type Session } from "../../src/session-state.js";
@@ -20,11 +21,7 @@ import {
   issueTrustedCrossRootTransferCapability,
   listActiveSessionAuthorityGrants,
 } from "../../src-electron/session-authority-storage.js";
-import {
-  ResourceBudgetError,
-  ResourceBudgetStorage,
-  verifyResourceBudgetLedger,
-} from "../../src-electron/resource-budget-storage.js";
+import { ResourceBudgetStorage, verifyResourceBudgetLedger } from "../../src-electron/resource-budget-storage.js";
 import { verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
@@ -56,11 +53,12 @@ function trustedMoveProof(rootSessionId: string): MutationAuthorityProof {
     grantId: null, grantRevision: null, evaluatedAt: NOW };
 }
 
-function issueMoveGrant(db: DatabaseSync, sourceActorSessionId: string, destinationRootSessionId: string): SessionAuthorityGrant {
+function issueMoveGrant(db: DatabaseSync, sourceActorSessionId: string, destinationRootSessionId: string,
+  destinationTargetRoles: readonly SessionRole[] = ALL_ROLES): SessionAuthorityGrant {
   const before = new Set(listActiveSessionAuthorityGrants(db, sourceActorSessionId, new Date(NOW)).map((grant) => grant.grantId));
   const proof = trustedMoveProof(destinationRootSessionId);
   const issued = issueTrustedCrossRootTransferCapability(db, { sourceActorSessionId, destinationRootSessionId,
-    destinationTargetRoles: ALL_ROLES, principal: { kind: "system", service: "session-root-transfer-test" },
+    destinationTargetRoles, principal: { kind: "system", service: "session-root-transfer-test" },
     proof, expiresAt: null, issuedAt: NOW });
   const created = issued.find((grant) => !before.has(grant.grantId)
     && grant.provenance.source === "trusted-cross-root-transfer");
@@ -122,12 +120,54 @@ function enlargeDestinationBudget(db: DatabaseSync, destinationRootSessionId: st
   budgets.close();
 }
 
-function prepareMove(db: DatabaseSync, sourceRootSessionId: string, destinationRootSessionId: string) {
+function prepareMove(db: DatabaseSync, sourceRootSessionId: string, destinationRootSessionId: string,
+  destinationTargetRoles: readonly SessionRole[] = ALL_ROLES) {
   const sourceGrant = issueMoveGrant(db, sourceRootSessionId, sourceRootSessionId);
-  const destinationGrant = issueMoveGrant(db, sourceRootSessionId, destinationRootSessionId);
+  const destinationGrant = issueMoveGrant(db, sourceRootSessionId, destinationRootSessionId, destinationTargetRoles);
   return { sourceGrant, destinationGrant,
     sourceProof: agentMoveProof(sourceRootSessionId, sourceGrant, sourceRootSessionId),
     destinationProof: agentMoveProof(sourceRootSessionId, destinationGrant, destinationRootSessionId) };
+}
+
+function permissionShape(permission: SessionAuthorityGrant["childCeiling"][number]) {
+  return { mode: permission.mode, action: permission.action, resourceKind: permission.resourceKind,
+    relationSelector: permission.relationSelector, effectClass: permission.effectClass,
+    targetSessionRoles: [...permission.targetSessionRoles].sort() };
+}
+
+function grantContractShape(grant: SessionAuthorityGrant) {
+  return { granteeSessionId: grant.granteeSessionId, actions: [...grant.actions].sort(),
+    resourceKind: grant.resourceKind, relationSelector: grant.relationSelector,
+    targetSessionRoles: [...grant.targetSessionRoles].sort(), effectClass: grant.effectClass,
+    delegable: grant.delegable,
+    childCeiling: grant.childCeiling.map(permissionShape)
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))) };
+}
+
+function earlierExpiry(left: string | null, right: string | null): string | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return left < right ? left : right;
+}
+
+function expectedTransferredGrants(db: DatabaseSync, sessionIds: readonly string[], sourceRootSessionId: string,
+  retiredGrantId: string, destinationIssuer: SessionAuthorityGrant) {
+  return sessionIds.flatMap((sessionId) => listActiveSessionAuthorityGrants(db, sessionId, new Date(NOW))
+    .filter((grant) => grant.rootSessionId === sourceRootSessionId && grant.grantId !== retiredGrantId)
+    .map((grant) => ({ ...grantContractShape(grant), expiresAt: earlierExpiry(grant.expiresAt, destinationIssuer.expiresAt),
+      supersedesGrantId: grant.grantId, supersedesGrantRevision: grant.revision + 1 })))
+    .sort((left, right) => left.supersedesGrantId.localeCompare(right.supersedesGrantId));
+}
+
+function actualTransferredGrants(db: DatabaseSync, sessionIds: readonly string[], destinationRootSessionId: string,
+  operationId: string) {
+  return sessionIds.flatMap((sessionId) => listActiveSessionAuthorityGrants(db, sessionId, new Date(LATER))
+    .filter((grant) => grant.rootSessionId === destinationRootSessionId
+      && grant.provenance.source === "session-transfer" && grant.provenance.operationId === operationId)
+    .map((grant) => ({ ...grantContractShape(grant), expiresAt: grant.expiresAt,
+      supersedesGrantId: grant.provenance.supersedesGrantId,
+      supersedesGrantRevision: grant.provenance.supersedesGrantRevision })))
+    .sort((left, right) => String(left.supersedesGrantId).localeCompare(String(right.supersedesGrantId)));
 }
 
 function baselineGrantShape(db: DatabaseSync, sessionId: string) {
@@ -153,21 +193,23 @@ function binding(db: DatabaseSync, sessionId: string) {
 }
 
 function snapshot(db: DatabaseSync): string {
-  return JSON.stringify({ sessions: db.prepare("SELECT id, resource_revision FROM sessions_v6 ORDER BY id").all(),
-    bindings: db.prepare("SELECT * FROM session_role_bindings_v6 ORDER BY session_id").all(),
-    work: db.prepare(`SELECT id, kind, root_session_id, creator_session_id, target_session_id,
-      parent_work_item_id, state, revision, result_json FROM work_items_v6 ORDER BY id`).all(),
-    accounts: db.prepare("SELECT * FROM resource_budget_accounts_v6 ORDER BY account_id").all(),
-    dimensions: db.prepare("SELECT * FROM resource_budget_dimensions_v6 ORDER BY account_id, dimension").all(),
-    grants: db.prepare(`SELECT grant_id, root_session_id, grantee_session_id, revision, revoked_at
-      FROM session_authority_grants_v6 ORDER BY grant_id`).all() });
+  const tables = ["sessions_v6", "session_role_bindings_v6", "session_resource_events_v6",
+    "work_items_v6", "work_item_events_v6", "work_item_result_revisions_v6", "work_item_aggregations_v6",
+    "work_item_aggregation_events_v6", "work_item_aggregation_decisions_v6", "work_item_idempotency_v6",
+    "work_item_execution_associations_v6", "work_item_aggregation_idempotency_v6", "work_item_tombstones_v6",
+    "resource_budget_accounts_v6", "resource_budget_dimensions_v6",
+    "resource_budget_reservations_v6", "resource_budget_metered_usage_v6", "resource_budget_events_v6",
+    "resource_budget_idempotency_v6", "resource_budget_migration_markers_v6", "session_authority_grants_v6",
+    "session_authority_grant_events_v6", "resource_event_headers_v6"] as const;
+  return JSON.stringify(Object.fromEntries(tables.map((table) =>
+    [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])));
 }
 
 describe("Session root transfer", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "standalone rootのwhole-root移管はdestinationをoverall-coordinatorへ昇格し、source Session・Root Work Item・budget・grantを同じtransactionでdestination rootへ統合する"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Session ownership transfer" }
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#ownership-transfer" }
   // fault = "root入力をparentなしとして拒否する、またはSession、Root Work Item、budget、grantの一部だけを移管する"
   // observable = "再open後のSession binding/revision、Work Item projection/history、budget account/ledger、authority grant"
   // observation_boundary = "component-behavior"
@@ -199,6 +241,9 @@ describe("Session root transfer", () => {
         destinationBaselineBefore = baselineGrantShape(db, destination.id);
         assert.ok(destinationBaselineBefore.length > 0);
         const move = prepareMove(db, source.id, destination.id);
+        const expectedGrantTransfers = expectedTransferredGrants(db, [source.id], source.id,
+          move.sourceGrant.grantId, move.destinationGrant);
+        assert.ok(expectedGrantTransfers.length > 0);
         db.exec("BEGIN IMMEDIATE");
         const result = applyRootMove(db, { source, destination, descendants: [],
           sourceProof: move.sourceProof, destinationProof: move.destinationProof,
@@ -249,10 +294,10 @@ describe("Session root transfer", () => {
           .get(move.sourceGrant.grantId) as { revoked_at: string | null }).revoked_at, LATER);
         assert.equal((db.prepare(`SELECT COUNT(*) AS count FROM session_authority_grants_v6
           WHERE json_extract(provenance_json, '$.supersedesGrantId') = ?`).get(move.sourceGrant.grantId) as { count: number }).count, 0);
-        assert.equal((db.prepare(`SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE grantee_session_id = ?
-          AND root_session_id = ? AND revoked_at IS NULL`).get(source.id, source.id) as { count: number }).count, 0);
-        assert.ok((db.prepare(`SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE grantee_session_id = ?
-          AND root_session_id = ? AND revoked_at IS NULL`).get(source.id, destination.id) as { count: number }).count > 0);
+        assert.deepEqual(actualTransferredGrants(db, [source.id], destination.id, "root-transfer-standalone"),
+          expectedGrantTransfers);
+        assert.equal(listActiveSessionAuthorityGrants(db, source.id, new Date(LATER))
+          .filter((grant) => grant.rootSessionId === source.id).length, 0);
         assert.deepEqual(baselineGrantShape(db, destination.id), destinationBaselineBefore);
         verifyResourceBudgetLedger(db);
         verifyResourceHistoryProjections(db);
@@ -279,7 +324,7 @@ describe("Session root transfer", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "overall-coordinator rootのwhole-root移管はdirect childをdestination直下へ平坦化し、grandchildの親子関係と全Sessionのrootを保つ"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Session ownership transfer" }
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#ownership-transfer" }
   // fault = "旧root配下をそのまま一段深くしてdepth上限を超える、またはdescendantを移管漏れにする"
   // observable = "再open後のsource root、direct task child、executor grandchildのrole bindingとgrant root"
   // observation_boundary = "component-behavior"
@@ -307,6 +352,10 @@ describe("Session root transfer", () => {
         settleRootWork(db, source.id);
         enlargeDestinationBudget(db, destination.id);
         const move = prepareMove(db, source.id, destination.id);
+        const movedSessionIds = [source.id, task.id, executor.id];
+        const expectedGrantTransfers = expectedTransferredGrants(db, movedSessionIds, source.id,
+          move.sourceGrant.grantId, move.destinationGrant);
+        assert.ok(expectedGrantTransfers.length > 0);
         db.exec("BEGIN IMMEDIATE");
         const result = applyRootMove(db, { source, destination, descendants: [task, executor],
           sourceProof: move.sourceProof, destinationProof: move.destinationProof, operationId: "root-transfer-tree" });
@@ -319,11 +368,11 @@ describe("Session root transfer", () => {
           parent_session_id: destination.id, delegation_depth: 1 });
         assert.deepEqual(binding(db, executor.id), { session_role: "executor", root_session_id: destination.id,
           parent_session_id: task.id, delegation_depth: 2 });
-        for (const sessionId of [source.id, task.id, executor.id]) {
-          assert.equal((db.prepare(`SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE grantee_session_id = ?
-            AND root_session_id = ? AND revoked_at IS NULL`).get(sessionId, source.id) as { count: number }).count, 0);
-          assert.ok((db.prepare(`SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE grantee_session_id = ?
-            AND root_session_id = ? AND revoked_at IS NULL`).get(sessionId, destination.id) as { count: number }).count > 0);
+        assert.deepEqual(actualTransferredGrants(db, movedSessionIds, destination.id, "root-transfer-tree"),
+          expectedGrantTransfers);
+        for (const sessionId of movedSessionIds) {
+          assert.equal(listActiveSessionAuthorityGrants(db, sessionId, new Date(LATER))
+            .filter((grant) => grant.rootSessionId === source.id).length, 0);
           assert.equal((db.prepare(`SELECT COUNT(*) AS count FROM resource_event_headers_v6 WHERE resource_kind = 'session'
             AND resource_id = ? AND resource_revision = 2 AND root_id = ?`).get(sessionId, destination.id) as { count: number }).count, 1);
         }
@@ -348,39 +397,56 @@ describe("Session root transfer", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "destination budget不足のwhole-root移管はSession、Work Item、budget、grantの永続化状態を一切変更せずrollbackできる"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Session ownership transfer" }
-  // fault = "budget capacity検証の前後でroot移管の一部を保存し、失敗後に複数resourceのownerやrevisionが分岐する"
-  // observable = "失敗transaction前後のSession、binding、Work Item、budget account/dimension、grant projection"
+  // claim = "whole-root移管の後段authority検証が拒否した場合、先行更新されたSession、Work Item、budgetと全履歴をtransaction rollbackで元に戻す"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#ownership-transfer" }
+  // fault = "authority ceiling拒否より前のroot統合を部分保存し、失敗後にprojectionまたはevent履歴だけが移管済みになる"
+  // observable = "拒否catch時の先行binding・Work event・budget更新と、rollback前後の全Session/Work/budget/grant projection・event・shared header"
   // observation_boundary = "component-behavior"
   // scope = "whole-root transfer transaction rollback"
   // lifecycle = "permanent"
-  // impact = "容量不足という通常の拒否でSession treeまたは認可・予算履歴が部分移管され、復旧不能な不整合になる"
-  // distinction = "個別storageのcapacity testでは確認できないapplySessionMove全体のtransaction rollback境界を比較する"
+  // impact = "認可拒否でSession treeまたはWork・予算履歴が部分移管され、再open後に正本間のownerが分岐する"
+  // distinction = "個別storageの拒否testでは確認できない、複数storage更新後に起きるapplySessionMove後段失敗のrollback境界を比較する"
   // risk_tags = ["authorization", "billing", "irreversible-data-loss"]
   // @end-test-value
-  it("destination budget不足ではroot移管全体をrollbackする", async () => {
+  it("後段authority ceiling拒否では先行したroot移管更新をすべてrollbackする", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-root-transfer-rollback-"));
     const dbPath = path.join(directory, "db.sqlite");
     const sessions = new SessionStorageV6(dbPath);
     try {
-      const source = root("root-source", "standalone");
+      const source = root("root-source", "overall-coordinator");
       const destination = root("root-destination", "standalone");
       sessions.insertSession(source);
       sessions.insertSession(destination);
       const db = new DatabaseSync(dbPath);
       try {
         settleRootWork(db, source.id);
-        const move = prepareMove(db, source.id, destination.id);
+        enlargeDestinationBudget(db, destination.id);
+        const move = prepareMove(db, source.id, destination.id, ["standalone", "executor"]);
         const before = snapshot(db);
         db.exec("BEGIN IMMEDIATE");
-        assert.throws(() => applyRootMove(db, { source, destination, descendants: [],
-          sourceProof: move.sourceProof, destinationProof: move.destinationProof,
-          operationId: "root-transfer-budget-rejected" }),
-        (error) => error instanceof ResourceBudgetError && error.code === "BUDGET_HARD_LIMIT_EXCEEDED");
+        assert.throws(() => {
+          try {
+            applyRootMove(db, { source, destination, descendants: [], sourceProof: move.sourceProof,
+              destinationProof: move.destinationProof, operationId: "root-transfer-authority-rejected" });
+          } catch (error) {
+            assert.deepEqual(binding(db, source.id), { session_role: "executor", root_session_id: destination.id,
+              parent_session_id: destination.id, delegation_depth: 1 });
+            const writtenWork = db.prepare(`SELECT kind, origin_kind, root_session_id, creator_session_id,
+              target_session_id, revision FROM work_items_v6 WHERE id = ?`).get(`root-work-item:${source.id}`) as Record<string, unknown>;
+            assert.deepEqual({ ...writtenWork }, { kind: "delegated", origin_kind: "transferred_root",
+              root_session_id: destination.id, creator_session_id: destination.id,
+              target_session_id: source.id, revision: 4 });
+            assert.equal((db.prepare(`SELECT COUNT(*) AS count FROM work_item_events_v6 WHERE work_item_id = ?
+              AND event_type = 'parent_changed'`).get(`root-work-item:${source.id}`) as { count: number }).count, 1);
+            assert.deepEqual({ ...db.prepare(`SELECT account_kind, root_session_id, parent_account_id
+              FROM resource_budget_accounts_v6 WHERE account_id = ?`).get(source.id) as Record<string, unknown> },
+            { account_kind: "session", root_session_id: destination.id, parent_account_id: destination.id });
+            throw error;
+          }
+        }, (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_FORBIDDEN");
         db.exec("ROLLBACK");
         assert.equal(snapshot(db), before);
-        assert.deepEqual(binding(db, source.id), { session_role: "standalone", root_session_id: source.id,
+        assert.deepEqual(binding(db, source.id), { session_role: "overall-coordinator", root_session_id: source.id,
           parent_session_id: null, delegation_depth: 0 });
       } finally { db.close(); }
     } finally {

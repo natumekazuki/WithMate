@@ -955,8 +955,7 @@ export function transferSessionAuthority(db: DatabaseSync, input: {
   const retiredCapabilityId = input.retireSourceTransferCapabilityGrantId ?? null;
   if (retiredCapabilityId !== null) {
     const retiredCapability = sourceGrants.find((grant) => grant.grantId === retiredCapabilityId);
-    if (input.sessionId !== input.sourceRootSessionId
-      || !retiredCapability || !isSourceTransferCapability(retiredCapability, input.sourceRootSessionId)) {
+    if (!retiredCapability || !isSourceTransferCapability(retiredCapability, input.sourceRootSessionId, input.sessionId)) {
       throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "Only the exact trusted source-root transfer capability may be retired.", {
         grantId: retiredCapabilityId,
       });
@@ -1082,12 +1081,13 @@ export function assertGrantProofCurrent(
 function isSourceTransferCapability(
   grant: SessionAuthorityGrant,
   sourceRootSessionId: string,
+  actorSessionId: string,
 ): boolean {
   return grant.provenance.source === "trusted-cross-root-transfer"
     && grant.provenance.sourceRootSessionId === sourceRootSessionId
     && grant.provenance.destinationRootSessionId === sourceRootSessionId
     && grant.rootSessionId === sourceRootSessionId
-    && grant.granteeSessionId === sourceRootSessionId
+    && grant.granteeSessionId === actorSessionId
     && grant.actions.length === 1
     && grant.actions[0] === "session.move"
     && grant.resourceKind === "session"
