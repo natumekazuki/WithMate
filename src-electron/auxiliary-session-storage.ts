@@ -96,7 +96,7 @@ export class AuxiliarySessionStorage {
         SELECT created_at, updated_at, summary_json
         FROM auxiliary_sessions
         WHERE parent_session_id = ?
-        ORDER BY created_at ASC, id ASC
+        ORDER BY updated_at DESC, id DESC
       `).all(parentSessionId) as AuxiliarySessionSummaryRow[];
       return rows
         .map(parseAuxiliarySessionSummaryRow)

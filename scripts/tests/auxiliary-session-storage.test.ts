@@ -347,6 +347,56 @@ test("AuxiliarySessionStorage は軽量summaryを保存して再読込する", a
 
 // @test-value v2
 // kind = "contract"
+// claim = "AuxiliarySessionStorageの親ごとの一覧は最終使用時刻の降順で返し、同時刻ではIDの降順で安定する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md:75" }
+// fault = "保存順や作成時刻の順序、または同時刻のID昇順を返し、最近使ったAuxiliaryが一覧の先頭に来ない"
+// observable = "listAuxiliarySessionsの返却ID順"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-storage-order"
+// lifecycle = "permanent"
+// @end-test-value
+test("AuxiliarySessionStorage は最終使用順で一覧を返す", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-order-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  const storage = new AuxiliarySessionStorage(dbPath);
+  try {
+    storage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-created-later",
+      parentSessionId: "parent-order",
+      createdAt: "2026-01-03T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }));
+    storage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-last-used",
+      parentSessionId: "parent-order",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-03T00:00:00.000Z",
+    }));
+    storage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-same-time-a",
+      parentSessionId: "parent-order",
+      createdAt: "2026-01-04T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    }));
+    storage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-same-time-b",
+      parentSessionId: "parent-order",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    }));
+
+    assert.deepEqual(
+      storage.listAuxiliarySessions("parent-order").map((summary) => summary.id),
+      ["aux-last-used", "aux-same-time-b", "aux-same-time-a", "aux-created-later"],
+    );
+  } finally {
+    storage.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "旧Auxiliaryのpreview backfillは最新の有効なcompleted raw itemから最終assistant blockだけを採用する"
 // oracle = { type = "contract", ref = "issue-710-preview-legacy-audit-backfill" }
 // fault = "中間assistant結合値、失敗turn、空または切り詰め済みの最新completed raw itemを最終応答として保存する"

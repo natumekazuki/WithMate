@@ -71,10 +71,10 @@ function writePrefs(parentSessionId: string, prefs: WorkspacePrefs): void {
   }
 }
 
-function sortByCreation(summaries: AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
+function sortByLastUsed(summaries: AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
   return [...summaries].sort((left, right) => {
-    const created = left.createdAt.localeCompare(right.createdAt);
-    return created || left.id.localeCompare(right.id);
+    const updated = right.updatedAt.localeCompare(left.updatedAt);
+    return updated || right.id.localeCompare(left.id);
   });
 }
 
@@ -134,7 +134,7 @@ export function useAuxiliaryWorkspace(input: {
     setLoading(true);
     setError(null);
     try {
-      const next = sortByCreation(await api.listAuxiliarySessions(parentSessionId));
+      const next = sortByLastUsed(await api.listAuxiliarySessions(parentSessionId));
       if (
         !mountedRef.current
         ||
@@ -238,7 +238,7 @@ export function useAuxiliaryWorkspace(input: {
         || terminalRevision !== terminalRevisionRef.current.get(id)
         || terminalEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
       const nextSummaries = fullSession
-        ? sortByCreation([
+        ? sortByLastUsed([
           ...summariesRef.current.filter((summary) => summary.id !== id),
           projectAuxiliarySessionSummary(session),
         ])
@@ -312,7 +312,7 @@ export function useAuxiliaryWorkspace(input: {
     detailsRef.current.set(saved.id, saved);
     const binding = bindingsRef.current.get(saved.id);
     if (binding) binding.sessionRef.current = saved;
-    const nextSummaries = sortByCreation([...summariesRef.current.filter((summary) => summary.id !== saved.id), projectAuxiliarySessionSummary(saved)]);
+    const nextSummaries = sortByLastUsed([...summariesRef.current.filter((summary) => summary.id !== saved.id), projectAuxiliarySessionSummary(saved)]);
     summariesRef.current = nextSummaries;
     setSummaries(nextSummaries);
     selectedIdRef.current = saved.id;
@@ -355,7 +355,7 @@ export function useAuxiliaryWorkspace(input: {
         else detailsRef.current.delete(id);
         setSelectedSession((selected) => selected?.id === id ? next : selected);
         const nextSummaries = next
-          ? sortByCreation([...summariesRef.current.filter((summary) => summary.id !== id), projectAuxiliarySessionSummary(next)])
+          ? sortByLastUsed([...summariesRef.current.filter((summary) => summary.id !== id), projectAuxiliarySessionSummary(next)])
           : summariesRef.current.filter((summary) => summary.id !== id);
         summariesRef.current = nextSummaries;
         setSummaries(nextSummaries);

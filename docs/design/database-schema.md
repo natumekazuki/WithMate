@@ -2,7 +2,7 @@
 
 ## Auxiliary Session Projection (Issue #710)
 
-`auxiliary_sessions`は親Session配下の複数会話を保存する。payloadには会話、draft、provider thread、Character snapshotを保持し、`summary_json`には一覧用のicon、preview、stable identity、status等だけを派生保存する。Auxiliary一覧・active一覧・running一覧はsummary projectionを読み、全payloadやCharacter定義を毎回走査しない。`created_at ASC, id ASC`を作成順として使う。
+`auxiliary_sessions`は親Session配下の複数会話を保存する。payloadには会話、draft、provider thread、Character snapshotを保持し、`summary_json`には一覧用のicon、preview、stable identity、status等だけを派生保存する。Auxiliary一覧・active一覧・running一覧はsummary projectionを読み、全payloadやCharacter定義を毎回走査しない。親ごとのAuxiliary一覧は`updated_at DESC, id DESC`を最終使用順として使う。
 
 - 作成日: 2026-03-27
 - 更新日: 2026-06-24
