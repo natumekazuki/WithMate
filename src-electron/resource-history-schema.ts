@@ -303,9 +303,9 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
 }
 
 const retainedWorkItemRowsSql = `
-  SELECT id, sequence, contract_revision, kind, root_session_id, creator_session_id, target_session_id, parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority, source_identity_json, state, revision, progress_summary, blockers_json, next_action, result_json, created_at, updated_at, archived_at FROM work_items_v6
+  SELECT id, sequence, contract_revision, kind, origin_kind, root_session_id, creator_session_id, target_session_id, parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority, source_identity_json, state, revision, progress_summary, blockers_json, next_action, result_json, created_at, updated_at, archived_at FROM work_items_v6
   UNION ALL
-  SELECT json_extract(snapshot_json, '$.id') AS id, json_extract(snapshot_json, '$.sequence') AS sequence, json_extract(snapshot_json, '$.contract_revision') AS contract_revision, json_extract(snapshot_json, '$.kind') AS kind, json_extract(snapshot_json, '$.root_session_id') AS root_session_id, json_extract(snapshot_json, '$.creator_session_id') AS creator_session_id, json_extract(snapshot_json, '$.target_session_id') AS target_session_id, json_extract(snapshot_json, '$.parent_work_item_id') AS parent_work_item_id, json_extract(snapshot_json, '$.predecessor_work_item_id') AS predecessor_work_item_id, json_extract(snapshot_json, '$.goal') AS goal, json_extract(snapshot_json, '$.scope') AS scope, json_extract(snapshot_json, '$.completion_criteria') AS completion_criteria, json_extract(snapshot_json, '$.authority') AS authority, json_extract(snapshot_json, '$.source_identity_json') AS source_identity_json, json_extract(snapshot_json, '$.state') AS state, json_extract(snapshot_json, '$.revision') AS revision, json_extract(snapshot_json, '$.progress_summary') AS progress_summary, json_extract(snapshot_json, '$.blockers_json') AS blockers_json, json_extract(snapshot_json, '$.next_action') AS next_action, json_extract(snapshot_json, '$.result_json') AS result_json, json_extract(snapshot_json, '$.created_at') AS created_at, json_extract(snapshot_json, '$.updated_at') AS updated_at, json_extract(snapshot_json, '$.archived_at') AS archived_at FROM work_item_tombstones_v6
+  SELECT json_extract(snapshot_json, '$.id') AS id, json_extract(snapshot_json, '$.sequence') AS sequence, json_extract(snapshot_json, '$.contract_revision') AS contract_revision, json_extract(snapshot_json, '$.kind') AS kind, COALESCE(json_extract(snapshot_json, '$.origin_kind'), 'native') AS origin_kind, json_extract(snapshot_json, '$.root_session_id') AS root_session_id, json_extract(snapshot_json, '$.creator_session_id') AS creator_session_id, json_extract(snapshot_json, '$.target_session_id') AS target_session_id, json_extract(snapshot_json, '$.parent_work_item_id') AS parent_work_item_id, json_extract(snapshot_json, '$.predecessor_work_item_id') AS predecessor_work_item_id, json_extract(snapshot_json, '$.goal') AS goal, json_extract(snapshot_json, '$.scope') AS scope, json_extract(snapshot_json, '$.completion_criteria') AS completion_criteria, json_extract(snapshot_json, '$.authority') AS authority, json_extract(snapshot_json, '$.source_identity_json') AS source_identity_json, json_extract(snapshot_json, '$.state') AS state, json_extract(snapshot_json, '$.revision') AS revision, json_extract(snapshot_json, '$.progress_summary') AS progress_summary, json_extract(snapshot_json, '$.blockers_json') AS blockers_json, json_extract(snapshot_json, '$.next_action') AS next_action, json_extract(snapshot_json, '$.result_json') AS result_json, json_extract(snapshot_json, '$.created_at') AS created_at, json_extract(snapshot_json, '$.updated_at') AS updated_at, json_extract(snapshot_json, '$.archived_at') AS archived_at FROM work_item_tombstones_v6
 `;
 
 function verifyWorkItemTombstones(db: DatabaseSync): void {
@@ -421,7 +421,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
             OR (change.event_type = 'parent_changed' AND json_type(change.payload_json, '$.afterTargetSessionId') = 'text'))
         ORDER BY change.revision DESC LIMIT 1),
         json_extract((SELECT initial.payload_json FROM work_item_events_v6 AS initial
-          WHERE initial.work_item_id = event.work_item_id AND initial.revision = 1 LIMIT 1), '$.targetSessionId')),
+          WHERE initial.work_item_id = event.work_item_id ORDER BY initial.revision LIMIT 1), '$.targetSessionId')),
       event.event_type, event.revision,
       event.principal_kind,
       CASE WHEN event.principal_kind = 'agent' THEN event.actor_session_id ELSE NULL END,
@@ -448,7 +448,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
             OR (change.event_type = 'parent_changed' AND json_type(change.payload_json, '$.afterTargetSessionId') = 'text'))
         ORDER BY change_header.sequence DESC LIMIT 1),
         json_extract((SELECT initial.payload_json FROM work_item_events_v6 AS initial
-          WHERE initial.work_item_id = item.id AND initial.revision = 1 LIMIT 1), '$.targetSessionId')), event.event_kind,
+          WHERE initial.work_item_id = item.id ORDER BY initial.revision LIMIT 1), '$.targetSessionId')), event.event_kind,
       event.aggregate_revision, NULL, NULL,
       CASE WHEN event.event_kind = 'decision_corrected' THEN
         'work-item-aggregation:' || event.parent_work_item_id || ':revision:' || json_extract(event.payload_json, '$.supersededDecisionRevision')
@@ -614,7 +614,7 @@ function verifyHeaderGrant(db: DatabaseSync, header: StoredHeaderRow): void {
 
 function verifyWorkItemReplay(db: DatabaseSync): void {
   const items = db.prepare(`
-    SELECT id, sequence, contract_revision, kind, root_session_id, creator_session_id,
+    SELECT id, sequence, contract_revision, kind, origin_kind, root_session_id, creator_session_id,
       target_session_id, parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority,
       source_identity_json, state, revision, progress_summary, blockers_json, next_action,
       result_json, created_at, updated_at, archived_at
@@ -648,6 +648,7 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
     const initial = JSON.parse(first.payload_json) as Record<string, unknown>;
     const replay: Record<string, unknown> = {
       kind: initial.kind,
+      originKind: initial.originKind ?? "native",
       rootSessionId: initial.rootSessionId,
       creatorSessionId: initial.creatorSessionId,
       targetSessionId: initial.targetSessionId,
@@ -696,6 +697,16 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
           throw new Error(`Work Item parent event cannot replay from its predecessor: ${item.id}`);
         }
         replay.parentWorkItemId = payload.afterParentWorkItemId;
+        if (payload.beforeKind !== undefined) {
+          if (payload.beforeKind !== replay.kind || payload.afterKind === undefined) {
+            throw new Error(`Work Item kind event cannot replay from its predecessor: ${item.id}`);
+          }
+          replay.kind = payload.afterKind;
+        }
+        if (payload.beforeOriginKind !== undefined) {
+          if (payload.beforeOriginKind !== replay.originKind || payload.afterOriginKind === undefined) throw new Error(`Work Item origin event cannot replay from its predecessor: ${item.id}`);
+          replay.originKind = payload.afterOriginKind;
+        }
         if (payload.beforeCreatorSessionId !== undefined) {
           if (payload.beforeCreatorSessionId !== replay.creatorSessionId) {
             throw new Error(`Work Item creator event cannot replay from its predecessor: ${item.id}`);
@@ -725,6 +736,7 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
     }
     const current = {
       kind: item.kind,
+      originKind: item.origin_kind,
       rootSessionId: item.root_session_id,
       creatorSessionId: item.creator_session_id,
       targetSessionId: item.target_session_id,

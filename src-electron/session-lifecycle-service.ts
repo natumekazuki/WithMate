@@ -296,6 +296,16 @@ export class SessionLifecycleService {
           const ids = [record.targetSessionId, ...(request.descendantPolicy === "archive_descendants"
             ? this.deps.storage.getLifecycleManifest(record.targetSessionId).descendants.map((entry) => entry.sessionId) : [])];
           for (const id of ids) await this.deps.publishRemovedSession(id);
+        } else if (record.operation === "session.move") {
+          const storedIds = record.manifest.affectedSessionIds;
+          const ids = Array.isArray(storedIds) && storedIds.every((id): id is string => typeof id === "string")
+            ? storedIds
+            : [record.targetSessionId];
+          for (const id of ids) {
+            const session = this.deps.storage.getLifecycleSession(id, true);
+            if (!session) throw new Error("The committed lifecycle Session is missing.");
+            this.deps.publishSession(session);
+          }
         } else {
           const session = this.deps.storage.getLifecycleSession(record.targetSessionId, true);
           if (!session) throw new Error("The committed lifecycle Session is missing.");

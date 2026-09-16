@@ -986,8 +986,13 @@ export class SessionStorageV6 {
       }
       if (record.targetSessionId && operation === "session.move") {
         const manifest = this.getLifecycleManifest(record.targetSessionId, typeof request.destinationRootSessionId === "string" ? request.destinationRootSessionId : undefined);
-        applySessionMove(this.db, { ...(request as unknown as import("./session-lifecycle-move.js").SessionMoveInput), descendants: manifest.descendants,
+        const moveResult = applySessionMove(this.db, { ...(request as unknown as import("./session-lifecycle-move.js").SessionMoveInput), descendants: manifest.descendants,
           destinationProof: record.manifest.destinationProof as MutationAuthorityProof | undefined }, input.proof, input.now, record.operationId);
+        this.db.prepare(`
+          UPDATE session_lifecycle_operations_v6
+          SET manifest_json = json_set(manifest_json, '$.affectedSessionIds', json(?))
+          WHERE operation_id = ?
+        `).run(JSON.stringify(moveResult.affectedSessionIds), record.operationId);
         const moved = this.getLifecycleSession(record.targetSessionId);
         if (!moved) throw new Error("The moved Session is missing.");
         return input.projectResult(moved);

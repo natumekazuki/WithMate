@@ -10630,6 +10630,10 @@ var workItemEventSchema = discriminatedUnion("type", [
 		...workItemEventBase,
 		type: literal("parent_changed"),
 		payload: object$1({
+			beforeKind: _enum(["root", "delegated"]).optional(),
+			afterKind: _enum(["root", "delegated"]).optional(),
+			beforeOriginKind: _enum(["native", "transferred_root"]).optional(),
+			afterOriginKind: _enum(["native", "transferred_root"]).optional(),
 			beforeParentWorkItemId: string().nullable(),
 			afterParentWorkItemId: string().nullable(),
 			beforeCreatorSessionId: string().optional(),
@@ -11259,6 +11263,7 @@ var workItemIdentityShape = {
 	sequence: number().int().positive(),
 	contractRevision: literal(2),
 	kind: _enum(["root", "delegated"]),
+	originKind: literal("transferred_root").optional(),
 	rootSessionId: string(),
 	creatorSessionId: string(),
 	targetSessionId: string(),
@@ -11290,23 +11295,33 @@ function validateWorkItemKind(schema) {
 			path: ["kind"],
 			message: "Root Work Item binding is invalid."
 		});
-		if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || b.goal.length === 0 || b.scope.length === 0 || b.completionCriteria.length === 0 || b.authority.length === 0)) context.addIssue({
+		if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || v.originKind !== "transferred_root" && (b.goal.trim().length === 0 || b.scope.trim().length === 0 || b.completionCriteria.trim().length === 0 || b.authority.trim().length === 0))) context.addIssue({
 			code: "custom",
 			path: ["kind"],
 			message: "Delegated Work Item binding is invalid."
 		});
+		if (v.originKind === "transferred_root" && (v.kind !== "delegated" || ![
+			"completed",
+			"partially_completed",
+			"failed",
+			"canceled"
+		].includes(v.state ?? ""))) context.addIssue({
+			code: "custom",
+			path: ["originKind"],
+			message: "Transferred root Work Items must be terminal delegated items."
+		});
 		const hasProgress = v.progressSummary !== void 0 || v.blockers !== void 0 || v.nextAction !== void 0;
-		if (v.kind === "root" && (!hasProgress || v.progressSummary === void 0 || v.blockers === void 0 || v.nextAction === void 0)) context.addIssue({
+		if ((v.kind === "root" || v.originKind === "transferred_root") && (!hasProgress || v.progressSummary === void 0 || v.blockers === void 0 || v.nextAction === void 0)) context.addIssue({
 			code: "custom",
 			path: ["kind"],
 			message: "Root Work Items require progress fields."
 		});
-		if (v.kind === "delegated" && hasProgress) context.addIssue({
+		if (v.kind === "delegated" && v.originKind !== "transferred_root" && hasProgress) context.addIssue({
 			code: "custom",
 			path: ["kind"],
 			message: "Delegated Work Items cannot include root progress fields."
 		});
-		if (v.kind === "delegated" && v.predecessorWorkItemId !== void 0) context.addIssue({
+		if (v.kind === "delegated" && v.originKind !== "transferred_root" && v.predecessorWorkItemId !== void 0) context.addIssue({
 			code: "custom",
 			path: ["predecessorWorkItemId"],
 			message: "Delegated Work Items cannot include root successor fields."

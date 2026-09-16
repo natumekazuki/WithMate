@@ -237,6 +237,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "accepted_at",
   ],
   work_items_v6: [
+    "origin_kind",
     "sequence",
     "id",
     "kind",
@@ -946,6 +947,8 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && sessionExecutionPublicProgressSql.includes("truncated IN (0, 1)")
     && workItemsSql.includes("contract_revision = 2")
     && workItemsSql.includes("kind IN ('root', 'delegated')")
+    && workItemsSql.includes("origin_kind IN ('native', 'transferred_root')")
+    && workItemsSql.includes("origin_kind = 'native' OR (kind = 'delegated' AND state IN ('completed', 'partially_completed', 'failed', 'canceled'))")
     && workItemsSql.includes("'partially_completed'")
     && workItemsSql.includes("length(CAST(result_json AS BLOB)) <= 262144")
     && workItemsSql.includes("root_session_id = creator_session_id")
@@ -1679,6 +1682,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     kind TEXT NOT NULL CHECK (kind IN ('root', 'delegated')),
+    origin_kind TEXT NOT NULL DEFAULT 'native' CHECK (origin_kind IN ('native', 'transferred_root')),
     contract_revision INTEGER NOT NULL CHECK (contract_revision = 2),
     root_session_id TEXT NOT NULL,
     creator_session_id TEXT NOT NULL,
@@ -1709,6 +1713,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     archived_at TEXT,
     FOREIGN KEY (parent_work_item_id) REFERENCES work_items_v6(id),
     FOREIGN KEY (predecessor_work_item_id) REFERENCES work_items_v6(id),
+    CHECK (origin_kind = 'native' OR (kind = 'delegated' AND state IN ('completed', 'partially_completed', 'failed', 'canceled'))),
     CHECK (
       (
         kind = 'root'
@@ -1720,6 +1725,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     ),
     CHECK (
       kind = 'root'
+      OR origin_kind = 'transferred_root'
       OR (
         length(trim(goal)) > 0
         AND length(trim(scope)) > 0
@@ -1729,6 +1735,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     ),
     CHECK (
       kind = 'root'
+      OR origin_kind = 'transferred_root'
       OR (
         progress_summary = ''
         AND blockers_json = '[]'
@@ -3369,6 +3376,47 @@ function ensureRootWorkItemSuccessorSchema(db: DatabaseSync): void {
   }
 }
 
+function ensureTransferredRootWorkItemSchema(db: DatabaseSync): void {
+  if (tableColumnNames(db, "work_items_v6").has("origin_kind")) return;
+  // Rebuild the referencing tables too: renaming the parent rewrites their FKs,
+  // while dropping it with live dependents could cascade or violate those FKs.
+  const schemas = db.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    .all() as Array<{ name: string; sql: string }>;
+  const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
+  const affected = new Set(["work_items_v6"]);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const table of schemas) {
+      if (affected.has(table.name)) continue;
+      const keys = db.prepare(`PRAGMA foreign_key_list(${quote(table.name)})`).all() as Array<{ table: string }>;
+      if (keys.some((key) => affected.has(key.table))) {
+        affected.add(table.name);
+        changed = true;
+      }
+    }
+  }
+  const tables = [...affected].map((name) => schemas.find((table) => table.name === name)!);
+  const objects = (db.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE type IN ('index', 'trigger') AND sql IS NOT NULL")
+    .all() as Array<{ type: string; name: string; tbl_name: string; sql: string }>).filter((object) =>
+      affected.has(object.tbl_name) || (object.type === "trigger" && object.sql.includes("work_items_v6")));
+  const sequences = db.prepare("SELECT name, seq FROM sqlite_sequence").all() as Array<{ name: string; seq: number }>;
+  for (const object of objects) db.exec(`DROP ${object.type} ${quote(object.name)}`);
+  for (const table of tables) db.exec(`CREATE TEMP TABLE ${quote(`transfer_copy_${table.name}`)} AS SELECT * FROM ${quote(table.name)}`);
+  for (const table of [...tables].reverse()) db.exec(`DROP TABLE ${quote(table.name)}`);
+  for (const table of tables) {
+    db.exec(table.name === "work_items_v6"
+      ? CREATE_V6_WORK_ITEM_TABLES_SQL.slice(CREATE_V6_WORK_ITEM_TABLES_SQL.indexOf("CREATE TABLE IF NOT EXISTS work_items_v6"), CREATE_V6_WORK_ITEM_TABLES_SQL.indexOf("CREATE INDEX"))
+      : table.sql);
+    const columns = [...tableColumnNames(db, `transfer_copy_${table.name}`)].map(quote).join(", ");
+    db.exec(`INSERT INTO ${quote(table.name)} (${columns}) SELECT ${columns} FROM ${quote(`transfer_copy_${table.name}`)}; DROP TABLE ${quote(`transfer_copy_${table.name}`)}`);
+  }
+  for (const object of objects) db.exec(object.sql);
+  for (const sequence of sequences.filter((entry) => affected.has(entry.name))) {
+    db.prepare("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?").run(sequence.seq, sequence.name);
+  }
+  if (db.prepare("PRAGMA foreign_key_check").get()) throw new Error("Transferred root Work Item migration violated a foreign key.");
+}
+
 function namespaceLegacyPrincipalKeys(db: DatabaseSync, tableName: string): void {
   if (!tableExists(db, tableName) || !tableColumnNames(db, tableName).has("principal_session_id")) return;
   db.exec(`
@@ -3751,6 +3799,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync, options: { backfillLegacyHistory
   if (tableExists(db, "work_items_v6") && !tableColumnNames(db, "work_items_v6").has("archived_at")) {
     db.exec("ALTER TABLE work_items_v6 ADD COLUMN archived_at TEXT");
   }
+  ensureTransferredRootWorkItemSchema(db);
   const sessionColumns = tableColumnNames(db, "sessions_v6");
   if (!sessionColumns.has("deleted_at")) {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN deleted_at TEXT");

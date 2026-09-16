@@ -44,6 +44,8 @@ cross-rootのWork Item単体移管は`work.move`へ`destinationTargetSessionId`�
 
 移管manifestの`resourceHistory`は既存の共通event headerを持つresourceだけを集計する。budgetの履歴キーはSession IDではなくaccount ID、file writeとtranscript exportはoperation IDである。grant chainとDelegationは専用の保存領域を使い、manifestの`grantChains`と`delegationRows`へ列挙する。共通headerのないresourceについて空の履歴を生成しない。
 
+root Session全体の移管は`session.move`のcross-root入力へ`destinationParentSessionId: null`を指定する。元rootは移管先直属のexecutorとなり、元root直属の子も移管先直属へ付け替える。孫の親とdepthは維持する。移管先がstandaloneならoverall-coordinatorへ変更するが、Role変更によるgrantの自動追加は行わない。移管先budgetには移管されるallocationと共有storage消費を受け入れる容量が必要である。child Sessionの移管ではdestination parentを指定する。
+
 cross-root Session移管のpreparedからpublication完了またはrecovery終端までは両rootの新規mutationを制限する。read、cancel、同じ要求による移管回復は維持する。running Turnはallow-to-settleとし、移管はqueued/runningが解消してから行う。grantのrevokeまたはexpiry後はqueuedの新規admissionを拒否し、開始済みTurnの結果を未実行へ変更しない。
 
 ```powershell

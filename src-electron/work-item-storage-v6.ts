@@ -26,6 +26,7 @@ import {
   type WorkItemContractProjection,
   type WorkItemEvent,
   type WorkItemEventType,
+  type WorkItemKind,
   type WorkItemProgressEventPayload,
   type WorkItemParentChangedEventPayload,
   type WorkItemResult,
@@ -98,6 +99,7 @@ type WorkItemRow = {
   state: WorkItemState;
   revision: number;
   result_json: string | null;
+  origin_kind: "native" | "transferred_root";
   progress_summary: string;
   blockers_json: string;
   next_action: string;
@@ -999,19 +1001,6 @@ export class WorkItemStorageV6 {
     operationId: string;
     transferredAt: string;
   }): void {
-    const moved = new Set(input.movedSessionIds);
-    if (input.transferRoot) {
-      const destinationRootWork = this.db.prepare(`SELECT id FROM work_items_v6
-        WHERE kind = 'root' AND root_session_id = ? LIMIT 1`)
-        .get(input.destinationRootSessionId) as { id: string } | undefined;
-      if (destinationRootWork) {
-        throw new WorkItemAggregationConflictError(
-          "WORK_ITEM_TRANSFER_ROOT_CONFLICT",
-          "A root Work Item already exists in the destination root Session.",
-          { workItemId: destinationRootWork.id },
-        );
-      }
-    }
     const rows = this.db.prepare(`SELECT id FROM work_items_v6
       WHERE root_session_id = ? AND (creator_session_id IN (${input.movedSessionIds.map(() => "?").join(",") || "NULL"})
         OR target_session_id IN (${input.movedSessionIds.map(() => "?").join(",") || "NULL"}) OR (? = 1 AND kind = 'root'))
@@ -1027,19 +1016,15 @@ export class WorkItemStorageV6 {
       }
     }
     for (const current of snapshots) {
-      const nextCreator = input.transferRoot && current.creatorSessionId === input.sourceRootSessionId
-        ? input.destinationRootSessionId : current.creatorSessionId;
-      const nextTarget = input.transferRoot && current.targetSessionId === input.sourceRootSessionId
-        ? input.destinationRootSessionId : current.targetSessionId;
-      if (!moved.has(current.creatorSessionId) && nextCreator === current.creatorSessionId)
-        throw new WorkItemAggregationConflictError("WORK_ITEM_TRANSFER_OWNER_INVALID", "A Work Item creator is outside the transferred Session closure.");
-      if (!moved.has(current.targetSessionId) && nextTarget === current.targetSessionId)
-        throw new WorkItemAggregationConflictError("WORK_ITEM_TRANSFER_OWNER_INVALID", "A Work Item target is outside the transferred Session closure.");
+      const sourceRoot = input.transferRoot && current.kind === "root" && current.rootSessionId === input.sourceRootSessionId;
+      const nextCreator = sourceRoot ? input.destinationRootSessionId : current.creatorSessionId;
+      const nextTarget = sourceRoot ? input.sourceRootSessionId : current.targetSessionId;
+      const nextParent = sourceRoot ? null : current.parentWorkItemId;
       const nextRevision = current.revision + 1;
-      this.updateOwnership(current, { parentWorkItemId: current.parentWorkItemId,
+      this.updateOwnership(current, { kind: sourceRoot ? "delegated" : current.kind, originKind: sourceRoot ? "transferred_root" : undefined, parentWorkItemId: nextParent,
         rootSessionId: input.destinationRootSessionId, creatorSessionId: nextCreator, targetSessionId: nextTarget }, input.transferredAt);
       this.insertEvent({ workItemId: current.id, revision: nextRevision, type: "parent_changed", actorSessionId: input.proof.principal.kind === "agent" ? input.proof.principal.actorSessionId : input.sourceRootSessionId,
-        payload: this.ownershipChangePayload(current, { parentWorkItemId: current.parentWorkItemId,
+        payload: this.ownershipChangePayload(current, { kind: sourceRoot ? "delegated" : current.kind, originKind: sourceRoot ? "transferred_root" : undefined, parentWorkItemId: nextParent,
           rootSessionId: input.destinationRootSessionId, creatorSessionId: nextCreator, targetSessionId: nextTarget }, false, true),
         createdAt: input.transferredAt, proof: input.proof, operationId: input.operationId, idempotencyKey: null });
     }
@@ -2500,6 +2485,8 @@ export class WorkItemStorageV6 {
   }
 
   private updateOwnership(current: WorkItem, next: {
+    kind?: WorkItemKind;
+    originKind?: "transferred_root";
     parentWorkItemId: string | null;
     rootSessionId: string;
     creatorSessionId: string;
@@ -2507,14 +2494,16 @@ export class WorkItemStorageV6 {
   }, updatedAt: string): number {
     const nextRevision = current.revision + 1;
     const changed = this.db.prepare(`UPDATE work_items_v6
-      SET parent_work_item_id = ?, root_session_id = ?, creator_session_id = ?, target_session_id = ?, revision = ?, updated_at = ?
-      WHERE id = ? AND revision = ?`).run(next.parentWorkItemId, next.rootSessionId, next.creatorSessionId,
+      SET kind = ?, origin_kind = ?, parent_work_item_id = ?, root_session_id = ?, creator_session_id = ?, target_session_id = ?, revision = ?, updated_at = ?
+      WHERE id = ? AND revision = ?`).run(next.kind ?? current.kind, next.originKind ?? (current.kind === "delegated" ? current.originKind : undefined) ?? "native", next.parentWorkItemId, next.rootSessionId, next.creatorSessionId,
       next.targetSessionId, nextRevision, updatedAt, current.id, current.revision);
     if (changed.changes !== 1) throw new WorkItemRevisionConflictError(current.id, current.revision, this.getRequired(current.id).revision);
     return nextRevision;
   }
 
   private ownershipChangePayload(current: WorkItem, next: {
+    kind?: WorkItemKind;
+    originKind?: "transferred_root";
     parentWorkItemId: string | null;
     rootSessionId: string;
     creatorSessionId: string;
@@ -2523,6 +2512,8 @@ export class WorkItemStorageV6 {
     return {
       beforeParentWorkItemId: current.parentWorkItemId,
       afterParentWorkItemId: next.parentWorkItemId,
+      ...(next.kind !== undefined && next.kind !== current.kind ? { beforeKind: current.kind, afterKind: next.kind } : {}),
+      ...(next.originKind !== undefined ? { beforeOriginKind: current.kind === "delegated" ? current.originKind ?? "native" : "native", afterOriginKind: next.originKind } : {}),
       beforeCreatorSessionId: current.creatorSessionId,
       afterCreatorSessionId: next.creatorSessionId,
       ...(includeRootAndTarget ? {
@@ -2761,6 +2752,7 @@ function parseWorkItem(row: WorkItemRow): WorkItem {
   }
   const binding = {
     kind: row.kind,
+    ...(row.origin_kind === "transferred_root" ? { originKind: "transferred_root" as const } : {}),
     rootSessionId: row.root_session_id,
     creatorSessionId: row.creator_session_id,
     targetSessionId: row.target_session_id,
@@ -2777,7 +2769,7 @@ function parseWorkItem(row: WorkItemRow): WorkItem {
     sequence: row.sequence,
     contractRevision: WORK_ITEM_CONTRACT_REVISION,
     ...binding,
-    ...(row.kind === "root" || row.predecessor_work_item_id ? { predecessorWorkItemId: row.predecessor_work_item_id ?? null } : {}),
+    ...(row.kind === "root" || row.origin_kind === "transferred_root" || row.predecessor_work_item_id ? { predecessorWorkItemId: row.predecessor_work_item_id ?? null } : {}),
     state: row.state,
     revision: row.revision,
     result,
@@ -2785,14 +2777,14 @@ function parseWorkItem(row: WorkItemRow): WorkItem {
     updatedAt: row.updated_at,
     ...(row.archived_at ? { archivedAt: row.archived_at } : {}),
   };
-  if (binding.kind === "delegated") return common as WorkItem;
+  if (binding.kind === "delegated" && binding.originKind !== "transferred_root") return common as WorkItem;
   const blockers = JSON.parse(row.blockers_json) as unknown;
   if (!Array.isArray(blockers) || !blockers.every((blocker) => typeof blocker === "string")) {
     throw new TypeError(`Invalid Root Work Item blockers: ${row.id}`);
   }
   return {
     ...common,
-    kind: "root",
+    kind: row.kind,
     progressSummary: row.progress_summary,
     blockers,
     nextAction: row.next_action,

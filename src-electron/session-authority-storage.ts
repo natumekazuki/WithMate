@@ -935,6 +935,12 @@ export function transferSessionAuthority(db: DatabaseSync, input: {
   destinationIssuerGrantRevision: number;
   operationId: string;
   transferredAt: string;
+  /**
+   * A whole-root merge consumes the temporary source-root transfer capability.
+   * The caller must identify the exact capability used for that move; this is
+   * intentionally not a general-purpose grant retirement switch.
+   */
+  retireSourceTransferCapabilityGrantId?: string;
 }): readonly SessionAuthorityGrant[] {
   const destinationIssuer = requireGrant(db, input.destinationIssuerGrantId);
   assertGrantActive(destinationIssuer, destinationIssuer.granteeSessionId,
@@ -946,10 +952,21 @@ export function transferSessionAuthority(db: DatabaseSync, input: {
     WHERE grantee_session_id = ? AND root_session_id = ? AND revoked_at IS NULL`)
     .all(input.sessionId, input.sourceRootSessionId) as GrantRow[];
   const sourceGrants = rows.map(decodeGrant);
+  const retiredCapabilityId = input.retireSourceTransferCapabilityGrantId ?? null;
+  if (retiredCapabilityId !== null) {
+    const retiredCapability = sourceGrants.find((grant) => grant.grantId === retiredCapabilityId);
+    if (input.sessionId !== input.sourceRootSessionId
+      || !retiredCapability || !isSourceTransferCapability(retiredCapability, input.sourceRootSessionId)) {
+      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "Only the exact trusted source-root transfer capability may be retired.", {
+        grantId: retiredCapabilityId,
+      });
+    }
+  }
   const now = new Date(input.transferredAt);
   for (const grant of sourceGrants) {
     assertGrantActive(grant, grant.granteeSessionId, grant.revision, now);
     assertIssuerChainCurrent(db, grant, now);
+    if (grant.grantId === retiredCapabilityId) continue;
     if (!grant.actions.every((action) => destinationIssuer.childCeiling.some((ceiling) =>
       samePermission(ceiling, { mode: grant.delegable ? "delegate" : "exercise", action,
         resourceKind: grant.resourceKind, relationSelector: grant.relationSelector,
@@ -968,6 +985,7 @@ export function transferSessionAuthority(db: DatabaseSync, input: {
       principal: { kind: "system", service: "session-transfer" },
       revokedAt: input.transferredAt,
     });
+    if (grant.grantId === retiredCapabilityId) continue;
     insertGrant(db, {
       rootSessionId: input.destinationRootSessionId,
       issuerKind: "system",
@@ -1059,6 +1077,22 @@ export function assertGrantProofCurrent(
     throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The authority proof no longer matches the canonical resource scope.");
   }
   assertIssuerChainCurrent(db, grant, now);
+}
+
+function isSourceTransferCapability(
+  grant: SessionAuthorityGrant,
+  sourceRootSessionId: string,
+): boolean {
+  return grant.provenance.source === "trusted-cross-root-transfer"
+    && grant.provenance.sourceRootSessionId === sourceRootSessionId
+    && grant.provenance.destinationRootSessionId === sourceRootSessionId
+    && grant.rootSessionId === sourceRootSessionId
+    && grant.granteeSessionId === sourceRootSessionId
+    && grant.actions.length === 1
+    && grant.actions[0] === "session.move"
+    && grant.resourceKind === "session"
+    && grant.relationSelector === "root_owner"
+    && grant.effectClass === "local_mutation";
 }
 
 /** A pending move already records both roots; its existing recovery operation releases the drain. */
@@ -1214,9 +1248,16 @@ function verifyBaselineGrantSet(
   binding: { session_id: string; session_role: SessionRole; root_session_id: string },
   rows: readonly GrantRow[],
 ): void {
-  const expected = baselineSessionAuthorityPermissions(binding.session_role);
-  const actualKeys = rows.map((row) => baselineGrantKey(binding, row));
-  const expectedKeys = expected.map((item) => baselinePermissionKey(binding.session_role, item));
+  // A Role change does not issue additional authority. Validate the immutable
+  // issuance template recorded by the baseline, not the current display Role.
+  const issuedRole = parseGrantProvenance(rows[0]).sessionRole;
+  if (typeof issuedRole !== "string" || !SESSION_ROLE_VALUES.includes(issuedRole as SessionRole)) {
+    throw new SessionAuthorityError("AUTHORITY_MIGRATION_REQUIRED", "The baseline issuance Role is invalid.", { sessionId: binding.session_id });
+  }
+  const baselineBinding = { ...binding, session_role: issuedRole as SessionRole };
+  const expected = baselineSessionAuthorityPermissions(baselineBinding.session_role);
+  const actualKeys = rows.map((row) => baselineGrantKey(baselineBinding, row));
+  const expectedKeys = expected.map((item) => baselinePermissionKey(baselineBinding.session_role, item));
   if (
     actualKeys.length !== expectedKeys.length
     || actualKeys.some((key) => key === null)

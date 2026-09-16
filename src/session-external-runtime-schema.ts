@@ -389,7 +389,7 @@ const workItemEventSchema = z.discriminatedUnion("type", [
   z.object({ ...workItemEventBase, type: z.literal("state_transitioned"), payload: z.object({ from: z.enum(WORK_ITEM_STATES), to: z.enum(WORK_ITEM_STATES) }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("result_reported"), payload: z.object({ from: z.enum(WORK_ITEM_STATES), to: z.enum(WORK_ITEM_STATES), result: workItemEventResultSchema, resultRevision: z.number().int().positive().optional(), supersededResultRevision: z.number().int().positive().optional(), correctionReason: z.string().optional(), sourceRevision: z.number().int().positive().optional(), executionRevision: z.number().int().positive().nullable().optional() }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("assignment_changed"), payload: z.object({ beforeTargetSessionId: z.string(), afterTargetSessionId: z.string() }).strict() }).strict(),
-  z.object({ ...workItemEventBase, type: z.literal("parent_changed"), payload: z.object({ beforeParentWorkItemId: z.string().nullable(), afterParentWorkItemId: z.string().nullable(), beforeCreatorSessionId: z.string().optional(), afterCreatorSessionId: z.string().optional(), beforeRootSessionId: z.string().optional(), afterRootSessionId: z.string().optional(), beforeTargetSessionId: z.string().optional(), afterTargetSessionId: z.string().optional(), supersededDecision: z.boolean() }).strict() }).strict(),
+  z.object({ ...workItemEventBase, type: z.literal("parent_changed"), payload: z.object({ beforeKind: z.enum(["root", "delegated"]).optional(), afterKind: z.enum(["root", "delegated"]).optional(), beforeOriginKind: z.enum(["native", "transferred_root"]).optional(), afterOriginKind: z.enum(["native", "transferred_root"]).optional(), beforeParentWorkItemId: z.string().nullable(), afterParentWorkItemId: z.string().nullable(), beforeCreatorSessionId: z.string().optional(), afterCreatorSessionId: z.string().optional(), beforeRootSessionId: z.string().optional(), afterRootSessionId: z.string().optional(), beforeTargetSessionId: z.string().optional(), afterTargetSessionId: z.string().optional(), supersededDecision: z.boolean() }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("archived"), payload: z.object({ archivedAt: z.string(), reason: z.string().optional() }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("restored"), payload: z.object({ restoredAt: z.string() }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("deleted"), payload: z.object({ deletedAt: z.string() }).strict() }).strict(),
@@ -819,6 +819,7 @@ const workItemIdentityShape = {
   sequence: z.number().int().positive(),
   contractRevision: z.literal(2),
   kind: z.enum(["root", "delegated"]),
+  originKind: z.literal("transferred_root").optional(),
   rootSessionId: z.string(),
   creatorSessionId: z.string(),
   targetSessionId: z.string(),
@@ -845,6 +846,8 @@ function validateWorkItemKind<T extends z.ZodObject>(schema: T) {
   return schema.superRefine((value, context) => {
     const v = value as {
       kind: string;
+      originKind?: "transferred_root";
+      state?: string;
       progressSummary?: string;
       blockers?: string[];
       nextAction?: string;
@@ -852,11 +855,12 @@ function validateWorkItemKind<T extends z.ZodObject>(schema: T) {
     };
     const b = value as { rootSessionId: string; creatorSessionId: string; targetSessionId: string; parentWorkItemId: string | null; goal: string; scope: string; completionCriteria: string; authority: string };
     if (v.kind === "root" && (b.rootSessionId !== b.creatorSessionId || b.creatorSessionId !== b.targetSessionId || b.parentWorkItemId !== null)) context.addIssue({ code: "custom", path: ["kind"], message: "Root Work Item binding is invalid." });
-    if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || b.goal.length === 0 || b.scope.length === 0 || b.completionCriteria.length === 0 || b.authority.length === 0)) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Item binding is invalid." });
+    if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || (v.originKind !== "transferred_root" && (b.goal.trim().length === 0 || b.scope.trim().length === 0 || b.completionCriteria.trim().length === 0 || b.authority.trim().length === 0)))) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Item binding is invalid." });
+    if (v.originKind === "transferred_root" && (v.kind !== "delegated" || !["completed", "partially_completed", "failed", "canceled"].includes(v.state ?? ""))) context.addIssue({ code: "custom", path: ["originKind"], message: "Transferred root Work Items must be terminal delegated items." });
     const hasProgress = v.progressSummary !== undefined || v.blockers !== undefined || v.nextAction !== undefined;
-    if (v.kind === "root" && (!hasProgress || v.progressSummary === undefined || v.blockers === undefined || v.nextAction === undefined)) context.addIssue({ code: "custom", path: ["kind"], message: "Root Work Items require progress fields." });
-    if (v.kind === "delegated" && hasProgress) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Items cannot include root progress fields." });
-    if (v.kind === "delegated" && v.predecessorWorkItemId !== undefined) context.addIssue({ code: "custom", path: ["predecessorWorkItemId"], message: "Delegated Work Items cannot include root successor fields." });
+    if ((v.kind === "root" || v.originKind === "transferred_root") && (!hasProgress || v.progressSummary === undefined || v.blockers === undefined || v.nextAction === undefined)) context.addIssue({ code: "custom", path: ["kind"], message: "Root Work Items require progress fields." });
+    if (v.kind === "delegated" && v.originKind !== "transferred_root" && hasProgress) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Items cannot include root progress fields." });
+    if (v.kind === "delegated" && v.originKind !== "transferred_root" && v.predecessorWorkItemId !== undefined) context.addIssue({ code: "custom", path: ["predecessorWorkItemId"], message: "Delegated Work Items cannot include root successor fields." });
   });
 }
 const activeWorkItemSchema = validateWorkItemKind(z.object({
