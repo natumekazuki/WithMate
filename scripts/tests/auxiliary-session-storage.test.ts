@@ -235,6 +235,16 @@ test("resolveAuxiliaryParentSession は cached summary より stored full sessio
   assert.equal(resolved?.characterRuntimeSnapshot?.definitionMarkdown, "# Character\n\nStored snapshot prompt.");
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "旧Auxiliary schemaの初期化はcreated_at列を補完し、現行の最終使用順indexだけを保持する"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md:5" }
+// fault = "created_atなしの既存tableを初期化できないか、旧作成順indexを残して最終使用順indexを欠落させる"
+// observable = "auxiliary_sessionsのcolumnsとindex names"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-schema-upgrade"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxiliarySessionStorage は created_at なしの旧 auxiliary_sessions を初期化できる", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-legacy-schema-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
@@ -259,7 +269,7 @@ test("AuxiliarySessionStorage は created_at なしの旧 auxiliary_sessions を
     auxiliaryStorage.close();
     auxiliaryStorage = null;
 
-    const db = new DatabaseSync(dbPath);
+    let db = new DatabaseSync(dbPath);
     try {
       const columns = (db.prepare("PRAGMA table_info(auxiliary_sessions)").all() as SqliteColumnInfoRow[])
         .map((column) => column.name);
@@ -268,7 +278,24 @@ test("AuxiliarySessionStorage は created_at なしの旧 auxiliary_sessions を
       const indexes = (db.prepare("PRAGMA index_list(auxiliary_sessions)").all() as SqliteIndexListRow[])
         .map((row) => row.name);
       assert.equal(indexes.includes("idx_auxiliary_sessions_parent_updated"), true);
-      assert.equal(indexes.includes("idx_auxiliary_sessions_parent_created"), true);
+      db.exec(`
+        CREATE INDEX idx_auxiliary_sessions_parent_created
+          ON auxiliary_sessions(parent_session_id, created_at ASC)
+      `);
+    } finally {
+      db.close();
+    }
+
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    auxiliaryStorage.close();
+    auxiliaryStorage = null;
+
+    db = new DatabaseSync(dbPath);
+    try {
+      const indexes = (db.prepare("PRAGMA index_list(auxiliary_sessions)").all() as SqliteIndexListRow[])
+        .map((row) => row.name);
+      assert.equal(indexes.includes("idx_auxiliary_sessions_parent_updated"), true);
+      assert.equal(indexes.includes("idx_auxiliary_sessions_parent_created"), false);
     } finally {
       db.close();
     }
