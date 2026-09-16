@@ -871,6 +871,7 @@ export type SessionChatScreenProps = {
   headerSplitter: ReactNode;
   isHeaderVisible: boolean;
   messageColumn: ReactNode;
+  auxiliaryHeader?: ReactNode;
   auxiliaryMessageColumn?: ReactNode;
   auxiliarySplitter?: ReactNode;
   isAuxiliaryVisible?: boolean;
@@ -922,6 +923,7 @@ export function SessionChatScreen({
   headerSplitter,
   isHeaderVisible,
   messageColumn,
+  auxiliaryHeader = null,
   auxiliaryMessageColumn = null,
   auxiliarySplitter = null,
   isAuxiliaryVisible = false,
@@ -1019,6 +1021,10 @@ export function SessionChatScreen({
     : contentWidth > 0 && !singleChat
       ? Math.max(columnSizes.auxiliary / contentWidth, Math.min(1 - columnSizes.main / contentWidth, auxiliaryWidthRatio))
       : auxiliaryWidthRatio;
+  const hasAuxiliaryHeader = auxiliaryHeader != null;
+  const auxiliaryColumnTemplate = auxiliaryWidthRatio <= 0 && hasAuxiliaryHeader
+    ? "var(--session-auxiliary-header-min-width)"
+    : `minmax(0, ${Math.max(0, effectiveRatio)}fr)`;
 
   return (
     <div
@@ -1071,11 +1077,24 @@ export function SessionChatScreen({
             <div
               ref={columnsRef}
               className={`session-concurrent-chat-columns${singleChat ? " is-single-chat" : ""}`}
-              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - effectiveRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0, effectiveRatio)}fr)` }}
+              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - effectiveRatio)}fr) var(--session-dock-splitter-size) ${auxiliaryColumnTemplate}` }}
             >
               <div className={`session-concurrent-chat-column session-concurrent-chat-main${auxiliaryWidthRatio >= 1 ? " is-zero-width" : ""}`} inert={!singleChat && auxiliaryWidthRatio >= 1} aria-hidden={!singleChat && auxiliaryWidthRatio >= 1}>{messageColumn}</div>
               {auxiliarySplitter}
-              <div className={`session-concurrent-chat-column session-concurrent-chat-auxiliary${auxiliaryWidthRatio <= 0 ? " is-zero-width" : ""}`} inert={!singleChat && auxiliaryWidthRatio <= 0} aria-hidden={!singleChat && auxiliaryWidthRatio <= 0}>{auxiliaryMessageColumn}</div>
+              <div
+                className={`session-concurrent-chat-column session-concurrent-chat-auxiliary${auxiliaryWidthRatio <= 0 ? " is-zero-width" : ""}${hasAuxiliaryHeader ? " has-header" : ""}`}
+                inert={!singleChat && auxiliaryWidthRatio <= 0 && !hasAuxiliaryHeader}
+                aria-hidden={!singleChat && auxiliaryWidthRatio <= 0 && !hasAuxiliaryHeader}
+              >
+                {auxiliaryHeader}
+                <div
+                  className="session-concurrent-chat-message-content"
+                  inert={!singleChat && auxiliaryWidthRatio <= 0 && hasAuxiliaryHeader}
+                  aria-hidden={!singleChat && auxiliaryWidthRatio <= 0 && hasAuxiliaryHeader}
+                >
+                  {auxiliaryMessageColumn}
+                </div>
+              </div>
             </div>
           ) : messageColumn}
         </div>

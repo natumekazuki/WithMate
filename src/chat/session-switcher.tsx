@@ -67,6 +67,13 @@ export function SessionSwitcher({
   }, []);
 
   useEffect(() => {
+    if (!canOpen && isOpen) {
+      setIsOpen(false);
+      setSearchQuery("");
+    }
+  }, [canOpen, isOpen]);
+
+  useEffect(() => {
     if (!isOpen) {
       return;
     }
@@ -166,7 +173,7 @@ export function SessionSwitcher({
         disabled={!canMove}
         aria-label="次へ"
       >›</button>
-      {isOpen ? (
+      {canOpen && isOpen ? (
         <div ref={listRef} id={listId} className="session-switcher-popover" role="listbox" aria-label={`${ariaLabel}一覧`} onKeyDown={handleListKeyDown}>
           {searchable ? (
             <input

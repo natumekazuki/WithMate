@@ -4330,6 +4330,7 @@ button:disabled {
 .session-message-stack {
   --session-main-min-width: 360px;
   --session-auxiliary-min-width: 360px;
+  --session-auxiliary-header-min-width: 280px;
   --session-region-min-width: var(--session-main-min-width);
   --session-region-min-height: var(--session-central-min-height, 160px);
   display: grid;
@@ -4438,7 +4439,8 @@ button:disabled {
   overflow: hidden;
 }
 
-.session-concurrent-chat-columns:not(.is-single-chat) .session-concurrent-chat-column.is-zero-width {
+.session-concurrent-chat-columns:not(.is-single-chat) .session-concurrent-chat-main.is-zero-width,
+.session-concurrent-chat-columns:not(.is-single-chat) .session-concurrent-chat-auxiliary.is-zero-width:not(.has-header) {
   visibility: hidden;
 }
 
@@ -4448,6 +4450,18 @@ button:disabled {
   grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+}
+
+.session-concurrent-chat-message-content {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.session-concurrent-chat-columns:not(.is-single-chat) .session-concurrent-chat-auxiliary.is-zero-width.has-header > .session-concurrent-chat-message-content {
+  visibility: hidden;
 }
 
 .conversation-message-column {
@@ -4482,6 +4496,10 @@ button:disabled {
 }
 
 .session-concurrent-chat-auxiliary > .concurrent-chat-target-overlay {
+  z-index: 20;
+}
+
+.session-concurrent-chat-auxiliary > .session-concurrent-chat-message-content > .concurrent-chat-target-overlay {
   z-index: 20;
 }
 

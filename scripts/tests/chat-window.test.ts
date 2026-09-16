@@ -1160,7 +1160,7 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
 // claim = "Concurrent ChatのCollapseは折りたたみ対象がない間はdisabledで、Auxiliary追加は切り替えUI内に表示され既存Auxiliaryの有無に関係なく作成不可ならdisabledになり、対象messageが追加されるとCollapseがenabledになって対象messageを縮小する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
 // fault = "対象messageがない状態でCollapseを操作できる、Auxiliary追加が切り替えUIから欠落する、作成不可でも追加buttonが有効になる、対象追加後もCollapseがdisabledのままになる、またはクリックしても対象messageが縮小されない"
-// observable = "Collapse buttonのdisabled状態、Auxiliary切り替えUI内の追加buttonの表示・disabled状態、click後のmessage card縮小状態とExpand label"
+// observable = "Collapse buttonのdisabled状態、Auxiliary切り替えUI内の追加buttonの表示・disabled状態とclick callback、click後のmessage card縮小状態とExpand label"
 // observation_boundary = "component-behavior"
 // scope = "ChatWindow concurrent collapse and Auxiliary switcher add action"
 // lifecycle = "permanent"
@@ -1236,6 +1236,8 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
     const auxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
     assert.ok(auxiliaryAddButton);
     assert.ok(auxiliaryAddButton.closest(".session-switcher-current-group"));
+    assert.equal(auxiliaryAddButton.closest("[aria-hidden='true']"), null);
+    assert.equal(auxiliaryAddButton.closest("[inert]"), null);
     assert.equal(auxiliaryAddButton.disabled, false);
     await act(async () => auxiliaryAddButton.click());
     assert.deepEqual(auxiliaryActions, ["add"]);
@@ -1251,6 +1253,16 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
     assert.equal(existingAuxiliaryAddButton.disabled, false);
     await act(async () => existingAuxiliaryAddButton.click());
     assert.deepEqual(auxiliaryActions, ["add", "add"]);
+
+    await act(async () => {
+      root?.render(React.createElement(ChatWindow, {
+        ...props,
+        concurrentChats: buildConcurrentChats([], true, [{ id: "aux-a", label: "Auxiliary A" }]),
+      }));
+    });
+    const existingDisabledAuxiliaryAddButton = container.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
+    assert.ok(existingDisabledAuxiliaryAddButton);
+    assert.equal(existingDisabledAuxiliaryAddButton.disabled, true);
 
     await act(async () => {
       root?.render(React.createElement(ChatWindow, {
@@ -1300,7 +1312,7 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
 // claim = "Auxiliaryの幅0でも列とsplitterを残し、クリックで開く操作を提示する"
 // oracle = { type = "contract", ref = "issue-710-zero-width-auxiliary" }
 // fault = "Auxiliaryを幅0にするとsplitterが消えるか開く操作として提示されず、再表示できない"
-// observable = "0frのgrid templateとsplitterのaria-expanded"
+// observable = "Auxiliaryのタイトル枠内で有効な追加button、Auxiliary splitterのaria-expanded"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -1316,15 +1328,27 @@ test("ChatWindow はAuxiliaryを幅0で残しsplitterの再展開導線を表示
       auxiliaryItems: [{ id: "aux-a", label: "A" }],
       target: "main",
       widthRatio: 0,
+      onAddAuxiliary() {},
       onSelectAuxiliary() {},
       onTargetChange() {},
       onWidthRatioChange() {},
     },
   }));
 
-  assert.match(html, /0fr/);
-  assert.match(html, /aria-label="Auxiliaryを開く"/);
-  assert.match(html, /aria-expanded="false"/);
+  assert.match(html, /var\(--session-auxiliary-header-min-width\)/);
+  const dom = new JSDOM(html);
+  const auxiliaryAddButton = dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
+  assert.ok(auxiliaryAddButton);
+  assert.ok(auxiliaryAddButton.closest(".session-switcher-current-group"));
+  assert.equal(auxiliaryAddButton.closest("[aria-hidden='true']"), null);
+  assert.equal(auxiliaryAddButton.closest("[inert]"), null);
+  assert.equal(auxiliaryAddButton.disabled, false);
+  const auxiliarySplitter = dom.window.document.querySelector<HTMLButtonElement>(
+    ".concurrent-chat-splitter[aria-label='Auxiliaryを開く']",
+  );
+  assert.ok(auxiliarySplitter);
+  assert.equal(auxiliarySplitter.getAttribute("aria-expanded"), "false");
+  dom.window.close();
 });
 
 // @test-value v2
@@ -1927,10 +1951,10 @@ test("ConcurrentChatSplitter は幅0をclickだけで既定幅へ戻す", async 
 
 // @test-value v2
 // kind = "contract"
-// claim = "共通switcherは中央triggerから検索一覧を開き、検索中の矢印・IME入力を壊さず、候補確定・outside click・Escape後のfocus復帰を扱う"
+// claim = "共通switcherは中央triggerから検索一覧を開き、検索中の矢印・IME入力を壊さず、候補確定・outside click・Escape後のfocus復帰と候補消滅時のpopover閉鎖を扱う"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "検索中のArrowDownで候補を飛ばす、IMEのEscapeで一覧を閉じる、候補を選べない、または閉じた後にtriggerへfocusが戻らない"
-// observable = "候補一覧、選択callback、popoverの表示状態、document.activeElement"
+// fault = "検索中のArrowDownで候補を飛ばす、IMEのEscapeで一覧を閉じる、候補を選べない、候補がなくなってもpopoverが残る、または閉じた後にtriggerへfocusが戻らない"
+// observable = "候補一覧、選択callback、options空化後を含むpopoverの表示状態、document.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "session-switcher"
 // lifecycle = "permanent"
@@ -2009,6 +2033,22 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     await act(async () => trigger.click());
     await act(async () => dom.window.document.getElementById("outside")?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true })));
     assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
+    await act(async () => trigger.click());
+    assert.ok(dom.window.document.querySelector('[role="listbox"]'));
+    await act(async () => {
+      root?.render(React.createElement(SessionSwitcher, {
+        ariaLabel: "Auxiliary会話切り替え",
+        options: [],
+        selectedId: "",
+        searchable: true,
+        onMove() {},
+        onSelect() {},
+      }));
+    });
+    assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
+    const emptyTrigger = dom.window.document.querySelector<HTMLButtonElement>(".session-switcher-current");
+    assert.ok(emptyTrigger);
+    assert.equal(emptyTrigger.disabled, true);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

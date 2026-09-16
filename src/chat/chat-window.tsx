@@ -80,7 +80,7 @@ export type ChatErrorNotice = {
 export type ChatWindowProps = Omit<
   ChatScreenProps,
   "header" | "messageColumn" | "actionDock" | "isHeaderVisible" | "supportingSurface" | "errorSurface"
-  | "auxiliaryMessageColumn" | "auxiliarySplitter" | "isAuxiliaryVisible" | "auxiliaryWidthRatio" | "concurrentTarget"
+  | "auxiliaryHeader" | "auxiliaryMessageColumn" | "auxiliarySplitter" | "isAuxiliaryVisible" | "auxiliaryWidthRatio" | "concurrentTarget"
 > & {
   isHeaderExpanded: boolean;
   headerProps: SessionHeaderProps;
@@ -595,37 +595,37 @@ export function ChatWindow({
           ) : null}
         </div>
       )}
+      auxiliaryHeader={concurrentChats && (concurrentChats.auxiliaryItems.length > 0 || concurrentChats.onAddAuxiliary) ? (
+        <SessionSwitcher
+          ariaLabel="Auxiliary会話切り替え"
+          className="concurrent-chat-session-switcher"
+          options={concurrentChats.auxiliaryItems}
+          selectedId={concurrentChats.selectedAuxiliaryId ?? ""}
+          emptyLabel="Auxiliary"
+          currentAction={concurrentChats.onAddAuxiliary ? (
+            <button
+              type="button"
+              className="session-switcher-add-button"
+              aria-label="Auxiliaryを追加"
+              title="Auxiliaryを追加"
+              onClick={concurrentChats.onAddAuxiliary}
+              disabled={concurrentChats.isAddAuxiliaryDisabled}
+            >
+              +
+            </button>
+          ) : null}
+          searchable
+          onMove={(direction) => {
+            const items = concurrentChats.auxiliaryItems;
+            const current = items.findIndex((item) => item.id === concurrentChats.selectedAuxiliaryId);
+            if (current < 0 || items.length < 2) return;
+            concurrentChats.onSelectAuxiliary(items[(current + direction + items.length) % items.length].id);
+          }}
+          onSelect={concurrentChats.onSelectAuxiliary}
+        />
+      ) : null}
       auxiliaryMessageColumn={concurrentChats ? (
         <>
-          {concurrentChats.auxiliaryItems.length > 0 || concurrentChats.onAddAuxiliary ? (
-            <SessionSwitcher
-              ariaLabel="Auxiliary会話切り替え"
-              className="concurrent-chat-session-switcher"
-              options={concurrentChats.auxiliaryItems}
-              selectedId={concurrentChats.selectedAuxiliaryId ?? ""}
-              emptyLabel="Auxiliary"
-              currentAction={concurrentChats.onAddAuxiliary ? (
-                <button
-                  type="button"
-                  className="session-switcher-add-button"
-                  aria-label="Auxiliaryを追加"
-                  title="Auxiliaryを追加"
-                  onClick={concurrentChats.onAddAuxiliary}
-                  disabled={concurrentChats.isAddAuxiliaryDisabled}
-                >
-                  +
-                </button>
-              ) : null}
-              searchable
-              onMove={(direction) => {
-                const items = concurrentChats.auxiliaryItems;
-                const current = items.findIndex((item) => item.id === concurrentChats.selectedAuxiliaryId);
-                if (current < 0 || items.length < 2) return;
-                concurrentChats.onSelectAuxiliary(items[(current + direction + items.length) % items.length].id);
-              }}
-              onSelect={concurrentChats.onSelectAuxiliary}
-            />
-          ) : null}
           <div id="session-auxiliary-chat-pane" className="concurrent-chat-column-content">
             {concurrentChats.auxiliaryItems.length === 0 ? null : concurrentChats.loading ? (
               <div className="concurrent-chat-state" role="status" aria-label="Auxiliaryを読み込み中">
