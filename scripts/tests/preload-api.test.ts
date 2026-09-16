@@ -12,9 +12,11 @@ type Listener = (...args: unknown[]) => void;
 
 function createIpcRendererStub() {
   const listeners = new Map<string, Listener>();
+  const removedListeners: Array<{ channel: string; listener: Listener }> = [];
 
   return {
     listeners,
+    removedListeners,
     ipcRenderer: {
       invoke(channel: string, ...args: unknown[]) {
         return Promise.resolve({ channel, args });
@@ -22,8 +24,11 @@ function createIpcRendererStub() {
       on(channel: string, listener: Listener) {
         listeners.set(channel, listener);
       },
-      removeListener(channel: string) {
-        listeners.delete(channel);
+      removeListener(channel: string, listener: Listener) {
+        if (listeners.get(channel) === listener) {
+          listeners.delete(channel);
+        }
+        removedListeners.push({ channel, listener });
       },
       send() {},
     },
@@ -630,6 +635,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
     "subscribeAppBootStatus",
+    "subscribeAuxiliarySessionNavigation",
     "subscribeCompanionSessionSummaries",
     "subscribeLiveSessionRun",
     "subscribeModelCatalog",
@@ -758,6 +764,66 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   assert.equal(listeners.has("withmate:app-boot-status"), false);
   assert.equal(listeners.has("withmate:sessions-changed"), false);
   assert.equal(listeners.has("withmate:prompt-templates-changed"), false);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "preloadはAuxiliary navigation eventを検証してrendererへ親Session IDと対象Auxiliary IDを渡し、購読解除後は受け取らない"
+// oracle = { type = "contract", ref = "withmate-window-types AuxiliarySessionNavigationPayload" }
+// fault = "不正なMain Process payloadをrendererへ渡す、親または子のIDを変換で失う、購読解除後もlistenerを呼び出す"
+// observable = "listenerへ届いたnavigation payloadとIPC listenerの登録状態"
+// observation_boundary = "public-boundary"
+// scope = "preload auxiliary navigation subscription"
+// lifecycle = "permanent"
+// distinction = "既存の複数subscription unwrap testでは検証しない、Auxiliary navigation固有のpayload検証と解除を専用に検証する"
+// @end-test-value
+test("createWithMateWindowApi はAuxiliary navigation payloadを検証してunwrapする", () => {
+  const { ipcRenderer, listeners, removedListeners } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  const received: unknown[] = [];
+  const dispose = api.subscribeAuxiliarySessionNavigation((payload) => {
+    received.push(payload);
+  });
+  const registeredListener = listeners.get("withmate:open-auxiliary-session");
+  assert.ok(registeredListener);
+
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: " parent-session ",
+    auxiliarySessionId: " auxiliary-1 ",
+  });
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: "parent-session",
+    auxiliarySessionId: "",
+  });
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: "parent-session",
+    auxiliarySessionId: "auxiliary-1",
+    unexpected: true,
+  });
+  listeners.get("withmate:open-auxiliary-session")?.({}, null);
+  listeners.get("withmate:open-auxiliary-session")?.({}, []);
+  listeners.get("withmate:open-auxiliary-session")?.({}, 42);
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: 42,
+    auxiliarySessionId: "auxiliary-1",
+  });
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: "parent-session",
+    auxiliarySessionId: {},
+  });
+  dispose();
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: "parent-session-2",
+    auxiliarySessionId: "auxiliary-2",
+  });
+
+  assert.deepEqual(received, [{
+    parentSessionId: "parent-session",
+    auxiliarySessionId: "auxiliary-1",
+  }]);
+  assert.equal(removedListeners.at(-1)?.channel, "withmate:open-auxiliary-session");
+  assert.equal(removedListeners.at(-1)?.listener, registeredListener);
+  assert.equal(listeners.has("withmate:open-auxiliary-session"), false);
 });
 
 test("createWithMateWindowApi は telemetry / background activity の payload も unwrap する", () => {

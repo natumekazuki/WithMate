@@ -36,13 +36,21 @@ function session(id: string, createdAt: string, overrides: Partial<AuxiliarySess
   };
 }
 
-function setup(api: AuxiliaryWorkspaceApi, parentSessionId: string | null = "parent-1") {
+function setup(
+  api: AuxiliaryWorkspaceApi,
+  parentSessionId: string | null = "parent-1",
+  initialSelectedId: string | null = null,
+) {
   const dom = new JSDOM("<div id='root'></div>", { url: "https://withmate.test" });
   const previousWindow = globalThis.window;
   Object.assign(globalThis, { window: dom.window, IS_REACT_ACT_ENVIRONMENT: true });
   let current: AuxiliaryWorkspace | null = null;
   function Probe(props: { parentSessionId: string | null }) {
-    current = useAuxiliaryWorkspace({ parentSessionId: props.parentSessionId, api });
+    current = useAuxiliaryWorkspace({
+      parentSessionId: props.parentSessionId,
+      api,
+      initialSelectedId,
+    });
     return null;
   }
   const root: Root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
@@ -54,6 +62,45 @@ function setup(api: AuxiliaryWorkspaceApi, parentSessionId: string | null = "par
     async unmount() { await act(async () => { root.unmount(); }); Object.assign(globalThis, { window: previousWindow }); },
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "通知から指定されたAuxiliary IDは一覧取得後の初期選択へ反映され、Auxiliary選択はMain/Auxiliaryの送信対象を変更しない"
+// oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+// fault = "新規Session WindowのAuxiliary queryを無視する、または対象会話の選択時に送信対象までAuxiliaryへ切り替える"
+// observable = "hookのselectedId、selectedSession、target"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-notification-navigation"
+// lifecycle = "permanent"
+// distinction = "通常の一覧選択testでは検証できない通知由来の初期選択と送信対象の独立性を専用に検証する"
+// @end-test-value
+test("通知由来のAuxiliary選択は送信対象を変更しない", async () => {
+  const a = session("a", "2026-01-01");
+  const b = session("b", "2026-01-02");
+  const view = setup({
+    listAuxiliarySessions: async () => [a, b],
+    getAuxiliarySession: async (id) => id === a.id ? a : id === b.id ? b : null,
+  }, "parent-1", b.id);
+
+  await view.render();
+  assert.equal(view.current.selectedId, b.id);
+  assert.equal(view.current.selectedSession?.id, b.id);
+  assert.equal(view.current.target, "main");
+
+  await act(async () => { view.current.selectSession(a.id); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(view.current.selectedId, a.id);
+  assert.equal(view.current.selectedSession?.id, a.id);
+  assert.equal(view.current.target, "main");
+
+  await act(async () => { view.current.setTarget("auxiliary"); });
+  await act(async () => { view.current.selectSession(b.id); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(view.current.selectedId, b.id);
+  assert.equal(view.current.selectedSession?.id, b.id);
+  assert.equal(view.current.target, "auxiliary");
+  await view.unmount();
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

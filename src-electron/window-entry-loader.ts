@@ -7,7 +7,7 @@ export type WindowLike = {
 
 export type HomeEntryMode = "home" | "monitor" | "settings" | "memory-review";
 export type ChatEntryMode =
-  | { kind: "agent"; sessionId: string }
+  | { kind: "agent"; sessionId: string; auxiliarySessionId?: string | null }
   | { kind: "companion"; sessionId: string };
 
 export type WindowEntryLoaderDeps = {
@@ -71,7 +71,11 @@ export class WindowEntryLoader {
 
 export function buildChatEntrySearch(mode: ChatEntryMode): string {
   if (mode.kind === "agent") {
-    return `?sessionId=${encodeURIComponent(mode.sessionId)}`;
+    const auxiliarySessionId = mode.auxiliarySessionId?.trim() ?? "";
+    const auxiliaryQuery = auxiliarySessionId
+      ? `&auxiliarySessionId=${encodeURIComponent(auxiliarySessionId)}`
+      : "";
+    return `?sessionId=${encodeURIComponent(mode.sessionId)}${auxiliaryQuery}`;
   }
   if (mode.kind === "companion") {
     return `?companionSessionId=${encodeURIComponent(mode.sessionId)}&mode=companion`;

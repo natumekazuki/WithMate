@@ -84,6 +84,7 @@ function createHarness(overrides?: Partial<SessionTurnNotificationServiceDeps<Fa
   const notifications: FakeNotification[] = [];
   const options: SessionTurnNotificationOptions<FakeIcon>[] = [];
   const openedSessions: string[] = [];
+  const openedAuxiliarySessions: Array<{ parentSessionId: string; auxiliarySessionId: string }> = [];
   let homeOpenCount = 0;
   const warnings: Array<{ event: string; sessionId: string; error?: unknown }> = [];
   const deps: SessionTurnNotificationServiceDeps<FakeIcon> = {
@@ -102,6 +103,9 @@ function createHarness(overrides?: Partial<SessionTurnNotificationServiceDeps<Fa
     getSession: () => session,
     openSessionWindow: (sessionId) => {
       openedSessions.push(sessionId);
+    },
+    openAuxiliarySessionWindow: (parentSessionId, auxiliarySessionId) => {
+      openedAuxiliarySessions.push({ parentSessionId, auxiliarySessionId });
     },
     openHomeWindow: () => {
       homeOpenCount += 1;
@@ -132,6 +136,7 @@ function createHarness(overrides?: Partial<SessionTurnNotificationServiceDeps<Fa
     notifications,
     options,
     openedSessions,
+    openedAuxiliarySessions,
     warnings,
     get homeOpenCount() {
       return homeOpenCount;
@@ -590,6 +595,92 @@ describe("SessionTurnNotificationService", () => {
 
     assert.equal(openFailureHarness.homeOpenCount, 1);
     assert.equal(openFailureHarness.warnings[0]?.event, "target-open-failed");
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliaryのterminal通知は親Session Windowのfocusを判定し、clickで指定されたAuxiliaryだけを開く"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "Auxiliary完了時に通知されない、親Windowではなく子IDをfocus判定へ渡す、clickでMain Windowを開く、または指定IDを失う"
+  // observable = "通知生成、focus判定へ渡したSession ID、通知ID、click後のAuxiliary navigation payload"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-session-turn-notification"
+  // lifecycle = "permanent"
+  // distinction = "通常Sessionのclick testでは観測できない親Windowと子会話のID分離、通知IDの分離、およびAuxiliary navigationを専用に検証する"
+  // @end-test-value
+  it("Auxiliary通知は親Windowを基準に指定されたAuxiliaryを開く", async () => {
+    const focusedSessionIds: string[] = [];
+    const auxiliary = createSession({ id: "runtime-auxiliary-1" });
+    const firstTarget = {
+      kind: "auxiliary" as const,
+      parentSessionId: "parent-session-1",
+      auxiliarySessionId: "stored-auxiliary-1",
+    };
+    const focusedHarness = createHarness({
+      isSessionWindowFocused: (sessionId) => {
+        focusedSessionIds.push(sessionId);
+        return sessionId === firstTarget.parentSessionId;
+      },
+    });
+
+    assert.equal(focusedHarness.terminalService.notifyTurnTerminal({
+      outcome: "completed",
+      session: auxiliary,
+      lastNonEmptyAssistantMessageText: "Auxiliaryの完了",
+    }, firstTarget), false);
+    assert.deepEqual(focusedSessionIds, [firstTarget.parentSessionId]);
+    assert.equal(focusedHarness.notifications.length, 0);
+
+    const harness = createHarness({
+      isSessionWindowFocused: (sessionId) => {
+        focusedSessionIds.push(sessionId);
+        return false;
+      },
+    });
+    assert.equal(harness.terminalService.notifyTurnTerminal({
+      outcome: "completed",
+      session: auxiliary,
+      lastNonEmptyAssistantMessageText: "Auxiliaryの完了",
+    }, firstTarget), true);
+    harness.notifications[0]?.click();
+    await flushAsyncListeners();
+    assert.deepEqual(harness.openedAuxiliarySessions, [{
+      parentSessionId: firstTarget.parentSessionId,
+      auxiliarySessionId: firstTarget.auxiliarySessionId,
+    }]);
+
+    const secondTarget = {
+      ...firstTarget,
+      auxiliarySessionId: "stored-auxiliary-2",
+    };
+    assert.equal(harness.terminalService.notifyTurnTerminal({
+      outcome: "completed",
+      session: auxiliary,
+      lastNonEmptyAssistantMessageText: "Auxiliaryの完了",
+    }, secondTarget), true);
+    assert.notEqual(harness.options[0]?.id, harness.options[1]?.id);
+    assert.equal(harness.notifications[0]?.closed, false);
+
+    harness.notifications[1]?.click();
+    await flushAsyncListeners();
+
+    assert.deepEqual(focusedSessionIds, [
+      firstTarget.parentSessionId,
+      firstTarget.parentSessionId,
+      firstTarget.parentSessionId,
+    ]);
+    assert.deepEqual(harness.openedAuxiliarySessions, [
+      {
+        parentSessionId: firstTarget.parentSessionId,
+        auxiliarySessionId: firstTarget.auxiliarySessionId,
+      },
+      {
+        parentSessionId: secondTarget.parentSessionId,
+        auxiliarySessionId: secondTarget.auxiliarySessionId,
+      },
+    ]);
+    assert.deepEqual(harness.openedSessions, []);
+    assert.equal(harness.homeOpenCount, 0);
   });
 
   it("同じ通知の click が多重発火しても対象 Session は一度だけ開く", async () => {

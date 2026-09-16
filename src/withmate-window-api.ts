@@ -72,6 +72,7 @@ import type {
   SavePastedSessionFileRequest,
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
+  AuxiliarySessionNavigationPayload,
 } from "./withmate-window-types.js";
 import type {
   CreateMateInput,
@@ -376,6 +377,7 @@ export type WithMateWindowSubscriptionApi = {
   subscribeSessionGlossary(listener: (projection: SessionGlossaryProjection) => void): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeSessionWindowRestoreSet(listener: (sessionIds: string[]) => void): () => void;
+  subscribeAuxiliarySessionNavigation(listener: (payload: AuxiliarySessionNavigationPayload) => void): () => void;
   subscribeOpenCompanionReviewWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;
 };

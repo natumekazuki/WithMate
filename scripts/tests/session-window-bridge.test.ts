@@ -191,6 +191,167 @@ describe("SessionWindowBridge", () => {
     assert.equal(window.showCount, 1);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "既存Session WindowへのAuxiliary navigationは親Windowを再利用して対象Auxiliaryの識別情報だけをrendererへ渡す"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "Auxiliary通知のclickで別Windowを作る、親Windowをfocusしない、または対象AuxiliaryのIDを失う"
+  // observable = "作成Window数、Windowのactivation操作、renderer navigation payload"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-auxiliary-navigation"
+  // lifecycle = "permanent"
+  // distinction = "通常のSession Window open testでは検証できない、既存Window再利用時のAuxiliary navigationを専用に検証する"
+  // @end-test-value
+  it("既存Session WindowへのAuxiliary openはWindowを再利用して対象を通知する", async () => {
+    const session = createSession();
+    const window = new StubWindow();
+    const navigationPayloads: unknown[] = [];
+    let createCount = 0;
+    const bridge = new SessionWindowBridge({
+      createWindow() {
+        createCount += 1;
+        return window;
+      },
+      async loadChatEntry() {},
+      sendAuxiliarySessionNavigation(_window, payload) {
+        navigationPayloads.push(payload);
+      },
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      isRunInFlight() {
+        return false;
+      },
+      getAllowQuitWithInFlightRuns() {
+        return false;
+      },
+      confirmCloseWhileRunning() {
+        return false;
+      },
+      broadcastOpenSessionWindowIds() {},
+    });
+
+    await bridge.openSessionWindow(session.id);
+    window.resetActivation({ minimized: false, visible: true });
+    await bridge.openAuxiliarySessionWindow(session.id, "auxiliary-1");
+
+    assert.equal(createCount, 1);
+    assert.deepEqual(window.activationOperations, ["show", "focus"]);
+    assert.deepEqual(navigationPayloads, [{
+      parentSessionId: session.id,
+      auxiliarySessionId: "auxiliary-1",
+    }]);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "新規Session WindowへのAuxiliary openはentry loadへ対象Auxiliary IDを渡す"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "Auxiliary通知のclickで新規に親Windowを開くとき、対象Auxiliary IDをqueryへ渡さずMain会話を表示する"
+  // observable = "作成Window数とentry loadへ渡されたChatEntryMode"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-auxiliary-navigation"
+  // lifecycle = "permanent"
+  // distinction = "既存Window再利用時のrenderer event通知とは分離して、新規Windowのentry query経路を専用に検証する"
+  // @end-test-value
+  it("新規Session WindowへのAuxiliary openはentry loadへ対象を渡す", async () => {
+    const session = createSession();
+    let loadedChatMode: unknown = null;
+    let createCount = 0;
+    const bridge = new SessionWindowBridge({
+      createWindow() {
+        createCount += 1;
+        return new StubWindow();
+      },
+      async loadChatEntry(_window, mode) {
+        loadedChatMode = mode;
+      },
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      isRunInFlight() {
+        return false;
+      },
+      getAllowQuitWithInFlightRuns() {
+        return false;
+      },
+      confirmCloseWhileRunning() {
+        return false;
+      },
+      broadcastOpenSessionWindowIds() {},
+    });
+
+    await bridge.openAuxiliarySessionWindow(session.id, "auxiliary-1");
+
+    assert.equal(createCount, 1);
+    assert.deepEqual(loadedChatMode, {
+      kind: "agent",
+      sessionId: session.id,
+      auxiliarySessionId: "auxiliary-1",
+    });
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "親Session Windowのentry load中にAuxiliary openが重なっても、Window作成とentry loadを重複させずnavigationを保持する"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "通知clickが親Windowのload中に発生した時、別Windowを作る、Auxiliary navigationを失う、またはentry loadを二重実行する"
+  // observable = "作成Window数、entry load回数、navigation payload、open結果のWindow同一性"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-auxiliary-navigation"
+  // lifecycle = "permanent"
+  // distinction = "settledな既存Window・新規Windowのquery経路とは分離して、opening中の共有promise経路を専用に検証する"
+  // @end-test-value
+  it("entry load中のAuxiliary openは親Windowの共有結果へnavigationする", async () => {
+    const session = createSession();
+    let resolveLoad: (() => void) | null = null;
+    let createCount = 0;
+    let loadCount = 0;
+    const navigationPayloads: unknown[] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow() {
+        createCount += 1;
+        return new StubWindow();
+      },
+      loadChatEntry() {
+        loadCount += 1;
+        return new Promise<void>((resolve) => {
+          resolveLoad = resolve;
+        });
+      },
+      sendAuxiliarySessionNavigation(_window, payload) {
+        navigationPayloads.push(payload);
+      },
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      isRunInFlight() {
+        return false;
+      },
+      getAllowQuitWithInFlightRuns() {
+        return false;
+      },
+      confirmCloseWhileRunning() {
+        return false;
+      },
+      broadcastOpenSessionWindowIds() {},
+    });
+
+    const mainOpen = bridge.openSessionWindow(session.id);
+    const auxiliaryOpen = bridge.openAuxiliarySessionWindow(session.id, "auxiliary-1");
+    assert.equal(createCount, 1);
+    assert.equal(loadCount, 1);
+    assert.ok(resolveLoad);
+    resolveLoad();
+
+    const [mainWindow, auxiliaryWindow] = await Promise.all([mainOpen, auxiliaryOpen]);
+    assert.equal(mainWindow, auxiliaryWindow);
+    assert.deepEqual(navigationPayloads, [{
+      parentSessionId: session.id,
+      auxiliarySessionId: "auxiliary-1",
+    }]);
+  });
+
   it("既存 window は通常・最小化・非表示の各状態から可視化して focus する", async (t) => {
     const cases = [
       {

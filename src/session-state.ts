@@ -691,6 +691,10 @@ export function getSessionIdFromLocation(): string | null {
   return new URLSearchParams(getLocationSearch()).get("sessionId");
 }
 
+export function getAuxiliarySessionIdFromLocation(): string | null {
+  return new URLSearchParams(getLocationSearch()).get("auxiliarySessionId");
+}
+
 export function getDiffTokenFromLocation(): string | null {
   return new URLSearchParams(getLocationSearch()).get("token");
 }

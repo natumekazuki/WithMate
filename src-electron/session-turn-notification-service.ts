@@ -123,6 +123,10 @@ export type SessionTurnTerminalNotification =
     session: Session;
   };
 
+export type SessionTurnNotificationTarget =
+  | { kind: "session"; sessionId: string }
+  | { kind: "auxiliary"; parentSessionId: string; auxiliarySessionId: string };
+
 export type SessionTurnNotificationCloseReason =
   | "userCanceled"
   | "applicationHidden"
@@ -146,6 +150,7 @@ export type SessionTurnNotificationServiceDeps<TIcon> = {
   createNotification(options: SessionTurnNotificationOptions<TIcon>): SessionTurnNotificationHandle;
   getSession(sessionId: string): Awaitable<Session | null>;
   openSessionWindow(sessionId: string): Awaitable<void>;
+  openAuxiliarySessionWindow(parentSessionId: string, auxiliarySessionId: string): Awaitable<void>;
   openHomeWindow(): Awaitable<void>;
   logWarning(event: string, sessionId: string, error?: unknown): void;
 };
@@ -156,16 +161,19 @@ export class SessionTurnNotificationService<TIcon> {
 
   constructor(private readonly deps: SessionTurnNotificationServiceDeps<TIcon>) {}
 
-  notifyTurnTerminal(notificationInput: SessionTurnTerminalNotification): boolean {
+  notifyTurnTerminal(
+    notificationInput: SessionTurnTerminalNotification,
+    target: SessionTurnNotificationTarget = { kind: "session", sessionId: notificationInput.session.id },
+  ): boolean {
     const { session } = notificationInput;
-    const sessionId = session.id;
-    if (!this.isEligible(sessionId)) {
+    const notificationKey = this.getNotificationKey(target);
+    if (!this.isEligible(this.getFocusSessionId(target), notificationKey)) {
       return false;
     }
 
     const content = this.buildNotificationContent(notificationInput);
     const options: SessionTurnNotificationOptions<TIcon> = {
-      id: this.buildNotificationId(sessionId),
+      id: this.buildNotificationId(notificationKey),
       groupId: SessionTurnNotificationService.notificationGroupId,
       ...content,
     };
@@ -174,58 +182,59 @@ export class SessionTurnNotificationService<TIcon> {
       options.icon = icon;
     }
 
-    this.closePreviousNotification(sessionId);
+    this.closePreviousNotification(notificationKey);
 
     let notification: SessionTurnNotificationHandle;
     try {
       notification = this.deps.createNotification(options);
     } catch (error) {
-      this.deps.logWarning("create-failed", sessionId, error);
+      this.deps.logWarning("create-failed", notificationKey, error);
       return false;
     }
 
-    this.trackNotification(sessionId, notification);
+    this.trackNotification(notificationKey, target, notification);
 
     try {
       notification.show();
       return true;
     } catch (error) {
-      this.clearIfCurrent(sessionId, notification);
-      this.deps.logWarning("show-failed", sessionId, error);
+      this.clearIfCurrent(notificationKey, notification);
+      this.deps.logWarning("show-failed", notificationKey, error);
       return false;
     }
   }
 
   private trackNotification(
-    sessionId: string,
+    notificationKey: string,
+    target: SessionTurnNotificationTarget,
     notification: SessionTurnNotificationHandle,
   ): void {
     notification.onClick(() => {
-      if (!this.clearIfCurrent(sessionId, notification)) {
+      if (!this.clearIfCurrent(notificationKey, notification)) {
         return;
       }
-      void this.openNotificationTarget(sessionId);
+      void this.openNotificationTarget(target, notificationKey);
     });
     notification.onClose((reason) => {
       if (reason !== "timedOut") {
-        this.clearIfCurrent(sessionId, notification);
+        this.clearIfCurrent(notificationKey, notification);
       }
     });
     notification.onFailed((error) => {
-      this.clearIfCurrent(sessionId, notification);
-      this.deps.logWarning("delivery-failed", sessionId, error);
+      this.clearIfCurrent(notificationKey, notification);
+      this.deps.logWarning("delivery-failed", notificationKey, error);
     });
-    this.trackedNotifications.set(sessionId, notification);
+    this.trackedNotifications.set(notificationKey, notification);
   }
 
-  private isEligible(sessionId: string): boolean {
+  private isEligible(focusSessionId: string, notificationKey: string): boolean {
     try {
       return this.deps.platform === "win32"
         && this.deps.isNotificationSupported()
         && this.deps.isNotificationEnabled()
-        && !this.deps.isSessionWindowFocused(sessionId);
+        && !this.deps.isSessionWindowFocused(focusSessionId);
     } catch (error) {
-      this.deps.logWarning("eligibility-check-failed", sessionId, error);
+      this.deps.logWarning("eligibility-check-failed", notificationKey, error);
       return false;
     }
   }
@@ -321,21 +330,37 @@ export class SessionTurnNotificationService<TIcon> {
     return true;
   }
 
-  private async openNotificationTarget(sessionId: string): Promise<void> {
+  private async openNotificationTarget(
+    target: SessionTurnNotificationTarget,
+    notificationKey: string,
+  ): Promise<void> {
     try {
-      const session = await this.deps.getSession(sessionId);
+      if (target.kind === "auxiliary") {
+        await this.deps.openAuxiliarySessionWindow(target.parentSessionId, target.auxiliarySessionId);
+        return;
+      }
+
+      const session = await this.deps.getSession(target.sessionId);
       if (session) {
-        await this.deps.openSessionWindow(sessionId);
+        await this.deps.openSessionWindow(target.sessionId);
         return;
       }
     } catch (error) {
-      this.deps.logWarning("target-open-failed", sessionId, error);
+      this.deps.logWarning("target-open-failed", notificationKey, error);
     }
 
     try {
       await this.deps.openHomeWindow();
     } catch (error) {
-      this.deps.logWarning("home-open-failed", sessionId, error);
+      this.deps.logWarning("home-open-failed", notificationKey, error);
     }
+  }
+
+  private getNotificationKey(target: SessionTurnNotificationTarget): string {
+    return target.kind === "auxiliary" ? target.auxiliarySessionId : target.sessionId;
+  }
+
+  private getFocusSessionId(target: SessionTurnNotificationTarget): string {
+    return target.kind === "auxiliary" ? target.parentSessionId : target.sessionId;
   }
 }

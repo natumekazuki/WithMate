@@ -86,8 +86,10 @@ export function clampAuxiliaryWidthRatio(ratio: number): number {
 export function useAuxiliaryWorkspace(input: {
   parentSessionId: string | null;
   api: AuxiliaryWorkspaceApi | null;
+  initialSelectedId?: string | null;
 }): AuxiliaryWorkspace {
   const { parentSessionId, api } = input;
+  const initialSelectedId = input.initialSelectedId?.trim() || null;
   const parentSessionIdRef = useRef(parentSessionId);
   parentSessionIdRef.current = parentSessionId;
   const [summaries, setSummaries] = useState<AuxiliarySessionSummary[]>([]);
@@ -103,6 +105,7 @@ export function useAuxiliaryWorkspace(input: {
   const widthRatioRef = useRef(prefsRef.current.widthRatio);
   const [widthRatio, setWidthRatioState] = useState(widthRatioRef.current);
   const selectedIdRef = useRef<string | null>(null);
+  const pendingSelectionIdRef = useRef<string | null>(initialSelectedId);
   const detailsRef = useRef(new Map<string, AuxiliarySession>());
   const bindingsRef = useRef(new Map<string, AuxiliarySessionBinding>());
   const loadRevisionRef = useRef(0);
@@ -145,9 +148,17 @@ export function useAuxiliaryWorkspace(input: {
       setSummaries(next);
       summariesRef.current = next;
       const preferred = prefsRef.current.selectedId;
-      const nextId = selectedIdRef.current && next.some((summary) => summary.id === selectedIdRef.current)
+      const requestedId = pendingSelectionIdRef.current;
+      const hasRequestedId = requestedId !== null && next.some((summary) => summary.id === requestedId);
+      const nextId = hasRequestedId
+        ? requestedId
+        : selectedIdRef.current && next.some((summary) => summary.id === selectedIdRef.current)
         ? selectedIdRef.current
         : preferred && next.some((summary) => summary.id === preferred) ? preferred : next[0]?.id ?? null;
+      if (hasRequestedId) {
+        pendingSelectionIdRef.current = null;
+        persistPrefs({ selectedId: nextId });
+      }
       if (nextId !== selectedIdRef.current) {
         selectedIdRef.current = nextId;
         setSelectedId(nextId);
@@ -161,13 +172,14 @@ export function useAuxiliaryWorkspace(input: {
         setLoading(false);
       }
     }
-  }, [api, parentSessionId]);
+  }, [api, parentSessionId, persistPrefs]);
 
   useEffect(() => {
     prefsRef.current = parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO };
     widthRatioRef.current = prefsRef.current.widthRatio;
     setWidthRatioState(widthRatioRef.current);
     selectedIdRef.current = null;
+    pendingSelectionIdRef.current = initialSelectedId;
     setSelectedId(null);
     setSelectedSession(null);
     summariesRef.current = [];
@@ -184,7 +196,7 @@ export function useAuxiliaryWorkspace(input: {
     setDetailError(null);
     setError(null);
     void refreshSummaries();
-  }, [parentSessionId, refreshSummaries]);
+  }, [initialSelectedId, parentSessionId, refreshSummaries]);
 
   useEffect(() => {
     const id = selectedId;
@@ -286,12 +298,17 @@ export function useAuxiliaryWorkspace(input: {
   }, [api, parentSessionId]);
 
   const selectSession = useCallback((id: string | null) => {
-    if (id !== null && !summaries.some((summary) => summary.id === id)) return;
+    if (id !== null && !summaries.some((summary) => summary.id === id)) {
+      pendingSelectionIdRef.current = id;
+      void refreshSummaries();
+      return;
+    }
+    pendingSelectionIdRef.current = null;
     selectedIdRef.current = id;
     setSelectedId(id);
     setSelectedSession(id ? detailsRef.current.get(id) ?? null : null);
     persistPrefs({ selectedId: id });
-  }, [persistPrefs, summaries]);
+  }, [persistPrefs, refreshSummaries, summaries]);
 
   const setWidthRatio = useCallback((ratio: number) => {
     const next = clampAuxiliaryWidthRatio(ratio);
