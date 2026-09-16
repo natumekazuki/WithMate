@@ -2,7 +2,7 @@
 
 ## Auxiliary Session (Issue #710)
 
-Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、Headerの`New Auxiliary`は既存会話を閉じず末尾へ追加する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。折りたたみ時はAuxiliary面と内部境界を隠し、ActionDock対象をMainへ戻す。
+Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、Headerの`New Auxiliary`は既存会話を閉じず末尾へ追加する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。実行中のAuxiliaryはicon内にcompactなprocessing indicatorを重ね、行高とpreviewの幅を変えない。折りたたみ時はAuxiliary面と内部境界を隠し、ActionDock対象をMainへ戻す。
 
 - 作成日: 2026-03-14
 - 対象: Electron 版 WithMate の現在 UI
