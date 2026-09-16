@@ -3695,16 +3695,21 @@ export function SessionActionDockCompactRow({
             </button>
           </div>
         ) : null}
-        {isRunning ? (
-          <button
-            className="danger session-send-button"
-            type="button"
-            onClick={onCancel}
-            title={cancelButtonTitle}
-          >
-            Cancel
-          </button>
-        ) : null}
+        <div
+          className={`session-action-dock-compact-cancel-slot${isRunning ? " is-active" : ""}`}
+          aria-hidden={isRunning ? undefined : true}
+        >
+          {isRunning ? (
+            <button
+              className="danger session-send-button"
+              type="button"
+              onClick={onCancel}
+              title={cancelButtonTitle}
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -4099,16 +4104,6 @@ export function SessionComposerExpanded({
               />
             </div>
           ) : null}
-          {isRunning ? (
-              <button
-                className="drawer-toggle compact danger composer-toolbar-cancel-button"
-                type="button"
-                onClick={onSendOrCancel}
-                title={sendButtonTitle}
-              >
-                Cancel
-              </button>
-          ) : null}
           {showJumpToBottom || showMessageViewModeControls || targetDock ? (
             <div className="composer-toolbar-view-actions">
               {targetDock ? <div className="composer-target-dock-slot">{targetDock}</div> : null}
@@ -4257,7 +4252,7 @@ export function SessionComposerExpanded({
         </div>
       </div>
 
-      <div className={`composer-control-row${isRunning ? " running" : ""}`}>
+      <div className="composer-control-row">
         <div className="composer-settings">
           {showExecutionModeControls ? (
             <>
@@ -4374,22 +4369,24 @@ export function SessionComposerExpanded({
         </div>
 
 
-        {isRunning ? null : (
-          <button
-            className="session-send-button"
-            type="button"
-            onClick={onSendOrCancel}
-            disabled={isSendDisabled}
-            title={appendShortcutLabel(
-              sendButtonTitle,
-              SHORTCUT_COMMAND_IDS.composerSubmit,
-              undefined,
-              keyboardShortcuts,
-            )}
-          >
-            Send
-          </button>
-        )}
+        <button
+          className={`session-send-button${isRunning ? " danger" : ""}`}
+          type="button"
+          onClick={onSendOrCancel}
+          disabled={!isRunning && isSendDisabled}
+          title={
+            isRunning
+              ? sendButtonTitle
+              : appendShortcutLabel(
+                  sendButtonTitle,
+                  SHORTCUT_COMMAND_IDS.composerSubmit,
+                  undefined,
+                  keyboardShortcuts,
+                )
+          }
+        >
+          {isRunning ? "Cancel" : "Send"}
+        </button>
       </div>
     </div>
   );

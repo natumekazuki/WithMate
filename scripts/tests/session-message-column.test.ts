@@ -1756,6 +1756,18 @@ test("SessionMessageColumn は pending response text も response action 対象�
   assert.equal(pendingBody.getAttribute("data-message-text-actions"), "true");
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "選択範囲がassistant本文内にあるときだけresponse action toolbarを表示し、対象外本文・Source表示・非表示状態では除去する"
+// oracle = { type = "contract", ref = "src/session-components.tsx: message response actions" }
+// fault = "user messageやSource表示への切替後もtoolbarが残るか、copy/quote actionが選択本文を受け取れない"
+// observable = "mounted SessionMessageColumn DOMとselectionchange・resize・scrollによるtoolbar表示、copy/quote callback"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumn selection response actions"
+// lifecycle = "permanent"
+// impact = "assistant response text actionの到達性と非対象messageへの誤表示を防ぐ"
+// distinction = "selection eventの実DOM遷移を検証し、static markupやtypecheckではselection ownerとlifecycleを確認しない"
+// @end-test-value
 test("SessionMessageColumn は選択範囲にだけ response action toolbar を表示する", async () => {
   const copiedTexts: string[] = [];
   const quotedTexts: string[] = [];
@@ -1942,7 +1954,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.equal(container.querySelector(".message-response-actions"), null);
     await clearSelection();
   } finally {
-    mounted.cleanup();
+    await mounted.cleanup();
   }
 });
 
@@ -2207,6 +2219,18 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "expanded ActionDockは実行中も下部の主操作位置にCancelを保持し、上部の操作群から移動させない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
+// fault = "実行中に下部の主操作が消えるか、Cancelが上部toolbarへ移動してActionDock開閉時の操作位置が変わる"
+// observable = "SessionComposerExpandedのrender済みDOMにおけるcomposer-control-rowとcomposer-attachments-toolbarの操作要素"
+// observation_boundary = "component-behavior"
+// scope = "expanded ActionDock primary action"
+// lifecycle = "permanent"
+// impact = "実行中のCancelの発見性と、ActionDockの開閉・Main / Auxiliary切替時の主操作位置を安定させる"
+// distinction = "typecheck/buildはexpandedとrunningのDOM上の主操作位置を観測しない"
+// @end-test-value
 test("SessionComposerExpanded は実行中の操作後に jump button と表示切替を右側 group へ描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
@@ -2284,13 +2308,22 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.match(html, /composer-toolbar-progress/);
   assert.match(html, /処理を実行中/);
   assert.match(html, /末尾へ移動/);
-  assert.match(html, /composer-toolbar-cancel-button/);
   assert.ok(html.indexOf("Attach") < html.indexOf("処理を実行中"));
-  assert.ok(html.indexOf("処理を実行中") < html.indexOf("Cancel"));
-  assert.ok(html.indexOf("Cancel") < html.indexOf("末尾へ移動"));
+  assert.ok(html.indexOf("処理を実行中") < html.indexOf("末尾へ移動"));
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Preview"));
   assert.match(html, /composer-toolbar-view-actions[\s\S]*末尾へ移動[\s\S]*Message display mode/);
-  assert.doesNotMatch(html, />Send<\/button>/);
+
+  const renderedDocument = new JSDOM(html).window.document;
+  const toolbar = renderedDocument.querySelector(".composer-attachments-toolbar");
+  const controlRow = renderedDocument.querySelector(".composer-control-row");
+  const cancelButton = controlRow?.querySelector<HTMLButtonElement>(":scope > button.session-send-button.danger");
+  assert.ok(toolbar);
+  assert.ok(controlRow);
+  assert.ok(cancelButton);
+  assert.doesNotMatch(toolbar.textContent ?? "", /Cancel/);
+  assert.equal(cancelButton.textContent, "Cancel");
+  assert.equal(cancelButton.getAttribute("title"), "実行をキャンセル");
+  assert.equal(controlRow.querySelectorAll(":scope > button.session-send-button").length, 1);
 });
 
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {
@@ -2343,6 +2376,89 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
   assert.match(html, />Cancel<\/button>/);
   assert.doesNotMatch(html, /Draft/);
   assert.doesNotMatch(html, /添付 2/);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "compact ActionDockは実行状態が変わっても末尾のCancel予約slotを同じ位置に保持し、実行中だけCancelを操作可能にする"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
+// fault = "非実行中にslotが消えるか、実行状態の切替でCancelが末尾以外へ移動する、または実行中にCancelが操作できない"
+// observable = "同一React treeをidle/runningへ更新したSessionActionDockCompactRowのslot親、末尾位置、class、Cancel button"
+// observation_boundary = "component-behavior"
+// scope = "compact ActionDock Cancel slot"
+// lifecycle = "permanent"
+// impact = "compact ActionDockの右端を固定し、Main / Auxiliary切替とrun状態変更による操作位置の横ずれを防ぐ"
+// distinction = "CSS declaration testは固定幅を確認し、component testは同一React treeの状態更新後もslotのDOM位置を確認する"
+// @end-test-value
+test("SessionActionDockCompactRow は実行状態が変わっても Cancel の末尾予約slotを維持する", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  let root: Root | null = null;
+  let setRunning: React.Dispatch<React.SetStateAction<boolean>> | null = null;
+  function Harness() {
+    const [isRunning, updateRunning] = React.useState(false);
+    setRunning = updateRunning;
+    return React.createElement(SessionActionDockCompactRow, {
+      attachmentCount: 0,
+      isRunning,
+      showJumpToBottom: true,
+      cancelButtonTitle: "実行をキャンセル",
+      onExpand() {},
+      onJumpToBottom() {},
+      onCancel() {},
+    });
+  }
+
+  const assertSlot = (slot: Element | null, isRunning: boolean) => {
+    assert.ok(slot);
+    const parent = slot.parentElement;
+    assert.ok(parent?.classList.contains("session-action-dock-compact-actions"));
+    assert.equal(parent?.lastElementChild, slot);
+    assert.equal(slot.classList.contains("is-active"), isRunning);
+    if (isRunning) {
+      assert.equal(slot.querySelector("button")?.textContent, "Cancel");
+    } else {
+      assert.equal(slot.getAttribute("aria-hidden"), "true");
+      assert.equal(slot.querySelector("button"), null);
+    }
+  };
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Harness));
+    });
+    const container = dom.window.document.getElementById("root") as HTMLElement;
+    const idleSlot = container.querySelector(".session-action-dock-compact-cancel-slot");
+    assertSlot(idleSlot, false);
+    assert.ok(setRunning);
+
+    await act(async () => {
+      setRunning?.(true);
+    });
+    const runningSlot = container.querySelector(".session-action-dock-compact-cancel-slot");
+    assertSlot(runningSlot, true);
+    assert.equal(runningSlot, idleSlot);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
 });
 
 test("SessionContextPane は latest command がないとき empty text を表示する", () => {

@@ -2,6 +2,18 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+// @test-value v2
+// kind = "contract"
+// claim = "Session composerは設定fieldを通常幅で横並びに保ち、狭幅では設定群を先に折り返してSend領域を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: composer runtime settings" }
+// fault = "設定fieldが一行に収まらず、設定群の折り返し前にSend領域が押し出されるか、狭幅で設定が到達不能になる"
+// observable = "src/styles.cssのcomposer settingsとcontainer breakpoint宣言"
+// observation_boundary = "declaration"
+// scope = "Session composer settings layout"
+// lifecycle = "permanent"
+// impact = "runtime settingsとSend / Cancel主操作を同じActionDock内で到達可能に保つ"
+// distinction = "typecheck/buildはCSSの設定field幅とcontainer breakpointの順序を観測しない"
+// @end-test-value
 test("Session composer は設定field内を一行にし、通常幅で設定群を保ち、狭幅で折り返す", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
@@ -48,4 +60,41 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
   assert.ok(Number.isFinite(settingsWrapWidth));
   assert.ok(Number.isFinite(controlStackWidth));
   assert.ok(settingsWrapWidth <= controlStackWidth, "通常幅では設定群を Send より先に折り返さない");
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "ActionDockのCancel予約領域は通常幅で固定幅を持ち、非実行中は領域を保ったまま不可視になり、狭幅では操作列へ追従する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
+// fault = "Cancelの表示切替でcompact ActionDockの右端位置が変わるか、狭幅で予約領域がoverflowを起こす"
+// observable = "src/styles.cssのCancel slot固定幅・不可視・狭幅上書き宣言"
+// observation_boundary = "declaration"
+// scope = "ActionDock Cancel slot CSS"
+// lifecycle = "permanent"
+// impact = "Main / Auxiliary切替とActionDock開閉でCancelの操作位置を一定にし、狭幅でも他の操作を押し出さない"
+// distinction = "component render testはDOM上のslot位置を確認し、typecheck/buildはCSSの固定幅とresponsive overrideを確認しない"
+// @end-test-value
+test("Session composer の Cancel slot は固定幅と狭幅上書きを持つ", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.composer-control-row > \.session-send-button\s*{[\s\S]*?min-width:\s*86px;/,
+    "expandedのSend / Cancel buttonは同じ最小幅を使う",
+  );
+  assert.match(
+    stylesSource,
+    /\.session-action-dock-compact-cancel-slot\s*{\s*flex:\s*0 0 86px;\s*width:\s*86px;\s*min-width:\s*86px;/,
+    "compact ActionDockのCancel領域は固定幅を予約する",
+  );
+  assert.match(
+    stylesSource,
+    /\.session-action-dock-compact-cancel-slot:not\(\.is-active\)\s*{\s*visibility:\s*hidden;/,
+    "非実行中のcompact Cancelは領域を保ったまま不可視にする",
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*760px\)\s*{[\s\S]*?\.session-action-dock-compact-cancel-slot\s*{\s*flex:\s*0 0 auto;\s*width:\s*100%;\s*min-width:\s*0;/,
+    "狭幅ではcompact Cancel領域を操作列幅へ追従させる",
+  );
 });

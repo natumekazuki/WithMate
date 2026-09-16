@@ -222,6 +222,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - compact / expanded の 2 状態を持つ
   - 常に全幅の下dockとして置く
   - compact でも draft preview、添付数、run 状態、末尾移動、`Send / Cancel` を残す
+  - compact の末尾には `Cancel` 用の固定幅領域を常時予約し、非実行中は不可視にする。expanded でも下部の主操作位置を使い、開閉や Main / Auxiliary 切替で位置を変えない
   - 開閉は下 splitter に集約し、dock 内に `Hide` や reopen hit area を置かない
   - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる
   - default では通常送信の直後に compact へ戻す
