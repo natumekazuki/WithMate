@@ -66,12 +66,12 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
 // kind = "contract"
 // claim = "ActionDockのCancel予約領域は通常幅で固定幅を持ち、非実行中は領域を保ったまま不可視になり、狭幅では操作列へ追従する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "Cancelの表示切替でcompact ActionDockの右端位置が変わるか、狭幅で予約領域がoverflowを起こす"
+// fault = "CSS宣言からCancel slotの固定幅、非実行中の不可視、狭幅overrideのいずれかが欠け、予約領域の幅契約が崩れる"
 // observable = "src/styles.cssのCancel slot固定幅・不可視・狭幅上書き宣言"
 // observation_boundary = "declaration"
 // scope = "ActionDock Cancel slot CSS"
 // lifecycle = "permanent"
-// impact = "Main / Auxiliary切替とActionDock開閉でCancelの操作位置を一定にし、狭幅でも他の操作を押し出さない"
+// impact = "compact / expandedが共有するCancel slotの幅・visibility・狭幅挙動をCSS上で保つ"
 // distinction = "component render testはDOM上のslot位置を確認し、typecheck/buildはCSSの固定幅とresponsive overrideを確認しない"
 // @end-test-value
 test("Session composer の Cancel slot は固定幅と狭幅上書きを持つ", async () => {
@@ -80,21 +80,26 @@ test("Session composer の Cancel slot は固定幅と狭幅上書きを持つ",
   assert.match(
     stylesSource,
     /\.composer-control-row > \.session-send-button\s*{[\s\S]*?min-width:\s*86px;/,
-    "expandedのSend / Cancel buttonは同じ最小幅を使う",
+    "expandedのSend buttonは最小幅86pxを使う",
   );
   assert.match(
     stylesSource,
-    /\.session-action-dock-compact-cancel-slot\s*{\s*flex:\s*0 0 86px;\s*width:\s*86px;\s*min-width:\s*86px;/,
-    "compact ActionDockのCancel領域は固定幅を予約する",
+    /\.session-action-dock-cancel-slot\s*{\s*flex:\s*0 0 86px;\s*width:\s*86px;\s*min-width:\s*86px;/,
+    "ActionDockのCancel領域は固定幅を予約する",
   );
   assert.match(
     stylesSource,
-    /\.session-action-dock-compact-cancel-slot:not\(\.is-active\)\s*{\s*visibility:\s*hidden;/,
-    "非実行中のcompact Cancelは領域を保ったまま不可視にする",
+    /\.session-action-dock-cancel-slot > \.session-send-button\s*{\s*width:\s*100%;/,
+    "Cancel buttonは予約slotいっぱいに表示する",
   );
   assert.match(
     stylesSource,
-    /@media \(max-width:\s*760px\)\s*{[\s\S]*?\.session-action-dock-compact-cancel-slot\s*{\s*flex:\s*0 0 auto;\s*width:\s*100%;\s*min-width:\s*0;/,
-    "狭幅ではcompact Cancel領域を操作列幅へ追従させる",
+    /\.session-action-dock-cancel-slot:not\(\.is-active\)\s*{\s*visibility:\s*hidden;/,
+    "非実行中のCancelは領域を保ったまま不可視にする",
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*760px\)\s*{(?:(?!@media\b)[\s\S])*?\.session-action-dock-cancel-slot\s*{\s*flex:\s*0 0 auto;\s*width:\s*100%;\s*min-width:\s*0;/,
+    "狭幅ではCancel領域を操作列幅へ追従させる",
   );
 });

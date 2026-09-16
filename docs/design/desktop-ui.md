@@ -222,7 +222,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - compact / expanded の 2 状態を持つ
   - 常に全幅の下dockとして置く
   - compact でも draft preview、添付数、run 状態、末尾移動、`Send / Cancel` を残す
-  - compact の末尾には `Cancel` 用の固定幅領域を常時予約し、非実行中は不可視にする。expanded でも下部の主操作位置を使い、開閉や Main / Auxiliary 切替で位置を変えない
+  - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の固定幅領域を常時予約し、非実行中は不可視にする。expanded の下段には disabled の `Send` を残し、開閉や Main / Auxiliary 切替で `Cancel` の位置を変えない
   - 開閉は下 splitter に集約し、dock 内に `Hide` や reopen hit area を置かない
   - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる
   - default では通常送信の直後に compact へ戻す
@@ -300,7 +300,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `liveRun.errorMessage` は `Latest Command` card 内の alert block として扱う
 - right pane 自体の描画失敗は pane 専用 fallback に切り替え、`右ペインを再描画` と `Window を再読み込み` を出す
 - right pane は run 中の command 安全確認面として扱い、full timeline や `Turn Inspector` は常設しない
-- 実行中は `Send` の代わりに `Cancel` を表示
+- 実行中は上段に `Cancel` を表示し、下段には disabled の `Send` を残す
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
   - `Changed Files` は Details UIには表示しない。artifactの永続化、audit、Diff model、Changes paneのデータはこの表示変更だけでは削除しない

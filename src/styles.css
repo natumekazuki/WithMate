@@ -929,6 +929,7 @@ button:disabled {
 .diff-button,
 .diff-close,
 .composer-control-row > .session-send-button,
+.session-action-dock-cancel-slot > .session-send-button,
 .session-action-dock-compact-actions button {
   border: 0;
   border-radius: 999px;
@@ -6699,22 +6700,23 @@ button:disabled {
 }
 
 .session-action-dock-compact-actions .drawer-toggle,
+.session-action-dock-cancel-slot > .session-send-button,
 .session-action-dock-compact-actions .session-send-button {
   min-height: 40px;
   padding: 10px 14px;
 }
 
-.session-action-dock-compact-cancel-slot {
+.session-action-dock-cancel-slot {
   flex: 0 0 86px;
   width: 86px;
   min-width: 86px;
 }
 
-.session-action-dock-compact-cancel-slot:not(.is-active) {
+.session-action-dock-cancel-slot:not(.is-active) {
   visibility: hidden;
 }
 
-.session-action-dock-compact-cancel-slot > .session-send-button {
+.session-action-dock-cancel-slot > .session-send-button {
   width: 100%;
 }
 
@@ -6740,6 +6742,7 @@ button:disabled {
   color: #fde68a;
 }
 
+.session-page .session-action-dock-cancel-slot > .session-send-button,
 .session-page .session-action-dock-compact-actions .session-send-button {
   background: var(--character-main);
   color: var(--character-main-ink);
@@ -6747,6 +6750,7 @@ button:disabled {
   padding: 9px 12px;
 }
 
+.session-page .session-action-dock-cancel-slot > .session-send-button.danger,
 .session-page .session-action-dock-compact-actions .session-send-button.danger {
   background: color-mix(in srgb, #f87171 82%, var(--character-main));
   color: #fff5f5;
@@ -13524,7 +13528,7 @@ button:disabled {
     align-items: stretch;
   }
 
-  .session-action-dock-compact-cancel-slot {
+  .session-action-dock-cancel-slot {
     flex: 0 0 auto;
     width: 100%;
     min-width: 0;
