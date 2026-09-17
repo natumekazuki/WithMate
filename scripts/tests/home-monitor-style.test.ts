@@ -37,15 +37,15 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Home Monitorの状態アイコンは各状態を個別の形で表現し、旧status selectorを残さずreduced motionにも従う"
-// oracle = { type = "contract", ref = "issue-722 monitor status icon styling" }
-// fault = "状態を色だけで表現する、状態ruleの確認が別blockへ跨る、旧home-monitor-status selectorを残す、またはreduced motion時も回転を続ける"
+// claim = "Home Monitorの状態アイコンは実行状態に応じた形を使い、待機と終了は円形で揃え、旧status selectorを残さずreduced motionにも従う"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
+// fault = "状態を色だけで表現する、終了状態を待機と異なる角形で表現する、状態ruleの確認が別blockへ跨る、旧home-monitor-status selectorを残す、またはreduced motion時も回転を続ける"
 // observable = "状態別status icon rule本体、旧selectorの不在、reduced motion時のanimation無効化CSS"
 // observation_boundary = "implementation"
-// scope = "Home Monitor status icon CSS"
+// scope = "Home Monitor and shared session status icon CSS"
 // lifecycle = "permanent"
-// impact = "実行中・失敗・待機・未確定を視認可能な形で区別し、動きが苦手な環境でも静止表示する"
-// distinction = "現行のMonitor DOMへ対応する専用iconの形・状態・motion契約だけを検証する"
+// impact = "実行中・失敗・中断・待機・終了・未確定を視認可能な形で区別し、動きが苦手な環境でも静止表示する"
+// distinction = "Home Monitor専用iconのclosed形状と、共有status iconの既存形状・旧selector不在・reduced motionをまとめて検証する"
 // @end-test-value
 test("Home Monitor の status icon は状態ごとの形とmotion制御で styling される", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
@@ -93,7 +93,11 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
   );
   assert.match(
     readCssRule(stylesSource, ".home-page .home-monitor-status-icon.closed .home-monitor-status-icon-mark"),
-    /border-radius: 2px;/,
+    /border: 1\.5px solid currentColor;/,
+  );
+  assert.match(
+    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.closed .home-monitor-status-icon-mark"),
+    /border-radius: 50%;/,
   );
   assert.match(
     readCssRule(stylesSource, ".home-page .home-monitor-status-icon.loading .home-monitor-status-icon-mark"),
@@ -104,10 +108,14 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
     "@media (prefers-reduced-motion: reduce)",
   ).find((block) => block.includes(".home-monitor-status-icon.running"));
   assert.ok(reducedMotionBlock);
-  assert.match(
-    reducedMotionBlock,
-    /\.home-monitor-status-icon\.running \.home-monitor-status-icon-mark,\s*\.home-monitor-status-icon\.loading \.home-monitor-status-icon-mark\s*\{\s*animation: none;/s,
-  );
+  for (const state of ["running", "loading"]) {
+    assert.match(
+      reducedMotionBlock,
+      new RegExp(
+        String.raw`\.home-monitor-status-icon\.${state} \.home-monitor-status-icon-mark[^{}]*\{[^}]*animation:\s*none;`,
+      ),
+    );
+  }
 });
 
 // @test-value v2

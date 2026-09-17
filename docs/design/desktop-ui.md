@@ -69,7 +69,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
     - `停止・完了`: `interrupted` / `error` / `neutral` を含む non-running
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
-  - running / interrupted / error / 待機 / 終了は、色だけに依存しない状態アイコンで判別できる
+  - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
   - Auxiliaryの取得中・失敗時はカードごとにAuxiliaryがあるように表示せず、Monitor領域のstatus feedbackで状態を示す
   - open な SessionWindow がないときは、その旨が分かる empty state を出す
   - `Monitor Window` button から独立した monitor window を開ける
@@ -179,9 +179,9 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - `実行中` / `停止・完了` の 2 section を持つ
   - 表示単位は親Sessionの集約カードとし、親カードを2行で固定する。1行目はdisclosure、avatar、親title、2行目は`Main`と`Aux`の状態アイコンを表示する
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
-  - `running` はaccent色のspinner、待機はsubduedな中空円、errorはwarning triangleで表し、カード点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
+  - `running` はaccent色のspinner、待機と終了はsubduedな中空円、errorはwarning triangleで表し、カード点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
   - Auxiliaryが存在する親だけdisclosureと`Aux`集約を表示し、Auxiliaryがない場合もMainだけの2行を維持する。展開時は親カード内へ作成順のAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する
-  - Auxiliaryの状態集約では`実行中`、`エラー`、`待機`、`終了`を別々に数え、closed Auxiliaryを待機へ変換しない。interruptedとerrorも別の形状で表示する
+  - Auxiliaryの状態集約では`実行中`、`エラー`、`待機`、`終了`を別々に数え、closed Auxiliaryを待機へ変換しない。待機と終了は同じ円形だが、状態ラベルと集約を分ける。interruptedとerrorも別の形状で表示する
   - section countは親カード数とし、Auxiliaryをtop-level rowとして重複表示しない。親の状態はMainとAuxiliaryを分離して保持し、Auxiliaryのいずれかが実行中なら親カードを`実行中`へ分類する
   - 親titleは既存の親Windowを開き、Auxiliary rowは同じ親Windowを指定したstable Auxiliary IDで開いて選択する。対象が消えた、親が一致しない、Windowを開けない場合はfallbackせずMonitor内へ失敗を返す
   - 展開状態は親kindとstable IDごとのWindow local stateとし、複数親を同時に展開できる。再描画、状態更新、section移動で失わず、Homeと独立Monitor Windowの間で永続化・同期しない
