@@ -140,7 +140,7 @@ export function buildSessionLifecycleManifest(
       AND revoked_at IS NULL
     ORDER BY grant_id
   `).all(...ids) as GrantRow[];
-  const grantChains = db.prepare(`
+  const grantChains = destinationRootSessionId === undefined ? [] : db.prepare(`
     WITH RECURSIVE affected_grants(grant_id) AS (
       SELECT grant_id FROM session_authority_grants_v6
       WHERE grantee_session_id IN (${marks}) OR (issuer_kind = 'agent' AND issuer_id IN (${marks}))
@@ -189,6 +189,31 @@ export function buildSessionLifecycleManifest(
         WHERE action.event_id = event.id AND action.action_type IN ('resolved', 'cancelled', 'superseded')
       )
   `).get(...ids, ...ids, ...ids) as { count: number };
+  const blockers: string[] = [];
+  if (executionCounts.running > 0) blockers.push("running_executions");
+  if (executionCounts.queued > 0) blockers.push("queued_executions");
+  if (openInteractions.count > 0) blockers.push("open_interactions");
+  if (openCoordinationEvents.count > 0) blockers.push("open_coordination_events");
+  if (ids.length > 1) blockers.push("descendants_present");
+  if (blockingWorkItem) blockers.push("work_items_present");
+  if (reservations.length > 0) blockers.push("budget_reservations_present");
+  const base = {
+    sessionId: target,
+    manifestRevision: manifestRevision(db),
+    destinationRootSessionId: destinationRootSessionId ?? null,
+    descendants: ids.filter((id) => id !== target).map((id) => ({ sessionId: id, revision: (db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?").get(id) as { resource_revision: number }).resource_revision })),
+    workItems: workItems.map((row) => ({ workItemId: row.id, state: row.state, revision: row.revision, parentWorkItemId: row.parent_work_item_id })),
+    artifacts: artifacts.map((row) => ({ id: String(row.id), ownerSessionId: row.owner_session_id })),
+    budgetReservations: reservations.map((row) => ({ id: row.reservation_id, state: row.state })),
+    executions: executionCounts,
+    grants: grants.map((row) => ({ id: row.grant_id, revision: row.revision, state: "active" })),
+    openInteractions: openInteractions.count,
+    openCoordinationEvents: openCoordinationEvents.count,
+    blockers,
+  };
+  if (destinationRootSessionId === undefined) {
+    return { ...base, destinationRootSessionId: null, deletable: blockers.length === 0 };
+  }
   const coordinationEventIds = (db.prepare(`SELECT id FROM coordination_events_v6 WHERE actor_session_id IN (${marks}) OR target_session_id IN (${marks}) OR parent_session_id IN (${marks}) ORDER BY id`).all(...ids, ...ids, ...ids) as Array<{ id: string }>).map((row) => row.id);
   const interactionIds = executionIds.length === 0 ? [] : (db.prepare(`SELECT id FROM session_interactions_v6 WHERE execution_id IN (${executionIds.map(() => "?").join(", ")}) ORDER BY id`).all(...executionIds) as Array<{ id: string }>).map((row) => row.id);
   const workItemIds = workItems.map((row) => row.id);
@@ -223,15 +248,7 @@ export function buildSessionLifecycleManifest(
     ORDER BY resource_kind, resource_id
   `).all(...historyClauses.flatMap((key) => [key.resourceKind, key.resourceId])) as ResourceHistoryRow[];
   const result: SessionRuntimeSessionMoveManifestResult = {
-    sessionId: target,
-    manifestRevision: manifestRevision(db),
-    destinationRootSessionId: destinationRootSessionId ?? null,
-    descendants: ids.filter((id) => id !== target).map((id) => ({ sessionId: id, revision: (db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?").get(id) as { resource_revision: number }).resource_revision })),
-    workItems: workItems.map((row) => ({ workItemId: row.id, state: row.state, revision: row.revision, parentWorkItemId: row.parent_work_item_id })),
-    artifacts: artifacts.map((row) => ({ id: String(row.id), ownerSessionId: row.owner_session_id })),
-    budgetReservations: reservations.map((row) => ({ id: row.reservation_id, state: row.state })),
-    executions: executionCounts,
-    grants: grants.map((row) => ({ id: row.grant_id, revision: row.revision, state: "active" })),
+    ...base,
     budgetAccounts: budgetAccounts.map((row) => ({ id: row.account_id, ownerSessionId: row.owner_session_id, rootSessionId: row.root_session_id, revision: row.revision })),
     budgetUsage: budgetUsage.map((row) => ({ id: row.usage_id, accountId: row.account_id, executionId: row.execution_id, amount: row.amount, unit: row.usage_unit, confidence: row.confidence })),
     rootWorkItems: workItems.filter((row) => row.kind === "root").map((row) => ({ id: row.id, state: row.state, revision: row.revision })),
@@ -240,16 +257,6 @@ export function buildSessionLifecycleManifest(
     resourceHistory: resourceHistory.map((row) => ({ resourceKind: row.resource_kind, resourceId: row.resource_id, eventCount: row.event_count, latestRevision: row.latest_revision })),
     coordinationEventIds,
     interactionIds,
-    openInteractions: openInteractions.count,
-    openCoordinationEvents: openCoordinationEvents.count,
-    blockers: [],
   };
-  if (executionCounts.running > 0) result.blockers.push("running_executions");
-  if (executionCounts.queued > 0) result.blockers.push("queued_executions");
-  if (openInteractions.count > 0) result.blockers.push("open_interactions");
-  if (openCoordinationEvents.count > 0) result.blockers.push("open_coordination_events");
-  if (result.descendants.length > 0) result.blockers.push("descendants_present");
-  if (blockingWorkItem) result.blockers.push("work_items_present");
-  if (result.budgetReservations.length > 0) result.blockers.push("budget_reservations_present");
-  return destinationRootSessionId === undefined ? { ...result, deletable: result.blockers.length === 0 } : result;
+  return result;
 }

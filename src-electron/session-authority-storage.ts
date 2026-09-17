@@ -19,7 +19,6 @@ import {
 import { SESSION_RUNTIME_OPERATIONS, type SessionRuntimeOperation } from "../src/session-external-runtime-contract.js";
 import { SESSION_ROLE_VALUES, type SessionRole } from "../src/session-role-binding.js";
 import { ensureSessionAuthoritySchema } from "./session-authority-schema.js";
-import { ResourceBudgetStorage, ResourceBudgetError } from "./resource-budget-storage.js";
 import { RESOURCE_BUDGET_DIMENSIONS } from "../src/resource-budget.js";
 import type {
   SessionGrantCreateInput,
@@ -1502,18 +1501,35 @@ function assertGrantBudgetAccount(db: DatabaseSync, grant: Pick<SessionAuthority
   const ceiling = grant.provenance.budget;
   if (accountId === undefined && ceiling === undefined) return;
   if (typeof accountId !== "string") throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "A bounded grant requires an existing budget account.");
-  const budget = (() => {
-    try { return new ResourceBudgetStorage(db).get(ownerId ?? grant.rootSessionId); }
-    catch (error) {
-      if (!(error instanceof ResourceBudgetError)) throw error;
-      throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant budget account cannot be resolved.");
+  const requestedOwnerId = ownerId ?? grant.rootSessionId;
+  let account = db.prepare(`
+    SELECT account_id, root_session_id, revoked_at
+    FROM resource_budget_accounts_v6
+    WHERE owner_session_id = ?
+    ORDER BY CASE account_kind WHEN 'session' THEN 0 ELSE 1 END
+    LIMIT 1
+  `).get(requestedOwnerId) as { account_id: string; root_session_id: string; revoked_at: string | null } | undefined;
+  if (!account) {
+    const binding = db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?")
+      .get(requestedOwnerId) as { root_session_id: string } | undefined;
+    if (binding) {
+      account = db.prepare(`
+        SELECT account_id, root_session_id, revoked_at
+        FROM resource_budget_accounts_v6
+        WHERE account_id = ?
+        LIMIT 1
+      `).get(binding.root_session_id) as { account_id: string; root_session_id: string; revoked_at: string | null } | undefined;
     }
-  })();
-  if (budget.accountId !== accountId || budget.rootSessionId !== grant.rootSessionId || budget.revokedAt !== null) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant budget is not the target's current account.");
+  }
+  if (!account || account.account_id !== accountId || account.root_session_id !== grant.rootSessionId || account.revoked_at !== null) {
+    throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant budget is not the target's current account.");
+  }
   if (ceiling && typeof ceiling === "object" && !Array.isArray(ceiling)) {
     for (const [key, maximum] of Object.entries(ceiling)) {
-      const dimension = budget.dimensions[key as typeof RESOURCE_BUDGET_DIMENSIONS[number]];
-      if (!dimension || typeof maximum !== "number" || dimension.hardLimit > maximum) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Configure a budget allocation within the grant ceiling before admission.");
+      if (!RESOURCE_BUDGET_DIMENSIONS.includes(key as typeof RESOURCE_BUDGET_DIMENSIONS[number])) throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The grant budget contains an unknown dimension.", { dimension: key });
+      const dimension = db.prepare("SELECT hard_limit FROM resource_budget_dimensions_v6 WHERE account_id = ? AND dimension = ?")
+        .get(account.account_id, key) as { hard_limit: number } | undefined;
+      if (!dimension || typeof maximum !== "number" || dimension.hard_limit > maximum) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "Configure a budget allocation within the grant ceiling before admission.");
     }
   }
 }

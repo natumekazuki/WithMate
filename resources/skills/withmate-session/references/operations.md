@@ -140,16 +140,16 @@ Store only summary, facts, assumptions, impact, and recommendation within the pu
 
 Every application operation requires the valid runtime binding issued by WithMate for the current provider execution. `session.self` returns only that binding's actor Session ID and does not accept a caller-supplied Session ID. All other Session-scoped operations keep an explicit target, including cross-Session handoff; the actor is never used as an implicit target.
 
-`turn.run` and `turn.enqueue` use the following canonical Role and hierarchy matrix. The runtime derives the actor from its binding and reads both actor and target bindings; request fields cannot override the relationship.
+Role names and hierarchy are baseline grant templates and routing hints, not a live authorization matrix. `turn.run` and `turn.enqueue` derive the actor from its binding, require an explicit target, and evaluate the saved active grant, canonical resource relation, external side-effect class, budget, and runtime generation; request fields cannot override those values. A same-root active communication grant may authorize a canonical target beyond the baseline direct-child template. Cross-root consultation grants are limited to their declared consultation scope, and Session or Work Item transfer requires its dedicated transfer proof.
 
-| Actor Role | Allowed target |
+| Baseline Role template | Default routing hint |
 | --- | --- |
 | `standalone` | Self only |
 | `overall-coordinator` | Self, a direct `task-coordinator` child, or a direct `executor` child |
 | `task-coordinator` | Self, a direct `executor` child, the root `overall-coordinator`, or a sibling `task-coordinator` with the same root and parent |
 | `executor` | Self or its direct parent (`overall-coordinator` or `task-coordinator`) |
 
-Cross-root Turns, overall-coordinator-to-grandchild Turns, executor-to-sibling or other-branch Turns, nonexistent targets, and caller-supplied Role or hierarchy claims are rejected before execution or queue acceptance. Trusted GUI messages are a separate user-invocation boundary and are not restricted by this Agent matrix. `runtime.catalog.sessionTurnCommunicationContractRevision` identifies this Turn communication contract.
+Nonexistent targets and caller-supplied Role or hierarchy claims are rejected before execution or queue acceptance. A target outside the baseline template is allowed only when the active grant and canonical relation authorize the requested same-root operation. A cross-root Turn remains rejected unless it is the separately declared consultation operation with its consultation grant; Session and Work Item transfer are independent lifecycle mutations with dedicated transfer proofs, not ordinary Turn routing. Trusted GUI messages are a separate user-invocation boundary. `runtime.catalog.sessionTurnCommunicationContractRevision` identifies this Turn communication contract.
 
 ## Turn lifecycle
 

@@ -11,7 +11,7 @@ import {
   type SessionAuthorityGrant,
   type SessionAuthorityRelationSelector,
 } from "../src/session-authority.js";
-import type { SessionRuntimeOperation } from "../src/session-external-runtime-contract.js";
+import { SessionRuntimeValidationError, type SessionRuntimeOperation } from "../src/session-external-runtime-contract.js";
 import type { SessionRole } from "../src/session-role-binding.js";
 import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
 import {
@@ -53,6 +53,20 @@ type ScopeCandidate = {
   scope: ResolvedSessionAuthorityScope;
   targetRole?: SessionRole;
   requiredGrantId?: string;
+};
+
+const SESSION_GRANT_LIST_CURSOR_VERSION = 1 as const;
+const SESSION_GRANT_LIST_SORT = "grant_id_asc" as const;
+type SessionGrantListCursor = {
+  version: typeof SESSION_GRANT_LIST_CURSOR_VERSION;
+  operation: "grant.list";
+  sort: typeof SESSION_GRANT_LIST_SORT;
+  actorSessionId: string;
+  providerId: string;
+  executionGeneration: string;
+  includeRevoked: boolean;
+  granteeSessionId: string | null;
+  grantId: string;
 };
 
 export class SessionAuthorityService {
@@ -99,9 +113,17 @@ export class SessionAuthorityService {
   grantList(binding: ResolvedAgentRuntimeBinding, input: SessionGrantListInput = {}): SessionGrantListResult {
     this.validateRuntimeBinding(binding);
     const limit = input.limit ?? 50;
-    const grants = listSessionAuthorityGrants(this.db, binding.actorSessionId, input);
+    const normalized = input.cursor === undefined
+      ? input
+      : { ...input, cursor: decodeSessionGrantListCursor(input.cursor, binding, input) };
+    const grants = listSessionAuthorityGrants(this.db, binding.actorSessionId, normalized);
     const items = grants.slice(0, limit).map(projectGrant);
-    return { items, ...(grants.length > limit ? { nextCursor: items.at(-1)!.grant.grantId } : {}) };
+    return {
+      items,
+      ...(grants.length > limit && items.at(-1)
+        ? { nextCursor: encodeSessionGrantListCursor(items.at(-1)!.grant.grantId, binding, input) }
+        : {}),
+    };
   }
 
   grantRevoke(binding: ResolvedAgentRuntimeBinding, input: SessionGrantRevokeInput): SessionGrantResult {
@@ -290,6 +312,50 @@ function projectGrant(grant: SessionAuthorityGrant): SessionGrantResult {
     issuerId: grant.issuerKind === "agent" ? grant.issuerId : grant.issuerKind,
     provenance: Object.fromEntries(Object.entries(grant.provenance).filter(([key]) => publicKeys.includes(key))),
   } };
+}
+
+function encodeSessionGrantListCursor(
+  grantId: string,
+  binding: ResolvedAgentRuntimeBinding,
+  input: SessionGrantListInput,
+): string {
+  const cursor: SessionGrantListCursor = {
+    version: SESSION_GRANT_LIST_CURSOR_VERSION,
+    operation: "grant.list",
+    sort: SESSION_GRANT_LIST_SORT,
+    actorSessionId: binding.actorSessionId,
+    providerId: binding.providerId,
+    executionGeneration: binding.executionGeneration,
+    includeRevoked: input.includeRevoked === true,
+    granteeSessionId: input.granteeSessionId ?? null,
+    grantId,
+  };
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeSessionGrantListCursor(
+  value: string,
+  binding: ResolvedAgentRuntimeBinding,
+  input: SessionGrantListInput,
+): string {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<SessionGrantListCursor>;
+    if (
+      parsed.version !== SESSION_GRANT_LIST_CURSOR_VERSION
+      || parsed.operation !== "grant.list"
+      || parsed.sort !== SESSION_GRANT_LIST_SORT
+      || parsed.actorSessionId !== binding.actorSessionId
+      || parsed.providerId !== binding.providerId
+      || parsed.executionGeneration !== binding.executionGeneration
+      || parsed.includeRevoked !== (input.includeRevoked === true)
+      || parsed.granteeSessionId !== (input.granteeSessionId ?? null)
+      || typeof parsed.grantId !== "string"
+      || !parsed.grantId
+    ) throw new Error("invalid cursor");
+    return parsed.grantId;
+  } catch {
+    throw new SessionRuntimeValidationError("The grant list cursor is invalid.", { field: "cursor" }, "INVALID_CURSOR");
+  }
 }
 
 function resolveScopes(

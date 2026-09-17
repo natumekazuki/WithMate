@@ -442,28 +442,37 @@ describe("Work Item contract", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "同一principalとidempotency keyの同一create requestはimmutable bindingをreplayし、異なるrequestは拒否する"
-  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-IDENTITY-01-immutable-binding" }
-  // fault = "retryが重複Work Itemを作成するか、同じkeyの別targetやgoalが既存bindingを上書きする"
+  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#work-identity-01-委譲identity" }
+  // fault = "retryが重複Work Itemを作成するか、同じkeyのrequest各field差分がfingerprint検証を迂回して既存bindingを上書きする"
   // observable = "保存済みWork Item identity、idempotency row、collision error"
   // observation_boundary = "component-behavior"
   // scope = "WorkItemService create idempotency"
   // lifecycle = "permanent"
-  // distinction = "同一requestのreplayと異なるtargetのcollisionを同じledgerに対して観測する"
+  // distinction = "同一requestのreplayとexpectedContainerRevision、target、goal、scope、completionCriteria、authority、sourceIdentityを一項目ずつ変更したcollisionを同じledgerに対して観測する"
   // @end-test-value
   it("WORK-IDENTITY-01: create replayはimmutable bindingを復元し異なるfingerprintを拒否する", () => {
-    const created = createRootWork();
-    assert.equal(createRootWork().id, created.id);
+    const original = {
+      expectedContainerRevision: currentSessionResourceRevision("task"), targetSessionId: "task",
+      goal: "Delegate a task", scope: "Work Item slice", completionCriteria: "All direct checks pass",
+      authority: "Local repository changes", sourceIdentity, idempotencyKey: "create-root",
+    };
+    const created = service.create(original, binding("root"));
+    assert.equal(service.create(original, binding("root")).id, created.id);
     assert.deepEqual(storage.get(created.id), created);
-    assert.throws(() => service.create({
-      expectedContainerRevision: currentSessionResourceRevision("sibling"),
-      targetSessionId: "sibling",
-      goal: "Changed",
-      scope: "Work Item slice",
-      completionCriteria: "All direct checks pass",
-      authority: "Local repository changes",
-      sourceIdentity,
-      idempotencyKey: "create-root",
-    }, binding("root")), WorkItemIdempotencyConflictError);
+    const variants = [
+      { expectedContainerRevision: original.expectedContainerRevision + 1 },
+      { targetSessionId: "sibling" },
+      { parentWorkItemId: "different-parent" },
+      { goal: "Changed" },
+      { scope: "Changed scope" },
+      { completionCriteria: "Changed completion" },
+      { authority: "Changed authority" },
+      { sourceIdentity: { ...sourceIdentity, branch: "changed-branch" } },
+    ];
+    for (const variant of variants) {
+      assert.throws(() => service.create({ ...original, ...variant }, binding("root")), WorkItemIdempotencyConflictError);
+      assert.deepEqual(storage.get(created.id), created);
+    }
     assert.equal(storage.get(created.id)?.targetSessionId, "task");
   });
 
@@ -490,7 +499,7 @@ describe("Work Item contract", () => {
   it("WORK-IDEM-07: 24時間経過後はledgerを削除して同じkeyを新しい要求へ再利用できる", () => {
     const first = createRootWork("expiring-key");
     currentNow = AFTER_EXPIRES;
-    const second = service.create({
+    const secondInput = {
       expectedContainerRevision: currentSessionResourceRevision("task"),
       targetSessionId: "task",
       goal: "New delegation after retention",
@@ -499,8 +508,10 @@ describe("Work Item contract", () => {
       authority: "local",
       sourceIdentity,
       idempotencyKey: "expiring-key",
-    }, binding("root"));
+    };
+    const second = service.create(secondInput, binding("root"));
     assert.notEqual(second.id, first.id);
+    assert.equal(service.create(secondInput, binding("root")).id, second.id);
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
       assert.equal((db.prepare(`
@@ -565,7 +576,24 @@ describe("Work Item contract", () => {
       idempotencyKey: "create-root",
     };
     const parent = createWithActiveGrant(parentInput, binding("root"));
-    assert.throws(() => service.create({
+    const snapshot = () => {
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        return {
+          sessions: db.prepare("SELECT id, resource_revision FROM sessions_v6 ORDER BY id").all(),
+          workItems: db.prepare("SELECT * FROM work_items_v6 ORDER BY id").all(),
+          workEvents: db.prepare("SELECT * FROM work_item_events_v6 ORDER BY work_item_id, revision").all(),
+          workIdempotency: db.prepare("SELECT * FROM work_item_idempotency_v6 ORDER BY operation, idempotency_key").all(),
+          budgets: db.prepare("SELECT * FROM resource_budget_accounts_v6 ORDER BY account_id").all(),
+        };
+      } finally { db.close(); }
+    };
+    const assertRejectedWithoutPersistence = (action: () => unknown, errorClass: RegExp | typeof WorkItemAuthorityError | typeof WorkItemParentError) => {
+      const before = snapshot();
+      assert.throws(action, errorClass, "the invalid delegation must be rejected");
+      assert.deepEqual(snapshot(), before);
+    };
+    assertRejectedWithoutPersistence(() => service.create({
       expectedContainerRevision: currentSessionResourceRevision("standalone"),
       targetSessionId: "standalone",
       goal: "cross root",
@@ -587,7 +615,7 @@ describe("Work Item contract", () => {
     };
     const child = createWithActiveGrant(childInput, binding("task"));
     assert.equal(child.parentWorkItemId, parent.id);
-    assert.throws(() => service.create({
+    assertRejectedWithoutPersistence(() => service.create({
       expectedContainerRevision: currentSessionResourceRevision("task"),
       targetSessionId: "task",
       goal: "self delegation",
@@ -597,7 +625,7 @@ describe("Work Item contract", () => {
       sourceIdentity,
       idempotencyKey: "self-delegation",
     }, binding("task")), WorkItemAuthorityError);
-    assert.throws(() => service.create({
+    assertRejectedWithoutPersistence(() => service.create({
       expectedContainerRevision: currentSessionResourceRevision("executor"),
       targetSessionId: "executor",
       parentWorkItemId: child.id,

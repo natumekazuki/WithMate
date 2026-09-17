@@ -4,6 +4,8 @@ import test from "node:test";
 
 import { buildSessionLifecycleManifest } from "../../src-electron/session-lifecycle-manifest.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
+import { SESSION_RUNTIME_RESULT_SCHEMA_VERSION } from "../../src/session-external-runtime-contract.js";
+import { parseSessionRuntimeResultEnvelope } from "../../src/session-external-runtime-schema.js";
 
 function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -46,10 +48,10 @@ test("Session lifecycle manifestは空closureを実在DBから返す", () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "manifestは対象subtreeのexecution、active grant、reservation、artifact、open interaction/coordinationを列挙し、event追加をstale検知する"
-// oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeSessionMoveManifestResult" }
-// fault = "対象subtreeのresourceが欠落する、または同root siblingのeventでrevision変化を見落とす"
-// observable = "execution/work/grant/reservation/usage/artifact/interaction/coordinationの件数とstate、grant chain、resource history、event identity"
+// claim = "move manifestは対象subtreeの移管用resource詳細を列挙し、delete manifestは削除可否に必要な既存列挙だけを返し、event追加をstale検知する"
+// oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeDeleteManifestResult,SessionRuntimeSessionMoveManifestResult" }
+// fault = "対象subtreeのresourceが欠落する、同root siblingのeventでrevision変化を見落とす、またはdelete manifestへ移管専用詳細が混入する"
+// observable = "execution/work/grant/reservation/usage/artifact/interaction/coordinationの件数とstate、grant chain、resource history、event identity、delete projectionのfield集合"
 // observation_boundary = "implementation"
 // scope = "session-lifecycle-manifest"
 // lifecycle = "permanent"
@@ -127,6 +129,12 @@ test("Session lifecycle manifestはrunning/queuedと保護resourceを列挙す�
     "work_items_present",
   ]);
   const deletion = buildSessionLifecycleManifest(db, "child");
+  parseSessionRuntimeResultEnvelope("session.move.manifest", {
+    schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION, operation: "session.move.manifest", result: manifest,
+  });
+  parseSessionRuntimeResultEnvelope("session.delete.manifest", {
+    schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION, operation: "session.delete.manifest", result: deletion,
+  });
   assert.equal("deletable" in deletion && deletion.deletable, false);
   assert.ok(deletion.blockers.includes("work_items_present"));
   assert.ok(deletion.blockers.includes("budget_reservations_present"));

@@ -367,7 +367,13 @@ export type SessionRuntimeRestoreInput = SessionRuntimeSessionInput & { expected
 export type SessionRuntimeArchiveInput = SessionRuntimeSessionInput & { expectedRevision: number; reason: string; descendantPolicy: "retain" | "archive_descendants"; idempotencyKey: string };
 export type SessionRuntimeDeleteManifestInput = SessionRuntimeSessionInput;
 export type SessionRuntimeDeleteInput = SessionRuntimeSessionInput & { expectedRevision: number; manifestRevision: number; idempotencyKey: string };
-export type SessionRuntimeDeleteManifestResult = SessionRuntimeSessionMoveManifestResult & { deletable: boolean };
+type SessionRuntimeSessionLifecycleManifestBase = Pick<SessionRuntimeSessionMoveManifestResult,
+  "sessionId" | "manifestRevision" | "destinationRootSessionId" | "descendants" | "workItems" | "artifacts"
+  | "budgetReservations" | "executions" | "grants" | "openInteractions" | "openCoordinationEvents" | "blockers">;
+export type SessionRuntimeDeleteManifestResult = SessionRuntimeSessionLifecycleManifestBase & {
+  destinationRootSessionId: null;
+  deletable: boolean;
+};
 
 export type SessionRuntimePublicCharacter = { id: string; name: string };
 export type SessionRuntimePublicWorkspace = {

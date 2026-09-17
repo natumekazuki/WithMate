@@ -11,7 +11,7 @@ import { buildNewSession, type Session } from "../../src/session-state.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { applySessionMove } from "../../src-electron/session-lifecycle-move.js";
-import { issueTrustedCrossRootTransferCapability, listActiveSessionAuthorityGrants, revokeSessionAuthorityGrant } from "../../src-electron/session-authority-storage.js";
+import { createSessionAuthorityGrant, issueTrustedCrossRootTransferCapability, issueTrustedGrantPolicy, listActiveSessionAuthorityGrants, revokeSessionAuthorityGrant } from "../../src-electron/session-authority-storage.js";
 import { ResourceBudgetStorage, bootstrapRootResourceBudget } from "../../src-electron/resource-budget-storage.js";
 import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
 import { RESOURCE_BUDGET_DIMENSIONS } from "../../src/resource-budget.js";
@@ -680,10 +680,10 @@ describe("Session lifecycle move", () => {
 
   // @test-value v2
   // kind = "security"
-  // claim = "失効したissuerに依存するgrantをSession移管で再発行せず、外側transactionがtopology変更をrollbackする"
+  // claim = "失効したissuerに依存するactive child grantをSession移管で再発行せず、外側transactionがtopology変更をrollbackする"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
   // fault = "revoked parentの子grantをdestination issuerへ付け替えて権限を復活させる"
-  // observable = "move拒否、rollback後のSession root/revisionと移管先grant件数"
+  // observable = "revoked parentとactive childのissuer chain拒否、rollback後のSession root/revisionと移管先grant件数"
   // observation_boundary = "component-behavior"
   // scope = "SQLite applySessionMove inside caller transaction with real grant revocation"
   // lifecycle = "permanent"
@@ -694,8 +694,24 @@ describe("Session lifecycle move", () => {
     try {
       const sourceGrant = provisionMoveGrant(db, ctx.sourceRoot.id)[0];
       const destinationGrant = provisionMoveGrant(db, ctx.sourceRoot.id, ctx.destinationRoot.id)[0];
-      const selfGrant = listActiveSessionAuthorityGrants(db, ctx.target.id, new Date(NOW)).find((grant) => grant.actions.includes("session.self"))!;
-      revokeSessionAuthorityGrant(db, { grantId: selfGrant.grantId, expectedRevision: selfGrant.revision,
+      const parentGrant = issueTrustedGrantPolicy(db, {
+        rootSessionId: ctx.sourceRoot.id, granteeSessionId: ctx.sourceRoot.id,
+        actions: ["session.get"], resourceKind: "session", relationSelector: "root_member",
+        targetSessionRoles: ["executor"], effectClass: "read", delegable: true,
+        childCeiling: [{ mode: "exercise", action: "session.get", resourceKind: "session", relationSelector: "root_member", effectClass: "read", targetSessionRoles: ["executor"] }],
+        principal: { kind: "system", service: "session-move-test" }, proof: {
+          principal: { kind: "system", service: "session-move-test" }, providerId: null,
+          operation: "session.move", mappingRevision: 2, action: "session.move", effectClass: "local_mutation",
+          grantId: null, grantRevision: null,
+          resolvedScope: { resourceKind: "session", resourceId: null, rootSessionId: ctx.sourceRoot.id, ownerKind: "session", ownerId: ctx.sourceRoot.id, relation: "root_owner" }, evaluatedAt: NOW,
+        }, expiresAt: null, issuedAt: NOW,
+      })[0];
+      createSessionAuthorityGrant(db, { issuerSessionId: ctx.sourceRoot.id, issuedAt: NOW, grant: {
+        parentGrantId: parentGrant.grantId, parentGrantRevision: parentGrant.revision, idempotencyKey: "revoked-parent-child",
+        granteeSessionId: ctx.target.id, actions: ["session.get"], resourceKind: "session", relationSelector: "root_member",
+        targetSessionRoles: ["executor"], effectClass: "read", delegable: false, childCeiling: [], expiresAt: null,
+      }});
+      revokeSessionAuthorityGrant(db, { grantId: parentGrant.grantId, expectedRevision: parentGrant.revision,
         principal: { kind: "system", service: "test-policy" }, revokedAt: NOW });
       const before = db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id);
       db.exec("BEGIN IMMEDIATE");

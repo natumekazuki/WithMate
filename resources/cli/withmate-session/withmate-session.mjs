@@ -10254,7 +10254,7 @@ var sessionDeleteInputSchema = object$1({
 	manifestRevision: number().int().min(1),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
-var sessionManifestResultSchema = object$1({
+var sessionLifecycleManifestBaseSchema = object$1({
 	sessionId: nonEmptyStringSchema,
 	manifestRevision: number().int().min(1),
 	destinationRootSessionId: string().nullable(),
@@ -10285,6 +10285,11 @@ var sessionManifestResultSchema = object$1({
 		revision: number().int().min(1),
 		state: nonEmptyStringSchema
 	}).strict()),
+	openInteractions: number().int().nonnegative(),
+	openCoordinationEvents: number().int().nonnegative(),
+	blockers: array(string())
+}).strict();
+var sessionManifestResultSchema = sessionLifecycleManifestBaseSchema.extend({
 	budgetAccounts: array(object$1({
 		id: nonEmptyStringSchema,
 		ownerSessionId: nonEmptyStringSchema,
@@ -10330,12 +10335,12 @@ var sessionManifestResultSchema = object$1({
 		latestRevision: number().int().min(1).nullable()
 	}).strict()),
 	coordinationEventIds: array(nonEmptyStringSchema),
-	interactionIds: array(nonEmptyStringSchema),
-	openInteractions: number().int().nonnegative(),
-	openCoordinationEvents: number().int().nonnegative(),
-	blockers: array(string())
+	interactionIds: array(nonEmptyStringSchema)
 }).strict();
-var sessionDeleteManifestResultSchema = sessionManifestResultSchema.extend({ deletable: boolean() }).strict();
+var sessionDeleteManifestResultSchema = sessionLifecycleManifestBaseSchema.extend({
+	destinationRootSessionId: _null(),
+	deletable: boolean()
+}).strict();
 var sessionFileListInputSchema = object$1({
 	sessionId: nonEmptyStringSchema,
 	limit: number().int().min(1).max(500).default(50),

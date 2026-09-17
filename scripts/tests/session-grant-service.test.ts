@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 
 import { SessionAuthorityError } from "../../src/session-authority.js";
+import { SessionRuntimeValidationError } from "../../src/session-external-runtime-contract.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import { issueTrustedGrantPolicy, revokeSessionAuthorityGrant } from "../../src-electron/session-authority-storage.js";
@@ -22,10 +23,10 @@ const binding = (id: string, generation = "generation-1"): ResolvedAgentRuntimeB
 
 // @test-value v2
 // kind = "security"
-// claim = "grant ownerは親のactive ceilingを守り、親失効後も同一再送で初回grantを返し、他actorによる親grant取得を拒否する"
+// claim = "grant ownerは親のactive ceilingと初回replayを守り、他actorの親grant取得とlist cursorのactor/filter流用を拒否する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Direct validation" }
-// fault = "親grantの失効後も子grantを作成する、exercise ceilingから再委譲可能なgrantを発行する、別actorが親grantを取得する"
-// observable = "実SQLiteを使ったservice responseのgrant IDと初回snapshot、listのcursor/page順序・重複・revoked/grantee filter、owner拒否"
+// fault = "親grantの失効後も子grantを作成する、exercise ceilingから再委譲可能なgrantを発行する、別actorが親grantを取得する、別actor/filterのcursorで一覧が欠落する"
+// observable = "実SQLiteを使ったservice responseのgrant IDと初回snapshot、listのcursor/page順序・重複・revoked/grantee filter、owner拒否、cursor流用と不正cursorのINVALID_CURSOR"
 // observation_boundary = "component-behavior"
 // scope = "session-grant-service-owner"
 // lifecycle = "permanent"
@@ -66,6 +67,10 @@ test("grant service owner enforces parent ceiling and actor ownership", async ()
     assert.ok(nextPage.items.length >= 1);
     assert.ok(page.items[0]!.grant.grantId < nextPage.items[0]!.grant.grantId);
     assert.equal(new Set([...page.items, ...nextPage.items].map((item) => item.grant.grantId)).size, page.items.length + nextPage.items.length);
+    assert.throws(() => authority.grantList(binding(root.id), { includeRevoked: false, limit: 1, cursor: page.nextCursor }), (error: unknown) => error instanceof SessionRuntimeValidationError && error.code === "INVALID_CURSOR" && error.details.field === "cursor");
+    assert.throws(() => authority.grantList(binding(root.id), { granteeSessionId: child.id, includeRevoked: true, limit: 1, cursor: page.nextCursor }), (error: unknown) => error instanceof SessionRuntimeValidationError && error.code === "INVALID_CURSOR");
+    assert.throws(() => authority.grantList(binding(child.id), { includeRevoked: true, limit: 1, cursor: page.nextCursor }), (error: unknown) => error instanceof SessionRuntimeValidationError && error.code === "INVALID_CURSOR");
+    assert.throws(() => authority.grantList(binding(root.id), { includeRevoked: true, limit: 1, cursor: "malformed" }), (error: unknown) => error instanceof SessionRuntimeValidationError && error.code === "INVALID_CURSOR");
     assert.ok(authority.grantList(binding(root.id), {}).items.every((item) => item.grant.revokedAt === null));
     assert.ok(authority.grantList(binding(root.id), { includeRevoked: true, limit: 100 }).items.some((item) => item.grant.grantId === parent.grantId && item.grant.revokedAt !== null));
     const childGrants = authority.grantList(binding(root.id), { granteeSessionId: child.id }).items;
@@ -154,7 +159,7 @@ test("temporary cross-root communication remains bounded through replay expiry a
 // claim = "same-rootの非parent Sessionはactiveなexplicit grantのresource scopeでroutingでき、grant unionとrevokeを正しく評価し、trusted policyの不正な発行日時を拒否する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Same-root routing" }
 // fault = "parent matrixがないtargetを拒否する、または一方のgrant revokeで別の有効grantまで無効化する、または不正日時のpolicyを保存する"
-// observable = "実SQLiteを使ったauthorize proofのgrantIdと許可・拒否結果、trusted policyの不正resource/account拒否、不正issuedAtのAUTHORITY_SCOPE_INVALID"
+// observable = "実SQLiteを使ったauthorize proofのgrantIdと許可・拒否結果、trusted policyの不正resource/account拒否、不正issuedAtのAUTHORITY_SCOPE_INVALIDとgrant/event row不変"
 // observation_boundary = "component-behavior"
 // scope = "same-root grant routing evaluator"
 // lifecycle = "permanent"
@@ -175,7 +180,11 @@ test("same-root non-parent routing uses explicit grant union", async () => {
     assert.throws(() => authority.authorize(binding(parent.id), "turn.enqueue", { sessionId: sibling.id }));
     assert.throws(() => issueTrustedGrantPolicy(db, { ...common, resourceIds: ["missing-session"] }), /resource/i);
     assert.throws(() => issueTrustedGrantPolicy(db, { ...common, budgetAccountId: "wrong-account" }), /account/i);
+    const grantsBeforeInvalidTimestamp = db.prepare("SELECT grant_id, revision, provenance_json FROM session_authority_grants_v6 ORDER BY grant_id").all();
+    const eventsBeforeInvalidTimestamp = db.prepare("SELECT event_id, grant_id, event_kind, grant_revision, payload_json FROM session_authority_grant_events_v6 ORDER BY event_id").all();
     assert.throws(() => issueTrustedGrantPolicy(db, { ...common, issuedAt: "invalid-date" }), (error: unknown) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_SCOPE_INVALID");
+    assert.deepEqual(db.prepare("SELECT grant_id, revision, provenance_json FROM session_authority_grants_v6 ORDER BY grant_id").all(), grantsBeforeInvalidTimestamp);
+    assert.deepEqual(db.prepare("SELECT event_id, grant_id, event_kind, grant_revision, payload_json FROM session_authority_grant_events_v6 ORDER BY event_id").all(), eventsBeforeInvalidTimestamp);
     const first = issueTrustedGrantPolicy(db, { ...common })[0]!;
     const second = issueTrustedGrantPolicy(db, { ...common, resourceIds: [sibling.id], proof: common.proof })[0]!;
     const input = { sessionId: sibling.id };

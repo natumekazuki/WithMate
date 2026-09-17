@@ -286,7 +286,7 @@ const sessionRestoreInputSchema = z.discriminatedUnion("kind", [
 const sessionArchiveInputSchema = z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), reason: nonEmptyStringSchema, descendantPolicy: z.enum(["retain", "archive_descendants"]), idempotencyKey: nonEmptyStringSchema }).strict();
 const sessionDeleteManifestInputSchema = sessionGetInputSchema;
 const sessionDeleteInputSchema = z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), manifestRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema }).strict();
-const sessionManifestResultSchema = z.object({
+const sessionLifecycleManifestBaseSchema = z.object({
   sessionId: nonEmptyStringSchema, manifestRevision: z.number().int().min(1), destinationRootSessionId: z.string().nullable(),
   descendants: z.array(z.object({ sessionId: nonEmptyStringSchema, revision: z.number().int().min(1) }).strict()),
   workItems: z.array(z.object({ workItemId: nonEmptyStringSchema, state: nonEmptyStringSchema, revision: z.number().int().min(1), parentWorkItemId: z.string().nullable() }).strict()),
@@ -294,6 +294,9 @@ const sessionManifestResultSchema = z.object({
   budgetReservations: z.array(z.object({ id: nonEmptyStringSchema, state: nonEmptyStringSchema }).strict()),
   executions: z.object({ running: z.number().int().nonnegative(), queued: z.number().int().nonnegative() }).strict(),
   grants: z.array(z.object({ id: nonEmptyStringSchema, revision: z.number().int().min(1), state: nonEmptyStringSchema }).strict()),
+  openInteractions: z.number().int().nonnegative(), openCoordinationEvents: z.number().int().nonnegative(), blockers: z.array(z.string()),
+}).strict();
+const sessionManifestResultSchema = sessionLifecycleManifestBaseSchema.extend({
   budgetAccounts: z.array(z.object({ id: nonEmptyStringSchema, ownerSessionId: nonEmptyStringSchema, rootSessionId: nonEmptyStringSchema, revision: z.number().int().min(1) }).strict()).optional(),
   budgetUsage: z.array(z.object({ id: nonEmptyStringSchema, accountId: nonEmptyStringSchema, executionId: z.string().nullable(), amount: z.number(), unit: nonEmptyStringSchema, confidence: nonEmptyStringSchema }).strict()).optional(),
   sessionFolders: z.array(z.object({ sessionId: nonEmptyStringSchema, path: nonEmptyStringSchema }).strict()).optional(),
@@ -302,9 +305,8 @@ const sessionManifestResultSchema = z.object({
   grantChains: z.array(z.object({ id: nonEmptyStringSchema, issuerGrantId: z.string().nullable(), issuerGrantRevision: z.number().int().min(1).nullable(), granteeSessionId: nonEmptyStringSchema, revision: z.number().int().min(1), revokedAt: z.string().nullable(), expiresAt: z.string().nullable() }).strict()),
   resourceHistory: z.array(z.object({ resourceKind: nonEmptyStringSchema, resourceId: nonEmptyStringSchema, eventCount: z.number().int().nonnegative(), latestRevision: z.number().int().min(1).nullable() }).strict()),
   coordinationEventIds: z.array(nonEmptyStringSchema), interactionIds: z.array(nonEmptyStringSchema),
-  openInteractions: z.number().int().nonnegative(), openCoordinationEvents: z.number().int().nonnegative(), blockers: z.array(z.string()),
 }).strict();
-const sessionDeleteManifestResultSchema = sessionManifestResultSchema.extend({ deletable: z.boolean() }).strict();
+const sessionDeleteManifestResultSchema = sessionLifecycleManifestBaseSchema.extend({ destinationRootSessionId: z.null(), deletable: z.boolean() }).strict();
 const sessionFileListInputSchema = z.object({
   sessionId: nonEmptyStringSchema,
   limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),

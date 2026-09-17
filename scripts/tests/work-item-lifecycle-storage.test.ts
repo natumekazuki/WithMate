@@ -314,24 +314,25 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "archive/restore は採用済みchildのresultとdecision childRevisionを変更せず、delete は未参照archived canceledのみ物理削除し履歴とretry可能性を保持する"
+  // claim = "archive/restore は採用済みchildのresultとdecision childRevisionを変更せず、参照済みchildのdeleteを拒否し、未参照archived canceledの削除後も履歴とretry可能性を保持する"
   // fault = "archive/restoreでdecision snapshotがstale化する、またはdeleteで参照済みWork Itemやeventsを失う"
   // observable = "work_items_v6, work_item_aggregation_decisions_v6, work_item_events_v6, work_item_tombstones_v6, work_item_idempotency_v6"
   // observation_boundary = "component-behavior"
   // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/02-work-item-lifecycle.md" }
   // scope = "WorkItemStorageV6 archive/restore/delete"
   // lifecycle = "permanent"
-  // distinction = "decision済みchildのarchive/restoreと孤立canceled Work Itemのdeleteを別実体で観測する"
+  // distinction = "decision済みchildのarchive/restoreと孤立archived canceled Work Itemのdeleteを別実体で観測し、result全体と期待row集合を比較する"
   // @end-test-value
-  it("archive/restoreはdecisionを保全し、孤立canceledだけをdeleteする", () => {
+  it("archive/restoreはdecisionを保全し、参照済みchildを拒否して孤立canceledだけをdeleteする", () => {
     const parent = create(null, "root", "task", "archive-parent");
     const child = settle(create(parent.id, "task", "executor", "archive-child"));
+    const expectedResult = child.result;
     const summary = storage.getAggregationSummary(parent.id);
     storage.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, actorSessionId: "task", decision: "accepted", reason: null, expectedAggregateRevision: summary.aggregateRevision, idempotencyKey: "archive-decision", requestFingerprint: "archive-decision-fp", decidedAt: LATER, expiresAt: EXPIRES, proof: proof("work.aggregation.decide") });
     const decisionRevision = Number(sql("SELECT child_revision AS n FROM work_item_aggregation_decisions_v6 WHERE child_work_item_id=?", child.id)[0].n);
     const archived = storage.archive({ workItemId: child.id, expectedRevision: child.revision, principalSessionId: "root", idempotencyKey: "archive", requestFingerprint: "archive-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.archive"), reason: "retained" });
     const restored = storage.restore({ workItemId: child.id, expectedRevision: archived.revision, principalSessionId: "root", idempotencyKey: "restore", requestFingerprint: "restore-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.restore") });
-    assert.equal(restored.result?.summary, "done");
+    assert.deepEqual(restored.result, expectedResult);
     assert.equal(Number(sql("SELECT child_revision AS n FROM work_item_aggregation_decisions_v6 WHERE child_work_item_id=?", child.id)[0].n), decisionRevision);
     const archivedAgain = storage.archive({ workItemId: child.id, expectedRevision: restored.revision, principalSessionId: "root", idempotencyKey: "archive-again", requestFingerprint: "archive-again-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.archive"), reason: "retained" });
     let referencedDeleteError: unknown;
@@ -345,9 +346,14 @@ describe("WorkItemStorageV6 lifecycle boundary", () => {
     const deleted = storage.delete({ workItemId: archivedOrphan.id, expectedRevision: archivedOrphan.revision, principalSessionId: "root", idempotencyKey: "delete", requestFingerprint: "delete-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.delete") });
     assert.equal(deleted.id, orphan.id);
     assert.equal(storage.get(orphan.id)?.deletedAt, LATER);
-    assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_events_v6 WHERE work_item_id=?", orphan.id)[0].n, 4);
+    assert.deepEqual(sql<{ event_type: string }>("SELECT event_type FROM work_item_events_v6 WHERE work_item_id=? ORDER BY revision", orphan.id).map((row) => row.event_type), ["created", "state_transitioned", "archived", "deleted"]);
     assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_tombstones_v6 WHERE work_item_id=?", orphan.id)[0].n, 1);
-    assert.equal(sql("SELECT COUNT(*) AS n FROM work_item_idempotency_v6 WHERE work_item_id=?", orphan.id)[0].n >= 3, true);
+    assert.deepEqual(sql<{ operation: string; idempotency_key: string; work_item_id: string }>("SELECT operation,idempotency_key,work_item_id FROM work_item_idempotency_v6 WHERE work_item_id=? ORDER BY operation,idempotency_key", orphan.id).map((row) => ({ ...row })), [
+      { operation: "work.archive", idempotency_key: "archive-orphan", work_item_id: orphan.id },
+      { operation: "work.cancel", idempotency_key: "cancel", work_item_id: orphan.id },
+      { operation: "work.create", idempotency_key: "orphan", work_item_id: orphan.id },
+      { operation: "work.delete", idempotency_key: "delete", work_item_id: orphan.id },
+    ]);
     const deletedReplay = storage.delete({ workItemId: orphan.id, expectedRevision: deleted.revision, principalSessionId: "root", idempotencyKey: "delete", requestFingerprint: "delete-fp", updatedAt: LATER, expiresAt: EXPIRES, proof: proof("work.delete") });
     assert.equal(deletedReplay.id, orphan.id);
     storage.close(); storage = new WorkItemStorageV6(dbPath);
