@@ -52,7 +52,6 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_sessions_last_active",
   "idx_v6_session_messages_session_seq",
   "idx_auxiliary_sessions_parent_updated",
-  "idx_auxiliary_sessions_parent_created",
   "idx_v6_session_turns_session_updated",
   "idx_v6_session_turns_auxiliary_updated",
   "idx_v6_session_turns_phase_updated",
@@ -765,9 +764,6 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
     ON auxiliary_sessions(parent_session_id, updated_at DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_created
-    ON auxiliary_sessions(parent_session_id, created_at ASC);
 `;
 
 export const CREATE_V6_SESSION_TURNS_TABLE_SQL = `
@@ -1463,12 +1459,9 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
         ON auxiliary_sessions(parent_session_id, updated_at DESC)
     `);
-
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_created
-        ON auxiliary_sessions(parent_session_id, created_at ASC)
-    `);
   }
+
+  db.exec("DROP INDEX IF EXISTS idx_auxiliary_sessions_parent_created");
 
   db.exec(CREATE_V6_SESSION_TURNS_TABLE_SQL);
   db.exec(CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL);

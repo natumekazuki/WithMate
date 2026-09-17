@@ -2,7 +2,7 @@
 
 ## Issue #710 Auxiliary Session
 
-複数Auxiliaryを追加して作成順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態でも、中央のAuxiliary切り替え枠に現在タイトルと左右切り替えボタン、タイトル横の`＋`が残り、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
+複数Auxiliaryを追加して最終使用順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態でも、中央のAuxiliary切り替え枠に現在タイトルと左右切り替えボタン、タイトル横の`＋`が残り、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
 
 ## 目的
 

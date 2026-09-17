@@ -12,7 +12,7 @@ Auxiliaryは監査専用ではなく、通常のprovider chat/coding sessionと�
 ## Scope
 
 - Auxiliary切り替えUIからの新規Auxiliary追加（既存会話を終了、置換、削除しない）。
-- 作成順の一覧、stable Session IDによる選択、左右矢印による前後移動。
+- 最終使用順の一覧、stable Session IDによる選択、左右矢印による前後移動。
 - Main左／選択Auxiliary右の共通chat shellと共有ActionDock。
 - Auxiliaryごとの会話、draft、runtime option、Character ID／snapshot、provider threadの保存。
 - 非AIの一覧preview。直近turnで確定した最終assistant応答ブロックの冒頭を機械的に平文化する。
@@ -72,7 +72,7 @@ MainとAuxiliaryはmessages、composer draft、live run、pending approval／eli
 
 一覧用の`summary_json`はpayloadの派生projectionであり、messages、draft、Character定義本文を含めない。upsert時にpayloadと同時更新し、既存行は初回migrationで一度だけ補完する。Auxiliary一覧、active一覧、running一覧はsummary列だけを読み、全transcriptや定義本文を毎回走査しない。会話本文の取得とruntime復元だけがpayloadを読む。
 
-Auxiliaryは作成順（`createdAt ASC, id ASC`）で並べる。実行、draft、preview更新で順序を変えない。選択状態はindexではなくstable IDで保持する。
+Auxiliaryは最終使用順（`updatedAt DESC, id DESC`）で並べる。実行、draft、preview更新で順序を更新する。選択状態はindexではなくstable IDで保持する。
 
 ## Preview contract
 

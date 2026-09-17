@@ -53,11 +53,6 @@ const CREATE_AUXILIARY_SESSION_PARENT_UPDATED_INDEX_SQL = `
     ON auxiliary_sessions(parent_session_id, updated_at DESC)
 `;
 
-const CREATE_AUXILIARY_SESSION_PARENT_CREATED_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_created
-    ON auxiliary_sessions(parent_session_id, created_at ASC)
-`;
-
 export class AuxiliarySessionStorage {
   private db: DatabaseSync | null;
   private legacySummaryBackfillDone = false;
@@ -96,7 +91,7 @@ export class AuxiliarySessionStorage {
         SELECT created_at, updated_at, summary_json
         FROM auxiliary_sessions
         WHERE parent_session_id = ?
-        ORDER BY created_at ASC, id ASC
+        ORDER BY updated_at DESC, id DESC
       `).all(parentSessionId) as AuxiliarySessionSummaryRow[];
       return rows
         .map(parseAuxiliarySessionSummaryRow)
@@ -232,7 +227,7 @@ export class AuxiliarySessionStorage {
       ensureAuxiliarySessionCreatedAtColumn(db);
       ensureAuxiliarySessionSummaryColumn(db);
       db.exec(CREATE_AUXILIARY_SESSION_PARENT_UPDATED_INDEX_SQL);
-      db.exec(CREATE_AUXILIARY_SESSION_PARENT_CREATED_INDEX_SQL);
+      db.exec("DROP INDEX IF EXISTS idx_auxiliary_sessions_parent_created");
     });
   }
 

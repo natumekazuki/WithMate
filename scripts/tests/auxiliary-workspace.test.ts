@@ -6,6 +6,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { useAuxiliaryWorkspace, type AuxiliaryWorkspaceApi, type AuxiliaryWorkspace } from "../../src/chat/use-auxiliary-workspace.js";
+import { runAuxiliaryDraftChangeAndSaveOperation } from "../../src/auxiliary-draft-save-context.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 
 function session(id: string, createdAt: string, overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
@@ -62,6 +63,36 @@ function deferred<T>() {
 }
 
 // @test-value v2
+// kind = "contract"
+// claim = "Auxiliary一覧は最終使用時刻の降順で表示し、同時刻ではIDの降順で安定する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md:75" }
+// fault = "作成時刻の順序を表示し続けるか、同時刻の会話順が不定になり、最近使ったAuxiliaryへすぐ切り替えられない"
+// observable = "hookが公開するsummariesのID順"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-summary-order"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary一覧は最終使用順で並び、同時刻ではIDで安定する", async () => {
+  const createdLater = session("created-later", "2026-01-03", { updatedAt: "2026-01-01" });
+  const lastUsed = session("last-used", "2026-01-01", { updatedAt: "2026-01-03" });
+  const sameTimeA = session("same-time-a", "2026-01-04", { updatedAt: "2026-01-02" });
+  const sameTimeB = session("same-time-b", "2026-01-02", { updatedAt: "2026-01-02" });
+  const api: AuxiliaryWorkspaceApi = {
+    listAuxiliarySessions: async () => [createdLater, lastUsed, sameTimeA, sameTimeB],
+    getAuxiliarySession: async () => null,
+  };
+  const view = setup(api);
+  await view.render();
+  assert.deepEqual(view.current.summaries.map((summary) => summary.id), [
+    "last-used",
+    "same-time-b",
+    "same-time-a",
+    "created-later",
+  ]);
+  await view.unmount();
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "会話切替の逆順詳細取得は最新選択の詳細だけを表示する"
 // oracle = { type = "contract", ref = "issue-710-selection-load-generation" }
@@ -72,9 +103,9 @@ function deferred<T>() {
 // lifecycle = "permanent"
 // @end-test-value
 test("逆順detail loadは現在選択のIDを巻き戻さない", async () => {
-  const a = session("a", "2026-01-01");
-  const b = session("b", "2026-01-02");
-  const c = session("c", "2026-01-03");
+  const a = session("a", "2026-01-01", { updatedAt: "2026-01-03" });
+  const b = session("b", "2026-01-02", { updatedAt: "2026-01-02" });
+  const c = session("c", "2026-01-03", { updatedAt: "2026-01-01" });
   const loadA = deferred<AuxiliarySession | null>();
   const loadB = deferred<AuxiliarySession | null>();
   const loadC = deferred<AuxiliarySession | null>();
@@ -228,6 +259,7 @@ test("hidden sessionのsaveとterminalでdraft・previewを維持する", async 
   const b = session("b", "2026-01-02");
   let terminal: ((id: string, state: null) => void) | null = null;
   let latest = a;
+  const savedRequests: AuxiliarySession[] = [];
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => [a, b],
     getAuxiliarySession: async (id) => id === "a" ? latest : b,
@@ -242,15 +274,44 @@ test("hidden sessionのsaveとterminalでdraft・previewを維持する", async 
   const bindingB = view.current.getBinding("b");
   const revision = binding.mutationRevision.current;
   bindingB.mutationRevision.current += 1;
-  await act(async () => { view.current.setTarget("main"); binding.setSession((current) => current ? { ...current, composerDraft: "hidden draft" } : current); });
-  latest = { ...a, composerDraft: "hidden draft", preview: "terminal answer", messages: [...a.messages, { role: "assistant", text: "terminal answer" }] };
+  await act(async () => { view.current.selectSession("b"); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  let saveResult: Awaited<ReturnType<typeof runAuxiliaryDraftChangeAndSaveOperation>> = null;
+  await act(async () => {
+    view.current.setTarget("main");
+    saveResult = await runAuxiliaryDraftChangeAndSaveOperation({
+      draft: "hidden draft",
+      selectionStart: "hidden draft".length,
+      clearBlockedFeedback: () => {},
+      setComposerCaret: () => {},
+      currentSession: binding.getSession(),
+      createTimestampLabel: () => "2026-01-03T00:00:00.000Z",
+      draftSaveQueue: binding.draftSaveQueue.current,
+      getCurrentSession: binding.getSession,
+      saveAuxiliarySession: async (request) => {
+        savedRequests.push(request);
+        latest = request;
+        return request;
+      },
+      mutationRevision: binding.mutationRevision,
+      activeSessionRef: binding.sessionRef,
+      draftSaveQueueRef: binding.draftSaveQueue,
+      setActiveSession: (update) => binding.setSession(update),
+    });
+  });
+  assert.equal(savedRequests.length, 1);
+  assert.equal(savedRequests[0]?.composerDraft, "hidden draft");
+  assert.equal(saveResult?.request.composerDraft, "hidden draft");
+  assert.equal(saveResult?.saved.composerDraft, "hidden draft");
+  assert.equal(binding.sessionRef.current?.composerDraft, "hidden draft");
+  latest = { ...latest, preview: "terminal answer", messages: [...latest.messages, { role: "assistant", text: "terminal answer" }] };
   assert.ok(terminal);
   await act(async () => { terminal?.("a", null); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   assert.equal(binding.sessionRef.current?.composerDraft, "hidden draft");
-  assert.equal(binding.mutationRevision.current, revision);
+  assert.equal(binding.mutationRevision.current, revision + 1);
   assert.equal(bindingB.mutationRevision.current, 1);
-  assert.equal(view.current.summaries[0]?.preview, "terminal answer");
+  assert.equal(view.current.summaries.find((summary) => summary.id === "a")?.preview, "terminal answer");
   await view.unmount();
 });
 

@@ -761,6 +761,36 @@ describe("database-schema-v6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V6 schemaのensureは既存DBに残ったAuxiliary作成順indexを削除し、最終使用順indexを保持する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md:5" }
+  // fault = "schema ensure後も旧作成順indexが残って不要な維持コストを発生させるか、最終使用順indexを欠落させる"
+  // observable = "auxiliary_sessionsのindex names"
+  // observation_boundary = "public-boundary"
+  // scope = "v6-auxiliary-index-cleanup"
+  // impact = "既存DBの不要なindex領域と書き込み維持コストが残る"
+  // distinction = "isValidV6Databaseは余分なindexを許容するため、ensureV6Schemaの既存DB修復を直接確認する"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("ensureV6Schema は既存の旧Auxiliary indexを削除する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec(`
+        DROP INDEX idx_auxiliary_sessions_parent_updated;
+        CREATE INDEX idx_auxiliary_sessions_parent_created
+          ON auxiliary_sessions(parent_session_id, created_at ASC)
+      `);
+
+      ensureV6Schema(db);
+
+      assert.equal(indexNames(db).includes("idx_auxiliary_sessions_parent_updated"), true);
+      assert.equal(indexNames(db).includes("idx_auxiliary_sessions_parent_created"), false);
+    } finally {
+      db.close();
+    }
+  });
+
   it("ensureV6Schema は既存Memory idempotencyとmutation/move eventへ列をadditive追加する", () => {
     const db = new DatabaseSync(":memory:");
     try {
