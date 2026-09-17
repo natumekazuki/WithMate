@@ -1,4 +1,5 @@
 import type { Session } from "../src/app-state.js";
+import type { AuxiliarySessionNavigationPayload } from "../src/withmate-window-types.js";
 import type { ChatEntryMode } from "./window-entry-loader.js";
 
 export type SessionWindowCloseEvent = {
@@ -21,6 +22,10 @@ export type SessionWindowLike = {
 export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   createWindow(sessionId: string): TWindow;
   loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
+  sendAuxiliarySessionNavigation?(
+    window: TWindow,
+    payload: AuxiliarySessionNavigationPayload,
+  ): void;
   getSession(sessionId: string): Session | null;
   isRunInFlight(sessionId: string): boolean;
   getAllowQuitWithInFlightRuns(): boolean;
@@ -107,10 +112,18 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     return Array.from(this.sessionWindows.values()).filter((window) => !window.isDestroyed());
   }
 
-  async openSessionWindow(sessionId: string, auxiliarySessionId?: string): Promise<TWindow> {
+  async openSessionWindow(
+    sessionId: string,
+    options: SessionWindowOpenOptions = {},
+  ): Promise<TWindow> {
+    const auxiliarySessionId = options.auxiliarySessionId?.trim() || null;
     const openingWindow = this.openingSessionWindows.get(sessionId);
     if (openingWindow) {
-      return openingWindow;
+      const window = await openingWindow;
+      if (auxiliarySessionId) {
+        this.sendAuxiliarySessionNavigation(sessionId, auxiliarySessionId, window);
+      }
+      return window;
     }
 
     const existingWindow = this.getWindow(sessionId);
@@ -121,6 +134,9 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
 
       existingWindow.show();
       existingWindow.focus();
+      if (auxiliarySessionId) {
+        this.sendAuxiliarySessionNavigation(sessionId, auxiliarySessionId, existingWindow);
+      }
       return existingWindow;
     }
 
@@ -146,6 +162,10 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
         this.openingSessionWindows.delete(sessionId);
       }
     }
+  }
+
+  async openAuxiliarySessionWindow(parentSessionId: string, auxiliarySessionId: string): Promise<TWindow> {
+    return this.openSessionWindow(parentSessionId, { auxiliarySessionId });
   }
 
   closeSessionWindow(sessionId: string): void {
@@ -220,7 +240,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private async loadSessionWindow(
     sessionId: string,
     window: TWindow,
-    auxiliarySessionId?: string,
+    auxiliarySessionId: string | null,
   ): Promise<TWindow> {
     try {
       await this.deps.loadChatEntry(window, {
@@ -308,4 +328,19 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private listSnapshotSessionWindowIds(): string[] {
     return this.listSettledOpenSessionWindowIds();
   }
+
+  private sendAuxiliarySessionNavigation(
+    parentSessionId: string,
+    auxiliarySessionId: string,
+    window: TWindow,
+  ): void {
+    if (!this.deps.sendAuxiliarySessionNavigation) {
+      throw new Error("Auxiliary Session navigation is not wired.");
+    }
+    this.deps.sendAuxiliarySessionNavigation(window, { parentSessionId, auxiliarySessionId });
+  }
 }
+
+export type SessionWindowOpenOptions = {
+  auxiliarySessionId?: string | null;
+};

@@ -1356,10 +1356,13 @@ export type SessionDiffPreviewProps = {
   onCopyText: (text: string) => void;
   onQuoteText?: (text: string) => void;
   onOpenPreview?: () => Promise<string | null>;
+  onOpenBeforePreview?: () => Promise<string | null>;
+  onOpenAfterPreview?: () => Promise<string | null>;
   onReload?: () => Promise<string | null>;
   loading?: boolean;
   reloadPending?: boolean;
   chatNotice?: string;
+  contextLabel?: string;
 };
 
 export function SessionDiffPreview({
@@ -1370,10 +1373,13 @@ export function SessionDiffPreview({
   onCopyText,
   onQuoteText,
   onOpenPreview,
+  onOpenBeforePreview,
+  onOpenAfterPreview,
   onReload,
   loading = false,
   reloadPending = false,
   chatNotice = "",
+  contextLabel,
 }: SessionDiffPreviewProps) {
   const keyboardShortcuts = useShortcutSettings();
   const [viewMode, setViewMode] = useState<"split" | "inline">("split");
@@ -1453,19 +1459,22 @@ export function SessionDiffPreview({
     }
   };
 
-  const openPreview = async () => {
-    if (!onOpenPreview) {
+  const openPreviewAction = async (
+    action: (() => Promise<string | null>) | undefined,
+    fallbackMessage: string,
+  ) => {
+    if (!action) {
       return;
     }
     const revision = ++navigationRevisionRef.current;
     try {
-      const message = await onOpenPreview();
+      const message = await action();
       if (revision === navigationRevisionRef.current && previewIdentityRef.current === previewIdentity) {
         setFeedback(message ?? "");
       }
     } catch (error) {
       if (revision === navigationRevisionRef.current && previewIdentityRef.current === previewIdentity) {
-        setFeedback(error instanceof Error ? error.message : "The file preview could not be opened.");
+        setFeedback(error instanceof Error ? error.message : fallbackMessage);
       }
     }
   };
@@ -1484,7 +1493,11 @@ export function SessionDiffPreview({
             onBack={backNavigation.onBack}
           />
         ) : null}
-        <div className="session-file-preview-title"><strong>{title}</strong><span>Git Diff</span></div>
+        <div className="session-file-preview-title">
+          <strong>{title}</strong>
+          <span>Git Diff</span>
+          {contextLabel ? <span className="session-diff-preview-context">{contextLabel}</span> : null}
+        </div>
         <div className="session-file-preview-actions">
           <div className="session-file-preview-segmented" role="group" aria-label="Git diff display mode">
             <button
@@ -1507,9 +1520,25 @@ export function SessionDiffPreview({
           {onOpenPreview ? (
             <button
               type="button"
-              onClick={() => void openPreview()}
+              onClick={() => void openPreviewAction(onOpenPreview, "The file preview could not be opened.")}
             >
               Open Preview
+            </button>
+          ) : null}
+          {onOpenBeforePreview ? (
+            <button
+              type="button"
+              onClick={() => void openPreviewAction(onOpenBeforePreview, "The before preview could not be opened.")}
+            >
+              Open Before
+            </button>
+          ) : null}
+          {onOpenAfterPreview ? (
+            <button
+              type="button"
+              onClick={() => void openPreviewAction(onOpenAfterPreview, "The after preview could not be opened.")}
+            >
+              Open After
             </button>
           ) : null}
           <button

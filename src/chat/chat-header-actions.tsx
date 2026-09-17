@@ -11,11 +11,6 @@ export type WorkspaceExplorerActionOptions = {
   onOpenExplorer: () => void;
 };
 
-export type AuxiliaryHeaderActionsOptions = {
-  startDisabled?: boolean;
-  onStart: () => void;
-};
-
 export type LiveSessionHeaderPropsInput = {
   taskTitle: string;
   isEditingTitle: boolean;
@@ -96,24 +91,6 @@ export function createMessageCollapseHeaderAction({
     >
       {label}
     </button>
-  );
-}
-
-export function createAuxiliaryHeaderActions({
-  startDisabled = false,
-  onStart,
-}: AuxiliaryHeaderActionsOptions) {
-  return (
-    <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
-      <button
-        className="drawer-toggle compact secondary"
-        type="button"
-        onClick={onStart}
-        disabled={startDisabled}
-      >
-        New Auxiliary
-      </button>
-    </div>
   );
 }
 

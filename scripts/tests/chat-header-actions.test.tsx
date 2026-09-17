@@ -10,7 +10,6 @@ import { SessionHeader } from "../../src/session-components.js";
 
 import {
   buildLiveSessionHeaderProps,
-  createAuxiliaryHeaderActions,
   createMessageCollapseHeaderAction,
   createWorkspaceExplorerAction,
 } from "../../src/chat/chat-header-actions.js";
@@ -178,96 +177,6 @@ test("createMessageCollapseHeaderAction は既存header button語彙とshortcut�
     onToggle: noop,
   }));
   assert.match(expandedHtml, />Expand<\/button>/);
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "SessionHeaderは渡されたmessage collapse actionとAuxiliary actionを欠落させず指定順に表示する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "Header actionsの順序が入れ替わる、またはmessage collapse actionかAuxiliary actionが表示されない"
-// observable = "renderされたHTMLにおけるmessage collapse actionとAuxiliary session actionsのindex順"
-// observation_boundary = "component-behavior"
-// scope = "session-header-actions"
-// lifecycle = "permanent"
-// @end-test-value
-test("SessionHeader はmessage collapse actionをAuxiliaryの左隣へ描画する", () => {
-  const html = renderToStaticMarkup(
-    <SessionHeader
-      taskTitle="Session"
-      isEditingTitle={false}
-      titleDraft="Session"
-      isRunning={false}
-      actions={(
-        <>
-          {createMessageCollapseHeaderAction({ allMessagesCollapsed: false, onToggle: noop })}
-          {createAuxiliaryHeaderActions({
-            onStart: noop,
-          })}
-        </>
-      )}
-      showTerminalButton={false}
-      showRenameButton={false}
-      showAuditLogButton={false}
-      showDeleteButton={false}
-      onOpenAuditLog={noop}
-      onOpenTerminal={noop}
-      onTitleDraftChange={noop}
-      onTitleInputKeyDown={noop}
-      onSaveTitle={noop}
-      onCancelTitleEdit={noop}
-      onStartTitleEdit={noop}
-      onDeleteSession={noop}
-    />,
-  );
-
-  assert.match(html, /aria-label="完了済みmessageをすべて縮小"/);
-  assert.match(html, /aria-label="Auxiliary session actions"/);
-  assert.ok(
-    html.indexOf('aria-label="完了済みmessageをすべて縮小"')
-      < html.indexOf('aria-label="Auxiliary session actions"'),
-  );
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "作成不可のHeaderではNew Auxiliary操作がdisabledになる"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 新規追加" }
-// fault = "作成が許可されない状態でも追加ボタンが有効になる"
-// observable = "New Auxiliaryボタンのdisabled属性"
-// observation_boundary = "component-behavior"
-// scope = "auxiliary-header"
-// lifecycle = "permanent"
-// @end-test-value
-test("createAuxiliaryHeaderActions は idle 時の Auxiliary start action を描画する", () => {
-  const html = renderToStaticMarkup(createAuxiliaryHeaderActions({
-    startDisabled: true,
-    onStart: noop,
-  }));
-
-  assert.match(html, /aria-label="Auxiliary session actions"/);
-  assert.doesNotMatch(html, /session-window-control-group-label/);
-  assert.match(html, />New Auxiliary<\/button>/);
-  assert.match(html, /disabled=""/);
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "既存AuxiliaryがあるHeaderでもNew Auxiliary操作をラベルなしで有効表示する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 新規追加" }
-// fault = "既存Auxiliaryがある状態でAuxiliaryラベルが再表示される、または新規追加操作をdisabled表示する"
-// observable = "active HeaderのAuxiliary group label不在とNew Auxiliary buttonの表示・disabled属性"
-// observation_boundary = "component-behavior"
-// scope = "auxiliary-header"
-// lifecycle = "permanent"
-// @end-test-value
-test("createAuxiliaryHeaderActions は active 時もAuxiliaryラベルなしでNew Auxiliaryを描画する", () => {
-  const html = renderToStaticMarkup(createAuxiliaryHeaderActions({
-    onStart: noop,
-  }));
-
-  assert.doesNotMatch(html, /session-window-control-group-label/);
-  assert.match(html, />New Auxiliary<\/button>/);
-  assert.doesNotMatch(html, /disabled=""/);
 });
 
 test("buildLiveSessionHeaderProps は live session header の共通 action を組み立てる", () => {

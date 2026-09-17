@@ -143,6 +143,10 @@ export type SessionFilePreviewWindowOpenRequest =
       view?: { kind: "preview" };
     }
   | {
+      kind: "history-diff";
+      request: FileRootGitHistoryDiffRequest;
+    }
+  | {
       kind: "link";
       sessionId: string;
       target: string;
@@ -167,7 +171,18 @@ export type SessionFilePreviewWindowPayload = SessionFilePreviewWindowPayloadBas
       resource: SessionFileGitCommitResourceRequest;
       view?: { kind: "preview" };
     }
+  | {
+      historyDiff: SessionFileHistoryDiffWindowPayload;
+    }
 );
+
+export type SessionFileHistoryDiffWindowPayload = {
+  request: FileRootGitHistoryDiffRequest;
+  patch: string;
+  previewResource: SessionFileGitCommitResourceRequest | null;
+  previewBeforeResource: SessionFileGitCommitResourceRequest | null;
+  previewAfterResource: SessionFileGitCommitResourceRequest | null;
+};
 
 export const FILE_PREVIEW_WINDOW_TITLE_FALLBACK = "File Preview";
 
@@ -192,6 +207,12 @@ export type SessionFilePreviewWindowOpenResult =
       targetType: "preview-window";
       disposition: "created" | "focused";
       resource: SessionFilePreviewResourceRequest;
+    }
+  | {
+      status: "opened";
+      targetType: "preview-window";
+      disposition: "created" | "focused";
+      historyDiff: FileRootGitHistoryDiffRequest;
     }
   | {
       status: "opened";
@@ -333,6 +354,7 @@ export type FileRootGitHistoryRepository = {
   displayPath: string;
   branches: string[];
   currentBranch: string | null;
+  refs: FileRootGitHistoryAvailableRef[];
 };
 
 export type FileRootGitHistoryRepositoriesRequest = {
@@ -353,6 +375,13 @@ export type FileRootGitHistoryRefKind = "head" | "branch" | "tag";
 
 export type FileRootGitHistoryRef = {
   kind: FileRootGitHistoryRefKind;
+  name: string;
+};
+
+export type FileRootGitHistoryAvailableRefKind = "branch" | "remote" | "tag";
+
+export type FileRootGitHistoryAvailableRef = {
+  kind: FileRootGitHistoryAvailableRefKind;
   name: string;
 };
 
@@ -397,9 +426,63 @@ export type FileRootGitHistoryCommitDetailResult =
     }
   | { status: "commit-not-found" | "repository-not-found" | "failed"; message: string };
 
-export type FileRootGitHistoryDiffRequest = FileRootGitHistoryCommitDetailRequest & {
+export type FileRootGitHistoryComparisonMode = "direct" | "branch";
+
+export type FileRootGitHistoryComparisonSelector =
+  | { kind: "head" }
+  | { kind: "branch" | "remote" | "tag"; name: string }
+  | { kind: "commit"; objectId: string };
+
+export type FileRootGitHistoryComparison = {
+  mode: FileRootGitHistoryComparisonMode;
+  base: FileRootGitHistoryComparisonSelector;
+  target: FileRootGitHistoryComparisonSelector;
+  baseCommitId: string;
+  targetCommitId: string;
+  mergeBaseCommitId: string | null;
+};
+
+export type FileRootGitHistoryComparisonRequest = FileRootGitHistoryRequest & {
+  base: FileRootGitHistoryComparisonSelector;
+  target: FileRootGitHistoryComparisonSelector;
+  mode: FileRootGitHistoryComparisonMode;
+};
+
+export type FileRootGitHistoryComparisonResult =
+  | {
+      status: "ok";
+      comparison: FileRootGitHistoryComparison;
+      entries: FileRootGitChangeEntry[];
+    }
+  | {
+      status:
+        | "repository-not-found"
+        | "invalid-selector"
+        | "commit-not-found"
+        | "merge-base-unavailable"
+        | "ambiguous-merge-base"
+        | "failed";
+      message: string;
+    };
+
+export type FileRootGitHistoryCommitDiffRequest = FileRootGitHistoryCommitDetailRequest & {
   relativePath?: string | null;
 };
+
+export type FileRootGitHistoryComparisonDiffRequest = FileRootGitHistoryRequest & {
+  comparison: FileRootGitHistoryComparison;
+  relativePath?: string | null;
+};
+
+export type FileRootGitHistoryDiffRequest =
+  | FileRootGitHistoryCommitDiffRequest
+  | FileRootGitHistoryComparisonDiffRequest;
+
+export function isFileRootGitHistoryComparisonDiffRequest(
+  request: FileRootGitHistoryDiffRequest,
+): request is FileRootGitHistoryComparisonDiffRequest {
+  return "comparison" in request;
+}
 
 export type FileRootGitHistoryDiffResult =
   | {
@@ -410,6 +493,21 @@ export type FileRootGitHistoryDiffResult =
       previewResource: SessionFileGitCommitResourceRequest | null;
     }
   | {
-      status: "commit-not-found" | "not-changed" | "repository-not-found" | "failed";
+      status: "ok";
+      comparison: FileRootGitHistoryComparison;
+      relativePath: string | null;
+      patch: string;
+      previewBeforeResource: SessionFileGitCommitResourceRequest | null;
+      previewAfterResource: SessionFileGitCommitResourceRequest | null;
+    }
+  | {
+      status:
+        | "commit-not-found"
+        | "not-changed"
+        | "repository-not-found"
+        | "invalid-selector"
+        | "merge-base-unavailable"
+        | "ambiguous-merge-base"
+        | "failed";
       message: string;
     };

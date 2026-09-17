@@ -231,7 +231,6 @@ export type AgentSessionChatProjectionInput = {
   onLoadAuditLogDetail: SessionAuditLogModalProps["onLoadDetail"];
   onLoadAuditLogOperationDetail: SessionAuditLogModalProps["onLoadOperationDetail"];
   onCloseAuditLog: () => void;
-  headerActions?: ReactNode;
   isAuxiliaryMode?: boolean;
 };
 
@@ -271,7 +270,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: input.onDeleteSession,
     onTogglePin: input.onToggleSessionPin,
-    actions: input.headerActions,
     onOpenWorkspaceExplorer: input.onOpenSessionExplorer,
     isWorkspaceExplorerDisabled: !input.isWorkspaceAvailable,
   });

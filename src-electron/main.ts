@@ -75,6 +75,7 @@ import type {
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
 import type {
+  SessionFileHistoryDiffWindowPayload,
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
 } from "../src/file-explorer/file-explorer-contract.js";
@@ -274,6 +275,7 @@ import { getGlossaryAgentRuntimeOperations } from "../src/glossary-operation-sch
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
+  WITHMATE_OPEN_AUXILIARY_SESSION_EVENT,
   WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
 } from "../src/withmate-ipc-channels.js";
@@ -1702,6 +1704,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   createFileRootGitChangesService().listHistoryCommits(request),
                 getFileRootGitHistoryCommitDetail: (request) =>
                   createFileRootGitChangesService().getHistoryCommitDetail(request),
+                getFileRootGitHistoryComparison: (request) =>
+                  createFileRootGitChangesService().getHistoryComparison(request),
                 getFileRootGitHistoryDiff: (request) =>
                   createFileRootGitChangesService().getHistoryDiff(request),
                 getSessionMessageArtifact,
@@ -2876,6 +2880,17 @@ function requireSessionTurnNotificationService(): SessionTurnNotificationService
       openSessionWindow: async (sessionId) => {
         await openSessionWindow(sessionId);
       },
+      openAuxiliarySessionWindow: async (parentSessionId, auxiliarySessionId) => {
+        const auxiliary = requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
+        if (
+          !auxiliary
+          || auxiliary.parentSessionId !== parentSessionId
+          || !requireSessionStorage().getSession(parentSessionId)
+        ) {
+          throw new Error("Auxiliary Session の通知対象が見つからないよ。");
+        }
+        await requireSessionWindowBridge().openAuxiliarySessionWindow(parentSessionId, auxiliarySessionId);
+      },
       openHomeWindow: async () => {
         await createHomeWindow();
       },
@@ -2973,6 +2988,17 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         if (requestId) {
           requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
         }
+      },
+      notifySessionTurnTerminal: (notification) => {
+        const auxiliary = requireAuxiliarySessionService().getAuxiliarySession(notification.session.id);
+        if (!auxiliary || !requireSessionStorage().getSession(auxiliary.parentSessionId)) {
+          return;
+        }
+        requireSessionTurnNotificationService().notifyTurnTerminal(notification, {
+          kind: "auxiliary",
+          parentSessionId: auxiliary.parentSessionId,
+          auxiliarySessionId: auxiliary.id,
+        });
       },
       currentTimestampLabel,
     });
@@ -3149,6 +3175,9 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
           title: getSession(sessionId)?.taskTitle.trim() || `WithMate Session - ${sessionId}`,
         }),
       loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
+      sendAuxiliarySessionNavigation: (window, payload) => {
+        window.webContents.send(WITHMATE_OPEN_AUXILIARY_SESSION_EVENT, payload);
+      },
       getSession,
       isRunInFlight: isSessionRunInFlight,
       getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,
@@ -4287,11 +4316,7 @@ async function openCharacterEditorWindow(characterId?: string | null): Promise<B
 }
 
 async function openSessionWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow> {
-  const window = await requireMainWindowFacade().openSessionWindow(sessionId, auxiliarySessionId);
-  if (auxiliarySessionId) {
-    requireMainBroadcastFacade().broadcastAuxiliarySessionSelection(sessionId, auxiliarySessionId);
-  }
-  return window;
+  return requireMainWindowFacade().openSessionWindow(sessionId, auxiliarySessionId);
 }
 
 async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {
@@ -4301,6 +4326,48 @@ async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserW
 async function openSessionFilePreviewWindow(
   request: SessionFilePreviewWindowOpenRequest,
 ): Promise<SessionFilePreviewWindowOpenResult> {
+  if (request.kind === "history-diff") {
+    const result = await createFileRootGitChangesService().getHistoryDiff(request.request);
+    if (result.status !== "ok") {
+      return {
+        status: "failed",
+        targetType: "local-file",
+        target: request.request.relativePath ?? "Git history diff",
+        message: result.message,
+      };
+    }
+    try {
+      const ownerSessionId = await getSessionFileExplorerOwnerSessionId(request.request.sessionId);
+      if (!ownerSessionId) {
+        throw new Error("The owning Session could not be resolved.");
+      }
+      const historyDiff: SessionFileHistoryDiffWindowPayload = {
+        request: request.request,
+        patch: result.patch,
+        previewResource: "previewResource" in result ? result.previewResource : null,
+        previewBeforeResource: "previewBeforeResource" in result ? result.previewBeforeResource : null,
+        previewAfterResource: "previewAfterResource" in result ? result.previewAfterResource : null,
+      };
+      const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({
+        historyDiff,
+        ownerSessionId,
+        windowTitle: resolveSessionFilePreviewWindowTitle(request.request.relativePath ?? "Git Diff"),
+      });
+      return {
+        status: "opened",
+        targetType: "preview-window",
+        disposition,
+        historyDiff: request.request,
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        targetType: "local-file",
+        target: request.request.relativePath ?? "Git history diff",
+        message: error instanceof Error ? error.message : "The Git history diff could not be opened.",
+      };
+    }
+  }
   const explorer = createSessionFileExplorerService();
   let resource = request.kind === "resource" ? request.resource : null;
   if (request.kind === "link") {

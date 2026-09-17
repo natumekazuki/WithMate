@@ -73,6 +73,7 @@ import type {
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
   AuxiliarySessionSelectionPayload,
+  AuxiliarySessionNavigationPayload,
 } from "./withmate-window-types.js";
 import type {
   CreateMateInput,
@@ -121,6 +122,8 @@ import type {
   FileRootGitHistoryCommitDetailResult,
   FileRootGitHistoryCommitsRequest,
   FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryComparisonRequest,
+  FileRootGitHistoryComparisonResult,
   FileRootGitHistoryDiffRequest,
   FileRootGitHistoryDiffResult,
   FileRootGitHistoryRepositoriesRequest,
@@ -221,6 +224,9 @@ export type WithMateWindowSessionApi = {
   getFileRootGitHistoryCommitDetail(
     request: FileRootGitHistoryCommitDetailRequest,
   ): Promise<FileRootGitHistoryCommitDetailResult>;
+  getFileRootGitHistoryComparison(
+    request: FileRootGitHistoryComparisonRequest,
+  ): Promise<FileRootGitHistoryComparisonResult>;
   getFileRootGitHistoryDiff(
     request: FileRootGitHistoryDiffRequest,
   ): Promise<FileRootGitHistoryDiffResult>;
@@ -379,6 +385,7 @@ export type WithMateWindowSubscriptionApi = {
   subscribeSessionGlossary(listener: (projection: SessionGlossaryProjection) => void): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeSessionWindowRestoreSet(listener: (sessionIds: string[]) => void): () => void;
+  subscribeAuxiliarySessionNavigation(listener: (payload: AuxiliarySessionNavigationPayload) => void): () => void;
   subscribeOpenCompanionReviewWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;
 };

@@ -3,6 +3,7 @@ import type { IpcRenderer } from "electron";
 import type { RendererLogInput } from "../src/app-log-types.js";
 import { normalizeSessionSummaryInvalidation } from "./session-summary-query.js";
 import {
+  normalizeAuxiliarySessionNavigationPayload,
   normalizeOpenSessionWindowIdsChangedPayload,
   normalizeOpenSessionWindowIdsPageResult,
   normalizeAuxiliarySessionSelectionPayload,
@@ -104,6 +105,7 @@ import {
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
   WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL,
   WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
@@ -137,6 +139,7 @@ import {
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_OPEN_AUXILIARY_SESSION_EVENT,
   WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
   WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
@@ -433,6 +436,9 @@ function createSessionApi(
     },
     getFileRootGitHistoryCommitDetail(request) {
       return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL, request);
+    },
+    getFileRootGitHistoryComparison(request) {
+      return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL, request);
     },
     getFileRootGitHistoryDiff(request) {
       return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL, request);
@@ -822,6 +828,14 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     },
     subscribeSessionFilePreviewNavigation(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, listener);
+    },
+    subscribeAuxiliarySessionNavigation(listener) {
+      return subscribe(ipcRenderer, WITHMATE_OPEN_AUXILIARY_SESSION_EVENT, (payload: unknown) => {
+        const normalized = normalizeAuxiliarySessionNavigationPayload(payload);
+        if (normalized) {
+          listener(normalized);
+        }
+      });
     },
     subscribeSessionInvalidation(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSIONS_INVALIDATED_EVENT, (payload: unknown) => {

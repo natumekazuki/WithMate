@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import {
@@ -8,9 +16,15 @@ import {
 import type {
   FileRootGitChangeEntry,
   FileRootGitChangeScope,
+  FileRootGitHistoryAvailableRef,
   FileRootGitHistoryCommit,
   FileRootGitHistoryCommitDetailResult,
   FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryComparison,
+  FileRootGitHistoryComparisonDiffRequest,
+  FileRootGitHistoryComparisonMode,
+  FileRootGitHistoryComparisonResult,
+  FileRootGitHistoryComparisonSelector,
   FileRootGitHistoryDiffRequest,
   FileRootGitHistoryRef,
   FileRootGitHistoryRepositoriesResult,
@@ -23,6 +37,7 @@ type FileRootGitHistoryApi = Pick<
   | "listFileRootGitHistoryCommits"
   | "getFileRootGitHistoryCommitDetail"
   | "getFileRootGitHistoryDiff"
+  | "getFileRootGitHistoryComparison"
 >;
 
 export type FileRootGitHistoryPaneProps = {
@@ -49,6 +64,29 @@ const HISTORY_REF_KIND_LABELS = {
   tag: "Tag",
 } as const satisfies Record<FileRootGitHistoryRef["kind"], string>;
 
+const HISTORY_COMPARISON_MODE_LABELS: Record<FileRootGitHistoryComparisonMode, string> = {
+  direct: "Direct comparison",
+  branch: "Branch changes",
+};
+
+const HISTORY_AVAILABLE_REF_KIND_LABELS: Record<FileRootGitHistoryAvailableRef["kind"], string> = {
+  branch: "Branch",
+  remote: "Remote",
+  tag: "Tag",
+};
+
+type HistoryComparisonDraft = {
+  base: FileRootGitHistoryComparisonSelector | null;
+  target: FileRootGitHistoryComparisonSelector | null;
+  mode: FileRootGitHistoryComparisonMode;
+};
+
+type HistoryComparisonOpenOptions = {
+  base?: FileRootGitHistoryComparisonSelector | null;
+  target?: FileRootGitHistoryComparisonSelector;
+  mode?: FileRootGitHistoryComparisonMode;
+};
+
 type HistoryPageIdentity = {
   generation: number;
   repositoryId: string;
@@ -62,6 +100,238 @@ function directoryStateKey(rootId: string, scope: FileRootGitChangeScope, relati
 
 function historyEntryKey(repositoryId: string, entry: FileRootGitChangeEntry): string {
   return `${repositoryId}:commit:${entry.relativePath}`;
+}
+
+function historyComparisonEntryKey(repositoryId: string, entry: FileRootGitChangeEntry): string {
+  return historyEntryKey(repositoryId, entry);
+}
+
+function selectorLabel(selector: FileRootGitHistoryComparisonSelector | null): string {
+  if (!selector) {
+    return "Select a ref";
+  }
+  if (selector.kind === "head") {
+    return "HEAD";
+  }
+  if (selector.kind === "commit") {
+    return `Commit ${selector.objectId.slice(0, 7)}`;
+  }
+  return selector.name;
+}
+
+function selectorKey(selector: FileRootGitHistoryComparisonSelector | null): string {
+  if (!selector) {
+    return "";
+  }
+  return selector.kind === "commit" ? `commit:${selector.objectId}` : `${selector.kind}:${selector.kind === "head" ? "HEAD" : selector.name}`;
+}
+
+function branchSelector(branch: string | null): FileRootGitHistoryComparisonSelector {
+  return branch === null ? { kind: "head" } : { kind: "branch", name: branch };
+}
+
+function defaultComparisonBase(
+  repository: FileRootGitHistoryRepository,
+  target: FileRootGitHistoryComparisonSelector,
+): FileRootGitHistoryComparisonSelector | null {
+  const refs = repository.refs.filter((ref) => ref.kind === "branch");
+  const available = refs.filter((ref) => !(target.kind === "branch" && ref.name === target.name));
+  const preferred = available.find((ref) => ref.name === "main" || ref.name === "master") ?? available[0];
+  return preferred ? { kind: preferred.kind, name: preferred.name } : null;
+}
+
+function focusHistoryComparisonOption(list: HTMLElement | null, index: number): void {
+  list?.querySelectorAll<HTMLButtonElement>('[role="option"]')[index]?.focus();
+}
+
+function HistoryComparisonRefPicker({
+  label,
+  value,
+  refs,
+  onChange,
+  isOpen,
+  onToggle,
+  onClose,
+  disabled = false,
+}: {
+  label: string;
+  value: FileRootGitHistoryComparisonSelector | null;
+  refs: FileRootGitHistoryAvailableRef[];
+  onChange: (value: FileRootGitHistoryComparisonSelector) => void;
+  isOpen: boolean;
+  onToggle: () => void;
+  onClose: (restoreFocus?: boolean) => void;
+  disabled?: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const controlRef = useRef<HTMLDivElement | null>(null);
+  const optionsRef = useRef<HTMLDivElement | null>(null);
+  const labelId = useId();
+  const valueId = useId();
+  const menuId = useId();
+  const queryText = query.trim().toLowerCase();
+  const filteredRefs = useMemo(() => refs.filter((ref) => (
+    !queryText || ref.name.toLowerCase().includes(queryText)
+  )), [queryText, refs]);
+  const commitCandidate = /^[0-9a-f]{7,64}$/i.test(query.trim())
+    ? query.trim().toLowerCase()
+    : null;
+
+  const close = useCallback((restoreFocus = true) => {
+    onClose(restoreFocus);
+    if (restoreFocus) {
+      triggerRef.current?.focus();
+    }
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setQuery("");
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!controlRef.current?.contains(event.target as Node)) {
+        onClose(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing) {
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [close, isOpen, onClose]);
+
+  const choose = (next: FileRootGitHistoryComparisonSelector) => {
+    onChange(next);
+    close();
+  };
+
+  const handleOptionsKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
+    const optionElements = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    const currentIndex = optionElements.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (optionElements.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      focusHistoryComparisonOption(optionsRef.current, (currentIndex + direction + optionElements.length) % optionElements.length);
+      return;
+    }
+    if (event.key === "Enter" && currentIndex >= 0) {
+      event.preventDefault();
+      optionElements[currentIndex]?.click();
+    }
+  };
+
+  return (
+    <div className="file-history-comparison-picker">
+      <span className="file-history-comparison-picker-label" id={labelId}>{label}</span>
+      <div className="file-history-comparison-picker-control" ref={controlRef}>
+        <button
+          ref={triggerRef}
+          className="file-history-comparison-picker-trigger"
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={isOpen}
+          aria-controls={menuId}
+          aria-labelledby={`${labelId} ${valueId}`}
+          disabled={disabled}
+          onClick={() => (isOpen ? close() : onToggle())}
+        >
+          <span id={valueId}>{selectorLabel(value)}</span>
+        </button>
+        {isOpen ? (
+          <div
+            className="file-history-comparison-picker-menu"
+            id={menuId}
+            role="dialog"
+            aria-labelledby={labelId}
+          >
+            <input
+              autoFocus
+              aria-label={`${label} search`}
+              type="search"
+              placeholder="Search refs or enter commit SHA"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) {
+                  return;
+                }
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  focusHistoryComparisonOption(optionsRef.current, 0);
+                }
+              }}
+            />
+            <div
+              ref={optionsRef}
+              className="file-history-comparison-picker-options"
+              role="listbox"
+              aria-label={`${label} refs`}
+              onKeyDown={handleOptionsKeyDown}
+            >
+              {(!queryText || "head".includes(queryText)) ? (
+                <button
+                  className="file-history-comparison-picker-option"
+                  type="button"
+                  role="option"
+                  aria-selected={value?.kind === "head"}
+                  onClick={() => choose({ kind: "head" })}
+                >
+                  <strong>HEAD</strong>
+                  <span>Current checked-out commit</span>
+                </button>
+              ) : null}
+              {commitCandidate ? (
+                <button
+                  className="file-history-comparison-picker-option"
+                  type="button"
+                  role="option"
+                  aria-selected={value?.kind === "commit" && value.objectId === commitCandidate}
+                  onClick={() => choose({ kind: "commit", objectId: commitCandidate })}
+                >
+                  <strong>Commit {commitCandidate.slice(0, 7)}</strong>
+                  <span>Resolve typed commit SHA</span>
+                </button>
+              ) : null}
+              {filteredRefs.map((ref) => (
+                <button
+                  className="file-history-comparison-picker-option"
+                  type="button"
+                  role="option"
+                  aria-selected={value?.kind === ref.kind && value.name === ref.name}
+                  key={`${ref.kind}:${ref.name}`}
+                  onClick={() => choose({ kind: ref.kind, name: ref.name })}
+                >
+                  <strong>{ref.name}</strong>
+                  <span>{HISTORY_AVAILABLE_REF_KIND_LABELS[ref.kind]}</span>
+                </button>
+              ))}
+              {filteredRefs.length === 0 && !commitCandidate && queryText !== "head" ? (
+                <span className="file-history-comparison-picker-empty">No matching refs.</span>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function formatCommitDate(value: string): string {
@@ -129,6 +399,7 @@ export function FileRootGitHistoryPane({
   const selectedCommitIdRef = useRef<string | null>(null);
   const detailRequestRef = useRef(0);
   const diffRequestRef = useRef(0);
+  const comparisonRequestRef = useRef(0);
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const listScrollTopRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -150,6 +421,22 @@ export function FileRootGitHistoryPane({
   const [loadingDiffKey, setLoadingDiffKey] = useState("");
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
   const [lastSelectedCommitId, setLastSelectedCommitId] = useState<string | null>(null);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [comparisonDraft, setComparisonDraft] = useState<HistoryComparisonDraft>({
+    base: null,
+    target: null,
+    mode: "branch",
+  });
+  const [comparison, setComparison] = useState<FileRootGitHistoryComparison | null>(null);
+  const [comparisonEntries, setComparisonEntries] = useState<FileRootGitChangeEntry[]>([]);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [comparisonMessage, setComparisonMessage] = useState("");
+  const [comparisonFilter, setComparisonFilter] = useState("");
+  const [comparisonReturnToDetail, setComparisonReturnToDetail] = useState(false);
+  const [openComparisonPicker, setOpenComparisonPicker] = useState<"base" | "target" | null>(null);
+  const closeComparisonPicker = useCallback(() => {
+    setOpenComparisonPicker(null);
+  }, []);
 
   const isCurrentRepository = useCallback((generation: number, repository: FileRootGitHistoryRepository) => (
     generationRef.current === generation
@@ -237,6 +524,7 @@ export function FileRootGitHistoryPane({
     repository: FileRootGitHistoryRepository | null,
     generation?: number,
     branch: string | null = repository?.currentBranch ?? null,
+    preserveComparisonDraft = false,
   ) => {
     const nextGeneration = generation ?? generationRef.current + 1;
     generationRef.current = nextGeneration;
@@ -249,6 +537,7 @@ export function FileRootGitHistoryPane({
     selectedCommitIdRef.current = null;
     detailRequestRef.current += 1;
     diffRequestRef.current += 1;
+    comparisonRequestRef.current += 1;
     setSelectedRepository(repository);
     setSelectedBranch(branch);
     setCommits([]);
@@ -265,6 +554,17 @@ export function FileRootGitHistoryPane({
     setCollapsedDirectories({});
     setLoadingDiffKey("");
     setSelectedEntryPath(null);
+    setComparisonOpen(false);
+    setComparison(null);
+    setComparisonEntries([]);
+    setComparisonLoading(false);
+    setComparisonMessage("");
+    setComparisonFilter("");
+    setComparisonReturnToDetail(false);
+    setOpenComparisonPicker(null);
+    if (!preserveComparisonDraft) {
+      setComparisonDraft({ base: null, target: null, mode: "branch" });
+    }
     onRepositoryChange?.(repository?.repositoryId ?? null);
     if (!repository) {
       return;
@@ -283,39 +583,20 @@ export function FileRootGitHistoryPane({
     if (!repository) {
       return;
     }
-    chooseRepository(repository, undefined, branch);
+    chooseRepository(repository, undefined, branch, true);
   }, [chooseRepository]);
 
   const reloadRepositories = useCallback(async (preserveSelection: boolean) => {
     const generation = generationRef.current + 1;
-    generationRef.current = generation;
-    pageRequestRef.current = null;
-    detailRequestRef.current += 1;
     const previousRepository = selectedRepositorySessionIdRef.current === sessionId
       ? selectedRepositoryRef.current
       : null;
     const previousRepositoryId = previousRepository?.repositoryId ?? null;
     const previousRootId = previousRepository?.rootId ?? null;
     const previousBranch = previousRepository ? selectedBranchRef.current : null;
-    selectedRepositoryRef.current = null;
-    selectedRepositorySessionIdRef.current = sessionId;
-    selectedBranchRef.current = null;
-    onRepositoryChange?.(null);
-    setSelectedRepository(null);
-    setSelectedBranch(null);
+    chooseRepository(null, generation);
     setRepositories([]);
-    setCommits([]);
-    setSelectedCommitId(null);
-    setSelectedCommit(null);
-    setChangedEntries([]);
-    setListMessage("");
-    setDetailMessage("");
     setLoadingRepositories(true);
-    setLoadingCommits(false);
-    setLoadingMore(false);
-    cursorRef.current = null;
-    hasMoreRef.current = false;
-    setHasMore(false);
     if (!api || !sessionId || !enabled) {
       setLoadingRepositories(false);
       return;
@@ -360,6 +641,7 @@ export function FileRootGitHistoryPane({
       generationRef.current += 1;
       pageRequestRef.current = null;
       detailRequestRef.current += 1;
+      comparisonRequestRef.current += 1;
     };
   }, [reloadRepositories, refreshRevision, rootsRevision]);
 
@@ -380,7 +662,7 @@ export function FileRootGitHistoryPane({
   }, [loadPage]);
 
   useEffect(() => {
-    if (selectedCommitId || !hasMore || loadingRepositories || !selectedRepository) {
+    if (selectedCommitId || comparisonOpen || !hasMore || loadingRepositories || !selectedRepository) {
       return;
     }
     const sentinel = sentinelRef.current;
@@ -395,10 +677,10 @@ export function FileRootGitHistoryPane({
     }, { root, rootMargin: "0px 0px 96px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, loadMore, loadingRepositories, selectedCommitId, selectedRepository]);
+  }, [comparisonOpen, hasMore, loadMore, loadingRepositories, selectedCommitId, selectedRepository]);
 
   useEffect(() => {
-    if (selectedCommitId) {
+    if (selectedCommitId || comparisonOpen) {
       return;
     }
     const scrollElement = listScrollRef.current;
@@ -409,7 +691,7 @@ export function FileRootGitHistoryPane({
       scrollElement.scrollTop = listScrollTopRef.current;
     });
     return () => cancelAnimationFrame(frame);
-  }, [selectedCommitId]);
+  }, [comparisonOpen, selectedCommitId]);
 
   const selectCommit = useCallback(async (commit: FileRootGitHistoryCommit) => {
     const repository = selectedRepositoryRef.current;
@@ -480,6 +762,171 @@ export function FileRootGitHistoryPane({
     setLoadingDiffKey("");
     setSelectedEntryPath(null);
   }, []);
+
+  const openComparison = useCallback((
+    returnToDetail: boolean,
+    options: HistoryComparisonOpenOptions = {},
+  ) => {
+    const repository = selectedRepositoryRef.current;
+    if (!repository || !api) {
+      return;
+    }
+    const target = options.target ?? branchSelector(selectedBranchRef.current);
+    const preservedBase = comparisonDraft.base;
+    const nextBase = "base" in options
+      ? options.base ?? null
+      : preservedBase && selectorKey(preservedBase) !== selectorKey(target)
+        ? preservedBase
+        : defaultComparisonBase(repository, target);
+    const mode = options.mode ?? comparisonDraft.mode;
+    setComparisonDraft({ base: nextBase, target, mode });
+    comparisonRequestRef.current += 1;
+    diffRequestRef.current += 1;
+    setComparisonOpen(true);
+    setComparison(null);
+    setComparisonEntries([]);
+    setComparisonLoading(false);
+    setComparisonMessage("");
+    setComparisonFilter("");
+    setComparisonReturnToDetail(returnToDetail);
+    setOpenComparisonPicker(null);
+    setLoadingDiffKey("");
+    setSelectedEntryPath(null);
+  }, [api, comparisonDraft.base, comparisonDraft.mode]);
+
+  const backFromComparison = useCallback(() => {
+    comparisonRequestRef.current += 1;
+    diffRequestRef.current += 1;
+    setComparisonOpen(false);
+    setComparison(null);
+    setComparisonEntries([]);
+    setComparisonLoading(false);
+    setComparisonMessage("");
+    setComparisonFilter("");
+    setComparisonReturnToDetail(false);
+    setOpenComparisonPicker(null);
+    setLoadingDiffKey("");
+    setSelectedEntryPath(null);
+  }, []);
+
+  const applyComparison = useCallback(async () => {
+    const repository = selectedRepositoryRef.current;
+    if (!api || !sessionId || !repository) {
+      return;
+    }
+    if (!comparisonDraft.base || !comparisonDraft.target) {
+      setComparisonMessage("Select both a base and a target ref.");
+      return;
+    }
+    const requestId = comparisonRequestRef.current + 1;
+    comparisonRequestRef.current = requestId;
+    const generation = generationRef.current;
+    setComparisonLoading(true);
+    setComparison(null);
+    setComparisonEntries([]);
+    setComparisonMessage("");
+    try {
+      const result: FileRootGitHistoryComparisonResult = await api.getFileRootGitHistoryComparison({
+        sessionId,
+        repositoryId: repository.repositoryId,
+        rootId: repository.rootId,
+        base: comparisonDraft.base,
+        target: comparisonDraft.target,
+        mode: comparisonDraft.mode,
+      });
+      if (
+        generationRef.current !== generation
+        || comparisonRequestRef.current !== requestId
+        || !comparisonOpen
+        || selectedRepositoryRef.current?.repositoryId !== repository.repositoryId
+        || selectedRepositoryRef.current?.rootId !== repository.rootId
+      ) {
+        return;
+      }
+      if (result.status !== "ok") {
+        setComparisonMessage(result.message);
+        return;
+      }
+      setComparison(result.comparison);
+      setComparisonEntries(result.entries);
+      setComparisonFilter("");
+    } catch (error) {
+      if (
+        generationRef.current === generation
+        && comparisonRequestRef.current === requestId
+        && comparisonOpen
+      ) {
+        setComparisonMessage(error instanceof Error ? error.message : "Git comparison could not be loaded.");
+      }
+    } finally {
+      if (comparisonRequestRef.current === requestId) {
+        setComparisonLoading(false);
+      }
+    }
+  }, [api, comparisonDraft, comparisonOpen, sessionId]);
+
+  const openComparisonDiff = useCallback(async (
+    entry: FileRootGitChangeEntry | null,
+    openInWindow: boolean,
+  ) => {
+    const repository = selectedRepositoryRef.current;
+    const comparisonSnapshot = comparison;
+    if (!repository || !comparisonSnapshot || !sessionId) {
+      return;
+    }
+    const request: FileRootGitHistoryComparisonDiffRequest = {
+      sessionId,
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      comparison: comparisonSnapshot,
+      relativePath: entry?.relativePath ?? null,
+    };
+    const key = entry
+      ? historyComparisonEntryKey(repository.repositoryId, entry)
+      : `${repository.repositoryId}:comparison:${comparisonSnapshot.baseCommitId}:${comparisonSnapshot.targetCommitId}:all`;
+    const generation = generationRef.current;
+    const requestId = diffRequestRef.current + 1;
+    diffRequestRef.current = requestId;
+    const comparisonRequestId = comparisonRequestRef.current;
+    setSelectedEntryPath(entry?.relativePath ?? null);
+    setLoadingDiffKey(key);
+    setComparisonMessage("");
+    try {
+      const message = await onOpenDiff(request, openInWindow);
+      if (
+        generationRef.current !== generation
+        || diffRequestRef.current !== requestId
+        || comparisonRequestRef.current !== comparisonRequestId
+        || !comparisonOpen
+        || comparison?.baseCommitId !== comparisonSnapshot.baseCommitId
+        || comparison?.targetCommitId !== comparisonSnapshot.targetCommitId
+        || selectedRepositoryRef.current?.repositoryId !== repository.repositoryId
+        || selectedRepositoryRef.current?.rootId !== repository.rootId
+      ) {
+        return null;
+      }
+      if (message) {
+        setComparisonMessage(message);
+      }
+      return message;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Git comparison diff could not be opened.";
+      if (
+        generationRef.current === generation
+        && diffRequestRef.current === requestId
+        && comparisonRequestRef.current === comparisonRequestId
+        && comparisonOpen
+      ) {
+        setComparisonMessage(message);
+        return message;
+      }
+      return null;
+    } finally {
+      if (generationRef.current === generation && diffRequestRef.current === requestId) {
+        setLoadingDiffKey("");
+      }
+    }
+  }, [comparison, comparisonOpen, onOpenDiff, sessionId]);
 
   const toggleDirectory = useCallback((rootId: string, scope: FileRootGitChangeScope, relativePath: string) => {
     const key = directoryStateKey(rootId, scope, relativePath);
@@ -562,13 +1009,50 @@ export function FileRootGitHistoryPane({
     };
   }, [changedEntries, selectedRepository]);
 
+  const filteredComparisonEntries = useMemo(() => {
+    const query = comparisonFilter.trim().toLowerCase();
+    if (!query) {
+      return comparisonEntries;
+    }
+    return comparisonEntries.filter((entry) => (
+      entry.relativePath.toLowerCase().includes(query)
+      || entry.previousRelativePath?.toLowerCase().includes(query)
+    ));
+  }, [comparisonEntries, comparisonFilter]);
+
+  const comparisonRootChange = useMemo<GitRootChanges | null>(() => {
+    const repository = selectedRepository;
+    if (!repository || !comparison) {
+      return null;
+    }
+    return {
+      root: {
+        id: repository.repositoryId,
+        kind: "workspace",
+        label: repository.label,
+        displayPath: repository.displayPath,
+      },
+      status: filteredComparisonEntries.length > 0 ? "success" : "empty",
+      entries: filteredComparisonEntries,
+      message: "",
+    };
+  }, [comparison, filteredComparisonEntries, selectedRepository]);
+
   const selectedBranchAvailable = selectedRepository
     && selectedBranch !== null
     && selectedRepository.branches.includes(selectedBranch);
   const selectedEntryKey = selectedEntryPath
-    ? `${selectedRepository?.repositoryId ?? ""}:commit:${selectedEntryPath}`
+    ? comparisonOpen && comparison
+      ? historyComparisonEntryKey(selectedRepository?.repositoryId ?? "", {
+          relativePath: selectedEntryPath,
+          previousRelativePath: null,
+          kinds: {},
+          scopes: ["commit"],
+        })
+      : `${selectedRepository?.repositoryId ?? ""}:commit:${selectedEntryPath}`
     : null;
-  const isBusy = loadingRepositories || loadingCommits || loadingDetail || !!loadingDiffKey;
+  const canCompare = Boolean(api);
+  const isBusy = loadingRepositories || loadingCommits || loadingDetail || comparisonLoading || !!loadingDiffKey;
 
   return (
     <div className="file-history-pane" aria-busy={isBusy}>
@@ -591,29 +1075,172 @@ export function FileRootGitHistoryPane({
           </select>
         </label>
       ) : null}
-      {selectedRepository && (selectedRepository.branches.length > 0 || selectedBranch !== null) ? (
-        <label className="file-history-repository-selector">
-          <span>Branch</span>
-          <select
-            aria-label="History branch"
-            value={selectedBranch ?? ""}
-            onChange={(event) => chooseBranch(event.target.value || null)}
-          >
-            {selectedBranch === null ? (
-              <option value="" disabled>Detached HEAD — select a branch</option>
-            ) : !selectedBranchAvailable ? (
-              <option value={selectedBranch} disabled>{selectedBranch} (no longer available)</option>
-            ) : null}
-            {selectedRepository.branches.map((branch) => (
-              <option key={branch} value={branch}>
-                {branch}{branch === selectedRepository.currentBranch ? " (current)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+      {selectedRepository && (
+        selectedRepository.branches.length > 0
+        || selectedBranch !== null
+        || selectedRepository.refs.length > 0
+      ) ? (
+        <div className="file-history-history-toolbar">
+          <label className="file-history-repository-selector">
+            <span>Branch</span>
+            <select
+              aria-label="History branch"
+              value={selectedBranch ?? ""}
+              onChange={(event) => chooseBranch(event.target.value || null)}
+            >
+              {selectedBranch === null ? (
+                <option value="" disabled>Detached HEAD — select a branch</option>
+              ) : !selectedBranchAvailable ? (
+                <option value={selectedBranch} disabled>{selectedBranch} (no longer available)</option>
+              ) : null}
+              {selectedRepository.branches.map((branch) => (
+                <option key={branch} value={branch}>
+                  {branch}{branch === selectedRepository.currentBranch ? " (current)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          {canCompare ? (
+            <button
+              className="file-history-compare-trigger"
+              type="button"
+              onClick={() => openComparison(false, { mode: "branch" })}
+            >
+              Compare
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
-      {selectedCommitId ? (
+      {comparisonOpen ? (
+        <div className="file-history-comparison" aria-busy={comparisonLoading || undefined}>
+          <button className="file-history-back" type="button" onClick={backFromComparison}>
+            ← {comparisonReturnToDetail ? "Commit details" : "History"}
+          </button>
+          <div className="file-history-comparison-form">
+            <div className="file-history-comparison-form-heading">
+              <h3>Compare</h3>
+            </div>
+            {selectedRepository ? (
+              <>
+                <HistoryComparisonRefPicker
+                  label="Base"
+                  value={comparisonDraft.base}
+                  refs={selectedRepository.refs}
+                  disabled={comparisonLoading}
+                  isOpen={openComparisonPicker === "base"}
+                  onToggle={() => setOpenComparisonPicker((current) => current === "base" ? null : "base")}
+                  onClose={closeComparisonPicker}
+                  onChange={(base) => setComparisonDraft((current) => ({ ...current, base }))}
+                />
+                <HistoryComparisonRefPicker
+                  label="Target"
+                  value={comparisonDraft.target}
+                  refs={selectedRepository.refs}
+                  disabled={comparisonLoading}
+                  isOpen={openComparisonPicker === "target"}
+                  onToggle={() => setOpenComparisonPicker((current) => current === "target" ? null : "target")}
+                  onClose={closeComparisonPicker}
+                  onChange={(target) => setComparisonDraft((current) => ({ ...current, target }))}
+                />
+                <label className="file-history-comparison-mode">
+                  <span>Mode</span>
+                  <select
+                    aria-label="Comparison mode"
+                    value={comparisonDraft.mode}
+                    disabled={comparisonLoading}
+                    onChange={(event) => setComparisonDraft((current) => ({
+                      ...current,
+                      mode: event.target.value as FileRootGitHistoryComparisonMode,
+                    }))}
+                  >
+                    {(Object.keys(HISTORY_COMPARISON_MODE_LABELS) as FileRootGitHistoryComparisonMode[]).map((mode) => (
+                      <option key={mode} value={mode}>{HISTORY_COMPARISON_MODE_LABELS[mode]}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="file-history-open-changes file-history-comparison-submit"
+                  type="button"
+                  disabled={comparisonLoading || !comparisonDraft.base || !comparisonDraft.target}
+                  onClick={() => void applyComparison()}
+                >
+                  Compare
+                </button>
+              </>
+            ) : null}
+          </div>
+          {comparisonMessage ? <p className="file-history-message" role="alert">{comparisonMessage}</p> : null}
+          {comparisonLoading ? (
+            <div className="workspace-changes-loading" role="status" aria-live="polite">
+              <span className="workspace-changes-spinner" aria-hidden="true" />
+              <span className="visually-hidden">Loading Git comparison</span>
+            </div>
+          ) : comparison && comparisonRootChange ? (
+            <>
+              <div
+                className="file-history-comparison-result-header"
+                data-base-commit-id={comparison.baseCommitId}
+                data-target-commit-id={comparison.targetCommitId}
+              >
+                <div>
+                  <strong>
+                    {filteredComparisonEntries.length === comparisonEntries.length
+                      ? `${comparisonEntries.length} changed files`
+                      : `${filteredComparisonEntries.length} matching files`}
+                  </strong>
+                  <span>{HISTORY_COMPARISON_MODE_LABELS[comparison.mode]}</span>
+                </div>
+                <div className="file-history-comparison-oids" title={`${comparison.baseCommitId} → ${comparison.targetCommitId}`}>
+                  <code>{comparison.baseCommitId}</code>
+                  <span aria-hidden="true">→</span>
+                  <code>{comparison.targetCommitId}</code>
+                </div>
+                {comparison.mergeBaseCommitId ? (
+                  <span className="file-history-comparison-merge-base">
+                    merge-base <code>{comparison.mergeBaseCommitId}</code>
+                  </span>
+                ) : null}
+                <label className="file-history-comparison-filter">
+                  <span>Filter</span>
+                  <input
+                    aria-label="Filter changed files"
+                    type="search"
+                    placeholder="Filter changed files"
+                    value={comparisonFilter}
+                    onChange={(event) => setComparisonFilter(event.target.value)}
+                  />
+                </label>
+                <div className="file-history-comparison-result-actions">
+                  <button
+                    className="file-history-open-changes"
+                    type="button"
+                    disabled={!!loadingDiffKey}
+                    onClick={(event) => void openComparisonDiff(null, event.ctrlKey || event.metaKey)}
+                  >
+                    Open All Changes
+                  </button>
+                </div>
+              </div>
+              <div className="file-history-changed-files">
+                <FileRootChangesGroup
+                  rootChange={comparisonRootChange}
+                  groupCount={1}
+                  sizing="content"
+                  collapsedDirectories={collapsedDirectories}
+                  loadingKey={loadingDiffKey}
+                  scopes={HISTORY_SCOPES}
+                  selectedEntryKey={selectedEntryKey}
+                  onToggleDirectory={toggleDirectory}
+                  onOpenEntry={async (_rootId, entry, _scope, openInWindow) => {
+                    await openComparisonDiff(entry, openInWindow);
+                  }}
+                />
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : selectedCommitId ? (
         <div className="file-history-detail">
           <button className="file-history-back" type="button" onClick={backToHistory}>
             ← History
@@ -634,14 +1261,29 @@ export function FileRootGitHistoryPane({
                   ))}
                 </div>
               </div>
-              <button
-                className="file-history-open-changes"
-                type="button"
-                disabled={loadingDetail || !!loadingDiffKey || !rootChange}
-                onClick={() => void openCommitDiff(null, false)}
-              >
-                Open All Changes
-              </button>
+              <div className="file-history-detail-actions">
+                <button
+                  className="file-history-open-changes"
+                  type="button"
+                  disabled={loadingDetail || !!loadingDiffKey || !rootChange}
+                  onClick={() => void openCommitDiff(null, false)}
+                >
+                  Open All Changes
+                </button>
+                {canCompare ? (
+                  <button
+                    className="file-history-open-changes"
+                    type="button"
+                    disabled={loadingDetail || !!loadingDiffKey || !selectedCommit}
+                    onClick={() => openComparison(true, {
+                      base: selectedCommit ? { kind: "commit", objectId: selectedCommit.id } : null,
+                      mode: "direct",
+                    })}
+                  >
+                    Compare
+                  </button>
+                ) : null}
+              </div>
               {detailMessage ? <p className="file-history-message" role="alert">{detailMessage}</p> : null}
               {loadingDetail ? (
                 <div className="workspace-changes-loading" role="status" aria-live="polite">
@@ -696,26 +1338,41 @@ export function FileRootGitHistoryPane({
             <p className="file-history-empty">No commits.</p>
           ) : (
             commits.map((commit) => (
-              <button
-                className={`file-history-commit-row${lastSelectedCommitId === commit.id ? " is-selected" : ""}`}
-                type="button"
-                key={commit.id}
-                onClick={() => void selectCommit(commit)}
-              >
-                <span className="file-history-commit-subject" title={commit.subject}>{commit.subject || "(no subject)"}</span>
-                <span className="file-history-commit-secondary">
-                  <code>{commit.shortHash}</code>
-                  <span>{commitAuthor(commit)}</span>
-                  <time dateTime={commit.authoredAt}>{formatCommitDate(commit.authoredAt)}</time>
-                </span>
-                {commit.refs.length > 0 ? (
-                  <span className="file-history-ref-badges file-history-commit-row-ref-badges">
-                    {commit.refs.map((ref) => (
-                      <HistoryRefBadge historyRef={ref} key={`${ref.kind}:${ref.name}`} />
-                    ))}
+              <div className="file-history-commit-row-wrapper" key={commit.id}>
+                <button
+                  className={`file-history-commit-row${lastSelectedCommitId === commit.id ? " is-selected" : ""}`}
+                  type="button"
+                  onClick={() => void selectCommit(commit)}
+                >
+                  <span className="file-history-commit-subject" title={commit.subject}>{commit.subject || "(no subject)"}</span>
+                  <span className="file-history-commit-secondary">
+                    <code>{commit.shortHash}</code>
+                    <span>{commitAuthor(commit)}</span>
+                    <time dateTime={commit.authoredAt}>{formatCommitDate(commit.authoredAt)}</time>
                   </span>
+                  {commit.refs.length > 0 ? (
+                    <span className="file-history-ref-badges file-history-commit-row-ref-badges">
+                      {commit.refs.map((ref) => (
+                        <HistoryRefBadge historyRef={ref} key={`${ref.kind}:${ref.name}`} />
+                      ))}
+                    </span>
+                  ) : null}
+                </button>
+                {canCompare ? (
+                  <button
+                    className="file-history-commit-compare"
+                    type="button"
+                    aria-label={`Compare ${commit.shortHash}`}
+                    title={`Compare ${commit.shortHash}`}
+                    onClick={() => openComparison(false, {
+                      base: { kind: "commit", objectId: commit.id },
+                      mode: "direct",
+                    })}
+                  >
+                    <span aria-hidden="true">↔</span>
+                  </button>
                 ) : null}
-              </button>
+              </div>
             ))
           )}
           {hasMore ? (

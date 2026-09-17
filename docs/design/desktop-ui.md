@@ -2,7 +2,7 @@
 
 ## Auxiliary Session (Issue #710)
 
-Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、Headerの`New Auxiliary`は既存会話を閉じず末尾へ追加する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。折りたたみ時はAuxiliary面と内部境界を隠し、ActionDock対象をMainへ戻す。
+Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、中央のタイトル枠内にある`＋`から既存会話を閉じず最終使用順の一覧へ反映する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。実行中のAuxiliaryはicon内にcompactなprocessing indicatorを重ね、行高とpreviewの幅を変えない。折りたたみ時はAuxiliary面と内部境界を隠し、ActionDock対象をMainへ戻す。
 
 - 作成日: 2026-03-14
 - 対象: Electron 版 WithMate の現在 UI
@@ -241,7 +241,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する
   - 未作成の `Session Folder` は root の初回展開時に空ディレクトリとして作成する
   - tree row は仮想化し、file 本文は選択時に 1 件だけ chunk read する
-  - `Files | Changes` を切り替え、Changes は各 Git root の Working Tree / Staged を 1 file 単位で中央 live Git Diff へ開く。非 Git root は表示しない。包含関係にある root は独立した scope とし、同じ file も各 root からの相対 path で表示する
+  - `Files | Changes | History` を切り替え、Changes は各 Git root の Working Tree / Staged を 1 file 単位で中央 live Git Diff へ開く。History は同じ File Explorer shellでcommit履歴とcommit時点のfileをread-only表示し、History内のCompareでlocal branch / remote-tracking branch / tag / HEAD / commitをDirect comparisonまたはBranch changesとして比較する。非 Git root は表示しない。包含関係にある root は独立した scope とし、同じ file も各 root からの相対 path で表示する
+  - History Compareは4つ目のtabや独自のdiff surfaceを増やさず、Historyのfile tree、filter、Open All Changesを再利用する。比較時に解決したcommit object IDを保持し、branchの移動でpatchを暗黙に差し替えない。patchはcentral surfaceまたはdetached File Preview Windowで開け、before / after previewはcentral diffのactionからcommit-scoped File Preview Windowで開ける
   - Changes は user configuration から外部 command を実行しない。root の認可と表示 scope は ADR 015、Git executable、directory identity、config / index の隔離境界は ADR 014 を正本とする。有効な clean / process filter が必要な repository では、他の操作 feedback がある場合も理由を表示して利用不可にする
   - File Explorer の user-visible 導線は Companion に追加しない
 - 中央 file preview

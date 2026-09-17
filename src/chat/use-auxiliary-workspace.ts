@@ -72,10 +72,10 @@ function writePrefs(parentSessionId: string, prefs: WorkspacePrefs): void {
   }
 }
 
-function sortByCreation(summaries: AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
+function sortByLastUsed(summaries: AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
   return [...summaries].sort((left, right) => {
-    const created = left.createdAt.localeCompare(right.createdAt);
-    return created || left.id.localeCompare(right.id);
+    const updated = right.updatedAt.localeCompare(left.updatedAt);
+    return updated || right.id.localeCompare(left.id);
   });
 }
 
@@ -106,7 +106,8 @@ export function useAuxiliaryWorkspace(input: {
   const widthRatioRef = useRef(prefsRef.current.widthRatio);
   const [widthRatio, setWidthRatioState] = useState(widthRatioRef.current);
   const selectedIdRef = useRef<string | null>(null);
-  const requestedSelectionRef = useRef<string | null>(normalizedInitialSelectedId);
+  const requestedSelectionRef = useRef<string | null>(null);
+  const pendingSelectionIdRef = useRef<string | null>(normalizedInitialSelectedId);
   const detailsRef = useRef(new Map<string, AuxiliarySession>());
   const bindingsRef = useRef(new Map<string, AuxiliarySessionBinding>());
   const loadRevisionRef = useRef(0);
@@ -138,7 +139,7 @@ export function useAuxiliaryWorkspace(input: {
     setLoading(true);
     setError(null);
     try {
-      const next = sortByCreation(await api.listAuxiliarySessions(parentSessionId));
+      const next = sortByLastUsed(await api.listAuxiliarySessions(parentSessionId));
       if (
         !mountedRef.current
         ||
@@ -150,11 +151,23 @@ export function useAuxiliaryWorkspace(input: {
       summariesRef.current = next;
       const preferred = prefsRef.current.selectedId;
       const requested = requestedSelectionRef.current;
+      const requestedId = pendingSelectionIdRef.current;
+      const hasRequestedId = requestedId !== null && next.some((summary) => summary.id === requestedId);
+      const hasLegacyRequestedId = requested !== null && next.some((summary) => summary.id === requested);
       const nextId = requested !== null
         ? requested
-        : selectedIdRef.current && next.some((summary) => summary.id === selectedIdRef.current)
-          ? selectedIdRef.current
-          : preferred && next.some((summary) => summary.id === preferred) ? preferred : next[0]?.id ?? null;
+        : hasRequestedId
+          ? requestedId
+          : selectedIdRef.current && next.some((summary) => summary.id === selectedIdRef.current)
+            ? selectedIdRef.current
+            : preferred && next.some((summary) => summary.id === preferred) ? preferred : next[0]?.id ?? null;
+      if (hasRequestedId) {
+        pendingSelectionIdRef.current = null;
+        persistPrefs({ selectedId: nextId });
+      }
+      if (hasLegacyRequestedId) {
+        requestedSelectionRef.current = null;
+      }
       if (nextId !== selectedIdRef.current) {
         selectedIdRef.current = nextId;
         setSelectedId(nextId);
@@ -168,19 +181,20 @@ export function useAuxiliaryWorkspace(input: {
         setLoading(false);
       }
     }
-  }, [api, parentSessionId]);
+  }, [api, parentSessionId, persistPrefs]);
 
   useEffect(() => {
     prefsRef.current = parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO };
     widthRatioRef.current = prefsRef.current.widthRatio;
     setWidthRatioState(widthRatioRef.current);
     selectedIdRef.current = null;
-    requestedSelectionRef.current = normalizedInitialSelectedId;
+    requestedSelectionRef.current = null;
+    pendingSelectionIdRef.current = normalizedInitialSelectedId;
     setSelectedId(null);
     setSelectedSession(null);
     summariesRef.current = [];
     setSummaries([]);
-    setTargetState(normalizedInitialSelectedId ? "auxiliary" : "main");
+    setTargetState("main");
     detailsRef.current.clear();
     bindingsRef.current.clear();
     detailMutationEpochRef.current.clear();
@@ -192,7 +206,7 @@ export function useAuxiliaryWorkspace(input: {
     setDetailError(null);
     setError(null);
     void refreshSummaries();
-  }, [parentSessionId, refreshSummaries]);
+  }, [initialSelectedId, parentSessionId, refreshSummaries]);
 
   useEffect(() => {
     const id = selectedId;
@@ -246,7 +260,7 @@ export function useAuxiliaryWorkspace(input: {
         || terminalRevision !== terminalRevisionRef.current.get(id)
         || terminalEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
       const nextSummaries = fullSession
-        ? sortByCreation([
+        ? sortByLastUsed([
           ...summariesRef.current.filter((summary) => summary.id !== id),
           projectAuxiliarySessionSummary(session),
         ])
@@ -294,13 +308,18 @@ export function useAuxiliaryWorkspace(input: {
   }, [api, parentSessionId]);
 
   const selectSession = useCallback((id: string | null) => {
-    if (id !== null && !summaries.some((summary) => summary.id === id)) return;
+    if (id !== null && !summaries.some((summary) => summary.id === id)) {
+      pendingSelectionIdRef.current = id;
+      void refreshSummaries();
+      return;
+    }
+    pendingSelectionIdRef.current = null;
     requestedSelectionRef.current = null;
     selectedIdRef.current = id;
     setSelectedId(id);
     setSelectedSession(id ? detailsRef.current.get(id) ?? null : null);
     persistPrefs({ selectedId: id });
-  }, [persistPrefs, summaries]);
+  }, [persistPrefs, refreshSummaries, summaries]);
 
   const requestSessionSelection = useCallback((id: string) => {
     const normalizedId = id.trim();
@@ -334,7 +353,7 @@ export function useAuxiliaryWorkspace(input: {
     detailsRef.current.set(saved.id, saved);
     const binding = bindingsRef.current.get(saved.id);
     if (binding) binding.sessionRef.current = saved;
-    const nextSummaries = sortByCreation([...summariesRef.current.filter((summary) => summary.id !== saved.id), projectAuxiliarySessionSummary(saved)]);
+    const nextSummaries = sortByLastUsed([...summariesRef.current.filter((summary) => summary.id !== saved.id), projectAuxiliarySessionSummary(saved)]);
     summariesRef.current = nextSummaries;
     setSummaries(nextSummaries);
     selectedIdRef.current = saved.id;
@@ -377,7 +396,7 @@ export function useAuxiliaryWorkspace(input: {
         else detailsRef.current.delete(id);
         setSelectedSession((selected) => selected?.id === id ? next : selected);
         const nextSummaries = next
-          ? sortByCreation([...summariesRef.current.filter((summary) => summary.id !== id), projectAuxiliarySessionSummary(next)])
+          ? sortByLastUsed([...summariesRef.current.filter((summary) => summary.id !== id), projectAuxiliarySessionSummary(next)])
           : summariesRef.current.filter((summary) => summary.id !== id);
         summariesRef.current = nextSummaries;
         setSummaries(nextSummaries);

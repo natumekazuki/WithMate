@@ -170,6 +170,35 @@ export type OpenSessionWindowIdsChangedPayload =
   | { scope: "ids"; sessionIds: string[] }
   | { scope: "all" };
 
+export type AuxiliarySessionNavigationPayload = {
+  parentSessionId: string;
+  auxiliarySessionId: string;
+};
+
+export function normalizeAuxiliarySessionNavigationPayload(
+  value: unknown,
+): AuxiliarySessionNavigationPayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (!Object.keys(candidate).every((key) => ["parentSessionId", "auxiliarySessionId"].includes(key))) {
+    return null;
+  }
+  if (
+    typeof candidate.parentSessionId !== "string"
+    || !candidate.parentSessionId.trim()
+    || typeof candidate.auxiliarySessionId !== "string"
+    || !candidate.auxiliarySessionId.trim()
+  ) {
+    return null;
+  }
+  return {
+    parentSessionId: candidate.parentSessionId.trim(),
+    auxiliarySessionId: candidate.auxiliarySessionId.trim(),
+  };
+}
+
 export function normalizeOpenSessionWindowIdsChangedPayload(value: unknown): OpenSessionWindowIdsChangedPayload | null {
   if (value === null || value === undefined) {
     return null;
@@ -285,6 +314,7 @@ export type DeleteSessionsResult = {
   cutoffDate?: string;
   cutoffTimestampMs?: number;
   deletedSessionIds: string[];
+  deletedAuxiliarySessionIds?: string[];
   skippedRunningSessionIds: string[];
 };
 

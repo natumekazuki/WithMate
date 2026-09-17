@@ -49,7 +49,7 @@ export class MainWindowFacade {
   }
 
   async openSessionWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow> {
-    return this.deps.getSessionWindowBridge().openSessionWindow(sessionId, auxiliarySessionId);
+    return this.deps.getSessionWindowBridge().openSessionWindow(sessionId, { auxiliarySessionId });
   }
 
   closeSessionWindow(sessionId: string): void {

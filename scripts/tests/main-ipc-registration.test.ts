@@ -59,6 +59,7 @@ import {
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
   WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL,
   WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
@@ -171,15 +172,15 @@ function createSessionRequest(workspace: Record<string, unknown>) {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main IPC registrationは現行の公開channelを登録し、廃止済みchannelを登録しない"
+// claim = "Main IPC registrationは代表的な現行公開channel（History Compareを含む）を登録し、列挙した廃止channelを登録しない"
 // oracle = { type = "contract", ref = "withmate-ipc-channels public surface" }
-// fault = "preloadが公開したchannelにMain handlerがないか、廃止済みchannelが再び呼び出し可能になる"
-// observable = "ipcMain handlerへ登録された公開channel集合とremoved channelの不在"
+// fault = "列挙した現行channelにMain handlerがないか、廃止済みchannelが再び呼び出し可能になる"
+// observable = "registerMainIpcHandlers後のhandler mapにある代表channelとremoved channelの不在"
 // observation_boundary = "public-boundary"
 // scope = "Main IPC public channel registration"
 // lifecycle = "permanent"
-// impact = "rendererから公開APIを呼べない、または廃止済み操作をIPC経由で再実行できる"
-// distinction = "file tree context menuを含む公開channel集合とremoved channel不在を検証する"
+// impact = "rendererからHistory Compareを含む現行機能へ到達でき、廃止済み操作をIPC経由で再実行できない"
+// distinction = "file tree context menuとHistory Compareを含む代表的な公開channel、およびremoved channel不在を検証する"
 // @end-test-value
 test("registerMainIpcHandlers は保持する public IPC だけを登録する", () => {
   const { ipcMain, handlers } = createIpcMainStub();
@@ -207,6 +208,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL));
@@ -719,14 +721,14 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
 
 // @test-value v2
 // kind = "security"
-// claim = "File Explorer IPCはowning Session senderを確認し、検証済みroot ID列とhistory branch requestだけをserviceへ渡す"
+// claim = "File Explorer IPCはowning Session senderを確認し、検証済みfile-root/history requestとhistory comparison requestだけをserviceへ渡す"
 // oracle = { type = "contract", ref = "Session File Explorer IPC authority boundary" }
-// fault = "不正なroot ID列、無効なhistory branch、または別Session senderのfile explorer requestがchanges・history serviceへ到達する"
-// observable = "非owner・不正root・無効branch requestのrejectionとserviceへ渡されたdirectory・history request"
+// fault = "無効なhistory branch/ref、または別Session senderのfile explorer/history requestがchanges・history serviceへ到達する"
+// observable = "非owner・無効branch/ref requestのrejectionとserviceへ渡されたdirectory・history request"
 // observation_boundary = "public-boundary"
 // scope = "File Explorer IPC authority and request validation"
 // lifecycle = "permanent"
-// distinction = "Auxiliary IDをowning Sessionへ解決する成功経路と、別window・不正root・current preview resource外の拒否を同じIPC boundaryで確認する"
+// distinction = "Auxiliary IDをowning Sessionへ解決する成功経路と、別window・無効request・current preview resource外の拒否を同じIPC boundaryで確認する"
 // @end-test-value
 test("File Explorer IPC は owning Session window からだけ利用でき、Auxiliary ID を parent へ解決する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
@@ -745,6 +747,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   const historyRepositoryRequests: unknown[] = [];
   const historyCommitRequests: unknown[] = [];
   const historyDetailRequests: unknown[] = [];
+  const historyComparisonRequests: unknown[] = [];
   const historyDiffRequests: unknown[] = [];
   const changesRequests: unknown[] = [];
   const changesRepositoryRequests: unknown[] = [];
@@ -813,6 +816,10 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     getFileRootGitHistoryCommitDetail: async (request: unknown) => {
       historyDetailRequests.push(request);
       return { status: "commit-not-found", message: "none" };
+    },
+    getFileRootGitHistoryComparison: async (request: unknown) => {
+      historyComparisonRequests.push(request);
+      return { status: "ok", comparison: request, entries: [] };
     },
     getFileRootGitHistoryDiff: async (request: unknown) => {
       historyDiffRequests.push(request);
@@ -932,15 +939,32 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     await handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL)?.({}, historyDetailRequest),
     { status: "commit-not-found", message: "none" },
   );
+  const historyComparisonRequest = {
+    ...historyRequest,
+    base: { kind: "branch", name: "main" },
+    target: { kind: "remote", name: "origin/main" },
+    mode: "branch",
+  };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL)?.({}, historyComparisonRequest),
+    { status: "ok", comparison: historyComparisonRequest, entries: [] },
+  );
   const historyDiffRequest = { ...historyDetailRequest, relativePath: "src/App.tsx" };
   assert.deepEqual(
     await handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, historyDiffRequest),
     { status: "not-changed", message: "none" },
   );
+  const historyPreviewRequest = { kind: "history-diff", request: historyDiffRequest };
+  assert.equal(
+    (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, historyPreviewRequest) as { status: string }).status,
+    "opened",
+  );
   assert.deepEqual(historyRepositoryRequests, [historyRepositoriesRequest]);
   assert.deepEqual(historyCommitRequests, [{ ...historyCommitsRequest, cursor: null }]);
   assert.deepEqual(historyDetailRequests, [historyDetailRequest]);
+  assert.deepEqual(historyComparisonRequests, [historyComparisonRequest]);
   assert.deepEqual(historyDiffRequests, [historyDiffRequest]);
+  assert.deepEqual(previewNavigationRequests, [previewRequest, historyPreviewRequest]);
   for (const branch of [undefined, "", " main", "main ", "main\n"] as unknown[]) {
     await assert.rejects(
       () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, {
@@ -964,6 +988,13 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
       commitId: "not-a-commit",
     }) as Promise<unknown>,
     /commit id is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL)?.({}, {
+      ...historyComparisonRequest,
+      base: { kind: "branch", name: "../outside" },
+    }) as Promise<unknown>,
+    /comparison ref is invalid/,
   );
   await assert.rejects(
     () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, {
@@ -993,6 +1024,10 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     /owning Session window/,
   );
   await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, historyPreviewRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
     () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest) as Promise<unknown>,
     /owning Session window/,
   );
@@ -1015,12 +1050,17 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     /owning Session window/,
   );
   await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL)?.({}, historyComparisonRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
     () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, historyDiffRequest) as Promise<unknown>,
     /owning Session window/,
   );
   assert.deepEqual(historyRepositoryRequests, [historyRepositoriesRequest]);
   assert.deepEqual(historyCommitRequests, [{ ...historyCommitsRequest, cursor: null }]);
   assert.deepEqual(historyDetailRequests, [historyDetailRequest]);
+  assert.deepEqual(historyComparisonRequests, [historyComparisonRequest]);
   assert.deepEqual(historyDiffRequests, [historyDiffRequest]);
   await assert.rejects(
     () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest) as Promise<unknown>,

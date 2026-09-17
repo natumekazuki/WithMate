@@ -10,6 +10,8 @@ import type {
   FileRootGitHistoryCommit,
   FileRootGitHistoryCommitsRequest,
   FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryComparisonRequest,
+  FileRootGitHistoryComparisonResult,
   FileRootGitHistoryDiffRequest,
   FileRootGitHistoryRepository,
 } from "../../src/file-explorer/file-explorer-contract.js";
@@ -60,6 +62,10 @@ const repositoryA: FileRootGitHistoryRepository = {
   displayPath: "C:/withmate",
   branches: ["main", "feature/history"],
   currentBranch: "main",
+  refs: [
+    { kind: "branch", name: "main" },
+    { kind: "branch", name: "feature/history" },
+  ],
 };
 const repositoryB: FileRootGitHistoryRepository = {
   repositoryId: "git:bbbbbbbbbbbbbbbbbbbbbbbb",
@@ -68,6 +74,7 @@ const repositoryB: FileRootGitHistoryRepository = {
   displayPath: "C:/other",
   branches: ["other"],
   currentBranch: "other",
+  refs: [{ kind: "branch", name: "other" }],
 };
 
 function commit(id: string, subject: string): FileRootGitHistoryCommit {
@@ -208,6 +215,11 @@ async function flush(): Promise<void> {
   });
 }
 
+const unusedHistoryComparison = async (): Promise<FileRootGitHistoryComparisonResult> => ({
+  status: "failed",
+  message: "unused",
+});
+
 // @test-value v2
 // kind = "contract"
 // claim = "History paginationは専用scroll rootのsentinelから次pageを一度だけ取得し、完了後sentinelを隠す"
@@ -234,6 +246,7 @@ test("History pagination は Load more buttonを出さず sentinel と専用scro
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: first, entries: [] }),
     getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, relativePath: null, patch: "", previewResource: null }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -299,6 +312,17 @@ test("History pagination は Load more buttonを出さず sentinel と専用scro
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Historyの追加page失敗は既存commit一覧を保持し、sentinelから同じcursorを再試行できる"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "追加pageの失敗で既存一覧を消す、再試行できない、または同じcursorを重複せず誤ったcursorで取得する"
+// observable = "commit list DOM、error message、sentinel DOM、public listFileRootGitHistoryCommits cursor request"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane pagination failure recovery"
+// lifecycle = "permanent"
+// distinction = "追加pageの失敗後に既存commitとエラーを同時に保持し、同じsentinel triggerの再試行で次pageを一度だけ反映することをDOMとpublic requestで確認する"
+// @end-test-value
 test("History 追加pageの失敗は既存一覧を維持し、sentinelから再試行できる", async () => {
   const { dom, restore } = installDom();
   const first = commit("a", "first commit");
@@ -319,6 +343,7 @@ test("History 追加pageの失敗は既存一覧を維持し、sentinelから再
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: first, entries: [] }),
     getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -356,6 +381,17 @@ test("History 追加pageの失敗は既存一覧を維持し、sentinelから再
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "HistoryはGit repositoryが0件の状態とrepository内のcommitが0件の状態を別のempty stateで表示する"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "repository未取得、commit 0件、sentinel表示を同じempty stateへ混同し、利用者がGit repository不在と履歴空を区別できない"
+// observable = "No Git repositories/No commitsのDOM textとsentinelの不在"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane empty states"
+// lifecycle = "permanent"
+// distinction = "repository listが空のrenderとrepository存在・commit page空のrenderを同じpaneで切り替えて、表示文言とsentinelを別々に観測する"
+// @end-test-value
 test("History はrepository 0件とcommit 0件を別のempty stateで表示する", async () => {
   const { dom, restore } = installDom();
   let root: Root | null = null;
@@ -369,6 +405,7 @@ test("History はrepository 0件とcommit 0件を別のempty stateで表示す�
       }),
       getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "none" }),
       getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "none" }),
+      getFileRootGitHistoryComparison: unusedHistoryComparison,
     };
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
@@ -448,6 +485,7 @@ test("History repository切り替えは古いpageを捨てて新repositoryの先
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: commit("d", "detail"), entries: [] }),
     getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: commit("d", "detail").id, relativePath: null, patch: "", previewResource: null }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -514,6 +552,17 @@ test("History repository切り替えは古いpageを捨てて新repositoryの先
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "History repositoryの再読込開始時は旧Compare表示とcallback対象を即時に失効させ、再読込失敗を現在のpaneに反映する"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "repository再読込中も旧Compare表示やcallback対象を保持し、失敗した再読込のmessageを表示しない"
+// observable = "onRepositoryChange callback value、repository request count、History pane DOM state"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane repository reload invalidation"
+// lifecycle = "permanent"
+// distinction = "初回repository選択後にCompareを開き、rootsRevisionを変え、再読込がpendingの間にcallbackへnullを渡してCompare表示を失効させ、失敗messageを表示することを観測する"
+// @end-test-value
 test("History repository一覧の再読込開始時に旧Diffを即座に失効させる", async () => {
   const { dom, restore } = installDom();
   const repositoryChanges: Array<string | null> = [];
@@ -535,6 +584,7 @@ test("History repository一覧の再読込開始時に旧Diffを即座に失効�
     }),
     getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "none" }),
     getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "none" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -554,6 +604,11 @@ test("History repository一覧の再読込開始時に旧Diffを即座に失効�
     });
     await flush();
     assert.equal(repositoryChanges.at(-1), repositoryA.repositoryId);
+    const compareTrigger = dom.window.document.querySelector<HTMLButtonElement>(".file-history-compare-trigger");
+    assert.ok(compareTrigger);
+    await act(async () => compareTrigger.click());
+    await flush();
+    assert.ok(dom.window.document.querySelector(".file-history-comparison"));
 
     await act(async () => {
       root?.render(React.createElement(FileRootGitHistoryPane, {
@@ -570,11 +625,14 @@ test("History repository一覧の再読込開始時に旧Diffを即座に失効�
     await flush();
     assert.equal(repositoryRequests, 2);
     assert.equal(repositoryChanges.at(-1), null);
+    assert.equal(dom.window.document.querySelector(".file-history-comparison"), null);
 
     await act(async () => {
       resolveReload?.({ status: "failed", message: "repository reload failed" });
       await Promise.resolve();
     });
+    await flush();
+    assert.match(dom.window.document.body.textContent ?? "", /repository reload failed/);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -649,6 +707,7 @@ test("History branch選択は同一rootのrefreshで保持しroot変更でcurren
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "none" }),
     getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "none" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -787,14 +846,16 @@ test("History branch選択は同一rootのrefreshで保持しroot変更でcurren
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "HEAD、branch、tagのref badgeが一覧とdetailの両方で種類を文字markerとaccessible labelに保持する"
+// claim = "History detailはref種別、commit metadata、changed file tree、file diffとOpen All Changesを同じpane状態で利用できる"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
-// failure_mode = "ref badgeが色だけで種類を区別する実装へ戻り、色を判別できない利用者がHEAD、branch、tagを識別できない"
-// scope = "file-root-git-history-pane"
+// fault = "detail headerのref種別やcommit metadataが欠落する、changed file treeを開けない、またはOpen All Changesが選択commitのdiff callbackへ渡らない"
+// observable = "detail header DOM、ref badge markerとaccessible label、changed file tree DOM、diff request、Open All Changes callback"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane commit detail"
 // lifecycle = "permanent"
-// distinction = "contrastの描画値ではなく、色に依存しないref種別のobservableを一覧とdetailで検証する"
+// distinction = "単一commitをdetailへ開き、headerのref/metadata、changed file、通常のOpen All Changes requestを同時に観測する"
 // @end-test-value
 test("History detail はref種別、commit metadata、changed file tree、file diffとOpen All Changesを同じ状態で開く", async () => {
   const { dom, restore } = installDom();
@@ -821,6 +882,7 @@ test("History detail はref種別、commit metadata、changed file tree、file d
       diffRequests.push(request);
       return { status: "ok" as const, commitId: request.commitId, relativePath: request.relativePath ?? null, patch: "diff --git" };
     },
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -865,6 +927,15 @@ test("History detail はref種別、commit metadata、changed file tree、file d
     assert.match(dom.window.document.body.textContent ?? "", /history detail/);
     const detailHeader = dom.window.document.querySelector(".file-history-detail-header");
     assert.ok(detailHeader);
+    assert.equal(detailHeader.querySelector("code")?.textContent, targetCommit.id);
+    assert.equal(
+      detailHeader.querySelector(".file-history-commit-meta span")?.textContent,
+      targetCommit.authorName,
+    );
+    assert.equal(
+      detailHeader.querySelector("time")?.getAttribute("dateTime"),
+      targetCommit.authoredAt,
+    );
     assert.deepEqual(badgeStates(detailHeader), expectedBadges);
     const fileButton = dom.window.document.querySelector<HTMLButtonElement>(
       ".workspace-change-row[title='src/example.ts']",
@@ -873,12 +944,14 @@ test("History detail はref種別、commit metadata、changed file tree、file d
     await act(async () => fileButton.click());
     await flush();
     assert.equal(diffRequests.at(-1)?.relativePath, "src/example.ts");
+    assert.equal(diffRequests.at(-1)?.commitId, targetCommit.id);
     const openChanges = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent === "Open All Changes");
     assert.ok(openChanges);
     await act(async () => openChanges.click());
     await flush();
     assert.equal(diffRequests.at(-1)?.relativePath, null);
+    assert.equal(diffRequests.at(-1)?.commitId, targetCommit.id);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -887,11 +960,204 @@ test("History detail はref種別、commit metadata、changed file tree、file d
   }
 });
 
-// @test-value v1
-// kind = "invariant"
-// claim = "Git History ref badgeの共有primitiveがforeground、background、borderを明示し、HEAD、branch、tagのvariantは既存theme tokenでaccentを選ぶ"
+// @test-value v2
+// kind = "contract"
+// claim = "HistoryのCompareは履歴entryとbranch toolbarから同じpane内で起動し、pickerのlabel・focus・closeを保ったままbranch/remote refとmodeを固定comparisonのdiff callbackへ渡す"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Compare" }
+// fault = "Compare用の別tabを増やす、履歴entryから起動できない、endpoint labelのないpicker、外側クリックやEscapeで閉じないpicker、focusを失うpicker、branch/remote refを選べない、modeを失う、またはCtrl+clickをcentralへ固定する"
+// observable = "Compare trigger、picker ARIA label、ArrowDown option focus、outside pointer close、Escape focus restore、picker options、mode select、comparison request、resolved OID header、changed file DOM、onOpenDiff openInWindow"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane comparison"
+// lifecycle = "permanent"
+// impact = "履歴画面から比較条件を指定して、detached diff callbackへ同じcomparisonを渡せる"
+// distinction = "履歴entryのCompare起動後に戻り、toolbarからbase/targetをpicker keyboard操作と外側クリック・Escapeを含めて選択し、direct modeとfileのCtrl+clickでpublic callback requestを観測する"
+// @end-test-value
+test("History Compareはentryとtoolbarから起動し、固定comparisonをdetached diff callbackへ渡す", async () => {
+  const { dom, restore } = installDom();
+  const comparisonRepository: FileRootGitHistoryRepository = {
+    ...repositoryA,
+    refs: [
+      { kind: "branch", name: "main" },
+      { kind: "branch", name: "feature/history" },
+      { kind: "remote", name: "origin/feature/history" },
+      { kind: "tag", name: "v6.3.25" },
+    ],
+  };
+  const targetCommit = commit("1", "compare entry");
+  const comparisonRequests: FileRootGitHistoryComparisonRequest[] = [];
+  const diffRequests: Array<{ request: FileRootGitHistoryDiffRequest; openInWindow: boolean }> = [];
+  const comparison: NonNullable<FileRootGitHistoryComparisonResult & { status: "ok" }> = {
+    status: "ok",
+    comparison: {
+      mode: "direct",
+      base: { kind: "branch", name: "feature/history" },
+      target: { kind: "remote", name: "origin/feature/history" },
+      baseCommitId: "a".repeat(40),
+      targetCommitId: "b".repeat(40),
+      mergeBaseCommitId: null,
+    },
+    entries: [changedEntry("src/example.ts")],
+  };
+  const api = {
+    listFileRootGitHistoryRepositories: async () => ({ status: "ok" as const, repositories: [comparisonRepository] }),
+    listFileRootGitHistoryCommits: async () => ({
+      status: "ok" as const,
+      page: { entries: [targetCommit], nextCursor: null, hasMore: false },
+    }),
+    getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: targetCommit, entries: [] }),
+    getFileRootGitHistoryComparison: async (request: FileRootGitHistoryComparisonRequest) => {
+      comparisonRequests.push(request);
+      return comparison;
+    },
+    getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "unused" }),
+  };
+  let root: Root | null = null;
+  try {
+    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootGitHistoryPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        refreshRevision: 0,
+        onOpenDiff: async (request: FileRootGitHistoryDiffRequest, openInWindow: boolean) => {
+          diffRequests.push({ request, openInWindow });
+          return null;
+        },
+      }));
+      await Promise.resolve();
+    });
+    await flush();
+    const entryCompare = dom.window.document.querySelector<HTMLButtonElement>(".file-history-commit-compare");
+    assert.ok(entryCompare);
+    await act(async () => entryCompare.click());
+    await flush();
+    assert.equal(
+      dom.window.document.querySelector<HTMLButtonElement>(".file-history-comparison-picker-trigger")?.textContent?.trim(),
+      "Commit " + targetCommit.id.slice(0, 7),
+    );
+    const comparisonBack = dom.window.document.querySelector<HTMLButtonElement>(".file-history-back");
+    assert.ok(comparisonBack);
+    await act(async () => comparisonBack.click());
+    await flush();
+
+    const compareTrigger = dom.window.document.querySelector<HTMLButtonElement>(".file-history-compare-trigger");
+    assert.ok(compareTrigger);
+    await act(async () => compareTrigger.click());
+    await flush();
+    const pickers = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".file-history-comparison-picker-trigger")];
+    assert.equal(pickers.length, 2);
+    const baseLabelIds = pickers[0]?.getAttribute("aria-labelledby")?.split(/\s+/u) ?? [];
+    assert.equal(baseLabelIds.length, 2);
+    assert.equal(dom.window.document.getElementById(baseLabelIds[0] ?? "")?.textContent, "Base");
+    assert.ok(dom.window.document.getElementById(baseLabelIds[1] ?? ""));
+    await act(async () => pickers[0]?.click());
+    await flush();
+    assert.equal(dom.window.document.querySelectorAll(".file-history-comparison-picker-menu").length, 1);
+    const baseSearch = dom.window.document.querySelector<HTMLInputElement>("input[aria-label='Base search']");
+    assert.ok(baseSearch);
+    await act(async () => {
+      baseSearch?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
+      await Promise.resolve();
+    });
+    assert.equal(dom.window.document.activeElement?.getAttribute("role"), "option");
+    const comparisonMode = dom.window.document.querySelector<HTMLElement>(".file-history-comparison-mode");
+    assert.ok(comparisonMode);
+    await act(async () => {
+      comparisonMode?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flush();
+    assert.equal(dom.window.document.querySelectorAll(".file-history-comparison-picker-menu").length, 0);
+    await act(async () => pickers[0]?.click());
+    await flush();
+    await act(async () => {
+      dom.window.document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+      await Promise.resolve();
+    });
+    await flush();
+    assert.equal(dom.window.document.querySelectorAll(".file-history-comparison-picker-menu").length, 0);
+    assert.equal(dom.window.document.activeElement, pickers[0]);
+    await act(async () => pickers[0]?.click());
+    await flush();
+    const baseOption = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".file-history-comparison-picker-option")]
+      .find((button) => button.textContent?.includes("feature/history") && !button.textContent.includes("origin/"));
+    assert.ok(baseOption);
+    await act(async () => baseOption?.click());
+    await act(async () => pickers[1]?.click());
+    await flush();
+    const targetOption = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".file-history-comparison-picker-option")]
+      .find((button) => button.textContent?.includes("origin/feature/history"));
+    assert.ok(targetOption);
+    await act(async () => targetOption?.click());
+    const modeSelect = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='Comparison mode']");
+    assert.ok(modeSelect);
+    modeSelect.value = "direct";
+    await act(async () => {
+      modeSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+    const submit = dom.window.document.querySelector<HTMLButtonElement>(".file-history-comparison-submit");
+    assert.ok(submit);
+    await act(async () => submit.click());
+    await flush();
+    assert.deepEqual(comparisonRequests.at(-1), {
+      sessionId: "session-1",
+      repositoryId: comparisonRepository.repositoryId,
+      rootId: comparisonRepository.rootId,
+      base: { kind: "branch", name: "feature/history" },
+      target: { kind: "remote", name: "origin/feature/history" },
+      mode: "direct",
+    });
+    const resultHeader = dom.window.document.querySelector<HTMLElement>(".file-history-comparison-result-header");
+    assert.equal(resultHeader?.dataset.baseCommitId, "a".repeat(40));
+    assert.equal(resultHeader?.dataset.targetCommitId, "b".repeat(40));
+    assert.match(resultHeader?.textContent ?? "", /Direct comparison/);
+    const openAllChanges = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Open All Changes");
+    assert.ok(openAllChanges);
+    await act(async () => openAllChanges.click());
+    await flush();
+    assert.equal(diffRequests.at(-1)?.request.relativePath, null);
+    const filter = dom.window.document.querySelector<HTMLInputElement>("input[aria-label='Filter changed files']");
+    assert.ok(filter);
+    filter.value = "example";
+    await act(async () => {
+      filter.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    const fileButton = dom.window.document.querySelector<HTMLButtonElement>(".workspace-change-row[title='src/example.ts']");
+    assert.ok(fileButton);
+    await act(async () => {
+      fileButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+      await Promise.resolve();
+    });
+    await flush();
+    assert.equal(diffRequests.at(-1)?.openInWindow, true);
+    assert.deepEqual(diffRequests.at(-1)?.request, {
+      sessionId: "session-1",
+      repositoryId: comparisonRepository.repositoryId,
+      rootId: comparisonRepository.rootId,
+      comparison: comparison.comparison,
+      relativePath: "src/example.ts",
+    });
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restore();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Git History ref badgeの共有primitiveはforeground、background、borderを明示し、HEAD、branch、tagのvariantは既存theme tokenでaccentを選ぶ"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
-// failure_mode = "badgeの背景またはborderが透明なまま文字色だけを変え、通常、hover、selected row、detail headerの背景上でref labelが埋もれる"
+// fault = "badgeの背景またはborderが透明なまま文字色だけを変え、通常、hover、selected row、detail headerの背景上でref labelが埋もれる"
+// observable = "src/styles.cssのfile-history-ref-badge ruleとhead/branch/tag variant declarations"
+// observation_boundary = "implementation"
 // scope = "file-history-ref-badge-css"
 // lifecycle = "permanent"
 // distinction = "DOMでは算出できないCSSのforeground、background、border契約とvariantのtheme token利用を静的に検証する"
@@ -911,6 +1177,17 @@ test("History ref badge CSS は共有primitiveでforeground、background、borde
   assert.match(css, /\.file-history-ref-badge--tag\s*\{\s*--file-history-ref-accent:\s*var\(--gold\);\s*\}/);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Historyは古いcommit detail結果を、Back後に選択された現在のcommitへ反映しない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "前のcommit detailの遅延結果が新しく選択したcommitのchanged file treeへ混入する"
+// observable = "changed file tree DOMに表示されるold.ts/new.ts"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane commit detail request invalidation"
+// lifecycle = "permanent"
+// distinction = "first commit detailをpendingのままBackしてsecond commitを選び、first response後もold pathが表示されずsecond responseだけが表示されることを観測する"
+// @end-test-value
 test("History は古いcommit detail結果を現在のcommitへ混入させない", async () => {
   const { dom, restore } = installDom();
   const firstCommit = commit("a", "first detail");
@@ -927,6 +1204,7 @@ test("History は古いcommit detail結果を現在のcommitへ混入させな�
       assert.ok(request.commitId === firstCommit.id || request.commitId === secondCommit.id);
     }),
     getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -981,6 +1259,17 @@ test("History は古いcommit detail結果を現在のcommitへ混入させな�
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Historyは古いfile Diff結果を、Back後に選択された現在のcommitへ反映しない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "前のcommitの遅延Diff結果がBack後に選択したcommitのchanged file treeへ混入する"
+// observable = "diff result messageのDOMと現在commitのchanged file tree DOM"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane file diff request invalidation"
+// lifecycle = "permanent"
+// distinction = "first commitのfile diff callbackをpendingにしてBack後にsecond commitを開き、遅延したstale diffが表示されずsecond commit pathだけが残ることを観測する"
+// @end-test-value
 test("History は古いfile Diff結果をBack後のcommitへ混入させない", async () => {
   const { dom, restore } = installDom();
   const firstCommit = commit("a", "first diff");
@@ -998,6 +1287,7 @@ test("History は古いfile Diff結果をBack後のcommitへ混入させない",
       entries: [changedEntry(request.commitId === firstCommit.id ? "first.ts" : "second.ts")],
     }),
     getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {

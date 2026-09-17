@@ -2,7 +2,7 @@
 
 ## Auxiliary Session (Issue #710)
 
-Auxiliaryは単一の排他的modeではなく、Mainと同じchat shell内で複数会話を保持・切り替えるmodeである。Main＋選択中Auxiliaryを表示し、非表示Auxiliaryのrun、draft、thread、Character snapshotも会話ID単位で保持する。shell、message list、composer、right paneは共通実装を使い、会話ごとの差はmode/capability/adapterで解決する。Auxiliary一覧は作成順のstable IDと非AI previewを使い、一覧展開でtranscriptやCharacter定義を全件読み直さない。
+Auxiliaryは単一の排他的modeではなく、Mainと同じchat shell内で複数会話を保持・切り替えるmodeである。Main＋選択中Auxiliaryを表示し、非表示Auxiliaryのrun、draft、thread、Character snapshotも会話ID単位で保持する。shell、message list、composer、right paneは共通実装を使い、会話ごとの差はmode/capability/adapterで解決する。Auxiliary一覧は最終使用時刻順（`updatedAt DESC, id DESC`）と非AI previewを使い、一覧展開でtranscriptやCharacter定義を全件読み直さない。
 
 - 作成日: 2026-05-25
 - 対象: Agent Session、Companion、MateTalk、Auxiliary Session の chat UI / action 境界

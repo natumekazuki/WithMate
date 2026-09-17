@@ -12,9 +12,11 @@ type Listener = (...args: unknown[]) => void;
 
 function createIpcRendererStub() {
   const listeners = new Map<string, Listener>();
+  const removedListeners: Array<{ channel: string; listener: Listener }> = [];
 
   return {
     listeners,
+    removedListeners,
     ipcRenderer: {
       invoke(channel: string, ...args: unknown[]) {
         return Promise.resolve({ channel, args });
@@ -22,8 +24,11 @@ function createIpcRendererStub() {
       on(channel: string, listener: Listener) {
         listeners.set(channel, listener);
       },
-      removeListener(channel: string) {
-        listeners.delete(channel);
+      removeListener(channel: string, listener: Listener) {
+        if (listeners.get(channel) === listener) {
+          listeners.delete(channel);
+        }
+        removedListeners.push({ channel, listener });
       },
       send() {},
     },
@@ -39,7 +44,7 @@ function createIpcRendererStub() {
 // observation_boundary = "public-boundary"
 // scope = "preload invoke API"
 // lifecycle = "permanent"
-// distinction = "file tree context menuとSession Monitor context menuを含む公開invoke method群のchannelと引数を一括検証し、subscription payload検証とは分離する"
+// distinction = "file tree context menuとSession Monitor context menuを含む公開invoke method群のchannelと引数を一括検証する"
 // @end-test-value
 test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる", async () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -404,6 +409,16 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-file-root-git-history-commit-detail",
     args: [historyDetailRequest],
   });
+  const historyComparisonRequest = {
+    ...historyRequest,
+    base: { kind: "branch" as const, name: "main" },
+    target: { kind: "tag" as const, name: "v1.0" },
+    mode: "direct" as const,
+  };
+  assert.deepEqual(await api.getFileRootGitHistoryComparison(historyComparisonRequest), {
+    channel: "withmate:get-file-root-git-history-comparison",
+    args: [historyComparisonRequest],
+  });
   const historyDiffRequest = { ...historyDetailRequest, relativePath: "src/App.tsx" };
   assert.deepEqual(await api.getFileRootGitHistoryDiff(historyDiffRequest), {
     channel: "withmate:get-file-root-git-history-diff",
@@ -484,14 +499,14 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
 
 // @test-value v2
 // kind = "contract"
-// claim = "preloadは明示した現行公開API allowlistのkeyを過不足なくexposeし、廃止済みkeyを公開しない"
+// claim = "preloadの公開API surfaceは列挙した現行WithMateWindowApi keyを過不足なくexposeし、列挙したremoved keyを公開しない"
 // oracle = { type = "contract", ref = "WithMateWindowApi public surface" }
-// fault = "明示allowlistに含まれるIPC methodがrendererへexposeされないか、廃止済みmethodが公開surfaceへ残る"
+// fault = "列挙した現行IPC methodがrendererへexposeされないか、列挙した廃止済みmethodが公開surfaceへ残る"
 // observable = "Object.keys(api)の公開key集合とremoved keyの不在"
 // observation_boundary = "public-boundary"
 // scope = "preload public API keys"
 // lifecycle = "permanent"
-// distinction = "tree path context menuを含む手書きallowlistとremoved key不在を検証し、TypeScript interfaceの型key完全性とは分離する"
+// distinction = "tree path context menuを含む列挙済み公開method集合とremoved key不在を検証する"
 // @end-test-value
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -579,6 +594,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listFileRootGitHistoryRepositories",
     "listFileRootGitHistoryCommits",
     "getFileRootGitHistoryCommitDetail",
+    "getFileRootGitHistoryComparison",
     "getFileRootGitHistoryDiff",
     "listWorkspaceCustomAgents",
     "listWorkspaceSkills",
@@ -644,6 +660,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeAppSettings",
     "subscribeAppBootStatus",
     "subscribeAuxiliarySessionSelection",
+    "subscribeAuxiliarySessionNavigation",
     "subscribeCompanionSessionSummaries",
     "subscribeLiveSessionRun",
     "subscribeModelCatalog",
@@ -805,6 +822,66 @@ test("createWithMateWindowApi はAuxiliary selection eventを検証してunwrap�
   assert.deepEqual(received, [{ parentSessionId: "session-1", auxiliarySessionId: "aux-1" }]);
   dispose();
   assert.equal(listeners.has("withmate:auxiliary-session-selection"), false);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "preloadはAuxiliary navigation eventを検証してrendererへ親Session IDと対象Auxiliary IDを渡し、購読解除後は受け取らない"
+// oracle = { type = "contract", ref = "withmate-window-types AuxiliarySessionNavigationPayload" }
+// fault = "不正なMain Process payloadをrendererへ渡す、親または子のIDを変換で失う、購読解除後もlistenerを呼び出す"
+// observable = "listenerへ届いたnavigation payloadとIPC listenerの登録状態"
+// observation_boundary = "public-boundary"
+// scope = "preload auxiliary navigation subscription"
+// lifecycle = "permanent"
+// distinction = "既存の複数subscription unwrap testでは検証しない、Auxiliary navigation固有のpayload検証と解除を専用に検証する"
+// @end-test-value
+test("createWithMateWindowApi はAuxiliary navigation payloadを検証してunwrapする", () => {
+  const { ipcRenderer, listeners, removedListeners } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  const received: unknown[] = [];
+  const dispose = api.subscribeAuxiliarySessionNavigation((payload) => {
+    received.push(payload);
+  });
+  const registeredListener = listeners.get("withmate:open-auxiliary-session");
+  assert.ok(registeredListener);
+
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: " parent-session ",
+    auxiliarySessionId: " auxiliary-1 ",
+  });
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: "parent-session",
+    auxiliarySessionId: "",
+  });
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: "parent-session",
+    auxiliarySessionId: "auxiliary-1",
+    unexpected: true,
+  });
+  listeners.get("withmate:open-auxiliary-session")?.({}, null);
+  listeners.get("withmate:open-auxiliary-session")?.({}, []);
+  listeners.get("withmate:open-auxiliary-session")?.({}, 42);
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: 42,
+    auxiliarySessionId: "auxiliary-1",
+  });
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: "parent-session",
+    auxiliarySessionId: {},
+  });
+  dispose();
+  listeners.get("withmate:open-auxiliary-session")?.({}, {
+    parentSessionId: "parent-session-2",
+    auxiliarySessionId: "auxiliary-2",
+  });
+
+  assert.deepEqual(received, [{
+    parentSessionId: "parent-session",
+    auxiliarySessionId: "auxiliary-1",
+  }]);
+  assert.equal(removedListeners.at(-1)?.channel, "withmate:open-auxiliary-session");
+  assert.equal(removedListeners.at(-1)?.listener, registeredListener);
+  assert.equal(listeners.has("withmate:open-auxiliary-session"), false);
 });
 
 test("createWithMateWindowApi は telemetry / background activity の payload も unwrap する", () => {

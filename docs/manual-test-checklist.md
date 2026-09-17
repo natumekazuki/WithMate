@@ -2,7 +2,7 @@
 
 ## Issue #710 Auxiliary Session
 
-複数Auxiliaryを追加して作成順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、preview用Provider呼び出しがないことを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
+複数Auxiliaryを追加して最終使用順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、実行中のAuxiliaryはicon内のprocessing indicatorで判別できること、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態でも、中央のAuxiliary切り替え枠に現在タイトルと左右切り替えボタン、タイトル横の`＋`が残り、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
 
 ## 目的
 
@@ -123,6 +123,7 @@ npm run electron:start
 | MT-023D | Session header hidden state | Session Window を開いて上 splitter を見る | 通常 state では Header が hidden で、中央 surface の上に再表示用 splitter だけが残る |
 | MT-023D1 | Session header expanded state | 上 splitter を押して Header を展開し、splitter をドラッグする | Header が1行分の固定高の full-width strip として表示され、Workspace / Session 操作と `Session actions` の `⋯` menuへ到達できる。`Close` は出ず、drag しても高さは変わらない |
 | MT-023D1A | Session header actions menu dismiss | expanded Header の `⋯` menuを開き、外側をpointer操作する。もう一度開いて`Escape`、triggerの再クリック、各menu項目の実行も試す | 外側操作、triggerの再クリック、項目実行でmenuが閉じる。`Escape`ではmenuが閉じてtriggerへfocusが戻り、pin / rename / audit / deleteの各操作は従来どおり実行される |
+| MT-023D1B | Auxiliary switcher title frame / add action | Session Window で Auxiliaryを作成し、Auxiliary列をsplitterで閉じた状態と開いた状態を順に確認する。Auxiliaryが0件の状態、既存Auxiliaryがある状態、追加不可の状態でタイトル枠の`＋`も操作する | Auxiliary列を閉じても中央のAuxiliaryタイトル枠と左右切り替えボタン、タイトル横の`＋`は表示され、メッセージ領域だけが非表示になる。`＋`は作成可能時にAuxiliary起動へつながり、作成不可時はdisabledになる。既存Auxiliaryがある場合はタイトル枠から一覧を開いて切り替えられ、splitterの再展開導線も残る |
 | MT-023D2 | Session terminal launch | expanded header の `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
 | MT-023D3 | Session header recollapse | expanded Header の上 splitterを押す | Header が閉じ、中央 surface の上に再表示用 splitterだけが残る |
 | MT-023D4 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |
@@ -206,3 +207,4 @@ npm run electron:start
 | MT-067A | Right pane error recovery | `Session Window` の right pane だけで render error を再現する | pane 専用 fallback が出て、`右ペインを再描画` と `Window を再読み込み` の両方が表示される |
 | MT-068 | Windows notification Session activation | Windows で通常の完了通知、返答 preview 通知、非 cancel の error 終端通知をそれぞれ発生させる。WithMate 以外を前面にした状態で、対象 Session Window が通常表示、最小化、非表示、未作成の各状態から live toast または Action Center の通知をクリックする | 成功通知は従来の完了文または preview、error 通知は成功と区別できる短い固定文を表示し、保存済み failure notice や raw provider error は表示しない。既存 Window は同じ位置のまま可視化され、最小化時は復元されて前面へ focus する。未作成なら対象 Session の Window が1つだけ新規表示される。別 Session WindowやHomeが開かず、同じ通知を再度activateしても追加のWindowは開かない |
 | MT-068A | Windows notification stale / fallback | 同じ Session で成功通知と error 通知を連続して発生させ、置き換え前の通知が操作可能なら古い通知と最新通知を順にクリックする。対象 Session Window が focus 中の error 終端と利用者 cancel も確認する。続けて通知後に対象 Session を削除する場合と、開く処理を失敗させる開発用条件を確認する | outcome が変わっても古い通知や同じ通知の多重activationはSessionを再openせず、最新通知の最初のactivationだけが対象を開く。対象 Session Window が focus 中の終端と利用者 cancel では通知しない。削除済みまたはopen失敗ではHomeが表示・focusされ、失敗が記録される |
+| MT-069 | Auxiliary processing indicator | Auxiliaryを3件以上用意して一覧を開き、表示中・非表示のAuxiliaryをそれぞれ実行する。実行中に一覧を開閉し、狭い幅と`prefers-reduced-motion`でも確認する | 実行中の行だけicon内に小さなprocessing indicatorが表示され、previewは既存の最大2行表示を維持し、indicator追加で行の高さとpreviewの幅は変わらない。待機中の行にindicatorは出ず、一覧を閉じても実行は継続する。reduced motionではindicatorが回転しない |

@@ -7,8 +7,8 @@ export type WindowLike = {
 
 export type HomeEntryMode = "home" | "monitor" | "settings" | "memory-review";
 export type ChatEntryMode =
-  | { kind: "agent"; sessionId: string; auxiliarySessionId?: string }
-  | { kind: "companion"; sessionId: string; auxiliarySessionId?: string };
+  | { kind: "agent"; sessionId: string; auxiliarySessionId?: string | null }
+  | { kind: "companion"; sessionId: string; auxiliarySessionId?: string | null };
 
 export type WindowEntryLoaderDeps = {
   devServerUrl?: string | null;
