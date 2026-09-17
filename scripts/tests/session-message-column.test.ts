@@ -1759,7 +1759,7 @@ test("SessionMessageColumn は pending response text も response action 対象�
 // @test-value v2
 // kind = "contract"
 // claim = "選択範囲がassistant本文内にあるときresponse action toolbarを表示し、対象外本文では除去する。Source切替時は既存toolbarを除去し、Source本文を新たに選択した場合は再表示する"
-// oracle = { type = "contract", ref = "src/session-components.tsx: message response actions" }
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D9" }
 // fault = "user message選択でtoolbarが残る、Source切替後の既存toolbarが残る、Source本文の新規選択でtoolbarが再表示されない、copy/quote actionが選択本文を受け取れない"
 // observable = "mounted SessionMessageColumn DOMとselectionchange・resize・scrollによるtoolbarの表示・除去、Source本文の再選択後のtoolbar、copy/quote callback"
 // observation_boundary = "component-behavior"
@@ -1943,7 +1943,20 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
       "assistant result",
       createRect({ left: 100, top: 100, width: 60, height: 20 }),
     );
-    assert.ok(container.querySelector(".message-response-actions"));
+    const sourceToolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
+    assert.ok(sourceToolbar);
+    const sourceCopyButton = Array.from(sourceToolbar.querySelectorAll("button"))
+      .find((button) => button.textContent === "Copy") as HTMLButtonElement | undefined;
+    const sourceQuoteButton = Array.from(sourceToolbar.querySelectorAll("button"))
+      .find((button) => button.textContent === "Quote") as HTMLButtonElement | undefined;
+    assert.ok(sourceCopyButton);
+    assert.ok(sourceQuoteButton);
+    await act(async () => {
+      sourceCopyButton.click();
+      sourceQuoteButton.click();
+    });
+    assert.deepEqual(copiedTexts, ["  assistant result\n", "assistant result"]);
+    assert.deepEqual(quotedTexts, ["  assistant result\n", "assistant result"]);
     await mounted.rerender({
       messages: [],
       onCopyMessageText: (text) => copiedTexts.push(text),
@@ -2123,14 +2136,14 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
 
 // @test-value v2
 // kind = "contract"
-// claim = "expanded ActionDockのidle表示はHideを置かず、上段操作列と設定・Send構成を維持し、Main / Auxiliary直前のCancel予約slotを不可視で保つ"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "expandedのidle表示でHideが現れるか、上段操作列・target slot・Cancel slot・下段Sendの配置が崩れるか、Cancelが不可視または操作不能にならない"
-// observable = "SessionComposerExpandedのidle static DOMにおけるHide不在、attachment・view action・target・Cancel slotの順序、Sendのcomposer-control-row直下配置"
+// claim = "expanded ActionDockのidle表示はattachment/view操作、closedなattachment menu、Add Directory/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023C, MT-023D4; docs/design/desktop-ui.md: Action Dock" }
+// fault = "idle表示でattachment/view action・closedなattachment menu・Add Directory/Dirs・target dock・Cancel slot・SendのDOM配置が崩れる、Hide/reopen導線が混入する、Cancel slotがactiveまたはbuttonを持つ、Sendがsettings group内へ移動する"
+// observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAdd Directory/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row直下のsettings groupとSend button"
 // observation_boundary = "component-behavior"
 // scope = "expanded ActionDock idle layout and Cancel slot"
 // lifecycle = "permanent"
-// impact = "expandedのidle表示で不要なHideを出さず、主操作とCancel予約領域の位置を維持して誤操作可能なCancelを表示しない"
+// impact = "expandedのidle表示で主操作とCancel予約領域の位置を維持し、誤操作可能なCancelを表示しない"
 // distinction = "CSS declaration testは共有slotの幅を確認し、running component testはactiveなCancelとdisabled Sendを確認し、このtestはidle layout全体を確認する"
 // @end-test-value
 test("SessionComposerExpanded は Hide を描画せず、Send を設定グループの外へ配置する", () => {
@@ -2208,59 +2221,102 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
     }),
   );
 
-  assert.match(html, /末尾へ移動/);
-  assert.doesNotMatch(html, />Hide<\/button>/);
-  assert.match(html, /composer-attachment-trigger-plus/);
-  assert.match(html, /Attach<\/button>/);
-  assert.match(html, /role="group" aria-label="Message display mode"/);
-  assert.match(html, /aria-pressed="false">Preview<\/button>/);
-  assert.match(html, /aria-pressed="true">Source<\/button>/);
-  assert.ok(html.indexOf("Add Directory") < html.indexOf("Preview"));
-  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Preview"));
-  assert.match(html, /composer-toolbar-view-actions[\s\S]*末尾へ移動[\s\S]*Message display mode/);
-  assert.doesNotMatch(html, />Session <span/);
-  assert.doesNotMatch(html, /Attach Copy|Session File|Session Folder|Session Image/);
   const renderedDocument = new JSDOM(html).window.document;
+  const composer = renderedDocument.querySelector(".composer");
+  const attachmentToolbar = renderedDocument.querySelector(".composer-attachments-toolbar");
+  const attachmentMenu = attachmentToolbar?.querySelector(".composer-attachment-menu-shell");
+  const attachmentButton = attachmentMenu?.querySelector("button.composer-attachment-trigger");
+  const attachmentPanel = renderedDocument.querySelector("#composer-attachment-menu");
+  const skillButton = Array.from(attachmentToolbar?.querySelectorAll("button") ?? [])
+    .find((button) => button.textContent?.trim() === "Skill");
+  const additionalDirectoryToolbar = attachmentToolbar?.querySelector(".composer-additional-directory-toolbar");
+  const addDirectoryButton = additionalDirectoryToolbar?.querySelector("button:nth-child(1)");
+  const directoriesButton = additionalDirectoryToolbar?.querySelector("button:nth-child(2)");
   const viewActions = renderedDocument.querySelector(".composer-toolbar-view-actions");
   const cancelSlot = viewActions?.querySelector(":scope > .session-action-dock-cancel-slot");
   const targetSlot = viewActions?.querySelector(":scope > .composer-target-dock-slot");
+  const jumpButton = viewActions?.querySelector("button.message-jump-bottom-button");
+  const viewModeGroup = viewActions?.querySelector(".composer-message-view-mode");
+  const previewButton = viewModeGroup?.querySelector("button:nth-child(1)");
+  const sourceButton = viewModeGroup?.querySelector("button:nth-child(2)");
+  const composerInputRow = renderedDocument.querySelector(".composer-input-row");
+  const controlRow = renderedDocument.querySelector(".composer-control-row");
+  const settingsGroup = controlRow?.querySelector(":scope > .composer-settings");
+  const sendButton = controlRow?.querySelector<HTMLButtonElement>(":scope > button.session-send-button");
+  assert.ok(composer);
+  assert.ok(attachmentToolbar);
+  assert.ok(attachmentMenu);
+  assert.ok(attachmentButton);
+  assert.ok(skillButton);
+  assert.ok(additionalDirectoryToolbar);
+  assert.ok(addDirectoryButton);
+  assert.ok(directoriesButton);
   assert.ok(viewActions);
   assert.ok(cancelSlot);
   assert.ok(targetSlot);
+  assert.ok(jumpButton);
+  assert.ok(viewModeGroup);
+  assert.ok(previewButton);
+  assert.ok(sourceButton);
+  assert.ok(composerInputRow);
+  assert.ok(controlRow);
+  assert.ok(settingsGroup);
+  assert.ok(sendButton);
+  assert.equal(composer.firstElementChild, attachmentToolbar);
+  assert.equal(attachmentToolbar.nextElementSibling, composerInputRow);
+  assert.equal(attachmentMenu.parentElement, attachmentToolbar);
+  assert.equal(attachmentButton.parentElement, attachmentMenu);
+  assert.equal(attachmentPanel, null);
+  assert.equal(skillButton.nextElementSibling, additionalDirectoryToolbar);
+  assert.match(attachmentButton.textContent ?? "", /Attach/);
+  assert.equal(addDirectoryButton.textContent, "Add Directory");
+  assert.equal(directoriesButton.textContent, "Dirs 0");
+  assert.ok((additionalDirectoryToolbar.compareDocumentPosition(viewActions) & 4) !== 0);
+  assert.ok((attachmentMenu.compareDocumentPosition(viewActions) & 4) !== 0);
   assert.equal(viewActions.firstElementChild, cancelSlot);
   assert.equal(cancelSlot.nextElementSibling, targetSlot);
   assert.equal(cancelSlot.classList.contains("is-active"), false);
   assert.equal(cancelSlot.getAttribute("aria-hidden"), "true");
   assert.equal(cancelSlot.querySelector("button"), null);
+  const forbiddenDockHitArea = Array.from(
+    composer.querySelectorAll("button, [role=\"button\"], a, [tabindex]")
+  ).find((element) => {
+    const accessibleText = [
+      element.textContent,
+      element.getAttribute("aria-label"),
+      element.getAttribute("title"),
+    ].filter(Boolean).join(" ");
+    return /\b(?:hide|reopen)\b/i.test(accessibleText);
+  });
+  assert.equal(forbiddenDockHitArea, undefined);
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
-  const composerInputRowHtml = html.match(
-    /<div class="composer-input-row"><div class="composer-box">(?<content>[\s\S]*?)<\/div><\/div><div class="composer-control-row">/,
-  );
-  assert.ok(composerInputRowHtml, "composer input row は textarea の領域だけにする");
-  assert.doesNotMatch(composerInputRowHtml.groups?.content ?? "", />Send<\/button>/);
-  assert.match(
-    html,
-    /<div class="composer-control-row"><div class="composer-settings">[\s\S]*?<\/div><button class="session-send-button"/,
-    "Send button は設定グループと独立した兄弟要素にする",
-  );
+  assert.equal(jumpButton.textContent, "末尾へ移動");
+  assert.equal(viewModeGroup.getAttribute("aria-label"), "Message display mode");
+  assert.equal(previewButton.getAttribute("aria-pressed"), "false");
+  assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
+  assert.equal(controlRow.firstElementChild, settingsGroup);
+  assert.equal(settingsGroup.nextElementSibling, sendButton);
+  assert.equal(settingsGroup.contains(sendButton), false);
+  assert.equal(sendButton.textContent, "Send");
+  assert.equal(sendButton.disabled, true);
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "expanded ActionDockは実行中も上段のMain / Auxiliary直前にactiveなCancelを保持し、下段のSend枠を実行中状態だけでdisabledに維持する"
+// claim = "expanded ActionDockは実行中だけCancel slotをactiveにし、Main / Auxiliary直前の位置を保ち、SendはisSendDisabled=falseでも実行中だけdisabledにする"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "実行中にCancel slotがactiveでないか、Main / Auxiliary内容の直前から移動するか、下段のSend枠が消えてActionDock開閉時にレイアウトが変わる"
-// observable = "SessionComposerExpandedのrender済みDOMにおける上段Cancel slotのclass・aria、Main / Auxiliary target slot、composer-control-row直下のdisabled Send"
+// fault = "running/idleでCancel slotのactive・aria・button有無が誤る、target直前位置が崩れる、running中のSend blocked reason titleが欠ける、またはisSendDisabled=falseのSendがrunningでenabledかidleでdisabledになる"
+// observable = "running/idleでrender済みSessionComposerExpanded DOMのCancel slot class・aria・button有無、target slot位置、composer-control-row直下のSend disabled状態とrunning時のblocked reason title"
 // observation_boundary = "component-behavior"
 // scope = "expanded ActionDock primary action"
 // lifecycle = "permanent"
 // impact = "compactとexpandedでCancelの相対位置を揃え、実行中の下段Send枠の消失によるレイアウトシフトを防ぐ"
-// distinction = "typecheck/buildはexpandedとrunningのDOM上の主操作位置を観測しない"
+// distinction = "typecheck/buildはexpandedのrunning/idle切替後のCancel slot状態とSend disabled状態をDOM上で観測しない"
 // @end-test-value
 test("SessionComposerExpanded は実行中の操作後に jump button と表示切替を右側 group へ描画する", () => {
-  const html = renderToStaticMarkup(
+  const renderComposer = (isRunning: boolean) => renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
-      isRunning: true,
+      isRunning,
       pendingRunIndicatorAnnouncement: "処理を実行中",
       pendingRunIndicatorText: "処理を実行中",
       targetDock: React.createElement("span", { className: "test-target-dock" }, "Main / Auxiliary"),
@@ -2285,7 +2341,7 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       attachmentItems: [],
       draft: "実行中の下書き",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
-      isComposerDisabled: true,
+      isComposerDisabled: false,
       isSendDisabled: false,
       composerSendability: {
         primaryFeedback: "",
@@ -2331,6 +2387,7 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       onMessageViewModeChange() {},
     }),
   );
+  const html = renderComposer(true);
 
   assert.match(html, /composer-toolbar-progress/);
   assert.match(html, /処理を実行中/);
@@ -2361,13 +2418,30 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.equal(cancelSlot.hasAttribute("aria-hidden"), false);
   assert.equal(cancelButton.textContent, "Cancel");
   assert.equal(cancelButton.disabled, false);
-  assert.equal(cancelButton.getAttribute("title"), "実行をキャンセル");
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
   assert.equal(sendButton.textContent, "Send");
   assert.equal(sendButton.disabled, true);
+  assert.ok(sendButton.getAttribute("title"), "running中のSendはblocked reason titleを持つ");
   assert.equal(sendButton.classList.contains("danger"), false);
-  assert.equal(sendButton.getAttribute("title"), "実行中は送信できません");
   assert.equal(controlRow.querySelectorAll(":scope > button.session-send-button").length, 1);
+
+  const idleHtml = renderComposer(false);
+  const idleDocument = new JSDOM(idleHtml).window.document;
+  const idleViewActions = idleDocument.querySelector(".composer-toolbar-view-actions");
+  const idleCancelSlot = idleViewActions?.querySelector(":scope > .session-action-dock-cancel-slot");
+  const idleTargetSlot = idleViewActions?.querySelector(":scope > .composer-target-dock-slot");
+  const idleControlRow = idleDocument.querySelector(".composer-control-row");
+  const idleSendButton = idleControlRow?.querySelector<HTMLButtonElement>(":scope > button.session-send-button");
+  assert.ok(idleViewActions);
+  assert.ok(idleCancelSlot);
+  assert.ok(idleTargetSlot);
+  assert.ok(idleControlRow);
+  assert.ok(idleSendButton);
+  assert.equal(idleCancelSlot.classList.contains("is-active"), false);
+  assert.equal(idleCancelSlot.getAttribute("aria-hidden"), "true");
+  assert.equal(idleCancelSlot.querySelector("button"), null);
+  assert.equal(idleCancelSlot.nextElementSibling, idleTargetSlot);
+  assert.equal(idleSendButton.disabled, false);
 });
 
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {
@@ -2396,19 +2470,19 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 
 // @test-value v2
 // kind = "contract"
-// claim = "compact ActionDockは実行中に展開導線を描画し、progress・CancelとMain / Auxiliary操作列を維持する"
+// claim = "compact ActionDockは実行中に展開導線を実際に操作でき、progress・CancelとMain / Auxiliary操作列を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "実行中のcompact ActionDockに展開導線、progress、Cancel、Main / Auxiliary操作列のいずれかが欠ける、またはCancelがtarget slotの直前にない"
-// observable = "SessionActionDockCompactRowの実行中static DOMにおけるprogress、Cancel、target slot、操作列のDOM順と内容"
+// fault = "実行中のcompact ActionDockに展開導線、progress、Cancel、Main / Auxiliary操作列のいずれかが欠ける、展開callbackが呼ばれない、またはCancelがtarget slotの直前にない"
+// observable = "SessionActionDockCompactRowの実行中static DOMにおけるprogress、jump button、Cancel、target slot、操作列のDOM順と、展開button clickによるonExpand callback"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock running presentation"
 // lifecycle = "permanent"
-// impact = "実行中のcompact ActionDockで展開導線とCancelの発見性、Main / Auxiliaryとの操作順を維持する"
-// distinction = "同一React treeのidle/running遷移は別testで確認し、このtestは実行中のstatic DOMと展開導線を確認する"
+// impact = "実行中のcompact ActionDockで展開導線とCancelの発見性、Main / Auxiliaryとの操作順を維持し、展開操作を失わせない"
+// distinction = "同一React treeのidle/running遷移は別testで確認し、このtestは実行中のstatic DOMと展開buttonの実clickを確認する"
 // @end-test-value
 test("SessionActionDockCompactRow は実行中の compact 表示から展開でき、jump button と Cancel を描画する", () => {
-  const html = renderToStaticMarkup(
-    React.createElement(SessionActionDockCompactRow, {
+  const expansionProbe = { calls: 0 },
+    compactProps = {
       attachmentCount: 2,
       isRunning: true,
       pendingRunIndicatorAnnouncement: "処理を実行中",
@@ -2417,11 +2491,15 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
       chatNotice: "New messages",
       showJumpToBottom: true,
       cancelButtonTitle: "実行をキャンセル",
-      onExpand() {},
+      onExpand() {
+        expansionProbe.calls += 1;
+      },
       onJumpToBottom() {},
       onCancel() {},
-    }),
-  );
+    },
+    html = renderToStaticMarkup(
+      React.createElement(SessionActionDockCompactRow, compactProps),
+    );
 
   assert.match(html, /aria-label="ActionDock を展開"/);
   assert.match(html, /session-action-dock-compact-progress-button/);
@@ -2440,6 +2518,43 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
   assert.equal(actions.firstElementChild, cancelSlot);
   assert.equal(cancelSlot.nextElementSibling, targetSlot);
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
+
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const mountedDom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: mountedDom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: mountedDom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: mountedDom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: mountedDom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: mountedDom.window.navigator });
+  let root: Root | null = null;
+  try {
+    act(() => {
+      root = createRoot(mountedDom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(SessionActionDockCompactRow, compactProps));
+    });
+    const expandButton = mountedDom.window.document.querySelector<HTMLButtonElement>(
+      'button[aria-label="ActionDock を展開"]',
+    );
+    assert.ok(expandButton);
+    act(() => {
+      expandButton.click();
+    });
+    assert.equal(expansionProbe.calls, 1);
+  } finally {
+    act(() => root?.unmount());
+    mountedDom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
 });
 
 // @test-value v2

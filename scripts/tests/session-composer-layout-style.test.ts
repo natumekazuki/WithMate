@@ -4,10 +4,10 @@ import test from "node:test";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session composerは設定fieldを通常幅で横並びに保ち、狭幅では設定群を先に折り返してSend領域を維持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: composer runtime settings" }
-// fault = "設定fieldが一行に収まらず、設定群の折り返し前にSend領域が押し出されるか、狭幅で設定が到達不能になる"
-// observable = "src/styles.cssのcomposer settingsとcontainer breakpoint宣言"
+// claim = "Session composerは個別の設定fieldへ固定幅を与えず、設定群をflex-wrapで折り返し、設定群のbreakpointをSendのstackより先に発火させる"
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023C; docs/design/desktop-ui.md: Action Dock" }
+// fault = "個別の設定fieldへwidth・min-width・flex-basisの固定指定が入り、設定群の折り返し前にSend領域がstackするか、設定群が折り返せない"
+// observable = "src/session-components.tsxの6設定field selectorとsrc/styles.cssの設定field宣言・container breakpoint宣言"
 // observation_boundary = "declaration"
 // scope = "Session composer settings layout"
 // lifecycle = "permanent"
@@ -36,10 +36,28 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
     /\.composer-setting-field select\s*{\s*flex:\s*1 1 max-content;\s*width:\s*max-content;\s*min-width:\s*0;/,
     "selectは最長の選択肢を基準にし、必要に応じて縮小できる",
   );
+  const settingFieldNames = ["approval", "reviewer", "sandbox", "model", "depth", "speed"] as const;
+  const sessionComponentsSource = await readFile("src/session-components.tsx", "utf8");
+  for (const fieldName of settingFieldNames) {
+    assert.match(
+      sessionComponentsSource,
+      new RegExp(`className=\\"composer-setting-field composer-setting-${fieldName}\\"`),
+      `${fieldName}設定field selectorをproduction実装で確認する`,
+    );
+  }
+  const settingFieldRule = stylesSource.match(
+    /(?:^|\n)\s*\.composer-setting-field\s*{(?<body>[^}]*)}/,
+  )?.groups?.body;
+  assert.ok(settingFieldRule, "共通設定field ruleを取得できる");
+  assert.doesNotMatch(settingFieldRule, /(?:^|[;\n])\s*(?:width|flex-basis)\s*:/, "共通設定fieldへ固定widthやflex-basisを付けない");
+  assert.match(settingFieldRule, /min-width:\s*0;/, "共通設定fieldは縮小可能なmin-widthを持つ");
+  const settingFieldClassPattern = settingFieldNames.join("|");
   assert.doesNotMatch(
     stylesSource,
-    /\.composer-setting-(?:approval|sandbox|model|depth)\s*{\s*flex-basis:/,
-    "設定fieldごとの固定幅を残さない",
+    new RegExp(
+      `[^{}]*\\.composer-setting-(?:${settingFieldClassPattern})(?=[\\s,.:>#]|$)[^{}]*\\{[^{}]*(?:\\bwidth|\\bmin-width|\\bflex-basis)\\s*:`,
+    ),
+    "6つの設定field selectorへ固定width・min-width・flex-basisを残さない",
   );
   assert.match(
     stylesSource,
