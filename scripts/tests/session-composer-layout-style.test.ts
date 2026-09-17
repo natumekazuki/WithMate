@@ -4,15 +4,15 @@ import test from "node:test";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session composerは個別の設定fieldへ固定幅を与えず、設定群をflex-wrapで折り返し、設定群のbreakpointをSendのstackより先に発火させる"
+// claim = "Session composerの6つの設定field selectorと共通CSSのflex配置・折り返し、設定群がSendのstackより先に発火するbreakpoint宣言が定義されている"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023C; docs/design/desktop-ui.md: Action Dock" }
-// fault = "個別の設定fieldへwidth・min-width・flex-basisの固定指定が入り、設定群の折り返し前にSend領域がstackするか、設定群が折り返せない"
+// fault = "6つの設定field selector、共通CSSのflex配置・折り返し、または設定群のbreakpoint宣言が欠ける、個別fieldへwidth・min-width・flex-basisの固定指定が入る、もしくは設定群のbreakpointがSendのstackより後になる"
 // observable = "src/session-components.tsxの6設定field selectorとsrc/styles.cssの設定field宣言・container breakpoint宣言"
 // observation_boundary = "declaration"
 // scope = "Session composer settings layout"
 // lifecycle = "permanent"
-// impact = "runtime settingsとSend / Cancel主操作を同じActionDock内で到達可能に保つ"
-// distinction = "typecheck/buildはCSSの設定field幅とcontainer breakpointの順序を観測しない"
+// impact = "Session composerの設定fieldとSend / Cancel主操作に必要なresponsive CSS契約を維持する"
+// distinction = "このtestはsource declarationとselector構成を確認し、typecheck/buildや実画面確認では得られないCSS契約を補う"
 // @end-test-value
 test("Session composer は設定field内を一行にし、通常幅で設定群を保ち、狭幅で折り返す", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
@@ -87,15 +87,15 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session composerのSend領域とActionDockのCancel予約領域は、通常幅で必要な幅を確保し、狭幅では指定した折り返しと操作列追従を行う"
+// claim = "Session composerのexpanded SendとActionDock Cancel予約領域に、通常幅の固定幅・非active時の不可視・狭幅時の操作列追従に必要なCSS宣言が定義されている"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
 // fault = "expandedのSend最小幅、Cancel slotの固定幅・非実行中の不可視・狭幅overrideのいずれかが欠け、ActionDockの主操作領域が崩れる"
 // observable = "src/styles.cssのexpanded Send最小幅、Cancel slot固定幅・不可視・狭幅上書き宣言"
 // observation_boundary = "declaration"
 // scope = "Session composer action controls CSS"
 // lifecycle = "permanent"
-// impact = "compact / expandedのSendとCancelの主操作領域を、通常幅と狭幅のActionDockで到達可能に保つ"
-// distinction = "component render testはDOM上のslot位置と状態を確認し、typecheck/buildはCSSの幅とresponsive overrideを確認しない"
+// impact = "compact / expandedのSendとCancelの主操作領域に必要なCSS契約を、通常幅と狭幅のActionDockで維持する"
+// distinction = "component render testはDOM上のslot位置と状態を確認し、このtestはsource declarationの幅とresponsive overrideを確認する"
 // @end-test-value
 test("Session composer の Cancel slot は固定幅と狭幅上書きを持つ", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");

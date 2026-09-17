@@ -2136,15 +2136,15 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
 
 // @test-value v2
 // kind = "contract"
-// claim = "expanded ActionDockのidle表示はattachment/view操作、closedなattachment menu、Add Directory/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
+// claim = "SessionComposerExpandedのidle DOMはattachment/view操作、closedなattachment menu、Add Directory/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023C, MT-023D4; docs/design/desktop-ui.md: Action Dock" }
 // fault = "idle表示でattachment/view action・closedなattachment menu・Add Directory/Dirs・target dock・Cancel slot・SendのDOM配置が崩れる、Hide/reopen導線が混入する、Cancel slotがactiveまたはbuttonを持つ、Sendがsettings group内へ移動する"
 // observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAdd Directory/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row直下のsettings groupとSend button"
 // observation_boundary = "component-behavior"
 // scope = "expanded ActionDock idle layout and Cancel slot"
 // lifecycle = "permanent"
-// impact = "expandedのidle表示で主操作とCancel予約領域の位置を維持し、誤操作可能なCancelを表示しない"
-// distinction = "CSS declaration testは共有slotの幅を確認し、running component testはactiveなCancelとdisabled Sendを確認し、このtestはidle layout全体を確認する"
+// impact = "SessionComposerExpandedのidle DOMで主操作とCancel予約領域の位置を維持し、誤操作可能なCancelを表示しない"
+// distinction = "CSS declaration testは共有slotの幅を確認し、running component testはactiveなCancelとdisabled Sendを確認し、このtestはSessionComposerExpanded単体のidle DOMを確認する"
 // @end-test-value
 test("SessionComposerExpanded は Hide を描画せず、Send を設定グループの外へ配置する", () => {
   const html = renderToStaticMarkup(
@@ -2303,15 +2303,15 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
 
 // @test-value v2
 // kind = "contract"
-// claim = "expanded ActionDockは実行中だけCancel slotをactiveにし、Main / Auxiliary直前の位置を保ち、SendはisSendDisabled=falseでも実行中だけdisabledにする"
+// claim = "SessionComposerExpandedのrunning/idle DOMは実行中だけCancel slotをactiveにし、Main / Auxiliary直前の位置を保ち、Sendは実行中だけdisabledになり、running中はtitle属性を持つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "running/idleでCancel slotのactive・aria・button有無が誤る、target直前位置が崩れる、running中のSend blocked reason titleが欠ける、またはisSendDisabled=falseのSendがrunningでenabledかidleでdisabledになる"
-// observable = "running/idleでrender済みSessionComposerExpanded DOMのCancel slot class・aria・button有無、target slot位置、composer-control-row直下のSend disabled状態とrunning時のblocked reason title"
+// fault = "running/idleでCancel slotのactive・aria・button有無が誤る、target直前位置が崩れる、running中のSend title属性が欠ける、またはisSendDisabled=falseのSendがrunningでenabledかidleでdisabledになる"
+// observable = "running/idleでrender済みSessionComposerExpanded DOMのCancel slot class・aria・button有無、target slot位置、composer-control-row直下のSend disabled状態とrunning時のtitle属性"
 // observation_boundary = "component-behavior"
 // scope = "expanded ActionDock primary action"
 // lifecycle = "permanent"
-// impact = "compactとexpandedでCancelの相対位置を揃え、実行中の下段Send枠の消失によるレイアウトシフトを防ぐ"
-// distinction = "typecheck/buildはexpandedのrunning/idle切替後のCancel slot状態とSend disabled状態をDOM上で観測しない"
+// impact = "SessionComposerExpandedのrunning/idle DOMでCancelの相対位置を揃え、実行中の下段Send枠の消失によるレイアウトシフトを防ぐ"
+// distinction = "このtestはSessionComposerExpanded単体のrunning/idle DOMを確認し、typecheck/buildや実画面確認では得られない状態別の構成を補う"
 // @end-test-value
 test("SessionComposerExpanded は実行中の操作後に jump button と表示切替を右側 group へ描画する", () => {
   const renderComposer = (isRunning: boolean) => renderToStaticMarkup(
@@ -2559,9 +2559,9 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
 
 // @test-value v2
 // kind = "contract"
-// claim = "compact ActionDockはidleとrunningの双方向遷移でもMain / Auxiliary直前のCancel予約slotを同じ位置に保持し、実行中だけCancelを操作可能にする"
+// claim = "compact ActionDockはidleとrunningの双方向遷移でもMain / Auxiliary直前のCancel予約slotを同じ位置に保持し、実行中だけCancel buttonをenabledで描画する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "idleまたはrunningでslotが消えるか、双方向の実行状態切替でCancelがMain / Auxiliary直前以外へ移動する、active状態・aria・操作可能性が崩れる"
+// fault = "idleまたはrunningでslotが消えるか、双方向の実行状態切替でCancelがMain / Auxiliary直前以外へ移動する、active状態・aria・Cancel buttonのenabled状態が崩れる"
 // observable = "React stateをidle/runningへ双方向に更新したSessionActionDockCompactRowのslot親、target内容、class、aria、Cancel button"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock Cancel slot"

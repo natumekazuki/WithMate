@@ -1559,15 +1559,15 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
 
 // @test-value v2
 // kind = "contract"
-// claim = "別窓File Previewのcopy通知は暗色theme token上でsuccess/errorの文字・背景・borderを保ち、操作群外のabsolute overlayとして表示される"
+// claim = "別窓File Previewのcopy通知に必要な暗色theme token、success/errorの文字・背景・border、操作群外overlayのCSS宣言が定義されている"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8" }
-// fault = "別窓が明色surfaceと明色文字を継承する、success/errorの背景またはborderが欠ける、または通知layerが通常の操作列へ参加する"
+// fault = "別窓copy通知の暗色theme token、success/errorの背景またはborder、または操作群外absolute overlayに必要なCSS宣言が欠けている"
 // observable = "file-preview-window-page、app-notificationのsuccess/error、session-file-preview-notification-layer各CSS declaration"
 // observation_boundary = "declaration"
 // scope = "File Preview detached notification stylesheet"
 // lifecycle = "permanent"
-// impact = "別窓でcopy結果の通知が背景に埋もれず、既存操作の位置を変えない"
-// distinction = "JSDOMでは算出できないtheme継承とlayout参加条件をstylesheet declarationから確認し、DOMの通知内容・ARIA・親境界の検証と分担する"
+// impact = "別窓のcopy通知表示に必要なCSS契約を維持し、実画面で確認すべき視認性とlayout条件を明確にする"
+// distinction = "JSDOMでは算出できない宣言の存在を確認し、DOMの通知内容・ARIA・親境界の検証と分担する"
 // @end-test-value
 test("別窓File Previewのcopy通知CSSは暗色themeと操作群外overlayを定義する", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
