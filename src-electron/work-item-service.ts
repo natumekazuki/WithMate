@@ -327,7 +327,7 @@ export class WorkItemService {
     const item = this.requireVisibleItem(input.workItemId, binding, false, proof, "work.move");
     this.requireExpectedRevision(item, input.expectedRevision);
     if (item.kind !== "delegated") {
-      throw new WorkItemAuthorityError("Only the canonical Work Item creator can move a delegated Work Item.", { workItemId: item.id, actorSessionId: binding.actorSessionId });
+      throw new WorkItemAuthorityError("Only delegated Work Items can be moved.", { workItemId: item.id, actorSessionId: binding.actorSessionId });
     }
     if (input.destinationTargetSessionId !== undefined) {
       const target = this.requireSession(input.destinationTargetSessionId);

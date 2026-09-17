@@ -238,15 +238,15 @@ export function buildSessionLifecycleManifest(
     WHERE resource_kind IN ('session_files', 'transcript') AND owner_kind = 'session'
       AND owner_id IN (${marks})`).all(...ids) as Array<{ resource_kind: string; resource_id: string }>;
   fileHistory.forEach((row) => addHistoryKey(row.resource_kind, row.resource_id));
-  const historyClauses = [...historyKeys.values()];
-  const historyWhere = historyClauses.length === 0 ? "0" : historyClauses.map(() => "(resource_kind = ? AND resource_id = ?)").join(" OR ");
-  const resourceHistory = historyClauses.length === 0 ? [] : db.prepare(`
-    SELECT resource_kind, resource_id, COUNT(*) AS event_count, MAX(resource_revision) AS latest_revision
-    FROM resource_event_headers_v6
-    WHERE ${historyWhere}
-    GROUP BY resource_kind, resource_id
-    ORDER BY resource_kind, resource_id
-  `).all(...historyClauses.flatMap((key) => [key.resourceKind, key.resourceId])) as ResourceHistoryRow[];
+  const resourceHistory = db.prepare(`
+    SELECT header.resource_kind, header.resource_id, COUNT(*) AS event_count, MAX(header.resource_revision) AS latest_revision
+    FROM json_each(?) AS requested
+    INNER JOIN resource_event_headers_v6 AS header
+      ON header.resource_kind = json_extract(requested.value, '$.resourceKind')
+      AND header.resource_id = json_extract(requested.value, '$.resourceId')
+    GROUP BY header.resource_kind, header.resource_id
+    ORDER BY header.resource_kind, header.resource_id
+  `).all(JSON.stringify([...historyKeys.values()])) as ResourceHistoryRow[];
   const result: SessionRuntimeSessionMoveManifestResult = {
     ...base,
     budgetAccounts: budgetAccounts.map((row) => ({ id: row.account_id, ownerSessionId: row.owner_session_id, rootSessionId: row.root_session_id, revision: row.revision })),

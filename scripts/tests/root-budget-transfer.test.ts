@@ -154,6 +154,149 @@ it("root全体をbudget account identityと累積storageを保って移管する
 });
 
 // @test-value v2
+// kind = "invariant"
+// claim = "削除済みSessionのbudget accountは消費履歴を保持したままusable allocationを失効させ、期限切れだけでroot移管を妨げない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Ownership transfer" }
+// fault = "tombstone済みSessionのexpired allocationがroot transferを拒否する、または消費済み枠を移管先のusable quotaとして二重計上する"
+// observable = "transfer成功、archival accountのrevokedAt・rootSessionId・parentAccountId、消費済みtotalTurns、hardLimit、ledger verifier結果"
+// observation_boundary = "component-behavior"
+// scope = "root-budget-transfer-deleted-owner"
+// lifecycle = "permanent"
+// risk_tags = ["billing", "irreversible-data-loss"]
+// @end-test-value
+it("削除済みSessionのbudget accountを履歴として保持しusable allocationから除外する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-root-budget-transfer-deleted-"));
+  const dbPath = path.join(directory, "db.sqlite");
+  const sessions = new SessionStorageV6(dbPath);
+  const sourceRoot = root("deleted-source-root");
+  const destinationRoot = root("deleted-destination-root");
+  sessions.insertSession(sourceRoot);
+  sessions.insertSession(destinationRoot);
+  const sourceChild = child("deleted-source-child", sourceRoot, "task-coordinator");
+  sessions.insertSession(sourceChild);
+  const db = new DatabaseSync(dbPath);
+  const budget = new ResourceBudgetStorage(db);
+  try {
+    bootstrapRootResourceBudget(db, { rootSessionId: sourceRoot.id, rootCreatedAt: NOW, createdAt: NOW });
+    bootstrapRootResourceBudget(db, { rootSessionId: destinationRoot.id, rootCreatedAt: NOW, createdAt: NOW });
+    const destination = budget.get(destinationRoot.id);
+    budget.configure({ sessionId: destinationRoot.id, accountId: destinationRoot.id, expectedRevision: destination.revision,
+      hardLimits: { concurrentTurns: 10, queuedTurns: 300, totalTurns: 3000, retries: 300,
+        sessions: 300, workItems: 1500, delegations: 1500, storageBytes: 2_147_483_648 },
+      idempotencyKey: "deleted-enlarge-destination" }, proof(destinationRoot.id, "deleted-destination-config"), NOW);
+    budget.allocateChild({ accountId: sourceChild.id, accountKind: "session", rootSessionId: sourceRoot.id,
+      ownerSessionId: sourceChild.id, parentAccountId: sourceRoot.id,
+      hardLimits: { concurrentTurns: 1, queuedTurns: 2, totalTurns: 3, retries: 2, sessions: 2, workItems: 2, delegations: 2, storageBytes: 0 },
+      authorityGrantId: null, authorityGrantRevision: null, expiresAt: "2026-09-06T00:00:00.000Z", deadlineAt: "2026-10-01T00:00:00.000Z",
+      idempotencyKey: "deleted-child", proof: proof(sourceRoot.id, "deleted-allocate"), createdAt: NOW });
+    budget.consumeCount({ sessionId: sourceChild.id, dimension: "totalTurns", idempotencyKey: "deleted-consume", consumedAt: NOW });
+    sessions.deleteSession(sourceChild.id);
+    const transferredAt = "2026-09-07T00:00:00.000Z";
+
+    budget.transferRootAllocation({ sourceRootSessionId: sourceRoot.id, destinationRootSessionId: destinationRoot.id,
+      proof: proof(sourceRoot.id, "deleted-transfer-source"), destinationProof: proof(destinationRoot.id, "deleted-transfer-destination"),
+      operationId: "deleted-root-transfer", transferredAt });
+
+    const moved = db.prepare(`SELECT root_session_id, parent_account_id, revoked_at
+      FROM resource_budget_accounts_v6 WHERE account_id = ?`).get(sourceChild.id) as
+      { root_session_id: string; parent_account_id: string; revoked_at: string | null };
+    assert.deepEqual({ ...moved }, { root_session_id: destinationRoot.id, parent_account_id: sourceRoot.id, revoked_at: transferredAt });
+    const dimension = db.prepare(`SELECT hard_limit, committed FROM resource_budget_dimensions_v6
+      WHERE account_id = ? AND dimension = 'totalTurns'`).get(sourceChild.id) as { hard_limit: number; committed: number };
+    assert.deepEqual({ ...dimension }, { hard_limit: 0, committed: 1 });
+    assert.equal(budget.getByAccountId(sourceRoot.id).dimensions.totalTurns.available, 999);
+    assert.equal(budget.getByAccountId(sourceChild.id).dimensions.totalTurns.available, 0);
+    const destinationAfter = budget.getByAccountId(destinationRoot.id);
+    assert.equal(destinationAfter.dimensions.totalTurns.allocatedToChildren, 1000);
+    assert.equal(destinationAfter.dimensions.totalTurns.available, 2000);
+    const archivedDimensions = db.prepare("SELECT dimension, hard_limit FROM resource_budget_dimensions_v6 WHERE account_id = ?")
+      .all(sourceChild.id) as Array<{ dimension: string; hard_limit: number }>;
+    assert.equal(archivedDimensions.length, 8);
+    for (const dimension of archivedDimensions) {
+      assert.equal(dimension.hard_limit, 0, dimension.dimension);
+    }
+    assert.equal((db.prepare("SELECT expires_at FROM resource_budget_accounts_v6 WHERE account_id = ?")
+      .get(sourceChild.id) as { expires_at: string }).expires_at, "2026-09-06T00:00:00.000Z");
+    assert.throws(() => budget.consumeCount({ sessionId: sourceChild.id, dimension: "totalTurns",
+      idempotencyKey: "deleted-reuse", consumedAt: transferredAt }),
+      (error: unknown) => error instanceof ResourceBudgetError && error.code === "BUDGET_AUTHORITY_REQUIRED");
+    assert.equal((db.prepare(`SELECT COUNT(*) AS count FROM resource_budget_events_v6
+      WHERE account_id = ? AND event_kind = 'consumed'`).get(sourceChild.id) as { count: number }).count, 1);
+    verifyResourceBudgetLedger(db);
+  } finally {
+    budget.close();
+    db.close();
+    sessions.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "削除済みSessionのbudget account配下にlive descendantがある場合、親をrevoked化したまま移管しない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Ownership transfer" }
+// fault = "tombstone済み親accountを移管してlive descendantのbudget authorityを暗黙に失効させる"
+// observable = "明示的なtransfer拒否コードとsource account hierarchyの不変性"
+// observation_boundary = "component-behavior"
+// scope = "root-budget-transfer-live-descendant-under-deleted-parent"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "irreversible-data-loss"]
+// @end-test-value
+it("削除済み親Session配下のlive budget descendantを暗黙失効させない", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-root-budget-transfer-live-descendant-"));
+  const dbPath = path.join(directory, "db.sqlite");
+  const sessions = new SessionStorageV6(dbPath);
+  const sourceRoot = root("live-descendant-source-root");
+  const destinationRoot = root("live-descendant-destination-root");
+  sessions.insertSession(sourceRoot);
+  sessions.insertSession(destinationRoot);
+  const deletedParent = child("live-descendant-deleted-parent", sourceRoot, "task-coordinator");
+  const liveDescendant = child("live-descendant-live-child", deletedParent);
+  sessions.insertSession(deletedParent);
+  sessions.insertSession(liveDescendant);
+  const db = new DatabaseSync(dbPath);
+  const budget = new ResourceBudgetStorage(db);
+  try {
+    bootstrapRootResourceBudget(db, { rootSessionId: sourceRoot.id, rootCreatedAt: NOW, createdAt: NOW });
+    bootstrapRootResourceBudget(db, { rootSessionId: destinationRoot.id, rootCreatedAt: NOW, createdAt: NOW });
+    const destination = budget.get(destinationRoot.id);
+    budget.configure({ sessionId: destinationRoot.id, accountId: destinationRoot.id, expectedRevision: destination.revision,
+      hardLimits: { concurrentTurns: 10, queuedTurns: 300, totalTurns: 3000, retries: 300,
+        sessions: 300, workItems: 1500, delegations: 1500, storageBytes: 2_147_483_648 },
+      idempotencyKey: "live-descendant-enlarge-destination" }, proof(destinationRoot.id, "live-descendant-destination-config"), NOW);
+    for (const [accountId, ownerSessionId, parentAccountId, idempotencyKey] of [
+      [deletedParent.id, deletedParent.id, sourceRoot.id, "live-descendant-parent"],
+      [liveDescendant.id, liveDescendant.id, deletedParent.id, "live-descendant-child"],
+    ] as const) {
+      budget.allocateChild({ accountId, accountKind: "session", rootSessionId: sourceRoot.id,
+        ownerSessionId, parentAccountId,
+        hardLimits: { concurrentTurns: 0, queuedTurns: 0, totalTurns: 1, retries: 0, sessions: 0, workItems: 0, delegations: 0, storageBytes: 0 },
+        authorityGrantId: null, authorityGrantRevision: null, expiresAt: null, deadlineAt: "2026-10-01T00:00:00.000Z",
+        idempotencyKey, proof: proof(sourceRoot.id, `${idempotencyKey}-proof`), createdAt: NOW });
+    }
+    sessions.deleteSession(deletedParent.id);
+    const beforeLiveAccount = db.prepare("SELECT * FROM resource_budget_accounts_v6 WHERE account_id = ?").get(liveDescendant.id);
+    const beforeLiveDimensions = db.prepare("SELECT * FROM resource_budget_dimensions_v6 WHERE account_id = ? ORDER BY dimension").all(liveDescendant.id);
+    assert.throws(() => budget.transferRootAllocation({ sourceRootSessionId: sourceRoot.id, destinationRootSessionId: destinationRoot.id,
+      proof: proof(sourceRoot.id, "live-descendant-transfer-source"), destinationProof: proof(destinationRoot.id, "live-descendant-transfer-destination"),
+      operationId: "live-descendant-transfer", transferredAt: "2026-09-07T00:00:00.000Z" }),
+      (error: unknown) => error instanceof ResourceBudgetError && error.code === "BUDGET_SETTLEMENT_CONFLICT");
+    assert.deepEqual({ ...(db.prepare(`SELECT root_session_id, parent_account_id, revoked_at
+      FROM resource_budget_accounts_v6 WHERE account_id = ?`).get(deletedParent.id) as Record<string, unknown>) },
+      { root_session_id: sourceRoot.id, parent_account_id: sourceRoot.id, revoked_at: null });
+    assert.equal((db.prepare(`SELECT root_session_id FROM resource_budget_accounts_v6 WHERE account_id = ?`)
+      .get(liveDescendant.id) as { root_session_id: string }).root_session_id, sourceRoot.id);
+    assert.deepEqual(db.prepare("SELECT * FROM resource_budget_accounts_v6 WHERE account_id = ?").get(liveDescendant.id), beforeLiveAccount);
+    assert.deepEqual(db.prepare("SELECT * FROM resource_budget_dimensions_v6 WHERE account_id = ? ORDER BY dimension").all(liveDescendant.id), beforeLiveDimensions);
+  } finally {
+    budget.close();
+    db.close();
+    sessions.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
 // kind = "security"
 // claim = "revokedな子budget allocationをroot transferでdestination authorityへ付け替えて復活させない"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Ownership transfer" }

@@ -14,6 +14,8 @@ Slice 4では、2026-09-12のユーザー承認により上記moveの内部処�
 
 actorはruntime binding、owner/root/parentはcanonical relationから取得する。契約のauthority説明はgrantではない。revision、idempotency、共通event header、budgetは既存ownerを使用し、migrationによる再baselineやgrant再発行で過去を置き換えない。
 
+Slice 7の`work.move`は、対象をカバーする明示grantと必要な移管先authorityで認可する。creatorであることを一律の追加条件とはせず、非creatorにも明示委譲できる。ADR 028のcreator/target制約維持はroot Work導入時の方針であり、この移管操作には本ADRの認可を適用する。delegated種別、revision、移管先・集約関係の整合性、および同一rootのtop-level adoptに必要なroot owner条件は維持する。
+
 planned sourceは一つのtupleとして保存する。actual start sourceはcaller入力を採用せず、実行のadmissionでcanonical Workspaceから解決する。未取得のlegacy executionについて現在のGit状態を過去の開始地点として補わない。
 
 archiveは一覧の可視性を変えるrevisionであり、resultやdecisionを書き換えない。restoreは可視性だけを復帰する。物理deleteはarchived terminalで、実行・親子・successor・集約の参照がないWork Itemに限定する。current rowを削除しても、監査と再送に必要な最後のsnapshot、typed event、共通header、期限内のidempotency responseを保持する。これは履歴を含む完全消去のAPIではない。

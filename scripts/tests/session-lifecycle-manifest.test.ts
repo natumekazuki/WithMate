@@ -15,6 +15,47 @@ function createDb(): DatabaseSync {
 
 // @test-value v2
 // kind = "invariant"
+// claim = "移管manifestは1000件の完了executionの履歴を件数やrevisionを欠落させず集約する"
+// oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeSessionMoveManifestResult" }
+// fault = "resource数に比例するSQL式がSQLite上限に達する、または回避のために履歴を切り捨てる"
+// observable = "1000件すべてのresource identity・eventCount・latestRevisionと並び順、対象外履歴の除外"
+// observation_boundary = "component-behavior"
+// scope = "SQLiteメモリDBを使うmanifest builder。execution admissionや移管transaction全体は対象外"
+// lifecycle = "permanent"
+// distinction = "型検査や小規模fixtureでは検出できないSQLite expression depth境界を、固定1000件の実queryで確認する"
+// @end-test-value
+test("移管manifestは多数の完了executionの履歴を全件集約する", () => {
+  const db = createDb();
+  try {
+    db.exec(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id, approval_mode, created_at, updated_at, last_active_at)
+      VALUES ('root', 'Root', 'active', 'codex', 1, 'model', 'never', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+      INSERT INTO session_role_bindings_v6 (session_id, session_role, role_contract_revision, root_session_id, parent_session_id, delegation_depth)
+      VALUES ('root', 'standalone', 1, 'root', NULL, 0)`);
+    const execution = db.prepare(`INSERT INTO session_executions_v6 (id, session_id, operation, state, request_json, created_at, updated_at)
+      VALUES (?, 'root', 'turn.run', 'completed', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
+    const header = db.prepare(`INSERT INTO resource_event_headers_v6
+      (event_id, resource_kind, resource_id, root_id, owner_kind, owner_id, event_kind, resource_revision, principal_kind, operation_id, occurred_at, committed_at, payload_schema_revision, effect)
+      VALUES (?, ?, ?, 'root', 'session', 'root', 'updated', ?, 'system', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 'committed')`);
+    const expected = [];
+    for (let index = 0; index < 1000; index += 1) {
+      const id = `execution-${String(index).padStart(4, "0")}`;
+      execution.run(id);
+      header.run(`${id}-first`, "execution", id, 1, `${id}-first`);
+      header.run(`${id}-last`, "execution", id, 3, `${id}-last`);
+      expected.push({ resourceKind: "execution", resourceId: id, eventCount: 2, latestRevision: 3 });
+    }
+    header.run("unrelated", "execution", "outside", 1, "unrelated");
+    header.run("other-kind", "work_item", "execution-0000", 1, "other-kind");
+    const manifest = buildSessionLifecycleManifest(db, "root", "destination");
+    assert.deepEqual(manifest.resourceHistory, expected);
+    assert.deepEqual(manifest.executions, { running: 0, queued: 0 });
+  } finally {
+    db.close();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "manifestは対象Session subtreeの実在resourceを列挙し、manifestRevisionはDB全体の既存append-only event counterを参照する"
 // oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeSessionMoveManifestResult" }
 // fault = "fake revisionやroot全体のresourceがmanifestに混入する"

@@ -371,15 +371,42 @@ export class ResourceBudgetStorage {
       if (accounts.length === 0 || accounts[0].account_id !== source.account_id) {
         throw new ResourceBudgetError("BUDGET_NOT_FOUND", "The source root budget account is missing.");
       }
-      for (const account of accounts) assertAllocationActive(this.db, account, input.transferredAt);
-      const directChildren = accounts.filter((account) => account.parent_account_id === source.account_id);
+      const deletedAccountIds = new Set(accounts
+        .filter((account) => this.isDeletedSession(account.owner_session_id))
+        .map((account) => account.account_id));
+      for (const account of accounts) {
+        // Tombstoned Session accounts remain as archival projections, but their
+        // old allocation authority must not block a live root transfer.
+        if (!deletedAccountIds.has(account.account_id)) assertAllocationActive(this.db, account, input.transferredAt);
+      }
+      const accountsById = new Map(accounts.map((account) => [account.account_id, account]));
+      for (const account of accounts) {
+        if (deletedAccountIds.has(account.account_id)) continue;
+        let parentAccountId = account.parent_account_id;
+        const visited = new Set<string>();
+        while (parentAccountId !== null) {
+          if (visited.has(parentAccountId)) break;
+          visited.add(parentAccountId);
+          if (deletedAccountIds.has(parentAccountId)) {
+            throw new ResourceBudgetError("BUDGET_SETTLEMENT_CONFLICT",
+              "A live budget descendant cannot remain under an archived Session allocation.", {
+                accountId: account.account_id,
+                archivedParentAccountId: parentAccountId,
+              });
+          }
+          parentAccountId = accountsById.get(parentAccountId)?.parent_account_id ?? null;
+        }
+      }
+      const directChildren = accounts.filter((account) => account.parent_account_id === source.account_id
+        && !deletedAccountIds.has(account.account_id));
       const openReservations = this.db.prepare(`SELECT reservation_id FROM resource_budget_reservations_v6
         WHERE account_id IN (SELECT account_id FROM resource_budget_accounts_v6 WHERE root_session_id = ?)
           AND state IN ('reserved', 'reconciliation_required') LIMIT 1`).get(input.sourceRootSessionId);
       if (openReservations) {
         throw new ResourceBudgetError("BUDGET_SETTLEMENT_CONFLICT", "Root budget transfer requires all reservations to be settled.");
       }
-      if (accounts.some((account) => account.deadline_at > destination.deadline_at)) {
+      if (accounts.some((account) => !deletedAccountIds.has(account.account_id)
+        && account.deadline_at > destination.deadline_at)) {
         throw new ResourceBudgetError("BUDGET_DEADLINE_EXCEEDED", "A transferred allocation exceeds the destination root deadline.", {
           deadlineAt: destination.deadline_at,
         });
@@ -424,27 +451,29 @@ export class ResourceBudgetStorage {
 
       for (const account of accounts) {
         const currentAccount = this.requireAccount(account.account_id);
+        const deletedOwner = deletedAccountIds.has(account.account_id);
         const nextParent = account.account_id === source.account_id || directChildren.some((child) => child.account_id === account.account_id)
           ? destination.account_id
           : account.parent_account_id;
         const nextKind = account.account_id === source.account_id ? "session" : account.account_kind;
-        const nextHardLimitStorage = account.account_id === source.account_id ? 0 : null;
+        const nextHardLimitStorage = account.account_id === source.account_id || deletedOwner ? 0 : null;
+        const nextRevokedAt = deletedOwner ? account.revoked_at ?? input.transferredAt : account.revoked_at;
         const nextRevision = currentAccount.revision + 1;
         this.db.prepare(`UPDATE resource_budget_accounts_v6
           SET account_kind = ?, root_session_id = ?, parent_account_id = ?,
               authority_grant_id = ?, authority_grant_revision = ?,
-              revision = ?, updated_at = ? WHERE account_id = ? AND revision = ?`).run(
+              revoked_at = ?, revision = ?, updated_at = ? WHERE account_id = ? AND revision = ?`).run(
           nextKind, input.destinationRootSessionId, nextParent,
           input.destinationProof.grantId, input.destinationProof.grantRevision,
-          nextRevision, input.transferredAt, account.account_id, currentAccount.revision);
+          nextRevokedAt, nextRevision, input.transferredAt, account.account_id, currentAccount.revision);
         if (nextHardLimitStorage !== null) {
           this.db.prepare(`UPDATE resource_budget_dimensions_v6 SET hard_limit = 0, soft_limit = NULL
             WHERE account_id = ? AND dimension = 'storageBytes'`).run(account.account_id);
           for (const dimension of RESOURCE_BUDGET_DIMENSIONS) {
             if (dimension === "storageBytes") continue;
-            const nextHardLimit = sourceHardLimits.get(dimension)!;
+            const nextHardLimit = deletedOwner ? 0 : sourceHardLimits.get(dimension)!;
             const current = this.requireDimension(account.account_id, dimension);
-            if (current.committed + current.reserved > nextHardLimit) {
+            if (!deletedOwner && current.committed + current.reserved > nextHardLimit) {
               throw new ResourceBudgetError("BUDGET_HARD_LIMIT_EXCEEDED", "The transferred root allocation cannot cover committed usage.", { dimension });
             }
             this.db.prepare(`UPDATE resource_budget_dimensions_v6 SET hard_limit = ?,
@@ -459,7 +488,7 @@ export class ResourceBudgetStorage {
           payload: { transfer: true, previousRootSessionId: input.sourceRootSessionId,
             destinationRootSessionId: input.destinationRootSessionId,
             previousParentAccountId: account.parent_account_id, destinationParentAccountId: nextParent,
-            accountKind: nextKind },
+            accountKind: nextKind, archived: deletedOwner },
         });
       }
       return this.getByAccountId(source.account_id);
@@ -1200,6 +1229,12 @@ export class ResourceBudgetStorage {
       .get(sessionId) as { root_session_id: string } | undefined;
     if (!root) throw budgetNotFound(sessionId);
     return this.requireAccount(root.root_session_id);
+  }
+
+  private isDeletedSession(sessionId: string): boolean {
+    const row = this.db.prepare("SELECT deleted_at FROM sessions_v6 WHERE id = ?")
+      .get(sessionId) as { deleted_at: string | null } | undefined;
+    return row?.deleted_at !== null && row?.deleted_at !== undefined;
   }
 
   private resolveRootAccount(sessionId: string): AccountRow {
