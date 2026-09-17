@@ -588,34 +588,15 @@ export function FileRootGitHistoryPane({
 
   const reloadRepositories = useCallback(async (preserveSelection: boolean) => {
     const generation = generationRef.current + 1;
-    generationRef.current = generation;
-    pageRequestRef.current = null;
-    detailRequestRef.current += 1;
     const previousRepository = selectedRepositorySessionIdRef.current === sessionId
       ? selectedRepositoryRef.current
       : null;
     const previousRepositoryId = previousRepository?.repositoryId ?? null;
     const previousRootId = previousRepository?.rootId ?? null;
     const previousBranch = previousRepository ? selectedBranchRef.current : null;
-    selectedRepositoryRef.current = null;
-    selectedRepositorySessionIdRef.current = sessionId;
-    selectedBranchRef.current = null;
-    onRepositoryChange?.(null);
-    setSelectedRepository(null);
-    setSelectedBranch(null);
+    chooseRepository(null, generation);
     setRepositories([]);
-    setCommits([]);
-    setSelectedCommitId(null);
-    setSelectedCommit(null);
-    setChangedEntries([]);
-    setListMessage("");
-    setDetailMessage("");
     setLoadingRepositories(true);
-    setLoadingCommits(false);
-    setLoadingMore(false);
-    cursorRef.current = null;
-    hasMoreRef.current = false;
-    setHasMore(false);
     if (!api || !sessionId || !enabled) {
       setLoadingRepositories(false);
       return;

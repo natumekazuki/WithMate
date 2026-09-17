@@ -554,14 +554,14 @@ test("History repository切り替えは古いpageを捨てて新repositoryの先
 
 // @test-value v2
 // kind = "contract"
-// claim = "History repositoryの再読込開始時は旧repositoryの選択状態とcallback対象を即時に失効させ、再読込失敗を現在のpaneに反映する"
+// claim = "History repositoryの再読込開始時は旧Compare表示とcallback対象を即時に失効させ、再読込失敗を現在のpaneに反映する"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
-// fault = "repository再読込中も旧repositoryの選択やcallback対象を保持し、失敗した再読込後に旧repositoryを利用可能な状態として残す"
+// fault = "repository再読込中も旧Compare表示やcallback対象を保持し、失敗した再読込のmessageを表示しない"
 // observable = "onRepositoryChange callback value、repository request count、History pane DOM state"
 // observation_boundary = "component-behavior"
 // scope = "FileRootGitHistoryPane repository reload invalidation"
 // lifecycle = "permanent"
-// distinction = "初回repository選択後にrootsRevisionを変え、再読込がpendingの間にcallbackへnullを渡して旧状態を失効させることを観測する"
+// distinction = "初回repository選択後にCompareを開き、rootsRevisionを変え、再読込がpendingの間にcallbackへnullを渡してCompare表示を失効させ、失敗messageを表示することを観測する"
 // @end-test-value
 test("History repository一覧の再読込開始時に旧Diffを即座に失効させる", async () => {
   const { dom, restore } = installDom();
@@ -604,6 +604,11 @@ test("History repository一覧の再読込開始時に旧Diffを即座に失効�
     });
     await flush();
     assert.equal(repositoryChanges.at(-1), repositoryA.repositoryId);
+    const compareTrigger = dom.window.document.querySelector<HTMLButtonElement>(".file-history-compare-trigger");
+    assert.ok(compareTrigger);
+    await act(async () => compareTrigger.click());
+    await flush();
+    assert.ok(dom.window.document.querySelector(".file-history-comparison"));
 
     await act(async () => {
       root?.render(React.createElement(FileRootGitHistoryPane, {
@@ -620,11 +625,14 @@ test("History repository一覧の再読込開始時に旧Diffを即座に失効�
     await flush();
     assert.equal(repositoryRequests, 2);
     assert.equal(repositoryChanges.at(-1), null);
+    assert.equal(dom.window.document.querySelector(".file-history-comparison"), null);
 
     await act(async () => {
       resolveReload?.({ status: "failed", message: "repository reload failed" });
       await Promise.resolve();
     });
+    await flush();
+    assert.match(dom.window.document.body.textContent ?? "", /repository reload failed/);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

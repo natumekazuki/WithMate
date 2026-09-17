@@ -19,7 +19,7 @@ Session WindowのFile Explorerから、認可済みGit rootのcommit履歴とcom
 - 同一rootのrefreshでは選択中branchを保持し、root変更では新しいrootのcurrent branchを初期選択します。選択branchが削除された場合は、利用できない状態を表示します。
 - merge commitのdetailとdiffはfirst parentとの比較として表示します。
 
-履歴やfile一覧はpage単位で読み込み、commit listの追加pageは専用scroll rootの末尾sentinelが表示領域に入ったときに取得します。repositoryの選択を変更した場合は表示中のcommit listをクリアし、以前の非同期取得結果を新しい選択へ反映しません。
+履歴やfile一覧はpage単位で読み込み、commit listの追加pageは専用scroll rootの末尾sentinelが表示領域に入ったときに取得します。repositoryの選択を変更した場合は表示中のcommit listをクリアし、以前の非同期取得結果を新しい選択へ反映しません。repository一覧の再読込開始時も、旧repositoryの詳細・比較・差分表示と関連する非同期取得を即時に失効させ、再読込失敗は現在のpaneへ表示します。
 
 ## Compare
 
