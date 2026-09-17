@@ -34,6 +34,12 @@ Roleは次だけを提供する。
 
 ## Same-root routing
 
+### 2026-09-18 の方針更新（実装追従前）
+
+自己宛のAgent-origin `turn.run / turn.enqueue`は禁止し、将来の自己実行は別権限のスケジュールで扱う。結果待ちの再開は依頼先Agentから返却先への明示Turnで行い、返送のauthorityも検証する。詳細とAuxiliaryの未決定事項は`docs/design/session-external-runtime.md`の「v6.4 方針更新: 自己宛Turnとスケジュールの分離」を正本とする。以下の任意Sessionへのroutingは、更新後には自己宛direct Turnを含まない。
+
+実装時は自己宛baselineの見直し、明示grantでも迂回できない対象検証、CLI/MCP/HTTPとcatalog・testの追従、schedule作成と発火の認可分離を確認する。既存保存grant・queued executionの扱いは実装前に整理し、文書更新だけを理由に削除・取消しない。GUI送信、他Sessionからの受付、既存失敗通知は維持する。本更新でruntimeの挙動は変更していない。
+
 same-root内では、active communication grantを持つAgentが任意のSessionへTurnまたは一時委譲を送れるようにする。固定parent／sibling／grandchild matrixはdefault grant templateへ移す。
 
 Turn requestはtarget Sessionを明示する。runtimeはactorとrootをbindingから解決し、targetへのactive grantを検証する。direct dispatchでもWork Itemまたはconsultation IDを関連付け、自由文だけの追跡不能な依頼にしない。

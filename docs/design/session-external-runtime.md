@@ -150,6 +150,18 @@ Sessionごとのqueueは、待機中のqueued executionを最大10件まで保�
 
 ### Session間Turn authorityと送信元projection
 
+#### v6.4 方針更新: 自己宛Turnとスケジュールの分離（2026-09-18）
+
+以下は採用した設計方針であり、この文書更新では実装・schema・grant migrationを変更していない。後掲のbaseline表にある自己宛許可は更新前の実装契約を示し、下記方針への実装追従が必要である。
+
+- Agentが自分へ直接`turn.run`または`turn.enqueue`を発行して次Turnを作る経路は許可しない。通常Sessionの自己宛baseline grantを見直し、明示grantによってこの禁止を迂回できないよう、Agent-origin direct Turnの対象条件として扱う。これは自己参照や他の自己管理操作を禁止する判断ではない。
+- ユーザーの追加入力を受け付けるGUIの永続FIFOと、認可された他SessionからのTurn受付は維持する。
+- 他Sessionの結果待ちからの再開は、依頼時に返却先と返送指示を伝え、結果を得たAgentが待機側へTurnを送る方式とする。往路の許可だけで復路を許可せず、返送側のactive grantとWork Itemまたはconsultationとの関連を検証する。返却先が実行中の場合は`turn.enqueue`を使う。成功結果のシステム自動配送は追加せず、既存のterminal failure notificationは別契約として維持する。
+- 外部要因の作業を後で確認する等の自己予約は、スケジュール機能として残す。スケジュール作成・管理とdirect Turn発行の権限は分離する。内部で同じexecution queueを使うことを、Agentへのdirect enqueue権限の付与または要求の理由にしない。
+- Agentが作成したスケジュールの発火は、その予約の認可根拠と適用時点の失効・期限・予算条件を検証する設計とする。既存GUI scheduleのtrusted user invocationへAgent作成を混同しない。公開APIの対応範囲、認可根拠の保持方法、作成・発火双方の認可実装は別途確認して実装へ反映する。本更新はAgent向けschedule APIの実装済み宣言ではない。
+
+Auxiliaryについては、外部から操作される対象としての公開と、他Sessionを操作する主体としての利用を分けて検討する。外部非公開・操作主体としては許可する案は未確定であり、返送Turnの受信を必要とする場合の公開範囲も未決定である。Auxiliaryのgrant付与元・初期scope・予算・階層への所属・schedule対応は確定していない。親Mainのidentityや権限を暗黙に代理利用する実装は導入しない。Main / Auxiliaryの送信方式をMCP公開可否だけから決めない。
+
 Agent起点の`turn.run`と`turn.enqueue`は、runtime bindingで確定したactor Sessionと、保存済みRole bindingから解決したtarget Sessionの関係をshared application serviceで検証する。authority入力はSQLiteからSession ID、title、canonical hierarchyとactive grantを取得する専用queryで解決し、公開用Session CRUDやworkspaceのGit branch取得を経由しない。request bodyからRole、root、parent、depthを受け取らず、CLI、MCP、raw HTTPで別の判定を持たない。baseline grantのTurn関係は次のとおりである。Role自体をlive authorityの上限にはしない。
 
 | baseline Role template | 初期grantのtarget |
