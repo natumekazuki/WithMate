@@ -4496,7 +4496,6 @@ button:disabled {
 .session-message-stack {
   --session-main-min-width: 360px;
   --session-auxiliary-min-width: 360px;
-  --session-auxiliary-header-min-width: 280px;
   --session-region-min-width: var(--session-main-min-width);
   --session-region-min-height: var(--session-central-min-height, 160px);
   display: grid;
