@@ -3678,6 +3678,21 @@ export function SessionActionDockCompactRow({
         </button>
       )}
       <div className="session-action-dock-compact-actions">
+        <div
+          className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}
+          aria-hidden={isRunning ? undefined : true}
+        >
+          {isRunning ? (
+            <button
+              className="danger session-send-button"
+              type="button"
+              onClick={onCancel}
+              title={cancelButtonTitle}
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
         {targetDock ? <div className="session-action-dock-target-slot">{targetDock}</div> : null}
         {isRunning && chatNotice ? (
           <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
@@ -3710,17 +3725,7 @@ export function SessionActionDockCompactRow({
               Source
             </button>
           </div>
-        ) : null}
-        {isRunning ? (
-          <button
-            className="danger session-send-button"
-            type="button"
-            onClick={onCancel}
-            title={cancelButtonTitle}
-          >
-            Cancel
-          </button>
-        ) : null}
+          ) : null}
       </div>
     </div>
   );
@@ -4115,18 +4120,23 @@ export function SessionComposerExpanded({
               />
             </div>
           ) : null}
-          {isRunning ? (
-              <button
-                className="drawer-toggle compact danger composer-toolbar-cancel-button"
-                type="button"
-                onClick={onSendOrCancel}
-                title={sendButtonTitle}
-              >
-                Cancel
-              </button>
-          ) : null}
-          {showJumpToBottom || showMessageViewModeControls || targetDock ? (
+          {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock ? (
             <div className="composer-toolbar-view-actions">
+              <div
+                className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}
+                aria-hidden={isRunning ? undefined : true}
+              >
+                {isRunning ? (
+                  <button
+                    className="danger session-send-button"
+                    type="button"
+                    onClick={onSendOrCancel}
+                    title={sendButtonTitle}
+                  >
+                    Cancel
+                  </button>
+                ) : null}
+              </div>
               {targetDock ? <div className="composer-target-dock-slot">{targetDock}</div> : null}
               {showJumpToBottom ? (
                 <button
@@ -4273,7 +4283,7 @@ export function SessionComposerExpanded({
         </div>
       </div>
 
-      <div className={`composer-control-row${isRunning ? " running" : ""}`}>
+      <div className="composer-control-row">
         <div className="composer-settings">
           {showExecutionModeControls ? (
             <>
@@ -4390,22 +4400,24 @@ export function SessionComposerExpanded({
         </div>
 
 
-        {isRunning ? null : (
-          <button
-            className="session-send-button"
-            type="button"
-            onClick={onSendOrCancel}
-            disabled={isSendDisabled}
-            title={appendShortcutLabel(
-              sendButtonTitle,
-              SHORTCUT_COMMAND_IDS.composerSubmit,
-              undefined,
-              keyboardShortcuts,
-            )}
-          >
-            Send
-          </button>
-        )}
+        <button
+          className="session-send-button"
+          type="button"
+          onClick={onSendOrCancel}
+          disabled={isRunning || isSendDisabled}
+          title={
+            isRunning
+              ? "実行中は送信できません"
+              : appendShortcutLabel(
+                  sendButtonTitle,
+                  SHORTCUT_COMMAND_IDS.composerSubmit,
+                  undefined,
+                  keyboardShortcuts,
+                )
+          }
+        >
+          Send
+        </button>
       </div>
     </div>
   );

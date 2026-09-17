@@ -922,6 +922,7 @@ button:disabled {
 .diff-button,
 .diff-close,
 .composer-control-row > .session-send-button,
+.session-action-dock-cancel-slot > .session-send-button,
 .session-action-dock-compact-actions button {
   border: 0;
   border-radius: 999px;
@@ -7330,9 +7331,24 @@ button:disabled {
 }
 
 .session-action-dock-compact-actions .drawer-toggle,
+.session-action-dock-cancel-slot > .session-send-button,
 .session-action-dock-compact-actions .session-send-button {
   min-height: 40px;
   padding: 10px 14px;
+}
+
+.session-action-dock-cancel-slot {
+  flex: 0 0 86px;
+  width: 86px;
+  min-width: 86px;
+}
+
+.session-action-dock-cancel-slot:not(.is-active) {
+  visibility: hidden;
+}
+
+.session-action-dock-cancel-slot > .session-send-button {
+  width: 100%;
 }
 
 .session-action-dock-compact-badge {
@@ -7357,6 +7373,7 @@ button:disabled {
   color: #fde68a;
 }
 
+.session-page .session-action-dock-cancel-slot > .session-send-button,
 .session-page .session-action-dock-compact-actions .session-send-button {
   background: var(--character-main);
   color: var(--character-main-ink);
@@ -7364,6 +7381,7 @@ button:disabled {
   padding: 9px 12px;
 }
 
+.session-page .session-action-dock-cancel-slot > .session-send-button.danger,
 .session-page .session-action-dock-compact-actions .session-send-button.danger {
   background: color-mix(in srgb, #f87171 82%, var(--character-main));
   color: #fff5f5;
@@ -10781,12 +10799,6 @@ button:disabled {
   padding: 8px 10px;
 }
 
-.composer-toolbar-cancel-button {
-  border-color: rgba(248, 113, 113, 0.32);
-  background: color-mix(in srgb, #f87171 82%, var(--character-main));
-  color: #fff5f5;
-}
-
 .composer-hide-button {
   margin-left: auto;
 }
@@ -11214,11 +11226,7 @@ button:disabled {
   margin-top: 12px;
 }
 
-.composer-control-row.running {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-@container session-action-dock (max-width: 850px) {
+@container session-action-dock (max-width: 960px) {
   .composer-settings > .composer-setting-field {
     flex-basis: calc(50% - 7px);
   }
@@ -11236,6 +11244,7 @@ button:disabled {
 
 .composer-control-row > .session-send-button {
   align-self: center;
+  min-width: 86px;
   padding: 12px 22px;
   background: rgba(255, 255, 255, 0.16);
   color: var(--ink);
@@ -14151,6 +14160,12 @@ button:disabled {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .session-action-dock-cancel-slot {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
   }
 
   .session-action-dock-compact-meta {
