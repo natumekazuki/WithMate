@@ -46,6 +46,11 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
     /\.composer-control-row > \.session-send-button\s*{\s*align-self:\s*center;/,
     "Send buttonは設定rowの中央に揃える",
   );
+  assert.match(
+    stylesSource,
+    /\.composer-settings\s*{\s*display:\s*flex;\s*flex-wrap:\s*wrap;/,
+    "設定群は折り返し可能にする",
+  );
   const settingsWrapWidth = Number(
     stylesSource.match(
       /@container session-action-dock \(max-width:\s*(?<width>\d+)px\)\s*{\s*\.composer-settings > \.composer-setting-field\s*{\s*flex-basis:\s*calc\(50% - 7px\);/,
@@ -59,7 +64,7 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
 
   assert.ok(Number.isFinite(settingsWrapWidth));
   assert.ok(Number.isFinite(controlStackWidth));
-  assert.ok(settingsWrapWidth <= controlStackWidth, "通常幅では設定群を Send より先に折り返さない");
+  assert.ok(settingsWrapWidth > controlStackWidth, "設定群の折り返しはSendのstackより先に発火する");
 });
 
 // @test-value v2

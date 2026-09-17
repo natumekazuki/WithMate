@@ -1758,10 +1758,10 @@ test("SessionMessageColumn は pending response text も response action 対象�
 
 // @test-value v2
 // kind = "contract"
-// claim = "選択範囲がassistant本文内にあるときだけresponse action toolbarを表示し、対象外本文・Source表示・非表示状態では除去する"
+// claim = "選択範囲がassistant本文内にあるときresponse action toolbarを表示し、対象外本文では除去する。Source切替時は既存toolbarを除去し、Source本文を新たに選択した場合は再表示する"
 // oracle = { type = "contract", ref = "src/session-components.tsx: message response actions" }
-// fault = "user messageやSource表示への切替後もtoolbarが残るか、copy/quote actionが選択本文を受け取れない"
-// observable = "mounted SessionMessageColumn DOMとselectionchange・resize・scrollによるtoolbar表示、copy/quote callback"
+// fault = "user message選択でtoolbarが残る、Source切替後の既存toolbarが残る、Source本文の新規選択でtoolbarが再表示されない、copy/quote actionが選択本文を受け取れない"
+// observable = "mounted SessionMessageColumn DOMとselectionchange・resize・scrollによるtoolbarの表示・除去、Source本文の再選択後のtoolbar、copy/quote callback"
 // observation_boundary = "component-behavior"
 // scope = "SessionMessageColumn selection response actions"
 // lifecycle = "permanent"
@@ -2257,7 +2257,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
 // impact = "compactとexpandedでCancelの相対位置を揃え、実行中の下段Send枠の消失によるレイアウトシフトを防ぐ"
 // distinction = "typecheck/buildはexpandedとrunningのDOM上の主操作位置を観測しない"
 // @end-test-value
-test("SessionComposerExpanded は実行中に上段Cancelとdisabled Sendを Main / Auxiliary の直前へ描画する", () => {
+test("SessionComposerExpanded は実行中の操作後に jump button と表示切替を右側 group へ描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
       isRunning: true,
@@ -2406,7 +2406,7 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 // impact = "実行中のcompact ActionDockで展開導線とCancelの発見性、Main / Auxiliaryとの操作順を維持する"
 // distinction = "同一React treeのidle/running遷移は別testで確認し、このtestは実行中のstatic DOMと展開導線を確認する"
 // @end-test-value
-test("SessionActionDockCompactRow は実行中の compact 表示に展開導線と jump button、Cancel を描画する", () => {
+test("SessionActionDockCompactRow は実行中の compact 表示から展開でき、jump button と Cancel を描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
       attachmentCount: 2,
