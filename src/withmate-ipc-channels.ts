@@ -1,4 +1,6 @@
 export const WITHMATE_OPEN_SESSION_CHANNEL = "withmate:open-session";
+export const WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL =
+  "withmate:show-session-monitor-context-menu";
 export const WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL = "withmate:get-session-window-restore-set";
 export const WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL = "withmate:restore-session-windows";
 export const WITHMATE_OPEN_HOME_WINDOW_CHANNEL = "withmate:open-home-window";

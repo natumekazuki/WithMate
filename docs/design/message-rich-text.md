@@ -25,7 +25,8 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - external image の自動通信と CSP の判断は `docs/adr/012-markdown-resource-loading-policy.md` を正本とする
 - SVG は `<img>` の resource として描画し、inline DOM へ挿入しない
 - file preview の local image 読込は Main process の root authorization と chunk read を経由し、preview 単位の固定同時数キューで実行する。file、reload、表示 mode、encoding の切替または unmount 後に待機処理を開始せず、実行中の stale read も次の chunk へ進めない。表示を継続する切替では resolver identity を current generation へ更新し、同じ source も再解決する
-- resolving、loading、error を visible state として表示する
+- 画像の resolving/loading はresourceの待機状態として保持し、表示開始から1,000ms未満は補助UIを表示しない。閾値を超えて未完了の場合だけ、画像領域内へ小さなspinnerを重ねて表示し、完了またはerrorで除去する。resolvingからloadingへ進む同一resourceの待機では表示タイマーをリセットしない。spinnerは`role="status"`相当の読み上げ名を持つが、本文の検索対象へ補助文字列を追加しない。errorは対象resourceを識別できる既存の失敗表示を維持する
+- Markdownの`img`、`a`、`pre` component typeはrenderごとに再生成せず、動的な操作callback、resource resolver、render modeだけを現在のcontextとして渡す。これによりcallback更新、本文末尾への追記、light/full切替では同じ位置の画像DOM・読み込みstate・lightbox stateを保持し、sourceまたはresource世代の変更では既存のresolver lifecycleに従って再読み込みする
 
 ## Non Goals
 

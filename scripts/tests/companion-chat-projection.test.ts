@@ -7,6 +7,7 @@ import {
   buildCompanionChatWindowProps,
   type CompanionChatProjectionInput,
 } from "../../src/chat/companion-chat-projection.js";
+import { ChatWindow } from "../../src/chat/chat-window.js";
 import {
   createOptimisticRunningSessionState,
   createOwnedPendingLiveSessionRunState,
@@ -356,6 +357,16 @@ test("buildCompanionChatWindowProps は retry draft 上書き確認を共通 com
   assert.match(html, />今の下書きを続ける<\/button>/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "通常Companionのheaderはrename・audit logを許可しdeleteを隠し、Merge actionを表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Agent / Companion shared chat screen" }
+// fault = "通常Companionでheader actionの許可状態またはMerge actionが誤ったmode向けに投影される"
+// observable = "headerPropsのshowRenameButton/showAuditLogButton/showDeleteButton、auxiliary class不在、renderされたMerge button"
+// observation_boundary = "public-boundary"
+// scope = "companion-chat-header-projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildCompanionChatWindowProps は通常 Companion の header action を維持する", () => {
   const props = buildCompanionChatWindowProps(createProjectionInput());
   const headerActionsHtml = renderToStaticMarkup(React.createElement(React.Fragment, null, props.headerProps.actions));
@@ -365,8 +376,6 @@ test("buildCompanionChatWindowProps は通常 Companion の header action を維
   assert.equal(props.headerProps.showDeleteButton, false);
   assert.doesNotMatch(props.className, /auxiliary-session-mode/);
   assert.match(headerActionsHtml, />Merge<\/button>/);
-  assert.equal(props.composerProps.modeLabel, undefined);
-  assert.equal(props.compactActionDockProps.modeLabel, undefined);
 });
 
 test("buildCompanionChatWindowProps は Audit Log modal に source label を渡す", () => {
@@ -387,7 +396,17 @@ test("buildCompanionChatWindowProps は Companion toast を modal child とし�
   assert.match(html, />保存しました<\/div>/);
 });
 
-test("buildCompanionChatWindowProps は Auxiliary mode の header action slot と mode label を渡す", () => {
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary modeではheader action slotを保持し、通常CompanionのMerge actionを表示しない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "Auxiliary modeでheader action slotが欠落する、またはrename・audit log・delete・Merge actionが表示される"
+// observable = "headerPropsの各action flag、auxiliary-session-mode class、Return to main button、Merge button不在"
+// observation_boundary = "public-boundary"
+// scope = "companion-auxiliary-header-projection"
+// lifecycle = "permanent"
+// @end-test-value
+test("buildCompanionChatWindowProps は Auxiliary mode の header action slot を渡す", () => {
   const props = buildCompanionChatWindowProps(createProjectionInput({
     headerActions: React.createElement(
       "button",
@@ -405,27 +424,37 @@ test("buildCompanionChatWindowProps は Auxiliary mode の header action slot �
   assert.match(props.className, /auxiliary-session-mode/);
   assert.match(headerActionsHtml, />Return to main<\/button>/);
   assert.doesNotMatch(headerActionsHtml, />Merge<\/button>/);
-  assert.equal(props.composerProps.modeLabel, "Auxiliary");
-  assert.equal(props.compactActionDockProps.modeLabel, "Auxiliary");
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "buildCompanionChatWindowPropsはright paneの一覧選択callbackを共通paneへ転送する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "projectionがonSelectContextPaneTabを欠落させ、共通paneが一覧選択を通知できない"
+// observable = "buildCompanionChatWindowPropsのrightPanePropsとChatWindow描画結果に現れる共通paneの選択callback契約"
+// observation_boundary = "public-boundary"
+// scope = "companion-chat-projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildCompanionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {
   const onCycleContextPaneTab = () => {};
+  const onSelectContextPaneTab = () => {};
   const onOpenCompanionReview = () => {};
   const props = buildCompanionChatWindowProps(createProjectionInput({
     onCycleContextPaneTab,
+    onSelectContextPaneTab,
     onOpenCompanionReview,
   }));
-  const rightPane = props.rightPane as React.ReactElement<{
-    children: React.ReactElement<SessionContextPaneProps>;
-  }>;
-  const paneProps = rightPane.props.children.props;
+  const paneProps = props.rightPaneProps as SessionContextPaneProps;
 
   assert.equal(paneProps.contextEmptyText, "context usage はまだありません。");
   assert.equal(paneProps.latestCommandEmptyText, undefined);
   assert.equal("onToggleHeaderExpanded" in paneProps, false);
   assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
+  assert.equal(paneProps.onSelectContextPaneTab, onSelectContextPaneTab);
   assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+  assert.match(html, /LatestCommand/);
 });
 
 test("buildCompanionChatWindowProps は right pane visibility と toggle を共通 shell に渡す", () => {

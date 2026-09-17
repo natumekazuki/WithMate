@@ -1225,6 +1225,7 @@ function appendCopilotStableRawItem(
         data: {
           content: event.data.content,
           parentToolCallId: event.data.parentToolCallId ?? null,
+          ...(event.agentId ? { agentId: event.agentId } : {}),
         },
       });
       break;

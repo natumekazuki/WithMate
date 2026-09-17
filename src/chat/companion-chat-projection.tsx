@@ -24,9 +24,8 @@ import { ChatSessionModals } from "./chat-session-modals.js";
 import {
   buildLiveSessionChatBodyProps,
   buildLiveSessionComposerDockProps,
-  resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
-import type { ChatWindowProps } from "./chat-window.js";
+import type { ChatWindowProps, ConcurrentChatWindowProps } from "./chat-window.js";
 import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js";
 import { buildLiveSessionHeaderProps } from "./chat-header-actions.js";
 import { COMPANION_PENDING_RUN_INDICATOR_TEXT } from "./pending-run-indicator.js";
@@ -54,9 +53,6 @@ export type CompanionChatProjectionInput = {
   dockLayoutStyle: CSSProperties;
   workbenchRef: RefObject<HTMLDivElement | null>;
   workbenchStyle: CSSProperties | undefined;
-  layoutPriority: ChatWindowProps["layoutPriority"];
-  onActivateSidePanePriority: () => void;
-  onActivateDockPriority: () => void;
   isHeaderExpanded: boolean;
   isEditingTitle: boolean;
   titleDraft: string;
@@ -198,10 +194,12 @@ export type CompanionChatProjectionInput = {
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
+  onKeyDownContextRailResize?: import("react").KeyboardEventHandler<HTMLButtonElement>;
   onStartActionDockResize: PointerEventHandler<HTMLButtonElement>;
   onToggleActionDock: () => void;
   onToggleContextRailVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onSelectContextPaneTab?: SessionContextPaneProps["onSelectContextPaneTab"];
   onOpenCompanionReview: (sessionId: string) => void;
   onCloseDiff: () => void;
   onOpenDiffWindow: (payload: DiffPreviewPayload) => void;
@@ -211,6 +209,10 @@ export type CompanionChatProjectionInput = {
   onCloseAuditLog: () => void;
   headerActions?: ReactNode;
   isAuxiliaryMode?: boolean;
+  concurrentChats?: Omit<ConcurrentChatWindowProps, "main" | "auxiliary"> & {
+    auxiliarySession?: ConcurrentChatWindowProps["auxiliarySession"];
+    auxiliaryProps?: Partial<SessionMessageColumnProps>;
+  };
 };
 
 export function buildCompanionChatWindowProps(input: CompanionChatProjectionInput): ChatWindowProps {
@@ -265,7 +267,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     buildLiveSessionCommonComposerDockInput({
       isRunning: input.isSelectedSessionRunning,
       ...COMPANION_PENDING_RUN_INDICATOR_TEXT,
-      modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       composerBlocked: input.composerBlocked,
       canSelectCustomAgent: input.session.provider === "copilot",
       isAgentPickerOpen: input.isAgentPickerOpen,
@@ -367,6 +368,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isContextRailResizing: input.isContextRailResizing,
       isContextRailVisible: input.isContextRailVisible,
       onStartContextRailResize: input.onStartContextRailResize,
+      onKeyDownContextRailResize: input.onKeyDownContextRailResize,
       onToggleContextRailVisibility: input.onToggleContextRailVisibility,
     },
   });
@@ -389,6 +391,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
     contextEmptyText: "context usage はまだありません。",
     onCycleContextPaneTab: input.onCycleContextPaneTab,
+    onSelectContextPaneTab: input.onSelectContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,
   });
 
@@ -402,9 +405,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     isHeaderExpanded: input.isHeaderExpanded,
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
-    layoutPriority: input.layoutPriority,
-    onActivateSidePanePriority: input.onActivateSidePanePriority,
-    onActivateDockPriority: input.onActivateDockPriority,
     headerProps,
     messageColumnProps: chatBodyProps.messageColumnProps,
     errorNotices: buildLiveSessionErrorNotices({
@@ -421,7 +421,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isActive: input.isActionDockResizing,
       isPanelExpanded: input.isActionDockExpanded,
       canCollapse: input.canCollapseActionDock,
-      onPointerDown: input.isActionDockExpanded ? input.onStartActionDockResize : undefined,
+      onPointerDown: input.onStartActionDockResize,
       onTogglePanel: input.onToggleActionDock,
     },
     composerProps: chatBodyProps.composerProps,
@@ -453,5 +453,13 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       </ChatSessionModals>
     ),
     isAuxiliaryMode: input.isAuxiliaryMode,
+    concurrentChats: input.concurrentChats ? {
+      ...input.concurrentChats,
+      main: chatBodyProps.messageColumnProps,
+      auxiliary: input.concurrentChats.auxiliarySession ? {
+        ...chatBodyProps.messageColumnProps,
+        ...input.concurrentChats.auxiliaryProps,
+      } : null,
+    } : undefined,
   });
 }

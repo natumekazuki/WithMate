@@ -557,13 +557,52 @@ describe("shortcut projection", () => {
     );
   });
 
-  // @test-value v1
-  // kind = "regression"
-  // claim = "test declaration at line 480 preserves its observable contract"
-  // oracle = { type = "contract", ref = "-480" }
-  // failure_mode = "line 480 violates its expected output or boundary behavior"
-  // scope = "shortcut-registry.test"
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Main / Auxiliary切り替え操作を既定shortcutとHelp projectionへ公開する"
+  // oracle = { type = "contract", ref = "shortcut-registry" }
+  // fault = "Main / Auxiliary切り替えshortcutが未登録、またはplatform別labelとHelpへ反映されない"
+  // observable = "shortcut registry entryのscope、accelerator、customizable policy、Help item"
+  // observation_boundary = "public-boundary"
+  // scope = "shortcut-registry"
   // lifecycle = "permanent"
+  // @end-test-value
+  it("Main / Auxiliary切り替えshortcutをSession scopeへ登録する", () => {
+    const entry = getShortcutEntry(SHORTCUT_COMMAND_IDS.conversationToggleTarget);
+    assert.deepEqual(entry.accelerators, {
+      windows: { key: "j", ctrlKey: true, shiftKey: true },
+      linux: { key: "j", ctrlKey: true, shiftKey: true },
+      macos: { key: "j", metaKey: true, shiftKey: true },
+    });
+    assert.equal(entry.scope, "session");
+    assert.equal(entry.allowInEditingTarget, false);
+    assert.equal(entry.allowRepeat, false);
+    assert.equal(entry.customizable, true);
+    assert.equal(entry.bindingKind, "letter");
+    assert.equal(getShortcutLabel(entry.id, "windows"), "Ctrl+Shift+J");
+    assert.equal(getShortcutLabel(entry.id, "macos"), "⌘⇧J");
+    assert.deepEqual(
+      getShortcutHelpProjection("windows")
+        .flatMap((group) => group.items)
+        .find((item) => item.id === entry.id),
+      {
+        id: entry.id,
+        label: "Toggle Main / Auxiliary",
+        acceleratorLabel: "Ctrl+Shift+J",
+      },
+    );
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "shortcut overrideを実効labelとHelp projectionへ反映し、不正なacceleratorを拒否する"
+  // oracle = { type = "contract", ref = "shortcut-registry" }
+  // fault = "ユーザー設定のoverrideが実効labelまたはHelpへ反映されない、または不正なacceleratorが登録される"
+  // observable = "override後のplatform label、Help item、invalid acceleratorのrejection"
+  // observation_boundary = "public-boundary"
+  // scope = "shortcut-registry override"
+  // lifecycle = "permanent"
+  // distinction = "既定shortcutの登録確認とは分け、ユーザー設定のoverrideと入力検証の公開結果を確認する"
   // @end-test-value
   it("ユーザー設定のoverrideを実効labelとHelp projectionへ反映する", () => {
     const settings = updateShortcutBinding(

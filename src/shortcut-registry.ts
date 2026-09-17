@@ -30,6 +30,7 @@ export const SHORTCUT_COMMAND_IDS = {
   messageCloseFind: "session.message.close-find",
   messageToggleCollapse: "session.message.toggle-collapse",
   messageToggleViewMode: "session.message.toggle-view-mode",
+  conversationToggleTarget: "session.conversation.toggle-target",
   filePreviewFind: "session.file-preview.find",
   filePreviewClose: "session.file-preview.close",
   filePreviewSelectAll: "session.file-preview.select-all",
@@ -69,6 +70,7 @@ const SHORTCUT_SCOPE_LABELS: Record<string, string> = {
   "message-list": "Messages",
   "file-preview": "File preview",
   composer: "Composer",
+  session: "Session",
   settings: "Settings",
 };
 
@@ -148,6 +150,16 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   {
     ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.messageToggleViewMode),
     label: "Toggle Preview / Source",
+    kind: "withmate",
+    allowInEditingTarget: false,
+    allowRepeat: false,
+    showInHelp: true,
+    customizable: true,
+    assignment: "new",
+  },
+  {
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.conversationToggleTarget),
+    label: "Toggle Main / Auxiliary",
     kind: "withmate",
     allowInEditingTarget: false,
     allowRepeat: false,

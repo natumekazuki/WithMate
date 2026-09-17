@@ -3,6 +3,10 @@ import type { ReactNode } from "react";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { HomeRightPaneProps } from "./HomeRightPane.js";
 import type { HomeMonitorEntry } from "./home-session-projection.js";
+import type {
+  SessionMonitorContextMenuPoint,
+  SessionMonitorEntryKind,
+} from "../withmate-window-types.js";
 
 type HomeRightPaneHandlers = {
   onChangeRightPaneView: (view: HomeRightPaneProps["rightPaneView"]) => void;
@@ -14,6 +18,11 @@ type HomeRightPaneHandlers = {
   onEditCharacter: (characterId: string) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  onShowSessionMonitorContextMenu: (
+    kind: SessionMonitorEntryKind,
+    sessionId: string,
+    point: SessionMonitorContextMenuPoint,
+  ) => void;
 };
 
 export type HomeRightPanePropsInput = {
@@ -22,6 +31,7 @@ export type HomeRightPanePropsInput = {
   scheduleLoadState?: HomeRightPaneProps["scheduleLoadState"];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
+  sessionMonitorFeedback?: string;
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
   characterListFeedback?: string;
@@ -38,6 +48,7 @@ export function buildHomeRightPaneProps({
   scheduleLoadState,
   runningMonitorEntries,
   nonRunningMonitorEntries,
+  sessionMonitorFeedback,
   monitorWindowIcon,
   characterEntries,
   characterListFeedback,
@@ -53,6 +64,7 @@ export function buildHomeRightPaneProps({
     scheduleLoadState,
     runningMonitorEntries,
     nonRunningMonitorEntries,
+    sessionMonitorFeedback,
     monitorWindowIcon,
     characterEntries,
     characterListFeedback,
@@ -65,6 +77,7 @@ export function buildHomeRightPaneProps({
     onEditCharacter: handlers.onEditCharacter,
     onOpenSession: handlers.onOpenSession,
     onOpenCompanionReview: handlers.onOpenCompanionReview,
+    onShowSessionMonitorContextMenu: handlers.onShowSessionMonitorContextMenu,
     canUsePrimaryFeatures,
     sessionWindowRestoreIds,
     sessionWindowRestorePending,

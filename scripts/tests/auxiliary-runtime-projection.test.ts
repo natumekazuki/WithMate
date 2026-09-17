@@ -230,6 +230,76 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary runtime projectionは保存済みCharacter snapshotの表示情報とownerをMainへ投影する"
+// oracle = { type = "contract", ref = "issue-710 Auxiliary Character owner projection" }
+// fault = "Auxiliaryの表示名・icon・themeが親Characterへ戻り、会話identityと表示identityが混線する"
+// observable = "projection characterId/name/icon/theme/snapshot"
+// observation_boundary = "declaration"
+// scope = "auxiliary-runtime-projection"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary runtime projectionはCharacter snapshotの表示情報を保持する", () => {
+  const parent = createSession();
+  const auxiliary = createAuxiliarySession();
+  const snapshot = {
+    ...parent.characterRuntimeSnapshot!,
+    characterId: "character-aux",
+    name: "Auxiliary Character",
+    iconFilePath: "auxiliary/icon.png",
+    theme: { main: "#111111", sub: "#222222" },
+  };
+  const projection = buildAuxiliaryRuntimeSessionProjection("main", parent, {
+    ...auxiliary,
+    characterId: snapshot.characterId,
+    characterRuntimeSnapshot: snapshot,
+  });
+
+  assert.equal(projection.characterId, snapshot.characterId);
+  assert.equal(projection.character, snapshot.name);
+  assert.equal(projection.characterIconPath, snapshot.iconFilePath);
+  assert.deepEqual(projection.characterThemeColors, snapshot.theme);
+  assert.deepEqual(projection.characterRuntimeSnapshot, snapshot);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Companionで選択中Auxiliaryのruntime投影は会話ID・thread・Character snapshotを保持する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Character identity projection" }
+// fault = "Companion Auxiliaryの表示を親CompanionのthreadまたはCharacterへ差し替え、別会話の結果を表示する"
+// observable = "buildCompanionAuxiliaryRuntimeSessionの返却runtime sessionのID/thread/Character表示情報"
+// observation_boundary = "declaration"
+// scope = "companion-auxiliary-runtime-projection"
+// lifecycle = "permanent"
+// @end-test-value
+test("Companion Auxiliary runtime projectionはCharacter snapshotと会話identityを保持する", () => {
+  const parent = createCompanionSession();
+  const auxiliary = createAuxiliarySession({
+    parentSessionId: parent.id,
+    threadId: "companion-auxiliary-thread",
+    characterId: "auxiliary-character",
+    characterRuntimeSnapshot: {
+      ...parent.characterRuntimeSnapshot!,
+      characterId: "auxiliary-character",
+      name: "Companion Auxiliary Character",
+      iconFilePath: "companion-auxiliary.png",
+      theme: { main: "#123456", sub: "#654321" },
+    },
+  });
+  const projection = buildCompanionAuxiliaryRuntimeSession(parent, auxiliary);
+
+  assert.equal(projection.id, auxiliary.id);
+  assert.equal(projection.threadId, auxiliary.threadId);
+  assert.equal(projection.characterId, auxiliary.characterId);
+  assert.equal(projection.characterRuntimeSnapshot?.characterId, auxiliary.characterRuntimeSnapshot?.characterId);
+  assert.equal(projection.character, auxiliary.characterRuntimeSnapshot?.name);
+  assert.equal(projection.characterIconPath, auxiliary.characterRuntimeSnapshot?.iconFilePath);
+  assert.deepEqual(projection.characterThemeColors, auxiliary.characterRuntimeSnapshot?.theme);
+  assert.deepEqual(projection.characterRuntimeSnapshot, auxiliary.characterRuntimeSnapshot);
+  assert.deepEqual(projection.messages, auxiliary.messages);
+});
+
 test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff fields", () => {
   const parent = createSession();
   const auxiliary = createAuxiliarySession();

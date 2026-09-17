@@ -34,12 +34,12 @@ function createIpcRendererStub() {
 // kind = "contract"
 // claim = "preloadのinvoke APIはdomainごとのrequest入力を保持し、正しい専用IPC channelへ転送する"
 // oracle = { type = "contract", ref = "WithMateWindowApi invoke methods and withmate-ipc-channels" }
-// fault = "Resource budget requestを別channelへ送るか、入力を欠落させてMainへ渡す"
-// observable = "ipcRenderer.invokeが受け取ったchannel名と引数"
+// fault = "renderer requestが別channelへ送られるか、引数の欠落または変換を受けてMainへ到達する"
+// observable = "ipcRenderer.invokeへ渡されたchannelと引数"
 // observation_boundary = "public-boundary"
 // scope = "preload invoke API"
 // lifecycle = "permanent"
-// distinction = "公開key集合では検出できないResource budget methodごとのchannelと入力対応を検証する"
+// distinction = "file tree context menuとSession Monitor context menuを含む公開invoke method群のchannelと引数を一括検証し、subscription payload検証とは分離する"
 // @end-test-value
 test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる", async () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -48,6 +48,15 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   assert.deepEqual(await api.openSession("session-1"), {
     channel: "withmate:open-session",
     args: ["session-1"],
+  });
+  const sessionMonitorContextMenuRequest = {
+    kind: "agent" as const,
+    sessionId: "session-1",
+    point: { x: 24, y: 48 },
+  };
+  assert.deepEqual(await api.showSessionMonitorContextMenu(sessionMonitorContextMenuRequest), {
+    channel: "withmate:show-session-monitor-context-menu",
+    args: [sessionMonitorContextMenuRequest],
   });
   assert.deepEqual(await api.getAppBootStatus(), {
     channel: "withmate:get-app-boot-status",
@@ -392,13 +401,21 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
     rootId: "workspace",
   };
+  const historyCommitsRequest = {
+    ...historyRequest,
+    branch: "main",
+  };
   assert.deepEqual(await api.listFileRootGitHistoryRepositories({ sessionId: "session-1" }), {
     channel: "withmate:list-file-root-git-history-repositories",
     args: [{ sessionId: "session-1" }],
   });
-  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyRequest, cursor: "100" }), {
+  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyCommitsRequest, cursor: "100" }), {
     channel: "withmate:list-file-root-git-history-commits",
-    args: [{ ...historyRequest, cursor: "100" }],
+    args: [{ ...historyCommitsRequest, cursor: "100" }],
+  });
+  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyRequest, branch: null, cursor: null }), {
+    channel: "withmate:list-file-root-git-history-commits",
+    args: [{ ...historyRequest, branch: null, cursor: null }],
   });
   const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
   assert.deepEqual(await api.getFileRootGitHistoryCommitDetail(historyDetailRequest), {
@@ -496,8 +513,8 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
 // kind = "contract"
 // claim = "preloadの公開API surfaceはWithMateWindowApiの現行keyを過不足なくexposeする"
 // oracle = { type = "contract", ref = "WithMateWindowApi public surface" }
-// fault = "Resource budget methodをrendererへexposeしないか、公開surfaceへ契約外methodを残す"
-// observable = "createWithMateWindowApiが返すobjectのsorted key集合"
+// fault = "型に存在するIPC methodがrendererへexposeされないか、廃止済みmethodが公開surfaceへ残る"
+// observable = "Object.keys(api)の公開key集合とremoved keyの不在"
 // observation_boundary = "public-boundary"
 // scope = "preload public API keys"
 // lifecycle = "permanent"
@@ -621,6 +638,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openCrashDumpFolder",
     "openPath",
     "openSession",
+    "showSessionMonitorContextMenu",
     "openSessionFile",
     "getSessionFilePreviewWindowPayload",
     "openSessionFilesDirectory",

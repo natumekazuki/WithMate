@@ -828,14 +828,17 @@ test("pick-image-file IPC は Character icon purpose を伝播し、不正な pu
   );
 });
 
-// @test-value v1
-// kind = "contract"
-// claim = "chat layout preference IPC は単一 target の列挙値だけを専用更新処理へ渡すが検証対象の公開契約を成立させる"
-// oracle = { type = "contract", ref = "scripts/tests/main-ipc-registration.test.ts:714 public contract" }
-// failure_mode = "chat layout preference IPC は単一 target の列挙値だけを専用更新処理へ渡すの条件で、consumerから観測できる公開結果が欠落・誤配信・不正許可になる"
-// scope = "main-ipc-registration"
+// @test-value v2
+// kind = "invariant"
+// claim = "chat layout IPC は現行 target の列挙値だけを専用更新処理へ渡す"
+// oracle = { type = "contract", ref = "Chat layout preference IPC boundary" }
+// fault = "不正な target/value または余分な payload が storage update へ到達する"
+// observable = "専用更新処理へ渡された updates"
+// observation_boundary = "public-boundary"
+// scope = "chat-layout-ipc"
 // lifecycle = "permanent"
-// distinction = "対象テスト「chat layout preference IPC は単一 target の列挙値だけを専用更新処理へ渡す」固有の入力、境界、またはwindow scopeを確認する"
+// impact = "廃止設定や不正値が main persistence に混入する"
+// distinction = "IPC input validation と dependency forwarding を同時に確認する"
 // @end-test-value
 test("chat layout preference IPC は単一 target の列挙値だけを専用更新処理へ渡す", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
@@ -870,26 +873,11 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
     }),
     { chatLayoutPreference: { target: "actionDock", value: "expanded" } },
   );
-  assert.deepEqual(
-    await handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
-      target: "priority",
-      value: "dock-first",
-    }),
-    { chatLayoutPreference: { target: "priority", value: "dock-first" } },
-  );
   await assert.rejects(
     () =>
       handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
         target: "header",
         value: "shown",
-      }) as Promise<unknown>,
-    /更新内容が不正/,
-  );
-  await assert.rejects(
-    () =>
-      handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
-        target: "priority",
-        value: "left-first",
       }) as Promise<unknown>,
     /更新内容が不正/,
   );
@@ -906,7 +894,6 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
     { target: "sidePane", value: "files" },
     { target: "header", value: "visible" },
     { target: "actionDock", value: "expanded" },
-    { target: "priority", value: "dock-first" },
   ]);
 });
 
@@ -965,13 +952,15 @@ test("Resource budget configure IPC は Settings Window だけを trusted user �
   assert.deepEqual(received, [input]);
 });
 
-// @test-value v1
 // kind = "security"
-// claim = "Changes repository discovery IPCはowning Session senderを確認し、検証済みroot ID列だけをserviceへ渡す"
+// claim = "File Explorer IPCはowning Session senderを確認し、検証済みroot ID列とhistory branch requestだけをserviceへ渡す"
 // oracle = { type = "contract", ref = "Session File Explorer IPC authority boundary" }
-// failure_mode = "不正なroot ID列または別Session senderがrepository discovery serviceへ到達する"
-// scope = "Changes repository discovery IPC"
+// fault = "不正なroot ID列、無効なhistory branch、または別Session senderのfile explorer requestがchanges・history serviceへ到達する"
+// observable = "非owner・不正root・無効branch requestのrejectionとserviceへ渡されたdirectory・history request"
+// observation_boundary = "public-boundary"
+// scope = "File Explorer IPC authority and request validation"
 // lifecycle = "permanent"
+// distinction = "Auxiliary IDをowning Sessionへ解決する成功経路と、別window・不正root・current preview resource外の拒否を同じIPC boundaryで確認する"
 // @end-test-value
 test("File Explorer IPC は owning Session window からだけ利用でき、Auxiliary ID を parent へ解決する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
@@ -1164,8 +1153,12 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
     rootId: "workspace",
   };
+  const historyCommitsRequest = {
+    ...historyRequest,
+    branch: "main",
+  };
   assert.deepEqual(
-    await handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, { ...historyRequest, cursor: null }),
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, { ...historyCommitsRequest, cursor: null }),
     { status: "ok", page: { entries: [], nextCursor: null, hasMore: false } },
   );
   const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
@@ -1179,12 +1172,22 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     { status: "not-changed", message: "none" },
   );
   assert.deepEqual(historyRepositoryRequests, [historyRepositoriesRequest]);
-  assert.deepEqual(historyCommitRequests, [{ ...historyRequest, cursor: null }]);
+  assert.deepEqual(historyCommitRequests, [{ ...historyCommitsRequest, cursor: null }]);
   assert.deepEqual(historyDetailRequests, [historyDetailRequest]);
   assert.deepEqual(historyDiffRequests, [historyDiffRequest]);
+  for (const branch of [undefined, "", " main", "main ", "main\n"] as unknown[]) {
+    await assert.rejects(
+      () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, {
+        ...historyRequest,
+        branch,
+        cursor: null,
+      }) as Promise<unknown>,
+      /Git history branch is invalid/,
+    );
+  }
   await assert.rejects(
     () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, {
-      ...historyRequest,
+      ...historyCommitsRequest,
       repositoryId: "not-a-repository",
     }) as Promise<unknown>,
     /Git history request/,
@@ -1233,6 +1236,26 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     /owning Session window/,
   );
   assert.deepEqual(changesRepositoryRequests, [changesRepositoriesRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL)?.({}, historyRepositoriesRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, { ...historyCommitsRequest, cursor: null }) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL)?.({}, historyDetailRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, historyDiffRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.deepEqual(historyRepositoryRequests, [historyRepositoriesRequest]);
+  assert.deepEqual(historyCommitRequests, [{ ...historyCommitsRequest, cursor: null }]);
+  assert.deepEqual(historyDetailRequests, [historyDetailRequest]);
+  assert.deepEqual(historyDiffRequests, [historyDiffRequest]);
   await assert.rejects(
     () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest) as Promise<unknown>,
     /current Preview resource/,

@@ -48,12 +48,24 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().isSettingsWindow(window);
   }
 
+  isSessionMonitorWindow(window: BrowserWindow): boolean {
+    return this.deps.getAuxWindowService().isSessionMonitorWindow(window);
+  }
+
   async openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
     return this.deps.getAuxWindowService().openCharacterEditorWindow(characterId);
   }
 
   async openSessionWindow(sessionId: string): Promise<BrowserWindow> {
     return this.deps.getSessionWindowBridge().openSessionWindow(sessionId);
+  }
+
+  closeSessionWindow(sessionId: string): void {
+    this.deps.getSessionWindowBridge().closeSessionWindow(sessionId);
+  }
+
+  requestCloseSessionWindow(sessionId: string): Promise<boolean> {
+    return this.deps.getSessionWindowBridge().requestCloseSessionWindow(sessionId);
   }
 
   async openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {
@@ -107,6 +119,10 @@ export class MainWindowFacade {
 
   getCompanionReviewWindow(sessionId: string): BrowserWindow | null {
     return this.deps.getAuxWindowService().getCompanionReviewWindow(sessionId);
+  }
+
+  closeCompanionReviewWindow(sessionId: string): void {
+    this.deps.getAuxWindowService().closeCompanionReviewWindow(sessionId);
   }
 
   closeResetTargetWindows(): void {

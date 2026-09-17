@@ -15,7 +15,6 @@ export type HomeLaunchDialogProps = {
   title: string;
   sessionPurpose: HomeLaunchSessionPurpose;
   sessionFolderSelected: boolean;
-  launchWorkspacePathLabel: string;
   workspacePathInput: string;
   workspaceValidation: HomeLaunchWorkspaceValidationState;
   workspaceValidationMessage: string;
@@ -45,7 +44,6 @@ export function HomeLaunchDialog({
   title,
   sessionPurpose,
   sessionFolderSelected,
-  launchWorkspacePathLabel,
   workspacePathInput,
   workspaceValidation,
   workspaceValidationMessage,
@@ -167,9 +165,6 @@ export function HomeLaunchDialog({
             SessionFolder
           </button>
         </div>
-        {sessionFolderSelected ? (
-          <p className="launch-path selected">{launchWorkspacePathLabel}</p>
-        ) : null}
       </section>
 
       <section className="launch-section minimal">

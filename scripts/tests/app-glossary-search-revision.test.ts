@@ -84,11 +84,13 @@ function createDeferred<T>(): {
   return { promise, resolve };
 }
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
 // claim = "Session Glossaryの検索scopeが更新されると表示中の旧結果を消し、同じrevisionでも最新requestより前のresponseを一覧へ戻さない"
 // oracle = { type = "contract", ref = "docs/features/repository-glossary.md#更新と監視" }
-// failure_mode = "revision更新待ちに旧entryが残るか、同一revisionへ並行した遅い旧responseが最新検索結果を上書きする"
+// fault = "revision更新待ちに旧entryが残るか、同一revisionへ並行した遅い旧responseが最新検索結果を上書きする"
+// observable = "scope revision更新時の検索結果DOMと、旧requestの結果が再表示されないこと"
+// observation_boundary = "component-behavior"
 // scope = "App Session Glossary search UI"
 // lifecycle = "permanent"
 // distinction = "revision比較helper単体では観測できない、Appのrequest世代管理と描画状態遷移をconsumer DOMで検証する"
@@ -206,7 +208,7 @@ test("Glossary検索はscope更新時に旧結果を消し、遅い旧requestを
     });
 
     const nextTab = dom.window.document.querySelector<HTMLButtonElement>(
-      'button[aria-label="次の表示へ切り替え"]',
+      'button[aria-label="次へ"]',
     );
     assert.ok(nextTab);
     await act(async () => {

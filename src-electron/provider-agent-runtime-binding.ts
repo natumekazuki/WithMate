@@ -49,7 +49,7 @@ export type ProviderAgentRuntimeBindingRedactor = {
 
 export type ProviderAgentRuntimeAuthoritySnapshotInput = {
   sessionId: string;
-  sessionKind: SessionKind;
+  sessionKind: SessionKind | "auxiliary";
   sessionRoleBinding: SessionRoleBinding | null;
   characterId: string | null | undefined;
   workspacePath: string | null | undefined;
@@ -64,7 +64,7 @@ export type ProviderAgentRuntimeAuthoritySnapshotInput = {
 export function buildProviderAgentRuntimeAuthoritySnapshot(
   input: ProviderAgentRuntimeAuthoritySnapshotInput,
 ): (ProviderAgentRuntimeAuthoritySnapshot & {
-  sessionKind: SessionKind;
+  sessionKind: SessionKind | "auxiliary";
   sessionRoleBinding?: SessionRoleBinding;
 }) | null {
   const characterId = input.characterId?.trim() ?? "";

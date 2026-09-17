@@ -747,6 +747,35 @@ function normalizeHistoryCursor(cursor: string | null | undefined): number {
   return Number(cursor);
 }
 
+function normalizeHistoryBranch(value: string): string {
+  if (typeof value !== "string" || !value || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error("Git history branch is invalid.");
+  }
+  return value;
+}
+
+function parseHistoryBranchList(output: Buffer): string[] {
+  const branches: string[] = [];
+  const seen = new Set<string>();
+  for (const rawBranch of output.toString("utf8").split(/\r?\n/u)) {
+    if (!rawBranch) {
+      continue;
+    }
+    const branch = normalizeHistoryBranch(rawBranch.slice("refs/heads/".length));
+    if (seen.has(branch)) {
+      continue;
+    }
+    seen.add(branch);
+    branches.push(branch);
+  }
+  return branches;
+}
+
+function parseCurrentHistoryBranch(output: Buffer): string | null {
+  const value = output.toString("utf8").replace(/\r?\n$/u, "");
+  return value ? normalizeHistoryBranch(value.slice("refs/heads/".length)) : null;
+}
+
 function isMissingFilesystemError(error: unknown): boolean {
   return typeof error === "object"
     && error !== null
@@ -767,6 +796,11 @@ type WorkspaceGitOperationFailure = WorkspaceGitFailure | {
 type HistoryGitOperationFailure = {
   status: "repository-not-found" | "failed";
   message: string;
+};
+
+type HistoryBranchState = {
+  branches: string[];
+  currentBranch: string | null;
 };
 
 function failedStatus(message: string): WorkspaceGitFailure {
@@ -2018,6 +2052,41 @@ export class FileRootGitChangesService {
     }
   }
 
+  async #readHistoryBranches(operation: WorkspaceGitOperation): Promise<HistoryBranchState> {
+    const currentBranchResult = await this.#runIdentityBoundGit(operation, [
+      "symbolic-ref",
+      "--quiet",
+      "HEAD",
+    ], undefined, {
+      maxStdoutBytes: MAX_HISTORY_LIST_STDOUT_BYTES,
+      maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
+    });
+    if (currentBranchResult.exitCode !== 0 && currentBranchResult.exitCode !== 1) {
+      throw new Error(currentBranchResult.stderr || "Git current branch could not be read.");
+    }
+    const branchesResult = await this.#runIdentityBoundGit(operation, [
+      "for-each-ref",
+      "--format=%(refname)",
+      "refs/heads",
+    ], undefined, {
+      maxStdoutBytes: MAX_HISTORY_LIST_STDOUT_BYTES,
+      maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
+    });
+    if (branchesResult.exitCode !== 0) {
+      throw new Error(branchesResult.stderr || "Git branches could not be read.");
+    }
+    const branches = parseHistoryBranchList(branchesResult.stdout);
+    const reportedCurrentBranch = currentBranchResult.exitCode === 0
+      ? parseCurrentHistoryBranch(currentBranchResult.stdout)
+      : null;
+    return {
+      branches,
+      currentBranch: reportedCurrentBranch && branches.includes(reportedCurrentBranch)
+        ? reportedCurrentBranch
+        : null,
+    };
+  }
+
   async #listHistoryRepositoriesRequest(
     request: FileRootGitHistoryRepositoriesRequest,
     signal: AbortSignal,
@@ -2030,6 +2099,8 @@ export class FileRootGitChangesService {
       rootId: string;
       label: string;
       displayPath: string;
+      branches: string[];
+      currentBranch: string | null;
     }>();
     const contexts = await this.#resolveHistoryRootContexts(request.sessionId);
     for (const context of contexts) {
@@ -2044,17 +2115,22 @@ export class FileRootGitChangesService {
         throw error;
       }
       const repositoryId = createHistoryRepositoryId(operation.repositoryIdentity.topLevel.realPath);
-      if (!repositories.has(repositoryId)) {
-        repositories.set(repositoryId, {
-          repositoryId,
-          rootId: context.rootId,
-          label: context.label,
-          displayPath: context.displayPath,
-        });
-      }
-      const cleanupError = await this.#closeOperation(operation);
-      if (cleanupError) {
-        return { status: "failed", message: cleanupError.message };
+      try {
+        if (!repositories.has(repositoryId)) {
+          const branchState = await this.#readHistoryBranches(operation);
+          repositories.set(repositoryId, {
+            repositoryId,
+            rootId: context.rootId,
+            label: context.label,
+            displayPath: context.displayPath,
+            ...branchState,
+          });
+        }
+      } finally {
+        const cleanupError = await this.#closeOperation(operation);
+        if (cleanupError) {
+          throw cleanupError;
+        }
       }
     }
     return { status: "ok", repositories: [...repositories.values()] };
@@ -2346,10 +2422,19 @@ export class FileRootGitChangesService {
     operation: WorkspaceGitOperation,
     request: FileRootGitHistoryCommitsRequest,
   ): Promise<FileRootGitHistoryCommitsResult> {
+    const branchState = await this.#readHistoryBranches(operation);
+    if (request.branch !== null && !branchState.branches.includes(request.branch)) {
+      return { status: "branch-not-found", message: "The selected Git branch is no longer available." };
+    }
+    if (branchState.branches.length === 0) {
+      return { status: "empty-repository", message: "The Git repository has no committed branches." };
+    }
+    if (request.branch === null) {
+      return { status: "detached-head", message: "Git HEAD is detached. Select a branch to view its history." };
+    }
     const skip = normalizeHistoryCursor(request.cursor);
     const result = await this.#runIdentityBoundGit(operation, [
       "log",
-      "--all",
       "--date-order",
       "--date=iso-strict",
       "--decorate=full",
@@ -2358,6 +2443,7 @@ export class FileRootGitChangesService {
       String(HISTORY_PAGE_SIZE + 1),
       "--skip",
       String(skip),
+      `refs/heads/${request.branch}`,
     ], undefined, {
       maxStdoutBytes: MAX_HISTORY_LIST_STDOUT_BYTES,
       maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
@@ -2410,9 +2496,12 @@ export class FileRootGitChangesService {
     request: FileRootGitHistoryCommitsRequest,
   ): Promise<FileRootGitHistoryCommitsResult> {
     try {
+      if (request.branch !== null) {
+        normalizeHistoryBranch(request.branch);
+      }
       normalizeHistoryCursor(request.cursor);
       return await runWorkspaceGitOperationWithAdmission(
-        `${request.sessionId}:${request.repositoryId}:history:list:${request.cursor ?? "0"}`,
+        `${request.sessionId}:${request.repositoryId}:history:list:${request.branch}:${request.cursor ?? "0"}`,
         this.#operationTimeoutMs,
         (signal) => this.#listHistoryCommitsRequest(request, signal),
       );

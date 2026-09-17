@@ -57,11 +57,13 @@ function createLatestSessionSummary(
 }
 
 describe("SessionLaunchSelectionService", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "新規Sessionは直近SessionがFastかつAuto-reviewでもCodex speedをStandard、ReviewerをUserから開始する"
-  // oracle = { type = "contract", ref = "accepted behavior: new Session default" }
-  // failure_mode = "新規Sessionが直近SessionのFastまたはAuto-reviewを暗黙継承する"
+  // claim = "同じproviderの新規Sessionは直近SessionのFastとAuto-reviewをCodex speedとReviewerとして継承する"
+  // oracle = { type = "contract", ref = "accepted behavior: new Session runtime selection inheritance" }
+  // fault = "Session launch selection serviceが直近SessionのcodexSpeedまたはcodexReviewerを破棄して既定値を返す"
+  // observable = "resolve()が返すSessionLaunchSelectionのcodexSpeedとcodexReviewer"
+  // observation_boundary = "public-boundary"
   // scope = "session-launch-selection"
   // lifecycle = "permanent"
   // @end-test-value
@@ -91,8 +93,8 @@ describe("SessionLaunchSelectionService", () => {
       reasoningEffort: "high",
       approvalMode: "never",
       codexSandboxMode: "danger-full-access",
-      codexSpeed: "standard",
-      codexReviewer: "user",
+      codexSpeed: "fast",
+      codexReviewer: "auto-review",
       customAgentName: "reviewer",
     });
   });

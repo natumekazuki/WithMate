@@ -15,13 +15,17 @@ import {
 } from "../../src/provider-settings-state.js";
 
 describe("provider-settings-state", () => {
-  // @test-value v1
-  // kind = "regression"
-  // claim = "test declaration at line 18 preserves its observable contract"
-  // oracle = { type = "contract", ref = "-18" }
-  // failure_mode = "line 18 violates its expected output or boundary behavior"
-  // scope = "provider-settings-state.test"
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "default AppSettings の chat layout は priority なしの canonical shape を持つ"
+  // oracle = { type = "contract", ref = "Default app settings" }
+  // fault = "削除済み priority が default settings に復活する"
+  // observable = "createDefaultAppSettings().chatLayoutPreference"
+  // observation_boundary = "public-boundary"
+  // scope = "default-chat-layout-settings"
   // lifecycle = "permanent"
+  // impact = "廃止設定が保存・IPC payload へ伝播する"
+  // distinction = "default provider settings と chat layout shape を確認する"
   // @end-test-value
   it("memory extraction threshold の default は 300000", () => {
     const settings = createDefaultAppSettings();
@@ -36,7 +40,6 @@ describe("provider-settings-state", () => {
       header: "hidden",
       actionDock: "compact",
       sidePane: "none",
-      priority: "side-pane-first",
     });
     assert.equal(settings.sessionTurnNotificationEnabled, true);
     assert.equal(settings.sessionTurnNotificationResponsePreviewEnabled, false);
@@ -186,13 +189,17 @@ describe("provider-settings-state", () => {
     assert.equal(normalizeAppSettings({}).scrollToLatestOnSend, true);
   });
 
-  // @test-value v1
-  // kind = "regression"
-  // claim = "test declaration at line 125 preserves its observable contract"
-  // oracle = { type = "contract", ref = "-125" }
-  // failure_mode = "line 125 violates its expected output or boundary behavior"
-  // scope = "provider-settings-state.test"
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "chat layout preference normalize は priority なしの canonical shape を返す"
+  // oracle = { type = "contract", ref = "AppSettings normalization" }
+  // fault = "入力の廃止済み priority が normalized settings に残る"
+  // observable = "normalizeAppSettings の chatLayoutPreference"
+  // observation_boundary = "public-boundary"
+  // scope = "normalized-chat-layout-settings"
   // lifecycle = "permanent"
+  // impact = "廃止設定が settings projection に混入する"
+  // distinction = "valid/invalid side pane の normalize と field shape を確認する"
   // @end-test-value
   it("chat layout preference は項目ごとに canonical enum へ normalize する", () => {
     assert.deepEqual(normalizeAppSettings({
@@ -200,13 +207,11 @@ describe("provider-settings-state", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "context",
-        priority: "dock-first",
       },
     }).chatLayoutPreference, {
       header: "visible",
       actionDock: "expanded",
       sidePane: "context",
-      priority: "dock-first",
     });
     assert.deepEqual(normalizeAppSettings({
       chatLayoutPreference: { header: "invalid", actionDock: false, sidePane: "left" },
@@ -214,7 +219,6 @@ describe("provider-settings-state", () => {
       header: "hidden",
       actionDock: "compact",
       sidePane: "none",
-      priority: "side-pane-first",
     });
   });
 
