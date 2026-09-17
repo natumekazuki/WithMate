@@ -312,6 +312,17 @@ test("History pagination は Load more buttonを出さず sentinel と専用scro
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Historyの追加page失敗は既存commit一覧を保持し、sentinelから同じcursorを再試行できる"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "追加pageの失敗で既存一覧を消す、再試行できない、または同じcursorを重複せず誤ったcursorで取得する"
+// observable = "commit list DOM、error message、sentinel DOM、public listFileRootGitHistoryCommits cursor request"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane pagination failure recovery"
+// lifecycle = "permanent"
+// distinction = "追加pageの失敗後に既存commitとエラーを同時に保持し、同じsentinel triggerの再試行で次pageを一度だけ反映することをDOMとpublic requestで確認する"
+// @end-test-value
 test("History 追加pageの失敗は既存一覧を維持し、sentinelから再試行できる", async () => {
   const { dom, restore } = installDom();
   const first = commit("a", "first commit");
@@ -370,6 +381,17 @@ test("History 追加pageの失敗は既存一覧を維持し、sentinelから再
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "HistoryはGit repositoryが0件の状態とrepository内のcommitが0件の状態を別のempty stateで表示する"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "repository未取得、commit 0件、sentinel表示を同じempty stateへ混同し、利用者がGit repository不在と履歴空を区別できない"
+// observable = "No Git repositories/No commitsのDOM textとsentinelの不在"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane empty states"
+// lifecycle = "permanent"
+// distinction = "repository listが空のrenderとrepository存在・commit page空のrenderを同じpaneで切り替えて、表示文言とsentinelを別々に観測する"
+// @end-test-value
 test("History はrepository 0件とcommit 0件を別のempty stateで表示する", async () => {
   const { dom, restore } = installDom();
   let root: Root | null = null;
@@ -530,6 +552,17 @@ test("History repository切り替えは古いpageを捨てて新repositoryの先
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "History repositoryの再読込開始時は旧repositoryの選択状態とcallback対象を即時に失効させ、再読込失敗を現在のpaneに反映する"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "repository再読込中も旧repositoryの選択やcallback対象を保持し、失敗した再読込後に旧repositoryを利用可能な状態として残す"
+// observable = "onRepositoryChange callback value、repository request count、History pane DOM state"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane repository reload invalidation"
+// lifecycle = "permanent"
+// distinction = "初回repository選択後にrootsRevisionを変え、再読込がpendingの間にcallbackへnullを渡して旧状態を失効させることを観測する"
+// @end-test-value
 test("History repository一覧の再読込開始時に旧Diffを即座に失効させる", async () => {
   const { dom, restore } = installDom();
   const repositoryChanges: Array<string | null> = [];
@@ -805,14 +838,16 @@ test("History branch選択は同一rootのrefreshで保持しroot変更でcurren
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "HEAD、branch、tagのref badgeが一覧とdetailの両方で種類を文字markerとaccessible labelに保持する"
+// claim = "History detailはref種別、commit metadata、changed file tree、file diffとOpen All Changesを同じpane状態で利用できる"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
-// failure_mode = "ref badgeが色だけで種類を区別する実装へ戻り、色を判別できない利用者がHEAD、branch、tagを識別できない"
-// scope = "file-root-git-history-pane"
+// fault = "detail headerのref種別やcommit metadataが欠落する、changed file treeを開けない、またはOpen All Changesが選択commitのdiff callbackへ渡らない"
+// observable = "detail header DOM、ref badge markerとaccessible label、changed file tree DOM、diff request、Open All Changes callback"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane commit detail"
 // lifecycle = "permanent"
-// distinction = "contrastの描画値ではなく、色に依存しないref種別のobservableを一覧とdetailで検証する"
+// distinction = "単一commitをdetailへ開き、headerのref/metadata、changed file、通常のOpen All Changes requestを同時に観測する"
 // @end-test-value
 test("History detail はref種別、commit metadata、changed file tree、file diffとOpen All Changesを同じ状態で開く", async () => {
   const { dom, restore } = installDom();
@@ -1097,11 +1132,13 @@ test("History Compareはentryとtoolbarから起動し、固定comparisonをdeta
   }
 });
 
-// @test-value v1
-// kind = "invariant"
-// claim = "Git History ref badgeの共有primitiveがforeground、background、borderを明示し、HEAD、branch、tagのvariantは既存theme tokenでaccentを選ぶ"
+// @test-value v2
+// kind = "contract"
+// claim = "Git History ref badgeの共有primitiveはforeground、background、borderを明示し、HEAD、branch、tagのvariantは既存theme tokenでaccentを選ぶ"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
-// failure_mode = "badgeの背景またはborderが透明なまま文字色だけを変え、通常、hover、selected row、detail headerの背景上でref labelが埋もれる"
+// fault = "badgeの背景またはborderが透明なまま文字色だけを変え、通常、hover、selected row、detail headerの背景上でref labelが埋もれる"
+// observable = "src/styles.cssのfile-history-ref-badge ruleとhead/branch/tag variant declarations"
+// observation_boundary = "implementation"
 // scope = "file-history-ref-badge-css"
 // lifecycle = "permanent"
 // distinction = "DOMでは算出できないCSSのforeground、background、border契約とvariantのtheme token利用を静的に検証する"
@@ -1121,6 +1158,17 @@ test("History ref badge CSS は共有primitiveでforeground、background、borde
   assert.match(css, /\.file-history-ref-badge--tag\s*\{\s*--file-history-ref-accent:\s*var\(--gold\);\s*\}/);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Historyは古いcommit detail結果を、Back後に選択された現在のcommitへ反映しない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "前のcommit detailの遅延結果が新しく選択したcommitのchanged file treeへ混入する"
+// observable = "changed file tree DOMに表示されるold.ts/new.ts"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane commit detail request invalidation"
+// lifecycle = "permanent"
+// distinction = "first commit detailをpendingのままBackしてsecond commitを選び、first response後もold pathが表示されずsecond responseだけが表示されることを観測する"
+// @end-test-value
 test("History は古いcommit detail結果を現在のcommitへ混入させない", async () => {
   const { dom, restore } = installDom();
   const firstCommit = commit("a", "first detail");
@@ -1192,6 +1240,17 @@ test("History は古いcommit detail結果を現在のcommitへ混入させな�
   }
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Historyは古いfile Diff結果を、Back後に選択された現在のcommitへ反映しない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "前のcommitの遅延Diff結果がBack後に選択したcommitのchanged file treeへ混入する"
+// observable = "diff result messageのDOMと現在commitのchanged file tree DOM"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane file diff request invalidation"
+// lifecycle = "permanent"
+// distinction = "first commitのfile diff callbackをpendingにしてBack後にsecond commitを開き、遅延したstale diffが表示されずsecond commit pathだけが残ることを観測する"
+// @end-test-value
 test("History は古いfile Diff結果をBack後のcommitへ混入させない", async () => {
   const { dom, restore } = installDom();
   const firstCommit = commit("a", "first diff");
