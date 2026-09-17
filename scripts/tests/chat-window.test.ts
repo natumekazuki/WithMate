@@ -1309,15 +1309,17 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryの幅0でも列とsplitterを残し、クリックで開く操作を提示する"
+// claim = "Auxiliaryは幅0でgrid trackと表示領域を閉じ、switcherと追加操作を隠し、splitterの再展開導線を残す"
 // oracle = { type = "contract", ref = "issue-710-zero-width-auxiliary" }
-// fault = "Auxiliaryを幅0にするとsplitterが消えるか開く操作として提示されず、再表示できない"
-// observable = "Auxiliaryのタイトル枠内で有効な追加button、Auxiliary splitterのaria-expanded"
+// fault = "Auxiliaryを幅0にしてもgrid trackや操作可能な表示領域が残る、switcherまたは追加buttonが表示される、またはsplitterの再展開導線が提示されない"
+// observable = "Auxiliary grid trackの0fr、Auxiliary columnのaria-hidden/inert、shell内のswitcherと追加buttonの不在、Auxiliary splitterのaria-expanded"
+// impact = "幅0でもAuxiliaryの表示や操作が残ると、Mainの全幅化とAuxiliaryの操作不可という公開UI契約に反し、誤操作可能な導線を残す"
+// distinction = "typecheck/buildやsplitter単体testでは、ChatWindow経由の0幅DOMとAuxiliary操作要素の不在を同時に確認できない"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
 // @end-test-value
-test("ChatWindow はAuxiliaryを幅0で残しsplitterの再展開導線を表示する", () => {
+test("ChatWindow はAuxiliaryを幅0で完全に閉じsplitterの再展開導線を残す", () => {
   const props = createChatWindowProps();
   const html = renderToStaticMarkup(React.createElement(ChatWindow, {
     ...props,
@@ -1335,14 +1337,17 @@ test("ChatWindow はAuxiliaryを幅0で残しsplitterの再展開導線を表示
     },
   }));
 
-  assert.match(html, /var\(--session-auxiliary-header-min-width\)/);
   const dom = new JSDOM(html);
-  const auxiliaryAddButton = dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
-  assert.ok(auxiliaryAddButton);
-  assert.ok(auxiliaryAddButton.closest(".session-switcher-current-group"));
-  assert.equal(auxiliaryAddButton.closest("[aria-hidden='true']"), null);
-  assert.equal(auxiliaryAddButton.closest("[inert]"), null);
-  assert.equal(auxiliaryAddButton.disabled, false);
+  assert.equal(html.includes("--session-auxiliary-header-min-width"), false);
+  const columns = dom.window.document.querySelector<HTMLElement>(".session-concurrent-chat-columns");
+  assert.ok(columns);
+  assert.match(columns.getAttribute("style") ?? "", /minmax\(0, 0fr\)/);
+  const auxiliaryColumn = dom.window.document.querySelector<HTMLElement>(".session-concurrent-chat-auxiliary");
+  assert.ok(auxiliaryColumn);
+  assert.equal(auxiliaryColumn.getAttribute("aria-hidden"), "true");
+  assert.equal(auxiliaryColumn.hasAttribute("inert"), true);
+  assert.equal(dom.window.document.querySelector(".concurrent-chat-session-switcher"), null);
+  assert.equal(dom.window.document.querySelector("button[aria-label='Auxiliaryを追加']"), null);
   const auxiliarySplitter = dom.window.document.querySelector<HTMLButtonElement>(
     ".concurrent-chat-splitter[aria-label='Auxiliaryを開く']",
   );

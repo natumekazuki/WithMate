@@ -1021,10 +1021,7 @@ export function SessionChatScreen({
     : contentWidth > 0 && !singleChat
       ? Math.max(columnSizes.auxiliary / contentWidth, Math.min(1 - columnSizes.main / contentWidth, auxiliaryWidthRatio))
       : auxiliaryWidthRatio;
-  const hasAuxiliaryHeader = auxiliaryHeader != null;
-  const auxiliaryColumnTemplate = auxiliaryWidthRatio <= 0 && hasAuxiliaryHeader
-    ? "var(--session-auxiliary-header-min-width)"
-    : `minmax(0, ${Math.max(0, effectiveRatio)}fr)`;
+  const hasAuxiliaryHeader = auxiliaryWidthRatio > 0 && auxiliaryHeader != null;
 
   return (
     <div
@@ -1077,7 +1074,7 @@ export function SessionChatScreen({
             <div
               ref={columnsRef}
               className={`session-concurrent-chat-columns${singleChat ? " is-single-chat" : ""}`}
-              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - effectiveRatio)}fr) var(--session-dock-splitter-size) ${auxiliaryColumnTemplate}` }}
+              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - effectiveRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0, effectiveRatio)}fr)` }}
             >
               <div className={`session-concurrent-chat-column session-concurrent-chat-main${auxiliaryWidthRatio >= 1 ? " is-zero-width" : ""}`} inert={!singleChat && auxiliaryWidthRatio >= 1} aria-hidden={!singleChat && auxiliaryWidthRatio >= 1}>{messageColumn}</div>
               {auxiliarySplitter}

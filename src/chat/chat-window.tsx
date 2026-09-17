@@ -595,7 +595,8 @@ export function ChatWindow({
           ) : null}
         </div>
       )}
-      auxiliaryHeader={concurrentChats && (concurrentChats.auxiliaryItems.length > 0 || concurrentChats.onAddAuxiliary) ? (
+      auxiliaryHeader={concurrentChats && concurrentChats.widthRatio > 0
+        && (concurrentChats.auxiliaryItems.length > 0 || concurrentChats.onAddAuxiliary) ? (
         <SessionSwitcher
           ariaLabel="Auxiliary会話切り替え"
           className="concurrent-chat-session-switcher"
