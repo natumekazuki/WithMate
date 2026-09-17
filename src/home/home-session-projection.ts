@@ -25,7 +25,6 @@ export type HomeCompanionMonitorEntry = {
   state: HomeSessionState;
   mainState: HomeSessionState;
   auxiliarySessions: AuxiliarySessionSummary[];
-  groupLabel: string;
 };
 
 export type HomeMonitorEntry = HomeAgentMonitorEntry | HomeCompanionMonitorEntry;
@@ -131,12 +130,6 @@ export function getHomeCompanionSessionState(
   };
 }
 
-export function buildCompanionGroupLabel(session: Pick<CompanionSessionSummary, "groupId" | "repoRoot">): string {
-  const normalizedRepoRoot = session.repoRoot.replace(/[\\/]+$/, "");
-  const pathParts = normalizedRepoRoot.split(/[\\/]/).filter(Boolean);
-  return pathParts.at(-1) || session.groupId;
-}
-
 function normalizePathKey(value: string): string {
   return value.replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
 }
@@ -219,7 +212,6 @@ export function buildHomeCompanionMonitorEntries(
         state: getHomeCompanionSessionState(session, auxiliarySessions),
         mainState: getHomeCompanionSessionState(session),
         auxiliarySessions,
-        groupLabel: buildCompanionGroupLabel(session),
       };
     });
 }
@@ -241,11 +233,11 @@ export function buildHomeSessionProjection(
   sessionSearchText: string,
   companionSessions: readonly CompanionSessionSummary[] = [],
   openCompanionReviewWindowIds: readonly string[] = [],
-  activeAuxiliarySessions: readonly AuxiliarySessionSummary[] = [],
+  auxiliarySessionSummaries: readonly AuxiliarySessionSummary[] = [],
 ): HomeSessionProjection {
   const normalizedSessionSearch = sessionSearchText.trim().toLocaleLowerCase();
   const auxiliarySessionsByParentId = new Map<string, AuxiliarySessionSummary[]>();
-  for (const auxiliary of activeAuxiliarySessions) {
+  for (const auxiliary of auxiliarySessionSummaries) {
     const siblings = auxiliarySessionsByParentId.get(auxiliary.parentSessionId) ?? [];
     siblings.push(auxiliary);
     auxiliarySessionsByParentId.set(auxiliary.parentSessionId, siblings);

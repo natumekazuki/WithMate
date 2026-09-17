@@ -106,8 +106,8 @@ import type {
   SessionMonitorEntryKind,
 } from "./withmate-window-types.js";
 import {
-  createHomeActiveAuxiliarySessionRefresher,
-  resolveHomeActiveAuxiliarySessionsState,
+  createHomeAuxiliarySessionRefresher,
+  resolveHomeAuxiliarySessionSummariesState,
 } from "./home/home-active-auxiliary-refresh.js";
 
 type HomeRightPaneView = "monitor" | "characters";
@@ -178,7 +178,7 @@ export default function HomeApp() {
   );
   const sessions = sessionSummariesState.summaries;
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
-  const [activeAuxiliarySessions, setActiveAuxiliarySessions] = useState<AuxiliarySessionSummary[]>([]);
+  const [auxiliarySessionSummaries, setAuxiliarySessionSummaries] = useState<AuxiliarySessionSummary[]>([]);
   const [auxiliaryDataState, setAuxiliaryDataState] = useState<HomeMonitorAuxiliaryDataState>("loading");
   const [openSessionWindowIdsState, setOpenSessionWindowIdsState] = useState<OpenSessionWindowIdsState>({
     status: "loading",
@@ -192,6 +192,7 @@ export default function HomeApp() {
   const [sessionWindowRestorePending, setSessionWindowRestorePending] = useState(false);
   const [sessionWindowRestoreFeedback, setSessionWindowRestoreFeedback] = useState("");
   const [sessionMonitorFeedback, setSessionMonitorFeedback] = useState("");
+  const [auxiliaryLoadFeedback, setAuxiliaryLoadFeedback] = useState("");
   const pendingSessionWindowRestoreIds = useMemo(
     () => openSessionWindowIdsState.status === "loaded"
       ? selectPendingSessionWindowRestoreIds(sessionWindowRestoreIds, openSessionWindowIds)
@@ -671,22 +672,27 @@ export default function HomeApp() {
   useEffect(() => {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
-      setActiveAuxiliarySessions([]);
+      setAuxiliarySessionSummaries([]);
       setAuxiliaryDataState("ready");
       return;
     }
 
-    const refresher = createHomeActiveAuxiliarySessionRefresher({
-      fetchActiveAuxiliarySessions: () => withmateApi.listOpenAuxiliarySessionSummaries(),
-      setActiveAuxiliarySessions: (sessions) => {
-        setActiveAuxiliarySessions((current) =>
-          resolveHomeActiveAuxiliarySessionsState(current, sessions),
+    const refresher = createHomeAuxiliarySessionRefresher({
+      fetchAuxiliarySessionSummaries: () => withmateApi.listOpenAuxiliarySessionSummaries(),
+      setAuxiliarySessionSummaries: (sessions) => {
+        setAuxiliarySessionSummaries((current) =>
+          resolveHomeAuxiliarySessionSummariesState(current, sessions),
         );
       },
-      onLoadState: setAuxiliaryDataState,
+      onLoadState: (state) => {
+        setAuxiliaryDataState(state);
+        if (state === "ready") {
+          setAuxiliaryLoadFeedback("");
+        }
+      },
       onError: (error) => {
         console.error(error);
-        setSessionMonitorFeedback(error instanceof Error ? error.message : "Auxiliaryの読み込みに失敗したよ。");
+        setAuxiliaryLoadFeedback(error instanceof Error ? error.message : "Auxiliaryの読み込みに失敗したよ。");
       },
     });
 
@@ -712,10 +718,10 @@ export default function HomeApp() {
       sessionSearchText,
       companionSessions,
       openCompanionReviewWindowIds,
-      activeAuxiliarySessions,
+      auxiliarySessionSummaries,
     ),
     [
-      activeAuxiliarySessions,
+      auxiliarySessionSummaries,
       companionSessions,
       openCompanionReviewWindowIds,
       openSessionWindowIds,
@@ -934,6 +940,9 @@ export default function HomeApp() {
     }
   };
 
+  const monitorFeedback = sessionMonitorFeedback
+    || (auxiliaryDataState === "loading" ? "Auxiliaryを確認中…" : auxiliaryLoadFeedback);
+
   const { settingsContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
     settingsContent: buildHomeSettingsContentProps(baseSettingsContentProps),
     mateSetupContent: buildHomeMateSetupContentProps({
@@ -954,7 +963,7 @@ export default function HomeApp() {
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
       auxiliaryDataState,
-      feedback: sessionMonitorFeedback,
+      feedback: monitorFeedback,
       onOpenSession: openMonitorSession,
       onOpenCompanionReview: openMonitorCompanionReview,
       onShowContextMenu: showSessionMonitorContextMenu,
@@ -986,7 +995,7 @@ export default function HomeApp() {
       runningMonitorEntries,
       nonRunningMonitorEntries,
       auxiliaryDataState,
-      sessionMonitorFeedback,
+      sessionMonitorFeedback: monitorFeedback,
       characterEntries,
       characterListFeedback,
       monitorWindowIcon: renderHomeMonitorWindowIcon(),

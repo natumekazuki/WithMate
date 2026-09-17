@@ -1711,6 +1711,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               auxiliary: {
                 listAuxiliarySessions: (parentSessionId) =>
                   requireAuxiliarySessionService().listAuxiliarySessions(parentSessionId),
+                listAuxiliarySessionSummaries: (parentSessionIds) =>
+                  requireAuxiliarySessionService().listAuxiliarySessionSummaries(parentSessionIds),
                 listOpenActiveAuxiliarySessionSummaries: () =>
                   requireAuxiliarySessionService().listActiveAuxiliarySessionSummaries([
                     ...listOpenSessionWindowIds(),
@@ -1721,9 +1723,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     ...listOpenSessionWindowIds(),
                     ...listOpenCompanionReviewWindowIds(),
                   ]));
-                  return parentSessionIds.flatMap((parentSessionId) =>
-                    requireAuxiliarySessionService().listAuxiliarySessions(parentSessionId),
-                  );
+                  return requireAuxiliarySessionService().listAuxiliarySessionSummaries(parentSessionIds);
                 },
                 getActiveAuxiliarySession: (parentSessionId) =>
                   requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId),

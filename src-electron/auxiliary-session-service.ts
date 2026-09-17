@@ -135,6 +135,10 @@ export class AuxiliarySessionService {
     return this.deps.getStorage().listAuxiliarySessions(parentSessionId);
   }
 
+  listAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[] {
+    return this.deps.getStorage().listAuxiliarySessionSummaries(parentSessionIds);
+  }
+
   listAllAuxiliarySessions(): AuxiliarySession[] {
     return this.deps.getStorage().listAllAuxiliarySessions();
   }

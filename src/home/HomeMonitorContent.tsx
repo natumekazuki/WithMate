@@ -25,7 +25,7 @@ export type HomeMonitorContentProps = {
   ) => void;
 };
 
-type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading";
+type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading" | "closed";
 
 function getEntryKey(entry: HomeMonitorEntry): string {
   return `${entry.kind}:${entry.session.id}`;
@@ -41,7 +41,10 @@ function getAuxiliaryStatus(summary: HomeMonitorEntry["auxiliarySessions"][numbe
   if (summary.runState === "error") {
     return { kind: "error", label: "エラー" };
   }
-  return { kind: "neutral", label: summary.status === "closed" ? "終了" : "待機" };
+  if (summary.status === "closed") {
+    return { kind: "closed", label: "終了" };
+  }
+  return { kind: "neutral", label: "待機" };
 }
 
 function MonitorStatusIcon({
@@ -61,15 +64,13 @@ function MonitorStatusIcon({
   );
 }
 
-function renderAuxiliaryStatusIcons(
-  entry: HomeMonitorEntry,
-  auxiliaryDataState: HomeMonitorAuxiliaryDataState,
-) {
+function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
   const summaries = entry.auxiliarySessions;
   const groups = [
     { kind: "running" as const, label: "実行中" },
     { kind: "error" as const, label: "エラー" },
     { kind: "neutral" as const, label: "待機" },
+    { kind: "closed" as const, label: "終了" },
   ].map((group) => ({
     ...group,
     count: summaries.filter((summary) => getAuxiliaryStatus(summary).kind === group.kind).length,
@@ -86,12 +87,6 @@ function renderAuxiliaryStatusIcons(
           count={group.count}
         />
       ))}
-      {auxiliaryDataState !== "ready" ? (
-        <MonitorStatusIcon
-          kind={auxiliaryDataState === "loading" ? "loading" : "error"}
-          label={auxiliaryDataState === "loading" ? "Auxiliaryを確認中" : "Auxiliaryの読み込みに失敗"}
-        />
-      ) : null}
     </span>
   );
 }
@@ -192,7 +187,7 @@ export function HomeMonitorContent({
             onClick={openParent}
             onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
             aria-haspopup={entry.kind === "agent" || entry.isWindowOpen ? "menu" : undefined}
-            aria-label={`Sessionを開く: ${title}`}
+            aria-label={`${entry.kind === "companion" ? "Companion Reviewを開く" : "Sessionを開く"}: ${title}`}
           >
             <CharacterAvatar
               character={{ name: entry.session.character, iconPath: entry.session.characterIconPath }}
@@ -207,10 +202,10 @@ export function HomeMonitorContent({
             <span className="home-monitor-status-label">Main</span>
             <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
           </span>
-          {auxiliarySessions.length > 0 || auxiliaryDataState !== "ready" ? (
+          {auxiliarySessions.length > 0 ? (
             <>
               <span className="home-monitor-summary-separator" aria-hidden="true" />
-              {renderAuxiliaryStatusIcons(entry, auxiliaryDataState)}
+              {renderAuxiliaryStatusIcons(entry)}
             </>
           ) : null}
         </div>
@@ -250,11 +245,19 @@ export function HomeMonitorContent({
     );
   });
 
+  const statusFeedback = feedback || (
+    auxiliaryDataState === "loading"
+      ? "Auxiliaryを確認中…"
+      : auxiliaryDataState === "error"
+        ? "Auxiliaryの読み込みに失敗したよ。"
+        : ""
+  );
+
   return (
     <div className="home-monitor-body">
-      {feedback ? (
+      {statusFeedback ? (
         <p className="settings-feedback" role="status" aria-live="polite">
-          {feedback}
+          {statusFeedback}
         </p>
       ) : null}
       <section className="home-monitor-section" aria-labelledby="home-monitor-running">

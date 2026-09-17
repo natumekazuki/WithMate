@@ -156,7 +156,7 @@ export type MainIpcWindowDepsArgs = {
   resolveHomeWindow(): MaybeWindow;
   resolveSessionWindow(sessionId: string): MaybeWindow;
   resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
-  openSessionWindow(sessionId: string): Promise<BrowserWindow>;
+  openSessionWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow>;
   showSessionMonitorContextMenu(
     event: IpcMainInvokeEvent,
     request: SessionMonitorContextMenuRequest,
@@ -175,7 +175,7 @@ export type MainIpcWindowDepsArgs = {
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
   getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFilePreviewResourceRequest | null;
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
-  openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
+  openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow>;
   openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;
@@ -362,6 +362,7 @@ export type MainIpcCompanionDepsArgs = {
 
 export type MainIpcAuxiliaryDepsArgs = {
   listAuxiliarySessions(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
+  listAuxiliarySessionSummaries(parentSessionIds: readonly string[]): Awaitable<AuxiliarySessionSummary[]>;
   listOpenActiveAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
   listOpenAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
@@ -434,6 +435,7 @@ function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
 
   return {
     listAuxiliarySessions: () => [],
+    listAuxiliarySessionSummaries: () => [],
     listOpenActiveAuxiliarySessionSummaries: () => [],
     listOpenAuxiliarySessionSummaries: () => [],
     getActiveAuxiliarySession: () => null,
@@ -456,8 +458,8 @@ export function createMainIpcRegistrationDeps(
     resolveHomeWindow: args.window.resolveHomeWindow,
     resolveSessionWindow: args.window.resolveSessionWindow,
     resolveCompanionReviewWindow: args.window.resolveCompanionReviewWindow,
-    openSessionWindow: async (sessionId) => {
-      await args.window.openSessionWindow(sessionId);
+    openSessionWindow: async (sessionId, auxiliarySessionId) => {
+      await args.window.openSessionWindow(sessionId, auxiliarySessionId);
     },
     showSessionMonitorContextMenu: args.window.showSessionMonitorContextMenu,
     getSessionWindowRestoreSet: () => args.window.getSessionWindowRestoreSet(),
@@ -486,8 +488,8 @@ export function createMainIpcRegistrationDeps(
     isFilePreviewWindow: args.window.isFilePreviewWindow,
     getFilePreviewWindowResource: args.window.getFilePreviewWindowResource,
     isFilePreviewTokenWindow: args.window.isFilePreviewTokenWindow,
-    openCompanionReviewWindow: async (sessionId) => {
-      await args.window.openCompanionReviewWindow(sessionId);
+    openCompanionReviewWindow: async (sessionId, auxiliarySessionId) => {
+      await args.window.openCompanionReviewWindow(sessionId, auxiliarySessionId);
     },
     openCompanionMergeWindow: async (sessionId) => {
       await args.window.openCompanionMergeWindow(sessionId);

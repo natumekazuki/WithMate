@@ -993,10 +993,10 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorの親カードはavatarとtitleを1行目、Mainの状態iconを2行目へ表示し、Auxiliary情報を常設しない"
+  // claim = "Home Monitorの親カードはavatarとtitleを1行目、Mainを独立した状態iconとして2行目へ表示し、Auxiliaryが存在する親だけ集約を追加する"
   // oracle = { type = "contract", ref = "issue-722 monitor two-row aggregate rendering" }
-  // fault = "workspaceや種別badgeを常設する、Main/Auxiliaryの状態表示を混同する、またはavatar/titleが欠落する"
-  // observable = "HomeMonitorContentのrender済みHTMLにおける2行構造、Main status icon、avatar、title、Auxiliary表示の不在"
+  // fault = "workspaceを常設する、Main/Auxiliaryの状態表示を混同する、Auxiliaryなしの親へ集約を出す、またはavatar/titleが欠落する"
+  // observable = "親cardごとの2行構造、Main/Auxiliary status cluster、状態icon、avatar、title、未展開時のAuxiliary detail rowの不在"
   // observation_boundary = "component-behavior"
   // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
@@ -1007,8 +1007,14 @@ describe("HomeMonitorContent", () => {
         kind: "agent",
         session: createMonitorSession("session-1", "Agent task"),
         state: { kind: "running", label: "実行中" },
-        mainState: { kind: "running", label: "実行中" },
-        auxiliarySessions: [createMonitorAuxiliary("aux-1", { runState: "error", preview: "Auxiliary error" })],
+        mainState: { kind: "neutral", label: "待機" },
+        auxiliarySessions: [
+          createMonitorAuxiliary("aux-1", { runState: "error", preview: "Auxiliary error" }),
+          createMonitorAuxiliary("aux-closed", {
+            status: "closed",
+            preview: "Closed auxiliary",
+          }),
+        ],
       },
       {
         kind: "agent",
@@ -1021,10 +1027,9 @@ describe("HomeMonitorContent", () => {
         kind: "companion",
         session: createMonitorCompanion("companion-1", "Companion task"),
         isWindowOpen: true,
-        state: { kind: "neutral", label: "待機" },
-        mainState: { kind: "neutral", label: "待機" },
+        state: { kind: "interrupted", label: "中断" },
+        mainState: { kind: "interrupted", label: "中断" },
         auxiliarySessions: [],
-        groupLabel: "demo",
       },
       {
         kind: "companion",
@@ -1033,7 +1038,6 @@ describe("HomeMonitorContent", () => {
         state: { kind: "running", label: "実行中" },
         mainState: { kind: "running", label: "実行中" },
         auxiliarySessions: [],
-        groupLabel: "demo",
       },
     ];
     const html = renderToStaticMarkup(
@@ -1047,30 +1051,94 @@ describe("HomeMonitorContent", () => {
     );
     const document = new JSDOM(html).window.document;
     const cards = Array.from(document.querySelectorAll(".home-monitor-card"));
+    const expectedMainStates = ["neutral", "running", "interrupted", "running"] as const;
 
     assert.ok(html.includes("Agent task"));
     assert.ok(html.includes("Auxiliary task"));
     assert.ok(html.includes("Companion task"));
     assert.ok(html.includes("Companion Auxiliary task"));
     assert.equal(html.includes("workspace"), false);
-    assert.equal(html.includes("demo"), false);
     assert.equal(cards.length, 4);
-    for (const card of cards) {
+    for (const [index, card] of cards.entries()) {
+      const parentRow = card.querySelector(".home-monitor-parent-row");
+      const summaryRow = card.querySelector(".home-monitor-summary-row");
       assert.equal(card.querySelectorAll(".home-monitor-parent-row").length, 1);
       assert.equal(card.querySelectorAll(".home-monitor-summary-row").length, 1);
       assert.equal(card.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
+      assert.equal(card.querySelectorAll(".home-monitor-parent-title").length, 1);
+      assert.equal(card.querySelectorAll(".home-monitor-avatar").length, 1);
+      assert.equal(parentRow?.querySelector(".home-monitor-avatar")?.classList.contains("home-monitor-avatar"), true);
+      assert.equal(parentRow?.querySelector(".home-monitor-parent-title")?.textContent, entries[index]?.session.taskTitle);
+      assert.equal(parentRow?.querySelector(".home-monitor-status-cluster"), null);
+      assert.equal(summaryRow?.querySelector(".home-monitor-avatar"), null);
+      assert.equal(summaryRow?.querySelector(".home-monitor-parent-title"), null);
+      assert.equal(summaryRow?.querySelectorAll(".home-monitor-status-cluster").length, index === 0 ? 2 : 1);
+      assert.equal(
+        summaryRow?.querySelectorAll(`.home-monitor-status-icon.${expectedMainStates[index]}`).length,
+        1,
+      );
     }
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-cluster").length, 2);
-    assert.ok(cards[0]?.querySelector(".home-monitor-auxiliary-status"));
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-auxiliary-status").length, 1);
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length, 1);
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.error").length, 1);
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.closed").length, 1);
+    assert.equal(cards[1]?.querySelectorAll(".home-monitor-status-cluster").length, 1);
+    assert.equal(cards[1]?.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
     assert.equal(html.match(/>Main<\/span>/g)?.length, 4);
     assert.equal(html.match(/>Aux<\/span>/g)?.length, 1);
-    assert.equal(html.match(/class="home-monitor-status-icon running"/g)?.length, 3);
+    assert.equal(html.match(/class="home-monitor-status-icon running"/g)?.length, 2);
     assert.equal(html.match(/class="home-monitor-status-icon neutral"/g)?.length, 1);
+    assert.equal(html.match(/class="home-monitor-status-icon interrupted"/g)?.length, 1);
     assert.equal(html.match(/class="home-monitor-status-icon error"/g)?.length, 1);
-    assert.equal(html.match(/aria-label="Main 実行中"/g)?.length, 3);
-    assert.ok(html.includes('aria-label="Main 待機"'));
+    assert.equal(html.match(/class="home-monitor-status-icon closed"/g)?.length, 1);
+    assert.equal(html.match(/aria-label="Main 実行中"/g)?.length, 2);
+    assert.equal(html.match(/aria-label="Main 待機"/g)?.length, 1);
+    assert.ok(html.includes('aria-label="Main 中断"'));
+    assert.ok(html.includes('aria-label="Auxiliary 終了"'));
+    assert.ok(html.includes('aria-label="Companion Reviewを開く: Companion task"'));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 4);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 4);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Auxiliary summaryが未確定でもAuxiliaryなしの親カードへ誤った集約を表示せず、loading/errorをMonitor feedbackで知らせる"
+  // oracle = { type = "contract", ref = "issue-722 auxiliary summary loading feedback" }
+  // fault = "loading/errorをAuxiliary存在として各親カードへ重複表示するか、未確定状態を0件・待機として隠す、またはfeedbackのaccessible statusを欠落させる"
+  // observable = "loading/error各状態でのAuxiliary status clusterの不在とrole=status feedbackの文言"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent auxiliary data state"
+  // lifecycle = "permanent"
+  // impact = "Auxiliaryの有無とsummary取得状態を混同させず、復旧可能な状態を利用者へ伝える"
+  // @end-test-value
+  it("Auxiliary summary未確定時は親カードへAuxiliaryを作らずMonitor feedbackを表示する", () => {
+    const entries = [{
+      kind: "agent" as const,
+      session: createMonitorSession("loading-session", "Loading task"),
+      state: { kind: "neutral" as const, label: "待機" },
+      mainState: { kind: "neutral" as const, label: "待機" },
+      auxiliarySessions: [],
+    }];
+    for (const [auxiliaryDataState, expectedFeedback] of [
+      ["loading", "Auxiliaryを確認中…"],
+      ["error", "Auxiliaryの読み込みに失敗したよ。"],
+    ] as const) {
+      const html = renderToStaticMarkup(
+        <HomeMonitorContent
+          runningEntries={[]}
+          nonRunningEntries={entries}
+          auxiliaryDataState={auxiliaryDataState}
+          onOpenSession={noOp}
+          onOpenCompanionReview={noOp}
+          onShowContextMenu={noOp}
+        />,
+      );
+      const document = new JSDOM(html).window.document;
+
+      assert.equal(document.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
+      assert.equal(document.querySelector('[role="status"]')?.textContent, expectedFeedback);
+    }
   });
 
   // @test-value v2
@@ -1152,7 +1220,6 @@ describe("HomeMonitorContent", () => {
           preview: "Companion auxiliary",
         }),
       ],
-      groupLabel: "demo",
     };
 
     Object.defineProperties(globalThis, {
@@ -1235,6 +1302,15 @@ describe("HomeMonitorContent", () => {
       assert.deepEqual(openedCompanions, [
         { sessionId: "companion-expand", auxiliarySessionId: "aux-companion" },
       ]);
+      assert.equal(
+        parentButtons[2]?.getAttribute("aria-label"),
+        "Companion Reviewを開く: Companion expandable task",
+      );
+      await act(async () => parentButtons[2]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      assert.deepEqual(openedCompanions, [
+        { sessionId: "companion-expand", auxiliarySessionId: "aux-companion" },
+        { sessionId: "companion-expand", auxiliarySessionId: undefined },
+      ]);
     } finally {
       await act(async () => root.unmount());
       dom.window.close();
@@ -1307,7 +1383,6 @@ describe("HomeMonitorContent", () => {
       state: { kind: "neutral", label: "待機" },
       mainState: { kind: "neutral", label: "待機" },
       auxiliarySessions: [],
-      groupLabel: "context menu",
     } as HomeMonitorEntry;
     const closedCompanionEntry: HomeMonitorEntry = {
       kind: "companion",
@@ -1322,7 +1397,6 @@ describe("HomeMonitorContent", () => {
       state: { kind: "neutral", label: "待機" },
       mainState: { kind: "neutral", label: "待機" },
       auxiliarySessions: [],
-      groupLabel: "context menu",
     } as HomeMonitorEntry;
 
     Object.defineProperties(globalThis, {
