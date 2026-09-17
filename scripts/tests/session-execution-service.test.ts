@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 
 import {
   SESSION_AUTHORITY_MAPPING_REVISION,
+  SessionAuthorityError,
   type MutationAuthorityProof,
 } from "../../src/session-authority.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
@@ -24,6 +25,7 @@ import {
   SessionExecutionStorageV6,
 } from "../../src-electron/session-execution-storage-v6.js";
 import { ResourceBudgetError, ResourceBudgetStorage } from "../../src-electron/resource-budget-storage.js";
+import { backfillBaselineSessionAuthority, revokeSessionAuthorityGrant } from "../../src-electron/session-authority-storage.js";
 
 const CREATED_AT = "2026-08-10T00:00:00.000Z";
 
@@ -71,6 +73,11 @@ async function createFixture(options: {
     hasDurableIntent: boolean;
   }) => void;
   prepareBudgetAdmission?: (sessionId: string) => Promise<void> | void;
+  validateQueuedAdmission?: (input: {
+    execution: import("../../src/session-execution.js").SessionExecutionStorageRecord;
+    proof: MutationAuthorityProof;
+  }) => void;
+  proofFactory?: (operation: "turn.run" | "turn.enqueue" | "turn.cancel", sessionId: string) => MutationAuthorityProof;
 } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-execution-service-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
@@ -130,13 +137,13 @@ async function createFixture(options: {
   let remainingAdmissionFailures = options.admissionFailures ?? 0;
   let remainingExhaustionWriteFailures = options.exhaustionWriteFailures ?? 0;
   const admitNextQueued = storage.admitNextQueued.bind(storage);
-  storage.admitNextQueued = (sessionId, admittedAt) => {
+  storage.admitNextQueued = (sessionId, admittedAt, validateAdmission) => {
     admissionAttempts += 1;
     if (remainingAdmissionFailures > 0) {
       remainingAdmissionFailures -= 1;
       throw new Error("transient admission failure");
     }
-    return admitNextQueued(sessionId, admittedAt);
+    return admitNextQueued(sessionId, admittedAt, validateAdmission);
   };
   const failNextQueued = storage.failNextQueued.bind(storage);
   storage.failNextQueued = (sessionId, failedAt, expiresAt) => {
@@ -161,6 +168,7 @@ async function createFixture(options: {
       return options.normalizeRequest?.(request) ?? request;
     },
     prepareBudgetAdmission: options.prepareBudgetAdmission,
+    validateQueuedAdmission: options.validateQueuedAdmission,
     dispatchTurn(sessionId, executionId) {
       activeSessions.add(sessionId);
       dispatchEvents.push({ executionId, persistedState: storage.get(executionId)?.state });
@@ -206,7 +214,7 @@ async function createFixture(options: {
       if (property === "run" || property === "enqueue" || property === "cancel") {
         return (input: Parameters<SessionExecutionService[typeof property]>[0]) => target[property]({
           ...input,
-          proof: trustedExecutionProof(
+          proof: (options.proofFactory ?? trustedExecutionProof)(
             property === "cancel" ? "turn.cancel" : property === "run" ? "turn.run" : "turn.enqueue",
             input.sessionId,
           ),
@@ -359,6 +367,127 @@ describe("SessionExecutionService", () => {
       assert.equal(fixture.storage.get(queued.id)?.errorCode, "QUEUE_ADMISSION_FAILURE");
       assert.equal(fixture.storage.get(queued.id)?.reason, "queue_admission_exhausted");
       assert.equal(fixture.dispatchEvents.length, 0);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "queued executionのadmission validator拒否はdispatchせずterminal failureへ収束する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Revoke-と実行中operation" }
+  // fault = "admission validatorの拒否を無視してqueued executionをdispatchする"
+  // observable = "同一executionのfailed state、admission callback回数、dispatch回数、admission前のbudget reserved"
+  // observation_boundary = "component-behavior"
+  // scope = "session-execution-queued-authority-revalidation"
+  // lifecycle = "permanent"
+  // distinction = "enqueue後のqueued admission callback拒否を明示的failureへ収束させる"
+  // @end-test-value
+  it("queued admissionのauthority再検証拒否はdispatchせずfailureへ収束する", async () => {
+    let validationCalls = 0;
+    const fixture = await createFixture({
+      queueRetryDelayMs: 1,
+      validateQueuedAdmission() {
+        validationCalls += 1;
+        throw new Error("saved grant was revoked");
+      },
+    });
+    try {
+      const queued = await fixture.service.enqueue(createInput(104));
+      await waitFor(() => fixture.storage.get(queued.id)?.state === "failed");
+      const failed = fixture.storage.get(queued.id);
+      assert.equal(failed?.errorCode, "QUEUE_ADMISSION_FAILURE");
+      assert.equal(failed?.reason, "queue_admission_exhausted");
+      assert.ok(validationCalls >= 1);
+      assert.equal(fixture.dispatchEvents.length, 0);
+      const budget = new ResourceBudgetStorage(fixture.dbPath);
+      try {
+        assert.equal(budget.get("session-1").dimensions.concurrentTurns.reserved, 0);
+      } finally {
+        budget.close();
+      }
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "保存済みgrant proofを持つqueued executionがadmission時のgrant再検証に失敗するとdispatchされない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Revoke-と実行中operation" }
+  // fault = "失効後の保存済みgrant revisionをadmissionが再検証せずdispatchする"
+  // observable = "execution failed、dispatchなし、budget reserved=0"
+  // observation_boundary = "component-behavior"
+  // scope = "session-execution-grant-revoke-admission"
+  // lifecycle = "permanent"
+  // distinction = "canonical revoke経路は使用するが、admission proof自体はtest fixtureで構成し、executionの失効grant再検証結果を観測する"
+  // @end-test-value
+  it("revoke済みgrantのqueued executionをadmissionしない", async () => {
+    const fixture = await createFixture({
+      queueRetryDelayMs: 1,
+      proofFactory: (operation, sessionId) => {
+        const bootstrapDb = new DatabaseSync(fixture.dbPath);
+        try {
+          backfillBaselineSessionAuthority(bootstrapDb, CREATED_AT);
+          const grant = bootstrapDb.prepare(`
+            SELECT grant_id, revision
+            FROM session_authority_grants_v6
+            WHERE grantee_session_id = ? AND actions_json LIKE ? AND revoked_at IS NULL
+            ORDER BY grant_id
+            LIMIT 1
+          `).get(sessionId, `%${operation}%`) as { grant_id: string; revision: number } | undefined;
+          assert.ok(grant);
+          bootstrapDb.prepare("UPDATE session_authority_grants_v6 SET effective_at = ? WHERE grant_id = ?")
+            .run(CREATED_AT, grant.grant_id);
+          return {
+            ...trustedExecutionProof(operation, sessionId),
+            principal: {
+              kind: "agent",
+              agent: "session-runtime",
+              actorSessionId: sessionId,
+              runtimeGeneration: "generation-1",
+            },
+            providerId: "codex",
+            grantId: grant.grant_id,
+            grantRevision: grant.revision,
+          };
+        } finally {
+          bootstrapDb.close();
+        }
+      },
+    });
+    try {
+      const queued = await fixture.service.enqueue(createInput(105));
+      const db = new DatabaseSync(fixture.dbPath);
+      try {
+        const grant = db.prepare(`
+          SELECT grant_id, revision
+          FROM session_authority_grants_v6
+          WHERE grantee_session_id = 'session-1'
+            AND actions_json = '["turn.enqueue"]'
+            AND revoked_at IS NULL
+          LIMIT 1
+        `).get() as { grant_id: string; revision: number } | undefined;
+        assert.ok(grant);
+        revokeSessionAuthorityGrant(db, {
+          grantId: grant.grant_id,
+          expectedRevision: grant.revision,
+          principal: { kind: "system", service: "execution-revoke-test" },
+          revokedAt: "2026-08-10T00:00:01.000Z",
+        });
+      } finally {
+        db.close();
+      }
+      await waitFor(() => fixture.storage.get(queued.id)?.state === "failed");
+      assert.equal(fixture.dispatchEvents.length, 0);
+      const budget = new ResourceBudgetStorage(fixture.dbPath);
+      try {
+        assert.equal(budget.get("session-1").dimensions.concurrentTurns.reserved, 0);
+      } finally {
+        budget.close();
+      }
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

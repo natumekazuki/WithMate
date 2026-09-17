@@ -4,6 +4,7 @@ import { SessionLifecycleRecoveryError, type SessionLifecycleService } from "./s
 import type { SessionRuntimeConfigureInput, SessionRuntimeMoveInput, SessionRuntimeCloneInput, SessionRuntimeRestoreInput, SessionRuntimeArchiveInput, SessionRuntimeDeleteInput } from "../src/session-external-runtime-contract.js";
 import { SessionAuthorityError, SESSION_AUTHORITY_MAPPING_REVISION, SESSION_AUTHORITY_OPERATION_DEFINITIONS, type MutationAdmissionProof, type MutationAuthorityProof } from "../src/session-authority.js";
 import type { SessionAuthorityService } from "./session-authority-service.js";
+import { SESSION_GRANT_CONTRACT_REVISION, type SessionGrantCreateInput, type SessionGrantGetInput, type SessionGrantListInput, type SessionGrantRevokeInput } from "../src/session-grant.js";
 import { SessionResourceRevisionConflictError } from "./resource-history-schema.js";
 import {
   RESOURCE_BUDGET_CONTRACT_REVISION,
@@ -201,7 +202,7 @@ import { DELEGATION_MAX_ITEMS } from "../src/delegation.js";
 export type SessionExternalApplicationServiceDeps = {
   delegationStorage?: DelegationStorage;
   lifecycleService?: Pick<SessionLifecycleService, "configure" | "move" | "clone" | "restore" | "archive" | "delete" | "deleteManifest" | "moveManifest">;
-  authorityService: Pick<SessionAuthorityService, "authorize" | "authorizeSessionAct" | "canSessionAct">;
+  authorityService: Pick<SessionAuthorityService, "authorize" | "authorizeSessionAct" | "canSessionAct"> & Partial<Pick<SessionAuthorityService, "grantCreate" | "grantGet" | "grantList" | "grantRevoke">>;
   executionService: Pick<
     SessionExecutionService,
     "beginShutdown" | "run" | "enqueue" | "get" | "listPage" | "cancel" | "waitForTerminal" | "resolveReplay"
@@ -382,9 +383,14 @@ export class SessionExternalApplicationService {
           "SESSION_BINDING_REQUIRED",
         );
       }
-      const authorized = this.deps.authorityService.authorize(agentRuntimeBinding, request.operation, request.input);
-      const additionalProofs = this.authorizeWorkItemAdditionalProofs(request.operation, request.input, agentRuntimeBinding);
-      const result = await this.executeValidated(request.operation, authorized.input, agentRuntimeBinding, authorized.proof, additionalProofs, compensation);
+      let result: SessionRuntimeResultByOperation[SessionRuntimeOperation];
+      if (request.operation.startsWith("grant.")) {
+        result = this.executeGrant(request.operation, request.input, agentRuntimeBinding);
+      } else {
+        const authorized = this.deps.authorityService.authorize(agentRuntimeBinding, request.operation, request.input);
+        const additionalProofs = this.authorizeWorkItemAdditionalProofs(request.operation, request.input, agentRuntimeBinding);
+        result = await this.executeValidated(request.operation, authorized.input, agentRuntimeBinding, authorized.proof, additionalProofs, compensation);
+      }
       this.invalidateWorkItemMutation(request.operation, agentRuntimeBinding.actorSessionId);
       const response = createSessionRuntimeResult(request.operation, result);
       assertApplicationResponseSize(request.operation, result, response);
@@ -392,6 +398,15 @@ export class SessionExternalApplicationService {
     } catch (error) {
       return mapApplicationError(error, operation, input);
     }
+  }
+
+  private executeGrant(operation: SessionRuntimeOperation, input: unknown, binding: ResolvedAgentRuntimeBinding): SessionRuntimeResultByOperation[SessionRuntimeOperation] {
+    const owner = this.deps.authorityService;
+    if (operation === "grant.create" && owner.grantCreate) return owner.grantCreate(binding, input as SessionGrantCreateInput);
+    if (operation === "grant.get" && owner.grantGet) return owner.grantGet(binding, input as SessionGrantGetInput);
+    if (operation === "grant.list" && owner.grantList) return owner.grantList(binding, input as SessionGrantListInput);
+    if (operation === "grant.revoke" && owner.grantRevoke) return owner.grantRevoke(binding, input as SessionGrantRevokeInput);
+    throw new SessionCrudError("RUNTIME_UNAVAILABLE", "The grant owner is unavailable.");
   }
 
   private async executeValidated(
@@ -619,11 +634,12 @@ export class SessionExternalApplicationService {
       ...(terminalNotification?.proof
         ? { terminalFailureNotificationProof: terminalNotification.proof }
         : {}),
-      ...this.resolveWorkItemAssociation(input, agentRuntimeBinding),
+      ...this.resolveWorkItemAssociation(input, agentRuntimeBinding, proof),
       ...await this.resolveTurnAcceptance(agentRuntimeBinding.actorSessionId, input.sessionId, input.turn.userMessage, proof.operation),
       request: {
         initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
         catalogRevision: input.catalogRevision,
+        ...(input.consultationGrantId ? { consultationGrantId: input.consultationGrantId } : {}),
         ...terminalNotification?.request,
         turn: input.turn,
       },
@@ -718,11 +734,12 @@ export class SessionExternalApplicationService {
       ...(terminalNotification?.proof
         ? { terminalFailureNotificationProof: terminalNotification.proof }
         : {}),
-      ...this.resolveWorkItemAssociation(input, agentRuntimeBinding),
+      ...this.resolveWorkItemAssociation(input, agentRuntimeBinding, proof),
       ...await this.resolveTurnAcceptance(agentRuntimeBinding.actorSessionId, input.sessionId, input.turn.userMessage, proof.operation),
       request: {
         initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
         catalogRevision: input.catalogRevision,
+        ...(input.consultationGrantId ? { consultationGrantId: input.consultationGrantId } : {}),
         ...terminalNotification?.request,
         turn: input.turn,
       },
@@ -821,10 +838,9 @@ export class SessionExternalApplicationService {
         { sessionId: targetSessionId },
       );
     }
-    const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
-    const targetBinding = requireSessionRoleBinding(target.sessionId, target);
-    if (actorBinding.rootSessionId !== targetBinding.rootSessionId
-      || !this.deps.authorityService.canSessionAct(actor.sessionId, operation, { sessionId: target.sessionId })) {
+    requireSessionRoleBinding(actor.sessionId, actor);
+    requireSessionRoleBinding(target.sessionId, target);
+    if (!this.deps.authorityService.canSessionAct(actor.sessionId, operation, { sessionId: target.sessionId })) {
       throw new SessionRuntimeValidationError(
         "The actor Session is not allowed to send a Turn to the target Session.",
         {
@@ -886,6 +902,9 @@ export class SessionExternalApplicationService {
         "request" in record ? record.request : undefined,
       ) ?? null,
       workItemId: this.deps.getExecutionWorkItemId?.(executionId) ?? null,
+      consultationGrantId: "request" in record && record.request && typeof record.request === "object"
+        && "consultationGrantId" in record.request && typeof record.request.consultationGrantId === "string"
+        ? record.request.consultationGrantId : null,
     });
   }
 
@@ -1051,12 +1070,25 @@ export class SessionExternalApplicationService {
   private resolveWorkItemAssociation(
     input: SessionRuntimeEnqueueInput,
     binding: Pick<ResolvedAgentRuntimeBinding, "actorSessionId">,
+    proof: MutationAdmissionProof,
   ): { workItemId?: string } {
+    const { actor, target } = this.requireSessionTurnAuthority(binding.actorSessionId, input.sessionId, proof.operation);
+    if (actor.sessionId !== target.sessionId && !input.workItemId && !input.consultationGrantId) {
+      throw new SessionRuntimeValidationError("A direct Session Turn requires a Work Item or consultation grant identity.", { field: "workItemId" });
+    }
+    if (actor.rootSessionId !== target.rootSessionId && !input.consultationGrantId) {
+      throw new SessionRuntimeValidationError("A cross-root Turn requires a temporary consultation grant.", { field: "consultationGrantId" });
+    }
+    if (input.consultationGrantId && proof.grantId !== input.consultationGrantId) {
+      throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The consultation identity must match the admitted grant.");
+    }
     if (!input.workItemId) return {};
+    this.deps.authorityService.authorizeSessionAct(binding.actorSessionId, "work.get", { workItemId: input.workItemId });
     this.requireWorkItemService().requireExecutionAssociation(
       input.workItemId,
       binding.actorSessionId,
       input.sessionId,
+      proof,
     );
     return { workItemId: input.workItemId };
   }
@@ -1226,6 +1258,7 @@ export class SessionExternalApplicationService {
     if (operation === "work.move") {
       const request = input as SessionRuntimeWorkItemMoveInput;
       const proofs: MutationAuthorityProof[] = [];
+      if (request.destinationTargetSessionId) proofs.push(this.deps.authorityService.authorize(binding, "work.create", { targetSessionId: request.destinationTargetSessionId }).proof);
       if (request.destinationParentWorkItemId) proofs.push(this.deps.authorityService.authorize(binding, "work.move", { workItemId: request.destinationParentWorkItemId }).proof);
       return proofs;
     }
@@ -1271,6 +1304,15 @@ function projectRuntimeCatalog(
       ],
     },
     sessionRoleContractRevision: SESSION_ROLE_CONTRACT_REVISION,
+    grants: {
+      contractRevision: SESSION_GRANT_CONTRACT_REVISION,
+      operations: ["create", "get", "list", "revoke"],
+      constraints: [
+        "Grant delegation cannot exceed the active parent scope, actions, budget or expiry. Baseline permissions are not expanded.",
+        "Direct Session dispatch requires a Work Item or temporary consultation grant identity; cross-root dispatch requires a consultation grant.",
+        "Revocation and expiry stop new admission. Admitted operations use allow-to-settle with their saved grant revision and execution generation.",
+      ],
+    },
     supportedSessionRoles: [...SESSION_ROLE_VALUES],
     baselineChildSessionRoleTemplates: {
       standalone: [...SESSION_ROLE_CHILDREN.standalone],
@@ -1363,6 +1405,10 @@ function projectionResourceDetails(
     return {};
   }
   const record = result as Record<string, unknown>;
+  if (operation === "grant.create" || operation === "grant.revoke") {
+    const grant = record.grant as Record<string, unknown> | undefined;
+    return grant && typeof grant.grantId === "string" ? { grantId: grant.grantId } : {};
+  }
   const sessionId = typeof record.sessionId === "string" ? record.sessionId : null;
   const executionId = typeof record.id === "string" ? record.id : null;
   const file = record.file && typeof record.file === "object" && !Array.isArray(record.file)
@@ -1405,6 +1451,7 @@ function fingerprintMutation(
     catalogRevision: input.catalogRevision,
     turn: input.turn,
     workItemId: input.workItemId ?? null,
+    ...(input.consultationGrantId ? { consultationGrantId: input.consultationGrantId } : {}),
     terminalFailureNotification: input.terminalFailureNotification ?? null,
   }), "utf8").digest("hex");
 }
@@ -1697,6 +1744,8 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
       code: error.code,
       message: error.message,
       effect: ["delegation.create", "delegation.retry", "delegation.cancel", "delegation.compensate"].includes(operation)
+        || operation === "grant.create"
+        || operation === "grant.revoke"
         || operation === "session.create"
         || operation === "session.rename"
         || operation === "session.configure"
@@ -1877,6 +1926,7 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
 }
 
 function isMutationOperation(operation: SessionRuntimeOperation | string, input?: unknown): boolean {
+  if (operation === "grant.create" || operation === "grant.revoke") return true;
   if (operation.startsWith("delegation.")) return operation !== "delegation.get" && operation !== "delegation.list";
   return operation === "budget.configure"
     || operation === "session.create"

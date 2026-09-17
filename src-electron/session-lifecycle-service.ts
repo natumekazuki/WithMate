@@ -2,6 +2,7 @@ import { SessionAuthorityError } from "../src/session-authority.js";
 import { ResourceBudgetError } from "./resource-budget-storage.js";
 import { SessionResourceRevisionConflictError } from "./resource-history-schema.js";
 import { createHash, randomUUID } from "node:crypto";
+import { lstatSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import type { MutationAuthorityProof } from "../src/session-authority.js";
 import { resolveCodexReviewerUpdate } from "../src/codex-reviewer.js";
@@ -97,7 +98,19 @@ export class SessionLifecycleService {
   }
   moveManifest(sessionId: string, destinationRootSessionId: string, proof?: MutationAuthorityProof): SessionRuntimeSessionMoveManifestResult {
     if (proof) this.destinationProof("session.move.manifest", { sessionId, destinationRootSessionId }, proof);
-    return this.deps.storage.getLifecycleManifest(sessionId, destinationRootSessionId) as SessionRuntimeSessionMoveManifestResult;
+    const manifest = this.deps.storage.getLifecycleManifest(sessionId, destinationRootSessionId) as SessionRuntimeSessionMoveManifestResult;
+    const sessionFolders = [sessionId, ...manifest.descendants.map((entry) => entry.sessionId)].flatMap((id) => {
+      const path = this.deps.resolveSessionFilesDirectory(id);
+      try {
+        const stat = lstatSync(path);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new SessionCrudError("SESSION_STATE_CONFLICT", "The SessionFolder is not a canonical directory.");
+        return [{ sessionId: id }];
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
+    });
+    return { ...manifest, sessionFolders };
   }
 
   async createSession(input: CreateSessionInput): Promise<Session> {
@@ -283,6 +296,16 @@ export class SessionLifecycleService {
           const ids = [record.targetSessionId, ...(request.descendantPolicy === "archive_descendants"
             ? this.deps.storage.getLifecycleManifest(record.targetSessionId).descendants.map((entry) => entry.sessionId) : [])];
           for (const id of ids) await this.deps.publishRemovedSession(id);
+        } else if (record.operation === "session.move") {
+          const storedIds = record.manifest.affectedSessionIds;
+          const ids = Array.isArray(storedIds) && storedIds.every((id): id is string => typeof id === "string")
+            ? storedIds
+            : [record.targetSessionId];
+          for (const id of ids) {
+            const session = this.deps.storage.getLifecycleSession(id, true);
+            if (!session) throw new Error("The committed lifecycle Session is missing.");
+            this.deps.publishSession(session);
+          }
         } else {
           const session = this.deps.storage.getLifecycleSession(record.targetSessionId, true);
           if (!session) throw new Error("The committed lifecycle Session is missing.");

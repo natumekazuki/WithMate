@@ -350,11 +350,13 @@ describe("Work Item contract", () => {
     assert.throws(() => service.retryAggregation({ ...request, goal: "different" }, binding("task")), WorkItemIdempotencyConflictError);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "aggregation decisionはterminal childだけを対象とし、canceledはacceptedを拒否しつつexcluded、failedとpartially_completedはexcludedを許可する"
   // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md#Work Item contract" }
-  // failure_mode = "未完了または取消済みchildを採用するか、除外可能なterminal結果を集約から外せずparentの完了判定が不正になる"
+  // fault = "未完了または取消済みchildを採用するか、除外可能なterminal結果を集約から外せずparentの完了判定が不正になる"
+  // observable = "excludedCount、authority/conflict error"
+  // observation_boundary = "component-behavior"
   // scope = "WorkItemService.decideAggregationのchild state別decision matrix"
   // lifecycle = "permanent"
   // distinction = "active、canceled、failed、partially_completedを一つのdecision境界へ通し、accepted拒否とexcluded許可の差を観測する"
@@ -437,29 +439,40 @@ describe("Work Item contract", () => {
     assert.throws(() => createChild(parent.id, "late-child"), WorkItemParentError);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
   // claim = "同一principalとidempotency keyの同一create requestはimmutable bindingをreplayし、異なるrequestは拒否する"
-  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-IDENTITY-01-immutable-binding" }
-  // failure_mode = "retryが重複Work Itemを作成するか、同じkeyの別targetやgoalが既存bindingを上書きする"
+  // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#work-identity-01-委譲identity" }
+  // fault = "retryが重複Work Itemを作成するか、同じkeyのrequest各field差分がfingerprint検証を迂回して既存bindingを上書きする"
+  // observable = "保存済みWork Item identity、idempotency row、collision error"
+  // observation_boundary = "component-behavior"
   // scope = "WorkItemService create idempotency"
   // lifecycle = "permanent"
-  // distinction = "同一requestのreplayと異なるtargetのcollisionを同じledgerに対して観測する"
+  // distinction = "同一requestのreplayとexpectedContainerRevision、target、goal、scope、completionCriteria、authority、sourceIdentityを一項目ずつ変更したcollisionを同じledgerに対して観測する"
   // @end-test-value
   it("WORK-IDENTITY-01: create replayはimmutable bindingを復元し異なるfingerprintを拒否する", () => {
-    const created = createRootWork();
-    assert.equal(createRootWork().id, created.id);
+    const original = {
+      expectedContainerRevision: currentSessionResourceRevision("task"), targetSessionId: "task",
+      goal: "Delegate a task", scope: "Work Item slice", completionCriteria: "All direct checks pass",
+      authority: "Local repository changes", sourceIdentity, idempotencyKey: "create-root",
+    };
+    const created = service.create(original, binding("root"));
+    assert.equal(service.create(original, binding("root")).id, created.id);
     assert.deepEqual(storage.get(created.id), created);
-    assert.throws(() => service.create({
-      expectedContainerRevision: currentSessionResourceRevision("sibling"),
-      targetSessionId: "sibling",
-      goal: "Changed",
-      scope: "Work Item slice",
-      completionCriteria: "All direct checks pass",
-      authority: "Local repository changes",
-      sourceIdentity,
-      idempotencyKey: "create-root",
-    }, binding("root")), WorkItemIdempotencyConflictError);
+    const variants = [
+      { expectedContainerRevision: original.expectedContainerRevision + 1 },
+      { targetSessionId: "sibling" },
+      { parentWorkItemId: "different-parent" },
+      { goal: "Changed" },
+      { scope: "Changed scope" },
+      { completionCriteria: "Changed completion" },
+      { authority: "Changed authority" },
+      { sourceIdentity: { ...sourceIdentity, branch: "changed-branch" } },
+    ];
+    for (const variant of variants) {
+      assert.throws(() => service.create({ ...original, ...variant }, binding("root")), WorkItemIdempotencyConflictError);
+      assert.deepEqual(storage.get(created.id), created);
+    }
     assert.equal(storage.get(created.id)?.targetSessionId, "task");
   });
 
@@ -473,18 +486,20 @@ describe("Work Item contract", () => {
     assert.deepEqual(replayed, created);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
-  // claim = "trusted principalのWork Item idempotency ledgerは24時間後だけ削除され、同じprincipalとkeyの新規要求へ再利用できる"
+  // claim = "trusted principalのWork Item idempotency ledgerは期限後にcleanupされ、同じprincipalとkeyの要求を再利用できる"
   // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-IDEM-07-idempotency-retention" }
-  // failure_mode = "principal namespace変更で期限内ledgerを見失うか、期限後の同じkeyを永久に拒否する"
+  // fault = "期限後のledgerがcleanupされず、同じprincipalとkeyの新規要求を拒否する"
+  // observable = "idempotency rowの保持/cleanupと同一key replay結果"
+  // observation_boundary = "component-behavior"
   // scope = "WorkItemStorageV6 idempotency retention"
   // lifecycle = "permanent"
   // @end-test-value
   it("WORK-IDEM-07: 24時間経過後はledgerを削除して同じkeyを新しい要求へ再利用できる", () => {
     const first = createRootWork("expiring-key");
     currentNow = AFTER_EXPIRES;
-    const second = service.create({
+    const secondInput = {
       expectedContainerRevision: currentSessionResourceRevision("task"),
       targetSessionId: "task",
       goal: "New delegation after retention",
@@ -493,8 +508,10 @@ describe("Work Item contract", () => {
       authority: "local",
       sourceIdentity,
       idempotencyKey: "expiring-key",
-    }, binding("root"));
+    };
+    const second = service.create(secondInput, binding("root"));
     assert.notEqual(second.id, first.id);
+    assert.equal(service.create(secondInput, binding("root")).id, second.id);
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
       assert.equal((db.prepare(`
@@ -537,16 +554,18 @@ describe("Work Item contract", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "baseline active grantを持つcoordinatorの直属Work Item作成を許可し、canonical Session tree外またはactive parentなしの委譲を拒否する"
+  // claim = "active grantを持つcoordinatorの直属Work Item作成を許可し、canonical Session tree外またはparent target不一致の委譲を拒否する"
   // oracle = { type = "contract", ref = "docs/plans/20260824-session-orchestration-work-item/plan.md#WORK-AUTH-02-authority" }
-  // failure_mode = "正規なactive grantの直属委譲を拒否するか、上方向、sibling、cross-root、自己target、またはinactive parentへの委譲を保存する"
+  // fault = "正規なactive grantの直属委譲を拒否するか、cross-rootまたはparent target不一致の委譲を保存する"
+  // observable = "Work Itemの保存結果とauthority/parent error"
+  // observation_boundary = "component-behavior"
   // scope = "SessionAuthorityService and WorkItemService delegation admission"
   // lifecycle = "permanent"
   // distinction = "許可pathはbaseline active grantのproofを使い、拒否pathはcanonical parent/target graphの各境界を対比する"
   // @end-test-value
-  it("WORK-AUTH-02: coordinatorとactive parentだけが直属targetへ委譲できる", () => {
+  it("WORK-AUTH-02: active grantの直属targetを許可しroot外とparent target不一致を拒否する", () => {
     const parentInput = {
       targetSessionId: "task",
       goal: "Delegate a task",
@@ -557,25 +576,25 @@ describe("Work Item contract", () => {
       idempotencyKey: "create-root",
     };
     const parent = createWithActiveGrant(parentInput, binding("root"));
-    assert.throws(() => service.create({
-      targetSessionId: "root",
-      goal: "upward communication is not delegation",
-      scope: "scope",
-      completionCriteria: "done",
-      authority: "none",
-      sourceIdentity,
-      idempotencyKey: "task-to-root",
-    }, binding("task")), WorkItemAuthorityError);
-    assert.throws(() => service.create({
-      targetSessionId: "task-sibling",
-      goal: "sibling communication is not delegation",
-      scope: "scope",
-      completionCriteria: "done",
-      authority: "none",
-      sourceIdentity,
-      idempotencyKey: "task-to-sibling",
-    }, binding("task")), WorkItemAuthorityError);
-    assert.throws(() => service.create({
+    const snapshot = () => {
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        return {
+          sessions: db.prepare("SELECT id, resource_revision FROM sessions_v6 ORDER BY id").all(),
+          workItems: db.prepare("SELECT * FROM work_items_v6 ORDER BY id").all(),
+          workEvents: db.prepare("SELECT * FROM work_item_events_v6 ORDER BY work_item_id, revision").all(),
+          workIdempotency: db.prepare("SELECT * FROM work_item_idempotency_v6 ORDER BY operation, idempotency_key").all(),
+          budgets: db.prepare("SELECT * FROM resource_budget_accounts_v6 ORDER BY account_id").all(),
+        };
+      } finally { db.close(); }
+    };
+    const assertRejectedWithoutPersistence = (action: () => unknown, errorClass: RegExp | typeof WorkItemAuthorityError | typeof WorkItemParentError) => {
+      const before = snapshot();
+      assert.throws(action, errorClass, "the invalid delegation must be rejected");
+      assert.deepEqual(snapshot(), before);
+    };
+    assertRejectedWithoutPersistence(() => service.create({
+      expectedContainerRevision: currentSessionResourceRevision("standalone"),
       targetSessionId: "standalone",
       goal: "cross root",
       scope: "scope",
@@ -584,34 +603,6 @@ describe("Work Item contract", () => {
       sourceIdentity,
       idempotencyKey: "cross-root",
     }, binding("root")), WorkItemAuthorityError);
-    assert.throws(() => service.create({
-      targetSessionId: "standalone",
-      goal: "forbidden",
-      scope: "scope",
-      completionCriteria: "done",
-      authority: "none",
-      sourceIdentity,
-      idempotencyKey: "standalone-create",
-    }, binding("standalone")), WorkItemAuthorityError);
-    assert.throws(() => service.create({
-      targetSessionId: "executor",
-      goal: "self forbidden",
-      scope: "scope",
-      completionCriteria: "done",
-      authority: "none",
-      sourceIdentity,
-      idempotencyKey: "executor-create",
-    }, binding("executor")), WorkItemAuthorityError);
-    assert.throws(() => service.create({
-      targetSessionId: "task",
-      goal: "self",
-      scope: "scope",
-      completionCriteria: "done",
-      authority: "none",
-      sourceIdentity,
-      idempotencyKey: "self",
-    }, binding("task")), WorkItemAuthorityError);
-
     const childInput = {
       targetSessionId: "executor",
       parentWorkItemId: parent.id,
@@ -624,7 +615,18 @@ describe("Work Item contract", () => {
     };
     const child = createWithActiveGrant(childInput, binding("task"));
     assert.equal(child.parentWorkItemId, parent.id);
-    assert.throws(() => service.create({
+    assertRejectedWithoutPersistence(() => service.create({
+      expectedContainerRevision: currentSessionResourceRevision("task"),
+      targetSessionId: "task",
+      goal: "self delegation",
+      scope: "scope",
+      completionCriteria: "done",
+      authority: "local",
+      sourceIdentity,
+      idempotencyKey: "self-delegation",
+    }, binding("task")), WorkItemAuthorityError);
+    assertRejectedWithoutPersistence(() => service.create({
+      expectedContainerRevision: currentSessionResourceRevision("executor"),
       targetSessionId: "executor",
       parentWorkItemId: child.id,
       goal: "bad parent",

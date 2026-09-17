@@ -18,7 +18,11 @@ export type DelegationItemInput = {
     | { kind: "existing"; workItemId: string }
     | { kind: "root" }
     | { kind: "replacement"; request: Omit<SessionRuntimeWorkItemAggregationRetryInput, "targetSessionId" | "idempotencyKey"> };
-  turn: Omit<SessionRuntimeEnqueueInput, "sessionId" | "workItemId" | "idempotencyKey" | "expectedContainerRevision">;
+  turn: DelegationTurnInput;
+};
+/** Turn composition may carry a temporary consultation identity through every saved step input. */
+export type DelegationTurnInput = Omit<SessionRuntimeEnqueueInput, "sessionId" | "workItemId" | "idempotencyKey" | "expectedContainerRevision"> & {
+  consultationGrantId?: string;
 };
 export type DelegationCreateInput = {
   idempotencyKey: string;

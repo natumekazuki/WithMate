@@ -216,6 +216,10 @@ const definition = <T extends SessionRuntimeOperation>(
 ): AuthorityOperationDefinition => ({ action, resourceKind, scopeSource, effectClass, decisionClass });
 
 export const SESSION_AUTHORITY_OPERATION_DEFINITIONS = {
+  "grant.create": definition("grant.create", "session", "actor", "local_mutation"),
+  "grant.get": definition("grant.get", "session", "actor", "read"),
+  "grant.list": definition("grant.list", "session", "actor", "read"),
+  "grant.revoke": definition("grant.revoke", "session", "actor", "local_mutation"),
   "delegation.create": definition("delegation.create", "session", "actor", "external_side_effect"),
   "delegation.get": definition("delegation.get", "session", "actor", "read"),
   "delegation.list": definition("delegation.list", "session", "actor", "read"),

@@ -95,6 +95,7 @@ const mutationInput = {
   sessionId: "session-1",
   catalogRevision: 4,
   idempotencyKey: "key-1",
+  workItemId: "work-dispatch",
   responseMode: "deferred" as const,
   turn: {
     provider: "codex" as const,
@@ -170,6 +171,7 @@ class SessionExternalApplicationService extends RuntimeSessionExternalApplicatio
   ) {
     super({
       ...deps,
+      workItemService: deps.workItemService ?? { requireExecutionAssociation() {} } as unknown as NonNullable<SessionExternalApplicationServiceDeps["workItemService"]>,
       authorityService: deps.authorityService ?? defaultAuthorityService,
     });
   }
@@ -1034,6 +1036,15 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
         ],
       },
       sessionRoleContractRevision: 1,
+      grants: {
+        contractRevision: 1,
+        operations: ["create", "get", "list", "revoke"],
+        constraints: [
+          "Grant delegation cannot exceed the active parent scope, actions, budget or expiry. Baseline permissions are not expanded.",
+          "Direct Session dispatch requires a Work Item or temporary consultation grant identity; cross-root dispatch requires a consultation grant.",
+          "Revocation and expiry stop new admission. Admitted operations use allow-to-settle with their saved grant revision and execution generation.",
+        ],
+      },
       supportedSessionRoles: ["standalone", "overall-coordinator", "task-coordinator", "executor"],
       baselineChildSessionRoleTemplates: {
         standalone: [],
@@ -1402,11 +1413,13 @@ test("EXT-PROVIDER-01: Copilot turn.optionsはpublic custom agentだけを投影
   assert.equal("result" in response && "codexSandboxModes" in response.result, false);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "admitted Turn mutationはauthority proofとstable actor identityをexecution serviceへ渡しpublic responseからprivate fieldを除く"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md" }
-// failure_mode = "proofなしでstorage mutationへ進む、actor identityがtargetへ置換される、またはprivate provider fieldを公開する"
+// fault = "proofなしでexecution portへ進む、actor identityがtargetへ置換される、またはprivate provider fieldを公開する"
+// observable = "execution portへ渡したproof・request・Work Item IDと公開responseのfield"
+// observation_boundary = "component-behavior"
 // scope = "SessionExternalApplicationService turn.run dispatch"
 // lifecycle = "permanent"
 // @end-test-value
@@ -1450,6 +1463,7 @@ test("Session application service persists catalog revision with the turn and re
       proof: admittedProof(actorBinding, "turn.run"),
       expectedContainerRevision: 1,
       sessionId: "session-1",
+      workItemId: "work-dispatch",
       request: {
         initiator: await resolveTurnInitiator("session-actor"),
         catalogRevision: 4,
@@ -1714,6 +1728,16 @@ test("I-01: canonical replayはcatalog revision更新後もstale validationよ�
   assert.equal(initiatorResolveCount, 0);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "同一actor・同一入力の再送ではcharacter snapshotが変化してもrequest fingerprintを維持する"
+// oracle = { type = "contract", ref = "docs/design/session-external-runtime.md" }
+// fault = "character snapshotの更新で同一actorの再送fingerprintが変化し、canonical replay identityが失われる"
+// observable = "同一actorによるrun/enqueueのexecution port入力fingerprintとinitiator identity"
+// observation_boundary = "component-behavior"
+// scope = "application actor identity and trace validation; grant evaluator is stubbed"
+// lifecycle = "permanent"
+// @end-test-value
 test("ID-02/ID-04: actorとtargetを分離しfingerprintをstable actor identityへ結び付ける", async () => {
   const mutations: Array<{ operation: "run" | "enqueue"; input: any }> = [];
   let snapshotRevision = 0;
@@ -1784,7 +1808,7 @@ test("ID-02/ID-04: actorとtargetを分離しfingerprintをstable actor identity
   ]);
   assert.equal(mutations[0]?.input.requestFingerprint, mutations[1]?.input.requestFingerprint);
   assert.equal(mutations[0]?.input.requestFingerprint, mutations[2]?.input.requestFingerprint);
-  assert.equal("error" in forbiddenOtherRoot && forbiddenOtherRoot.error.code, "SESSION_TURN_FORBIDDEN");
+  assert.equal("error" in forbiddenOtherRoot && forbiddenOtherRoot.error.code, "INVALID_INPUT");
   assert.notEqual(
     mutations[0]?.input.request.initiator.character.name,
     mutations[1]?.input.request.initiator.character.name,
@@ -1836,11 +1860,13 @@ test("ID-03: actor Sessionのcharacter snapshotを解決できない場合はexe
   assert.equal(runInvoked, false);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "terminal failure通知はouter callerとは別にsource Sessionからtarget Sessionへのproofとsource character snapshotをexecution admissionへ渡す"
 // oracle = { type = "contract", ref = "TN-AUTH-01/TN-SNAPSHOT-02" }
-// failure_mode = "outer callerのproofを通知先認可へ流用するか、通知元と異なるSession snapshotを保存して失効競合の再検証を迂回する"
+// fault = "outer callerのproofを通知先認可へ流用するか、通知元と異なるSession snapshotをexecution portへ渡す"
+// observable = "notification proofのactor/target、source character snapshot、拒否時のexecution port呼出数"
+// observation_boundary = "component-behavior"
 // scope = "SessionExternalApplicationService terminal failure notification admission wiring"
 // lifecycle = "permanent"
 // distinction = "outer proofのactor、通知proofのsource actorとtarget resource、保存snapshotのsourceを別々に観測する"
@@ -1863,7 +1889,7 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
       authorize(binding, operation, input) {
         return { input, proof: admittedProof(binding, operation) };
       },
-      canSessionAct() { return true; },
+      canSessionAct(_actorSessionId: string, _operation: string, input: { sessionId: string }) { return input.sessionId !== "cross-root-target"; },
       authorizeSessionAct(actorSessionId, operation, input: any) {
         const proof = admittedProof({ ...actorBinding, actorSessionId }, operation);
         return {
@@ -1946,6 +1972,7 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
   assert.equal(mutations[0].request.terminalFailureNotification.sourceSession.character.name,
     "Character source-session");
   assert.equal(mutations[0].terminalFailureNotificationProof.principal.actorSessionId, "source-session");
+  assert.equal(mutations[0].terminalFailureNotificationProof.operation, "turn.enqueue");
   assert.equal(mutations[0].terminalFailureNotificationProof.resolvedScope.resourceId, "target-session");
   assert.equal(mutations[0].proof.principal.actorSessionId, "actor-session");
   assert.deepEqual(resolvedSessions, []);

@@ -49,6 +49,43 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __hasOwnProp.call(mod, "module.exports") ? mod["module.exports"] : __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __require = /* #__PURE__ */ (() => createRequire(import.meta.url))();
 //#endregion
+//#region src/session-authority.ts
+var SESSION_AUTHORITY_EFFECT_CLASSES = [
+	"read",
+	"local_mutation",
+	"external_side_effect"
+];
+var SESSION_AUTHORITY_DECISION_CLASSES = [
+	"agent_delegable",
+	"user_only",
+	"deny_or_cancel"
+];
+var SESSION_AUTHORITY_RESOURCE_KINDS = [
+	"runtime",
+	"session",
+	"session_namespace",
+	"session_files",
+	"work_item",
+	"execution",
+	"interaction",
+	"coordination_event",
+	"transcript",
+	"budget"
+];
+var SESSION_AUTHORITY_RELATION_SELECTORS = [
+	"self",
+	"parent",
+	"direct_child",
+	"sibling",
+	"root_owner",
+	"root_member",
+	"owned_root",
+	"assigned",
+	"created",
+	"creator_or_target",
+	"visible_root"
+];
+//#endregion
 //#region src/delegation.ts
 var DELEGATION_STATES = [
 	"preparing",
@@ -250,3693 +287,6 @@ function requirePositiveSafeInteger(value, label) {
 	const result = requireNonNegativeSafeInteger(value, label);
 	if (result === 0) throw new ResourceBudgetValidationError(`${label} must be positive.`);
 	return result;
-}
-//#endregion
-//#region src/coordination-event.ts
-var COORDINATION_EVENT_KINDS = [
-	"progress",
-	"decision",
-	"escalation",
-	"user_decision_required",
-	"blocker",
-	"result",
-	"correction"
-];
-var COORDINATION_EVENT_STATES = [
-	"recorded",
-	"open",
-	"resolved",
-	"superseded",
-	"cancelled"
-];
-var COORDINATION_EVENT_MAX_PAYLOAD_BYTES = 16384;
-var CoordinationEventValidationError = class extends Error {
-	code;
-	details;
-	constructor(message, details = {}, code = "INVALID_INPUT") {
-		super(message);
-		this.name = "CoordinationEventValidationError";
-		this.code = code;
-		this.details = details;
-	}
-};
-function validateCoordinationEventPayload(value, field = "payload") {
-	const record = requireObject$1(value, field);
-	assertKeys$1(record, [
-		"summary",
-		"facts",
-		"assumptions",
-		"impact",
-		"recommendation"
-	], field);
-	const payload = {
-		summary: requireText(record.summary, `${field}.summary`, 240),
-		...record.facts === void 0 ? {} : { facts: requireTextList(record.facts, `${field}.facts`) },
-		...record.assumptions === void 0 ? {} : { assumptions: requireTextList(record.assumptions, `${field}.assumptions`) },
-		...record.impact === void 0 ? {} : { impact: requireText(record.impact, `${field}.impact`, 1e3) },
-		...record.recommendation === void 0 ? {} : { recommendation: requireText(record.recommendation, `${field}.recommendation`, 1e3) }
-	};
-	const actualBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
-	if (actualBytes > 16384) throw new CoordinationEventValidationError("Coordination event payload exceeds 16 KiB.", {
-		field,
-		actualBytes,
-		maxBytes: COORDINATION_EVENT_MAX_PAYLOAD_BYTES
-	}, "CONTENT_TOO_LARGE");
-	rejectSensitiveText(payload, field);
-	return payload;
-}
-function validateCoordinationEventOptions(value, field = "options") {
-	if (!Array.isArray(value) || value.length < 2 || value.length > 8) throw invalid$1(field, "Coordination event options must contain 2 to 8 items.");
-	const ids = /* @__PURE__ */ new Set();
-	const options = value.map((entry, index) => {
-		const itemField = `${field}[${index}]`;
-		const record = requireObject$1(entry, itemField);
-		assertKeys$1(record, [
-			"id",
-			"label",
-			"description"
-		], itemField);
-		const id = requireStableId(record.id, `${itemField}.id`);
-		if (ids.has(id)) throw invalid$1(`${itemField}.id`, "Coordination option IDs must be unique.");
-		ids.add(id);
-		return {
-			id,
-			label: requireText(record.label, `${itemField}.label`, 120),
-			...record.description === void 0 ? {} : { description: requireText(record.description, `${itemField}.description`, 500) }
-		};
-	});
-	rejectSensitiveValues(options.flatMap((option) => [
-		option.id,
-		option.label,
-		option.description ?? ""
-	]), field);
-	return options;
-}
-function validateCoordinationEventNote(value, field = "note") {
-	const note = requireText(value, field, 1e3);
-	rejectSensitiveValues([note], field);
-	return note;
-}
-function requireTextList(value, field) {
-	if (!Array.isArray(value) || value.length > 8) throw invalid$1(field, "Coordination event list fields contain at most 8 items.");
-	return value.map((item, index) => requireText(item, `${field}[${index}]`, 500));
-}
-function requireText(value, field, maxLength) {
-	if (typeof value !== "string" || !value.trim() || value.length > maxLength) throw invalid$1(field, `${field} must be a non-empty string of at most ${maxLength} characters.`);
-	return value.trim();
-}
-function requireStableId(value, field) {
-	const id = requireText(value, field, 80);
-	if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) throw invalid$1(field, `${field} must be a stable identifier.`);
-	return id;
-}
-function rejectSensitiveText(payload, field) {
-	rejectSensitiveValues([
-		payload.summary,
-		...payload.facts ?? [],
-		...payload.assumptions ?? [],
-		payload.impact ?? "",
-		payload.recommendation ?? ""
-	], field);
-}
-function rejectSensitiveValues(values, field) {
-	const forbidden = [
-		/-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----/i,
-		/\b(?:sk|ghp|github_pat)_[a-z0-9_-]{20,}\b/i,
-		/\bsk-(?:proj-)?[a-z0-9_-]{20,}\b/i,
-		/\bAKIA[0-9A-Z]{16}\b/,
-		/\bBearer\s+[a-z0-9._~+/=-]{20,}\b/i,
-		/\b(?:[a-z0-9]+[_-])*(?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key)\s*[:=]\s*(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,;]+)/i,
-		/\b[a-z]:[\\/][^\s"'<>)]*/i,
-		/\\\\[a-z0-9._$-]+\\[a-z0-9._$ -]+(?:\\[^\s"'<>)]*)?/i,
-		/(?:^|[\s"'(=[{,])\/\/[a-z0-9._$-]+\/[a-z0-9._$ -]+(?:\/[^\s"'<>)]*)?/im,
-		/\\\\[?.]\\[^\s"'<>)]*/i,
-		/(?:[a-z]:\\Users\\|\/Users\/|\/home\/)[^\s"'<>)]*/i,
-		/\b(?:stack trace|traceback \(most recent call last\))\b/i,
-		/\b(?:chain[- ]of[- ]thought|provider response|opaque binding|agentRuntimeBinding)\b/i,
-		/^diff --git /im,
-		/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m,
-		/(?:^|\n)\s*(?:\[[A-Z]{3,}\]|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\s/m
-	];
-	if (values.some((text) => forbidden.some((pattern) => pattern.test(text)))) throw new CoordinationEventValidationError("Coordination event payload contains content that must not be stored.", { field }, "SENSITIVE_CONTENT_REJECTED");
-}
-function requireObject$1(value, field) {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid$1(field, `${field} must be an object.`);
-	return value;
-}
-function assertKeys$1(record, allowed, field) {
-	const unknown = Object.keys(record).find((key) => !allowed.includes(key));
-	if (unknown) throw invalid$1(`${field}.${unknown}`, `Unknown field: ${field}.${unknown}.`);
-}
-function invalid$1(field, message) {
-	return new CoordinationEventValidationError(message, { field });
-}
-//#endregion
-//#region src/work-item.ts
-var WORK_ITEM_MAX_RESULT_BYTES = 262144;
-var WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES = 524288;
-var WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES = 2097152;
-var WORK_ITEM_MAX_TEXT_LENGTH = 16e3;
-var WORK_ITEM_AGGREGATION_DECISIONS = [
-	"accepted",
-	"excluded",
-	"retry_requested"
-];
-var WORK_ITEM_STATES = [
-	"pending",
-	"in_progress",
-	"waiting",
-	"completed",
-	"partially_completed",
-	"failed",
-	"canceled"
-];
-function workItemEventPayloadByteLength(payload) {
-	const serialized = JSON.stringify(payload);
-	if (serialized === void 0) throw new TypeError("Work Item event payload must be JSON serializable.");
-	return new TextEncoder().encode(serialized).byteLength;
-}
-var SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES = 8388608;
-var SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES = 1073741824;
-//#endregion
-//#region src/session-external-runtime-contract.ts
-var SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-v2";
-var SESSION_RUNTIME_RESULT_SCHEMA_VERSION = "withmate-session-result-v2";
-var SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v2";
-var SESSION_RUNTIME_MAX_BODY_BYTES = 8388608;
-var SESSION_RUNTIME_MAX_RESPONSE_BYTES = 8388608;
-var SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES = 1048576;
-var SESSION_RUNTIME_MAX_FILE_TEXT_BYTES = 8388608;
-var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
-var SESSION_RUNTIME_OPERATIONS = [
-	"delegation.create",
-	"delegation.get",
-	"delegation.list",
-	"delegation.retry",
-	"delegation.cancel",
-	"delegation.compensate",
-	"runtime.catalog",
-	"budget.get",
-	"budget.list",
-	"budget.configure",
-	"session.self",
-	"session.create",
-	"session.list",
-	"session.get",
-	"session.configure",
-	"session.rename",
-	"session.move.manifest",
-	"session.move",
-	"session.clone",
-	"session.restore",
-	"session.archive",
-	"session.delete.manifest",
-	"session.delete",
-	"session.files.list",
-	"session.files.read_text",
-	"session.files.write_text",
-	"work.create",
-	"work.list",
-	"work.get",
-	"work.revise",
-	"work.reassign",
-	"work.move",
-	"work.clone",
-	"work.reopen",
-	"work.archive",
-	"work.restore",
-	"work.delete",
-	"work.history.append",
-	"work.history.list",
-	"work.transition",
-	"work.result",
-	"work.result.correct",
-	"work.cancel",
-	"work.aggregation.get",
-	"work.aggregation.list",
-	"work.aggregation.decide",
-	"work.aggregation.retry",
-	"work.aggregation.correct",
-	"turn.options",
-	"turn.run",
-	"turn.enqueue",
-	"turn.list",
-	"turn.get",
-	"turn.cancel",
-	"interaction.list",
-	"interaction.respond",
-	"coordination.event.create",
-	"coordination.event.list",
-	"coordination.event.get",
-	"coordination.event.resolve",
-	"coordination.event.consume",
-	"coordination.event.cancel",
-	"coordination.event.correct",
-	"transcript.export"
-];
-var SESSION_RUNTIME_PROVIDER_IDS = ["codex", "copilot"];
-function sessionRuntimeOperationMayHaveEffect(operation, input) {
-	if (operation.startsWith("delegation.")) return operation !== "delegation.get" && operation !== "delegation.list";
-	if (operation === "transcript.export") return input === void 0 || input.destination?.kind !== "inline";
-	return operation === "session.create" || operation === "session.rename" || operation === "session.configure" || operation === "session.move" || operation === "session.clone" || operation === "session.restore" || operation === "session.archive" || operation === "session.delete" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "work.create" || operation === "work.transition" || operation === "work.revise" || operation === "work.history.append" || operation === "work.reassign" || operation === "work.move" || operation === "work.clone" || operation === "work.reopen" || operation === "work.archive" || operation === "work.restore" || operation === "work.delete" || operation === "work.result" || operation === "work.result.correct" || operation === "work.cancel" || operation === "work.aggregation.decide" || operation === "work.aggregation.retry" || operation === "work.aggregation.correct" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct";
-}
-var SessionRuntimeValidationError = class extends Error {
-	code;
-	details;
-	constructor(message, details = {}, code = "INVALID_INPUT") {
-		super(message);
-		this.name = "SessionRuntimeValidationError";
-		this.code = code;
-		this.details = details;
-	}
-};
-function assertSessionRuntimeRequestBodySize(actualBytes, field = "requestBody") {
-	if (actualBytes <= 8388608) return;
-	throw new SessionRuntimeValidationError("Session runtime request body exceeds 8 MiB.", {
-		field,
-		actualBytes,
-		maxBytes: SESSION_RUNTIME_MAX_BODY_BYTES
-	}, "CONTENT_TOO_LARGE");
-}
-function parseSessionRuntimeOperationInput(operation, value) {
-	if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) throw invalid("operation", "Unsupported Session runtime operation.");
-	if (operation.startsWith("delegation.")) return parseDelegationInput(operation, value);
-	if (operation === "runtime.catalog" || operation === "session.self") {
-		assertKeys(requireObject(value, "input"), [], "input");
-		return {};
-	}
-	if (operation === "budget.get") return parseResourceBudgetGetInput(value);
-	if (operation === "budget.list") return parseResourceBudgetListInput(value);
-	if (operation === "budget.configure") return parseResourceBudgetConfigureInput(value);
-	if (operation === "session.create") return parseSessionCreateInput(value);
-	if (operation === "session.list") return parseSessionListInput(value);
-	if (operation === "session.get") return parseSessionInput(value);
-	if (operation === "session.rename") return parseSessionRenameInput(value);
-	if (operation === "session.configure") return parseSessionConfigureInput(value);
-	if (operation === "session.move.manifest") return parseSessionMoveManifestInput(value);
-	if (operation === "session.move") return parseSessionMoveInput(value);
-	if (operation === "session.clone") return parseSessionCloneInput(value);
-	if (operation === "session.restore") return parseSessionRestoreInput(value);
-	if (operation === "session.archive") return parseSessionArchiveInput(value);
-	if (operation === "session.delete.manifest") return parseSessionInput(value);
-	if (operation === "session.delete") return parseSessionDeleteInput(value);
-	if (operation === "session.files.list") return parseSessionFileListInput(value);
-	if (operation === "session.files.read_text") return parseSessionFileReadTextInput(value);
-	if (operation === "session.files.write_text") return parseSessionFileWriteTextInput(value);
-	if (operation === "work.create") return parseWorkItemCreateInput(value);
-	if (operation === "work.list") return parseWorkItemListInput(value);
-	if (operation === "work.get") return parseWorkItemInput(value);
-	if (operation === "work.revise") return parseWorkItemReviseInput(value);
-	if (operation === "work.reassign") return parseWorkItemReassignInput(value);
-	if (operation === "work.move") return parseWorkItemMoveInput(value);
-	if (operation === "work.clone") return parseWorkItemCloneInput(value);
-	if (operation === "work.reopen") return parseWorkItemReopenInput(value);
-	if (operation === "work.archive") return parseWorkItemArchiveInput(value);
-	if (operation === "work.restore") return parseWorkItemRestoreInput(value);
-	if (operation === "work.delete") return parseWorkItemDeleteInput(value);
-	if (operation === "work.history.append") return parseWorkItemHistoryAppendInput(value);
-	if (operation === "work.history.list") return parseWorkItemHistoryListInput(value);
-	if (operation === "work.transition") return parseWorkItemTransitionInput(value);
-	if (operation === "work.result") return parseWorkItemResultInput(value);
-	if (operation === "work.result.correct") return parseWorkItemResultCorrectionInput(value);
-	if (operation === "work.cancel") return parseWorkItemCancelInput(value);
-	if (operation === "work.aggregation.get") return parseWorkItemAggregationGetInput(value);
-	if (operation === "work.aggregation.list") return parseWorkItemAggregationListInput(value);
-	if (operation === "work.aggregation.decide") return parseWorkItemAggregationDecisionInput(value);
-	if (operation === "work.aggregation.retry") return parseWorkItemAggregationRetryInput(value);
-	if (operation === "work.aggregation.correct") return parseWorkItemAggregationCorrectionInput(value);
-	if (operation === "turn.options") return parseSessionInput(value);
-	if (operation === "turn.run") return parseTurnRunInput(value);
-	if (operation === "turn.enqueue") return parseTurnEnqueueInput(value);
-	if (operation === "turn.list") return parseTurnListInput(value);
-	if (operation === "turn.get") return parseExecutionInput(value);
-	if (operation === "turn.cancel") return parseCancelInput(value);
-	if (operation === "interaction.list") return parseInteractionListInput(value);
-	if (operation === "interaction.respond") return parseInteractionRespondInput(value);
-	if (operation === "coordination.event.create") return parseCoordinationEventCreateInput(value);
-	if (operation === "coordination.event.list") return parseCoordinationEventListInput(value);
-	if (operation === "coordination.event.get") return parseCoordinationEventGetInput(value);
-	if (operation === "coordination.event.resolve") return parseCoordinationEventResolveInput(value);
-	if (operation === "coordination.event.consume") return parseCoordinationEventConsumeInput(value);
-	if (operation === "coordination.event.cancel") return parseCoordinationEventCancelInput(value);
-	if (operation === "coordination.event.correct") return parseCoordinationEventCorrectInput(value);
-	if (operation === "transcript.export") return parseTranscriptExportInput(value);
-	throw invalid("operation", "Unsupported Session runtime operation.");
-}
-function parseCoordinationEventCreateInput(value) {
-	const record = requireObject$1(value, "input");
-	assertKeys$1(record, [
-		"expectedContainerRevision",
-		"kind",
-		"payload",
-		"executionId",
-		"targetSessionId",
-		"options",
-		"idempotencyKey"
-	], "input");
-	const kind = requireEnum(record.kind, COORDINATION_EVENT_KINDS.filter((candidate) => candidate !== "correction"), "kind");
-	const targetSessionId = record.targetSessionId === void 0 ? void 0 : requireNonEmptyString(record.targetSessionId, "targetSessionId");
-	const options = record.options === void 0 ? void 0 : validateCoordinationEventOptions(record.options);
-	if (kind === "escalation" !== (targetSessionId !== void 0)) throw invalid("targetSessionId", "targetSessionId is required only for escalation events.");
-	if (kind === "user_decision_required" !== (options !== void 0)) throw invalid("options", "options are required only for user_decision_required events.");
-	return {
-		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
-		kind,
-		payload: validateCoordinationEventPayload(record.payload),
-		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
-		...targetSessionId === void 0 ? {} : { targetSessionId },
-		...options === void 0 ? {} : { options },
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseCoordinationEventListInput(value) {
-	const record = requireObject$1(value, "input");
-	assertKeys$1(record, [
-		"scope",
-		"kind",
-		"state",
-		"limit",
-		"cursor"
-	], "input");
-	return {
-		scope: requireEnum(record.scope, ["self", "subtree"], "scope"),
-		...record.kind === void 0 ? {} : { kind: requireEnum(record.kind, COORDINATION_EVENT_KINDS, "kind") },
-		...record.state === void 0 ? {} : { state: requireEnum(record.state, COORDINATION_EVENT_STATES, "state") },
-		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 100, "LIMIT_EXCEEDED"),
-		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
-	};
-}
-function parseCoordinationEventGetInput(value) {
-	const record = requireObject$1(value, "input");
-	assertKeys$1(record, ["eventId", "idempotencyKey"], "input");
-	const hasEventId = record.eventId !== void 0;
-	if (hasEventId === (record.idempotencyKey !== void 0)) throw invalid("input", "Exactly one of eventId or idempotencyKey is required.");
-	return hasEventId ? { eventId: requireNonEmptyString(record.eventId, "eventId") } : { idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
-}
-function parseCoordinationEventResolveInput(value) {
-	const record = requireObject$1(value, "input");
-	assertKeys$1(record, [
-		"expectedRevision",
-		"eventId",
-		"note",
-		"idempotencyKey"
-	], "input");
-	return {
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
-		eventId: requireNonEmptyString(record.eventId, "eventId"),
-		...record.note === void 0 ? {} : { note: validateCoordinationEventNote(record.note) },
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseCoordinationEventConsumeInput(value) {
-	const record = requireObject$1(value, "input");
-	assertKeys$1(record, [
-		"eventId",
-		"expectedResolutionSequence",
-		"idempotencyKey"
-	], "input");
-	return {
-		eventId: requireNonEmptyString(record.eventId, "eventId"),
-		expectedResolutionSequence: requireInteger(record.expectedResolutionSequence, "expectedResolutionSequence", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseCoordinationEventCancelInput(value) {
-	const record = requireObject$1(value, "input");
-	assertKeys$1(record, [
-		"expectedRevision",
-		"eventId",
-		"note",
-		"idempotencyKey"
-	], "input");
-	return {
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
-		eventId: requireNonEmptyString(record.eventId, "eventId"),
-		...record.note === void 0 ? {} : { note: validateCoordinationEventNote(record.note) },
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseCoordinationEventCorrectInput(value) {
-	const record = requireObject$1(value, "input");
-	assertKeys$1(record, [
-		"expectedRevision",
-		"eventId",
-		"payload",
-		"executionId",
-		"idempotencyKey"
-	], "input");
-	return {
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
-		eventId: requireNonEmptyString(record.eventId, "eventId"),
-		payload: validateCoordinationEventPayload(record.payload),
-		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function requireBoundedString(value, field, maxLength) {
-	const text = requireNonEmptyString(value, field);
-	if (text.length > maxLength) throw invalid(field, `${field} exceeds ${maxLength} characters.`);
-	return text;
-}
-function parseSessionCreateInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"expectedContainerRevision",
-		"placement",
-		"title",
-		"character",
-		"provider",
-		"workspace",
-		"initialGrant",
-		"budget",
-		"idempotencyKey"
-	], "input");
-	const placement = parseSessionPlacement(record.placement);
-	const character = requireObject(record.character, "character");
-	assertKeys(character, ["characterId", "expectedDefinitionSha256"], "character");
-	const provider = parseSessionProvider(record.provider, true);
-	return {
-		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
-		placement,
-		title: requireNonEmptyString(record.title, "title"),
-		character: {
-			characterId: requireNonEmptyString(character.characterId, "character.characterId"),
-			expectedDefinitionSha256: requireNonEmptyString(character.expectedDefinitionSha256, "character.expectedDefinitionSha256")
-		},
-		provider,
-		workspace: parseSessionCreateWorkspace(record.workspace),
-		initialGrant: parseSessionInitialGrant(record.initialGrant),
-		budget: parseSessionInitialBudget(record.budget),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseSessionPlacement(value) {
-	const record = requireObject(value, "placement");
-	const kind = requireEnum(record.kind, ["root", "child"], "placement.kind");
-	if (kind === "root") {
-		assertKeys(record, ["kind", "rootKind"], "placement");
-		return {
-			kind,
-			rootKind: requireEnum(record.rootKind, ["standalone", "overall-coordinator"], "placement.rootKind")
-		};
-	}
-	assertKeys(record, [
-		"kind",
-		"parentSessionId",
-		"sessionRole"
-	], "placement");
-	return {
-		kind,
-		parentSessionId: requireNonEmptyString(record.parentSessionId, "placement.parentSessionId"),
-		sessionRole: requireEnum(record.sessionRole, ["task-coordinator", "executor"], "placement.sessionRole")
-	};
-}
-function parseSessionProvider(value, resetOnly = false) {
-	const record = requireObject(value, "provider");
-	const threadContinuity = requireEnum(record.threadContinuity, ["continue", "reset"], "provider.threadContinuity");
-	if (resetOnly && threadContinuity !== "reset") throw invalid("provider.threadContinuity", "New Sessions require reset thread continuity.");
-	const common = {
-		id: requireEnum(record.id, SESSION_RUNTIME_PROVIDER_IDS, "provider.id"),
-		catalogRevision: requireInteger(record.catalogRevision, "provider.catalogRevision", 1, Number.MAX_SAFE_INTEGER),
-		model: requireNonEmptyString(record.model, "provider.model"),
-		reasoningEffort: requireModelReasoningEffort(record.reasoningEffort),
-		threadContinuity
-	};
-	const approvalMode = requireEnum(record.approvalMode, APPROVAL_MODE_VALUES, "provider.approvalMode");
-	if (common.id === "codex") {
-		assertKeys(record, [
-			"id",
-			"catalogRevision",
-			"model",
-			"reasoningEffort",
-			"threadContinuity",
-			"approvalMode",
-			"codexSandboxMode",
-			"allowedAdditionalDirectories"
-		], "provider");
-		if (!Array.isArray(record.allowedAdditionalDirectories) || !record.allowedAdditionalDirectories.every((item) => typeof item === "string" && item.length > 0)) throw invalid("provider.allowedAdditionalDirectories", "allowedAdditionalDirectories must be a string array.");
-		return {
-			...common,
-			id: "codex",
-			approvalMode,
-			codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "provider.codexSandboxMode"),
-			allowedAdditionalDirectories: record.allowedAdditionalDirectories
-		};
-	}
-	assertKeys(record, [
-		"id",
-		"catalogRevision",
-		"model",
-		"reasoningEffort",
-		"threadContinuity",
-		"approvalMode",
-		"customAgentName"
-	], "provider");
-	return {
-		...common,
-		id: "copilot",
-		approvalMode,
-		customAgentName: requireString(record.customAgentName, "provider.customAgentName").trim()
-	};
-}
-function parseSessionMoveManifestInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, ["sessionId", "destinationRootSessionId"], "input");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		destinationRootSessionId: requireNonEmptyString(record.destinationRootSessionId, "destinationRootSessionId")
-	};
-}
-function requireModelReasoningEffort(value) {
-	if (typeof value !== "string" || !isModelReasoningEffort(value)) throw invalid("provider.reasoningEffort", "Unsupported provider reasoning effort.");
-	return value;
-}
-function parseSessionInitialGrant(value) {
-	const record = requireObject(value, "initialGrant");
-	const kind = requireEnum(record.kind, ["inherit", "explicit"], "initialGrant.kind");
-	if (kind === "inherit") {
-		assertKeys(record, ["kind"], "initialGrant");
-		return { kind };
-	}
-	assertKeys(record, [
-		"kind",
-		"actions",
-		"visibility",
-		"expiresAt"
-	], "initialGrant");
-	if (!Array.isArray(record.actions) || !record.actions.every((item) => typeof item === "string" && item.length > 0)) throw invalid("initialGrant.actions", "actions must be a non-empty string array.");
-	if (!Array.isArray(record.visibility) || !record.visibility.every((item) => typeof item === "string" && item.length > 0)) throw invalid("initialGrant.visibility", "visibility must be a non-empty string array.");
-	return {
-		kind,
-		actions: record.actions,
-		visibility: record.visibility,
-		expiresAt: record.expiresAt === null ? null : requireNonEmptyString(record.expiresAt, "initialGrant.expiresAt")
-	};
-}
-function parseSessionInitialBudget(value) {
-	const record = requireObject(value, "budget");
-	const kind = requireEnum(record.kind, ["inherit", "explicit"], "budget.kind");
-	if (kind === "inherit") {
-		assertKeys(record, ["kind"], "budget");
-		return { kind };
-	}
-	assertKeys(record, [
-		"kind",
-		"hardLimits",
-		"deadlineAt"
-	], "budget");
-	const hardLimits = requireObject(record.hardLimits, "budget.hardLimits");
-	for (const [key, amount] of Object.entries(hardLimits)) if (!Number.isInteger(amount) || amount < 0) throw invalid(`budget.hardLimits.${key}`, "Budget limits must be non-negative integers.");
-	return {
-		kind,
-		hardLimits,
-		deadlineAt: requireNonEmptyString(record.deadlineAt, "budget.deadlineAt")
-	};
-}
-function parseSessionCreateWorkspace(value) {
-	const record = requireObject(value, "workspace");
-	const kind = requireEnum(record.kind, ["directory", "session_folder"], "workspace.kind");
-	if (kind === "session_folder") {
-		assertKeys(record, ["kind"], "workspace");
-		return { kind };
-	}
-	assertKeys(record, ["kind", "path"], "workspace");
-	return {
-		kind,
-		path: requireNonEmptyString(record.path, "workspace.path")
-	};
-}
-function parseSessionListInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, ["limit", "cursor"], "input");
-	return {
-		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
-		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
-	};
-}
-function parseSessionInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, ["sessionId"], "input");
-	return { sessionId: requireNonEmptyString(record.sessionId, "sessionId") };
-}
-function parseSessionRenameInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"expectedRevision",
-		"sessionId",
-		"title",
-		"idempotencyKey"
-	], "input");
-	return {
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		title: requireNonEmptyString(record.title, "title"),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseSessionConfigureInput(value) {
-	const record = requireObject(value, "input");
-	const base = {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-	const kind = requireEnum(record.kind, [
-		"title",
-		"runtime",
-		"character",
-		"workspace",
-		"role"
-	], "kind");
-	if (kind === "title") {
-		assertKeys(record, [
-			"sessionId",
-			"expectedRevision",
-			"idempotencyKey",
-			"kind",
-			"title"
-		], "input");
-		return {
-			...base,
-			kind,
-			title: requireNonEmptyString(record.title, "title")
-		};
-	}
-	if (kind === "runtime") {
-		assertKeys(record, [
-			"sessionId",
-			"expectedRevision",
-			"idempotencyKey",
-			"kind",
-			"provider"
-		], "input");
-		return {
-			...base,
-			kind,
-			provider: parseSessionProvider(record.provider)
-		};
-	}
-	if (kind === "character") {
-		assertKeys(record, [
-			"sessionId",
-			"expectedRevision",
-			"idempotencyKey",
-			"kind",
-			"character",
-			"threadContinuity"
-		], "input");
-		const character = requireObject(record.character, "character");
-		assertKeys(character, ["characterId", "expectedDefinitionSha256"], "character");
-		return {
-			...base,
-			kind,
-			character: {
-				characterId: requireNonEmptyString(character.characterId, "character.characterId"),
-				expectedDefinitionSha256: requireNonEmptyString(character.expectedDefinitionSha256, "character.expectedDefinitionSha256")
-			},
-			threadContinuity: requireEnum(record.threadContinuity, ["continue", "reset"], "threadContinuity")
-		};
-	}
-	if (kind === "workspace") {
-		assertKeys(record, [
-			"sessionId",
-			"expectedRevision",
-			"idempotencyKey",
-			"kind",
-			"workspace",
-			"threadContinuity"
-		], "input");
-		const workspace = parseSessionCreateWorkspace(record.workspace);
-		return {
-			...base,
-			kind,
-			workspace,
-			threadContinuity: requireEnum(record.threadContinuity, ["continue", "reset"], "threadContinuity")
-		};
-	}
-	assertKeys(record, [
-		"sessionId",
-		"expectedRevision",
-		"idempotencyKey",
-		"kind",
-		"sessionRole"
-	], "input");
-	return {
-		...base,
-		kind,
-		sessionRole: requireEnum(record.sessionRole, [
-			"standalone",
-			"overall-coordinator",
-			"task-coordinator",
-			"executor"
-		], "sessionRole")
-	};
-}
-function parseSessionMoveInput(value) {
-	const record = requireObject(value, "input");
-	const base = {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-	const kind = requireEnum(record.kind, ["same_root", "cross_root"], "kind");
-	const destinationExpectedRevision = requireInteger(record.destinationExpectedRevision, "destinationExpectedRevision", 1, Number.MAX_SAFE_INTEGER);
-	const destinationParentSessionId = record.destinationParentSessionId === null ? null : requireNonEmptyString(record.destinationParentSessionId, "destinationParentSessionId");
-	if (kind === "same_root") {
-		assertKeys(record, [
-			"sessionId",
-			"expectedRevision",
-			"idempotencyKey",
-			"kind",
-			"destinationParentSessionId",
-			"destinationExpectedRevision"
-		], "input");
-		return {
-			...base,
-			kind,
-			destinationParentSessionId,
-			destinationExpectedRevision
-		};
-	}
-	assertKeys(record, [
-		"sessionId",
-		"expectedRevision",
-		"idempotencyKey",
-		"kind",
-		"destinationParentSessionId",
-		"destinationRootSessionId",
-		"destinationExpectedRevision",
-		"transferManifestRevision",
-		"transferPolicy"
-	], "input");
-	return {
-		...base,
-		kind,
-		destinationParentSessionId,
-		destinationRootSessionId: requireNonEmptyString(record.destinationRootSessionId, "destinationRootSessionId"),
-		destinationExpectedRevision,
-		transferManifestRevision: requireInteger(record.transferManifestRevision, "transferManifestRevision", 1, Number.MAX_SAFE_INTEGER),
-		transferPolicy: requireEnum(record.transferPolicy, ["full"], "transferPolicy")
-	};
-}
-function parseSessionCloneInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sourceSessionId",
-		"expectedSourceRevision",
-		"expectedContainerRevision",
-		"placement",
-		"title",
-		"initialGrant",
-		"budget",
-		"idempotencyKey"
-	], "input");
-	return {
-		sourceSessionId: requireNonEmptyString(record.sourceSessionId, "sourceSessionId"),
-		expectedSourceRevision: requireInteger(record.expectedSourceRevision, "expectedSourceRevision", 1, Number.MAX_SAFE_INTEGER),
-		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 0, Number.MAX_SAFE_INTEGER),
-		placement: parseSessionPlacement(record.placement),
-		title: requireNonEmptyString(record.title, "title"),
-		initialGrant: parseSessionInitialGrant(record.initialGrant),
-		budget: parseSessionInitialBudget(record.budget),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseSessionRestoreInput(value) {
-	const record = requireObject(value, "input");
-	const kind = requireEnum(record.kind, ["root", "child"], "kind");
-	const base = {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		purpose: requireNonEmptyString(record.purpose, "purpose"),
-		provider: parseSessionProvider(record.provider),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-	if (kind === "root") {
-		assertKeys(record, [
-			"sessionId",
-			"expectedRevision",
-			"kind",
-			"purpose",
-			"provider",
-			"budget",
-			"idempotencyKey"
-		], "input");
-		return {
-			...base,
-			kind,
-			budget: parseSessionInitialBudget(record.budget)
-		};
-	}
-	assertKeys(record, [
-		"sessionId",
-		"expectedRevision",
-		"kind",
-		"purpose",
-		"provider",
-		"idempotencyKey"
-	], "input");
-	return {
-		...base,
-		kind
-	};
-}
-function parseSessionArchiveInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"expectedRevision",
-		"reason",
-		"descendantPolicy",
-		"idempotencyKey"
-	], "input");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		reason: requireNonEmptyString(record.reason, "reason"),
-		descendantPolicy: requireEnum(record.descendantPolicy, ["retain", "archive_descendants"], "descendantPolicy"),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseSessionDeleteInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"expectedRevision",
-		"manifestRevision",
-		"idempotencyKey"
-	], "input");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		manifestRevision: requireInteger(record.manifestRevision, "manifestRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseSessionFileListInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"limit",
-		"cursor"
-	], "input");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
-		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
-	};
-}
-function parseSessionFileReadTextInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"relativePath",
-		"maxBytes"
-	], "input");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		relativePath: requireNonEmptyString(record.relativePath, "relativePath"),
-		maxBytes: record.maxBytes === void 0 ? SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES : requireInteger(record.maxBytes, "maxBytes", 1, SESSION_RUNTIME_MAX_FILE_TEXT_BYTES, "LIMIT_EXCEEDED")
-	};
-}
-function parseSessionFileWriteTextInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"relativePath",
-		"content",
-		"maxBytes",
-		"replace",
-		"idempotencyKey"
-	], "input");
-	const maxBytes = record.maxBytes === void 0 ? SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES : requireInteger(record.maxBytes, "maxBytes", 1, SESSION_RUNTIME_MAX_FILE_TEXT_BYTES, "LIMIT_EXCEEDED");
-	const content = requireString(record.content, "content");
-	const actualBytes = Buffer.byteLength(content, "utf8");
-	if (actualBytes > maxBytes) throw new SessionRuntimeValidationError("Session file content exceeds the requested byte limit.", {
-		field: "content",
-		actualBytes,
-		maxBytes
-	}, "CONTENT_TOO_LARGE");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		relativePath: requireNonEmptyString(record.relativePath, "relativePath"),
-		content,
-		maxBytes,
-		replace: record.replace === void 0 ? false : requireBoolean(record.replace, "replace"),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemCreateInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"expectedContainerRevision",
-		"targetSessionId",
-		"parentWorkItemId",
-		"goal",
-		"scope",
-		"completionCriteria",
-		"authority",
-		"sourceIdentity",
-		"idempotencyKey"
-	], "input");
-	const source = requireObject(record.sourceIdentity, "sourceIdentity");
-	assertKeys(source, [
-		"workspace",
-		"repository",
-		"branch",
-		"base",
-		"head"
-	], "sourceIdentity");
-	return {
-		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
-		targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId"),
-		...record.parentWorkItemId === void 0 ? {} : { parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId") },
-		goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
-		scope: requireBoundedString(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
-		completionCriteria: requireBoundedString(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
-		authority: requireBoundedString(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
-		sourceIdentity: {
-			workspace: requireNullableBoundedString(source.workspace, "sourceIdentity.workspace"),
-			repository: requireNullableBoundedString(source.repository, "sourceIdentity.repository"),
-			branch: requireNullableBoundedString(source.branch, "sourceIdentity.branch"),
-			base: requireNullableBoundedString(source.base, "sourceIdentity.base"),
-			head: requireNullableBoundedString(source.head, "sourceIdentity.head")
-		},
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, ["workItemId"], "input");
-	return { workItemId: requireNonEmptyString(record.workItemId, "workItemId") };
-}
-function requireBoundedStringAllowEmpty(value, field, maxLength) {
-	if (typeof value !== "string") throw invalid(field, `${field} must be a string.`);
-	if (value.length > maxLength) throw invalid(field, `${field} exceeds ${maxLength} characters.`);
-	return value;
-}
-function parseWorkItemReviseInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"workItemId",
-		"goal",
-		"scope",
-		"completionCriteria",
-		"authority",
-		"sourceIdentity",
-		"expectedRevision",
-		"idempotencyKey"
-	], "input");
-	return {
-		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
-		goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
-		scope: requireBoundedStringAllowEmpty(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
-		completionCriteria: requireBoundedStringAllowEmpty(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
-		authority: requireBoundedStringAllowEmpty(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
-		...record.sourceIdentity === void 0 ? {} : { sourceIdentity: parseWorkItemSourceIdentity(record.sourceIdentity) },
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemReassignInput(value) {
-	const r = requireObject(value, "input");
-	assertKeys(r, [
-		"workItemId",
-		"targetSessionId",
-		"expectedRevision",
-		"expectedContainerRevision",
-		"transferPolicy",
-		"idempotencyKey"
-	], "input");
-	return {
-		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
-		targetSessionId: requireNonEmptyString(r.targetSessionId, "targetSessionId"),
-		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		...r.expectedContainerRevision === void 0 ? {} : { expectedContainerRevision: requireInteger(r.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER) },
-		transferPolicy: requireEnum(r.transferPolicy, ["handoff", "successor"], "transferPolicy"),
-		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemMoveInput(value) {
-	const r = requireObject(value, "input");
-	assertKeys(r, [
-		"workItemId",
-		"destinationParentWorkItemId",
-		"expectedRevision",
-		"expectedAggregateRevision",
-		"expectedDestinationAggregateRevision",
-		"idempotencyKey"
-	], "input");
-	return {
-		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
-		destinationParentWorkItemId: r.destinationParentWorkItemId === null ? null : requireNonEmptyString(r.destinationParentWorkItemId, "destinationParentWorkItemId"),
-		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		...r.expectedAggregateRevision === void 0 ? {} : { expectedAggregateRevision: requireInteger(r.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER) },
-		...r.expectedDestinationAggregateRevision === void 0 ? {} : { expectedDestinationAggregateRevision: requireInteger(r.expectedDestinationAggregateRevision, "expectedDestinationAggregateRevision", 0, Number.MAX_SAFE_INTEGER) },
-		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemCloneInput(value) {
-	const r = requireObject(value, "input");
-	assertKeys(r, [
-		"workItemId",
-		"expectedRevision",
-		"expectedContainerRevision",
-		"targetSessionId",
-		"parentWorkItemId",
-		"goal",
-		"scope",
-		"completionCriteria",
-		"authority",
-		"sourceIdentity",
-		"idempotencyKey"
-	], "input");
-	return {
-		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
-		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		expectedContainerRevision: requireInteger(r.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
-		targetSessionId: requireNonEmptyString(r.targetSessionId, "targetSessionId"),
-		...r.parentWorkItemId === void 0 ? {} : { parentWorkItemId: r.parentWorkItemId === null ? null : requireNonEmptyString(r.parentWorkItemId, "parentWorkItemId") },
-		goal: requireBoundedString(r.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
-		scope: requireBoundedStringAllowEmpty(r.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
-		completionCriteria: requireBoundedStringAllowEmpty(r.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
-		authority: requireBoundedStringAllowEmpty(r.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
-		sourceIdentity: parseWorkItemSourceIdentity(r.sourceIdentity),
-		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemReopenInput(value) {
-	return parseWorkItemRestoreLike(value, "reopen");
-}
-function parseWorkItemRestoreInput(value) {
-	return parseWorkItemRestoreLike(value, "restore");
-}
-function parseWorkItemRestoreLike(value, operation) {
-	if (operation === "restore") {
-		const r = requireObject(value, "input");
-		assertKeys(r, [
-			"workItemId",
-			"expectedRevision",
-			"idempotencyKey"
-		], "input");
-		return {
-			workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
-			expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-			idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
-		};
-	}
-	const r = requireObject(value, "input");
-	assertKeys(r, [
-		"workItemId",
-		"expectedRevision",
-		"strategy",
-		"expectedContainerRevision",
-		"destinationParentWorkItemId",
-		"goal",
-		"scope",
-		"completionCriteria",
-		"authority",
-		"sourceIdentity",
-		"idempotencyKey"
-	], "input");
-	return {
-		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
-		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		strategy: requireEnum(r.strategy, ["successor"], "strategy"),
-		...r.expectedContainerRevision === void 0 ? {} : { expectedContainerRevision: requireInteger(r.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER) },
-		...r.destinationParentWorkItemId === void 0 ? {} : { destinationParentWorkItemId: r.destinationParentWorkItemId === null ? null : requireNonEmptyString(r.destinationParentWorkItemId, "destinationParentWorkItemId") },
-		goal: requireBoundedString(r.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
-		scope: requireBoundedStringAllowEmpty(r.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
-		completionCriteria: requireBoundedStringAllowEmpty(r.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
-		authority: requireBoundedStringAllowEmpty(r.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
-		sourceIdentity: parseWorkItemSourceIdentity(r.sourceIdentity),
-		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemSourceIdentity(value) {
-	const r = requireObject(value, "sourceIdentity");
-	assertKeys(r, [
-		"workspace",
-		"repository",
-		"branch",
-		"base",
-		"head"
-	], "sourceIdentity");
-	return {
-		workspace: requireNullableBoundedString(r.workspace, "sourceIdentity.workspace"),
-		repository: requireNullableBoundedString(r.repository, "sourceIdentity.repository"),
-		branch: requireNullableBoundedString(r.branch, "sourceIdentity.branch"),
-		base: requireNullableBoundedString(r.base, "sourceIdentity.base"),
-		head: requireNullableBoundedString(r.head, "sourceIdentity.head")
-	};
-}
-function parseWorkItemArchiveInput(value) {
-	const r = requireObject(value, "input");
-	assertKeys(r, [
-		"workItemId",
-		"expectedRevision",
-		"reason",
-		"idempotencyKey"
-	], "input");
-	return {
-		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
-		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		reason: requireBoundedString(r.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH),
-		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemDeleteInput(value) {
-	const r = requireObject(value, "input");
-	assertKeys(r, [
-		"workItemId",
-		"expectedRevision",
-		"idempotencyKey"
-	], "input");
-	return {
-		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
-		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemHistoryAppendInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"workItemId",
-		"type",
-		"summary",
-		"blockers",
-		"nextAction",
-		"expectedRevision",
-		"idempotencyKey"
-	], "input");
-	const input = {
-		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
-		type: requireEnum(record.type, ["progress", "handoff"], "type"),
-		summary: requireBoundedString(record.summary, "summary", WORK_ITEM_MAX_TEXT_LENGTH),
-		blockers: parseWorkItemStringList(record.blockers, "blockers"),
-		nextAction: requireBoundedString(record.nextAction, "nextAction", WORK_ITEM_MAX_TEXT_LENGTH),
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-	requireWorkItemEventPayloadWithinLimit({
-		progressSummary: input.summary,
-		blockers: input.blockers,
-		nextAction: input.nextAction
-	});
-	return input;
-}
-function requireWorkItemEventPayloadWithinLimit(payload) {
-	const actualBytes = workItemEventPayloadByteLength(payload);
-	if (actualBytes > 524288) throw new SessionRuntimeValidationError("Work Item history payload exceeds the byte limit.", {
-		field: "input",
-		actualBytes,
-		maxBytes: WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES
-	}, "CONTENT_TOO_LARGE");
-}
-function parseWorkItemHistoryListInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"workItemId",
-		"limit",
-		"cursor"
-	], "input");
-	return {
-		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
-		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200, "LIMIT_EXCEEDED"),
-		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
-	};
-}
-function parseWorkItemListInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"creatorSessionId",
-		"targetSessionId",
-		"state",
-		"includeArchived",
-		"limit",
-		"cursor"
-	], "input");
-	return {
-		...record.creatorSessionId === void 0 ? {} : { creatorSessionId: requireNonEmptyString(record.creatorSessionId, "creatorSessionId") },
-		...record.targetSessionId === void 0 ? {} : { targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId") },
-		...record.state === void 0 ? {} : { state: requireEnum(record.state, WORK_ITEM_STATES, "state") },
-		includeArchived: record.includeArchived === void 0 ? false : requireBoolean(record.includeArchived, "includeArchived"),
-		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200, "LIMIT_EXCEEDED"),
-		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
-	};
-}
-function parseWorkItemTransitionInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"workItemId",
-		"state",
-		"expectedRevision",
-		"idempotencyKey"
-	], "input");
-	return {
-		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
-		state: requireEnum(record.state, ["in_progress", "waiting"], "state"),
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemResultInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"workItemId",
-		"state",
-		"expectedRevision",
-		"expectedAggregateRevision",
-		"expectedResultRevision",
-		"result",
-		"idempotencyKey"
-	], "input");
-	const state = requireEnum(record.state, [
-		"completed",
-		"partially_completed",
-		"failed"
-	], "state");
-	const result = requireObject(record.result, "result");
-	assertKeys(result, [
-		"summary",
-		"changes",
-		"verificationResults",
-		"findings",
-		"unverifiedItems",
-		"remainingWork"
-	], "result");
-	const parsedResult = {
-		summary: requireBoundedString(result.summary, "result.summary", WORK_ITEM_MAX_TEXT_LENGTH),
-		changes: parseWorkItemStringList(result.changes, "result.changes"),
-		verificationResults: parseWorkItemVerificationResults(result.verificationResults),
-		findings: parseWorkItemStringList(result.findings, "result.findings"),
-		unverifiedItems: parseWorkItemStringList(result.unverifiedItems, "result.unverifiedItems"),
-		remainingWork: parseWorkItemStringList(result.remainingWork, "result.remainingWork")
-	};
-	const canonicalResult = {
-		outcome: state,
-		...parsedResult,
-		reportingSessionId: "",
-		reportedAt: ""
-	};
-	const actualBytes = Buffer.byteLength(JSON.stringify(canonicalResult), "utf8");
-	if (actualBytes > 262144) throw new SessionRuntimeValidationError("Work Item result exceeds the byte limit.", {
-		field: "result",
-		actualBytes,
-		maxBytes: WORK_ITEM_MAX_RESULT_BYTES
-	}, "CONTENT_TOO_LARGE");
-	return {
-		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
-		state,
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		result: parsedResult,
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
-		...record.expectedAggregateRevision === void 0 ? {} : { expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER) },
-		...record.expectedResultRevision === void 0 ? {} : { expectedResultRevision: requireInteger(record.expectedResultRevision, "expectedResultRevision", 1, Number.MAX_SAFE_INTEGER) }
-	};
-}
-function parseWorkItemResultCorrectionInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"workItemId",
-		"expectedRevision",
-		"expectedResultRevision",
-		"correctionReason",
-		"result",
-		"idempotencyKey"
-	], "input");
-	const result = requireObject(record.result, "result");
-	assertKeys(result, [
-		"outcome",
-		"summary",
-		"changes",
-		"verificationResults",
-		"findings",
-		"unverifiedItems",
-		"remainingWork"
-	], "result");
-	const parsedResult = {
-		outcome: requireEnum(result.outcome, [
-			"completed",
-			"partially_completed",
-			"failed"
-		], "result.outcome"),
-		summary: requireBoundedString(result.summary, "result.summary", WORK_ITEM_MAX_TEXT_LENGTH),
-		changes: parseWorkItemStringList(result.changes, "result.changes"),
-		verificationResults: parseWorkItemVerificationResults(result.verificationResults),
-		findings: parseWorkItemStringList(result.findings, "result.findings"),
-		unverifiedItems: parseWorkItemStringList(result.unverifiedItems, "result.unverifiedItems"),
-		remainingWork: parseWorkItemStringList(result.remainingWork, "result.remainingWork")
-	};
-	const actualBytes = Buffer.byteLength(JSON.stringify(parsedResult), "utf8");
-	if (actualBytes > 262144) throw new SessionRuntimeValidationError("Work Item result exceeds the byte limit.", {
-		field: "result",
-		actualBytes,
-		maxBytes: WORK_ITEM_MAX_RESULT_BYTES
-	}, "CONTENT_TOO_LARGE");
-	return {
-		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		expectedResultRevision: requireInteger(record.expectedResultRevision, "expectedResultRevision", 1, Number.MAX_SAFE_INTEGER),
-		correctionReason: requireBoundedString(record.correctionReason, "correctionReason", WORK_ITEM_MAX_TEXT_LENGTH),
-		result: parsedResult,
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemAggregationGetInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, ["parentWorkItemId"], "input");
-	return { parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId") };
-}
-function parseWorkItemAggregationListInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"parentWorkItemId",
-		"decision",
-		"state",
-		"depth",
-		"fields",
-		"limit",
-		"cursor"
-	], "input");
-	const fields = record.fields === void 0 ? void 0 : record.fields;
-	if (fields !== void 0 && (!Array.isArray(fields) || fields.length > 3 || new Set(fields).size !== fields.length)) throw invalid("fields", "fields must be a unique bounded array.");
-	return {
-		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
-		...record.decision === void 0 ? {} : { decision: requireEnum(record.decision, WORK_ITEM_AGGREGATION_DECISIONS, "decision") },
-		...record.state === void 0 ? {} : { state: requireEnum(record.state, WORK_ITEM_STATES, "state") },
-		...record.depth === void 0 ? {} : { depth: requireInteger(record.depth, "depth", 1, 8) },
-		...fields === void 0 ? {} : { fields: fields.map((field, index) => requireEnum(field, [
-			"summary",
-			"decision",
-			"provenance"
-		], `fields[${index}]`)) },
-		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200, "LIMIT_EXCEEDED"),
-		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
-	};
-}
-function parseWorkItemAggregationCorrectionInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"parentWorkItemId",
-		"childWorkItemId",
-		"expectedAggregateRevision",
-		"expectedChildResultRevision",
-		"correction",
-		"idempotencyKey"
-	], "input");
-	const correction = requireObject(record.correction, "correction");
-	if (Object.keys(correction).length === 0) throw invalid("correction", "correction is required.");
-	const kind = requireEnum(correction.kind, [
-		"revise",
-		"withdraw",
-		"replace"
-	], "correction.kind");
-	assertKeys(correction, kind === "revise" ? [
-		"kind",
-		"decision",
-		"reason"
-	] : kind === "withdraw" ? ["kind", "reason"] : [
-		"kind",
-		"replacementWorkItemId",
-		"reason"
-	], "correction");
-	const reason = requireBoundedString(correction.reason, "correction.reason", WORK_ITEM_MAX_TEXT_LENGTH);
-	const parsedCorrection = kind === "revise" ? {
-		kind,
-		...correction.decision === void 0 ? {} : { decision: requireEnum(correction.decision, ["accepted", "excluded"], "correction.decision") },
-		reason
-	} : kind === "withdraw" ? {
-		kind,
-		reason
-	} : {
-		kind,
-		replacementWorkItemId: requireNonEmptyString(correction.replacementWorkItemId, "correction.replacementWorkItemId"),
-		reason
-	};
-	return {
-		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
-		childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"),
-		expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
-		expectedChildResultRevision: requireInteger(record.expectedChildResultRevision, "expectedChildResultRevision", 0, Number.MAX_SAFE_INTEGER),
-		correction: parsedCorrection,
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemAggregationDecisionInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"parentWorkItemId",
-		"childWorkItemId",
-		"decision",
-		"reason",
-		"expectedAggregateRevision",
-		"idempotencyKey"
-	], "input");
-	const decision = requireEnum(record.decision, ["accepted", "excluded"], "decision");
-	const reason = record.reason === void 0 ? void 0 : requireBoundedString(record.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH);
-	if (decision === "excluded" && reason === void 0) throw invalid("reason", "excluded requires a reason.");
-	return {
-		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
-		childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"),
-		decision,
-		...reason === void 0 ? {} : { reason },
-		expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemAggregationRetryInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"parentWorkItemId",
-		"childWorkItemId",
-		"targetSessionId",
-		"goal",
-		"scope",
-		"completionCriteria",
-		"authority",
-		"sourceIdentity",
-		"reason",
-		"expectedAggregateRevision",
-		"idempotencyKey"
-	], "input");
-	const sourceIdentity = requireObject(record.sourceIdentity, "sourceIdentity");
-	assertKeys(sourceIdentity, [
-		"workspace",
-		"repository",
-		"branch",
-		"base",
-		"head"
-	], "sourceIdentity");
-	return {
-		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
-		childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"),
-		targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId"),
-		goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
-		scope: requireBoundedString(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
-		completionCriteria: requireBoundedString(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
-		authority: requireBoundedString(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
-		sourceIdentity: {
-			workspace: requireNullableBoundedString(sourceIdentity.workspace, "sourceIdentity.workspace"),
-			repository: requireNullableBoundedString(sourceIdentity.repository, "sourceIdentity.repository"),
-			branch: requireNullableBoundedString(sourceIdentity.branch, "sourceIdentity.branch"),
-			base: requireNullableBoundedString(sourceIdentity.base, "sourceIdentity.base"),
-			head: requireNullableBoundedString(sourceIdentity.head, "sourceIdentity.head")
-		},
-		...record.reason === void 0 ? {} : { reason: requireBoundedString(record.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH) },
-		expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemCancelInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"workItemId",
-		"expectedRevision",
-		"idempotencyKey"
-	], "input");
-	return {
-		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseWorkItemStringList(value, field) {
-	if (!Array.isArray(value) || value.length > 100) throw invalid(field, `${field} must contain at most 100 items.`, "LIMIT_EXCEEDED");
-	return value.map((item, index) => requireBoundedString(item, `${field}[${index}]`, WORK_ITEM_MAX_TEXT_LENGTH));
-}
-function parseWorkItemVerificationResults(value) {
-	if (!Array.isArray(value) || value.length > 100) throw invalid("result.verificationResults", `result.verificationResults must contain at most 100 items.`, "LIMIT_EXCEEDED");
-	return value.map((item, index) => {
-		const record = requireObject(item, `result.verificationResults[${index}]`);
-		assertKeys(record, [
-			"name",
-			"status",
-			"details"
-		], `result.verificationResults[${index}]`);
-		return {
-			name: requireBoundedString(record.name, `result.verificationResults[${index}].name`, WORK_ITEM_MAX_TEXT_LENGTH),
-			status: requireEnum(record.status, [
-				"passed",
-				"failed",
-				"not_run"
-			], `result.verificationResults[${index}].status`),
-			details: requireBoundedString(record.details, `result.verificationResults[${index}].details`, WORK_ITEM_MAX_TEXT_LENGTH)
-		};
-	});
-}
-function requireNullableBoundedString(value, field) {
-	if (value === null) return null;
-	return requireBoundedString(value, field, WORK_ITEM_MAX_TEXT_LENGTH);
-}
-function createSessionRuntimeError(input) {
-	return {
-		schemaVersion: SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
-		error: {
-			code: input.code,
-			message: input.message,
-			retryable: input.retryable ?? false,
-			effect: input.effect ?? "not_applied",
-			details: input.details ?? {}
-		}
-	};
-}
-function parseTurnRunInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"expectedContainerRevision",
-		"sessionId",
-		"catalogRevision",
-		"idempotencyKey",
-		"responseMode",
-		"waitTimeoutMs",
-		"turn",
-		"terminalFailureNotification",
-		"workItemId"
-	], "input");
-	const responseMode = requireEnum(record.responseMode, ["wait", "deferred"], "responseMode");
-	if (responseMode === "deferred" && record.waitTimeoutMs !== void 0) throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
-	return {
-		...parseTurnMutationBase(record),
-		responseMode,
-		...record.waitTimeoutMs === void 0 ? {} : { waitTimeoutMs: requireInteger(record.waitTimeoutMs, "waitTimeoutMs", 1, SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS) }
-	};
-}
-function parseTurnEnqueueInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"expectedContainerRevision",
-		"sessionId",
-		"catalogRevision",
-		"idempotencyKey",
-		"turn",
-		"terminalFailureNotification",
-		"workItemId"
-	], "input");
-	return parseTurnMutationBase(record);
-}
-function parseTurnMutationBase(record) {
-	return {
-		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
-		turn: parseTurnRequest(record.turn),
-		...record.terminalFailureNotification === void 0 ? {} : { terminalFailureNotification: parseTerminalFailureNotificationInput(record.terminalFailureNotification) },
-		...record.workItemId === void 0 ? {} : { workItemId: requireNonEmptyString(record.workItemId, "workItemId") }
-	};
-}
-function parseTerminalFailureNotificationInput(value) {
-	const record = requireObject(value, "terminalFailureNotification");
-	assertKeys(record, ["targetSessionId"], "terminalFailureNotification");
-	return { targetSessionId: requireNonEmptyString(record.targetSessionId, "terminalFailureNotification.targetSessionId") };
-}
-function parseTurnRequest(value) {
-	const record = requireObject(value, "turn");
-	const provider = requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "turn.provider");
-	const reasoningEffort = record.reasoningEffort;
-	if (!isModelReasoningEffort(reasoningEffort)) throw invalid("reasoningEffort", "reasoningEffort is invalid.");
-	const common = {
-		userMessage: requireNonEmptyString(record.userMessage, "userMessage"),
-		model: requireNonEmptyString(record.model, "model"),
-		reasoningEffort,
-		approvalMode: requireEnum(record.approvalMode, APPROVAL_MODE_VALUES, "approvalMode"),
-		attachments: parseTurnAttachments(record.attachments)
-	};
-	if (provider === "codex") {
-		assertKeys(record, [
-			"provider",
-			"userMessage",
-			"model",
-			"reasoningEffort",
-			"approvalMode",
-			"codexSandboxMode",
-			"attachments"
-		], "turn");
-		return {
-			...common,
-			provider,
-			codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "codexSandboxMode")
-		};
-	}
-	assertKeys(record, [
-		"provider",
-		"userMessage",
-		"model",
-		"reasoningEffort",
-		"approvalMode",
-		"customAgentName",
-		"attachments"
-	], "turn");
-	return {
-		...common,
-		provider,
-		customAgentName: requireString(record.customAgentName, "customAgentName").trim()
-	};
-}
-function parseTurnAttachments(value) {
-	if (!Array.isArray(value) || value.length > 32) throw invalid("attachments", `attachments must be an array with at most 32 items.`);
-	const seen = /* @__PURE__ */ new Set();
-	return value.map((item, index) => {
-		const record = requireObject(item, `attachments[${index}]`);
-		assertKeys(record, ["kind", "relativePath"], `attachments[${index}]`);
-		const relativePath = requireNonEmptyString(record.relativePath, `attachments[${index}].relativePath`);
-		if (relativePath.includes("\0") || relativePath.includes("\\") || relativePath.includes("\r") || relativePath.includes("\n") || relativePath.startsWith("/") || /^[a-zA-Z]:/.test(relativePath) || relativePath.startsWith("//")) throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must be a portable relative path.");
-		if (relativePath.split("/").some((segment) => !segment || segment === "." || segment === "..")) throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must identify an item inside the SessionFolder.");
-		const duplicateKey = relativePath.toLowerCase();
-		if (seen.has(duplicateKey)) throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must not be duplicated.");
-		seen.add(duplicateKey);
-		return {
-			kind: requireEnum(record.kind, [
-				"file",
-				"folder",
-				"image"
-			], `attachments[${index}].kind`),
-			relativePath
-		};
-	});
-}
-function parseExecutionInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, ["sessionId", "executionId"], "input");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		executionId: requireNonEmptyString(record.executionId, "executionId")
-	};
-}
-function parseCancelInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"executionId",
-		"expectedRevision",
-		"idempotencyKey"
-	], "input");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		executionId: requireNonEmptyString(record.executionId, "executionId"),
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
-	};
-}
-function parseTurnListInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"limit",
-		"cursor"
-	], "input");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
-		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
-	};
-}
-function parseInteractionListInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"executionId",
-		"kind",
-		"state",
-		"limit",
-		"cursor"
-	], "input");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
-		...record.kind === void 0 ? {} : { kind: requireEnum(record.kind, ["approval", "elicitation"], "kind") },
-		...record.state === void 0 ? {} : { state: requireEnum(record.state, [
-			"pending",
-			"answered",
-			"expired"
-		], "state") },
-		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
-		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
-	};
-}
-function parseInteractionRespondInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"executionId",
-		"interactionId",
-		"expectedRevision",
-		"response",
-		"idempotencyKey",
-		"responseMode",
-		"waitTimeoutMs"
-	], "input");
-	const responseMode = requireEnum(record.responseMode, ["wait", "deferred"], "responseMode");
-	if (responseMode === "deferred" && record.waitTimeoutMs !== void 0) throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
-	return {
-		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		executionId: requireNonEmptyString(record.executionId, "executionId"),
-		interactionId: requireNonEmptyString(record.interactionId, "interactionId"),
-		response: parseInteractionResponse(record.response),
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
-		responseMode,
-		...record.waitTimeoutMs === void 0 ? {} : { waitTimeoutMs: requireInteger(record.waitTimeoutMs, "waitTimeoutMs", 1, SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS) }
-	};
-}
-function parseInteractionResponse(value) {
-	const record = requireObject(value, "response");
-	const kind = requireEnum(record.kind, ["approval", "elicitation"], "response.kind");
-	if (kind === "approval") {
-		assertKeys(record, ["kind", "decision"], "response");
-		return {
-			kind,
-			decision: requireEnum(record.decision, ["approve", "deny"], "response.decision")
-		};
-	}
-	const action = requireEnum(record.action, [
-		"accept",
-		"decline",
-		"cancel"
-	], "response.action");
-	if (action !== "accept") {
-		assertKeys(record, ["kind", "action"], "response");
-		return {
-			kind,
-			action
-		};
-	}
-	assertKeys(record, [
-		"kind",
-		"action",
-		"content"
-	], "response");
-	const content = requireObject(record.content, "response.content");
-	return {
-		kind,
-		action,
-		content: Object.fromEntries(Object.entries(content).map(([name, item]) => [requireNonEmptyString(name, "response.content field"), parseElicitationValue(item, `response.content.${name}`)]))
-	};
-}
-function parseTranscriptExportInput(value) {
-	const record = requireObject(value, "input");
-	assertKeys(record, [
-		"sessionId",
-		"format",
-		"maxBytes",
-		"destination"
-	], "input");
-	const destination = requireObject(record.destination, "destination");
-	const kind = requireEnum(destination.kind, ["inline", "session_folder"], "destination.kind");
-	const maxBytes = requireInteger(record.maxBytes ?? (kind === "inline" ? 1048576 : 67108864), "maxBytes", 1, kind === "inline" ? SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES : SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES, "LIMIT_EXCEEDED");
-	if (kind === "inline") {
-		assertKeys(destination, ["kind"], "destination");
-		return {
-			sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-			format: requireEnum(record.format, ["json", "markdown"], "format"),
-			maxBytes,
-			destination: { kind }
-		};
-	}
-	assertKeys(destination, [
-		"kind",
-		"relativePath",
-		"replace",
-		"idempotencyKey"
-	], "destination");
-	return {
-		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
-		format: requireEnum(record.format, ["json", "markdown"], "format"),
-		maxBytes,
-		destination: {
-			kind,
-			relativePath: requireNonEmptyString(destination.relativePath, "destination.relativePath"),
-			replace: destination.replace === void 0 ? false : requireBoolean(destination.replace, "destination.replace"),
-			idempotencyKey: requireNonEmptyString(destination.idempotencyKey, "destination.idempotencyKey")
-		}
-	};
-}
-function parseElicitationValue(value, field) {
-	if (typeof value === "string" || typeof value === "boolean") return value;
-	if (typeof value === "number" && Number.isFinite(value)) return value;
-	if (Array.isArray(value) && value.every((item) => typeof item === "string")) return [...value];
-	throw invalid(field, `${field} has an invalid elicitation value.`);
-}
-function requireObject(value, field) {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid(field, `${field} must be an object.`);
-	return value;
-}
-function parseDelegationInput(operation, value) {
-	const record = requireObject(value, "input");
-	if (operation === "delegation.list") {
-		assertKeys(record, ["limit", "cursor"], "input");
-		return {
-			limit: requireInteger(record.limit, "limit", 1, 500),
-			...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
-		};
-	}
-	if (operation !== "delegation.create") {
-		assertKeys(record, operation === "delegation.get" ? ["delegationId"] : operation === "delegation.retry" ? [
-			"delegationId",
-			"expectedRevision",
-			"idempotencyKey",
-			"dispatch"
-		] : [
-			"delegationId",
-			"expectedRevision",
-			"idempotencyKey"
-		], "input");
-		const delegationId = requireNonEmptyString(record.delegationId, "delegationId");
-		if (operation === "delegation.get") return { delegationId };
-		return {
-			delegationId,
-			expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
-			idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
-			...operation === "delegation.retry" ? { dispatch: requireEnum(record.dispatch, ["prepare", "enqueue"], "dispatch") } : {}
-		};
-	}
-	assertKeys(record, [
-		"idempotencyKey",
-		"dispatch",
-		"items"
-	], "input");
-	if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > 20) throw invalid("items", `Expected 1 to 20 delegation items.`);
-	const items = record.items.map((value) => {
-		const item = requireObject(value, "item");
-		assertKeys(item, [
-			"target",
-			"work",
-			"turn"
-		], "item");
-		const targetInput = requireObject(item.target, "target");
-		const targetKind = requireEnum(targetInput.kind, ["existing", "create"], "target.kind");
-		assertKeys(targetInput, targetKind === "existing" ? ["kind", "sessionId"] : ["kind", "session"], "target");
-		let target;
-		if (targetKind === "existing") target = {
-			kind: "existing",
-			sessionId: requireNonEmptyString(targetInput.sessionId, "sessionId")
-		};
-		else {
-			const session = requireObject(targetInput.session, "session");
-			if ("idempotencyKey" in session) throw invalid("session.idempotencyKey", "The delegation owns step idempotency keys.");
-			const { idempotencyKey: _key, ...parsed } = parseSessionCreateInput({
-				...session,
-				idempotencyKey: "delegation-step"
-			});
-			target = {
-				kind: "create",
-				session: parsed
-			};
-		}
-		const workInput = requireObject(item.work, "work");
-		const workKind = requireEnum(workInput.kind, [
-			"create",
-			"existing",
-			"root",
-			"replacement"
-		], "work.kind");
-		let work;
-		if (workKind === "root") {
-			assertKeys(workInput, ["kind"], "work");
-			work = { kind: "root" };
-		} else if (workKind === "existing") {
-			assertKeys(workInput, ["kind", "workItemId"], "work");
-			work = {
-				kind: "existing",
-				workItemId: requireNonEmptyString(workInput.workItemId, "workItemId")
-			};
-		} else {
-			const field = workKind === "create" ? "contract" : "request";
-			assertKeys(workInput, ["kind", field], "work");
-			const nested = requireObject(workInput[field], field);
-			for (const key of [
-				"targetSessionId",
-				"idempotencyKey",
-				...workKind === "create" ? ["expectedContainerRevision"] : []
-			]) if (key in nested) throw invalid(`${field}.${key}`, "The delegation resolves this field.");
-			if (workKind === "create") {
-				const { targetSessionId: _target, idempotencyKey: _key, expectedContainerRevision: _revision, ...contract } = parseWorkItemCreateInput({
-					...nested,
-					targetSessionId: "delegation-target",
-					expectedContainerRevision: 1,
-					idempotencyKey: "delegation-step"
-				});
-				work = {
-					kind: "create",
-					contract
-				};
-			} else {
-				const { targetSessionId: _target, idempotencyKey: _key, ...request } = parseWorkItemAggregationRetryInput({
-					...nested,
-					targetSessionId: "delegation-target",
-					idempotencyKey: "delegation-step"
-				});
-				work = {
-					kind: "replacement",
-					request
-				};
-			}
-		}
-		if ((target.kind === "create" && target.session.placement.kind === "root") !== (work.kind === "root")) throw invalid("work.kind", "A new root Session requires its canonical Root Work Item.");
-		const turnInput = requireObject(item.turn, "turn");
-		for (const key of [
-			"sessionId",
-			"workItemId",
-			"idempotencyKey",
-			"expectedContainerRevision"
-		]) if (key in turnInput) throw invalid(`turn.${key}`, "The delegation resolves this field.");
-		const { sessionId: _session, workItemId: _work, idempotencyKey: _key, expectedContainerRevision: _revision, ...turn } = parseTurnEnqueueInput({
-			...turnInput,
-			sessionId: "delegation-target",
-			expectedContainerRevision: 1,
-			idempotencyKey: "delegation-step"
-		});
-		return {
-			target,
-			work,
-			turn
-		};
-	});
-	return {
-		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
-		dispatch: requireEnum(record.dispatch, ["prepare", "enqueue"], "dispatch"),
-		items
-	};
-}
-function assertKeys(record, allowed, field) {
-	const unknownKey = Object.keys(record).find((key) => !allowed.includes(key));
-	if (unknownKey) throw invalid(`${field}.${unknownKey}`, `Unknown field: ${unknownKey}.`);
-}
-function requireNonEmptyString(value, field) {
-	if (typeof value !== "string" || !value.trim()) throw invalid(field, `${field} must be a non-empty string.`);
-	return value.trim();
-}
-function requireString(value, field) {
-	if (typeof value !== "string") throw invalid(field, `${field} must be a string.`);
-	return value;
-}
-function requireBoolean(value, field) {
-	if (typeof value !== "boolean") throw invalid(field, `${field} must be a boolean.`);
-	return value;
-}
-function requireInteger(value, field, min, max, code = "INVALID_INPUT") {
-	if (!Number.isSafeInteger(value) || value < min || value > max) throw invalid(field, `${field} must be an integer from ${min} through ${max}.`, code);
-	return value;
-}
-function requireEnum(value, values, field) {
-	if (typeof value !== "string" || !values.includes(value)) throw invalid(field, `${field} is invalid.`);
-	return value;
-}
-function invalid(field, message, code = "INVALID_INPUT") {
-	return new SessionRuntimeValidationError(message, { field }, code);
-}
-//#endregion
-//#region src/session-runtime-discovery.ts
-var SESSION_RUNTIME_KIND = "session";
-var WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV = "WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID";
-var WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV = "WITHMATE_SESSION_RUNTIME_GENERATION_ID";
-function parseSessionRuntimeCredentialEnvelope(serialized, identity, adapter) {
-	let value;
-	try {
-		value = JSON.parse(serialized);
-	} catch {
-		return null;
-	}
-	if (!isRecord$1(value) || !hasExactKeys$1(value, [
-		"schemaVersion",
-		"applicationInstanceId",
-		"runtimeKind",
-		"adapterKind",
-		"runtimeGenerationId",
-		"credential"
-	]) || value.schemaVersion !== "withmate-runtime-credential-v1" || value.applicationInstanceId !== identity.applicationInstanceId || value.runtimeKind !== "session" || value.runtimeKind !== identity.runtimeKind || value.adapterKind !== adapter || value.runtimeGenerationId !== identity.runtimeGenerationId || !isRecord$1(value.credential) || !hasExactKeys$1(value.credential, [
-		"schemaVersion",
-		"baseUrl",
-		"apiSecret",
-		"adapterSecret"
-	]) || value.credential.schemaVersion !== "withmate-session-runtime-credential-v1" || typeof value.credential.baseUrl !== "string" || typeof value.credential.apiSecret !== "string" || typeof value.credential.adapterSecret !== "string") return null;
-	return value;
-}
-function isRecord$1(value) {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hasExactKeys$1(value, expected) {
-	const actual = Object.keys(value).sort();
-	const sortedExpected = [...expected].sort();
-	return actual.length === sortedExpected.length && actual.every((key, index) => key === sortedExpected[index]);
-}
-//#endregion
-//#region src/session-runtime-exchange.ts
-var SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER = "x-withmate-session-runtime-application-instance";
-var SESSION_RUNTIME_GENERATION_HEADER = "x-withmate-session-runtime-generation";
-var SESSION_RUNTIME_NONCE_HEADER = "x-withmate-session-runtime-nonce";
-var SESSION_RUNTIME_CHALLENGE_HEADER = "x-withmate-session-runtime-challenge";
-var SESSION_RUNTIME_OPERATION_PATH = "/v1/operation";
-var SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-session-exchange-v1";
-function createSessionRuntimeChallenge(apiSecret, applicationInstanceId, runtimeGenerationId, nonce) {
-	return createHmac("sha256", apiSecret).update(`${applicationInstanceId}\n${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
-}
-//#endregion
-//#region src/agent-runtime/agent-runtime-binding-contract.ts
-var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
-var WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED";
-var RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME = "runtime-discovery";
-var RUNTIME_DISCOVERY_ENTRY_FILE_NAME = "entry.json";
-var RUNTIME_DISCOVERY_DEFAULT_HEARTBEAT_MS = 5e3;
-var RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS = 2e4;
-var RUNTIME_DISCOVERY_DEFAULT_CAPACITY_CLEANUP_GRACE_MS = 6e4;
-var RUNTIME_DISCOVERY_DEFAULT_RETENTION_MS = 864e5;
-var RuntimeDiscoveryRegistryError = class extends Error {
-	code;
-	constructor(code, message, options) {
-		super(message, options);
-		this.name = "RuntimeDiscoveryRegistryError";
-		this.code = code;
-	}
-};
-var DEFAULT_RUNTIME_DISCOVERY_REGISTRY_LIMITS = {
-	heartbeatMs: RUNTIME_DISCOVERY_DEFAULT_HEARTBEAT_MS,
-	staleThresholdMs: RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS,
-	capacityCleanupGraceMs: RUNTIME_DISCOVERY_DEFAULT_CAPACITY_CLEANUP_GRACE_MS,
-	retentionMs: RUNTIME_DISCOVERY_DEFAULT_RETENTION_MS,
-	maxEntries: 64
-};
-var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-var RUNTIME_KIND_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
-var ADAPTER_KIND_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
-var CREDENTIAL_FILE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,126}\.json$/;
-var BUILD_CHANNELS = /* @__PURE__ */ new Set([
-	"installed",
-	"development",
-	"visual-check",
-	"unknown"
-]);
-function isRecord(value) {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hasExactKeys(value, keys) {
-	const actualKeys = Object.keys(value).sort();
-	const expectedKeys = [...keys].sort();
-	return actualKeys.length === expectedKeys.length && actualKeys.every((key, index) => key === expectedKeys[index]);
-}
-function isIsoTimestamp(value) {
-	if (typeof value !== "string" || !value) return false;
-	const timestamp = Date.parse(value);
-	return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
-}
-function isUuid(value) {
-	return typeof value === "string" && UUID_PATTERN.test(value);
-}
-function isSafeRelativeRuntimeDiscoveryReference(value) {
-	return typeof value === "string" && value.length > 0 && !path.posix.isAbsolute(value) && !path.win32.isAbsolute(value) && !value.includes("/") && !value.includes("\\") && path.posix.basename(value) === value;
-}
-function isRuntimeDiscoveryIdentity(value) {
-	if (!isRecord(value)) return false;
-	return typeof value.applicationInstanceId === "string" && UUID_PATTERN.test(value.applicationInstanceId) && typeof value.runtimeGenerationId === "string" && UUID_PATTERN.test(value.runtimeGenerationId) && typeof value.runtimeKind === "string" && RUNTIME_KIND_PATTERN.test(value.runtimeKind);
-}
-function isRuntimeDiscoveryAdapterReference(value) {
-	if (!isRecord(value) || !hasExactKeys(value, ["adapterKind", "credentialFileName"])) return false;
-	if (typeof value.adapterKind !== "string" || !ADAPTER_KIND_PATTERN.test(value.adapterKind)) return false;
-	if (typeof value.credentialFileName !== "string" || !CREDENTIAL_FILE_NAME_PATTERN.test(value.credentialFileName) || !isSafeRelativeRuntimeDiscoveryReference(value.credentialFileName) || value.credentialFileName === "entry.json") return false;
-	return true;
-}
-function isRuntimeDiscoverySelector(value) {
-	if (!isRecord(value) || typeof value.runtimeKind !== "string" || !RUNTIME_KIND_PATTERN.test(value.runtimeKind)) return false;
-	if (value.applicationInstanceId !== void 0 && !isUuid(value.applicationInstanceId)) return false;
-	if (value.runtimeGenerationId !== void 0 && !isUuid(value.runtimeGenerationId)) return false;
-	return value.runtimeGenerationId === void 0 || value.applicationInstanceId !== void 0;
-}
-function buildRuntimeDiscoveryCredentialFileName(identity, adapterKind) {
-	if (!ADAPTER_KIND_PATTERN.test(adapterKind)) throw new RuntimeDiscoveryRegistryError("registry_configuration", "Invalid adapter kind.");
-	return `credential-${createHash("sha256").update(`${identity.applicationInstanceId}\0${identity.runtimeKind}\0${identity.runtimeGenerationId}\0${adapterKind}`).digest("hex")}.json`;
-}
-function buildRuntimeDiscoverySlotName(slot) {
-	if (!Number.isSafeInteger(slot) || slot < 0 || slot >= 64) throw new RuntimeDiscoveryRegistryError("registry_configuration", "Runtime registry slot is out of range.");
-	return `slot-${String(slot).padStart(2, "0")}`;
-}
-function parseRuntimeDiscoveryRegistryEntry(value) {
-	if (!isRecord(value) || !hasExactKeys(value, [
-		"schemaVersion",
-		"applicationInstanceId",
-		"runtimeKind",
-		"runtimeGenerationId",
-		"buildChannel",
-		"process",
-		"publicationId",
-		"publishedAt",
-		"lease",
-		"adapters"
-	])) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry has an invalid shape.");
-	if (value.schemaVersion !== "withmate-runtime-discovery-entry-v1" || !isRuntimeDiscoveryIdentity(value) || typeof value.buildChannel !== "string" || !BUILD_CHANNELS.has(value.buildChannel) || !isUuid(value.publicationId) || !isIsoTimestamp(value.publishedAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry metadata is invalid.");
-	const entry = value;
-	if (!isRecord(entry.process) || !hasExactKeys(entry.process, ["pid", "startedAt"]) || typeof entry.process.pid !== "number" || !Number.isSafeInteger(entry.process.pid) || entry.process.pid <= 0 || !isIsoTimestamp(entry.process.startedAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry process metadata is invalid.");
-	if (!isRecord(entry.lease) || !hasExactKeys(entry.lease, ["heartbeatAt"]) || !isIsoTimestamp(entry.lease.heartbeatAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry lease metadata is invalid.");
-	if (!Array.isArray(entry.adapters) || entry.adapters.length === 0 || !entry.adapters.every(isRuntimeDiscoveryAdapterReference)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry adapter references are invalid.");
-	const adapterKinds = /* @__PURE__ */ new Set();
-	const credentialFileNames = /* @__PURE__ */ new Set();
-	for (const adapter of entry.adapters) {
-		if (adapterKinds.has(adapter.adapterKind) || credentialFileNames.has(adapter.credentialFileName)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry adapter references must be unique.");
-		adapterKinds.add(adapter.adapterKind);
-		credentialFileNames.add(adapter.credentialFileName);
-	}
-	return value;
-}
-function getRuntimeDiscoveryLeaseState(entry, now, staleThresholdMs = RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS) {
-	return now.getTime() - Date.parse(entry.lease.heartbeatAt) > staleThresholdMs ? "expired" : "fresh";
-}
-function toSafeRuntimeDiscoveryMetadata(entry, now, staleThresholdMs = RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS) {
-	return {
-		applicationInstanceId: entry.applicationInstanceId,
-		runtimeKind: entry.runtimeKind,
-		runtimeGenerationId: entry.runtimeGenerationId,
-		buildChannel: entry.buildChannel,
-		pid: entry.process.pid,
-		processStartedAt: entry.process.startedAt,
-		publicationId: entry.publicationId,
-		publishedAt: entry.publishedAt,
-		leaseHeartbeatAt: entry.lease.heartbeatAt,
-		leaseState: getRuntimeDiscoveryLeaseState(entry, now, staleThresholdMs)
-	};
-}
-function resolveDefaultRuntimeDiscoveryRegistryRoot(env = process.env, platform = process.platform) {
-	if (platform === "win32") {
-		const localAppData = env.LOCALAPPDATA?.trim();
-		if (!localAppData || !path.win32.isAbsolute(localAppData)) throw new RuntimeDiscoveryRegistryError("registry_configuration", "LOCALAPPDATA must identify an absolute Windows directory.");
-		return path.win32.join(localAppData, "WithMate", RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME, "v1");
-	}
-	const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
-	return path.join(tmpdir(), "withmate", ownerSegment, RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME, "v1");
-}
-function normalizeRuntimeDiscoveryRegistryLimits(overrides = {}) {
-	const limits = {
-		...DEFAULT_RUNTIME_DISCOVERY_REGISTRY_LIMITS,
-		...overrides
-	};
-	for (const [name, value] of Object.entries(limits)) if (!Number.isSafeInteger(value) || value <= 0) throw new RuntimeDiscoveryRegistryError("registry_configuration", `Runtime registry limit ${name} must be a positive integer.`);
-	if (limits.maxEntries > 64) throw new RuntimeDiscoveryRegistryError("registry_configuration", `Runtime registry maxEntries must not exceed 64.`);
-	return limits;
-}
-//#endregion
-//#region node_modules/graceful-fs/polyfills.js
-var require_polyfills = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var constants = __require("constants");
-	var origCwd = process.cwd;
-	var cwd = null;
-	var platform = process.env.GRACEFUL_FS_PLATFORM || process.platform;
-	process.cwd = function() {
-		if (!cwd) cwd = origCwd.call(process);
-		return cwd;
-	};
-	try {
-		process.cwd();
-	} catch (er) {}
-	if (typeof process.chdir === "function") {
-		var chdir = process.chdir;
-		process.chdir = function(d) {
-			cwd = null;
-			chdir.call(process, d);
-		};
-		if (Object.setPrototypeOf) Object.setPrototypeOf(process.chdir, chdir);
-	}
-	module.exports = patch;
-	function patch(fs) {
-		if (constants.hasOwnProperty("O_SYMLINK") && process.version.match(/^v0\.6\.[0-2]|^v0\.5\./)) patchLchmod(fs);
-		if (!fs.lutimes) patchLutimes(fs);
-		fs.chown = chownFix(fs.chown);
-		fs.fchown = chownFix(fs.fchown);
-		fs.lchown = chownFix(fs.lchown);
-		fs.chmod = chmodFix(fs.chmod);
-		fs.fchmod = chmodFix(fs.fchmod);
-		fs.lchmod = chmodFix(fs.lchmod);
-		fs.chownSync = chownFixSync(fs.chownSync);
-		fs.fchownSync = chownFixSync(fs.fchownSync);
-		fs.lchownSync = chownFixSync(fs.lchownSync);
-		fs.chmodSync = chmodFixSync(fs.chmodSync);
-		fs.fchmodSync = chmodFixSync(fs.fchmodSync);
-		fs.lchmodSync = chmodFixSync(fs.lchmodSync);
-		fs.stat = statFix(fs.stat);
-		fs.fstat = statFix(fs.fstat);
-		fs.lstat = statFix(fs.lstat);
-		fs.statSync = statFixSync(fs.statSync);
-		fs.fstatSync = statFixSync(fs.fstatSync);
-		fs.lstatSync = statFixSync(fs.lstatSync);
-		if (fs.chmod && !fs.lchmod) {
-			fs.lchmod = function(path, mode, cb) {
-				if (cb) process.nextTick(cb);
-			};
-			fs.lchmodSync = function() {};
-		}
-		if (fs.chown && !fs.lchown) {
-			fs.lchown = function(path, uid, gid, cb) {
-				if (cb) process.nextTick(cb);
-			};
-			fs.lchownSync = function() {};
-		}
-		if (platform === "win32") fs.rename = typeof fs.rename !== "function" ? fs.rename : (function(fs$rename) {
-			function rename(from, to, cb) {
-				var start = Date.now();
-				var backoff = 0;
-				fs$rename(from, to, function CB(er) {
-					if (er && (er.code === "EACCES" || er.code === "EPERM" || er.code === "EBUSY") && Date.now() - start < 6e4) {
-						setTimeout(function() {
-							fs.stat(to, function(stater, st) {
-								if (stater && stater.code === "ENOENT") fs$rename(from, to, CB);
-								else cb(er);
-							});
-						}, backoff);
-						if (backoff < 100) backoff += 10;
-						return;
-					}
-					if (cb) cb(er);
-				});
-			}
-			if (Object.setPrototypeOf) Object.setPrototypeOf(rename, fs$rename);
-			return rename;
-		})(fs.rename);
-		fs.read = typeof fs.read !== "function" ? fs.read : (function(fs$read) {
-			function read(fd, buffer, offset, length, position, callback_) {
-				var callback;
-				if (callback_ && typeof callback_ === "function") {
-					var eagCounter = 0;
-					callback = function(er, _, __) {
-						if (er && er.code === "EAGAIN" && eagCounter < 10) {
-							eagCounter++;
-							return fs$read.call(fs, fd, buffer, offset, length, position, callback);
-						}
-						callback_.apply(this, arguments);
-					};
-				}
-				return fs$read.call(fs, fd, buffer, offset, length, position, callback);
-			}
-			if (Object.setPrototypeOf) Object.setPrototypeOf(read, fs$read);
-			return read;
-		})(fs.read);
-		fs.readSync = typeof fs.readSync !== "function" ? fs.readSync : (function(fs$readSync) {
-			return function(fd, buffer, offset, length, position) {
-				var eagCounter = 0;
-				while (true) try {
-					return fs$readSync.call(fs, fd, buffer, offset, length, position);
-				} catch (er) {
-					if (er.code === "EAGAIN" && eagCounter < 10) {
-						eagCounter++;
-						continue;
-					}
-					throw er;
-				}
-			};
-		})(fs.readSync);
-		function patchLchmod(fs) {
-			fs.lchmod = function(path, mode, callback) {
-				fs.open(path, constants.O_WRONLY | constants.O_SYMLINK, mode, function(err, fd) {
-					if (err) {
-						if (callback) callback(err);
-						return;
-					}
-					fs.fchmod(fd, mode, function(err) {
-						fs.close(fd, function(err2) {
-							if (callback) callback(err || err2);
-						});
-					});
-				});
-			};
-			fs.lchmodSync = function(path, mode) {
-				var fd = fs.openSync(path, constants.O_WRONLY | constants.O_SYMLINK, mode);
-				var threw = true;
-				var ret;
-				try {
-					ret = fs.fchmodSync(fd, mode);
-					threw = false;
-				} finally {
-					if (threw) try {
-						fs.closeSync(fd);
-					} catch (er) {}
-					else fs.closeSync(fd);
-				}
-				return ret;
-			};
-		}
-		function patchLutimes(fs) {
-			if (constants.hasOwnProperty("O_SYMLINK") && fs.futimes) {
-				fs.lutimes = function(path, at, mt, cb) {
-					fs.open(path, constants.O_SYMLINK, function(er, fd) {
-						if (er) {
-							if (cb) cb(er);
-							return;
-						}
-						fs.futimes(fd, at, mt, function(er) {
-							fs.close(fd, function(er2) {
-								if (cb) cb(er || er2);
-							});
-						});
-					});
-				};
-				fs.lutimesSync = function(path, at, mt) {
-					var fd = fs.openSync(path, constants.O_SYMLINK);
-					var ret;
-					var threw = true;
-					try {
-						ret = fs.futimesSync(fd, at, mt);
-						threw = false;
-					} finally {
-						if (threw) try {
-							fs.closeSync(fd);
-						} catch (er) {}
-						else fs.closeSync(fd);
-					}
-					return ret;
-				};
-			} else if (fs.futimes) {
-				fs.lutimes = function(_a, _b, _c, cb) {
-					if (cb) process.nextTick(cb);
-				};
-				fs.lutimesSync = function() {};
-			}
-		}
-		function chmodFix(orig) {
-			if (!orig) return orig;
-			return function(target, mode, cb) {
-				return orig.call(fs, target, mode, function(er) {
-					if (chownErOk(er)) er = null;
-					if (cb) cb.apply(this, arguments);
-				});
-			};
-		}
-		function chmodFixSync(orig) {
-			if (!orig) return orig;
-			return function(target, mode) {
-				try {
-					return orig.call(fs, target, mode);
-				} catch (er) {
-					if (!chownErOk(er)) throw er;
-				}
-			};
-		}
-		function chownFix(orig) {
-			if (!orig) return orig;
-			return function(target, uid, gid, cb) {
-				return orig.call(fs, target, uid, gid, function(er) {
-					if (chownErOk(er)) er = null;
-					if (cb) cb.apply(this, arguments);
-				});
-			};
-		}
-		function chownFixSync(orig) {
-			if (!orig) return orig;
-			return function(target, uid, gid) {
-				try {
-					return orig.call(fs, target, uid, gid);
-				} catch (er) {
-					if (!chownErOk(er)) throw er;
-				}
-			};
-		}
-		function statFix(orig) {
-			if (!orig) return orig;
-			return function(target, options, cb) {
-				if (typeof options === "function") {
-					cb = options;
-					options = null;
-				}
-				function callback(er, stats) {
-					if (stats) {
-						if (stats.uid < 0) stats.uid += 4294967296;
-						if (stats.gid < 0) stats.gid += 4294967296;
-					}
-					if (cb) cb.apply(this, arguments);
-				}
-				return options ? orig.call(fs, target, options, callback) : orig.call(fs, target, callback);
-			};
-		}
-		function statFixSync(orig) {
-			if (!orig) return orig;
-			return function(target, options) {
-				var stats = options ? orig.call(fs, target, options) : orig.call(fs, target);
-				if (stats) {
-					if (stats.uid < 0) stats.uid += 4294967296;
-					if (stats.gid < 0) stats.gid += 4294967296;
-				}
-				return stats;
-			};
-		}
-		function chownErOk(er) {
-			if (!er) return true;
-			if (er.code === "ENOSYS") return true;
-			if (!process.getuid || process.getuid() !== 0) {
-				if (er.code === "EINVAL" || er.code === "EPERM") return true;
-			}
-			return false;
-		}
-	}
-}));
-//#endregion
-//#region node_modules/graceful-fs/legacy-streams.js
-var require_legacy_streams = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var Stream = __require("stream").Stream;
-	module.exports = legacy;
-	function legacy(fs) {
-		return {
-			ReadStream,
-			WriteStream
-		};
-		function ReadStream(path, options) {
-			if (!(this instanceof ReadStream)) return new ReadStream(path, options);
-			Stream.call(this);
-			var self = this;
-			this.path = path;
-			this.fd = null;
-			this.readable = true;
-			this.paused = false;
-			this.flags = "r";
-			this.mode = 438;
-			this.bufferSize = 65536;
-			options = options || {};
-			var keys = Object.keys(options);
-			for (var index = 0, length = keys.length; index < length; index++) {
-				var key = keys[index];
-				this[key] = options[key];
-			}
-			if (this.encoding) this.setEncoding(this.encoding);
-			if (this.start !== void 0) {
-				if ("number" !== typeof this.start) throw TypeError("start must be a Number");
-				if (this.end === void 0) this.end = Infinity;
-				else if ("number" !== typeof this.end) throw TypeError("end must be a Number");
-				if (this.start > this.end) throw new Error("start must be <= end");
-				this.pos = this.start;
-			}
-			if (this.fd !== null) {
-				process.nextTick(function() {
-					self._read();
-				});
-				return;
-			}
-			fs.open(this.path, this.flags, this.mode, function(err, fd) {
-				if (err) {
-					self.emit("error", err);
-					self.readable = false;
-					return;
-				}
-				self.fd = fd;
-				self.emit("open", fd);
-				self._read();
-			});
-		}
-		function WriteStream(path, options) {
-			if (!(this instanceof WriteStream)) return new WriteStream(path, options);
-			Stream.call(this);
-			this.path = path;
-			this.fd = null;
-			this.writable = true;
-			this.flags = "w";
-			this.encoding = "binary";
-			this.mode = 438;
-			this.bytesWritten = 0;
-			options = options || {};
-			var keys = Object.keys(options);
-			for (var index = 0, length = keys.length; index < length; index++) {
-				var key = keys[index];
-				this[key] = options[key];
-			}
-			if (this.start !== void 0) {
-				if ("number" !== typeof this.start) throw TypeError("start must be a Number");
-				if (this.start < 0) throw new Error("start must be >= zero");
-				this.pos = this.start;
-			}
-			this.busy = false;
-			this._queue = [];
-			if (this.fd === null) {
-				this._open = fs.open;
-				this._queue.push([
-					this._open,
-					this.path,
-					this.flags,
-					this.mode,
-					void 0
-				]);
-				this.flush();
-			}
-		}
-	}
-}));
-//#endregion
-//#region node_modules/graceful-fs/clone.js
-var require_clone = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports = clone;
-	var getPrototypeOf = Object.getPrototypeOf || function(obj) {
-		return obj.__proto__;
-	};
-	function clone(obj) {
-		if (obj === null || typeof obj !== "object") return obj;
-		if (obj instanceof Object) var copy = { __proto__: getPrototypeOf(obj) };
-		else var copy = Object.create(null);
-		Object.getOwnPropertyNames(obj).forEach(function(key) {
-			Object.defineProperty(copy, key, Object.getOwnPropertyDescriptor(obj, key));
-		});
-		return copy;
-	}
-}));
-//#endregion
-//#region node_modules/graceful-fs/graceful-fs.js
-var require_graceful_fs = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var fs = __require("fs");
-	var polyfills = require_polyfills();
-	var legacy = require_legacy_streams();
-	var clone = require_clone();
-	var util$1 = __require("util");
-	/* istanbul ignore next - node 0.x polyfill */
-	var gracefulQueue;
-	var previousSymbol;
-	/* istanbul ignore else - node 0.x polyfill */
-	if (typeof Symbol === "function" && typeof Symbol.for === "function") {
-		gracefulQueue = Symbol.for("graceful-fs.queue");
-		previousSymbol = Symbol.for("graceful-fs.previous");
-	} else {
-		gracefulQueue = "___graceful-fs.queue";
-		previousSymbol = "___graceful-fs.previous";
-	}
-	function noop() {}
-	function publishQueue(context, queue) {
-		Object.defineProperty(context, gracefulQueue, { get: function() {
-			return queue;
-		} });
-	}
-	var debug = noop;
-	if (util$1.debuglog) debug = util$1.debuglog("gfs4");
-	else if (/\bgfs4\b/i.test(process.env.NODE_DEBUG || "")) debug = function() {
-		var m = util$1.format.apply(util$1, arguments);
-		m = "GFS4: " + m.split(/\n/).join("\nGFS4: ");
-		console.error(m);
-	};
-	if (!fs[gracefulQueue]) {
-		publishQueue(fs, global[gracefulQueue] || []);
-		fs.close = (function(fs$close) {
-			function close(fd, cb) {
-				return fs$close.call(fs, fd, function(err) {
-					if (!err) resetQueue();
-					if (typeof cb === "function") cb.apply(this, arguments);
-				});
-			}
-			Object.defineProperty(close, previousSymbol, { value: fs$close });
-			return close;
-		})(fs.close);
-		fs.closeSync = (function(fs$closeSync) {
-			function closeSync(fd) {
-				fs$closeSync.apply(fs, arguments);
-				resetQueue();
-			}
-			Object.defineProperty(closeSync, previousSymbol, { value: fs$closeSync });
-			return closeSync;
-		})(fs.closeSync);
-		if (/\bgfs4\b/i.test(process.env.NODE_DEBUG || "")) process.on("exit", function() {
-			debug(fs[gracefulQueue]);
-			__require("assert").equal(fs[gracefulQueue].length, 0);
-		});
-	}
-	if (!global[gracefulQueue]) publishQueue(global, fs[gracefulQueue]);
-	module.exports = patch(clone(fs));
-	if (process.env.TEST_GRACEFUL_FS_GLOBAL_PATCH && !fs.__patched) {
-		module.exports = patch(fs);
-		fs.__patched = true;
-	}
-	function patch(fs) {
-		polyfills(fs);
-		fs.gracefulify = patch;
-		fs.createReadStream = createReadStream;
-		fs.createWriteStream = createWriteStream;
-		var fs$readFile = fs.readFile;
-		fs.readFile = readFile;
-		function readFile(path, options, cb) {
-			if (typeof options === "function") cb = options, options = null;
-			return go$readFile(path, options, cb);
-			function go$readFile(path, options, cb, startTime) {
-				return fs$readFile(path, options, function(err) {
-					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
-						go$readFile,
-						[
-							path,
-							options,
-							cb
-						],
-						err,
-						startTime || Date.now(),
-						Date.now()
-					]);
-					else if (typeof cb === "function") cb.apply(this, arguments);
-				});
-			}
-		}
-		var fs$writeFile = fs.writeFile;
-		fs.writeFile = writeFile;
-		function writeFile(path, data, options, cb) {
-			if (typeof options === "function") cb = options, options = null;
-			return go$writeFile(path, data, options, cb);
-			function go$writeFile(path, data, options, cb, startTime) {
-				return fs$writeFile(path, data, options, function(err) {
-					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
-						go$writeFile,
-						[
-							path,
-							data,
-							options,
-							cb
-						],
-						err,
-						startTime || Date.now(),
-						Date.now()
-					]);
-					else if (typeof cb === "function") cb.apply(this, arguments);
-				});
-			}
-		}
-		var fs$appendFile = fs.appendFile;
-		if (fs$appendFile) fs.appendFile = appendFile;
-		function appendFile(path, data, options, cb) {
-			if (typeof options === "function") cb = options, options = null;
-			return go$appendFile(path, data, options, cb);
-			function go$appendFile(path, data, options, cb, startTime) {
-				return fs$appendFile(path, data, options, function(err) {
-					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
-						go$appendFile,
-						[
-							path,
-							data,
-							options,
-							cb
-						],
-						err,
-						startTime || Date.now(),
-						Date.now()
-					]);
-					else if (typeof cb === "function") cb.apply(this, arguments);
-				});
-			}
-		}
-		var fs$copyFile = fs.copyFile;
-		if (fs$copyFile) fs.copyFile = copyFile;
-		function copyFile(src, dest, flags, cb) {
-			if (typeof flags === "function") {
-				cb = flags;
-				flags = 0;
-			}
-			return go$copyFile(src, dest, flags, cb);
-			function go$copyFile(src, dest, flags, cb, startTime) {
-				return fs$copyFile(src, dest, flags, function(err) {
-					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
-						go$copyFile,
-						[
-							src,
-							dest,
-							flags,
-							cb
-						],
-						err,
-						startTime || Date.now(),
-						Date.now()
-					]);
-					else if (typeof cb === "function") cb.apply(this, arguments);
-				});
-			}
-		}
-		var fs$readdir = fs.readdir;
-		fs.readdir = readdir;
-		var noReaddirOptionVersions = /^v[0-5]\./;
-		function readdir(path, options, cb) {
-			if (typeof options === "function") cb = options, options = null;
-			var go$readdir = noReaddirOptionVersions.test(process.version) ? function go$readdir(path, options, cb, startTime) {
-				return fs$readdir(path, fs$readdirCallback(path, options, cb, startTime));
-			} : function go$readdir(path, options, cb, startTime) {
-				return fs$readdir(path, options, fs$readdirCallback(path, options, cb, startTime));
-			};
-			return go$readdir(path, options, cb);
-			function fs$readdirCallback(path, options, cb, startTime) {
-				return function(err, files) {
-					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
-						go$readdir,
-						[
-							path,
-							options,
-							cb
-						],
-						err,
-						startTime || Date.now(),
-						Date.now()
-					]);
-					else {
-						if (files && files.sort) files.sort();
-						if (typeof cb === "function") cb.call(this, err, files);
-					}
-				};
-			}
-		}
-		if (process.version.substr(0, 4) === "v0.8") {
-			var legStreams = legacy(fs);
-			ReadStream = legStreams.ReadStream;
-			WriteStream = legStreams.WriteStream;
-		}
-		var fs$ReadStream = fs.ReadStream;
-		if (fs$ReadStream) {
-			ReadStream.prototype = Object.create(fs$ReadStream.prototype);
-			ReadStream.prototype.open = ReadStream$open;
-		}
-		var fs$WriteStream = fs.WriteStream;
-		if (fs$WriteStream) {
-			WriteStream.prototype = Object.create(fs$WriteStream.prototype);
-			WriteStream.prototype.open = WriteStream$open;
-		}
-		Object.defineProperty(fs, "ReadStream", {
-			get: function() {
-				return ReadStream;
-			},
-			set: function(val) {
-				ReadStream = val;
-			},
-			enumerable: true,
-			configurable: true
-		});
-		Object.defineProperty(fs, "WriteStream", {
-			get: function() {
-				return WriteStream;
-			},
-			set: function(val) {
-				WriteStream = val;
-			},
-			enumerable: true,
-			configurable: true
-		});
-		var FileReadStream = ReadStream;
-		Object.defineProperty(fs, "FileReadStream", {
-			get: function() {
-				return FileReadStream;
-			},
-			set: function(val) {
-				FileReadStream = val;
-			},
-			enumerable: true,
-			configurable: true
-		});
-		var FileWriteStream = WriteStream;
-		Object.defineProperty(fs, "FileWriteStream", {
-			get: function() {
-				return FileWriteStream;
-			},
-			set: function(val) {
-				FileWriteStream = val;
-			},
-			enumerable: true,
-			configurable: true
-		});
-		function ReadStream(path, options) {
-			if (this instanceof ReadStream) return fs$ReadStream.apply(this, arguments), this;
-			else return ReadStream.apply(Object.create(ReadStream.prototype), arguments);
-		}
-		function ReadStream$open() {
-			var that = this;
-			open(that.path, that.flags, that.mode, function(err, fd) {
-				if (err) {
-					if (that.autoClose) that.destroy();
-					that.emit("error", err);
-				} else {
-					that.fd = fd;
-					that.emit("open", fd);
-					that.read();
-				}
-			});
-		}
-		function WriteStream(path, options) {
-			if (this instanceof WriteStream) return fs$WriteStream.apply(this, arguments), this;
-			else return WriteStream.apply(Object.create(WriteStream.prototype), arguments);
-		}
-		function WriteStream$open() {
-			var that = this;
-			open(that.path, that.flags, that.mode, function(err, fd) {
-				if (err) {
-					that.destroy();
-					that.emit("error", err);
-				} else {
-					that.fd = fd;
-					that.emit("open", fd);
-				}
-			});
-		}
-		function createReadStream(path, options) {
-			return new fs.ReadStream(path, options);
-		}
-		function createWriteStream(path, options) {
-			return new fs.WriteStream(path, options);
-		}
-		var fs$open = fs.open;
-		fs.open = open;
-		function open(path, flags, mode, cb) {
-			if (typeof mode === "function") cb = mode, mode = null;
-			return go$open(path, flags, mode, cb);
-			function go$open(path, flags, mode, cb, startTime) {
-				return fs$open(path, flags, mode, function(err, fd) {
-					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
-						go$open,
-						[
-							path,
-							flags,
-							mode,
-							cb
-						],
-						err,
-						startTime || Date.now(),
-						Date.now()
-					]);
-					else if (typeof cb === "function") cb.apply(this, arguments);
-				});
-			}
-		}
-		return fs;
-	}
-	function enqueue(elem) {
-		debug("ENQUEUE", elem[0].name, elem[1]);
-		fs[gracefulQueue].push(elem);
-		retry();
-	}
-	var retryTimer;
-	function resetQueue() {
-		var now = Date.now();
-		for (var i = 0; i < fs[gracefulQueue].length; ++i) if (fs[gracefulQueue][i].length > 2) {
-			fs[gracefulQueue][i][3] = now;
-			fs[gracefulQueue][i][4] = now;
-		}
-		retry();
-	}
-	function retry() {
-		clearTimeout(retryTimer);
-		retryTimer = void 0;
-		if (fs[gracefulQueue].length === 0) return;
-		var elem = fs[gracefulQueue].shift();
-		var fn = elem[0];
-		var args = elem[1];
-		var err = elem[2];
-		var startTime = elem[3];
-		var lastTime = elem[4];
-		if (startTime === void 0) {
-			debug("RETRY", fn.name, args);
-			fn.apply(null, args);
-		} else if (Date.now() - startTime >= 6e4) {
-			debug("TIMEOUT", fn.name, args);
-			var cb = args.pop();
-			if (typeof cb === "function") cb.call(null, err);
-		} else {
-			var sinceAttempt = Date.now() - lastTime;
-			var sinceStart = Math.max(lastTime - startTime, 1);
-			if (sinceAttempt >= Math.min(sinceStart * 1.2, 100)) {
-				debug("RETRY", fn.name, args);
-				fn.apply(null, args.concat([startTime]));
-			} else fs[gracefulQueue].push(elem);
-		}
-		if (retryTimer === void 0) retryTimer = setTimeout(retry, 0);
-	}
-}));
-//#endregion
-//#region node_modules/retry/lib/retry_operation.js
-var require_retry_operation = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	function RetryOperation(timeouts, options) {
-		if (typeof options === "boolean") options = { forever: options };
-		this._originalTimeouts = JSON.parse(JSON.stringify(timeouts));
-		this._timeouts = timeouts;
-		this._options = options || {};
-		this._maxRetryTime = options && options.maxRetryTime || Infinity;
-		this._fn = null;
-		this._errors = [];
-		this._attempts = 1;
-		this._operationTimeout = null;
-		this._operationTimeoutCb = null;
-		this._timeout = null;
-		this._operationStart = null;
-		if (this._options.forever) this._cachedTimeouts = this._timeouts.slice(0);
-	}
-	module.exports = RetryOperation;
-	RetryOperation.prototype.reset = function() {
-		this._attempts = 1;
-		this._timeouts = this._originalTimeouts;
-	};
-	RetryOperation.prototype.stop = function() {
-		if (this._timeout) clearTimeout(this._timeout);
-		this._timeouts = [];
-		this._cachedTimeouts = null;
-	};
-	RetryOperation.prototype.retry = function(err) {
-		if (this._timeout) clearTimeout(this._timeout);
-		if (!err) return false;
-		var currentTime = (/* @__PURE__ */ new Date()).getTime();
-		if (err && currentTime - this._operationStart >= this._maxRetryTime) {
-			this._errors.unshift(/* @__PURE__ */ new Error("RetryOperation timeout occurred"));
-			return false;
-		}
-		this._errors.push(err);
-		var timeout = this._timeouts.shift();
-		if (timeout === void 0) {
-			if (this._cachedTimeouts) {
-				this._errors.splice(this._errors.length - 1, this._errors.length);
-				this._timeouts = this._cachedTimeouts.slice(0);
-				timeout = this._timeouts.shift();
-			} else return false;
-		}
-		var self = this;
-		var timer = setTimeout(function() {
-			self._attempts++;
-			if (self._operationTimeoutCb) {
-				self._timeout = setTimeout(function() {
-					self._operationTimeoutCb(self._attempts);
-				}, self._operationTimeout);
-				if (self._options.unref) self._timeout.unref();
-			}
-			self._fn(self._attempts);
-		}, timeout);
-		if (this._options.unref) timer.unref();
-		return true;
-	};
-	RetryOperation.prototype.attempt = function(fn, timeoutOps) {
-		this._fn = fn;
-		if (timeoutOps) {
-			if (timeoutOps.timeout) this._operationTimeout = timeoutOps.timeout;
-			if (timeoutOps.cb) this._operationTimeoutCb = timeoutOps.cb;
-		}
-		var self = this;
-		if (this._operationTimeoutCb) this._timeout = setTimeout(function() {
-			self._operationTimeoutCb();
-		}, self._operationTimeout);
-		this._operationStart = (/* @__PURE__ */ new Date()).getTime();
-		this._fn(this._attempts);
-	};
-	RetryOperation.prototype.try = function(fn) {
-		console.log("Using RetryOperation.try() is deprecated");
-		this.attempt(fn);
-	};
-	RetryOperation.prototype.start = function(fn) {
-		console.log("Using RetryOperation.start() is deprecated");
-		this.attempt(fn);
-	};
-	RetryOperation.prototype.start = RetryOperation.prototype.try;
-	RetryOperation.prototype.errors = function() {
-		return this._errors;
-	};
-	RetryOperation.prototype.attempts = function() {
-		return this._attempts;
-	};
-	RetryOperation.prototype.mainError = function() {
-		if (this._errors.length === 0) return null;
-		var counts = {};
-		var mainError = null;
-		var mainErrorCount = 0;
-		for (var i = 0; i < this._errors.length; i++) {
-			var error = this._errors[i];
-			var message = error.message;
-			var count = (counts[message] || 0) + 1;
-			counts[message] = count;
-			if (count >= mainErrorCount) {
-				mainError = error;
-				mainErrorCount = count;
-			}
-		}
-		return mainError;
-	};
-}));
-//#endregion
-//#region node_modules/retry/lib/retry.js
-var require_retry$1 = /* @__PURE__ */ __commonJSMin(((exports) => {
-	var RetryOperation = require_retry_operation();
-	exports.operation = function(options) {
-		return new RetryOperation(exports.timeouts(options), {
-			forever: options && options.forever,
-			unref: options && options.unref,
-			maxRetryTime: options && options.maxRetryTime
-		});
-	};
-	exports.timeouts = function(options) {
-		if (options instanceof Array) return [].concat(options);
-		var opts = {
-			retries: 10,
-			factor: 2,
-			minTimeout: 1e3,
-			maxTimeout: Infinity,
-			randomize: false
-		};
-		for (var key in options) opts[key] = options[key];
-		if (opts.minTimeout > opts.maxTimeout) throw new Error("minTimeout is greater than maxTimeout");
-		var timeouts = [];
-		for (var i = 0; i < opts.retries; i++) timeouts.push(this.createTimeout(i, opts));
-		if (options && options.forever && !timeouts.length) timeouts.push(this.createTimeout(i, opts));
-		timeouts.sort(function(a, b) {
-			return a - b;
-		});
-		return timeouts;
-	};
-	exports.createTimeout = function(attempt, opts) {
-		var random = opts.randomize ? Math.random() + 1 : 1;
-		var timeout = Math.round(random * opts.minTimeout * Math.pow(opts.factor, attempt));
-		timeout = Math.min(timeout, opts.maxTimeout);
-		return timeout;
-	};
-	exports.wrap = function(obj, options, methods) {
-		if (options instanceof Array) {
-			methods = options;
-			options = null;
-		}
-		if (!methods) {
-			methods = [];
-			for (var key in obj) if (typeof obj[key] === "function") methods.push(key);
-		}
-		for (var i = 0; i < methods.length; i++) {
-			var method = methods[i];
-			var original = obj[method];
-			obj[method] = function retryWrapper(original) {
-				var op = exports.operation(options);
-				var args = Array.prototype.slice.call(arguments, 1);
-				var callback = args.pop();
-				args.push(function(err) {
-					if (op.retry(err)) return;
-					if (err) arguments[0] = op.mainError();
-					callback.apply(this, arguments);
-				});
-				op.attempt(function() {
-					original.apply(obj, args);
-				});
-			}.bind(obj, original);
-			obj[method].options = options;
-		}
-	};
-}));
-//#endregion
-//#region node_modules/retry/index.js
-var require_retry = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports = require_retry$1();
-}));
-//#endregion
-//#region node_modules/signal-exit/signals.js
-var require_signals = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports = [
-		"SIGABRT",
-		"SIGALRM",
-		"SIGHUP",
-		"SIGINT",
-		"SIGTERM"
-	];
-	if (process.platform !== "win32") module.exports.push("SIGVTALRM", "SIGXCPU", "SIGXFSZ", "SIGUSR2", "SIGTRAP", "SIGSYS", "SIGQUIT", "SIGIOT");
-	if (process.platform === "linux") module.exports.push("SIGIO", "SIGPOLL", "SIGPWR", "SIGSTKFLT", "SIGUNUSED");
-}));
-//#endregion
-//#region node_modules/signal-exit/index.js
-var require_signal_exit = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var process = global.process;
-	var processOk = function(process) {
-		return process && typeof process === "object" && typeof process.removeListener === "function" && typeof process.emit === "function" && typeof process.reallyExit === "function" && typeof process.listeners === "function" && typeof process.kill === "function" && typeof process.pid === "number" && typeof process.on === "function";
-	};
-	/* istanbul ignore if */
-	if (!processOk(process)) module.exports = function() {
-		return function() {};
-	};
-	else {
-		var assert = __require("assert");
-		var signals = require_signals();
-		var isWin = /^win/i.test(process.platform);
-		var EE = __require("events");
-		/* istanbul ignore if */
-		if (typeof EE !== "function") EE = EE.EventEmitter;
-		var emitter;
-		if (process.__signal_exit_emitter__) emitter = process.__signal_exit_emitter__;
-		else {
-			emitter = process.__signal_exit_emitter__ = new EE();
-			emitter.count = 0;
-			emitter.emitted = {};
-		}
-		if (!emitter.infinite) {
-			emitter.setMaxListeners(Infinity);
-			emitter.infinite = true;
-		}
-		module.exports = function(cb, opts) {
-			/* istanbul ignore if */
-			if (!processOk(global.process)) return function() {};
-			assert.equal(typeof cb, "function", "a callback must be provided for exit handler");
-			if (loaded === false) load();
-			var ev = "exit";
-			if (opts && opts.alwaysLast) ev = "afterexit";
-			var remove = function() {
-				emitter.removeListener(ev, cb);
-				if (emitter.listeners("exit").length === 0 && emitter.listeners("afterexit").length === 0) unload();
-			};
-			emitter.on(ev, cb);
-			return remove;
-		};
-		var unload = function unload() {
-			if (!loaded || !processOk(global.process)) return;
-			loaded = false;
-			signals.forEach(function(sig) {
-				try {
-					process.removeListener(sig, sigListeners[sig]);
-				} catch (er) {}
-			});
-			process.emit = originalProcessEmit;
-			process.reallyExit = originalProcessReallyExit;
-			emitter.count -= 1;
-		};
-		module.exports.unload = unload;
-		var emit = function emit(event, code, signal) {
-			/* istanbul ignore if */
-			if (emitter.emitted[event]) return;
-			emitter.emitted[event] = true;
-			emitter.emit(event, code, signal);
-		};
-		var sigListeners = {};
-		signals.forEach(function(sig) {
-			sigListeners[sig] = function listener() {
-				/* istanbul ignore if */
-				if (!processOk(global.process)) return;
-				if (process.listeners(sig).length === emitter.count) {
-					unload();
-					emit("exit", null, sig);
-					/* istanbul ignore next */
-					emit("afterexit", null, sig);
-					/* istanbul ignore next */
-					if (isWin && sig === "SIGHUP") sig = "SIGINT";
-					/* istanbul ignore next */
-					process.kill(process.pid, sig);
-				}
-			};
-		});
-		module.exports.signals = function() {
-			return signals;
-		};
-		var loaded = false;
-		var load = function load() {
-			if (loaded || !processOk(global.process)) return;
-			loaded = true;
-			emitter.count += 1;
-			signals = signals.filter(function(sig) {
-				try {
-					process.on(sig, sigListeners[sig]);
-					return true;
-				} catch (er) {
-					return false;
-				}
-			});
-			process.emit = processEmit;
-			process.reallyExit = processReallyExit;
-		};
-		module.exports.load = load;
-		var originalProcessReallyExit = process.reallyExit;
-		var processReallyExit = function processReallyExit(code) {
-			/* istanbul ignore if */
-			if (!processOk(global.process)) return;
-			process.exitCode = code || /* istanbul ignore next */ 0;
-			emit("exit", process.exitCode, null);
-			/* istanbul ignore next */
-			emit("afterexit", process.exitCode, null);
-			/* istanbul ignore next */
-			originalProcessReallyExit.call(process, process.exitCode);
-		};
-		var originalProcessEmit = process.emit;
-		var processEmit = function processEmit(ev, arg) {
-			if (ev === "exit" && processOk(global.process)) {
-				/* istanbul ignore else */
-				if (arg !== void 0) process.exitCode = arg;
-				var ret = originalProcessEmit.apply(this, arguments);
-				/* istanbul ignore next */
-				emit("exit", process.exitCode, null);
-				/* istanbul ignore next */
-				emit("afterexit", process.exitCode, null);
-				/* istanbul ignore next */
-				return ret;
-			} else return originalProcessEmit.apply(this, arguments);
-		};
-	}
-}));
-//#endregion
-//#region node_modules/proper-lockfile/lib/mtime-precision.js
-var require_mtime_precision = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var cacheSymbol = Symbol();
-	function probe(file, fs, callback) {
-		const cachedPrecision = fs[cacheSymbol];
-		if (cachedPrecision) return fs.stat(file, (err, stat) => {
-			/* istanbul ignore if */
-			if (err) return callback(err);
-			callback(null, stat.mtime, cachedPrecision);
-		});
-		const mtime = /* @__PURE__ */ new Date(Math.ceil(Date.now() / 1e3) * 1e3 + 5);
-		fs.utimes(file, mtime, mtime, (err) => {
-			/* istanbul ignore if */
-			if (err) return callback(err);
-			fs.stat(file, (err, stat) => {
-				/* istanbul ignore if */
-				if (err) return callback(err);
-				const precision = stat.mtime.getTime() % 1e3 === 0 ? "s" : "ms";
-				Object.defineProperty(fs, cacheSymbol, { value: precision });
-				callback(null, stat.mtime, precision);
-			});
-		});
-	}
-	function getMtime(precision) {
-		let now = Date.now();
-		if (precision === "s") now = Math.ceil(now / 1e3) * 1e3;
-		return new Date(now);
-	}
-	module.exports.probe = probe;
-	module.exports.getMtime = getMtime;
-}));
-//#endregion
-//#region node_modules/proper-lockfile/lib/lockfile.js
-var require_lockfile = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var path$1 = __require("path");
-	var fs = require_graceful_fs();
-	var retry = require_retry();
-	var onExit = require_signal_exit();
-	var mtimePrecision = require_mtime_precision();
-	var locks = {};
-	function getLockFile(file, options) {
-		return options.lockfilePath || `${file}.lock`;
-	}
-	function resolveCanonicalPath(file, options, callback) {
-		if (!options.realpath) return callback(null, path$1.resolve(file));
-		options.fs.realpath(file, callback);
-	}
-	function acquireLock(file, options, callback) {
-		const lockfilePath = getLockFile(file, options);
-		options.fs.mkdir(lockfilePath, (err) => {
-			if (!err) return mtimePrecision.probe(lockfilePath, options.fs, (err, mtime, mtimePrecision) => {
-				/* istanbul ignore if */
-				if (err) {
-					options.fs.rmdir(lockfilePath, () => {});
-					return callback(err);
-				}
-				callback(null, mtime, mtimePrecision);
-			});
-			if (err.code !== "EEXIST") return callback(err);
-			if (options.stale <= 0) return callback(Object.assign(/* @__PURE__ */ new Error("Lock file is already being held"), {
-				code: "ELOCKED",
-				file
-			}));
-			options.fs.stat(lockfilePath, (err, stat) => {
-				if (err) {
-					if (err.code === "ENOENT") return acquireLock(file, {
-						...options,
-						stale: 0
-					}, callback);
-					return callback(err);
-				}
-				if (!isLockStale(stat, options)) return callback(Object.assign(/* @__PURE__ */ new Error("Lock file is already being held"), {
-					code: "ELOCKED",
-					file
-				}));
-				removeLock(file, options, (err) => {
-					if (err) return callback(err);
-					acquireLock(file, {
-						...options,
-						stale: 0
-					}, callback);
-				});
-			});
-		});
-	}
-	function isLockStale(stat, options) {
-		return stat.mtime.getTime() < Date.now() - options.stale;
-	}
-	function removeLock(file, options, callback) {
-		options.fs.rmdir(getLockFile(file, options), (err) => {
-			if (err && err.code !== "ENOENT") return callback(err);
-			callback();
-		});
-	}
-	function updateLock(file, options) {
-		const lock = locks[file];
-		/* istanbul ignore if */
-		if (lock.updateTimeout) return;
-		lock.updateDelay = lock.updateDelay || options.update;
-		lock.updateTimeout = setTimeout(() => {
-			lock.updateTimeout = null;
-			options.fs.stat(lock.lockfilePath, (err, stat) => {
-				const isOverThreshold = lock.lastUpdate + options.stale < Date.now();
-				if (err) {
-					if (err.code === "ENOENT" || isOverThreshold) return setLockAsCompromised(file, lock, Object.assign(err, { code: "ECOMPROMISED" }));
-					lock.updateDelay = 1e3;
-					return updateLock(file, options);
-				}
-				if (!(lock.mtime.getTime() === stat.mtime.getTime())) return setLockAsCompromised(file, lock, Object.assign(/* @__PURE__ */ new Error("Unable to update lock within the stale threshold"), { code: "ECOMPROMISED" }));
-				const mtime = mtimePrecision.getMtime(lock.mtimePrecision);
-				options.fs.utimes(lock.lockfilePath, mtime, mtime, (err) => {
-					const isOverThreshold = lock.lastUpdate + options.stale < Date.now();
-					if (lock.released) return;
-					if (err) {
-						if (err.code === "ENOENT" || isOverThreshold) return setLockAsCompromised(file, lock, Object.assign(err, { code: "ECOMPROMISED" }));
-						lock.updateDelay = 1e3;
-						return updateLock(file, options);
-					}
-					lock.mtime = mtime;
-					lock.lastUpdate = Date.now();
-					lock.updateDelay = null;
-					updateLock(file, options);
-				});
-			});
-		}, lock.updateDelay);
-		/* istanbul ignore else */
-		if (lock.updateTimeout.unref) lock.updateTimeout.unref();
-	}
-	function setLockAsCompromised(file, lock, err) {
-		lock.released = true;
-		/* istanbul ignore if */
-		if (lock.updateTimeout) clearTimeout(lock.updateTimeout);
-		if (locks[file] === lock) delete locks[file];
-		lock.options.onCompromised(err);
-	}
-	function lock(file, options, callback) {
-		/* istanbul ignore next */
-		options = {
-			stale: 1e4,
-			update: null,
-			realpath: true,
-			retries: 0,
-			fs,
-			onCompromised: (err) => {
-				throw err;
-			},
-			...options
-		};
-		options.retries = options.retries || 0;
-		options.retries = typeof options.retries === "number" ? { retries: options.retries } : options.retries;
-		options.stale = Math.max(options.stale || 0, 2e3);
-		options.update = options.update == null ? options.stale / 2 : options.update || 0;
-		options.update = Math.max(Math.min(options.update, options.stale / 2), 1e3);
-		resolveCanonicalPath(file, options, (err, file) => {
-			if (err) return callback(err);
-			const operation = retry.operation(options.retries);
-			operation.attempt(() => {
-				acquireLock(file, options, (err, mtime, mtimePrecision) => {
-					if (operation.retry(err)) return;
-					if (err) return callback(operation.mainError());
-					const lock = locks[file] = {
-						lockfilePath: getLockFile(file, options),
-						mtime,
-						mtimePrecision,
-						options,
-						lastUpdate: Date.now()
-					};
-					updateLock(file, options);
-					callback(null, (releasedCallback) => {
-						if (lock.released) return releasedCallback && releasedCallback(Object.assign(/* @__PURE__ */ new Error("Lock is already released"), { code: "ERELEASED" }));
-						unlock(file, {
-							...options,
-							realpath: false
-						}, releasedCallback);
-					});
-				});
-			});
-		});
-	}
-	function unlock(file, options, callback) {
-		options = {
-			fs,
-			realpath: true,
-			...options
-		};
-		resolveCanonicalPath(file, options, (err, file) => {
-			if (err) return callback(err);
-			const lock = locks[file];
-			if (!lock) return callback(Object.assign(/* @__PURE__ */ new Error("Lock is not acquired/owned by you"), { code: "ENOTACQUIRED" }));
-			lock.updateTimeout && clearTimeout(lock.updateTimeout);
-			lock.released = true;
-			delete locks[file];
-			removeLock(file, options, callback);
-		});
-	}
-	function check(file, options, callback) {
-		options = {
-			stale: 1e4,
-			realpath: true,
-			fs,
-			...options
-		};
-		options.stale = Math.max(options.stale || 0, 2e3);
-		resolveCanonicalPath(file, options, (err, file) => {
-			if (err) return callback(err);
-			options.fs.stat(getLockFile(file, options), (err, stat) => {
-				if (err) return err.code === "ENOENT" ? callback(null, false) : callback(err);
-				return callback(null, !isLockStale(stat, options));
-			});
-		});
-	}
-	function getLocks() {
-		return locks;
-	}
-	/* istanbul ignore next */
-	onExit(() => {
-		for (const file in locks) {
-			const options = locks[file].options;
-			try {
-				options.fs.rmdirSync(getLockFile(file, options));
-			} catch (e) {}
-		}
-	});
-	module.exports.lock = lock;
-	module.exports.unlock = unlock;
-	module.exports.check = check;
-	module.exports.getLocks = getLocks;
-}));
-//#endregion
-//#region node_modules/proper-lockfile/lib/adapter.js
-var require_adapter = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var fs = require_graceful_fs();
-	function createSyncFs(fs) {
-		const methods = [
-			"mkdir",
-			"realpath",
-			"stat",
-			"rmdir",
-			"utimes"
-		];
-		const newFs = { ...fs };
-		methods.forEach((method) => {
-			newFs[method] = (...args) => {
-				const callback = args.pop();
-				let ret;
-				try {
-					ret = fs[`${method}Sync`](...args);
-				} catch (err) {
-					return callback(err);
-				}
-				callback(null, ret);
-			};
-		});
-		return newFs;
-	}
-	function toPromise(method) {
-		return (...args) => new Promise((resolve, reject) => {
-			args.push((err, result) => {
-				if (err) reject(err);
-				else resolve(result);
-			});
-			method(...args);
-		});
-	}
-	function toSync(method) {
-		return (...args) => {
-			let err;
-			let result;
-			args.push((_err, _result) => {
-				err = _err;
-				result = _result;
-			});
-			method(...args);
-			if (err) throw err;
-			return result;
-		};
-	}
-	function toSyncOptions(options) {
-		options = { ...options };
-		options.fs = createSyncFs(options.fs || fs);
-		if (typeof options.retries === "number" && options.retries > 0 || options.retries && typeof options.retries.retries === "number" && options.retries.retries > 0) throw Object.assign(/* @__PURE__ */ new Error("Cannot use retries with the sync api"), { code: "ESYNC" });
-		return options;
-	}
-	module.exports = {
-		toPromise,
-		toSync,
-		toSyncOptions
-	};
-}));
-(/* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var lockfile = require_lockfile();
-	var { toPromise, toSync, toSyncOptions } = require_adapter();
-	async function lock(file, options) {
-		return toPromise(await toPromise(lockfile.lock)(file, options));
-	}
-	function lockSync(file, options) {
-		return toSync(toSync(lockfile.lock)(file, toSyncOptions(options)));
-	}
-	function unlock(file, options) {
-		return toPromise(lockfile.unlock)(file, options);
-	}
-	function unlockSync(file, options) {
-		return toSync(lockfile.unlock)(file, toSyncOptions(options));
-	}
-	function check(file, options) {
-		return toPromise(lockfile.check)(file, options);
-	}
-	function checkSync(file, options) {
-		return toSync(lockfile.check)(file, toSyncOptions(options));
-	}
-	module.exports = lock;
-	module.exports.lock = lock;
-	module.exports.unlock = unlock;
-	module.exports.lockSync = lockSync;
-	module.exports.unlockSync = unlockSync;
-	module.exports.check = check;
-	module.exports.checkSync = checkSync;
-})))();
-var ACTIVE_DIRECTORY_NAME = "active";
-function normalizeRootDirectoryPath(rootDirectoryPath) {
-	return path.resolve(rootDirectoryPath ?? resolveDefaultRuntimeDiscoveryRegistryRoot());
-}
-function isMissingError(error) {
-	return error?.code === "ENOENT";
-}
-async function lstatSafe(targetPath) {
-	try {
-		return await lstat(targetPath);
-	} catch (error) {
-		if (isMissingError(error)) return null;
-		throw error;
-	}
-}
-async function readEntryFile(entryFilePath) {
-	const stats = await lstat(entryFilePath);
-	if (!stats.isFile() || stats.isSymbolicLink()) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry file is unsafe.");
-	const contents = await readFile(entryFilePath, "utf8");
-	let parsed;
-	try {
-		parsed = JSON.parse(contents);
-	} catch (error) {
-		throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry is not valid JSON.", { cause: error });
-	}
-	return parseRuntimeDiscoveryRegistryEntry(parsed);
-}
-async function readRecordFromSlot(activeDirectoryPath, slotName) {
-	const slotDirectoryPath = path.join(activeDirectoryPath, slotName);
-	const slotStats = await lstatSafe(slotDirectoryPath);
-	if (!slotStats) return { record: null };
-	if (!slotStats.isDirectory() || slotStats.isSymbolicLink()) return {
-		record: null,
-		issue: {
-			slotName,
-			code: "unsafe_slot"
-		}
-	};
-	let entry;
-	try {
-		entry = await readEntryFile(path.join(slotDirectoryPath, RUNTIME_DISCOVERY_ENTRY_FILE_NAME));
-	} catch {
-		return {
-			record: null,
-			issue: {
-				slotName,
-				code: "invalid_entry"
-			}
-		};
-	}
-	let credentialIssue;
-	for (const adapter of entry.adapters) {
-		if (adapter.credentialFileName !== buildRuntimeDiscoveryCredentialFileName(entry, adapter.adapterKind)) return {
-			record: null,
-			issue: {
-				slotName,
-				code: "invalid_entry"
-			}
-		};
-		const credentialPath = path.join(slotDirectoryPath, adapter.credentialFileName);
-		let credentialStats;
-		try {
-			credentialStats = await lstatSafe(credentialPath);
-		} catch {
-			credentialIssue ??= {
-				slotName,
-				code: "unsafe_credential"
-			};
-			continue;
-		}
-		if (!credentialStats) {
-			credentialIssue ??= {
-				slotName,
-				code: "missing_credential"
-			};
-			continue;
-		}
-		if (!credentialStats.isFile() || credentialStats.isSymbolicLink()) credentialIssue ??= {
-			slotName,
-			code: "unsafe_credential"
-		};
-	}
-	return {
-		record: {
-			slotName,
-			entry,
-			slotDirectoryPath
-		},
-		...credentialIssue ? { issue: credentialIssue } : {}
-	};
-}
-async function listRuntimeDiscoveryRegistryEntries(rootDirectoryPath, limitsOverride = {}) {
-	const limits = normalizeRuntimeDiscoveryRegistryLimits(limitsOverride);
-	const activeDirectoryPath = path.join(normalizeRootDirectoryPath(rootDirectoryPath), ACTIVE_DIRECTORY_NAME);
-	const activeStats = await lstatSafe(activeDirectoryPath);
-	if (!activeStats) return {
-		records: [],
-		issues: []
-	};
-	if (!activeStats.isDirectory() || activeStats.isSymbolicLink()) throw new RuntimeDiscoveryRegistryError("registry_security", "Runtime registry active directory is unsafe.");
-	const records = [];
-	const issues = [];
-	for (let index = 0; index < limits.maxEntries; index += 1) {
-		const result = await readRecordFromSlot(activeDirectoryPath, buildRuntimeDiscoverySlotName(index));
-		if (result.record) records.push(result.record);
-		if (result.issue) issues.push(result.issue);
-	}
-	return {
-		records,
-		issues
-	};
-}
-async function readRuntimeDiscoveryCredential(record, adapterKind) {
-	const reference = record.entry.adapters.find((adapter) => adapter.adapterKind === adapterKind);
-	if (!reference) return null;
-	const credentialPath = path.join(record.slotDirectoryPath, reference.credentialFileName);
-	try {
-		const stats = await lstatSafe(credentialPath);
-		if (!stats || !stats.isFile() || stats.isSymbolicLink()) return null;
-		return await readFile(credentialPath, "utf8");
-	} catch {
-		return null;
-	}
-}
-//#endregion
-//#region src/runtime-discovery/runtime-discovery-selector.ts
-async function selectRuntimeDiscoveryRecord(input) {
-	if (!isRuntimeDiscoverySelector(input.selector)) return error("runtime_selector_invalid", []);
-	const runtimeRecords = input.records.filter(({ entry }) => entry.runtimeKind === input.selector.runtimeKind);
-	const sameApplication = input.selector.applicationInstanceId ? runtimeRecords.filter(({ entry }) => entry.applicationInstanceId === input.selector.applicationInstanceId) : runtimeRecords;
-	if (input.selector.applicationInstanceId && sameApplication.length === 0) return error(runtimeRecords.length > 0 ? "runtime_instance_mismatch" : "runtime_unavailable", runtimeRecords);
-	const matching = input.selector.runtimeGenerationId ? sameApplication.filter(({ entry }) => entry.runtimeGenerationId === input.selector.runtimeGenerationId) : sameApplication;
-	if (input.selector.runtimeGenerationId && matching.length === 0) return error("runtime_generation_changed", sameApplication);
-	const active = [];
-	for (const record of matching) {
-		if (getRuntimeDiscoveryLeaseState(record.entry, input.now, input.staleThresholdMs) === "fresh") {
-			active.push(record);
-			continue;
-		}
-		try {
-			if (await input.challenge(record.entry, record.slotDirectoryPath)) active.push(record);
-		} catch {}
-	}
-	if (active.length === 0) return error(matching.length > 0 ? "runtime_stale" : "runtime_unavailable", matching);
-	if (active.length > 1) return error("runtime_ambiguous", matching);
-	const record = active[0];
-	return {
-		kind: "selected",
-		record,
-		metadata: toSafeRuntimeDiscoveryMetadata(record.entry, input.now, input.staleThresholdMs)
-	};
-	function error(code, records) {
-		return {
-			kind: "error",
-			code,
-			metadata: records.map(({ entry }) => toSafeRuntimeDiscoveryMetadata(entry, input.now, input.staleThresholdMs))
-		};
-	}
 }
 //#endregion
 //#region node_modules/zod/v4/core/util.js
@@ -9738,29 +6088,3824 @@ function datetime(params) {
 	return /* @__PURE__ */ _isoDateTime(ZodISODateTime, params);
 }
 //#endregion
-//#region src/session-authority.ts
-var SESSION_AUTHORITY_EFFECT_CLASSES = [
-	"read",
-	"local_mutation",
-	"external_side_effect"
+//#region src/session-grant.ts
+var sessionGrantExpirySchema = datetime({ offset: true }).nullable();
+//#endregion
+//#region src/coordination-event.ts
+var COORDINATION_EVENT_KINDS = [
+	"progress",
+	"decision",
+	"escalation",
+	"user_decision_required",
+	"blocker",
+	"result",
+	"correction"
 ];
-var SESSION_AUTHORITY_DECISION_CLASSES = [
-	"agent_delegable",
-	"user_only",
-	"deny_or_cancel"
+var COORDINATION_EVENT_STATES = [
+	"recorded",
+	"open",
+	"resolved",
+	"superseded",
+	"cancelled"
 ];
-var SESSION_AUTHORITY_RESOURCE_KINDS = [
-	"runtime",
-	"session",
-	"session_namespace",
-	"session_files",
-	"work_item",
-	"execution",
-	"interaction",
-	"coordination_event",
-	"transcript",
-	"budget"
+var COORDINATION_EVENT_MAX_PAYLOAD_BYTES = 16384;
+var CoordinationEventValidationError = class extends Error {
+	code;
+	details;
+	constructor(message, details = {}, code = "INVALID_INPUT") {
+		super(message);
+		this.name = "CoordinationEventValidationError";
+		this.code = code;
+		this.details = details;
+	}
+};
+function validateCoordinationEventPayload(value, field = "payload") {
+	const record = requireObject$1(value, field);
+	assertKeys$1(record, [
+		"summary",
+		"facts",
+		"assumptions",
+		"impact",
+		"recommendation"
+	], field);
+	const payload = {
+		summary: requireText(record.summary, `${field}.summary`, 240),
+		...record.facts === void 0 ? {} : { facts: requireTextList(record.facts, `${field}.facts`) },
+		...record.assumptions === void 0 ? {} : { assumptions: requireTextList(record.assumptions, `${field}.assumptions`) },
+		...record.impact === void 0 ? {} : { impact: requireText(record.impact, `${field}.impact`, 1e3) },
+		...record.recommendation === void 0 ? {} : { recommendation: requireText(record.recommendation, `${field}.recommendation`, 1e3) }
+	};
+	const actualBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+	if (actualBytes > 16384) throw new CoordinationEventValidationError("Coordination event payload exceeds 16 KiB.", {
+		field,
+		actualBytes,
+		maxBytes: COORDINATION_EVENT_MAX_PAYLOAD_BYTES
+	}, "CONTENT_TOO_LARGE");
+	rejectSensitiveText(payload, field);
+	return payload;
+}
+function validateCoordinationEventOptions(value, field = "options") {
+	if (!Array.isArray(value) || value.length < 2 || value.length > 8) throw invalid$1(field, "Coordination event options must contain 2 to 8 items.");
+	const ids = /* @__PURE__ */ new Set();
+	const options = value.map((entry, index) => {
+		const itemField = `${field}[${index}]`;
+		const record = requireObject$1(entry, itemField);
+		assertKeys$1(record, [
+			"id",
+			"label",
+			"description"
+		], itemField);
+		const id = requireStableId(record.id, `${itemField}.id`);
+		if (ids.has(id)) throw invalid$1(`${itemField}.id`, "Coordination option IDs must be unique.");
+		ids.add(id);
+		return {
+			id,
+			label: requireText(record.label, `${itemField}.label`, 120),
+			...record.description === void 0 ? {} : { description: requireText(record.description, `${itemField}.description`, 500) }
+		};
+	});
+	rejectSensitiveValues(options.flatMap((option) => [
+		option.id,
+		option.label,
+		option.description ?? ""
+	]), field);
+	return options;
+}
+function validateCoordinationEventNote(value, field = "note") {
+	const note = requireText(value, field, 1e3);
+	rejectSensitiveValues([note], field);
+	return note;
+}
+function requireTextList(value, field) {
+	if (!Array.isArray(value) || value.length > 8) throw invalid$1(field, "Coordination event list fields contain at most 8 items.");
+	return value.map((item, index) => requireText(item, `${field}[${index}]`, 500));
+}
+function requireText(value, field, maxLength) {
+	if (typeof value !== "string" || !value.trim() || value.length > maxLength) throw invalid$1(field, `${field} must be a non-empty string of at most ${maxLength} characters.`);
+	return value.trim();
+}
+function requireStableId(value, field) {
+	const id = requireText(value, field, 80);
+	if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) throw invalid$1(field, `${field} must be a stable identifier.`);
+	return id;
+}
+function rejectSensitiveText(payload, field) {
+	rejectSensitiveValues([
+		payload.summary,
+		...payload.facts ?? [],
+		...payload.assumptions ?? [],
+		payload.impact ?? "",
+		payload.recommendation ?? ""
+	], field);
+}
+function rejectSensitiveValues(values, field) {
+	const forbidden = [
+		/-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----/i,
+		/\b(?:sk|ghp|github_pat)_[a-z0-9_-]{20,}\b/i,
+		/\bsk-(?:proj-)?[a-z0-9_-]{20,}\b/i,
+		/\bAKIA[0-9A-Z]{16}\b/,
+		/\bBearer\s+[a-z0-9._~+/=-]{20,}\b/i,
+		/\b(?:[a-z0-9]+[_-])*(?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key)\s*[:=]\s*(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,;]+)/i,
+		/\b[a-z]:[\\/][^\s"'<>)]*/i,
+		/\\\\[a-z0-9._$-]+\\[a-z0-9._$ -]+(?:\\[^\s"'<>)]*)?/i,
+		/(?:^|[\s"'(=[{,])\/\/[a-z0-9._$-]+\/[a-z0-9._$ -]+(?:\/[^\s"'<>)]*)?/im,
+		/\\\\[?.]\\[^\s"'<>)]*/i,
+		/(?:[a-z]:\\Users\\|\/Users\/|\/home\/)[^\s"'<>)]*/i,
+		/\b(?:stack trace|traceback \(most recent call last\))\b/i,
+		/\b(?:chain[- ]of[- ]thought|provider response|opaque binding|agentRuntimeBinding)\b/i,
+		/^diff --git /im,
+		/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m,
+		/(?:^|\n)\s*(?:\[[A-Z]{3,}\]|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\s/m
+	];
+	if (values.some((text) => forbidden.some((pattern) => pattern.test(text)))) throw new CoordinationEventValidationError("Coordination event payload contains content that must not be stored.", { field }, "SENSITIVE_CONTENT_REJECTED");
+}
+function requireObject$1(value, field) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid$1(field, `${field} must be an object.`);
+	return value;
+}
+function assertKeys$1(record, allowed, field) {
+	const unknown = Object.keys(record).find((key) => !allowed.includes(key));
+	if (unknown) throw invalid$1(`${field}.${unknown}`, `Unknown field: ${field}.${unknown}.`);
+}
+function invalid$1(field, message) {
+	return new CoordinationEventValidationError(message, { field });
+}
+//#endregion
+//#region src/work-item.ts
+var WORK_ITEM_MAX_RESULT_BYTES = 262144;
+var WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES = 524288;
+var WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES = 2097152;
+var WORK_ITEM_MAX_TEXT_LENGTH = 16e3;
+var WORK_ITEM_AGGREGATION_DECISIONS = [
+	"accepted",
+	"excluded",
+	"retry_requested"
 ];
+var WORK_ITEM_STATES = [
+	"pending",
+	"in_progress",
+	"waiting",
+	"completed",
+	"partially_completed",
+	"failed",
+	"canceled"
+];
+function workItemEventPayloadByteLength(payload) {
+	const serialized = JSON.stringify(payload);
+	if (serialized === void 0) throw new TypeError("Work Item event payload must be JSON serializable.");
+	return new TextEncoder().encode(serialized).byteLength;
+}
+var SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES = 8388608;
+var SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES = 1073741824;
+//#endregion
+//#region src/session-external-runtime-contract.ts
+var SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-v2";
+var SESSION_RUNTIME_RESULT_SCHEMA_VERSION = "withmate-session-result-v2";
+var SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v2";
+var SESSION_RUNTIME_MAX_BODY_BYTES = 8388608;
+var SESSION_RUNTIME_MAX_RESPONSE_BYTES = 8388608;
+var SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES = 1048576;
+var SESSION_RUNTIME_MAX_FILE_TEXT_BYTES = 8388608;
+var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
+var SESSION_RUNTIME_OPERATIONS = [
+	"grant.create",
+	"grant.get",
+	"grant.list",
+	"grant.revoke",
+	"delegation.create",
+	"delegation.get",
+	"delegation.list",
+	"delegation.retry",
+	"delegation.cancel",
+	"delegation.compensate",
+	"runtime.catalog",
+	"budget.get",
+	"budget.list",
+	"budget.configure",
+	"session.self",
+	"session.create",
+	"session.list",
+	"session.get",
+	"session.configure",
+	"session.rename",
+	"session.move.manifest",
+	"session.move",
+	"session.clone",
+	"session.restore",
+	"session.archive",
+	"session.delete.manifest",
+	"session.delete",
+	"session.files.list",
+	"session.files.read_text",
+	"session.files.write_text",
+	"work.create",
+	"work.list",
+	"work.get",
+	"work.revise",
+	"work.reassign",
+	"work.move",
+	"work.clone",
+	"work.reopen",
+	"work.archive",
+	"work.restore",
+	"work.delete",
+	"work.history.append",
+	"work.history.list",
+	"work.transition",
+	"work.result",
+	"work.result.correct",
+	"work.cancel",
+	"work.aggregation.get",
+	"work.aggregation.list",
+	"work.aggregation.decide",
+	"work.aggregation.retry",
+	"work.aggregation.correct",
+	"turn.options",
+	"turn.run",
+	"turn.enqueue",
+	"turn.list",
+	"turn.get",
+	"turn.cancel",
+	"interaction.list",
+	"interaction.respond",
+	"coordination.event.create",
+	"coordination.event.list",
+	"coordination.event.get",
+	"coordination.event.resolve",
+	"coordination.event.consume",
+	"coordination.event.cancel",
+	"coordination.event.correct",
+	"transcript.export"
+];
+var SESSION_RUNTIME_PROVIDER_IDS = ["codex", "copilot"];
+function sessionRuntimeOperationMayHaveEffect(operation, input) {
+	if (operation === "grant.create" || operation === "grant.revoke") return true;
+	if (operation.startsWith("delegation.")) return operation !== "delegation.get" && operation !== "delegation.list";
+	if (operation === "transcript.export") return input === void 0 || input.destination?.kind !== "inline";
+	return operation === "session.create" || operation === "session.rename" || operation === "session.configure" || operation === "session.move" || operation === "session.clone" || operation === "session.restore" || operation === "session.archive" || operation === "session.delete" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "work.create" || operation === "work.transition" || operation === "work.revise" || operation === "work.history.append" || operation === "work.reassign" || operation === "work.move" || operation === "work.clone" || operation === "work.reopen" || operation === "work.archive" || operation === "work.restore" || operation === "work.delete" || operation === "work.result" || operation === "work.result.correct" || operation === "work.cancel" || operation === "work.aggregation.decide" || operation === "work.aggregation.retry" || operation === "work.aggregation.correct" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct";
+}
+var SessionRuntimeValidationError = class extends Error {
+	code;
+	details;
+	constructor(message, details = {}, code = "INVALID_INPUT") {
+		super(message);
+		this.name = "SessionRuntimeValidationError";
+		this.code = code;
+		this.details = details;
+	}
+};
+function assertSessionRuntimeRequestBodySize(actualBytes, field = "requestBody") {
+	if (actualBytes <= 8388608) return;
+	throw new SessionRuntimeValidationError("Session runtime request body exceeds 8 MiB.", {
+		field,
+		actualBytes,
+		maxBytes: SESSION_RUNTIME_MAX_BODY_BYTES
+	}, "CONTENT_TOO_LARGE");
+}
+function parseSessionRuntimeOperationInput(operation, value) {
+	if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) throw invalid("operation", "Unsupported Session runtime operation.");
+	if (operation === "grant.create") return parseSessionGrantCreateInput(value);
+	if (operation === "grant.get") return parseSessionGrantGetInput(value);
+	if (operation === "grant.list") return parseSessionGrantListInput(value);
+	if (operation === "grant.revoke") return parseSessionGrantRevokeInput(value);
+	if (operation.startsWith("delegation.")) return parseDelegationInput(operation, value);
+	if (operation === "runtime.catalog" || operation === "session.self") {
+		assertKeys(requireObject(value, "input"), [], "input");
+		return {};
+	}
+	if (operation === "budget.get") return parseResourceBudgetGetInput(value);
+	if (operation === "budget.list") return parseResourceBudgetListInput(value);
+	if (operation === "budget.configure") return parseResourceBudgetConfigureInput(value);
+	if (operation === "session.create") return parseSessionCreateInput(value);
+	if (operation === "session.list") return parseSessionListInput(value);
+	if (operation === "session.get") return parseSessionInput(value);
+	if (operation === "session.rename") return parseSessionRenameInput(value);
+	if (operation === "session.configure") return parseSessionConfigureInput(value);
+	if (operation === "session.move.manifest") return parseSessionMoveManifestInput(value);
+	if (operation === "session.move") return parseSessionMoveInput(value);
+	if (operation === "session.clone") return parseSessionCloneInput(value);
+	if (operation === "session.restore") return parseSessionRestoreInput(value);
+	if (operation === "session.archive") return parseSessionArchiveInput(value);
+	if (operation === "session.delete.manifest") return parseSessionInput(value);
+	if (operation === "session.delete") return parseSessionDeleteInput(value);
+	if (operation === "session.files.list") return parseSessionFileListInput(value);
+	if (operation === "session.files.read_text") return parseSessionFileReadTextInput(value);
+	if (operation === "session.files.write_text") return parseSessionFileWriteTextInput(value);
+	if (operation === "work.create") return parseWorkItemCreateInput(value);
+	if (operation === "work.list") return parseWorkItemListInput(value);
+	if (operation === "work.get") return parseWorkItemInput(value);
+	if (operation === "work.revise") return parseWorkItemReviseInput(value);
+	if (operation === "work.reassign") return parseWorkItemReassignInput(value);
+	if (operation === "work.move") return parseWorkItemMoveInput(value);
+	if (operation === "work.clone") return parseWorkItemCloneInput(value);
+	if (operation === "work.reopen") return parseWorkItemReopenInput(value);
+	if (operation === "work.archive") return parseWorkItemArchiveInput(value);
+	if (operation === "work.restore") return parseWorkItemRestoreInput(value);
+	if (operation === "work.delete") return parseWorkItemDeleteInput(value);
+	if (operation === "work.history.append") return parseWorkItemHistoryAppendInput(value);
+	if (operation === "work.history.list") return parseWorkItemHistoryListInput(value);
+	if (operation === "work.transition") return parseWorkItemTransitionInput(value);
+	if (operation === "work.result") return parseWorkItemResultInput(value);
+	if (operation === "work.result.correct") return parseWorkItemResultCorrectionInput(value);
+	if (operation === "work.cancel") return parseWorkItemCancelInput(value);
+	if (operation === "work.aggregation.get") return parseWorkItemAggregationGetInput(value);
+	if (operation === "work.aggregation.list") return parseWorkItemAggregationListInput(value);
+	if (operation === "work.aggregation.decide") return parseWorkItemAggregationDecisionInput(value);
+	if (operation === "work.aggregation.retry") return parseWorkItemAggregationRetryInput(value);
+	if (operation === "work.aggregation.correct") return parseWorkItemAggregationCorrectionInput(value);
+	if (operation === "turn.options") return parseSessionInput(value);
+	if (operation === "turn.run") return parseTurnRunInput(value);
+	if (operation === "turn.enqueue") return parseTurnEnqueueInput(value);
+	if (operation === "turn.list") return parseTurnListInput(value);
+	if (operation === "turn.get") return parseExecutionInput(value);
+	if (operation === "turn.cancel") return parseCancelInput(value);
+	if (operation === "interaction.list") return parseInteractionListInput(value);
+	if (operation === "interaction.respond") return parseInteractionRespondInput(value);
+	if (operation === "coordination.event.create") return parseCoordinationEventCreateInput(value);
+	if (operation === "coordination.event.list") return parseCoordinationEventListInput(value);
+	if (operation === "coordination.event.get") return parseCoordinationEventGetInput(value);
+	if (operation === "coordination.event.resolve") return parseCoordinationEventResolveInput(value);
+	if (operation === "coordination.event.consume") return parseCoordinationEventConsumeInput(value);
+	if (operation === "coordination.event.cancel") return parseCoordinationEventCancelInput(value);
+	if (operation === "coordination.event.correct") return parseCoordinationEventCorrectInput(value);
+	if (operation === "transcript.export") return parseTranscriptExportInput(value);
+	throw invalid("operation", "Unsupported Session runtime operation.");
+}
+function parseCoordinationEventCreateInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"expectedContainerRevision",
+		"kind",
+		"payload",
+		"executionId",
+		"targetSessionId",
+		"options",
+		"idempotencyKey"
+	], "input");
+	const kind = requireEnum(record.kind, COORDINATION_EVENT_KINDS.filter((candidate) => candidate !== "correction"), "kind");
+	const targetSessionId = record.targetSessionId === void 0 ? void 0 : requireNonEmptyString(record.targetSessionId, "targetSessionId");
+	const options = record.options === void 0 ? void 0 : validateCoordinationEventOptions(record.options);
+	if (kind === "escalation" !== (targetSessionId !== void 0)) throw invalid("targetSessionId", "targetSessionId is required only for escalation events.");
+	if (kind === "user_decision_required" !== (options !== void 0)) throw invalid("options", "options are required only for user_decision_required events.");
+	return {
+		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
+		kind,
+		payload: validateCoordinationEventPayload(record.payload),
+		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
+		...targetSessionId === void 0 ? {} : { targetSessionId },
+		...options === void 0 ? {} : { options },
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseCoordinationEventListInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"scope",
+		"kind",
+		"state",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		scope: requireEnum(record.scope, ["self", "subtree"], "scope"),
+		...record.kind === void 0 ? {} : { kind: requireEnum(record.kind, COORDINATION_EVENT_KINDS, "kind") },
+		...record.state === void 0 ? {} : { state: requireEnum(record.state, COORDINATION_EVENT_STATES, "state") },
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 100, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseCoordinationEventGetInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, ["eventId", "idempotencyKey"], "input");
+	const hasEventId = record.eventId !== void 0;
+	if (hasEventId === (record.idempotencyKey !== void 0)) throw invalid("input", "Exactly one of eventId or idempotencyKey is required.");
+	return hasEventId ? { eventId: requireNonEmptyString(record.eventId, "eventId") } : { idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
+}
+function parseCoordinationEventResolveInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"expectedRevision",
+		"eventId",
+		"note",
+		"idempotencyKey"
+	], "input");
+	return {
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
+		eventId: requireNonEmptyString(record.eventId, "eventId"),
+		...record.note === void 0 ? {} : { note: validateCoordinationEventNote(record.note) },
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseCoordinationEventConsumeInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"eventId",
+		"expectedResolutionSequence",
+		"idempotencyKey"
+	], "input");
+	return {
+		eventId: requireNonEmptyString(record.eventId, "eventId"),
+		expectedResolutionSequence: requireInteger(record.expectedResolutionSequence, "expectedResolutionSequence", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseCoordinationEventCancelInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"expectedRevision",
+		"eventId",
+		"note",
+		"idempotencyKey"
+	], "input");
+	return {
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
+		eventId: requireNonEmptyString(record.eventId, "eventId"),
+		...record.note === void 0 ? {} : { note: validateCoordinationEventNote(record.note) },
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseCoordinationEventCorrectInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"expectedRevision",
+		"eventId",
+		"payload",
+		"executionId",
+		"idempotencyKey"
+	], "input");
+	return {
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 0, Number.MAX_SAFE_INTEGER),
+		eventId: requireNonEmptyString(record.eventId, "eventId"),
+		payload: validateCoordinationEventPayload(record.payload),
+		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function requireBoundedString(value, field, maxLength) {
+	const text = requireNonEmptyString(value, field);
+	if (text.length > maxLength) throw invalid(field, `${field} exceeds ${maxLength} characters.`);
+	return text;
+}
+function parseSessionCreateInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"expectedContainerRevision",
+		"placement",
+		"title",
+		"character",
+		"provider",
+		"workspace",
+		"initialGrant",
+		"budget",
+		"idempotencyKey"
+	], "input");
+	const placement = parseSessionPlacement(record.placement);
+	const character = requireObject(record.character, "character");
+	assertKeys(character, ["characterId", "expectedDefinitionSha256"], "character");
+	const provider = parseSessionProvider(record.provider, true);
+	return {
+		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
+		placement,
+		title: requireNonEmptyString(record.title, "title"),
+		character: {
+			characterId: requireNonEmptyString(character.characterId, "character.characterId"),
+			expectedDefinitionSha256: requireNonEmptyString(character.expectedDefinitionSha256, "character.expectedDefinitionSha256")
+		},
+		provider,
+		workspace: parseSessionCreateWorkspace(record.workspace),
+		initialGrant: parseSessionInitialGrant(record.initialGrant),
+		budget: parseSessionInitialBudget(record.budget),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseSessionPlacement(value) {
+	const record = requireObject(value, "placement");
+	const kind = requireEnum(record.kind, ["root", "child"], "placement.kind");
+	if (kind === "root") {
+		assertKeys(record, ["kind", "rootKind"], "placement");
+		return {
+			kind,
+			rootKind: requireEnum(record.rootKind, ["standalone", "overall-coordinator"], "placement.rootKind")
+		};
+	}
+	assertKeys(record, [
+		"kind",
+		"parentSessionId",
+		"sessionRole"
+	], "placement");
+	return {
+		kind,
+		parentSessionId: requireNonEmptyString(record.parentSessionId, "placement.parentSessionId"),
+		sessionRole: requireEnum(record.sessionRole, ["task-coordinator", "executor"], "placement.sessionRole")
+	};
+}
+function parseSessionProvider(value, resetOnly = false) {
+	const record = requireObject(value, "provider");
+	const threadContinuity = requireEnum(record.threadContinuity, ["continue", "reset"], "provider.threadContinuity");
+	if (resetOnly && threadContinuity !== "reset") throw invalid("provider.threadContinuity", "New Sessions require reset thread continuity.");
+	const common = {
+		id: requireEnum(record.id, SESSION_RUNTIME_PROVIDER_IDS, "provider.id"),
+		catalogRevision: requireInteger(record.catalogRevision, "provider.catalogRevision", 1, Number.MAX_SAFE_INTEGER),
+		model: requireNonEmptyString(record.model, "provider.model"),
+		reasoningEffort: requireModelReasoningEffort(record.reasoningEffort),
+		threadContinuity
+	};
+	const approvalMode = requireEnum(record.approvalMode, APPROVAL_MODE_VALUES, "provider.approvalMode");
+	if (common.id === "codex") {
+		assertKeys(record, [
+			"id",
+			"catalogRevision",
+			"model",
+			"reasoningEffort",
+			"threadContinuity",
+			"approvalMode",
+			"codexSandboxMode",
+			"allowedAdditionalDirectories"
+		], "provider");
+		if (!Array.isArray(record.allowedAdditionalDirectories) || !record.allowedAdditionalDirectories.every((item) => typeof item === "string" && item.length > 0)) throw invalid("provider.allowedAdditionalDirectories", "allowedAdditionalDirectories must be a string array.");
+		return {
+			...common,
+			id: "codex",
+			approvalMode,
+			codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "provider.codexSandboxMode"),
+			allowedAdditionalDirectories: record.allowedAdditionalDirectories
+		};
+	}
+	assertKeys(record, [
+		"id",
+		"catalogRevision",
+		"model",
+		"reasoningEffort",
+		"threadContinuity",
+		"approvalMode",
+		"customAgentName"
+	], "provider");
+	return {
+		...common,
+		id: "copilot",
+		approvalMode,
+		customAgentName: requireString(record.customAgentName, "provider.customAgentName").trim()
+	};
+}
+function parseSessionMoveManifestInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, ["sessionId", "destinationRootSessionId"], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		destinationRootSessionId: requireNonEmptyString(record.destinationRootSessionId, "destinationRootSessionId")
+	};
+}
+function requireModelReasoningEffort(value) {
+	if (typeof value !== "string" || !isModelReasoningEffort(value)) throw invalid("provider.reasoningEffort", "Unsupported provider reasoning effort.");
+	return value;
+}
+function parseSessionInitialGrant(value) {
+	const record = requireObject(value, "initialGrant");
+	const kind = requireEnum(record.kind, ["inherit", "explicit"], "initialGrant.kind");
+	if (kind === "inherit") {
+		assertKeys(record, ["kind"], "initialGrant");
+		return { kind };
+	}
+	assertKeys(record, [
+		"kind",
+		"actions",
+		"visibility",
+		"expiresAt"
+	], "initialGrant");
+	if (!Array.isArray(record.actions) || !record.actions.every((item) => typeof item === "string" && item.length > 0)) throw invalid("initialGrant.actions", "actions must be a non-empty string array.");
+	if (!Array.isArray(record.visibility) || !record.visibility.every((item) => typeof item === "string" && item.length > 0)) throw invalid("initialGrant.visibility", "visibility must be a non-empty string array.");
+	return {
+		kind,
+		actions: record.actions,
+		visibility: record.visibility,
+		expiresAt: record.expiresAt === null ? null : requireNonEmptyString(record.expiresAt, "initialGrant.expiresAt")
+	};
+}
+function parseSessionInitialBudget(value) {
+	const record = requireObject(value, "budget");
+	const kind = requireEnum(record.kind, ["inherit", "explicit"], "budget.kind");
+	if (kind === "inherit") {
+		assertKeys(record, ["kind"], "budget");
+		return { kind };
+	}
+	assertKeys(record, [
+		"kind",
+		"hardLimits",
+		"deadlineAt"
+	], "budget");
+	const hardLimits = requireObject(record.hardLimits, "budget.hardLimits");
+	for (const [key, amount] of Object.entries(hardLimits)) if (!Number.isInteger(amount) || amount < 0) throw invalid(`budget.hardLimits.${key}`, "Budget limits must be non-negative integers.");
+	return {
+		kind,
+		hardLimits,
+		deadlineAt: requireNonEmptyString(record.deadlineAt, "budget.deadlineAt")
+	};
+}
+function parseSessionCreateWorkspace(value) {
+	const record = requireObject(value, "workspace");
+	const kind = requireEnum(record.kind, ["directory", "session_folder"], "workspace.kind");
+	if (kind === "session_folder") {
+		assertKeys(record, ["kind"], "workspace");
+		return { kind };
+	}
+	assertKeys(record, ["kind", "path"], "workspace");
+	return {
+		kind,
+		path: requireNonEmptyString(record.path, "workspace.path")
+	};
+}
+function parseSessionListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, ["limit", "cursor"], "input");
+	return {
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseSessionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, ["sessionId"], "input");
+	return { sessionId: requireNonEmptyString(record.sessionId, "sessionId") };
+}
+function parseSessionRenameInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"expectedRevision",
+		"sessionId",
+		"title",
+		"idempotencyKey"
+	], "input");
+	return {
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		title: requireNonEmptyString(record.title, "title"),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseSessionConfigureInput(value) {
+	const record = requireObject(value, "input");
+	const base = {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+	const kind = requireEnum(record.kind, [
+		"title",
+		"runtime",
+		"character",
+		"workspace",
+		"role"
+	], "kind");
+	if (kind === "title") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"idempotencyKey",
+			"kind",
+			"title"
+		], "input");
+		return {
+			...base,
+			kind,
+			title: requireNonEmptyString(record.title, "title")
+		};
+	}
+	if (kind === "runtime") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"idempotencyKey",
+			"kind",
+			"provider"
+		], "input");
+		return {
+			...base,
+			kind,
+			provider: parseSessionProvider(record.provider)
+		};
+	}
+	if (kind === "character") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"idempotencyKey",
+			"kind",
+			"character",
+			"threadContinuity"
+		], "input");
+		const character = requireObject(record.character, "character");
+		assertKeys(character, ["characterId", "expectedDefinitionSha256"], "character");
+		return {
+			...base,
+			kind,
+			character: {
+				characterId: requireNonEmptyString(character.characterId, "character.characterId"),
+				expectedDefinitionSha256: requireNonEmptyString(character.expectedDefinitionSha256, "character.expectedDefinitionSha256")
+			},
+			threadContinuity: requireEnum(record.threadContinuity, ["continue", "reset"], "threadContinuity")
+		};
+	}
+	if (kind === "workspace") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"idempotencyKey",
+			"kind",
+			"workspace",
+			"threadContinuity"
+		], "input");
+		const workspace = parseSessionCreateWorkspace(record.workspace);
+		return {
+			...base,
+			kind,
+			workspace,
+			threadContinuity: requireEnum(record.threadContinuity, ["continue", "reset"], "threadContinuity")
+		};
+	}
+	assertKeys(record, [
+		"sessionId",
+		"expectedRevision",
+		"idempotencyKey",
+		"kind",
+		"sessionRole"
+	], "input");
+	return {
+		...base,
+		kind,
+		sessionRole: requireEnum(record.sessionRole, [
+			"standalone",
+			"overall-coordinator",
+			"task-coordinator",
+			"executor"
+		], "sessionRole")
+	};
+}
+function parseSessionMoveInput(value) {
+	const record = requireObject(value, "input");
+	const base = {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+	const kind = requireEnum(record.kind, ["same_root", "cross_root"], "kind");
+	const destinationExpectedRevision = requireInteger(record.destinationExpectedRevision, "destinationExpectedRevision", 1, Number.MAX_SAFE_INTEGER);
+	const destinationParentSessionId = record.destinationParentSessionId === null ? null : requireNonEmptyString(record.destinationParentSessionId, "destinationParentSessionId");
+	if (kind === "same_root") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"idempotencyKey",
+			"kind",
+			"destinationParentSessionId",
+			"destinationExpectedRevision"
+		], "input");
+		return {
+			...base,
+			kind,
+			destinationParentSessionId,
+			destinationExpectedRevision
+		};
+	}
+	assertKeys(record, [
+		"sessionId",
+		"expectedRevision",
+		"idempotencyKey",
+		"kind",
+		"destinationParentSessionId",
+		"destinationRootSessionId",
+		"destinationExpectedRevision",
+		"transferManifestRevision",
+		"transferPolicy"
+	], "input");
+	return {
+		...base,
+		kind,
+		destinationParentSessionId,
+		destinationRootSessionId: requireNonEmptyString(record.destinationRootSessionId, "destinationRootSessionId"),
+		destinationExpectedRevision,
+		transferManifestRevision: requireInteger(record.transferManifestRevision, "transferManifestRevision", 1, Number.MAX_SAFE_INTEGER),
+		transferPolicy: requireEnum(record.transferPolicy, ["full"], "transferPolicy")
+	};
+}
+function parseSessionCloneInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sourceSessionId",
+		"expectedSourceRevision",
+		"expectedContainerRevision",
+		"placement",
+		"title",
+		"initialGrant",
+		"budget",
+		"idempotencyKey"
+	], "input");
+	return {
+		sourceSessionId: requireNonEmptyString(record.sourceSessionId, "sourceSessionId"),
+		expectedSourceRevision: requireInteger(record.expectedSourceRevision, "expectedSourceRevision", 1, Number.MAX_SAFE_INTEGER),
+		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 0, Number.MAX_SAFE_INTEGER),
+		placement: parseSessionPlacement(record.placement),
+		title: requireNonEmptyString(record.title, "title"),
+		initialGrant: parseSessionInitialGrant(record.initialGrant),
+		budget: parseSessionInitialBudget(record.budget),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseSessionRestoreInput(value) {
+	const record = requireObject(value, "input");
+	const kind = requireEnum(record.kind, ["root", "child"], "kind");
+	const base = {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		purpose: requireNonEmptyString(record.purpose, "purpose"),
+		provider: parseSessionProvider(record.provider),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+	if (kind === "root") {
+		assertKeys(record, [
+			"sessionId",
+			"expectedRevision",
+			"kind",
+			"purpose",
+			"provider",
+			"budget",
+			"idempotencyKey"
+		], "input");
+		return {
+			...base,
+			kind,
+			budget: parseSessionInitialBudget(record.budget)
+		};
+	}
+	assertKeys(record, [
+		"sessionId",
+		"expectedRevision",
+		"kind",
+		"purpose",
+		"provider",
+		"idempotencyKey"
+	], "input");
+	return {
+		...base,
+		kind
+	};
+}
+function parseSessionArchiveInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"expectedRevision",
+		"reason",
+		"descendantPolicy",
+		"idempotencyKey"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		reason: requireNonEmptyString(record.reason, "reason"),
+		descendantPolicy: requireEnum(record.descendantPolicy, ["retain", "archive_descendants"], "descendantPolicy"),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseSessionDeleteInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"expectedRevision",
+		"manifestRevision",
+		"idempotencyKey"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		manifestRevision: requireInteger(record.manifestRevision, "manifestRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseSessionFileListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseSessionFileReadTextInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"relativePath",
+		"maxBytes"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		relativePath: requireNonEmptyString(record.relativePath, "relativePath"),
+		maxBytes: record.maxBytes === void 0 ? SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES : requireInteger(record.maxBytes, "maxBytes", 1, SESSION_RUNTIME_MAX_FILE_TEXT_BYTES, "LIMIT_EXCEEDED")
+	};
+}
+function parseSessionFileWriteTextInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"relativePath",
+		"content",
+		"maxBytes",
+		"replace",
+		"idempotencyKey"
+	], "input");
+	const maxBytes = record.maxBytes === void 0 ? SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES : requireInteger(record.maxBytes, "maxBytes", 1, SESSION_RUNTIME_MAX_FILE_TEXT_BYTES, "LIMIT_EXCEEDED");
+	const content = requireString(record.content, "content");
+	const actualBytes = Buffer.byteLength(content, "utf8");
+	if (actualBytes > maxBytes) throw new SessionRuntimeValidationError("Session file content exceeds the requested byte limit.", {
+		field: "content",
+		actualBytes,
+		maxBytes
+	}, "CONTENT_TOO_LARGE");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		relativePath: requireNonEmptyString(record.relativePath, "relativePath"),
+		content,
+		maxBytes,
+		replace: record.replace === void 0 ? false : requireBoolean(record.replace, "replace"),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemCreateInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"expectedContainerRevision",
+		"targetSessionId",
+		"parentWorkItemId",
+		"goal",
+		"scope",
+		"completionCriteria",
+		"authority",
+		"sourceIdentity",
+		"idempotencyKey"
+	], "input");
+	const source = requireObject(record.sourceIdentity, "sourceIdentity");
+	assertKeys(source, [
+		"workspace",
+		"repository",
+		"branch",
+		"base",
+		"head"
+	], "sourceIdentity");
+	return {
+		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
+		targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId"),
+		...record.parentWorkItemId === void 0 ? {} : { parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId") },
+		goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
+		scope: requireBoundedString(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
+		completionCriteria: requireBoundedString(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
+		authority: requireBoundedString(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+		sourceIdentity: {
+			workspace: requireNullableBoundedString(source.workspace, "sourceIdentity.workspace"),
+			repository: requireNullableBoundedString(source.repository, "sourceIdentity.repository"),
+			branch: requireNullableBoundedString(source.branch, "sourceIdentity.branch"),
+			base: requireNullableBoundedString(source.base, "sourceIdentity.base"),
+			head: requireNullableBoundedString(source.head, "sourceIdentity.head")
+		},
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, ["workItemId"], "input");
+	return { workItemId: requireNonEmptyString(record.workItemId, "workItemId") };
+}
+function requireBoundedStringAllowEmpty(value, field, maxLength) {
+	if (typeof value !== "string") throw invalid(field, `${field} must be a string.`);
+	if (value.length > maxLength) throw invalid(field, `${field} exceeds ${maxLength} characters.`);
+	return value;
+}
+function parseWorkItemReviseInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"goal",
+		"scope",
+		"completionCriteria",
+		"authority",
+		"sourceIdentity",
+		"expectedRevision",
+		"idempotencyKey"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
+		scope: requireBoundedStringAllowEmpty(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
+		completionCriteria: requireBoundedStringAllowEmpty(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
+		authority: requireBoundedStringAllowEmpty(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+		...record.sourceIdentity === void 0 ? {} : { sourceIdentity: parseWorkItemSourceIdentity(record.sourceIdentity) },
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemReassignInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"workItemId",
+		"targetSessionId",
+		"expectedRevision",
+		"expectedContainerRevision",
+		"transferPolicy",
+		"idempotencyKey"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
+		targetSessionId: requireNonEmptyString(r.targetSessionId, "targetSessionId"),
+		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		...r.expectedContainerRevision === void 0 ? {} : { expectedContainerRevision: requireInteger(r.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER) },
+		transferPolicy: requireEnum(r.transferPolicy, ["handoff", "successor"], "transferPolicy"),
+		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemMoveInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"workItemId",
+		"destinationParentWorkItemId",
+		"destinationTargetSessionId",
+		"expectedRevision",
+		"expectedAggregateRevision",
+		"expectedDestinationAggregateRevision",
+		"expectedDestinationTargetRevision",
+		"idempotencyKey"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
+		destinationParentWorkItemId: r.destinationParentWorkItemId === null ? null : requireNonEmptyString(r.destinationParentWorkItemId, "destinationParentWorkItemId"),
+		...r.destinationTargetSessionId === void 0 ? {} : { destinationTargetSessionId: requireNonEmptyString(r.destinationTargetSessionId, "destinationTargetSessionId") },
+		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		...r.expectedAggregateRevision === void 0 ? {} : { expectedAggregateRevision: requireInteger(r.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER) },
+		...r.expectedDestinationAggregateRevision === void 0 ? {} : { expectedDestinationAggregateRevision: requireInteger(r.expectedDestinationAggregateRevision, "expectedDestinationAggregateRevision", 0, Number.MAX_SAFE_INTEGER) },
+		...r.expectedDestinationTargetRevision === void 0 ? {} : { expectedDestinationTargetRevision: requireInteger(r.expectedDestinationTargetRevision, "expectedDestinationTargetRevision", 1, Number.MAX_SAFE_INTEGER) },
+		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemCloneInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"workItemId",
+		"expectedRevision",
+		"expectedContainerRevision",
+		"targetSessionId",
+		"parentWorkItemId",
+		"goal",
+		"scope",
+		"completionCriteria",
+		"authority",
+		"sourceIdentity",
+		"idempotencyKey"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
+		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		expectedContainerRevision: requireInteger(r.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
+		targetSessionId: requireNonEmptyString(r.targetSessionId, "targetSessionId"),
+		...r.parentWorkItemId === void 0 ? {} : { parentWorkItemId: r.parentWorkItemId === null ? null : requireNonEmptyString(r.parentWorkItemId, "parentWorkItemId") },
+		goal: requireBoundedString(r.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
+		scope: requireBoundedStringAllowEmpty(r.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
+		completionCriteria: requireBoundedStringAllowEmpty(r.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
+		authority: requireBoundedStringAllowEmpty(r.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+		sourceIdentity: parseWorkItemSourceIdentity(r.sourceIdentity),
+		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemReopenInput(value) {
+	return parseWorkItemRestoreLike(value, "reopen");
+}
+function parseWorkItemRestoreInput(value) {
+	return parseWorkItemRestoreLike(value, "restore");
+}
+function parseWorkItemRestoreLike(value, operation) {
+	if (operation === "restore") {
+		const r = requireObject(value, "input");
+		assertKeys(r, [
+			"workItemId",
+			"expectedRevision",
+			"idempotencyKey"
+		], "input");
+		return {
+			workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
+			expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+			idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
+		};
+	}
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"workItemId",
+		"expectedRevision",
+		"strategy",
+		"expectedContainerRevision",
+		"destinationParentWorkItemId",
+		"goal",
+		"scope",
+		"completionCriteria",
+		"authority",
+		"sourceIdentity",
+		"idempotencyKey"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
+		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		strategy: requireEnum(r.strategy, ["successor"], "strategy"),
+		...r.expectedContainerRevision === void 0 ? {} : { expectedContainerRevision: requireInteger(r.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER) },
+		...r.destinationParentWorkItemId === void 0 ? {} : { destinationParentWorkItemId: r.destinationParentWorkItemId === null ? null : requireNonEmptyString(r.destinationParentWorkItemId, "destinationParentWorkItemId") },
+		goal: requireBoundedString(r.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
+		scope: requireBoundedStringAllowEmpty(r.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
+		completionCriteria: requireBoundedStringAllowEmpty(r.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
+		authority: requireBoundedStringAllowEmpty(r.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+		sourceIdentity: parseWorkItemSourceIdentity(r.sourceIdentity),
+		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemSourceIdentity(value) {
+	const r = requireObject(value, "sourceIdentity");
+	assertKeys(r, [
+		"workspace",
+		"repository",
+		"branch",
+		"base",
+		"head"
+	], "sourceIdentity");
+	return {
+		workspace: requireNullableBoundedString(r.workspace, "sourceIdentity.workspace"),
+		repository: requireNullableBoundedString(r.repository, "sourceIdentity.repository"),
+		branch: requireNullableBoundedString(r.branch, "sourceIdentity.branch"),
+		base: requireNullableBoundedString(r.base, "sourceIdentity.base"),
+		head: requireNullableBoundedString(r.head, "sourceIdentity.head")
+	};
+}
+function parseWorkItemArchiveInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"workItemId",
+		"expectedRevision",
+		"reason",
+		"idempotencyKey"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
+		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		reason: requireBoundedString(r.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH),
+		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemDeleteInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"workItemId",
+		"expectedRevision",
+		"idempotencyKey"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(r.workItemId, "workItemId"),
+		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemHistoryAppendInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"type",
+		"summary",
+		"blockers",
+		"nextAction",
+		"expectedRevision",
+		"idempotencyKey"
+	], "input");
+	const input = {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		type: requireEnum(record.type, ["progress", "handoff"], "type"),
+		summary: requireBoundedString(record.summary, "summary", WORK_ITEM_MAX_TEXT_LENGTH),
+		blockers: parseWorkItemStringList(record.blockers, "blockers"),
+		nextAction: requireBoundedString(record.nextAction, "nextAction", WORK_ITEM_MAX_TEXT_LENGTH),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+	requireWorkItemEventPayloadWithinLimit({
+		progressSummary: input.summary,
+		blockers: input.blockers,
+		nextAction: input.nextAction
+	});
+	return input;
+}
+function requireWorkItemEventPayloadWithinLimit(payload) {
+	const actualBytes = workItemEventPayloadByteLength(payload);
+	if (actualBytes > 524288) throw new SessionRuntimeValidationError("Work Item history payload exceeds the byte limit.", {
+		field: "input",
+		actualBytes,
+		maxBytes: WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES
+	}, "CONTENT_TOO_LARGE");
+}
+function parseWorkItemHistoryListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseWorkItemListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"creatorSessionId",
+		"targetSessionId",
+		"state",
+		"includeArchived",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		...record.creatorSessionId === void 0 ? {} : { creatorSessionId: requireNonEmptyString(record.creatorSessionId, "creatorSessionId") },
+		...record.targetSessionId === void 0 ? {} : { targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId") },
+		...record.state === void 0 ? {} : { state: requireEnum(record.state, WORK_ITEM_STATES, "state") },
+		includeArchived: record.includeArchived === void 0 ? false : requireBoolean(record.includeArchived, "includeArchived"),
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseWorkItemTransitionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"state",
+		"expectedRevision",
+		"idempotencyKey"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		state: requireEnum(record.state, ["in_progress", "waiting"], "state"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemResultInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"state",
+		"expectedRevision",
+		"expectedAggregateRevision",
+		"expectedResultRevision",
+		"result",
+		"idempotencyKey"
+	], "input");
+	const state = requireEnum(record.state, [
+		"completed",
+		"partially_completed",
+		"failed"
+	], "state");
+	const result = requireObject(record.result, "result");
+	assertKeys(result, [
+		"summary",
+		"changes",
+		"verificationResults",
+		"findings",
+		"unverifiedItems",
+		"remainingWork"
+	], "result");
+	const parsedResult = {
+		summary: requireBoundedString(result.summary, "result.summary", WORK_ITEM_MAX_TEXT_LENGTH),
+		changes: parseWorkItemStringList(result.changes, "result.changes"),
+		verificationResults: parseWorkItemVerificationResults(result.verificationResults),
+		findings: parseWorkItemStringList(result.findings, "result.findings"),
+		unverifiedItems: parseWorkItemStringList(result.unverifiedItems, "result.unverifiedItems"),
+		remainingWork: parseWorkItemStringList(result.remainingWork, "result.remainingWork")
+	};
+	const canonicalResult = {
+		outcome: state,
+		...parsedResult,
+		reportingSessionId: "",
+		reportedAt: ""
+	};
+	const actualBytes = Buffer.byteLength(JSON.stringify(canonicalResult), "utf8");
+	if (actualBytes > 262144) throw new SessionRuntimeValidationError("Work Item result exceeds the byte limit.", {
+		field: "result",
+		actualBytes,
+		maxBytes: WORK_ITEM_MAX_RESULT_BYTES
+	}, "CONTENT_TOO_LARGE");
+	return {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		state,
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		result: parsedResult,
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+		...record.expectedAggregateRevision === void 0 ? {} : { expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER) },
+		...record.expectedResultRevision === void 0 ? {} : { expectedResultRevision: requireInteger(record.expectedResultRevision, "expectedResultRevision", 1, Number.MAX_SAFE_INTEGER) }
+	};
+}
+function parseWorkItemResultCorrectionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"expectedRevision",
+		"expectedResultRevision",
+		"correctionReason",
+		"result",
+		"idempotencyKey"
+	], "input");
+	const result = requireObject(record.result, "result");
+	assertKeys(result, [
+		"outcome",
+		"summary",
+		"changes",
+		"verificationResults",
+		"findings",
+		"unverifiedItems",
+		"remainingWork"
+	], "result");
+	const parsedResult = {
+		outcome: requireEnum(result.outcome, [
+			"completed",
+			"partially_completed",
+			"failed"
+		], "result.outcome"),
+		summary: requireBoundedString(result.summary, "result.summary", WORK_ITEM_MAX_TEXT_LENGTH),
+		changes: parseWorkItemStringList(result.changes, "result.changes"),
+		verificationResults: parseWorkItemVerificationResults(result.verificationResults),
+		findings: parseWorkItemStringList(result.findings, "result.findings"),
+		unverifiedItems: parseWorkItemStringList(result.unverifiedItems, "result.unverifiedItems"),
+		remainingWork: parseWorkItemStringList(result.remainingWork, "result.remainingWork")
+	};
+	const actualBytes = Buffer.byteLength(JSON.stringify(parsedResult), "utf8");
+	if (actualBytes > 262144) throw new SessionRuntimeValidationError("Work Item result exceeds the byte limit.", {
+		field: "result",
+		actualBytes,
+		maxBytes: WORK_ITEM_MAX_RESULT_BYTES
+	}, "CONTENT_TOO_LARGE");
+	return {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		expectedResultRevision: requireInteger(record.expectedResultRevision, "expectedResultRevision", 1, Number.MAX_SAFE_INTEGER),
+		correctionReason: requireBoundedString(record.correctionReason, "correctionReason", WORK_ITEM_MAX_TEXT_LENGTH),
+		result: parsedResult,
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemAggregationGetInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, ["parentWorkItemId"], "input");
+	return { parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId") };
+}
+function parseWorkItemAggregationListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"parentWorkItemId",
+		"decision",
+		"state",
+		"depth",
+		"fields",
+		"limit",
+		"cursor"
+	], "input");
+	const fields = record.fields === void 0 ? void 0 : record.fields;
+	if (fields !== void 0 && (!Array.isArray(fields) || fields.length > 3 || new Set(fields).size !== fields.length)) throw invalid("fields", "fields must be a unique bounded array.");
+	return {
+		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+		...record.decision === void 0 ? {} : { decision: requireEnum(record.decision, WORK_ITEM_AGGREGATION_DECISIONS, "decision") },
+		...record.state === void 0 ? {} : { state: requireEnum(record.state, WORK_ITEM_STATES, "state") },
+		...record.depth === void 0 ? {} : { depth: requireInteger(record.depth, "depth", 1, 8) },
+		...fields === void 0 ? {} : { fields: fields.map((field, index) => requireEnum(field, [
+			"summary",
+			"decision",
+			"provenance"
+		], `fields[${index}]`)) },
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseWorkItemAggregationCorrectionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"parentWorkItemId",
+		"childWorkItemId",
+		"expectedAggregateRevision",
+		"expectedChildResultRevision",
+		"correction",
+		"idempotencyKey"
+	], "input");
+	const correction = requireObject(record.correction, "correction");
+	if (Object.keys(correction).length === 0) throw invalid("correction", "correction is required.");
+	const kind = requireEnum(correction.kind, [
+		"revise",
+		"withdraw",
+		"replace"
+	], "correction.kind");
+	assertKeys(correction, kind === "revise" ? [
+		"kind",
+		"decision",
+		"reason"
+	] : kind === "withdraw" ? ["kind", "reason"] : [
+		"kind",
+		"replacementWorkItemId",
+		"reason"
+	], "correction");
+	const reason = requireBoundedString(correction.reason, "correction.reason", WORK_ITEM_MAX_TEXT_LENGTH);
+	const parsedCorrection = kind === "revise" ? {
+		kind,
+		...correction.decision === void 0 ? {} : { decision: requireEnum(correction.decision, ["accepted", "excluded"], "correction.decision") },
+		reason
+	} : kind === "withdraw" ? {
+		kind,
+		reason
+	} : {
+		kind,
+		replacementWorkItemId: requireNonEmptyString(correction.replacementWorkItemId, "correction.replacementWorkItemId"),
+		reason
+	};
+	return {
+		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+		childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"),
+		expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
+		expectedChildResultRevision: requireInteger(record.expectedChildResultRevision, "expectedChildResultRevision", 0, Number.MAX_SAFE_INTEGER),
+		correction: parsedCorrection,
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemAggregationDecisionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"parentWorkItemId",
+		"childWorkItemId",
+		"decision",
+		"reason",
+		"expectedAggregateRevision",
+		"idempotencyKey"
+	], "input");
+	const decision = requireEnum(record.decision, ["accepted", "excluded"], "decision");
+	const reason = record.reason === void 0 ? void 0 : requireBoundedString(record.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH);
+	if (decision === "excluded" && reason === void 0) throw invalid("reason", "excluded requires a reason.");
+	return {
+		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+		childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"),
+		decision,
+		...reason === void 0 ? {} : { reason },
+		expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemAggregationRetryInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"parentWorkItemId",
+		"childWorkItemId",
+		"targetSessionId",
+		"goal",
+		"scope",
+		"completionCriteria",
+		"authority",
+		"sourceIdentity",
+		"reason",
+		"expectedAggregateRevision",
+		"idempotencyKey"
+	], "input");
+	const sourceIdentity = requireObject(record.sourceIdentity, "sourceIdentity");
+	assertKeys(sourceIdentity, [
+		"workspace",
+		"repository",
+		"branch",
+		"base",
+		"head"
+	], "sourceIdentity");
+	return {
+		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+		childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"),
+		targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId"),
+		goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
+		scope: requireBoundedString(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
+		completionCriteria: requireBoundedString(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
+		authority: requireBoundedString(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+		sourceIdentity: {
+			workspace: requireNullableBoundedString(sourceIdentity.workspace, "sourceIdentity.workspace"),
+			repository: requireNullableBoundedString(sourceIdentity.repository, "sourceIdentity.repository"),
+			branch: requireNullableBoundedString(sourceIdentity.branch, "sourceIdentity.branch"),
+			base: requireNullableBoundedString(sourceIdentity.base, "sourceIdentity.base"),
+			head: requireNullableBoundedString(sourceIdentity.head, "sourceIdentity.head")
+		},
+		...record.reason === void 0 ? {} : { reason: requireBoundedString(record.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH) },
+		expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemCancelInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"expectedRevision",
+		"idempotencyKey"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemStringList(value, field) {
+	if (!Array.isArray(value) || value.length > 100) throw invalid(field, `${field} must contain at most 100 items.`, "LIMIT_EXCEEDED");
+	return value.map((item, index) => requireBoundedString(item, `${field}[${index}]`, WORK_ITEM_MAX_TEXT_LENGTH));
+}
+function parseWorkItemVerificationResults(value) {
+	if (!Array.isArray(value) || value.length > 100) throw invalid("result.verificationResults", `result.verificationResults must contain at most 100 items.`, "LIMIT_EXCEEDED");
+	return value.map((item, index) => {
+		const record = requireObject(item, `result.verificationResults[${index}]`);
+		assertKeys(record, [
+			"name",
+			"status",
+			"details"
+		], `result.verificationResults[${index}]`);
+		return {
+			name: requireBoundedString(record.name, `result.verificationResults[${index}].name`, WORK_ITEM_MAX_TEXT_LENGTH),
+			status: requireEnum(record.status, [
+				"passed",
+				"failed",
+				"not_run"
+			], `result.verificationResults[${index}].status`),
+			details: requireBoundedString(record.details, `result.verificationResults[${index}].details`, WORK_ITEM_MAX_TEXT_LENGTH)
+		};
+	});
+}
+function requireNullableBoundedString(value, field) {
+	if (value === null) return null;
+	return requireBoundedString(value, field, WORK_ITEM_MAX_TEXT_LENGTH);
+}
+function createSessionRuntimeError(input) {
+	return {
+		schemaVersion: SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
+		error: {
+			code: input.code,
+			message: input.message,
+			retryable: input.retryable ?? false,
+			effect: input.effect ?? "not_applied",
+			details: input.details ?? {}
+		}
+	};
+}
+function parseTurnRunInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"expectedContainerRevision",
+		"sessionId",
+		"catalogRevision",
+		"idempotencyKey",
+		"responseMode",
+		"waitTimeoutMs",
+		"turn",
+		"terminalFailureNotification",
+		"workItemId",
+		"consultationGrantId"
+	], "input");
+	const responseMode = requireEnum(record.responseMode, ["wait", "deferred"], "responseMode");
+	if (responseMode === "deferred" && record.waitTimeoutMs !== void 0) throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
+	return {
+		...parseTurnMutationBase(record),
+		responseMode,
+		...record.waitTimeoutMs === void 0 ? {} : { waitTimeoutMs: requireInteger(record.waitTimeoutMs, "waitTimeoutMs", 1, SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS) }
+	};
+}
+function parseTurnEnqueueInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"expectedContainerRevision",
+		"sessionId",
+		"catalogRevision",
+		"idempotencyKey",
+		"turn",
+		"terminalFailureNotification",
+		"workItemId",
+		"consultationGrantId"
+	], "input");
+	return parseTurnMutationBase(record);
+}
+function parseTurnMutationBase(record) {
+	return {
+		expectedContainerRevision: requireInteger(record.expectedContainerRevision, "expectedContainerRevision", 1, Number.MAX_SAFE_INTEGER),
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+		turn: parseTurnRequest(record.turn),
+		...record.terminalFailureNotification === void 0 ? {} : { terminalFailureNotification: parseTerminalFailureNotificationInput(record.terminalFailureNotification) },
+		...record.workItemId === void 0 ? {} : { workItemId: requireNonEmptyString(record.workItemId, "workItemId") },
+		...record.consultationGrantId === void 0 ? {} : { consultationGrantId: requireNonEmptyString(record.consultationGrantId, "consultationGrantId") }
+	};
+}
+function parseSessionGrantCreateInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"parentGrantId",
+		"parentGrantRevision",
+		"granteeSessionId",
+		"actions",
+		"resourceKind",
+		"relationSelector",
+		"targetSessionRoles",
+		"effectClass",
+		"delegable",
+		"childCeiling",
+		"expiresAt",
+		"budget",
+		"resourceIds",
+		"purpose",
+		"completionCriteria",
+		"returnSessionId",
+		"budgetAccountId",
+		"idempotencyKey"
+	], "input");
+	if (!Array.isArray(r.actions) || r.actions.length === 0 || !r.actions.every((v) => typeof v === "string" && SESSION_RUNTIME_OPERATIONS.includes(v))) throw invalid("actions", "actions must contain known runtime operations.");
+	if (!Array.isArray(r.targetSessionRoles) || r.targetSessionRoles.length === 0 || !r.targetSessionRoles.every((v) => [
+		"standalone",
+		"overall-coordinator",
+		"task-coordinator",
+		"executor"
+	].includes(v))) throw invalid("targetSessionRoles", "targetSessionRoles must contain known Session roles.");
+	if (!sessionGrantExpirySchema.safeParse(r.expiresAt).success) throw invalid("expiresAt", "expiresAt must be an ISO timestamp with a timezone or null.");
+	if (r.resourceIds !== void 0 && (!Array.isArray(r.resourceIds) || !r.resourceIds.every((v) => typeof v === "string" && v.length > 0))) throw invalid("resourceIds", "resourceIds must be a string array.");
+	if (typeof r.delegable !== "boolean") throw invalid("delegable", "delegable must be boolean.");
+	if (r.childCeiling !== void 0) {
+		if (!Array.isArray(r.childCeiling)) throw invalid("childCeiling", "childCeiling must be an array.");
+		r.childCeiling.forEach((value, index) => {
+			const permission = requireObject(value, `childCeiling.${index}`);
+			assertKeys(permission, [
+				"mode",
+				"action",
+				"resourceKind",
+				"relationSelector",
+				"effectClass",
+				"targetSessionRoles"
+			], `childCeiling.${index}`);
+			requireEnum(permission.mode, ["exercise", "delegate"], `childCeiling.${index}.mode`);
+			requireEnum(permission.action, SESSION_RUNTIME_OPERATIONS, `childCeiling.${index}.action`);
+			requireEnum(permission.resourceKind, SESSION_AUTHORITY_RESOURCE_KINDS, `childCeiling.${index}.resourceKind`);
+			requireEnum(permission.relationSelector, SESSION_AUTHORITY_RELATION_SELECTORS, `childCeiling.${index}.relationSelector`);
+			requireEnum(permission.effectClass, SESSION_AUTHORITY_EFFECT_CLASSES, `childCeiling.${index}.effectClass`);
+			if (!Array.isArray(permission.targetSessionRoles) || !permission.targetSessionRoles.every((role) => [
+				"standalone",
+				"overall-coordinator",
+				"task-coordinator",
+				"executor"
+			].includes(role))) throw invalid(`childCeiling.${index}.targetSessionRoles`, "targetSessionRoles must contain known Session roles.");
+		});
+	}
+	if (r.budget !== void 0 && (!r.budget || typeof r.budget !== "object" || Array.isArray(r.budget) || Object.values(r.budget).some((v) => typeof v !== "number" || !Number.isSafeInteger(v) || v < 0))) throw invalid("budget", "budget values must be non-negative safe integers.");
+	return {
+		parentGrantId: requireNonEmptyString(r.parentGrantId, "parentGrantId"),
+		parentGrantRevision: requireInteger(r.parentGrantRevision, "parentGrantRevision", 1, Number.MAX_SAFE_INTEGER),
+		granteeSessionId: requireNonEmptyString(r.granteeSessionId, "granteeSessionId"),
+		actions: r.actions,
+		resourceKind: requireEnum(r.resourceKind, SESSION_AUTHORITY_RESOURCE_KINDS, "resourceKind"),
+		relationSelector: requireEnum(r.relationSelector, SESSION_AUTHORITY_RELATION_SELECTORS, "relationSelector"),
+		targetSessionRoles: r.targetSessionRoles,
+		effectClass: requireEnum(r.effectClass, SESSION_AUTHORITY_EFFECT_CLASSES, "effectClass"),
+		delegable: r.delegable,
+		...r.childCeiling === void 0 ? {} : { childCeiling: r.childCeiling },
+		expiresAt: r.expiresAt === null ? null : requireNonEmptyString(r.expiresAt, "expiresAt"),
+		...r.budget === void 0 ? {} : { budget: requireObject(r.budget, "budget") },
+		...r.resourceIds === void 0 ? {} : { resourceIds: r.resourceIds.map((v) => requireNonEmptyString(v, "resourceIds")) },
+		...r.purpose === void 0 ? {} : { purpose: requireNonEmptyString(r.purpose, "purpose") },
+		...r.completionCriteria === void 0 ? {} : { completionCriteria: requireNonEmptyString(r.completionCriteria, "completionCriteria") },
+		...r.returnSessionId === void 0 ? {} : { returnSessionId: requireNonEmptyString(r.returnSessionId, "returnSessionId") },
+		...r.budgetAccountId === void 0 ? {} : { budgetAccountId: requireNonEmptyString(r.budgetAccountId, "budgetAccountId") },
+		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseSessionGrantGetInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, ["grantId"], "input");
+	return { grantId: requireNonEmptyString(r.grantId, "grantId") };
+}
+function parseSessionGrantListInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"granteeSessionId",
+		"includeRevoked",
+		"limit",
+		"cursor"
+	], "input");
+	if (r.includeRevoked !== void 0 && typeof r.includeRevoked !== "boolean") throw invalid("includeRevoked", "includeRevoked must be boolean.");
+	return {
+		...r.granteeSessionId === void 0 ? {} : { granteeSessionId: requireNonEmptyString(r.granteeSessionId, "granteeSessionId") },
+		...r.includeRevoked === void 0 ? {} : { includeRevoked: r.includeRevoked },
+		limit: requireInteger(r.limit, "limit", 1, 500),
+		...r.cursor === void 0 ? {} : { cursor: requireNonEmptyString(r.cursor, "cursor") }
+	};
+}
+function parseSessionGrantRevokeInput(value) {
+	const r = requireObject(value, "input");
+	assertKeys(r, [
+		"grantId",
+		"expectedRevision",
+		"idempotencyKey"
+	], "input");
+	return {
+		grantId: requireNonEmptyString(r.grantId, "grantId"),
+		expectedRevision: requireInteger(r.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(r.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseTerminalFailureNotificationInput(value) {
+	const record = requireObject(value, "terminalFailureNotification");
+	assertKeys(record, ["targetSessionId"], "terminalFailureNotification");
+	return { targetSessionId: requireNonEmptyString(record.targetSessionId, "terminalFailureNotification.targetSessionId") };
+}
+function parseTurnRequest(value) {
+	const record = requireObject(value, "turn");
+	const provider = requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "turn.provider");
+	const reasoningEffort = record.reasoningEffort;
+	if (!isModelReasoningEffort(reasoningEffort)) throw invalid("reasoningEffort", "reasoningEffort is invalid.");
+	const common = {
+		userMessage: requireNonEmptyString(record.userMessage, "userMessage"),
+		model: requireNonEmptyString(record.model, "model"),
+		reasoningEffort,
+		approvalMode: requireEnum(record.approvalMode, APPROVAL_MODE_VALUES, "approvalMode"),
+		attachments: parseTurnAttachments(record.attachments)
+	};
+	if (provider === "codex") {
+		assertKeys(record, [
+			"provider",
+			"userMessage",
+			"model",
+			"reasoningEffort",
+			"approvalMode",
+			"codexSandboxMode",
+			"attachments"
+		], "turn");
+		return {
+			...common,
+			provider,
+			codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "codexSandboxMode")
+		};
+	}
+	assertKeys(record, [
+		"provider",
+		"userMessage",
+		"model",
+		"reasoningEffort",
+		"approvalMode",
+		"customAgentName",
+		"attachments"
+	], "turn");
+	return {
+		...common,
+		provider,
+		customAgentName: requireString(record.customAgentName, "customAgentName").trim()
+	};
+}
+function parseTurnAttachments(value) {
+	if (!Array.isArray(value) || value.length > 32) throw invalid("attachments", `attachments must be an array with at most 32 items.`);
+	const seen = /* @__PURE__ */ new Set();
+	return value.map((item, index) => {
+		const record = requireObject(item, `attachments[${index}]`);
+		assertKeys(record, ["kind", "relativePath"], `attachments[${index}]`);
+		const relativePath = requireNonEmptyString(record.relativePath, `attachments[${index}].relativePath`);
+		if (relativePath.includes("\0") || relativePath.includes("\\") || relativePath.includes("\r") || relativePath.includes("\n") || relativePath.startsWith("/") || /^[a-zA-Z]:/.test(relativePath) || relativePath.startsWith("//")) throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must be a portable relative path.");
+		if (relativePath.split("/").some((segment) => !segment || segment === "." || segment === "..")) throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must identify an item inside the SessionFolder.");
+		const duplicateKey = relativePath.toLowerCase();
+		if (seen.has(duplicateKey)) throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must not be duplicated.");
+		seen.add(duplicateKey);
+		return {
+			kind: requireEnum(record.kind, [
+				"file",
+				"folder",
+				"image"
+			], `attachments[${index}].kind`),
+			relativePath
+		};
+	});
+}
+function parseExecutionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, ["sessionId", "executionId"], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		executionId: requireNonEmptyString(record.executionId, "executionId")
+	};
+}
+function parseCancelInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"executionId",
+		"expectedRevision",
+		"idempotencyKey"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		executionId: requireNonEmptyString(record.executionId, "executionId"),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseTurnListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseInteractionListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"executionId",
+		"kind",
+		"state",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
+		...record.kind === void 0 ? {} : { kind: requireEnum(record.kind, ["approval", "elicitation"], "kind") },
+		...record.state === void 0 ? {} : { state: requireEnum(record.state, [
+			"pending",
+			"answered",
+			"expired"
+		], "state") },
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseInteractionRespondInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"executionId",
+		"interactionId",
+		"expectedRevision",
+		"response",
+		"idempotencyKey",
+		"responseMode",
+		"waitTimeoutMs"
+	], "input");
+	const responseMode = requireEnum(record.responseMode, ["wait", "deferred"], "responseMode");
+	if (responseMode === "deferred" && record.waitTimeoutMs !== void 0) throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
+	return {
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		executionId: requireNonEmptyString(record.executionId, "executionId"),
+		interactionId: requireNonEmptyString(record.interactionId, "interactionId"),
+		response: parseInteractionResponse(record.response),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+		responseMode,
+		...record.waitTimeoutMs === void 0 ? {} : { waitTimeoutMs: requireInteger(record.waitTimeoutMs, "waitTimeoutMs", 1, SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS) }
+	};
+}
+function parseInteractionResponse(value) {
+	const record = requireObject(value, "response");
+	const kind = requireEnum(record.kind, ["approval", "elicitation"], "response.kind");
+	if (kind === "approval") {
+		assertKeys(record, ["kind", "decision"], "response");
+		return {
+			kind,
+			decision: requireEnum(record.decision, ["approve", "deny"], "response.decision")
+		};
+	}
+	const action = requireEnum(record.action, [
+		"accept",
+		"decline",
+		"cancel"
+	], "response.action");
+	if (action !== "accept") {
+		assertKeys(record, ["kind", "action"], "response");
+		return {
+			kind,
+			action
+		};
+	}
+	assertKeys(record, [
+		"kind",
+		"action",
+		"content"
+	], "response");
+	const content = requireObject(record.content, "response.content");
+	return {
+		kind,
+		action,
+		content: Object.fromEntries(Object.entries(content).map(([name, item]) => [requireNonEmptyString(name, "response.content field"), parseElicitationValue(item, `response.content.${name}`)]))
+	};
+}
+function parseTranscriptExportInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"format",
+		"maxBytes",
+		"destination"
+	], "input");
+	const destination = requireObject(record.destination, "destination");
+	const kind = requireEnum(destination.kind, ["inline", "session_folder"], "destination.kind");
+	const maxBytes = requireInteger(record.maxBytes ?? (kind === "inline" ? 1048576 : 67108864), "maxBytes", 1, kind === "inline" ? SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES : SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES, "LIMIT_EXCEEDED");
+	if (kind === "inline") {
+		assertKeys(destination, ["kind"], "destination");
+		return {
+			sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+			format: requireEnum(record.format, ["json", "markdown"], "format"),
+			maxBytes,
+			destination: { kind }
+		};
+	}
+	assertKeys(destination, [
+		"kind",
+		"relativePath",
+		"replace",
+		"idempotencyKey"
+	], "destination");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		format: requireEnum(record.format, ["json", "markdown"], "format"),
+		maxBytes,
+		destination: {
+			kind,
+			relativePath: requireNonEmptyString(destination.relativePath, "destination.relativePath"),
+			replace: destination.replace === void 0 ? false : requireBoolean(destination.replace, "destination.replace"),
+			idempotencyKey: requireNonEmptyString(destination.idempotencyKey, "destination.idempotencyKey")
+		}
+	};
+}
+function parseElicitationValue(value, field) {
+	if (typeof value === "string" || typeof value === "boolean") return value;
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (Array.isArray(value) && value.every((item) => typeof item === "string")) return [...value];
+	throw invalid(field, `${field} has an invalid elicitation value.`);
+}
+function requireObject(value, field) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid(field, `${field} must be an object.`);
+	return value;
+}
+function parseDelegationInput(operation, value) {
+	const record = requireObject(value, "input");
+	if (operation === "delegation.list") {
+		assertKeys(record, ["limit", "cursor"], "input");
+		return {
+			limit: requireInteger(record.limit, "limit", 1, 500),
+			...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+		};
+	}
+	if (operation !== "delegation.create") {
+		assertKeys(record, operation === "delegation.get" ? ["delegationId"] : operation === "delegation.retry" ? [
+			"delegationId",
+			"expectedRevision",
+			"idempotencyKey",
+			"dispatch"
+		] : [
+			"delegationId",
+			"expectedRevision",
+			"idempotencyKey"
+		], "input");
+		const delegationId = requireNonEmptyString(record.delegationId, "delegationId");
+		if (operation === "delegation.get") return { delegationId };
+		return {
+			delegationId,
+			expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+			idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+			...operation === "delegation.retry" ? { dispatch: requireEnum(record.dispatch, ["prepare", "enqueue"], "dispatch") } : {}
+		};
+	}
+	assertKeys(record, [
+		"idempotencyKey",
+		"dispatch",
+		"items"
+	], "input");
+	if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > 20) throw invalid("items", `Expected 1 to 20 delegation items.`);
+	const items = record.items.map((value) => {
+		const item = requireObject(value, "item");
+		assertKeys(item, [
+			"target",
+			"work",
+			"turn"
+		], "item");
+		const targetInput = requireObject(item.target, "target");
+		const targetKind = requireEnum(targetInput.kind, ["existing", "create"], "target.kind");
+		assertKeys(targetInput, targetKind === "existing" ? ["kind", "sessionId"] : ["kind", "session"], "target");
+		let target;
+		if (targetKind === "existing") target = {
+			kind: "existing",
+			sessionId: requireNonEmptyString(targetInput.sessionId, "sessionId")
+		};
+		else {
+			const session = requireObject(targetInput.session, "session");
+			if ("idempotencyKey" in session) throw invalid("session.idempotencyKey", "The delegation owns step idempotency keys.");
+			const { idempotencyKey: _key, ...parsed } = parseSessionCreateInput({
+				...session,
+				idempotencyKey: "delegation-step"
+			});
+			target = {
+				kind: "create",
+				session: parsed
+			};
+		}
+		const workInput = requireObject(item.work, "work");
+		const workKind = requireEnum(workInput.kind, [
+			"create",
+			"existing",
+			"root",
+			"replacement"
+		], "work.kind");
+		let work;
+		if (workKind === "root") {
+			assertKeys(workInput, ["kind"], "work");
+			work = { kind: "root" };
+		} else if (workKind === "existing") {
+			assertKeys(workInput, ["kind", "workItemId"], "work");
+			work = {
+				kind: "existing",
+				workItemId: requireNonEmptyString(workInput.workItemId, "workItemId")
+			};
+		} else {
+			const field = workKind === "create" ? "contract" : "request";
+			assertKeys(workInput, ["kind", field], "work");
+			const nested = requireObject(workInput[field], field);
+			for (const key of [
+				"targetSessionId",
+				"idempotencyKey",
+				...workKind === "create" ? ["expectedContainerRevision"] : []
+			]) if (key in nested) throw invalid(`${field}.${key}`, "The delegation resolves this field.");
+			if (workKind === "create") {
+				const { targetSessionId: _target, idempotencyKey: _key, expectedContainerRevision: _revision, ...contract } = parseWorkItemCreateInput({
+					...nested,
+					targetSessionId: "delegation-target",
+					expectedContainerRevision: 1,
+					idempotencyKey: "delegation-step"
+				});
+				work = {
+					kind: "create",
+					contract
+				};
+			} else {
+				const { targetSessionId: _target, idempotencyKey: _key, ...request } = parseWorkItemAggregationRetryInput({
+					...nested,
+					targetSessionId: "delegation-target",
+					idempotencyKey: "delegation-step"
+				});
+				work = {
+					kind: "replacement",
+					request
+				};
+			}
+		}
+		if ((target.kind === "create" && target.session.placement.kind === "root") !== (work.kind === "root")) throw invalid("work.kind", "A new root Session requires its canonical Root Work Item.");
+		const turnInput = requireObject(item.turn, "turn");
+		for (const key of [
+			"sessionId",
+			"workItemId",
+			"idempotencyKey",
+			"expectedContainerRevision"
+		]) if (key in turnInput) throw invalid(`turn.${key}`, "The delegation resolves this field.");
+		const { sessionId: _session, workItemId: _work, idempotencyKey: _key, expectedContainerRevision: _revision, ...turn } = parseTurnEnqueueInput({
+			...turnInput,
+			sessionId: "delegation-target",
+			expectedContainerRevision: 1,
+			idempotencyKey: "delegation-step"
+		});
+		return {
+			target,
+			work,
+			turn
+		};
+	});
+	return {
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+		dispatch: requireEnum(record.dispatch, ["prepare", "enqueue"], "dispatch"),
+		items
+	};
+}
+function assertKeys(record, allowed, field) {
+	const unknownKey = Object.keys(record).find((key) => !allowed.includes(key));
+	if (unknownKey) throw invalid(`${field}.${unknownKey}`, `Unknown field: ${unknownKey}.`);
+}
+function requireNonEmptyString(value, field) {
+	if (typeof value !== "string" || !value.trim()) throw invalid(field, `${field} must be a non-empty string.`);
+	return value.trim();
+}
+function requireString(value, field) {
+	if (typeof value !== "string") throw invalid(field, `${field} must be a string.`);
+	return value;
+}
+function requireBoolean(value, field) {
+	if (typeof value !== "boolean") throw invalid(field, `${field} must be a boolean.`);
+	return value;
+}
+function requireInteger(value, field, min, max, code = "INVALID_INPUT") {
+	if (!Number.isSafeInteger(value) || value < min || value > max) throw invalid(field, `${field} must be an integer from ${min} through ${max}.`, code);
+	return value;
+}
+function requireEnum(value, values, field) {
+	if (typeof value !== "string" || !values.includes(value)) throw invalid(field, `${field} is invalid.`);
+	return value;
+}
+function invalid(field, message, code = "INVALID_INPUT") {
+	return new SessionRuntimeValidationError(message, { field }, code);
+}
+//#endregion
+//#region src/session-runtime-discovery.ts
+var SESSION_RUNTIME_KIND = "session";
+var WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID_ENV = "WITHMATE_SESSION_RUNTIME_APPLICATION_INSTANCE_ID";
+var WITHMATE_SESSION_RUNTIME_GENERATION_ID_ENV = "WITHMATE_SESSION_RUNTIME_GENERATION_ID";
+function parseSessionRuntimeCredentialEnvelope(serialized, identity, adapter) {
+	let value;
+	try {
+		value = JSON.parse(serialized);
+	} catch {
+		return null;
+	}
+	if (!isRecord$1(value) || !hasExactKeys$1(value, [
+		"schemaVersion",
+		"applicationInstanceId",
+		"runtimeKind",
+		"adapterKind",
+		"runtimeGenerationId",
+		"credential"
+	]) || value.schemaVersion !== "withmate-runtime-credential-v1" || value.applicationInstanceId !== identity.applicationInstanceId || value.runtimeKind !== "session" || value.runtimeKind !== identity.runtimeKind || value.adapterKind !== adapter || value.runtimeGenerationId !== identity.runtimeGenerationId || !isRecord$1(value.credential) || !hasExactKeys$1(value.credential, [
+		"schemaVersion",
+		"baseUrl",
+		"apiSecret",
+		"adapterSecret"
+	]) || value.credential.schemaVersion !== "withmate-session-runtime-credential-v1" || typeof value.credential.baseUrl !== "string" || typeof value.credential.apiSecret !== "string" || typeof value.credential.adapterSecret !== "string") return null;
+	return value;
+}
+function isRecord$1(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function hasExactKeys$1(value, expected) {
+	const actual = Object.keys(value).sort();
+	const sortedExpected = [...expected].sort();
+	return actual.length === sortedExpected.length && actual.every((key, index) => key === sortedExpected[index]);
+}
+//#endregion
+//#region src/session-runtime-exchange.ts
+var SESSION_RUNTIME_APPLICATION_INSTANCE_HEADER = "x-withmate-session-runtime-application-instance";
+var SESSION_RUNTIME_GENERATION_HEADER = "x-withmate-session-runtime-generation";
+var SESSION_RUNTIME_NONCE_HEADER = "x-withmate-session-runtime-nonce";
+var SESSION_RUNTIME_CHALLENGE_HEADER = "x-withmate-session-runtime-challenge";
+var SESSION_RUNTIME_OPERATION_PATH = "/v1/operation";
+var SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-session-exchange-v1";
+function createSessionRuntimeChallenge(apiSecret, applicationInstanceId, runtimeGenerationId, nonce) {
+	return createHmac("sha256", apiSecret).update(`${applicationInstanceId}\n${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
+}
+//#endregion
+//#region src/agent-runtime/agent-runtime-binding-contract.ts
+var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
+var WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED";
+var RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME = "runtime-discovery";
+var RUNTIME_DISCOVERY_ENTRY_FILE_NAME = "entry.json";
+var RUNTIME_DISCOVERY_DEFAULT_HEARTBEAT_MS = 5e3;
+var RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS = 2e4;
+var RUNTIME_DISCOVERY_DEFAULT_CAPACITY_CLEANUP_GRACE_MS = 6e4;
+var RUNTIME_DISCOVERY_DEFAULT_RETENTION_MS = 864e5;
+var RuntimeDiscoveryRegistryError = class extends Error {
+	code;
+	constructor(code, message, options) {
+		super(message, options);
+		this.name = "RuntimeDiscoveryRegistryError";
+		this.code = code;
+	}
+};
+var DEFAULT_RUNTIME_DISCOVERY_REGISTRY_LIMITS = {
+	heartbeatMs: RUNTIME_DISCOVERY_DEFAULT_HEARTBEAT_MS,
+	staleThresholdMs: RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS,
+	capacityCleanupGraceMs: RUNTIME_DISCOVERY_DEFAULT_CAPACITY_CLEANUP_GRACE_MS,
+	retentionMs: RUNTIME_DISCOVERY_DEFAULT_RETENTION_MS,
+	maxEntries: 64
+};
+var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var RUNTIME_KIND_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+var ADAPTER_KIND_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+var CREDENTIAL_FILE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,126}\.json$/;
+var BUILD_CHANNELS = /* @__PURE__ */ new Set([
+	"installed",
+	"development",
+	"visual-check",
+	"unknown"
+]);
+function isRecord(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function hasExactKeys(value, keys) {
+	const actualKeys = Object.keys(value).sort();
+	const expectedKeys = [...keys].sort();
+	return actualKeys.length === expectedKeys.length && actualKeys.every((key, index) => key === expectedKeys[index]);
+}
+function isIsoTimestamp(value) {
+	if (typeof value !== "string" || !value) return false;
+	const timestamp = Date.parse(value);
+	return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+function isUuid(value) {
+	return typeof value === "string" && UUID_PATTERN.test(value);
+}
+function isSafeRelativeRuntimeDiscoveryReference(value) {
+	return typeof value === "string" && value.length > 0 && !path.posix.isAbsolute(value) && !path.win32.isAbsolute(value) && !value.includes("/") && !value.includes("\\") && path.posix.basename(value) === value;
+}
+function isRuntimeDiscoveryIdentity(value) {
+	if (!isRecord(value)) return false;
+	return typeof value.applicationInstanceId === "string" && UUID_PATTERN.test(value.applicationInstanceId) && typeof value.runtimeGenerationId === "string" && UUID_PATTERN.test(value.runtimeGenerationId) && typeof value.runtimeKind === "string" && RUNTIME_KIND_PATTERN.test(value.runtimeKind);
+}
+function isRuntimeDiscoveryAdapterReference(value) {
+	if (!isRecord(value) || !hasExactKeys(value, ["adapterKind", "credentialFileName"])) return false;
+	if (typeof value.adapterKind !== "string" || !ADAPTER_KIND_PATTERN.test(value.adapterKind)) return false;
+	if (typeof value.credentialFileName !== "string" || !CREDENTIAL_FILE_NAME_PATTERN.test(value.credentialFileName) || !isSafeRelativeRuntimeDiscoveryReference(value.credentialFileName) || value.credentialFileName === "entry.json") return false;
+	return true;
+}
+function isRuntimeDiscoverySelector(value) {
+	if (!isRecord(value) || typeof value.runtimeKind !== "string" || !RUNTIME_KIND_PATTERN.test(value.runtimeKind)) return false;
+	if (value.applicationInstanceId !== void 0 && !isUuid(value.applicationInstanceId)) return false;
+	if (value.runtimeGenerationId !== void 0 && !isUuid(value.runtimeGenerationId)) return false;
+	return value.runtimeGenerationId === void 0 || value.applicationInstanceId !== void 0;
+}
+function buildRuntimeDiscoveryCredentialFileName(identity, adapterKind) {
+	if (!ADAPTER_KIND_PATTERN.test(adapterKind)) throw new RuntimeDiscoveryRegistryError("registry_configuration", "Invalid adapter kind.");
+	return `credential-${createHash("sha256").update(`${identity.applicationInstanceId}\0${identity.runtimeKind}\0${identity.runtimeGenerationId}\0${adapterKind}`).digest("hex")}.json`;
+}
+function buildRuntimeDiscoverySlotName(slot) {
+	if (!Number.isSafeInteger(slot) || slot < 0 || slot >= 64) throw new RuntimeDiscoveryRegistryError("registry_configuration", "Runtime registry slot is out of range.");
+	return `slot-${String(slot).padStart(2, "0")}`;
+}
+function parseRuntimeDiscoveryRegistryEntry(value) {
+	if (!isRecord(value) || !hasExactKeys(value, [
+		"schemaVersion",
+		"applicationInstanceId",
+		"runtimeKind",
+		"runtimeGenerationId",
+		"buildChannel",
+		"process",
+		"publicationId",
+		"publishedAt",
+		"lease",
+		"adapters"
+	])) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry has an invalid shape.");
+	if (value.schemaVersion !== "withmate-runtime-discovery-entry-v1" || !isRuntimeDiscoveryIdentity(value) || typeof value.buildChannel !== "string" || !BUILD_CHANNELS.has(value.buildChannel) || !isUuid(value.publicationId) || !isIsoTimestamp(value.publishedAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry metadata is invalid.");
+	const entry = value;
+	if (!isRecord(entry.process) || !hasExactKeys(entry.process, ["pid", "startedAt"]) || typeof entry.process.pid !== "number" || !Number.isSafeInteger(entry.process.pid) || entry.process.pid <= 0 || !isIsoTimestamp(entry.process.startedAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry process metadata is invalid.");
+	if (!isRecord(entry.lease) || !hasExactKeys(entry.lease, ["heartbeatAt"]) || !isIsoTimestamp(entry.lease.heartbeatAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry lease metadata is invalid.");
+	if (!Array.isArray(entry.adapters) || entry.adapters.length === 0 || !entry.adapters.every(isRuntimeDiscoveryAdapterReference)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry adapter references are invalid.");
+	const adapterKinds = /* @__PURE__ */ new Set();
+	const credentialFileNames = /* @__PURE__ */ new Set();
+	for (const adapter of entry.adapters) {
+		if (adapterKinds.has(adapter.adapterKind) || credentialFileNames.has(adapter.credentialFileName)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry adapter references must be unique.");
+		adapterKinds.add(adapter.adapterKind);
+		credentialFileNames.add(adapter.credentialFileName);
+	}
+	return value;
+}
+function getRuntimeDiscoveryLeaseState(entry, now, staleThresholdMs = RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS) {
+	return now.getTime() - Date.parse(entry.lease.heartbeatAt) > staleThresholdMs ? "expired" : "fresh";
+}
+function toSafeRuntimeDiscoveryMetadata(entry, now, staleThresholdMs = RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS) {
+	return {
+		applicationInstanceId: entry.applicationInstanceId,
+		runtimeKind: entry.runtimeKind,
+		runtimeGenerationId: entry.runtimeGenerationId,
+		buildChannel: entry.buildChannel,
+		pid: entry.process.pid,
+		processStartedAt: entry.process.startedAt,
+		publicationId: entry.publicationId,
+		publishedAt: entry.publishedAt,
+		leaseHeartbeatAt: entry.lease.heartbeatAt,
+		leaseState: getRuntimeDiscoveryLeaseState(entry, now, staleThresholdMs)
+	};
+}
+function resolveDefaultRuntimeDiscoveryRegistryRoot(env = process.env, platform = process.platform) {
+	if (platform === "win32") {
+		const localAppData = env.LOCALAPPDATA?.trim();
+		if (!localAppData || !path.win32.isAbsolute(localAppData)) throw new RuntimeDiscoveryRegistryError("registry_configuration", "LOCALAPPDATA must identify an absolute Windows directory.");
+		return path.win32.join(localAppData, "WithMate", RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME, "v1");
+	}
+	const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
+	return path.join(tmpdir(), "withmate", ownerSegment, RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME, "v1");
+}
+function normalizeRuntimeDiscoveryRegistryLimits(overrides = {}) {
+	const limits = {
+		...DEFAULT_RUNTIME_DISCOVERY_REGISTRY_LIMITS,
+		...overrides
+	};
+	for (const [name, value] of Object.entries(limits)) if (!Number.isSafeInteger(value) || value <= 0) throw new RuntimeDiscoveryRegistryError("registry_configuration", `Runtime registry limit ${name} must be a positive integer.`);
+	if (limits.maxEntries > 64) throw new RuntimeDiscoveryRegistryError("registry_configuration", `Runtime registry maxEntries must not exceed 64.`);
+	return limits;
+}
+//#endregion
+//#region node_modules/graceful-fs/polyfills.js
+var require_polyfills = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var constants = __require("constants");
+	var origCwd = process.cwd;
+	var cwd = null;
+	var platform = process.env.GRACEFUL_FS_PLATFORM || process.platform;
+	process.cwd = function() {
+		if (!cwd) cwd = origCwd.call(process);
+		return cwd;
+	};
+	try {
+		process.cwd();
+	} catch (er) {}
+	if (typeof process.chdir === "function") {
+		var chdir = process.chdir;
+		process.chdir = function(d) {
+			cwd = null;
+			chdir.call(process, d);
+		};
+		if (Object.setPrototypeOf) Object.setPrototypeOf(process.chdir, chdir);
+	}
+	module.exports = patch;
+	function patch(fs) {
+		if (constants.hasOwnProperty("O_SYMLINK") && process.version.match(/^v0\.6\.[0-2]|^v0\.5\./)) patchLchmod(fs);
+		if (!fs.lutimes) patchLutimes(fs);
+		fs.chown = chownFix(fs.chown);
+		fs.fchown = chownFix(fs.fchown);
+		fs.lchown = chownFix(fs.lchown);
+		fs.chmod = chmodFix(fs.chmod);
+		fs.fchmod = chmodFix(fs.fchmod);
+		fs.lchmod = chmodFix(fs.lchmod);
+		fs.chownSync = chownFixSync(fs.chownSync);
+		fs.fchownSync = chownFixSync(fs.fchownSync);
+		fs.lchownSync = chownFixSync(fs.lchownSync);
+		fs.chmodSync = chmodFixSync(fs.chmodSync);
+		fs.fchmodSync = chmodFixSync(fs.fchmodSync);
+		fs.lchmodSync = chmodFixSync(fs.lchmodSync);
+		fs.stat = statFix(fs.stat);
+		fs.fstat = statFix(fs.fstat);
+		fs.lstat = statFix(fs.lstat);
+		fs.statSync = statFixSync(fs.statSync);
+		fs.fstatSync = statFixSync(fs.fstatSync);
+		fs.lstatSync = statFixSync(fs.lstatSync);
+		if (fs.chmod && !fs.lchmod) {
+			fs.lchmod = function(path, mode, cb) {
+				if (cb) process.nextTick(cb);
+			};
+			fs.lchmodSync = function() {};
+		}
+		if (fs.chown && !fs.lchown) {
+			fs.lchown = function(path, uid, gid, cb) {
+				if (cb) process.nextTick(cb);
+			};
+			fs.lchownSync = function() {};
+		}
+		if (platform === "win32") fs.rename = typeof fs.rename !== "function" ? fs.rename : (function(fs$rename) {
+			function rename(from, to, cb) {
+				var start = Date.now();
+				var backoff = 0;
+				fs$rename(from, to, function CB(er) {
+					if (er && (er.code === "EACCES" || er.code === "EPERM" || er.code === "EBUSY") && Date.now() - start < 6e4) {
+						setTimeout(function() {
+							fs.stat(to, function(stater, st) {
+								if (stater && stater.code === "ENOENT") fs$rename(from, to, CB);
+								else cb(er);
+							});
+						}, backoff);
+						if (backoff < 100) backoff += 10;
+						return;
+					}
+					if (cb) cb(er);
+				});
+			}
+			if (Object.setPrototypeOf) Object.setPrototypeOf(rename, fs$rename);
+			return rename;
+		})(fs.rename);
+		fs.read = typeof fs.read !== "function" ? fs.read : (function(fs$read) {
+			function read(fd, buffer, offset, length, position, callback_) {
+				var callback;
+				if (callback_ && typeof callback_ === "function") {
+					var eagCounter = 0;
+					callback = function(er, _, __) {
+						if (er && er.code === "EAGAIN" && eagCounter < 10) {
+							eagCounter++;
+							return fs$read.call(fs, fd, buffer, offset, length, position, callback);
+						}
+						callback_.apply(this, arguments);
+					};
+				}
+				return fs$read.call(fs, fd, buffer, offset, length, position, callback);
+			}
+			if (Object.setPrototypeOf) Object.setPrototypeOf(read, fs$read);
+			return read;
+		})(fs.read);
+		fs.readSync = typeof fs.readSync !== "function" ? fs.readSync : (function(fs$readSync) {
+			return function(fd, buffer, offset, length, position) {
+				var eagCounter = 0;
+				while (true) try {
+					return fs$readSync.call(fs, fd, buffer, offset, length, position);
+				} catch (er) {
+					if (er.code === "EAGAIN" && eagCounter < 10) {
+						eagCounter++;
+						continue;
+					}
+					throw er;
+				}
+			};
+		})(fs.readSync);
+		function patchLchmod(fs) {
+			fs.lchmod = function(path, mode, callback) {
+				fs.open(path, constants.O_WRONLY | constants.O_SYMLINK, mode, function(err, fd) {
+					if (err) {
+						if (callback) callback(err);
+						return;
+					}
+					fs.fchmod(fd, mode, function(err) {
+						fs.close(fd, function(err2) {
+							if (callback) callback(err || err2);
+						});
+					});
+				});
+			};
+			fs.lchmodSync = function(path, mode) {
+				var fd = fs.openSync(path, constants.O_WRONLY | constants.O_SYMLINK, mode);
+				var threw = true;
+				var ret;
+				try {
+					ret = fs.fchmodSync(fd, mode);
+					threw = false;
+				} finally {
+					if (threw) try {
+						fs.closeSync(fd);
+					} catch (er) {}
+					else fs.closeSync(fd);
+				}
+				return ret;
+			};
+		}
+		function patchLutimes(fs) {
+			if (constants.hasOwnProperty("O_SYMLINK") && fs.futimes) {
+				fs.lutimes = function(path, at, mt, cb) {
+					fs.open(path, constants.O_SYMLINK, function(er, fd) {
+						if (er) {
+							if (cb) cb(er);
+							return;
+						}
+						fs.futimes(fd, at, mt, function(er) {
+							fs.close(fd, function(er2) {
+								if (cb) cb(er || er2);
+							});
+						});
+					});
+				};
+				fs.lutimesSync = function(path, at, mt) {
+					var fd = fs.openSync(path, constants.O_SYMLINK);
+					var ret;
+					var threw = true;
+					try {
+						ret = fs.futimesSync(fd, at, mt);
+						threw = false;
+					} finally {
+						if (threw) try {
+							fs.closeSync(fd);
+						} catch (er) {}
+						else fs.closeSync(fd);
+					}
+					return ret;
+				};
+			} else if (fs.futimes) {
+				fs.lutimes = function(_a, _b, _c, cb) {
+					if (cb) process.nextTick(cb);
+				};
+				fs.lutimesSync = function() {};
+			}
+		}
+		function chmodFix(orig) {
+			if (!orig) return orig;
+			return function(target, mode, cb) {
+				return orig.call(fs, target, mode, function(er) {
+					if (chownErOk(er)) er = null;
+					if (cb) cb.apply(this, arguments);
+				});
+			};
+		}
+		function chmodFixSync(orig) {
+			if (!orig) return orig;
+			return function(target, mode) {
+				try {
+					return orig.call(fs, target, mode);
+				} catch (er) {
+					if (!chownErOk(er)) throw er;
+				}
+			};
+		}
+		function chownFix(orig) {
+			if (!orig) return orig;
+			return function(target, uid, gid, cb) {
+				return orig.call(fs, target, uid, gid, function(er) {
+					if (chownErOk(er)) er = null;
+					if (cb) cb.apply(this, arguments);
+				});
+			};
+		}
+		function chownFixSync(orig) {
+			if (!orig) return orig;
+			return function(target, uid, gid) {
+				try {
+					return orig.call(fs, target, uid, gid);
+				} catch (er) {
+					if (!chownErOk(er)) throw er;
+				}
+			};
+		}
+		function statFix(orig) {
+			if (!orig) return orig;
+			return function(target, options, cb) {
+				if (typeof options === "function") {
+					cb = options;
+					options = null;
+				}
+				function callback(er, stats) {
+					if (stats) {
+						if (stats.uid < 0) stats.uid += 4294967296;
+						if (stats.gid < 0) stats.gid += 4294967296;
+					}
+					if (cb) cb.apply(this, arguments);
+				}
+				return options ? orig.call(fs, target, options, callback) : orig.call(fs, target, callback);
+			};
+		}
+		function statFixSync(orig) {
+			if (!orig) return orig;
+			return function(target, options) {
+				var stats = options ? orig.call(fs, target, options) : orig.call(fs, target);
+				if (stats) {
+					if (stats.uid < 0) stats.uid += 4294967296;
+					if (stats.gid < 0) stats.gid += 4294967296;
+				}
+				return stats;
+			};
+		}
+		function chownErOk(er) {
+			if (!er) return true;
+			if (er.code === "ENOSYS") return true;
+			if (!process.getuid || process.getuid() !== 0) {
+				if (er.code === "EINVAL" || er.code === "EPERM") return true;
+			}
+			return false;
+		}
+	}
+}));
+//#endregion
+//#region node_modules/graceful-fs/legacy-streams.js
+var require_legacy_streams = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var Stream = __require("stream").Stream;
+	module.exports = legacy;
+	function legacy(fs) {
+		return {
+			ReadStream,
+			WriteStream
+		};
+		function ReadStream(path, options) {
+			if (!(this instanceof ReadStream)) return new ReadStream(path, options);
+			Stream.call(this);
+			var self = this;
+			this.path = path;
+			this.fd = null;
+			this.readable = true;
+			this.paused = false;
+			this.flags = "r";
+			this.mode = 438;
+			this.bufferSize = 65536;
+			options = options || {};
+			var keys = Object.keys(options);
+			for (var index = 0, length = keys.length; index < length; index++) {
+				var key = keys[index];
+				this[key] = options[key];
+			}
+			if (this.encoding) this.setEncoding(this.encoding);
+			if (this.start !== void 0) {
+				if ("number" !== typeof this.start) throw TypeError("start must be a Number");
+				if (this.end === void 0) this.end = Infinity;
+				else if ("number" !== typeof this.end) throw TypeError("end must be a Number");
+				if (this.start > this.end) throw new Error("start must be <= end");
+				this.pos = this.start;
+			}
+			if (this.fd !== null) {
+				process.nextTick(function() {
+					self._read();
+				});
+				return;
+			}
+			fs.open(this.path, this.flags, this.mode, function(err, fd) {
+				if (err) {
+					self.emit("error", err);
+					self.readable = false;
+					return;
+				}
+				self.fd = fd;
+				self.emit("open", fd);
+				self._read();
+			});
+		}
+		function WriteStream(path, options) {
+			if (!(this instanceof WriteStream)) return new WriteStream(path, options);
+			Stream.call(this);
+			this.path = path;
+			this.fd = null;
+			this.writable = true;
+			this.flags = "w";
+			this.encoding = "binary";
+			this.mode = 438;
+			this.bytesWritten = 0;
+			options = options || {};
+			var keys = Object.keys(options);
+			for (var index = 0, length = keys.length; index < length; index++) {
+				var key = keys[index];
+				this[key] = options[key];
+			}
+			if (this.start !== void 0) {
+				if ("number" !== typeof this.start) throw TypeError("start must be a Number");
+				if (this.start < 0) throw new Error("start must be >= zero");
+				this.pos = this.start;
+			}
+			this.busy = false;
+			this._queue = [];
+			if (this.fd === null) {
+				this._open = fs.open;
+				this._queue.push([
+					this._open,
+					this.path,
+					this.flags,
+					this.mode,
+					void 0
+				]);
+				this.flush();
+			}
+		}
+	}
+}));
+//#endregion
+//#region node_modules/graceful-fs/clone.js
+var require_clone = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	module.exports = clone;
+	var getPrototypeOf = Object.getPrototypeOf || function(obj) {
+		return obj.__proto__;
+	};
+	function clone(obj) {
+		if (obj === null || typeof obj !== "object") return obj;
+		if (obj instanceof Object) var copy = { __proto__: getPrototypeOf(obj) };
+		else var copy = Object.create(null);
+		Object.getOwnPropertyNames(obj).forEach(function(key) {
+			Object.defineProperty(copy, key, Object.getOwnPropertyDescriptor(obj, key));
+		});
+		return copy;
+	}
+}));
+//#endregion
+//#region node_modules/graceful-fs/graceful-fs.js
+var require_graceful_fs = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var fs = __require("fs");
+	var polyfills = require_polyfills();
+	var legacy = require_legacy_streams();
+	var clone = require_clone();
+	var util$1 = __require("util");
+	/* istanbul ignore next - node 0.x polyfill */
+	var gracefulQueue;
+	var previousSymbol;
+	/* istanbul ignore else - node 0.x polyfill */
+	if (typeof Symbol === "function" && typeof Symbol.for === "function") {
+		gracefulQueue = Symbol.for("graceful-fs.queue");
+		previousSymbol = Symbol.for("graceful-fs.previous");
+	} else {
+		gracefulQueue = "___graceful-fs.queue";
+		previousSymbol = "___graceful-fs.previous";
+	}
+	function noop() {}
+	function publishQueue(context, queue) {
+		Object.defineProperty(context, gracefulQueue, { get: function() {
+			return queue;
+		} });
+	}
+	var debug = noop;
+	if (util$1.debuglog) debug = util$1.debuglog("gfs4");
+	else if (/\bgfs4\b/i.test(process.env.NODE_DEBUG || "")) debug = function() {
+		var m = util$1.format.apply(util$1, arguments);
+		m = "GFS4: " + m.split(/\n/).join("\nGFS4: ");
+		console.error(m);
+	};
+	if (!fs[gracefulQueue]) {
+		publishQueue(fs, global[gracefulQueue] || []);
+		fs.close = (function(fs$close) {
+			function close(fd, cb) {
+				return fs$close.call(fs, fd, function(err) {
+					if (!err) resetQueue();
+					if (typeof cb === "function") cb.apply(this, arguments);
+				});
+			}
+			Object.defineProperty(close, previousSymbol, { value: fs$close });
+			return close;
+		})(fs.close);
+		fs.closeSync = (function(fs$closeSync) {
+			function closeSync(fd) {
+				fs$closeSync.apply(fs, arguments);
+				resetQueue();
+			}
+			Object.defineProperty(closeSync, previousSymbol, { value: fs$closeSync });
+			return closeSync;
+		})(fs.closeSync);
+		if (/\bgfs4\b/i.test(process.env.NODE_DEBUG || "")) process.on("exit", function() {
+			debug(fs[gracefulQueue]);
+			__require("assert").equal(fs[gracefulQueue].length, 0);
+		});
+	}
+	if (!global[gracefulQueue]) publishQueue(global, fs[gracefulQueue]);
+	module.exports = patch(clone(fs));
+	if (process.env.TEST_GRACEFUL_FS_GLOBAL_PATCH && !fs.__patched) {
+		module.exports = patch(fs);
+		fs.__patched = true;
+	}
+	function patch(fs) {
+		polyfills(fs);
+		fs.gracefulify = patch;
+		fs.createReadStream = createReadStream;
+		fs.createWriteStream = createWriteStream;
+		var fs$readFile = fs.readFile;
+		fs.readFile = readFile;
+		function readFile(path, options, cb) {
+			if (typeof options === "function") cb = options, options = null;
+			return go$readFile(path, options, cb);
+			function go$readFile(path, options, cb, startTime) {
+				return fs$readFile(path, options, function(err) {
+					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
+						go$readFile,
+						[
+							path,
+							options,
+							cb
+						],
+						err,
+						startTime || Date.now(),
+						Date.now()
+					]);
+					else if (typeof cb === "function") cb.apply(this, arguments);
+				});
+			}
+		}
+		var fs$writeFile = fs.writeFile;
+		fs.writeFile = writeFile;
+		function writeFile(path, data, options, cb) {
+			if (typeof options === "function") cb = options, options = null;
+			return go$writeFile(path, data, options, cb);
+			function go$writeFile(path, data, options, cb, startTime) {
+				return fs$writeFile(path, data, options, function(err) {
+					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
+						go$writeFile,
+						[
+							path,
+							data,
+							options,
+							cb
+						],
+						err,
+						startTime || Date.now(),
+						Date.now()
+					]);
+					else if (typeof cb === "function") cb.apply(this, arguments);
+				});
+			}
+		}
+		var fs$appendFile = fs.appendFile;
+		if (fs$appendFile) fs.appendFile = appendFile;
+		function appendFile(path, data, options, cb) {
+			if (typeof options === "function") cb = options, options = null;
+			return go$appendFile(path, data, options, cb);
+			function go$appendFile(path, data, options, cb, startTime) {
+				return fs$appendFile(path, data, options, function(err) {
+					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
+						go$appendFile,
+						[
+							path,
+							data,
+							options,
+							cb
+						],
+						err,
+						startTime || Date.now(),
+						Date.now()
+					]);
+					else if (typeof cb === "function") cb.apply(this, arguments);
+				});
+			}
+		}
+		var fs$copyFile = fs.copyFile;
+		if (fs$copyFile) fs.copyFile = copyFile;
+		function copyFile(src, dest, flags, cb) {
+			if (typeof flags === "function") {
+				cb = flags;
+				flags = 0;
+			}
+			return go$copyFile(src, dest, flags, cb);
+			function go$copyFile(src, dest, flags, cb, startTime) {
+				return fs$copyFile(src, dest, flags, function(err) {
+					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
+						go$copyFile,
+						[
+							src,
+							dest,
+							flags,
+							cb
+						],
+						err,
+						startTime || Date.now(),
+						Date.now()
+					]);
+					else if (typeof cb === "function") cb.apply(this, arguments);
+				});
+			}
+		}
+		var fs$readdir = fs.readdir;
+		fs.readdir = readdir;
+		var noReaddirOptionVersions = /^v[0-5]\./;
+		function readdir(path, options, cb) {
+			if (typeof options === "function") cb = options, options = null;
+			var go$readdir = noReaddirOptionVersions.test(process.version) ? function go$readdir(path, options, cb, startTime) {
+				return fs$readdir(path, fs$readdirCallback(path, options, cb, startTime));
+			} : function go$readdir(path, options, cb, startTime) {
+				return fs$readdir(path, options, fs$readdirCallback(path, options, cb, startTime));
+			};
+			return go$readdir(path, options, cb);
+			function fs$readdirCallback(path, options, cb, startTime) {
+				return function(err, files) {
+					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
+						go$readdir,
+						[
+							path,
+							options,
+							cb
+						],
+						err,
+						startTime || Date.now(),
+						Date.now()
+					]);
+					else {
+						if (files && files.sort) files.sort();
+						if (typeof cb === "function") cb.call(this, err, files);
+					}
+				};
+			}
+		}
+		if (process.version.substr(0, 4) === "v0.8") {
+			var legStreams = legacy(fs);
+			ReadStream = legStreams.ReadStream;
+			WriteStream = legStreams.WriteStream;
+		}
+		var fs$ReadStream = fs.ReadStream;
+		if (fs$ReadStream) {
+			ReadStream.prototype = Object.create(fs$ReadStream.prototype);
+			ReadStream.prototype.open = ReadStream$open;
+		}
+		var fs$WriteStream = fs.WriteStream;
+		if (fs$WriteStream) {
+			WriteStream.prototype = Object.create(fs$WriteStream.prototype);
+			WriteStream.prototype.open = WriteStream$open;
+		}
+		Object.defineProperty(fs, "ReadStream", {
+			get: function() {
+				return ReadStream;
+			},
+			set: function(val) {
+				ReadStream = val;
+			},
+			enumerable: true,
+			configurable: true
+		});
+		Object.defineProperty(fs, "WriteStream", {
+			get: function() {
+				return WriteStream;
+			},
+			set: function(val) {
+				WriteStream = val;
+			},
+			enumerable: true,
+			configurable: true
+		});
+		var FileReadStream = ReadStream;
+		Object.defineProperty(fs, "FileReadStream", {
+			get: function() {
+				return FileReadStream;
+			},
+			set: function(val) {
+				FileReadStream = val;
+			},
+			enumerable: true,
+			configurable: true
+		});
+		var FileWriteStream = WriteStream;
+		Object.defineProperty(fs, "FileWriteStream", {
+			get: function() {
+				return FileWriteStream;
+			},
+			set: function(val) {
+				FileWriteStream = val;
+			},
+			enumerable: true,
+			configurable: true
+		});
+		function ReadStream(path, options) {
+			if (this instanceof ReadStream) return fs$ReadStream.apply(this, arguments), this;
+			else return ReadStream.apply(Object.create(ReadStream.prototype), arguments);
+		}
+		function ReadStream$open() {
+			var that = this;
+			open(that.path, that.flags, that.mode, function(err, fd) {
+				if (err) {
+					if (that.autoClose) that.destroy();
+					that.emit("error", err);
+				} else {
+					that.fd = fd;
+					that.emit("open", fd);
+					that.read();
+				}
+			});
+		}
+		function WriteStream(path, options) {
+			if (this instanceof WriteStream) return fs$WriteStream.apply(this, arguments), this;
+			else return WriteStream.apply(Object.create(WriteStream.prototype), arguments);
+		}
+		function WriteStream$open() {
+			var that = this;
+			open(that.path, that.flags, that.mode, function(err, fd) {
+				if (err) {
+					that.destroy();
+					that.emit("error", err);
+				} else {
+					that.fd = fd;
+					that.emit("open", fd);
+				}
+			});
+		}
+		function createReadStream(path, options) {
+			return new fs.ReadStream(path, options);
+		}
+		function createWriteStream(path, options) {
+			return new fs.WriteStream(path, options);
+		}
+		var fs$open = fs.open;
+		fs.open = open;
+		function open(path, flags, mode, cb) {
+			if (typeof mode === "function") cb = mode, mode = null;
+			return go$open(path, flags, mode, cb);
+			function go$open(path, flags, mode, cb, startTime) {
+				return fs$open(path, flags, mode, function(err, fd) {
+					if (err && (err.code === "EMFILE" || err.code === "ENFILE")) enqueue([
+						go$open,
+						[
+							path,
+							flags,
+							mode,
+							cb
+						],
+						err,
+						startTime || Date.now(),
+						Date.now()
+					]);
+					else if (typeof cb === "function") cb.apply(this, arguments);
+				});
+			}
+		}
+		return fs;
+	}
+	function enqueue(elem) {
+		debug("ENQUEUE", elem[0].name, elem[1]);
+		fs[gracefulQueue].push(elem);
+		retry();
+	}
+	var retryTimer;
+	function resetQueue() {
+		var now = Date.now();
+		for (var i = 0; i < fs[gracefulQueue].length; ++i) if (fs[gracefulQueue][i].length > 2) {
+			fs[gracefulQueue][i][3] = now;
+			fs[gracefulQueue][i][4] = now;
+		}
+		retry();
+	}
+	function retry() {
+		clearTimeout(retryTimer);
+		retryTimer = void 0;
+		if (fs[gracefulQueue].length === 0) return;
+		var elem = fs[gracefulQueue].shift();
+		var fn = elem[0];
+		var args = elem[1];
+		var err = elem[2];
+		var startTime = elem[3];
+		var lastTime = elem[4];
+		if (startTime === void 0) {
+			debug("RETRY", fn.name, args);
+			fn.apply(null, args);
+		} else if (Date.now() - startTime >= 6e4) {
+			debug("TIMEOUT", fn.name, args);
+			var cb = args.pop();
+			if (typeof cb === "function") cb.call(null, err);
+		} else {
+			var sinceAttempt = Date.now() - lastTime;
+			var sinceStart = Math.max(lastTime - startTime, 1);
+			if (sinceAttempt >= Math.min(sinceStart * 1.2, 100)) {
+				debug("RETRY", fn.name, args);
+				fn.apply(null, args.concat([startTime]));
+			} else fs[gracefulQueue].push(elem);
+		}
+		if (retryTimer === void 0) retryTimer = setTimeout(retry, 0);
+	}
+}));
+//#endregion
+//#region node_modules/retry/lib/retry_operation.js
+var require_retry_operation = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	function RetryOperation(timeouts, options) {
+		if (typeof options === "boolean") options = { forever: options };
+		this._originalTimeouts = JSON.parse(JSON.stringify(timeouts));
+		this._timeouts = timeouts;
+		this._options = options || {};
+		this._maxRetryTime = options && options.maxRetryTime || Infinity;
+		this._fn = null;
+		this._errors = [];
+		this._attempts = 1;
+		this._operationTimeout = null;
+		this._operationTimeoutCb = null;
+		this._timeout = null;
+		this._operationStart = null;
+		if (this._options.forever) this._cachedTimeouts = this._timeouts.slice(0);
+	}
+	module.exports = RetryOperation;
+	RetryOperation.prototype.reset = function() {
+		this._attempts = 1;
+		this._timeouts = this._originalTimeouts;
+	};
+	RetryOperation.prototype.stop = function() {
+		if (this._timeout) clearTimeout(this._timeout);
+		this._timeouts = [];
+		this._cachedTimeouts = null;
+	};
+	RetryOperation.prototype.retry = function(err) {
+		if (this._timeout) clearTimeout(this._timeout);
+		if (!err) return false;
+		var currentTime = (/* @__PURE__ */ new Date()).getTime();
+		if (err && currentTime - this._operationStart >= this._maxRetryTime) {
+			this._errors.unshift(/* @__PURE__ */ new Error("RetryOperation timeout occurred"));
+			return false;
+		}
+		this._errors.push(err);
+		var timeout = this._timeouts.shift();
+		if (timeout === void 0) {
+			if (this._cachedTimeouts) {
+				this._errors.splice(this._errors.length - 1, this._errors.length);
+				this._timeouts = this._cachedTimeouts.slice(0);
+				timeout = this._timeouts.shift();
+			} else return false;
+		}
+		var self = this;
+		var timer = setTimeout(function() {
+			self._attempts++;
+			if (self._operationTimeoutCb) {
+				self._timeout = setTimeout(function() {
+					self._operationTimeoutCb(self._attempts);
+				}, self._operationTimeout);
+				if (self._options.unref) self._timeout.unref();
+			}
+			self._fn(self._attempts);
+		}, timeout);
+		if (this._options.unref) timer.unref();
+		return true;
+	};
+	RetryOperation.prototype.attempt = function(fn, timeoutOps) {
+		this._fn = fn;
+		if (timeoutOps) {
+			if (timeoutOps.timeout) this._operationTimeout = timeoutOps.timeout;
+			if (timeoutOps.cb) this._operationTimeoutCb = timeoutOps.cb;
+		}
+		var self = this;
+		if (this._operationTimeoutCb) this._timeout = setTimeout(function() {
+			self._operationTimeoutCb();
+		}, self._operationTimeout);
+		this._operationStart = (/* @__PURE__ */ new Date()).getTime();
+		this._fn(this._attempts);
+	};
+	RetryOperation.prototype.try = function(fn) {
+		console.log("Using RetryOperation.try() is deprecated");
+		this.attempt(fn);
+	};
+	RetryOperation.prototype.start = function(fn) {
+		console.log("Using RetryOperation.start() is deprecated");
+		this.attempt(fn);
+	};
+	RetryOperation.prototype.start = RetryOperation.prototype.try;
+	RetryOperation.prototype.errors = function() {
+		return this._errors;
+	};
+	RetryOperation.prototype.attempts = function() {
+		return this._attempts;
+	};
+	RetryOperation.prototype.mainError = function() {
+		if (this._errors.length === 0) return null;
+		var counts = {};
+		var mainError = null;
+		var mainErrorCount = 0;
+		for (var i = 0; i < this._errors.length; i++) {
+			var error = this._errors[i];
+			var message = error.message;
+			var count = (counts[message] || 0) + 1;
+			counts[message] = count;
+			if (count >= mainErrorCount) {
+				mainError = error;
+				mainErrorCount = count;
+			}
+		}
+		return mainError;
+	};
+}));
+//#endregion
+//#region node_modules/retry/lib/retry.js
+var require_retry$1 = /* @__PURE__ */ __commonJSMin(((exports) => {
+	var RetryOperation = require_retry_operation();
+	exports.operation = function(options) {
+		return new RetryOperation(exports.timeouts(options), {
+			forever: options && options.forever,
+			unref: options && options.unref,
+			maxRetryTime: options && options.maxRetryTime
+		});
+	};
+	exports.timeouts = function(options) {
+		if (options instanceof Array) return [].concat(options);
+		var opts = {
+			retries: 10,
+			factor: 2,
+			minTimeout: 1e3,
+			maxTimeout: Infinity,
+			randomize: false
+		};
+		for (var key in options) opts[key] = options[key];
+		if (opts.minTimeout > opts.maxTimeout) throw new Error("minTimeout is greater than maxTimeout");
+		var timeouts = [];
+		for (var i = 0; i < opts.retries; i++) timeouts.push(this.createTimeout(i, opts));
+		if (options && options.forever && !timeouts.length) timeouts.push(this.createTimeout(i, opts));
+		timeouts.sort(function(a, b) {
+			return a - b;
+		});
+		return timeouts;
+	};
+	exports.createTimeout = function(attempt, opts) {
+		var random = opts.randomize ? Math.random() + 1 : 1;
+		var timeout = Math.round(random * opts.minTimeout * Math.pow(opts.factor, attempt));
+		timeout = Math.min(timeout, opts.maxTimeout);
+		return timeout;
+	};
+	exports.wrap = function(obj, options, methods) {
+		if (options instanceof Array) {
+			methods = options;
+			options = null;
+		}
+		if (!methods) {
+			methods = [];
+			for (var key in obj) if (typeof obj[key] === "function") methods.push(key);
+		}
+		for (var i = 0; i < methods.length; i++) {
+			var method = methods[i];
+			var original = obj[method];
+			obj[method] = function retryWrapper(original) {
+				var op = exports.operation(options);
+				var args = Array.prototype.slice.call(arguments, 1);
+				var callback = args.pop();
+				args.push(function(err) {
+					if (op.retry(err)) return;
+					if (err) arguments[0] = op.mainError();
+					callback.apply(this, arguments);
+				});
+				op.attempt(function() {
+					original.apply(obj, args);
+				});
+			}.bind(obj, original);
+			obj[method].options = options;
+		}
+	};
+}));
+//#endregion
+//#region node_modules/retry/index.js
+var require_retry = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	module.exports = require_retry$1();
+}));
+//#endregion
+//#region node_modules/signal-exit/signals.js
+var require_signals = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	module.exports = [
+		"SIGABRT",
+		"SIGALRM",
+		"SIGHUP",
+		"SIGINT",
+		"SIGTERM"
+	];
+	if (process.platform !== "win32") module.exports.push("SIGVTALRM", "SIGXCPU", "SIGXFSZ", "SIGUSR2", "SIGTRAP", "SIGSYS", "SIGQUIT", "SIGIOT");
+	if (process.platform === "linux") module.exports.push("SIGIO", "SIGPOLL", "SIGPWR", "SIGSTKFLT", "SIGUNUSED");
+}));
+//#endregion
+//#region node_modules/signal-exit/index.js
+var require_signal_exit = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var process = global.process;
+	var processOk = function(process) {
+		return process && typeof process === "object" && typeof process.removeListener === "function" && typeof process.emit === "function" && typeof process.reallyExit === "function" && typeof process.listeners === "function" && typeof process.kill === "function" && typeof process.pid === "number" && typeof process.on === "function";
+	};
+	/* istanbul ignore if */
+	if (!processOk(process)) module.exports = function() {
+		return function() {};
+	};
+	else {
+		var assert = __require("assert");
+		var signals = require_signals();
+		var isWin = /^win/i.test(process.platform);
+		var EE = __require("events");
+		/* istanbul ignore if */
+		if (typeof EE !== "function") EE = EE.EventEmitter;
+		var emitter;
+		if (process.__signal_exit_emitter__) emitter = process.__signal_exit_emitter__;
+		else {
+			emitter = process.__signal_exit_emitter__ = new EE();
+			emitter.count = 0;
+			emitter.emitted = {};
+		}
+		if (!emitter.infinite) {
+			emitter.setMaxListeners(Infinity);
+			emitter.infinite = true;
+		}
+		module.exports = function(cb, opts) {
+			/* istanbul ignore if */
+			if (!processOk(global.process)) return function() {};
+			assert.equal(typeof cb, "function", "a callback must be provided for exit handler");
+			if (loaded === false) load();
+			var ev = "exit";
+			if (opts && opts.alwaysLast) ev = "afterexit";
+			var remove = function() {
+				emitter.removeListener(ev, cb);
+				if (emitter.listeners("exit").length === 0 && emitter.listeners("afterexit").length === 0) unload();
+			};
+			emitter.on(ev, cb);
+			return remove;
+		};
+		var unload = function unload() {
+			if (!loaded || !processOk(global.process)) return;
+			loaded = false;
+			signals.forEach(function(sig) {
+				try {
+					process.removeListener(sig, sigListeners[sig]);
+				} catch (er) {}
+			});
+			process.emit = originalProcessEmit;
+			process.reallyExit = originalProcessReallyExit;
+			emitter.count -= 1;
+		};
+		module.exports.unload = unload;
+		var emit = function emit(event, code, signal) {
+			/* istanbul ignore if */
+			if (emitter.emitted[event]) return;
+			emitter.emitted[event] = true;
+			emitter.emit(event, code, signal);
+		};
+		var sigListeners = {};
+		signals.forEach(function(sig) {
+			sigListeners[sig] = function listener() {
+				/* istanbul ignore if */
+				if (!processOk(global.process)) return;
+				if (process.listeners(sig).length === emitter.count) {
+					unload();
+					emit("exit", null, sig);
+					/* istanbul ignore next */
+					emit("afterexit", null, sig);
+					/* istanbul ignore next */
+					if (isWin && sig === "SIGHUP") sig = "SIGINT";
+					/* istanbul ignore next */
+					process.kill(process.pid, sig);
+				}
+			};
+		});
+		module.exports.signals = function() {
+			return signals;
+		};
+		var loaded = false;
+		var load = function load() {
+			if (loaded || !processOk(global.process)) return;
+			loaded = true;
+			emitter.count += 1;
+			signals = signals.filter(function(sig) {
+				try {
+					process.on(sig, sigListeners[sig]);
+					return true;
+				} catch (er) {
+					return false;
+				}
+			});
+			process.emit = processEmit;
+			process.reallyExit = processReallyExit;
+		};
+		module.exports.load = load;
+		var originalProcessReallyExit = process.reallyExit;
+		var processReallyExit = function processReallyExit(code) {
+			/* istanbul ignore if */
+			if (!processOk(global.process)) return;
+			process.exitCode = code || /* istanbul ignore next */ 0;
+			emit("exit", process.exitCode, null);
+			/* istanbul ignore next */
+			emit("afterexit", process.exitCode, null);
+			/* istanbul ignore next */
+			originalProcessReallyExit.call(process, process.exitCode);
+		};
+		var originalProcessEmit = process.emit;
+		var processEmit = function processEmit(ev, arg) {
+			if (ev === "exit" && processOk(global.process)) {
+				/* istanbul ignore else */
+				if (arg !== void 0) process.exitCode = arg;
+				var ret = originalProcessEmit.apply(this, arguments);
+				/* istanbul ignore next */
+				emit("exit", process.exitCode, null);
+				/* istanbul ignore next */
+				emit("afterexit", process.exitCode, null);
+				/* istanbul ignore next */
+				return ret;
+			} else return originalProcessEmit.apply(this, arguments);
+		};
+	}
+}));
+//#endregion
+//#region node_modules/proper-lockfile/lib/mtime-precision.js
+var require_mtime_precision = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var cacheSymbol = Symbol();
+	function probe(file, fs, callback) {
+		const cachedPrecision = fs[cacheSymbol];
+		if (cachedPrecision) return fs.stat(file, (err, stat) => {
+			/* istanbul ignore if */
+			if (err) return callback(err);
+			callback(null, stat.mtime, cachedPrecision);
+		});
+		const mtime = /* @__PURE__ */ new Date(Math.ceil(Date.now() / 1e3) * 1e3 + 5);
+		fs.utimes(file, mtime, mtime, (err) => {
+			/* istanbul ignore if */
+			if (err) return callback(err);
+			fs.stat(file, (err, stat) => {
+				/* istanbul ignore if */
+				if (err) return callback(err);
+				const precision = stat.mtime.getTime() % 1e3 === 0 ? "s" : "ms";
+				Object.defineProperty(fs, cacheSymbol, { value: precision });
+				callback(null, stat.mtime, precision);
+			});
+		});
+	}
+	function getMtime(precision) {
+		let now = Date.now();
+		if (precision === "s") now = Math.ceil(now / 1e3) * 1e3;
+		return new Date(now);
+	}
+	module.exports.probe = probe;
+	module.exports.getMtime = getMtime;
+}));
+//#endregion
+//#region node_modules/proper-lockfile/lib/lockfile.js
+var require_lockfile = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var path$1 = __require("path");
+	var fs = require_graceful_fs();
+	var retry = require_retry();
+	var onExit = require_signal_exit();
+	var mtimePrecision = require_mtime_precision();
+	var locks = {};
+	function getLockFile(file, options) {
+		return options.lockfilePath || `${file}.lock`;
+	}
+	function resolveCanonicalPath(file, options, callback) {
+		if (!options.realpath) return callback(null, path$1.resolve(file));
+		options.fs.realpath(file, callback);
+	}
+	function acquireLock(file, options, callback) {
+		const lockfilePath = getLockFile(file, options);
+		options.fs.mkdir(lockfilePath, (err) => {
+			if (!err) return mtimePrecision.probe(lockfilePath, options.fs, (err, mtime, mtimePrecision) => {
+				/* istanbul ignore if */
+				if (err) {
+					options.fs.rmdir(lockfilePath, () => {});
+					return callback(err);
+				}
+				callback(null, mtime, mtimePrecision);
+			});
+			if (err.code !== "EEXIST") return callback(err);
+			if (options.stale <= 0) return callback(Object.assign(/* @__PURE__ */ new Error("Lock file is already being held"), {
+				code: "ELOCKED",
+				file
+			}));
+			options.fs.stat(lockfilePath, (err, stat) => {
+				if (err) {
+					if (err.code === "ENOENT") return acquireLock(file, {
+						...options,
+						stale: 0
+					}, callback);
+					return callback(err);
+				}
+				if (!isLockStale(stat, options)) return callback(Object.assign(/* @__PURE__ */ new Error("Lock file is already being held"), {
+					code: "ELOCKED",
+					file
+				}));
+				removeLock(file, options, (err) => {
+					if (err) return callback(err);
+					acquireLock(file, {
+						...options,
+						stale: 0
+					}, callback);
+				});
+			});
+		});
+	}
+	function isLockStale(stat, options) {
+		return stat.mtime.getTime() < Date.now() - options.stale;
+	}
+	function removeLock(file, options, callback) {
+		options.fs.rmdir(getLockFile(file, options), (err) => {
+			if (err && err.code !== "ENOENT") return callback(err);
+			callback();
+		});
+	}
+	function updateLock(file, options) {
+		const lock = locks[file];
+		/* istanbul ignore if */
+		if (lock.updateTimeout) return;
+		lock.updateDelay = lock.updateDelay || options.update;
+		lock.updateTimeout = setTimeout(() => {
+			lock.updateTimeout = null;
+			options.fs.stat(lock.lockfilePath, (err, stat) => {
+				const isOverThreshold = lock.lastUpdate + options.stale < Date.now();
+				if (err) {
+					if (err.code === "ENOENT" || isOverThreshold) return setLockAsCompromised(file, lock, Object.assign(err, { code: "ECOMPROMISED" }));
+					lock.updateDelay = 1e3;
+					return updateLock(file, options);
+				}
+				if (!(lock.mtime.getTime() === stat.mtime.getTime())) return setLockAsCompromised(file, lock, Object.assign(/* @__PURE__ */ new Error("Unable to update lock within the stale threshold"), { code: "ECOMPROMISED" }));
+				const mtime = mtimePrecision.getMtime(lock.mtimePrecision);
+				options.fs.utimes(lock.lockfilePath, mtime, mtime, (err) => {
+					const isOverThreshold = lock.lastUpdate + options.stale < Date.now();
+					if (lock.released) return;
+					if (err) {
+						if (err.code === "ENOENT" || isOverThreshold) return setLockAsCompromised(file, lock, Object.assign(err, { code: "ECOMPROMISED" }));
+						lock.updateDelay = 1e3;
+						return updateLock(file, options);
+					}
+					lock.mtime = mtime;
+					lock.lastUpdate = Date.now();
+					lock.updateDelay = null;
+					updateLock(file, options);
+				});
+			});
+		}, lock.updateDelay);
+		/* istanbul ignore else */
+		if (lock.updateTimeout.unref) lock.updateTimeout.unref();
+	}
+	function setLockAsCompromised(file, lock, err) {
+		lock.released = true;
+		/* istanbul ignore if */
+		if (lock.updateTimeout) clearTimeout(lock.updateTimeout);
+		if (locks[file] === lock) delete locks[file];
+		lock.options.onCompromised(err);
+	}
+	function lock(file, options, callback) {
+		/* istanbul ignore next */
+		options = {
+			stale: 1e4,
+			update: null,
+			realpath: true,
+			retries: 0,
+			fs,
+			onCompromised: (err) => {
+				throw err;
+			},
+			...options
+		};
+		options.retries = options.retries || 0;
+		options.retries = typeof options.retries === "number" ? { retries: options.retries } : options.retries;
+		options.stale = Math.max(options.stale || 0, 2e3);
+		options.update = options.update == null ? options.stale / 2 : options.update || 0;
+		options.update = Math.max(Math.min(options.update, options.stale / 2), 1e3);
+		resolveCanonicalPath(file, options, (err, file) => {
+			if (err) return callback(err);
+			const operation = retry.operation(options.retries);
+			operation.attempt(() => {
+				acquireLock(file, options, (err, mtime, mtimePrecision) => {
+					if (operation.retry(err)) return;
+					if (err) return callback(operation.mainError());
+					const lock = locks[file] = {
+						lockfilePath: getLockFile(file, options),
+						mtime,
+						mtimePrecision,
+						options,
+						lastUpdate: Date.now()
+					};
+					updateLock(file, options);
+					callback(null, (releasedCallback) => {
+						if (lock.released) return releasedCallback && releasedCallback(Object.assign(/* @__PURE__ */ new Error("Lock is already released"), { code: "ERELEASED" }));
+						unlock(file, {
+							...options,
+							realpath: false
+						}, releasedCallback);
+					});
+				});
+			});
+		});
+	}
+	function unlock(file, options, callback) {
+		options = {
+			fs,
+			realpath: true,
+			...options
+		};
+		resolveCanonicalPath(file, options, (err, file) => {
+			if (err) return callback(err);
+			const lock = locks[file];
+			if (!lock) return callback(Object.assign(/* @__PURE__ */ new Error("Lock is not acquired/owned by you"), { code: "ENOTACQUIRED" }));
+			lock.updateTimeout && clearTimeout(lock.updateTimeout);
+			lock.released = true;
+			delete locks[file];
+			removeLock(file, options, callback);
+		});
+	}
+	function check(file, options, callback) {
+		options = {
+			stale: 1e4,
+			realpath: true,
+			fs,
+			...options
+		};
+		options.stale = Math.max(options.stale || 0, 2e3);
+		resolveCanonicalPath(file, options, (err, file) => {
+			if (err) return callback(err);
+			options.fs.stat(getLockFile(file, options), (err, stat) => {
+				if (err) return err.code === "ENOENT" ? callback(null, false) : callback(err);
+				return callback(null, !isLockStale(stat, options));
+			});
+		});
+	}
+	function getLocks() {
+		return locks;
+	}
+	/* istanbul ignore next */
+	onExit(() => {
+		for (const file in locks) {
+			const options = locks[file].options;
+			try {
+				options.fs.rmdirSync(getLockFile(file, options));
+			} catch (e) {}
+		}
+	});
+	module.exports.lock = lock;
+	module.exports.unlock = unlock;
+	module.exports.check = check;
+	module.exports.getLocks = getLocks;
+}));
+//#endregion
+//#region node_modules/proper-lockfile/lib/adapter.js
+var require_adapter = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var fs = require_graceful_fs();
+	function createSyncFs(fs) {
+		const methods = [
+			"mkdir",
+			"realpath",
+			"stat",
+			"rmdir",
+			"utimes"
+		];
+		const newFs = { ...fs };
+		methods.forEach((method) => {
+			newFs[method] = (...args) => {
+				const callback = args.pop();
+				let ret;
+				try {
+					ret = fs[`${method}Sync`](...args);
+				} catch (err) {
+					return callback(err);
+				}
+				callback(null, ret);
+			};
+		});
+		return newFs;
+	}
+	function toPromise(method) {
+		return (...args) => new Promise((resolve, reject) => {
+			args.push((err, result) => {
+				if (err) reject(err);
+				else resolve(result);
+			});
+			method(...args);
+		});
+	}
+	function toSync(method) {
+		return (...args) => {
+			let err;
+			let result;
+			args.push((_err, _result) => {
+				err = _err;
+				result = _result;
+			});
+			method(...args);
+			if (err) throw err;
+			return result;
+		};
+	}
+	function toSyncOptions(options) {
+		options = { ...options };
+		options.fs = createSyncFs(options.fs || fs);
+		if (typeof options.retries === "number" && options.retries > 0 || options.retries && typeof options.retries.retries === "number" && options.retries.retries > 0) throw Object.assign(/* @__PURE__ */ new Error("Cannot use retries with the sync api"), { code: "ESYNC" });
+		return options;
+	}
+	module.exports = {
+		toPromise,
+		toSync,
+		toSyncOptions
+	};
+}));
+(/* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var lockfile = require_lockfile();
+	var { toPromise, toSync, toSyncOptions } = require_adapter();
+	async function lock(file, options) {
+		return toPromise(await toPromise(lockfile.lock)(file, options));
+	}
+	function lockSync(file, options) {
+		return toSync(toSync(lockfile.lock)(file, toSyncOptions(options)));
+	}
+	function unlock(file, options) {
+		return toPromise(lockfile.unlock)(file, options);
+	}
+	function unlockSync(file, options) {
+		return toSync(lockfile.unlock)(file, toSyncOptions(options));
+	}
+	function check(file, options) {
+		return toPromise(lockfile.check)(file, options);
+	}
+	function checkSync(file, options) {
+		return toSync(lockfile.check)(file, toSyncOptions(options));
+	}
+	module.exports = lock;
+	module.exports.lock = lock;
+	module.exports.unlock = unlock;
+	module.exports.lockSync = lockSync;
+	module.exports.unlockSync = unlockSync;
+	module.exports.check = check;
+	module.exports.checkSync = checkSync;
+})))();
+var ACTIVE_DIRECTORY_NAME = "active";
+function normalizeRootDirectoryPath(rootDirectoryPath) {
+	return path.resolve(rootDirectoryPath ?? resolveDefaultRuntimeDiscoveryRegistryRoot());
+}
+function isMissingError(error) {
+	return error?.code === "ENOENT";
+}
+async function lstatSafe(targetPath) {
+	try {
+		return await lstat(targetPath);
+	} catch (error) {
+		if (isMissingError(error)) return null;
+		throw error;
+	}
+}
+async function readEntryFile(entryFilePath) {
+	const stats = await lstat(entryFilePath);
+	if (!stats.isFile() || stats.isSymbolicLink()) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry file is unsafe.");
+	const contents = await readFile(entryFilePath, "utf8");
+	let parsed;
+	try {
+		parsed = JSON.parse(contents);
+	} catch (error) {
+		throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry is not valid JSON.", { cause: error });
+	}
+	return parseRuntimeDiscoveryRegistryEntry(parsed);
+}
+async function readRecordFromSlot(activeDirectoryPath, slotName) {
+	const slotDirectoryPath = path.join(activeDirectoryPath, slotName);
+	const slotStats = await lstatSafe(slotDirectoryPath);
+	if (!slotStats) return { record: null };
+	if (!slotStats.isDirectory() || slotStats.isSymbolicLink()) return {
+		record: null,
+		issue: {
+			slotName,
+			code: "unsafe_slot"
+		}
+	};
+	let entry;
+	try {
+		entry = await readEntryFile(path.join(slotDirectoryPath, RUNTIME_DISCOVERY_ENTRY_FILE_NAME));
+	} catch {
+		return {
+			record: null,
+			issue: {
+				slotName,
+				code: "invalid_entry"
+			}
+		};
+	}
+	let credentialIssue;
+	for (const adapter of entry.adapters) {
+		if (adapter.credentialFileName !== buildRuntimeDiscoveryCredentialFileName(entry, adapter.adapterKind)) return {
+			record: null,
+			issue: {
+				slotName,
+				code: "invalid_entry"
+			}
+		};
+		const credentialPath = path.join(slotDirectoryPath, adapter.credentialFileName);
+		let credentialStats;
+		try {
+			credentialStats = await lstatSafe(credentialPath);
+		} catch {
+			credentialIssue ??= {
+				slotName,
+				code: "unsafe_credential"
+			};
+			continue;
+		}
+		if (!credentialStats) {
+			credentialIssue ??= {
+				slotName,
+				code: "missing_credential"
+			};
+			continue;
+		}
+		if (!credentialStats.isFile() || credentialStats.isSymbolicLink()) credentialIssue ??= {
+			slotName,
+			code: "unsafe_credential"
+		};
+	}
+	return {
+		record: {
+			slotName,
+			entry,
+			slotDirectoryPath
+		},
+		...credentialIssue ? { issue: credentialIssue } : {}
+	};
+}
+async function listRuntimeDiscoveryRegistryEntries(rootDirectoryPath, limitsOverride = {}) {
+	const limits = normalizeRuntimeDiscoveryRegistryLimits(limitsOverride);
+	const activeDirectoryPath = path.join(normalizeRootDirectoryPath(rootDirectoryPath), ACTIVE_DIRECTORY_NAME);
+	const activeStats = await lstatSafe(activeDirectoryPath);
+	if (!activeStats) return {
+		records: [],
+		issues: []
+	};
+	if (!activeStats.isDirectory() || activeStats.isSymbolicLink()) throw new RuntimeDiscoveryRegistryError("registry_security", "Runtime registry active directory is unsafe.");
+	const records = [];
+	const issues = [];
+	for (let index = 0; index < limits.maxEntries; index += 1) {
+		const result = await readRecordFromSlot(activeDirectoryPath, buildRuntimeDiscoverySlotName(index));
+		if (result.record) records.push(result.record);
+		if (result.issue) issues.push(result.issue);
+	}
+	return {
+		records,
+		issues
+	};
+}
+async function readRuntimeDiscoveryCredential(record, adapterKind) {
+	const reference = record.entry.adapters.find((adapter) => adapter.adapterKind === adapterKind);
+	if (!reference) return null;
+	const credentialPath = path.join(record.slotDirectoryPath, reference.credentialFileName);
+	try {
+		const stats = await lstatSafe(credentialPath);
+		if (!stats || !stats.isFile() || stats.isSymbolicLink()) return null;
+		return await readFile(credentialPath, "utf8");
+	} catch {
+		return null;
+	}
+}
+//#endregion
+//#region src/runtime-discovery/runtime-discovery-selector.ts
+async function selectRuntimeDiscoveryRecord(input) {
+	if (!isRuntimeDiscoverySelector(input.selector)) return error("runtime_selector_invalid", []);
+	const runtimeRecords = input.records.filter(({ entry }) => entry.runtimeKind === input.selector.runtimeKind);
+	const sameApplication = input.selector.applicationInstanceId ? runtimeRecords.filter(({ entry }) => entry.applicationInstanceId === input.selector.applicationInstanceId) : runtimeRecords;
+	if (input.selector.applicationInstanceId && sameApplication.length === 0) return error(runtimeRecords.length > 0 ? "runtime_instance_mismatch" : "runtime_unavailable", runtimeRecords);
+	const matching = input.selector.runtimeGenerationId ? sameApplication.filter(({ entry }) => entry.runtimeGenerationId === input.selector.runtimeGenerationId) : sameApplication;
+	if (input.selector.runtimeGenerationId && matching.length === 0) return error("runtime_generation_changed", sameApplication);
+	const active = [];
+	for (const record of matching) {
+		if (getRuntimeDiscoveryLeaseState(record.entry, input.now, input.staleThresholdMs) === "fresh") {
+			active.push(record);
+			continue;
+		}
+		try {
+			if (await input.challenge(record.entry, record.slotDirectoryPath)) active.push(record);
+		} catch {}
+	}
+	if (active.length === 0) return error(matching.length > 0 ? "runtime_stale" : "runtime_unavailable", matching);
+	if (active.length > 1) return error("runtime_ambiguous", matching);
+	const record = active[0];
+	return {
+		kind: "selected",
+		record,
+		metadata: toSafeRuntimeDiscoveryMetadata(record.entry, input.now, input.staleThresholdMs)
+	};
+	function error(code, records) {
+		return {
+			kind: "error",
+			code,
+			metadata: records.map(({ entry }) => toSafeRuntimeDiscoveryMetadata(entry, input.now, input.staleThresholdMs))
+		};
+	}
+}
 //#endregion
 //#region src/session-external-runtime-schema.ts
 var reasoningEffortSchema = _enum([
@@ -9859,7 +10004,8 @@ var mutationBaseShape = {
 	idempotencyKey: nonEmptyStringSchema,
 	turn: turnSchema,
 	terminalFailureNotification: object$1({ targetSessionId: nonEmptyStringSchema }).strict().optional(),
-	workItemId: nonEmptyStringSchema.optional()
+	workItemId: nonEmptyStringSchema.optional(),
+	consultationGrantId: nonEmptyStringSchema.optional()
 };
 var runInputSchema = object$1({
 	...mutationBaseShape,
@@ -10111,7 +10257,7 @@ var sessionDeleteInputSchema = object$1({
 	manifestRevision: number().int().min(1),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
-var sessionManifestResultSchema = object$1({
+var sessionLifecycleManifestBaseSchema = object$1({
 	sessionId: nonEmptyStringSchema,
 	manifestRevision: number().int().min(1),
 	destinationRootSessionId: string().nullable(),
@@ -10122,7 +10268,8 @@ var sessionManifestResultSchema = object$1({
 	workItems: array(object$1({
 		workItemId: nonEmptyStringSchema,
 		state: nonEmptyStringSchema,
-		revision: number().int().min(1)
+		revision: number().int().min(1),
+		parentWorkItemId: string().nullable()
 	}).strict()),
 	artifacts: array(object$1({
 		id: nonEmptyStringSchema,
@@ -10145,7 +10292,55 @@ var sessionManifestResultSchema = object$1({
 	openCoordinationEvents: number().int().nonnegative(),
 	blockers: array(string())
 }).strict();
-var sessionDeleteManifestResultSchema = sessionManifestResultSchema.extend({ deletable: boolean() }).strict();
+var sessionManifestResultSchema = sessionLifecycleManifestBaseSchema.extend({
+	budgetAccounts: array(object$1({
+		id: nonEmptyStringSchema,
+		ownerSessionId: nonEmptyStringSchema,
+		rootSessionId: nonEmptyStringSchema,
+		revision: number().int().min(1)
+	}).strict()).optional(),
+	budgetUsage: array(object$1({
+		id: nonEmptyStringSchema,
+		accountId: nonEmptyStringSchema,
+		executionId: string().nullable(),
+		amount: number(),
+		unit: nonEmptyStringSchema,
+		confidence: nonEmptyStringSchema
+	}).strict()).optional(),
+	sessionFolders: array(object$1({ sessionId: nonEmptyStringSchema }).strict()).optional(),
+	rootWorkItems: array(object$1({
+		id: nonEmptyStringSchema,
+		state: nonEmptyStringSchema,
+		revision: number().int().min(1)
+	}).strict()).optional(),
+	delegationRows: array(object$1({
+		id: nonEmptyStringSchema,
+		actorSessionId: nonEmptyStringSchema,
+		revision: number().int().min(1),
+		state: nonEmptyStringSchema
+	}).strict()).optional(),
+	grantChains: array(object$1({
+		id: nonEmptyStringSchema,
+		issuerGrantId: string().nullable(),
+		issuerGrantRevision: number().int().min(1).nullable(),
+		granteeSessionId: nonEmptyStringSchema,
+		revision: number().int().min(1),
+		revokedAt: string().nullable(),
+		expiresAt: string().nullable()
+	}).strict()),
+	resourceHistory: array(object$1({
+		resourceKind: nonEmptyStringSchema,
+		resourceId: nonEmptyStringSchema,
+		eventCount: number().int().nonnegative(),
+		latestRevision: number().int().min(1).nullable()
+	}).strict()),
+	coordinationEventIds: array(nonEmptyStringSchema),
+	interactionIds: array(nonEmptyStringSchema)
+}).strict();
+var sessionDeleteManifestResultSchema = sessionLifecycleManifestBaseSchema.extend({
+	destinationRootSessionId: _null(),
+	deletable: boolean()
+}).strict();
 var sessionFileListInputSchema = object$1({
 	sessionId: nonEmptyStringSchema,
 	limit: number().int().min(1).max(500).default(50),
@@ -10245,9 +10440,11 @@ var workItemReassignInputSchema = object$1({
 var workItemMoveInputSchema = object$1({
 	workItemId: nonEmptyStringSchema,
 	destinationParentWorkItemId: nonEmptyStringSchema.nullable(),
+	destinationTargetSessionId: nonEmptyStringSchema.optional(),
 	expectedRevision: number().int().min(1),
 	expectedAggregateRevision: number().int().min(0).optional(),
 	expectedDestinationAggregateRevision: number().int().min(0).optional(),
+	expectedDestinationTargetRevision: number().int().min(1).optional(),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var workItemCloneInputSchema = object$1({
@@ -10438,10 +10635,18 @@ var workItemEventSchema = discriminatedUnion("type", [
 		...workItemEventBase,
 		type: literal("parent_changed"),
 		payload: object$1({
+			beforeKind: _enum(["root", "delegated"]).optional(),
+			afterKind: _enum(["root", "delegated"]).optional(),
+			beforeOriginKind: _enum(["native", "transferred_root"]).optional(),
+			afterOriginKind: _enum(["native", "transferred_root"]).optional(),
 			beforeParentWorkItemId: string().nullable(),
 			afterParentWorkItemId: string().nullable(),
 			beforeCreatorSessionId: string().optional(),
 			afterCreatorSessionId: string().optional(),
+			beforeRootSessionId: string().optional(),
+			afterRootSessionId: string().optional(),
+			beforeTargetSessionId: string().optional(),
+			afterTargetSessionId: string().optional(),
 			supersededDecision: boolean()
 		}).strict()
 	}).strict(),
@@ -10821,6 +11026,7 @@ function createExecutionSchema(operation) {
 			updatedAt: string()
 		}).strict().nullable(),
 		workItemId: string().nullable(),
+		consultationGrantId: string().nullable(),
 		workItemRevision: number().int().positive().nullable(),
 		plannedSourceIdentity: workItemSourceIdentitySchema.nullable(),
 		actualStartSourceIdentity: actualStartSourceIdentitySchema.nullable()
@@ -11062,6 +11268,7 @@ var workItemIdentityShape = {
 	sequence: number().int().positive(),
 	contractRevision: literal(2),
 	kind: _enum(["root", "delegated"]),
+	originKind: literal("transferred_root").optional(),
 	rootSessionId: string(),
 	creatorSessionId: string(),
 	targetSessionId: string(),
@@ -11093,23 +11300,33 @@ function validateWorkItemKind(schema) {
 			path: ["kind"],
 			message: "Root Work Item binding is invalid."
 		});
-		if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || b.goal.length === 0 || b.scope.length === 0 || b.completionCriteria.length === 0 || b.authority.length === 0)) context.addIssue({
+		if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || v.originKind !== "transferred_root" && (b.goal.trim().length === 0 || b.scope.trim().length === 0 || b.completionCriteria.trim().length === 0 || b.authority.trim().length === 0))) context.addIssue({
 			code: "custom",
 			path: ["kind"],
 			message: "Delegated Work Item binding is invalid."
 		});
+		if (v.originKind === "transferred_root" && (v.kind !== "delegated" || ![
+			"completed",
+			"partially_completed",
+			"failed",
+			"canceled"
+		].includes(v.state ?? ""))) context.addIssue({
+			code: "custom",
+			path: ["originKind"],
+			message: "Transferred root Work Items must be terminal delegated items."
+		});
 		const hasProgress = v.progressSummary !== void 0 || v.blockers !== void 0 || v.nextAction !== void 0;
-		if (v.kind === "root" && (!hasProgress || v.progressSummary === void 0 || v.blockers === void 0 || v.nextAction === void 0)) context.addIssue({
+		if ((v.kind === "root" || v.originKind === "transferred_root") && (!hasProgress || v.progressSummary === void 0 || v.blockers === void 0 || v.nextAction === void 0)) context.addIssue({
 			code: "custom",
 			path: ["kind"],
 			message: "Root Work Items require progress fields."
 		});
-		if (v.kind === "delegated" && hasProgress) context.addIssue({
+		if (v.kind === "delegated" && v.originKind !== "transferred_root" && hasProgress) context.addIssue({
 			code: "custom",
 			path: ["kind"],
 			message: "Delegated Work Items cannot include root progress fields."
 		});
-		if (v.kind === "delegated" && v.predecessorWorkItemId !== void 0) context.addIssue({
+		if (v.kind === "delegated" && v.originKind !== "transferred_root" && v.predecessorWorkItemId !== void 0) context.addIssue({
 			code: "custom",
 			path: ["predecessorWorkItemId"],
 			message: "Delegated Work Items cannot include root successor fields."
@@ -11289,7 +11506,53 @@ var delegationSchema = object$1({
 	createdAt: string(),
 	updatedAt: string()
 }).strict();
+var grantPermissionSchema = object$1({
+	mode: _enum(["exercise", "delegate"]),
+	action: _enum(SESSION_RUNTIME_OPERATIONS),
+	resourceKind: _enum(SESSION_AUTHORITY_RESOURCE_KINDS),
+	relationSelector: _enum(SESSION_AUTHORITY_RELATION_SELECTORS),
+	effectClass: _enum(SESSION_AUTHORITY_EFFECT_CLASSES),
+	targetSessionRoles: array(sessionRoleSchema)
+}).strict();
+var grantSchema = object$1({
+	grantId: nonEmptyStringSchema,
+	rootSessionId: nonEmptyStringSchema,
+	issuerKind: _enum([
+		"agent",
+		"user",
+		"system"
+	]),
+	issuerId: nonEmptyStringSchema,
+	issuerGrantId: string().nullable(),
+	issuerGrantRevision: number().int().positive().nullable(),
+	granteeSessionId: nonEmptyStringSchema,
+	actions: array(_enum(SESSION_RUNTIME_OPERATIONS)),
+	resourceKind: _enum(SESSION_AUTHORITY_RESOURCE_KINDS),
+	relationSelector: _enum(SESSION_AUTHORITY_RELATION_SELECTORS),
+	targetSessionRoles: array(sessionRoleSchema),
+	effectClass: _enum(SESSION_AUTHORITY_EFFECT_CLASSES),
+	delegable: boolean(),
+	childCeiling: array(grantPermissionSchema),
+	issuedAt: string(),
+	effectiveAt: string(),
+	expiresAt: string().nullable(),
+	revokedAt: string().nullable(),
+	revision: number().int().positive(),
+	mappingRevision: number().int().positive(),
+	provenance: record(string(), unknown())
+}).strict();
+var grantResultSchema = object$1({
+	contractRevision: literal(1),
+	grant: grantSchema
+}).strict();
 var resultSchemas = {
+	"grant.create": grantResultSchema,
+	"grant.get": grantResultSchema,
+	"grant.list": object$1({
+		items: array(grantResultSchema),
+		nextCursor: string().optional()
+	}).strict(),
+	"grant.revoke": grantResultSchema,
 	"delegation.create": delegationSchema,
 	"delegation.get": delegationSchema,
 	"delegation.list": object$1({
@@ -11432,6 +11695,16 @@ var resultSchemas = {
 			operations: array(string()),
 			maxItems: number().int().positive(),
 			prepareStartOperation: literal("delegation.retry"),
+			constraints: array(string())
+		}).strict().optional(),
+		grants: object$1({
+			contractRevision: literal(1),
+			operations: tuple([
+				literal("create"),
+				literal("get"),
+				literal("list"),
+				literal("revoke")
+			]),
 			constraints: array(string())
 		}).strict().optional(),
 		sessionLifecycle: object$1({
@@ -11644,11 +11917,47 @@ var delegationItemInputSchema = object$1({
 	})
 }).strict().refine((item) => (item.target.kind === "create" && item.target.session.placement.kind === "root") === (item.work.kind === "root"), "A new root Session requires its canonical Root Work Item.");
 var delegationGetInputSchema = object$1({ delegationId: nonEmptyStringSchema }).strict();
+var grantCreateInputSchema = object$1({
+	parentGrantId: nonEmptyStringSchema,
+	parentGrantRevision: number().int().positive(),
+	granteeSessionId: nonEmptyStringSchema,
+	actions: array(_enum(SESSION_RUNTIME_OPERATIONS)).min(1),
+	resourceKind: _enum(SESSION_AUTHORITY_RESOURCE_KINDS),
+	relationSelector: _enum(SESSION_AUTHORITY_RELATION_SELECTORS),
+	targetSessionRoles: array(sessionRoleSchema).min(1),
+	effectClass: _enum(SESSION_AUTHORITY_EFFECT_CLASSES),
+	delegable: boolean(),
+	childCeiling: array(grantPermissionSchema).optional(),
+	expiresAt: sessionGrantExpirySchema,
+	budget: record(string(), number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)).optional(),
+	resourceIds: array(nonEmptyStringSchema).optional(),
+	purpose: nonEmptyStringSchema.optional(),
+	completionCriteria: nonEmptyStringSchema.optional(),
+	returnSessionId: nonEmptyStringSchema.optional(),
+	budgetAccountId: nonEmptyStringSchema.optional(),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
+var grantGetInputSchema = object$1({ grantId: nonEmptyStringSchema }).strict();
+var grantListInputSchema = object$1({
+	granteeSessionId: nonEmptyStringSchema.optional(),
+	includeRevoked: boolean().optional(),
+	limit: number().int().positive().max(500),
+	cursor: nonEmptyStringSchema.optional()
+}).strict();
+var grantRevokeInputSchema = object$1({
+	grantId: nonEmptyStringSchema,
+	expectedRevision: number().int().positive(),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
 var delegationMutationInputSchema = delegationGetInputSchema.extend({
 	expectedRevision: number().int().positive(),
 	idempotencyKey: nonEmptyStringSchema
 });
 var inputSchemas = {
+	"grant.create": grantCreateInputSchema,
+	"grant.get": grantGetInputSchema,
+	"grant.list": grantListInputSchema,
+	"grant.revoke": grantRevokeInputSchema,
 	"delegation.create": object$1({
 		idempotencyKey: nonEmptyStringSchema,
 		dispatch: _enum(["prepare", "enqueue"]),
@@ -27798,6 +28107,34 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		destructive: false
 	},
 	{
+		name: "grant.create",
+		title: "Create authority grant",
+		description: "Issue a bounded authority grant within an existing issuer grant ceiling.",
+		readOnly: false,
+		destructive: false
+	},
+	{
+		name: "grant.get",
+		title: "Get authority grant",
+		description: "Read one authority grant and its durable provenance.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "grant.list",
+		title: "List authority grants",
+		description: "List authority grants visible to the current actor.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "grant.revoke",
+		title: "Revoke authority grant",
+		description: "Revoke an authority grant at its current revision.",
+		readOnly: false,
+		destructive: false
+	},
+	{
 		name: "delegation.create",
 		title: "Create delegation",
 		description: "Prepare or dispatch a batch through the canonical Session, Work Item and Turn owners. Inspect each item's state and committed IDs.",
@@ -28335,6 +28672,17 @@ function createWithMateSessionMcpServer(deps = {}) {
 		outputSchema: createSessionRuntimeOutputSchema("runtime.catalog")
 	}, async (input) => executeOperation("runtime.catalog", input, deps));
 	for (const operation of [
+		"grant.create",
+		"grant.get",
+		"grant.list",
+		"grant.revoke"
+	]) server.registerTool(operation, {
+		...definitions.get(operation),
+		annotations: annotations(definitions.get(operation)),
+		inputSchema: createSessionRuntimeAdvertisedInputSchema(operation),
+		outputSchema: createSessionRuntimeOutputSchema(operation)
+	}, async (input) => executeOperation(operation, input, deps));
+	for (const operation of [
 		"delegation.create",
 		"delegation.get",
 		"delegation.list",
@@ -28687,6 +29035,10 @@ var SessionCliUsageError = class extends Error {
 	}
 };
 var commandMap = /* @__PURE__ */ new Map([
+	["grant create", "grant.create"],
+	["grant get", "grant.get"],
+	["grant list", "grant.list"],
+	["grant revoke", "grant.revoke"],
 	["runtime catalog", "runtime.catalog"],
 	["delegation create", "delegation.create"],
 	["delegation get", "delegation.get"],
@@ -28717,6 +29069,13 @@ var commandMap = /* @__PURE__ */ new Map([
 	["work list", "work.list"],
 	["work get", "work.get"],
 	["work revise", "work.revise"],
+	["work reassign", "work.reassign"],
+	["work move", "work.move"],
+	["work clone", "work.clone"],
+	["work reopen", "work.reopen"],
+	["work archive", "work.archive"],
+	["work restore", "work.restore"],
+	["work delete", "work.delete"],
 	["work history append", "work.history.append"],
 	["work history list", "work.history.list"],
 	["work transition", "work.transition"],
@@ -28865,9 +29224,9 @@ async function parseArgs(args, deps) {
 	const workAggregationCommand = args[0] === "work" && args[1] === "aggregation";
 	const workResultCommand = args[0] === "work" && args[1] === "result" && args[2] === "correct";
 	const workHistoryCommand = args[0] === "work" && args[1] === "history";
-	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "budget" || args[0] === "session" || args[0] === "work" || args[0] === "delegation" || args[0] === "interaction" || args[0] === "transcript";
+	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "budget" || args[0] === "grant" || args[0] === "session" || args[0] === "work" || args[0] === "delegation" || args[0] === "interaction" || args[0] === "transcript";
 	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand || workAggregationCommand || workHistoryCommand || workResultCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|budget get|list|configure|delegation create|get|list|retry|cancel|compensate|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work result correct|work aggregation get|list|decide|retry|correct|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|grant create|get|list|revoke|budget get|list|configure|delegation create|get|list|retry|cancel|compensate|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|reassign|move|clone|reopen|archive|restore|delete|transition|result|cancel|work history append|list|work result correct|work aggregation get|list|decide|retry|correct|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
 	const optionStart = fileCommand || coordinationCommand || workAggregationCommand || workHistoryCommand || workResultCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;

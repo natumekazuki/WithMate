@@ -5,10 +5,14 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
+import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { SESSION_AUTHORITY_MAPPING_REVISION, type MutationAuthorityProof } from "../../src/session-authority.js";
 import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
+import { buildChildSessionRoleBinding } from "../../src/session-role-binding.js";
 import type { SessionRuntimeProviderTuple } from "../../src/session-external-runtime-contract.js";
+import { buildNewSession, type Session } from "../../src/session-state.js";
 import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
+import { issueTrustedCrossRootTransferCapability } from "../../src-electron/session-authority-storage.js";
 import { SessionLifecycleResolver } from "../../src-electron/session-lifecycle-resolver.js";
 import { SessionLifecycleRecoveryError, SessionLifecycleService } from "../../src-electron/session-lifecycle-service.js";
 import { SessionResourceRevisionConflictError } from "../../src-electron/resource-history-schema.js";
@@ -62,6 +66,7 @@ async function makeService(dbPath: string, overrides: {
   publishRemoved?: (sessionId: string) => Promise<void>;
   createSessionId?: () => string;
   workspace?: SessionLifecycleResolver["workspace"];
+  authorizeTransferDestination?: (actorSessionId: string, destinationRootSessionId: string, operation: "session.move" | "session.move.manifest", input: { sessionId: string; destinationRootSessionId: string }) => MutationAuthorityProof;
 } = {}): Promise<{ service: SessionLifecycleService; storage: SessionStorageV6; close(): void }> {
   const storage = new SessionStorageV6(dbPath);
   const db = new DatabaseSync(dbPath);
@@ -84,6 +89,7 @@ async function makeService(dbPath: string, overrides: {
     publishSession: (session) => overrides.publish?.(session),
     publishRemovedSession: overrides.publishRemoved ?? (async () => undefined),
     createSessionId: overrides.createSessionId ?? (() => "session-created"),
+    authorizeTransferDestination: overrides.authorizeTransferDestination,
   });
   return { service, storage, close: () => storage.close() };
 }
@@ -147,6 +153,89 @@ function completeRootWorkItem(dbPath: string, sessionId: string): void {
     storage.close();
   }
 }
+
+function rootSession(id: string): Session {
+  return { ...buildNewSession({
+    id, taskTitle: id, workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
+    characterId: character.id, character: character.name, characterIconPath: "",
+    characterThemeColors: character.theme, approvalMode: DEFAULT_APPROVAL_MODE,
+    rootSessionRole: "overall-coordinator",
+  }), updatedAt: "2026-09-08T00:00:00.000Z" };
+}
+
+function childSession(id: string, parent: Session, role: "task-coordinator" | "executor"): Session {
+  return { ...buildNewSession({
+    id, taskTitle: id, workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
+    characterId: character.id, character: character.name, characterIconPath: "",
+    characterThemeColors: character.theme, approvalMode: DEFAULT_APPROVAL_MODE,
+    roleBinding: buildChildSessionRoleBinding(id, parent.id, parent.roleBinding!, role),
+  }), updatedAt: "2026-09-08T00:00:00.000Z" };
+}
+
+function transferProof(actorSessionId: string, rootSessionId: string, grant: { grantId: string; revision: number }): MutationAuthorityProof {
+  return {
+    principal: { kind: "agent", agent: "session-runtime", actorSessionId, runtimeGeneration: "generation-1" },
+    providerId: "internal", operation: "session.move", mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+    action: "session.move", effectClass: "local_mutation", grantId: grant.grantId, grantRevision: grant.revision,
+    evaluatedAt: "2026-09-08T00:00:00.000Z",
+    resolvedScope: { resourceKind: "session", resourceId: null, rootSessionId,
+      ownerKind: "session", ownerId: rootSessionId, relation: "root_owner" },
+  };
+}
+
+function issueTransferCapability(dbPath: string, actorSessionId: string, rootSessionId: string) {
+  const db = new DatabaseSync(dbPath);
+  try {
+    const grants = issueTrustedCrossRootTransferCapability(db, {
+      sourceActorSessionId: actorSessionId,
+      destinationRootSessionId: rootSessionId,
+      destinationTargetRoles: ["task-coordinator", "executor"],
+      principal: { kind: "system", service: "session-lifecycle-service-test" },
+      proof: {
+        principal: { kind: "system", service: "session-lifecycle-service-test" }, providerId: null,
+        operation: "session.move", mappingRevision: SESSION_AUTHORITY_MAPPING_REVISION,
+        action: "session.move", effectClass: "local_mutation", grantId: null, grantRevision: null,
+        evaluatedAt: "2026-09-08T00:00:00.000Z",
+        resolvedScope: { resourceKind: "session_namespace", resourceId: null, rootSessionId,
+          ownerKind: "session", ownerId: rootSessionId, relation: "root_owner" },
+      },
+      expiresAt: null,
+      issuedAt: "2026-09-08T00:00:00.000Z",
+    });
+    if (!grants[0]) throw new Error("Transfer capability was not issued.");
+    return transferProof(actorSessionId, rootSessionId, grants[0]);
+  } finally {
+    db.close();
+  }
+}
+
+// @test-value v2
+// kind = "invariant"
+// claim = "session.move.manifestは実在するcanonical SessionFolderをSession IDだけで移動manifestへ投影する"
+// oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeSessionMoveManifestResult" }
+// fault = "実在するSessionFolderの識別子がmanifestから欠落する、または不要なhost pathを公開する"
+// observable = "moveManifestのsessionFoldersに含まれるSession IDのみのentry"
+// observation_boundary = "component-behavior"
+// scope = "SessionLifecycleService.moveManifest SessionFolder enrichment"
+// lifecycle = "permanent"
+// impact = "移管対象Folderの欠落と不要なprivate pathの公開を防ぐ"
+// distinction = "既存service testで実filesystemのFolder確認から返却projectionまでを観測し、型だけでは防げない余分なfieldも最小のassertionで確認する"
+// @end-test-value
+test("SessionLifecycleService moveManifestは実在SessionFolderだけを返す", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-lifecycle-manifest-folder-"));
+  const dbPath = path.join(root, "app.db");
+  const { service, close } = await makeService(dbPath);
+  try {
+    await service.create(createInput("manifest-folder-create"), proof("session.create", "session-created"));
+    const folder = path.join(root, "session-files", "session-created");
+    await mkdir(folder, { recursive: true });
+    const manifest = service.moveManifest("session-created", "session-created");
+    assert.deepEqual(manifest.sessionFolders, [{ sessionId: "session-created" }]);
+  } finally {
+    close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 // @test-value v2
 // kind = "invariant"
@@ -562,6 +651,136 @@ test("SessionLifecycleService はcommit後publication失敗を再開して重複
     committedDb.close();
     assert.equal(committedRecord.operation_id, pendingRecord.operation_id);
     assert.deepEqual({ state: committedRecord.state, current_step: committedRecord.current_step }, { state: "committed", current_step: "terminal" });
+  } finally {
+    close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "cross-root moveのpublicationは移動対象、全descendant、destination親を含むDB確定済みaffected Sessionを公開する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+// fault = "moveの返却対象だけを公開し、移動でbindingまたはrevisionが変わったdescendantやdestination親を公開しない"
+// observable = "publishSessionへ渡されたSession ID集合とoperation manifestへ保存されたaffectedSessionIds"
+// observation_boundary = "component-behavior"
+// scope = "SessionLifecycleService cross-root move publication"
+// lifecycle = "permanent"
+// impact = "未公開のSessionがあるとrendererが移管後も旧root、parent、revisionを表示する"
+// distinction = "moveのDB整合性testでは観測しない、commit後のpublication対象を実storageとservice境界で確認する"
+// @end-test-value
+test("SessionLifecycleService はcross-root moveでdestinationとdescendantも公開する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-lifecycle-move-publish-"));
+  const dbPath = path.join(root, "app.db");
+  const published: string[] = [];
+  let destinationProof: MutationAuthorityProof | undefined;
+  const { service, storage, close } = await makeService(dbPath, {
+    publish: (session) => { published.push(session.id); },
+    authorizeTransferDestination: () => {
+      if (!destinationProof) throw new Error("Destination proof was not initialized.");
+      return destinationProof;
+    },
+  });
+  try {
+    const sourceRoot = rootSession("move-source-root");
+    const destinationRoot = rootSession("move-destination-root");
+    const moved = childSession("move-task", sourceRoot, "task-coordinator");
+    const descendant = childSession("move-executor", moved, "executor");
+    storage.insertSession(sourceRoot);
+    storage.insertSession(destinationRoot);
+    storage.insertSession(moved);
+    storage.insertSession(descendant);
+    const sourceProof = issueTransferCapability(dbPath, sourceRoot.id, sourceRoot.id);
+    destinationProof = issueTransferCapability(dbPath, sourceRoot.id, destinationRoot.id);
+    const manifest = service.moveManifest(moved.id, destinationRoot.id);
+    const request = {
+      sessionId: moved.id, expectedRevision: storage.getSessionResourceRevision(moved.id)!, idempotencyKey: "move-publish-key",
+      kind: "cross_root" as const, destinationRootSessionId: destinationRoot.id,
+      destinationParentSessionId: destinationRoot.id, destinationExpectedRevision: storage.getSessionResourceRevision(destinationRoot.id)!,
+      transferManifestRevision: manifest.manifestRevision, transferPolicy: "full" as const,
+    };
+    await service.move(request, sourceProof);
+
+    const db = new DatabaseSync(dbPath);
+    const row = db.prepare("SELECT manifest_json FROM session_lifecycle_operations_v6 WHERE idempotency_key = ?")
+      .get(request.idempotencyKey) as { manifest_json: string };
+    db.close();
+    const storedIds = (JSON.parse(row.manifest_json) as { affectedSessionIds: string[] }).affectedSessionIds;
+    const expectedIds = [moved.id, descendant.id, destinationRoot.id].sort();
+    assert.deepEqual([...storedIds].sort(), expectedIds);
+    assert.deepEqual([...published].sort(), expectedIds);
+  } finally {
+    close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "cross-root moveのpublication失敗後はDBへ保存したaffectedSessionIds全体を同一operationから再公開し、move mutationを再適用しない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/00-shared-authority-and-history.md#Failure timing" }
+// fault = "recoveryがtarget Sessionだけを公開するか、現在のtopologyから対象を再計算して確定済み集合を失う"
+// observable = "保存済みaffectedSessionIds、retry時のpublishSession ID列、Session revision、pending operation状態"
+// observation_boundary = "public-boundary"
+// scope = "SessionLifecycleService cross-root move publication recovery"
+// lifecycle = "permanent"
+// impact = "部分公開後の再開でdescendantまたはdestinationの表示が恒久的に古いまま残る"
+// distinction = "createの単一Session recoveryとは異なり、move固有の複数affected Session集合を保存して再利用することを確認する"
+// @end-test-value
+test("SessionLifecycleService はmove publication失敗後に保存済みaffected Session集合を再公開する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-lifecycle-move-publish-recovery-"));
+  const dbPath = path.join(root, "app.db");
+  const published: string[] = [];
+  let destinationProof: MutationAuthorityProof | undefined;
+  let failPublication = true;
+  const { service, storage, close } = await makeService(dbPath, {
+    publish: (session) => {
+      published.push(session.id);
+      if (failPublication) throw new Error("move publication unavailable");
+    },
+    authorizeTransferDestination: () => {
+      if (!destinationProof) throw new Error("Destination proof was not initialized.");
+      return destinationProof;
+    },
+  });
+  try {
+    const sourceRoot = rootSession("retry-source-root");
+    const destinationRoot = rootSession("retry-destination-root");
+    const moved = childSession("retry-task", sourceRoot, "task-coordinator");
+    const descendant = childSession("retry-executor", moved, "executor");
+    storage.insertSession(sourceRoot);
+    storage.insertSession(destinationRoot);
+    storage.insertSession(moved);
+    storage.insertSession(descendant);
+    const sourceProof = issueTransferCapability(dbPath, sourceRoot.id, sourceRoot.id);
+    destinationProof = issueTransferCapability(dbPath, sourceRoot.id, destinationRoot.id);
+    const manifest = service.moveManifest(moved.id, destinationRoot.id);
+    const request = {
+      sessionId: moved.id, expectedRevision: storage.getSessionResourceRevision(moved.id)!, idempotencyKey: "move-publish-retry-key",
+      kind: "cross_root" as const, destinationRootSessionId: destinationRoot.id,
+      destinationParentSessionId: destinationRoot.id, destinationExpectedRevision: storage.getSessionResourceRevision(destinationRoot.id)!,
+      transferManifestRevision: manifest.manifestRevision, transferPolicy: "full" as const,
+    };
+    await assert.rejects(service.move(request, sourceProof),
+      (error) => error instanceof SessionLifecycleRecoveryError && error.effect === "applied");
+    const committedRevisions = new Map([moved.id, descendant.id, destinationRoot.id]
+      .map((id) => [id, storage.getSessionResourceRevision(id)] as const));
+    const db = new DatabaseSync(dbPath);
+    const row = db.prepare("SELECT manifest_json, state, current_step FROM session_lifecycle_operations_v6 WHERE idempotency_key = ?")
+      .get(request.idempotencyKey) as { manifest_json: string; state: string; current_step: string };
+    db.close();
+    const storedIds = (JSON.parse(row.manifest_json) as { affectedSessionIds: string[] }).affectedSessionIds;
+    const expectedIds = [moved.id, descendant.id, destinationRoot.id].sort();
+    assert.deepEqual([...storedIds].sort(), expectedIds);
+    assert.deepEqual({ state: row.state, currentStep: row.current_step }, { state: "running", currentStep: "db_committed" });
+
+    published.length = 0;
+    failPublication = false;
+    await service.move(request, sourceProof);
+    assert.deepEqual(published, storedIds);
+    assert.deepEqual([...committedRevisions], [moved.id, descendant.id, destinationRoot.id]
+      .map((id) => [id, storage.getSessionResourceRevision(id)] as const));
+    assert.equal(storage.listPendingLifecycleOperations().length, 0);
   } finally {
     close();
     await rm(root, { recursive: true, force: true });

@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { MutationAuthorityProof } from "../src/session-authority.js";
 import { assertGrantProofCurrent, transferSessionAuthority } from "./session-authority-storage.js";
 import { ResourceBudgetStorage } from "./resource-budget-storage.js";
+import { WorkItemStorageV6 } from "./work-item-storage-v6.js";
 import { appendSessionResourceEvent, getSessionResourceRevision } from "./resource-history-schema.js";
 import { SessionCrudError } from "./session-crud-service.js";
 import { requireChildSessionRoleAllowed, requireSessionRoleBinding, SessionRoleBindingError } from "../src/session-role-binding.js";
@@ -73,15 +74,25 @@ function assertManifest(db: DatabaseSync, input: SessionMoveInput, sourceRoot: s
     assertRevision(db, id, index === 0 ? input.expectedRevision : descendants[index - 1].revision);
     return row;
   });
-  const actualChildren = (db.prepare(`SELECT session_id FROM session_role_bindings_v6
-    WHERE root_session_id = ? ORDER BY session_id`).all(sourceRoot) as Array<{ session_id: string }>).map((row) => row.session_id);
-  if (input.kind === "cross_root" && descendants.length > 0) {
-    for (const id of actualChildren) {
-      if (id !== input.sessionId && !ids.includes(id)) {
-        const child = binding(db, id);
-        if (ids.includes(child.parent_session_id ?? "")) fail("The move manifest omits a descendant Session.");
-      }
-    }
+  const actualChildren = (db.prepare(`WITH RECURSIVE subtree(session_id) AS (
+      SELECT binding.session_id
+      FROM session_role_bindings_v6 AS binding
+      INNER JOIN sessions_v6 AS session ON session.id = binding.session_id AND session.deleted_at IS NULL
+      WHERE binding.session_id = ? AND binding.root_session_id = ?
+      UNION ALL
+      SELECT child.session_id
+      FROM session_role_bindings_v6 AS child
+      INNER JOIN sessions_v6 AS child_session ON child_session.id = child.session_id AND child_session.deleted_at IS NULL
+      INNER JOIN subtree AS parent ON parent.session_id = child.parent_session_id
+      WHERE child.root_session_id = ?
+    ) SELECT session_id FROM subtree ORDER BY session_id`).all(input.sessionId, sourceRoot, sourceRoot) as Array<{ session_id: string }>).map((row) => row.session_id);
+  const actualSet = new Set(actualChildren);
+  const requestedSet = new Set(ids);
+  if (input.kind === "cross_root" && (actualSet.size !== requestedSet.size || actualChildren.some((id) => !requestedSet.has(id)))) {
+    fail("The move manifest does not exactly match the Session subtree.");
+  }
+  if (input.kind === "cross_root") {
+    for (const id of ids) if (!actualSet.has(id)) fail("The move manifest contains a Session outside the target subtree.");
   }
   return rows;
 }
@@ -100,6 +111,19 @@ function assertInactiveResources(db: DatabaseSync, sourceRoot: string, sessionId
     WHERE session_id IN (${placeholders}) AND state IN ('running', 'queued') LIMIT 1`)
     .get(...sessionIds) as { id: string } | undefined;
   if (execution) fail(`An active Session execution prevents moving the Session subtree: ${execution.id}.`);
+  const pendingInteraction = db.prepare(`SELECT interaction.id FROM session_interactions_v6 AS interaction
+    INNER JOIN session_executions_v6 AS execution ON execution.id = interaction.execution_id
+    WHERE interaction.state = 'pending' AND execution.session_id IN (${placeholders}) LIMIT 1`)
+    .get(...sessionIds) as { id: string } | undefined;
+  if (pendingInteraction) fail(`A pending Session interaction prevents moving the Session subtree: ${pendingInteraction.id}.`);
+  const reservation = db.prepare(`SELECT reservation.reservation_id FROM resource_budget_reservations_v6 AS reservation
+    INNER JOIN resource_budget_accounts_v6 AS account ON account.account_id = reservation.account_id
+    LEFT JOIN session_executions_v6 AS execution ON execution.id = reservation.execution_id
+    WHERE reservation.state IN ('reserved', 'reconciliation_required')
+      AND (account.owner_session_id IN (${placeholders}) OR execution.session_id IN (${placeholders})
+        OR (account.root_session_id = ? AND account.account_kind = 'root' AND reservation.dimension = 'storageBytes'))
+    LIMIT 1`).get(...sessionIds, ...sessionIds, sourceRoot) as { reservation_id: string } | undefined;
+  if (reservation) fail(`An open resource reservation prevents moving the Session subtree: ${reservation.reservation_id}.`);
   const openCoordination = db.prepare(`SELECT event.id FROM coordination_events_v6 AS event
     WHERE (event.actor_session_id IN (${placeholders}) OR event.target_session_id IN (${placeholders}) OR event.parent_session_id IN (${placeholders}))
       AND event.kind IN ('escalation', 'user_decision_required', 'blocker')
@@ -108,6 +132,26 @@ function assertInactiveResources(db: DatabaseSync, sourceRoot: string, sessionId
       WHERE action.event_id = event.id AND action.action_type IN ('resolved', 'cancelled', 'superseded')
     ) LIMIT 1`).get(...sessionIds, ...sessionIds, ...sessionIds) as { id: string } | undefined;
   if (openCoordination) fail(`An open coordination event prevents moving the Session subtree: ${openCoordination.id}.`);
+}
+
+function assertNoPendingLifecycleOperations(
+  db: DatabaseSync,
+  sessionIds: readonly string[],
+  operationId: string,
+  sourceRootSessionId: string,
+  destinationRootSessionId: string,
+): void {
+  const marks = sessionIds.map(() => "?").join(", ");
+  const pending = db.prepare(`SELECT operation_id FROM session_lifecycle_operations_v6
+    WHERE operation_id <> ?
+      AND operation = 'session.move'
+      AND state IN ('prepared', 'running', 'recovery-required')
+      AND (source_root_session_id IN (?, ?)
+        OR destination_root_session_id IN (?, ?)
+        OR target_session_id IN (${marks}))
+    LIMIT 1`).get(operationId, sourceRootSessionId, destinationRootSessionId,
+      sourceRootSessionId, destinationRootSessionId, ...sessionIds) as { operation_id: string } | undefined;
+  if (pending) fail(`A pending lifecycle operation prevents transfer: ${pending.operation_id}.`);
 }
 
 /**
@@ -127,14 +171,21 @@ export function applySessionMove(
     : source.root_session_id;
   if (input.kind === "cross_root" && destinationRoot === source.root_session_id) fail("Cross-root move destination equals the source root.");
   if (input.kind === "cross_root" && input.transferPolicy !== "full") fail("Cross-root move requires the full transfer policy.");
+  const rootMerge = input.kind === "cross_root"
+    && input.sessionId === source.root_session_id
+    && input.destinationParentSessionId === null;
   assertGrantProofCurrent(db, proof, new Date(now));
   if (input.destinationProof) assertGrantProofCurrent(db, input.destinationProof, new Date(now));
   const destinationRootBinding = binding(db, destinationRoot);
   if (destinationRootBinding.root_session_id !== destinationRoot || destinationRootBinding.parent_session_id !== null) {
     fail("The destination root must be an actual root Session.");
   }
+  if (input.kind === "cross_root" && input.destinationParentSessionId === null && !rootMerge) {
+    fail("A cross-root move without a destination parent must move the actual root Session itself.");
+  }
   const rows = assertManifest(db, input, source.root_session_id);
   const ids = rows.map((row) => row.session_id);
+  assertNoPendingLifecycleOperations(db, ids, operationId, source.root_session_id, destinationRoot);
   assertInactiveResources(db, source.root_session_id, ids);
 
   const parent = input.destinationParentSessionId === null ? null : binding(db, input.destinationParentSessionId);
@@ -144,11 +195,14 @@ export function applySessionMove(
     assertRevision(db, parent.session_id, input.destinationExpectedRevision);
     const active = db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ? AND deleted_at IS NULL AND state <> 'archived'").get(parent.session_id);
     if (!active) fail("The destination parent Session is not active.");
-  } else if (input.destinationExpectedRevision !== assertRevision(db, destinationRoot, input.destinationExpectedRevision)) {
-    fail("The destination root revision is stale.");
+  } else {
+    assertRevision(db, destinationRoot, input.destinationExpectedRevision);
+    if (rootMerge && !db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ? AND deleted_at IS NULL AND state <> 'archived'").get(destinationRoot)) {
+      fail("The destination root Session is not active.");
+    }
   }
-  if (!parent && (source.session_role === "task-coordinator" || source.session_role === "executor")) fail("A child Session cannot become an orphan.");
-  if (source.session_role === "standalone" && (parent || destinationRoot !== input.sessionId)) fail("A standalone Session cannot become a child.");
+  if (!parent && !rootMerge && (source.session_role === "task-coordinator" || source.session_role === "executor")) fail("A child Session cannot become an orphan.");
+  if (source.session_role === "standalone" && !rootMerge && (parent || destinationRoot !== input.sessionId)) fail("A standalone Session cannot become a child.");
   if (parent) {
     try {
       requireChildSessionRoleAllowed({
@@ -179,16 +233,37 @@ export function applySessionMove(
       .get(source.root_session_id) as { id: string } | undefined : undefined;
     if (rootWork) fail(`The source root Work Item prevents a cross-root move: ${rootWork.id}.`);
   }
+  const budget = new ResourceBudgetStorage(db);
+  if (rootMerge) {
+    budget.transferRootAllocation({ sourceRootSessionId: source.root_session_id,
+      destinationRootSessionId: destinationRoot, proof, destinationProof: input.destinationProof!,
+      operationId, transferredAt: now });
+  }
+  if (input.kind === "cross_root" && !rootMerge) {
+    const workItems = new WorkItemStorageV6(db);
+    try {
+      workItems.transferSessionOwnershipWithinTransaction({ sourceRootSessionId: source.root_session_id,
+        destinationRootSessionId: destinationRoot, movedSessionIds: ids, transferRoot: false,
+        proof, operationId, transferredAt: now });
+    } finally { workItems.close(); }
+  }
 
   const revisions: Record<string, number> = {};
   const nextDepth = parent ? parent.delegation_depth + 1 : 0;
   for (const row of rows) {
-    const depth = row.session_id === input.sessionId ? nextDepth : nextDepth + row.delegation_depth - source.delegation_depth;
+    const depth = rootMerge
+      ? (row.session_id === input.sessionId || row.parent_session_id === input.sessionId ? 1 : row.delegation_depth)
+      : (row.session_id === input.sessionId ? nextDepth : nextDepth + row.delegation_depth - source.delegation_depth);
     if (depth < 0 || depth > 2) fail("The moved Session subtree exceeds the delegation depth limit.");
     const nextRoot = destinationRoot;
-    const nextParent = row.session_id === input.sessionId ? input.destinationParentSessionId : row.parent_session_id;
+    const nextParent = rootMerge
+      ? (row.session_id === input.sessionId || row.parent_session_id === input.sessionId ? destinationRoot : row.parent_session_id)
+      : (row.session_id === input.sessionId ? input.destinationParentSessionId : row.parent_session_id);
+    const nextRole = rootMerge
+      ? (row.session_id === input.sessionId ? "executor" : row.session_role)
+      : row.session_role;
     const changed = db.prepare(`UPDATE session_role_bindings_v6
-      SET root_session_id = ?, parent_session_id = ?, delegation_depth = ? WHERE session_id = ?`).run(nextRoot, nextParent, depth, row.session_id);
+      SET session_role = ?, root_session_id = ?, parent_session_id = ?, delegation_depth = ? WHERE session_id = ?`).run(nextRole, nextRoot, nextParent, depth, row.session_id);
     if (changed.changes !== 1) fail(`Session role binding update failed: ${row.session_id}.`);
     const current = assertRevision(db, row.session_id, row.session_id === input.sessionId ? input.expectedRevision : (input.descendants ?? []).find((item) => item.sessionId === row.session_id)!.revision);
     const next = current + 1;
@@ -198,7 +273,18 @@ export function applySessionMove(
       payload: { sourceRootSessionId: source.root_session_id, destinationRootSessionId: destinationRoot, destinationParentSessionId: input.destinationParentSessionId } });
     revisions[row.session_id] = next;
   }
-  if (parent) {
+  if (rootMerge) {
+    const current = assertRevision(db, destinationRoot, input.destinationExpectedRevision);
+    const next = current + 1;
+    db.prepare("UPDATE session_role_bindings_v6 SET session_role = 'overall-coordinator' WHERE session_id = ? AND session_role = 'standalone'").run(destinationRoot);
+    db.prepare("UPDATE sessions_v6 SET resource_revision = ?, updated_at = ?, last_active_at = ? WHERE id = ? AND resource_revision = ?")
+      .run(next, now, now, destinationRoot, current);
+    appendSessionResourceEvent(db, { sessionId: destinationRoot, revision: next, eventKind: "move", proof,
+      operationId, idempotencyKey: null, occurredAt: now,
+      payload: { affectedSessionId: input.sessionId, destinationRootSessionId: destinationRoot, destinationParentSessionId: null,
+        rolePromoted: destinationRootBinding.session_role === "standalone" } });
+    revisions[destinationRoot] = next;
+  } else if (parent) {
     const current = assertRevision(db, parent.session_id, input.destinationExpectedRevision);
     const next = current + 1;
     db.prepare("UPDATE sessions_v6 SET resource_revision = ?, updated_at = ?, last_active_at = ? WHERE id = ? AND resource_revision = ?")
@@ -209,19 +295,20 @@ export function applySessionMove(
     revisions[parent.session_id] = next;
   }
 
-  if (input.kind === "cross_root") {
-    const destinationGrantId = input.destinationProof!.grantId as string;
-    const destinationGrantRevision = input.destinationProof!.grantRevision as number;
-    for (const id of ids) {
-      transferSessionAuthority(db, { sessionId: id, sourceRootSessionId: source.root_session_id, destinationRootSessionId: destinationRoot,
-        destinationIssuerGrantId: destinationGrantId, destinationIssuerGrantRevision: destinationGrantRevision, operationId, transferredAt: now });
-    }
+  if (input.kind === "cross_root" && rootMerge) {
+    const workItems = new WorkItemStorageV6(db);
+    try {
+      workItems.transferSessionOwnershipWithinTransaction({ sourceRootSessionId: source.root_session_id,
+        destinationRootSessionId: destinationRoot, movedSessionIds: ids, transferRoot: rootMerge,
+        proof, operationId, transferredAt: now });
+    } finally { workItems.close(); }
   }
-  const budget = new ResourceBudgetStorage(db);
   for (const row of rows) {
-    const targetParent = row.session_id === input.sessionId ? input.destinationParentSessionId : row.parent_session_id;
+    const targetParent = rootMerge
+      ? (row.session_id === input.sessionId || row.parent_session_id === input.sessionId ? destinationRoot : row.parent_session_id)
+      : (row.session_id === input.sessionId ? input.destinationParentSessionId : row.parent_session_id);
     if (!targetParent) continue;
-    if (row.root_session_id !== destinationRoot || row.session_id === input.sessionId) {
+    if (!rootMerge && (row.root_session_id !== destinationRoot || row.session_id === input.sessionId)) {
       binding(db, targetParent);
       const destinationGrant = input.destinationProof ?? proof;
       const hasAllocation = db.prepare("SELECT 1 FROM resource_budget_accounts_v6 WHERE owner_session_id = ? AND account_kind = 'session'")
@@ -233,6 +320,19 @@ export function applySessionMove(
         destinationParentAccountId: budget.get(targetParent).accountId, destinationAuthorityGrantId: destinationGrant.grantId,
         destinationAuthorityGrantRevision: destinationGrant.grantRevision, proof, destinationProof: input.destinationProof,
         operationId, transferredAt: now });
+    }
+  }
+  if (input.kind === "cross_root") {
+    const destinationGrantId = input.destinationProof!.grantId as string;
+    const destinationGrantRevision = input.destinationProof!.grantRevision as number;
+    for (const id of rows
+      .slice()
+      .sort((left, right) => right.delegation_depth - left.delegation_depth)
+      .map((row) => row.session_id)) {
+      transferSessionAuthority(db, { sessionId: id, sourceRootSessionId: source.root_session_id, destinationRootSessionId: destinationRoot,
+        destinationIssuerGrantId: destinationGrantId, destinationIssuerGrantRevision: destinationGrantRevision, operationId, transferredAt: now,
+        retireSourceTransferCapabilityGrantId: rootMerge && proof.principal.kind === "agent" && id === proof.principal.actorSessionId
+          ? (proof.grantId ?? undefined) : undefined });
     }
   }
   return { sessionId: input.sessionId, sourceRootSessionId: source.root_session_id, destinationRootSessionId: destinationRoot,

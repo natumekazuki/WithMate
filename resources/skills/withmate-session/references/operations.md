@@ -47,9 +47,10 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 64 operations:
+The CLI and MCP expose the same 68 operations:
 
 - Runtime: `runtime.catalog`
+- Authority grants: `grant.create`, `grant.get`, `grant.list`, `grant.revoke`
 - Delegation: `delegation.create`, `delegation.get`, `delegation.list`, `delegation.retry`, `delegation.cancel`, `delegation.compensate`
 - Budget: `budget.get`, `budget.list`, `budget.configure`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.configure`, `session.rename`, `session.move.manifest`, `session.move`, `session.clone`, `session.restore`, `session.archive`, `session.delete.manifest`, `session.delete`
@@ -60,7 +61,7 @@ The CLI and MCP expose the same 64 operations:
 - Transcript: `transcript.export`
 - Coordination: `coordination.event.create`, `coordination.event.list`, `coordination.event.get`, `coordination.event.resolve`, `coordination.event.consume`, `coordination.event.cancel`, `coordination.event.correct`
 
-CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`.
+CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`. Grant issuance is bounded by the parent grant's action, resource, budget, and expiry ceiling; it does not expand baseline authority.
 Coordination commands use `coordination event <verb>`.
 
 Session lifecycle operations use a read-only manifest before a move or delete mutation. `session.move.manifest` requires the target `sessionId` and `destinationRootSessionId`; pass its `manifestRevision` and the unchanged transfer plan to `session.move`. `session.delete.manifest` is a read-only precondition for `session.delete`. In Slice 3, `session.delete` creates a tombstone and retains Session history, budget ledger, retry identity, and the SessionFolder workspace. The existing cleanup path for a SessionFolder attached to a directory workspace remains in effect. Physical purge requires a later retention and purge-scope contract.
@@ -85,9 +86,9 @@ A Work Item is the stable identity of one delegation. It is separate from a Sess
 
 The target Session owns `pending` to `in_progress` or `waiting` transitions, resumption, and terminal result reporting. The creator owns cancellation while the Work Item is nonterminal. Every existing-item mutation requires the current `expectedRevision` and an idempotency key. Terminal states are `completed`, `partially_completed`, `failed`, and `canceled`; a terminal row is never overwritten to resume work. A terminal result is submitted explicitly with its matching outcome and is not copied from an execution's assistant text or raw log.
 
-Work Item lifecycle mutations use the actor's active grants and canonical resource relations. Contract authority text does not issue a grant. New lifecycle capabilities are not added to existing baseline grants automatically; only an actor explicitly granted the capability through the existing trusted grant owner issuance path may execute it. Grants are not reissued to expand access, and a general Agent grant API remains a Slice 7 capability. Use `work.history.list` to inspect the contract and lifecycle events before retrying a conflicting change. `work.reopen` creates a successor while preserving the predecessor's result, decisions, and membership history. `work.clone` copies a contract template with a source link; it does not copy results, decisions, executions, history, or retry identity.
+Work Item lifecycle mutations use the actor's active grants and canonical resource relations. Contract authority text does not issue a grant. New lifecycle capabilities are not added to existing baseline grants automatically; only an actor explicitly granted the capability through the trusted grant owner issuance path may execute it. `grant.create` requires an active delegable parent and cannot widen its ceiling. Use `work.history.list` to inspect the contract and lifecycle events before retrying a conflicting change. `work.reopen` creates a successor while preserving the predecessor's result, decisions, and membership history. `work.clone` copies a contract template with a source link; it does not copy results, decisions, executions, history, or retry identity.
 
-`work.move` records departure from the old parent and adoption by the new parent atomically. If an old decision exists, its supersede is recorded in the same transaction. Adoption changes membership only: the new parent must explicitly assess and decide the result. A standalone Work Item move across roots is not connected in this slice and is not an available capability. `work.result.correct` appends a new result revision and propagates stale state to accepted parent aggregates; `work.aggregation.correct` uses a strict `revise | withdraw | replace` union. `work.aggregation.list` accepts bounded depth, cursor, state, decision, and field projections. Full result payloads are retrieved separately with `work.get`.
+`work.move` records departure from the old parent and adoption by the new parent atomically. If an old decision exists, its supersede is recorded in the same transaction. Adoption changes membership only: the new parent must explicitly assess and decide the result. Cross-root Work Item moves are available when `destinationTargetSessionId` and `expectedDestinationTargetRevision` are supplied. `work.result.correct` appends a new result revision and propagates stale state to accepted parent aggregates; `work.aggregation.correct` uses a strict `revise | withdraw | replace` union. `work.aggregation.list` accepts bounded depth, cursor, state, decision, and field projections. Full result payloads are retrieved separately with `work.get`.
 
 Split uses `delegation.create` with multiple items and an explicit `parentWorkItemId` in each new Work Item contract. Use `dispatch: "prepare"` to establish every planned child before starting any execution. The batch preserves partial success and is not atomic. Merge uses explicit child decisions and the parent's `work.result`; there is no separate split or merge operation. Do not describe a sequence of individual creates as an atomic batch.
 
@@ -139,16 +140,16 @@ Store only summary, facts, assumptions, impact, and recommendation within the pu
 
 Every application operation requires the valid runtime binding issued by WithMate for the current provider execution. `session.self` returns only that binding's actor Session ID and does not accept a caller-supplied Session ID. All other Session-scoped operations keep an explicit target, including cross-Session handoff; the actor is never used as an implicit target.
 
-`turn.run` and `turn.enqueue` use the following canonical Role and hierarchy matrix. The runtime derives the actor from its binding and reads both actor and target bindings; request fields cannot override the relationship.
+Role names and hierarchy are baseline grant templates and routing hints, not a live authorization matrix. `turn.run` and `turn.enqueue` derive the actor from its binding, require an explicit target, and evaluate the saved active grant, canonical resource relation, external side-effect class, budget, and runtime generation; request fields cannot override those values. A same-root active communication grant may authorize a canonical target beyond the baseline direct-child template. Cross-root consultation grants are limited to their declared consultation scope, and Session or Work Item transfer requires its dedicated transfer proof.
 
-| Actor Role | Allowed target |
+| Baseline Role template | Default routing hint |
 | --- | --- |
 | `standalone` | Self only |
 | `overall-coordinator` | Self, a direct `task-coordinator` child, or a direct `executor` child |
 | `task-coordinator` | Self, a direct `executor` child, the root `overall-coordinator`, or a sibling `task-coordinator` with the same root and parent |
 | `executor` | Self or its direct parent (`overall-coordinator` or `task-coordinator`) |
 
-Cross-root Turns, overall-coordinator-to-grandchild Turns, executor-to-sibling or other-branch Turns, nonexistent targets, and caller-supplied Role or hierarchy claims are rejected before execution or queue acceptance. Trusted GUI messages are a separate user-invocation boundary and are not restricted by this Agent matrix. `runtime.catalog.sessionTurnCommunicationContractRevision` identifies this Turn communication contract.
+Nonexistent targets and caller-supplied Role or hierarchy claims are rejected before execution or queue acceptance. A target outside the baseline template is allowed only when the active grant and canonical relation authorize the requested same-root operation. A cross-root Turn remains rejected unless it is the separately declared consultation operation with its consultation grant; Session and Work Item transfer are independent lifecycle mutations with dedicated transfer proofs, not ordinary Turn routing. Trusted GUI messages are a separate user-invocation boundary. `runtime.catalog.sessionTurnCommunicationContractRevision` identifies this Turn communication contract.
 
 ## Turn lifecycle
 

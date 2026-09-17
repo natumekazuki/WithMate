@@ -30,6 +30,30 @@ current model catalogを確認する。入力JSONは不要である。
 withmate-session runtime catalog
 ```
 
+## Authority grant操作
+
+`grant create`は親grantのcurrent revisionを指定し、issuerのaction、scope、budget、expiryを超えない範囲だけを発行する。idempotency replayは初回のissuance snapshotを返すため、現在のrevoke・expiry状態は`grant get`で確認する。`grant list`と`grant get`は現在のactorから可視なgrantを返し、`grant revoke`はcurrent revisionを要求する。consultation用途では`purpose`、`completionCriteria`、`resourceIds`、`budgetAccountId`、`returnSessionId`、`expiresAt`を明示し、Turn dispatchの`consultationGrantId`へ同じgrantを関連付ける。
+
+cross-root consultationは、先に既存の`budgetAccountId`へ`budget configure`で必要なallocationを設定し、responder root ownerがrequesterへ限定grantを発行する。grant発行時に新しいquota台帳は作らず、既存accountのcurrent limitがgrantのbudget ceiling内かを再評価する。requesterはgrantの`returnSessionId`を返却先としてTurnを実行し、完了後に`grant revoke`でtemporary accessを終了する。結果とartifact provenanceは保持され、granteeのaccessだけが失効する。
+
+親となるpolicy grantは、trusted ownerの`issueTrustedGrantPolicy`で明示的に発行する。既存Sessionへの自動付与とGUIのgrant編集画面は追加していない。readと外部副作用は別effect classのgrantとして発行する。`returnSessionId`は返却先の契約として保存し、結果の自動配送は行わない。呼出側が既存Turn操作で返却を行う。
+
+`delegation.create`でも各itemの`turn.consultationGrantId`へ同じ一時grant IDを指定できる。existing Work Itemを関連付ける場合は、そのWork Itemの`work.get`権限も必要になる。
+
+cross-rootのWork Item単体移管は`work.move`へ`destinationTargetSessionId`と`expectedDestinationTargetRevision`を指定する。移管先parentがある場合はそのrevisionと権限も必要で、集約descendantを持つWorkは単体移管できない。過去の結果・execution・履歴は保持し、以後の実行は移管先Sessionのbudgetを使う。
+
+移管manifestの`resourceHistory`は既存の共通event headerを持つresourceだけを集計する。budgetの履歴キーはSession IDではなくaccount ID、file writeとtranscript exportはoperation IDである。grant chainとDelegationは専用の保存領域を使い、manifestの`grantChains`と`delegationRows`へ列挙する。共通headerのないresourceについて空の履歴を生成しない。
+
+root Session全体の移管は`session.move`のcross-root入力へ`destinationParentSessionId: null`を指定する。元rootは移管先直属のexecutorとなり、元root直属の子も移管先直属へ付け替える。孫の親とdepthは維持する。移管先がstandaloneならoverall-coordinatorへ変更するが、Role変更によるgrantの自動追加は行わない。移管先budgetには移管されるallocationと共有storage消費を受け入れる容量が必要である。child Sessionの移管ではdestination parentを指定する。
+
+cross-root Session移管のpreparedからpublication完了またはrecovery終端までは両rootの新規mutationを制限する。read、cancel、同じ要求による移管回復は維持する。running Turnはallow-to-settleとし、移管はqueued/runningが解消してから行う。grantのrevokeまたはexpiry後はqueuedの新規admissionを拒否し、開始済みTurnの結果を未実行へ変更しない。
+
+```powershell
+withmate-session grant get --json '{"grantId":"GRANT_ID"}'
+withmate-session grant list --json '{"limit":50,"includeRevoked":false}'
+withmate-session grant revoke --json '{"grantId":"GRANT_ID","expectedRevision":2,"idempotencyKey":"grant-revoke-001"}'
+```
+
 ## Resource budget操作
 
 対象Sessionのbudgetを取得する。root配下の可視account一覧は`budget list`で取得する。
@@ -77,7 +101,7 @@ withmate-session work restore --json '{"workItemId":"WORK_ITEM_ID","expectedRevi
 withmate-session work delete --json '{"workItemId":"WORK_ITEM_ID","expectedRevision":10,"idempotencyKey":"work-delete-001"}'
 ```
 
-`work.create`はtarget Sessionのcurrent `revision`を`expectedContainerRevision`へ指定する。`work.reassign`、`work.move`、`work.clone`、`work.reopen`では、対象Work Itemのcurrent `expectedRevision`に加えて、変更先Sessionまたはparentのcurrent revisionが必要な場合は対応するcontainer revisionを指定する。`work.move`は旧parentからの離脱と新parentへのadoption、旧decisionのsupersedeを同一transactionへ保存するが、adoptionは結果の自動採用ではない。同一root内では確定済みparentへのmoveも認め、旧parentと新parentの影響を受ける確定済み集約をstaleにする。異なるroot間のWork Item単体moveは未接続であり、このSliceの実装済み能力として扱わない。`work.clone`と`work.reopen`は新しいWork Item IDを発行し、旧Work Itemのresult、decision、所属履歴を変更しない。`work.archive`は一覧の既定表示から隠すだけで、`work.restore`はarchive状態だけを戻す。`work.delete`は適格なterminal Work Itemのcurrent rowを削除するが、履歴、idempotency response、execution association、aggregation ledger、tombstoneを保持する。`work.result.correct`は旧resultを履歴に保持したまま新しいresult revisionを作り、`work.aggregation.correct`は`revise | withdraw | replace`でcurrent decisionを更新する。`work.aggregation.list`のflattenはbounded depth、field、state、decision filterとcursorへ束縛する。
+`work.create`はtarget Sessionのcurrent `revision`を`expectedContainerRevision`へ指定する。`work.reassign`、`work.move`、`work.clone`、`work.reopen`では、対象Work Itemのcurrent `expectedRevision`に加えて、変更先Sessionまたはparentのcurrent revisionが必要な場合は対応するcontainer revisionを指定する。`work.move`は旧parentからの離脱と新parentへのadoption、旧decisionのsupersedeを同一transactionへ保存するが、adoptionは結果の自動採用ではない。同一root内では確定済みparentへのmoveも認め、旧parentと新parentの影響を受ける確定済み集約をstaleにする。異なるroot間のWork Item単体moveは`destinationTargetSessionId`と`expectedDestinationTargetRevision`を指定して実行できる。`work.clone`と`work.reopen`は新しいWork Item IDを発行し、旧Work Itemのresult、decision、所属履歴を変更しない。`work.archive`は一覧の既定表示から隠すだけで、`work.restore`はarchive状態だけを戻す。`work.delete`は適格なterminal Work Itemのcurrent rowを削除するが、履歴、idempotency response、execution association、aggregation ledger、tombstoneを保持する。`work.result.correct`は旧resultを履歴に保持したまま新しいresult revisionを作り、`work.aggregation.correct`は`revise | withdraw | replace`でcurrent decisionを更新する。`work.aggregation.list`のflattenはbounded depth、field、state、decision filterとcursorへ束縛する。
 
 `turn run`または`turn enqueue`もtarget Sessionのcurrent `revision`を`expectedContainerRevision`へ指定し、top-levelへ任意の`workItemId`を渡すと、root、target、active state、actor authorityをexecution作成前に検証して関連付けを保存する。Work Itemのplanned `sourceIdentity`は契約として保存し、実行admission時にtarget Sessionのcanonical workspaceからactual source identityを解決してassociationへ保存する。requestからactual sourceを指定したり、解決不能なworkspaceを成功扱いしたりしない。`workItemId`はTurnのidempotency fingerprintへ含まれるため、同じkeyで関連先だけを変更するとconflictになる。executionのterminal stateはWork Itemを暗黙に完了させない。target Sessionが`work result`で`completed`、`partially_completed`、`failed`のstateとstrict resultを同時に報告する。creator Sessionは非terminal Work Itemを`work cancel`で取消せる。全mutationはcurrent revisionとidempotency keyを要求する。
 
@@ -89,7 +113,7 @@ root coordinatorは`work aggregation list`の`depth`（1–8）、`fields`（`su
 
 `turn options`は対象Sessionのproviderに応じた候補を返す。Codex Turnは`provider: "codex"`と`codexSandboxMode`、Copilot Turnは`provider: "copilot"`と`customAgentName`を指定する。provider固有fieldを混在させない。
 
-Agent起点の`turn run`と`turn enqueue`は、runtime bindingで確定したactorとtargetのcanonical Role bindingに対して次の送信matrixを適用する。
+Agent起点の`turn run`と`turn enqueue`は、runtime bindingで確定したactorとtargetのcanonical Role bindingに対してactive grantを評価する。次の表は初期grantのRole templateであり、追加grantへの権限上限ではない。
 
 | actor Role | 許可するtarget |
 | --- | --- |
@@ -98,7 +122,7 @@ Agent起点の`turn run`と`turn enqueue`は、runtime bindingで確定したact
 | `task-coordinator` | actor自身、直属の`executor`、rootの`overall-coordinator`、同じrootかつ同じ親の兄弟`task-coordinator` |
 | `executor` | actor自身、直属の親（`overall-coordinator`または`task-coordinator`） |
 
-異なるroot、`overall-coordinator`から孫executor、`executor`から兄弟または別branch、存在しないtargetはexecutionまたはqueue作成前に拒否される。requestへactor Role、root、parent、depthを指定してもauthorityには使われない。GUIからユーザーが直接送信するTurnは別のtrusted invocation境界であり、このAgent間matrixを適用しない。`runtime catalog`の`sessionTurnCommunicationContractRevision`で対応する通信契約revisionを確認する。
+baselineの対象外でも、same-rootの明示communication grantがあれば送信できる。cross-rootには限定consultation grantを必要とし、権限外または存在しないtargetはexecutionまたはqueue作成前に拒否される。requestへactor Role、root、parent、depthを指定してもauthorityには使われない。GUIからユーザーが直接送信するTurnは別のtrusted invocation境界であり、このAgent grantによる認可とは分離する。`runtime catalog`の`sessionTurnCommunicationContractRevision`で対応する通信契約revisionを確認する。
 
 ```powershell
 withmate-session turn run --json '{"expectedContainerRevision":1,"sessionId":"SESSION_ID","catalogRevision":1,"idempotencyKey":"run-codex-001","responseMode":"deferred","turn":{"provider":"codex","userMessage":"確認して","model":"gpt-5.4","reasoningEffort":"high","approvalMode":"on-request","codexSandboxMode":"workspace-write"}}'
@@ -133,7 +157,7 @@ withmate-session session delete-manifest --json '{"sessionId":"SESSION_ID"}'
 
 `session.create`はrootまたはchild placementを明示する。childではparentとRole、rootではrootKindを指定し、Character identity、provider実行tuple、Workspace、initial grant、budgetを省略しない。actor、root、depth、grant上限は保存済みbindingとactive grantから再評価される。新規Sessionのprovider thread continuityは`reset`だけを受理する。
 
-`session.self`、`session.create`、`session.list`、`session.get`は`revision`、`sessionRole`、`roleContractRevision`、`rootSessionId`、`parentSessionId`、`delegationDepth`を同じ形で返す。mutationは対象またはcontainerのcurrent revisionを要求し、各操作へcaller-owned `idempotencyKey`を渡す。`session.move.manifest`と`session.delete.manifest`はread-onlyで、deleteは取得済みmanifest revisionをmutationへ要求する。`runtime catalog`の`baselineChildSessionRoleTemplates`はbaseline grant発行時のtemplateであり、現在のactorに対する認可結果ではない。新しいWork Item lifecycle操作のgrantは既存baselineへ自動追加せず、既存grant ownerのtrusted issuanceで明示付与されたactorだけが実行できる。既存grantの再発行による拡張やAgent向け汎用grant APIはSlice 7まで提供しない。
+`session.self`、`session.create`、`session.list`、`session.get`は`revision`、`sessionRole`、`roleContractRevision`、`rootSessionId`、`parentSessionId`、`delegationDepth`を同じ形で返す。mutationは対象またはcontainerのcurrent revisionを要求し、各操作へcaller-owned `idempotencyKey`を渡す。`session.move.manifest`と`session.delete.manifest`はread-onlyで、deleteは取得済みmanifest revisionをmutationへ要求する。`runtime catalog`の`baselineChildSessionRoleTemplates`はbaseline grant発行時のtemplateであり、現在のactorに対する認可結果ではない。新しいWork Item lifecycle操作のgrantは既存baselineへ自動追加せず、trusted root policyまたはそのceiling内のgrant.createで明示付与されたactorだけが実行できる。grant.get/list/revokeを使って保存済み権限を参照・失効し、baselineの再発行による権限拡張は行わない。
 
 `session.delete`はSlice 3では物理削除ではなくtombstoneへ遷移する。Sessionの履歴、budget ledger、retry identity、SessionFolder workspaceは保持する。directory workspaceに付随するSessionFolderの既存cleanup経路は維持する。retention期間と履歴・ledgerを含むpurge範囲を定義するphysical purgeは後続の別変更とする。
 
@@ -194,7 +218,7 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは計64操作で、Session lifecycleのmanifest read、configure、move、clone、restore、archive、deleteとWork Item lifecycleを含む。Work Itemの`work.result.correct`、および集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`、`work.aggregation.correct`も含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは計68操作で、Authority grant、Session lifecycleのmanifest read、configure、move、clone、restore、archive、deleteとWork Item lifecycleを含む。Work Itemの`work.result.correct`、および集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`、`work.aggregation.correct`も含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
 
 ## Coordination event
 

@@ -94,6 +94,10 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
 
 export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "runtime.catalog", title: "Get runtime catalog", description: "Read the current public Provider and model catalog.", readOnly: true, destructive: false },
+  { name: "grant.create", title: "Create authority grant", description: "Issue a bounded authority grant within an existing issuer grant ceiling.", readOnly: false, destructive: false },
+  { name: "grant.get", title: "Get authority grant", description: "Read one authority grant and its durable provenance.", readOnly: true, destructive: false },
+  { name: "grant.list", title: "List authority grants", description: "List authority grants visible to the current actor.", readOnly: true, destructive: false },
+  { name: "grant.revoke", title: "Revoke authority grant", description: "Revoke an authority grant at its current revision.", readOnly: false, destructive: false },
   { name: "delegation.create", title: "Create delegation", description: "Prepare or dispatch a batch through the canonical Session, Work Item and Turn owners. Inspect each item's state and committed IDs.", readOnly: false, destructive: true },
   { name: "delegation.get", title: "Get delegation", description: "Read one delegation owned by the current actor, including partial effects and recovery actions.", readOnly: true, destructive: false },
   { name: "delegation.list", title: "List delegations", description: "List the current actor's delegations, including unfinished requests.", readOnly: true, destructive: false },
@@ -279,6 +283,12 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: createSessionRuntimeAdvertisedInputSchema("runtime.catalog"),
     outputSchema: createSessionRuntimeOutputSchema("runtime.catalog"),
   }, async (input) => executeOperation("runtime.catalog", input, deps));
+  for (const operation of ["grant.create", "grant.get", "grant.list", "grant.revoke"] as const) {
+    server.registerTool(operation, {
+      ...definitions.get(operation)!, annotations: annotations(definitions.get(operation)!),
+      inputSchema: createSessionRuntimeAdvertisedInputSchema(operation), outputSchema: createSessionRuntimeOutputSchema(operation),
+    }, async (input) => executeOperation(operation, input, deps));
+  }
   for (const operation of ["delegation.create", "delegation.get", "delegation.list", "delegation.retry", "delegation.cancel", "delegation.compensate"] as const) {
     server.registerTool(operation, {
       ...definitions.get(operation)!, annotations: annotations(definitions.get(operation)!),

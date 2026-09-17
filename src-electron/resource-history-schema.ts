@@ -303,9 +303,9 @@ export function verifyResourceHistoryProjections(db: DatabaseSync): void {
 }
 
 const retainedWorkItemRowsSql = `
-  SELECT id, sequence, contract_revision, kind, root_session_id, creator_session_id, target_session_id, parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority, source_identity_json, state, revision, progress_summary, blockers_json, next_action, result_json, created_at, updated_at, archived_at FROM work_items_v6
+  SELECT id, sequence, contract_revision, kind, origin_kind, root_session_id, creator_session_id, target_session_id, parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority, source_identity_json, state, revision, progress_summary, blockers_json, next_action, result_json, created_at, updated_at, archived_at FROM work_items_v6
   UNION ALL
-  SELECT json_extract(snapshot_json, '$.id') AS id, json_extract(snapshot_json, '$.sequence') AS sequence, json_extract(snapshot_json, '$.contract_revision') AS contract_revision, json_extract(snapshot_json, '$.kind') AS kind, json_extract(snapshot_json, '$.root_session_id') AS root_session_id, json_extract(snapshot_json, '$.creator_session_id') AS creator_session_id, json_extract(snapshot_json, '$.target_session_id') AS target_session_id, json_extract(snapshot_json, '$.parent_work_item_id') AS parent_work_item_id, json_extract(snapshot_json, '$.predecessor_work_item_id') AS predecessor_work_item_id, json_extract(snapshot_json, '$.goal') AS goal, json_extract(snapshot_json, '$.scope') AS scope, json_extract(snapshot_json, '$.completion_criteria') AS completion_criteria, json_extract(snapshot_json, '$.authority') AS authority, json_extract(snapshot_json, '$.source_identity_json') AS source_identity_json, json_extract(snapshot_json, '$.state') AS state, json_extract(snapshot_json, '$.revision') AS revision, json_extract(snapshot_json, '$.progress_summary') AS progress_summary, json_extract(snapshot_json, '$.blockers_json') AS blockers_json, json_extract(snapshot_json, '$.next_action') AS next_action, json_extract(snapshot_json, '$.result_json') AS result_json, json_extract(snapshot_json, '$.created_at') AS created_at, json_extract(snapshot_json, '$.updated_at') AS updated_at, json_extract(snapshot_json, '$.archived_at') AS archived_at FROM work_item_tombstones_v6
+  SELECT json_extract(snapshot_json, '$.id') AS id, json_extract(snapshot_json, '$.sequence') AS sequence, json_extract(snapshot_json, '$.contract_revision') AS contract_revision, json_extract(snapshot_json, '$.kind') AS kind, COALESCE(json_extract(snapshot_json, '$.origin_kind'), 'native') AS origin_kind, json_extract(snapshot_json, '$.root_session_id') AS root_session_id, json_extract(snapshot_json, '$.creator_session_id') AS creator_session_id, json_extract(snapshot_json, '$.target_session_id') AS target_session_id, json_extract(snapshot_json, '$.parent_work_item_id') AS parent_work_item_id, json_extract(snapshot_json, '$.predecessor_work_item_id') AS predecessor_work_item_id, json_extract(snapshot_json, '$.goal') AS goal, json_extract(snapshot_json, '$.scope') AS scope, json_extract(snapshot_json, '$.completion_criteria') AS completion_criteria, json_extract(snapshot_json, '$.authority') AS authority, json_extract(snapshot_json, '$.source_identity_json') AS source_identity_json, json_extract(snapshot_json, '$.state') AS state, json_extract(snapshot_json, '$.revision') AS revision, json_extract(snapshot_json, '$.progress_summary') AS progress_summary, json_extract(snapshot_json, '$.blockers_json') AS blockers_json, json_extract(snapshot_json, '$.next_action') AS next_action, json_extract(snapshot_json, '$.result_json') AS result_json, json_extract(snapshot_json, '$.created_at') AS created_at, json_extract(snapshot_json, '$.updated_at') AS updated_at, json_extract(snapshot_json, '$.archived_at') AS archived_at FROM work_item_tombstones_v6
 `;
 
 function verifyWorkItemTombstones(db: DatabaseSync): void {
@@ -413,9 +413,15 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     UNION ALL
     SELECT 'work-item:' || event.work_item_id || ':revision:' || event.revision,
       'work_item', event.work_item_id, item.root_session_id,
-      COALESCE((SELECT json_extract(next.payload_json, '$.beforeTargetSessionId') FROM work_item_events_v6 next
-        WHERE next.work_item_id=event.work_item_id AND next.event_type='assignment_changed' AND next.revision>event.revision
-        ORDER BY next.revision LIMIT 1),item.target_session_id),
+      COALESCE((SELECT json_extract(change.payload_json, '$.afterTargetSessionId')
+        FROM work_item_events_v6 AS change
+        WHERE change.work_item_id = event.work_item_id
+          AND change.revision <= event.revision
+          AND ((change.event_type = 'assignment_changed' AND json_type(change.payload_json, '$.afterTargetSessionId') = 'text')
+            OR (change.event_type = 'parent_changed' AND json_type(change.payload_json, '$.afterTargetSessionId') = 'text'))
+        ORDER BY change.revision DESC LIMIT 1),
+        json_extract((SELECT initial.payload_json FROM work_item_events_v6 AS initial
+          WHERE initial.work_item_id = event.work_item_id ORDER BY initial.revision LIMIT 1), '$.targetSessionId')),
       event.event_type, event.revision,
       event.principal_kind,
       CASE WHEN event.principal_kind = 'agent' THEN event.actor_session_id ELSE NULL END,
@@ -432,13 +438,17 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     UNION ALL
     SELECT event.event_id, 'work_item', event.parent_work_item_id,
       item.root_session_id,
-      COALESCE((SELECT json_extract(assignment.payload_json, '$.beforeTargetSessionId')
-        FROM work_item_events_v6 assignment
-        JOIN resource_event_headers_v6 assignment_header
-          ON assignment_header.event_id = 'work-item:' || assignment.work_item_id || ':revision:' || assignment.revision
-        WHERE assignment.work_item_id = item.id AND assignment.event_type = 'assignment_changed'
-          AND assignment_header.sequence > (SELECT sequence FROM resource_event_headers_v6 WHERE event_id = event.event_id)
-        ORDER BY assignment.revision LIMIT 1), item.target_session_id), event.event_kind,
+      COALESCE((SELECT json_extract(change.payload_json, '$.afterTargetSessionId')
+        FROM work_item_events_v6 AS change
+        JOIN resource_event_headers_v6 AS change_header
+          ON change_header.event_id = 'work-item:' || change.work_item_id || ':revision:' || change.revision
+        WHERE change.work_item_id = item.id
+          AND change_header.sequence <= (SELECT sequence FROM resource_event_headers_v6 WHERE event_id = event.event_id)
+          AND ((change.event_type = 'assignment_changed' AND json_type(change.payload_json, '$.afterTargetSessionId') = 'text')
+            OR (change.event_type = 'parent_changed' AND json_type(change.payload_json, '$.afterTargetSessionId') = 'text'))
+        ORDER BY change_header.sequence DESC LIMIT 1),
+        json_extract((SELECT initial.payload_json FROM work_item_events_v6 AS initial
+          WHERE initial.work_item_id = item.id ORDER BY initial.revision LIMIT 1), '$.targetSessionId')), event.event_kind,
       event.aggregate_revision, NULL, NULL,
       CASE WHEN event.event_kind = 'decision_corrected' THEN
         'work-item-aggregation:' || event.parent_work_item_id || ':revision:' || json_extract(event.payload_json, '$.supersededDecisionRevision')
@@ -492,7 +502,7 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
       'transcript', 'interaction', 'coordination_event')
   `).all() as StoredHeaderRow[];
   const actualById = new Map(actual.map((row) => [row.event_id, row]));
-  const movesBySession = new Map<string, Array<{ sequence: number; source_root: string }>>();
+  const movesBySession = new Map<string, Array<{ sequence: number; source_root: string; source_owner?: string }>>();
   const moves = db.prepare(`
     SELECT event.session_id, header.sequence,
       json_extract(event.payload_json, '$.sourceRootSessionId') AS source_root
@@ -507,6 +517,21 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     history.push(move);
     movesBySession.set(move.session_id, history);
   }
+  const workMovesByItem = new Map<string, Array<{ sequence: number; source_root: string }>>();
+  const workMoves = db.prepare(`
+    SELECT event.work_item_id, header.sequence,
+      json_extract(event.payload_json, '$.beforeRootSessionId') AS source_root
+    FROM work_item_events_v6 AS event
+    INNER JOIN resource_event_headers_v6 AS header ON header.event_id = 'work-item:' || event.work_item_id || ':revision:' || event.revision
+    WHERE event.event_type = 'parent_changed'
+      AND json_type(event.payload_json, '$.beforeRootSessionId') = 'text'
+    ORDER BY header.sequence
+  `).all() as Array<{ work_item_id: string; sequence: number; source_root: string }>;
+  for (const move of workMoves) {
+    const history = workMovesByItem.get(move.work_item_id) ?? [];
+    history.push({ sequence: move.sequence, source_root: move.source_root });
+    workMovesByItem.set(move.work_item_id, history);
+  }
   if (actualById.size !== expected.length || actual.length !== expected.length) {
     throw new Error("Resource event header coverage does not match the typed event history.");
   }
@@ -517,7 +542,9 @@ function verifyResourceEventHeaders(db: DatabaseSync): void {
     // A later move's source root identifies that interval without rewriting history.
     const nextMove = ["session", "session_files", "transcript", "interaction"].includes(row.resource_kind)
       ? movesBySession.get(row.owner_id)?.find((move) => move.sequence > header.sequence)
-      : undefined;
+      : row.resource_kind === "work_item"
+        ? workMovesByItem.get(row.resource_id)?.find((move) => move.sequence > header.sequence)
+        : undefined;
     const comparable = {
       resourceKind: header.resource_kind,
       resourceId: header.resource_id,
@@ -587,7 +614,7 @@ function verifyHeaderGrant(db: DatabaseSync, header: StoredHeaderRow): void {
 
 function verifyWorkItemReplay(db: DatabaseSync): void {
   const items = db.prepare(`
-    SELECT id, sequence, contract_revision, kind, root_session_id, creator_session_id,
+    SELECT id, sequence, contract_revision, kind, origin_kind, root_session_id, creator_session_id,
       target_session_id, parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority,
       source_identity_json, state, revision, progress_summary, blockers_json, next_action,
       result_json, created_at, updated_at, archived_at
@@ -621,6 +648,7 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
     const initial = JSON.parse(first.payload_json) as Record<string, unknown>;
     const replay: Record<string, unknown> = {
       kind: initial.kind,
+      originKind: initial.originKind ?? "native",
       rootSessionId: initial.rootSessionId,
       creatorSessionId: initial.creatorSessionId,
       targetSessionId: initial.targetSessionId,
@@ -669,11 +697,31 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
           throw new Error(`Work Item parent event cannot replay from its predecessor: ${item.id}`);
         }
         replay.parentWorkItemId = payload.afterParentWorkItemId;
+        if (payload.beforeKind !== undefined) {
+          if (payload.beforeKind !== replay.kind || payload.afterKind === undefined) {
+            throw new Error(`Work Item kind event cannot replay from its predecessor: ${item.id}`);
+          }
+          replay.kind = payload.afterKind;
+        }
+        if (payload.beforeOriginKind !== undefined) {
+          if (payload.beforeOriginKind !== replay.originKind || payload.afterOriginKind === undefined) throw new Error(`Work Item origin event cannot replay from its predecessor: ${item.id}`);
+          replay.originKind = payload.afterOriginKind;
+        }
         if (payload.beforeCreatorSessionId !== undefined) {
           if (payload.beforeCreatorSessionId !== replay.creatorSessionId) {
             throw new Error(`Work Item creator event cannot replay from its predecessor: ${item.id}`);
           }
           replay.creatorSessionId = payload.afterCreatorSessionId;
+        }
+        if (payload.beforeTargetSessionId !== undefined) {
+          if (payload.beforeTargetSessionId !== replay.targetSessionId)
+            throw new Error(`Work Item target event cannot replay from its predecessor: ${item.id}`);
+          replay.targetSessionId = payload.afterTargetSessionId;
+        }
+        if (payload.beforeRootSessionId !== undefined) {
+          if (payload.beforeRootSessionId !== replay.rootSessionId)
+            throw new Error(`Work Item root event cannot replay from its predecessor: ${item.id}`);
+          replay.rootSessionId = payload.afterRootSessionId;
         }
       } else if (event.event_type === "archived") {
         replay.archivedAt = payload.archivedAt;
@@ -688,6 +736,7 @@ function verifyWorkItemReplay(db: DatabaseSync): void {
     }
     const current = {
       kind: item.kind,
+      originKind: item.origin_kind,
       rootSessionId: item.root_session_id,
       creatorSessionId: item.creator_session_id,
       targetSessionId: item.target_session_id,

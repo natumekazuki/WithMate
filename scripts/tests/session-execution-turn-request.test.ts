@@ -6,6 +6,17 @@ import {
   validateSessionExecutionTurnRequest,
 } from "../../src-electron/session-execution-turn-request.js";
 
+// @test-value v2
+// kind = "compatibility"
+// claim = "execution request validationはconsultation grant identityとattachment identityをdispatch envelopeへ保持する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
+// fault = "parserまたはturn validatorの正規化でconsultationGrantIdを失い、cross-root executionのprovenanceを追跡できなくする"
+// observable = "validation後の再parse結果におけるconsultationGrantIdとattachment identity"
+// observation_boundary = "component-behavior"
+// scope = "session execution request normalization"
+// lifecycle = "permanent"
+// distinction = "既存のattachment identity保持検証にtop-level consultation grantのparse・validation・再parseを含める"
+// @end-test-value
 test("EXT-ATTACH-10: validation後もdispatch envelopeとattachment identityを保持する", async () => {
   const validated = await validateSessionExecutionTurnRequest(
     "session-1",
@@ -20,6 +31,7 @@ test("EXT-ATTACH-10: validation後もdispatch envelopeとattachment identityを�
         },
       },
       catalogRevision: 7,
+      consultationGrantId: "grant-consultation-1",
       turn: {
         provider: "copilot",
         userMessage: "inspect brief",
@@ -49,6 +61,7 @@ test("EXT-ATTACH-10: validation後もdispatch envelopeとattachment identityを�
   assert.equal(reparsed.initiator?.kind, "session");
   assert.equal(reparsed.catalogRevision, 7);
   assert.equal(reparsed.providerId, "copilot");
+  assert.equal(reparsed.consultationGrantId, "grant-consultation-1");
   assert.equal(reparsed.turn.attachments?.[0]?.identity?.canonicalRelativePath, "brief.md");
 });
 

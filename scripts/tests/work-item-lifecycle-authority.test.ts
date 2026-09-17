@@ -150,6 +150,35 @@ describe("Work Item lifecycle authority capability", () => {
 
   // @test-value v2
   // kind = "security"
+  // claim = "明示された両側grantを持つ非creatorがdelegated Work Itemを移管できる"
+  // fault = "有効な認可後にcreator一致条件で移管を拒否する、または移管先ownerではなく操作actorをcreatorにする"
+  // observable = "非creator actorによるmove成功と保存されたparent・creator・revision"
+  // observation_boundary = "component-behavior"
+  // oracle = { type = "contract", ref = "docs/adr/031-work-item-lifecycle.md" }
+  // scope = "同一rootの非top-level adopt、実authorityとWorkItemService/storage"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("非creatorにも明示grantで移管を委譲できる", async () => {
+    const { dbPath, create } = await fixture();
+    const source = create("noncreator-source", "root", "task");
+    const destination = create("noncreator-destination", "task", "executor");
+    const actor = agentBinding("task");
+    assert.notEqual(source.creatorSessionId, actor.actorSessionId);
+    issue(dbPath, "assigned", ["task-coordinator"]);
+    issue(dbPath, "created", ["executor"]);
+    const sourceProof = authority!.authorize(actor, "work.move", { workItemId: source.id }).proof;
+    const destinationProof = authority!.authorize(actor, "work.move", { workItemId: destination.id }).proof;
+    const moved = service!.move({ workItemId: source.id, destinationParentWorkItemId: destination.id,
+      expectedRevision: source.revision, expectedAggregateRevision: 0, expectedDestinationAggregateRevision: 0,
+      idempotencyKey: "noncreator-move" }, actor, sourceProof, [destinationProof]);
+    assert.equal(moved.parentWorkItemId, destination.id);
+    assert.equal(moved.creatorSessionId, destination.targetSessionId);
+    assert.equal(moved.revision, source.revision + 1);
+    assert.deepEqual(storage!.get(source.id), moved);
+  });
+
+  // @test-value v2
+  // kind = "security"
   // claim = "Persisted lifecycle grants and their grant history survive authority service restart without baseline grant changes"
   // fault = "startup reissues lifecycle capability or loses its provenance/history, making a previously issued source and destination pair inconsistent"
   // observable = "grant rows, grant event rows, and post-restart authorization"

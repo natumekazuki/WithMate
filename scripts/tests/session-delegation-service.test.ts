@@ -160,6 +160,37 @@ test("prepared work starts only with an admitted retry and cancels through the o
 
 // @test-value v2
 // kind = "invariant"
+// claim = "DelegationのTurn stepはtemporary consultation grant identityを保存済みrequestとowner enqueue inputへ同一値で伝播する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md#Cross-root-consultation" }
+// fault = "consultationGrantIdをparserまたはstep compositionで失い、cross-root dispatchのprovenanceを追跡不能にする"
+// observable = "実SQLite request_jsonとowner enqueue inputのconsultationGrantId"
+// observation_boundary = "component-behavior"
+// scope = "Delegation consultation composition"
+// lifecycle = "permanent"
+// distinction = "既存resource owner stub上で、保存されたrequestとcanonical turn.enqueue入力の一致を確認する"
+// @end-test-value
+test("consultation grant identity is preserved through the saved delegation turn step", async () => {
+  const f = await fixture();
+  try {
+    const consultationGrantId = "authority-grant:consultation-1";
+    const input: DelegationCreateInput = {
+      ...request,
+      idempotencyKey: "consultation-create",
+      items: [{ ...request.items[0]!, turn: { ...request.items[0]!.turn, consultationGrantId } }],
+    };
+    const service = f.make();
+    const created = await service.create(binding, input, proof);
+    const saved = JSON.parse(f.storage.getRequestJson(created.id, binding.actorSessionId)) as DelegationCreateInput;
+    assert.equal(saved.items[0]?.turn.consultationGrantId, consultationGrantId);
+    const enqueue = f.attempts.find((call) => call.operation === "turn.enqueue");
+    assert.equal(enqueue?.input.consultationGrantId, consultationGrantId);
+  } finally {
+    await f.close();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "Delegation batchは最初の失敗で停止し、先行itemのresource IDを保持したまま後続stepだけをretryして重複作成しない"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/04-delegation-transaction.md#部分成功とstep状態" }
 // fault = "後続itemの失敗で先行結果を捨てる、batch全体を再実行してSession・Work Item・Turnを重複作成する"

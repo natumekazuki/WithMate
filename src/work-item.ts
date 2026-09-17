@@ -77,6 +77,7 @@ export type RootWorkItemBinding = WorkItemBindingBase & Readonly<{
 
 export type DelegatedWorkItemBinding = WorkItemBindingBase & Readonly<{
   kind: "delegated";
+  originKind?: "transferred_root";
 }>;
 
 export type WorkItemBinding = RootWorkItemBinding | DelegatedWorkItemBinding;
@@ -126,7 +127,10 @@ export type RootWorkItem = WorkItemBase & RootWorkItemBinding & WorkItemLifecycl
   nextAction: string;
 }>;
 
-export type DelegatedWorkItem = WorkItemBase & DelegatedWorkItemBinding & WorkItemLifecycle;
+export type DelegatedWorkItem = WorkItemBase & DelegatedWorkItemBinding & WorkItemLifecycle & (
+  | Readonly<{ originKind?: never; predecessorWorkItemId?: never; progressSummary?: never; blockers?: never; nextAction?: never }>
+  | Readonly<{ originKind: "transferred_root"; predecessorWorkItemId?: string | null; progressSummary: string; blockers: readonly string[]; nextAction: string }>
+);
 
 export type WorkItem = RootWorkItem | DelegatedWorkItem;
 
@@ -189,8 +193,16 @@ export type WorkItemAssignmentChangedEventPayload = Readonly<{
 export type WorkItemParentChangedEventPayload = Readonly<{
   beforeParentWorkItemId: string | null;
   afterParentWorkItemId: string | null;
+  beforeKind?: WorkItemKind;
+  afterKind?: WorkItemKind;
+  beforeOriginKind?: "native" | "transferred_root";
+  afterOriginKind?: "native" | "transferred_root";
   beforeCreatorSessionId?: string;
   afterCreatorSessionId?: string;
+  beforeRootSessionId?: string;
+  afterRootSessionId?: string;
+  beforeTargetSessionId?: string;
+  afterTargetSessionId?: string;
   supersededDecision: boolean;
 }>;
 export type WorkItemArchivedEventPayload = Readonly<{ archivedAt: string; reason?: string }>;
@@ -339,6 +351,7 @@ export function assertValidWorkItemBinding(binding: WorkItemBinding): void {
   if (binding.creatorSessionId === binding.targetSessionId) {
     throw new TypeError("A delegated Work Item creator and target must differ.");
   }
+  if (binding.originKind === "transferred_root") return;
   if (
     binding.goal.trim().length === 0
     || binding.scope.trim().length === 0

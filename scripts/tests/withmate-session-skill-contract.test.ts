@@ -55,16 +55,28 @@ describe("withmate-session managed Skill contract", () => {
     assert.doesNotMatch(`${skill}\n${operations}`, /node_modules/);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "managed Skillとoperations referenceの配布説明に、baseline templateとactive grantの区別およびconsultation/transferの認可境界を含む"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
+  // fault = "配布説明からbaselineとactive grantの区別、same-root routingまたはcross-root consultation/transferの認可境界が欠落する"
+  // observable = "baseline template、active grant、canonical relation、consultation/transfer境界の配布説明"
+  // observation_boundary = "declaration"
+  // scope = "withmate-session managed Skill authority guidance"
+  // lifecycle = "permanent"
+  // distinction = "Roleの初期templateと現在の認可判断を区別し、例外的なcross-root境界を明示する"
+  // @end-test-value
   it("Agent間TurnのRole/hierarchy authority matrixを配布Skillとreferenceへ同期する", async () => {
     const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
     const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
     const contract = `${skill}\n${operations}`;
 
     assert.match(contract, /sessionTurnCommunicationContractRevision/);
-    assert.match(contract, /standalone actor may target only itself/);
-    assert.match(contract, /overall coordinator may target itself or a direct task coordinator or executor child/);
-    assert.match(contract, /sibling task coordinator with the same root and parent/);
-    assert.match(contract, /executor may target only itself or its direct parent/);
+    assert.match(contract, /Role names and hierarchy are baseline grant templates and routing hints, not a live authorization matrix/);
+    assert.match(contract, /active grant, canonical resource relation, external side-effect class, budget, and runtime generation/);
+    assert.match(contract, /same-root active communication grant may authorize a canonical target beyond the baseline direct-child template/);
+    assert.match(contract, /Cross-root consultation grants are limited to their declared consultation scope/);
+    assert.match(contract, /Session or Work Item transfer requires its dedicated transfer proof/);
     assert.match(contract, /Trusted GUI messages are a separate user-invocation boundary/);
   });
 

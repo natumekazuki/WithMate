@@ -46,6 +46,8 @@ Agentによるroot作成は、現在のrootから独立した作業領域を作�
 
 `session.move` は同じroot内のparent変更と、rootまたはowner境界を越える移管をstrict unionで扱う。cross-root variantだけがsourceとdestination双方のgrant、transfer manifest、drainingを要求する。現行のcross-root入力はtransferPolicyへの`"full"`明示指定を必須とし、省略や`"retain"`などの値を全量移動へ補完しない。
 
+root全体移管の`destinationParentSessionId: null`は、既存rootへの統合を表す。元rootのexecutor化、直属childrenの付け替え、Root Work Itemの由来保持、budget配分の移送は[Ownership transfer](05-grants-routing-and-transfer.md#ownership-transfer)に従い、既存Session階層のdepth上限を維持する。
+
 moveは次を原子的に再評価する。
 
 - cycleが生じないこと

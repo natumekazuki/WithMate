@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   SESSION_AUTHORITY_MAPPING_REVISION,
@@ -10,15 +11,28 @@ import {
   type SessionAuthorityGrant,
   type SessionAuthorityRelationSelector,
 } from "../src/session-authority.js";
-import type { SessionRuntimeOperation } from "../src/session-external-runtime-contract.js";
+import { SessionRuntimeValidationError, type SessionRuntimeOperation } from "../src/session-external-runtime-contract.js";
 import type { SessionRole } from "../src/session-role-binding.js";
 import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
+import {
+  SESSION_GRANT_CONTRACT_REVISION,
+  type SessionGrantCreateInput,
+  type SessionGrantGetInput,
+  type SessionGrantListInput,
+  type SessionGrantListResult,
+  type SessionGrantRevokeInput,
+  type SessionGrantResult,
+} from "../src/session-grant.js";
 import {
   assertGrantProofCurrent,
   backfillBaselineSessionAuthority,
   grantAllows,
   listActiveSessionAuthorityGrants,
   verifySessionAuthorityMigration,
+  createSessionAuthorityGrant,
+  getSessionAuthorityGrant,
+  listSessionAuthorityGrants,
+  revokeSessionAuthorityGrantByActor,
 } from "./session-authority-storage.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
@@ -38,6 +52,21 @@ type SessionIdentity = {
 type ScopeCandidate = {
   scope: ResolvedSessionAuthorityScope;
   targetRole?: SessionRole;
+  requiredGrantId?: string;
+};
+
+const SESSION_GRANT_LIST_CURSOR_VERSION = 1 as const;
+const SESSION_GRANT_LIST_SORT = "grant_id_asc" as const;
+type SessionGrantListCursor = {
+  version: typeof SESSION_GRANT_LIST_CURSOR_VERSION;
+  operation: "grant.list";
+  sort: typeof SESSION_GRANT_LIST_SORT;
+  actorSessionId: string;
+  providerId: string;
+  executionGeneration: string;
+  includeRevoked: boolean;
+  granteeSessionId: string | null;
+  grantId: string;
 };
 
 export class SessionAuthorityService {
@@ -61,6 +90,62 @@ export class SessionAuthorityService {
 
   close(): void {
     this.db.close();
+  }
+
+  grantCreate(binding: ResolvedAgentRuntimeBinding, input: SessionGrantCreateInput): SessionGrantResult {
+    this.validateRuntimeBinding(binding);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const grant = createSessionAuthorityGrant(this.db, { issuerSessionId: binding.actorSessionId, grant: input, issuedAt: this.now().toISOString() });
+      this.db.exec("COMMIT");
+      return projectGrant(grant);
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  grantGet(binding: ResolvedAgentRuntimeBinding, input: SessionGrantGetInput): SessionGrantResult {
+    this.validateRuntimeBinding(binding);
+    return projectGrant(getSessionAuthorityGrant(this.db, binding.actorSessionId, input));
+  }
+
+  grantList(binding: ResolvedAgentRuntimeBinding, input: SessionGrantListInput = {}): SessionGrantListResult {
+    this.validateRuntimeBinding(binding);
+    const limit = input.limit ?? 50;
+    const normalized = input.cursor === undefined
+      ? input
+      : { ...input, cursor: decodeSessionGrantListCursor(input.cursor, binding, input) };
+    const grants = listSessionAuthorityGrants(this.db, binding.actorSessionId, normalized);
+    const items = grants.slice(0, limit).map(projectGrant);
+    return {
+      items,
+      ...(grants.length > limit && items.at(-1)
+        ? { nextCursor: encodeSessionGrantListCursor(items.at(-1)!.grant.grantId, binding, input) }
+        : {}),
+    };
+  }
+
+  grantRevoke(binding: ResolvedAgentRuntimeBinding, input: SessionGrantRevokeInput): SessionGrantResult {
+    this.validateRuntimeBinding(binding);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const grant = revokeSessionAuthorityGrantByActor(this.db, binding.actorSessionId, input, this.now().toISOString());
+      this.db.exec("COMMIT");
+      return projectGrant(grant);
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private validateRuntimeBinding(binding: ResolvedAgentRuntimeBinding): void {
+    const currentGeneration = this.options.getExecutionGeneration(binding.actorSessionId, binding.providerId);
+    if (currentGeneration === null || currentGeneration !== binding.executionGeneration) throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The Session runtime generation is stale.", { actorSessionId: binding.actorSessionId });
+    requireSessionIdentity(this.db, binding.actorSessionId);
+    if (!this.db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ? AND deleted_at IS NULL").get(binding.actorSessionId)) {
+      throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The grant actor is no longer available.");
+    }
   }
 
   authorize<T>(
@@ -160,21 +245,30 @@ export class SessionAuthorityService {
     const actor = requireSessionIdentity(this.db, actorSessionId);
     const definition = SESSION_AUTHORITY_OPERATION_DEFINITIONS[operation];
     const scopes = resolveScopes(this.db, actor, operation, input, transferDestinationRootSessionId);
-    const grants = listActiveSessionAuthorityGrants(this.db, actor.sessionId, now);
+    const consultationGrantId = objectInput(input).consultationGrantId;
+    const grants = listActiveSessionAuthorityGrants(this.db, actor.sessionId, now)
+      .filter((grant) => consultationGrantId === undefined || grant.grantId === consultationGrantId);
     for (const candidate of scopes) {
       const request = {
         action: definition.action,
         effectClass: definition.effectClass,
         resolvedScope: candidate.scope,
       };
-      const grant = grants.find((item) => grantAllows(item, request, candidate.targetRole));
-      if (!grant) continue;
+      for (const grant of grants) {
+      if (candidate.requiredGrantId !== undefined && grant.grantId !== candidate.requiredGrantId) continue;
+      if (grant.rootSessionId !== candidate.scope.rootSessionId || !grantAllows(grant, request, candidate.targetRole)) continue;
+      if ((actor.rootSessionId !== candidate.scope.rootSessionId && !["session.move", "session.move.manifest", "work.move", "work.create"].includes(operation)) || consultationGrantId !== undefined) {
+        if (!Array.isArray(grant.provenance.resourceIds) || grant.expiresAt === null
+          || typeof grant.provenance.purpose !== "string" || typeof grant.provenance.completionCriteria !== "string"
+          || typeof grant.provenance.returnSessionId !== "string" || typeof grant.provenance.budgetAccountId !== "string") continue;
+      }
       const proof = buildProof(actor, operation, runtime, candidate.scope, grant, now);
       try {
         assertGrantProofCurrent(this.db, proof, now);
         return proof;
       } catch (error) {
         if (!(error instanceof SessionAuthorityError)) throw error;
+      }
       }
     }
     throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "No active authority grant permits this operation.", {
@@ -210,6 +304,58 @@ function buildProof(
     grantRevision: grant.revision,
     evaluatedAt: now.toISOString(),
   };
+}
+
+function projectGrant(grant: SessionAuthorityGrant): SessionGrantResult {
+  const publicKeys = ["source", "resourceIds", "purpose", "completionCriteria", "returnSessionId", "budgetAccountId", "budget"];
+  return { contractRevision: SESSION_GRANT_CONTRACT_REVISION, grant: { ...grant,
+    issuerId: grant.issuerKind === "agent" ? grant.issuerId : grant.issuerKind,
+    provenance: Object.fromEntries(Object.entries(grant.provenance).filter(([key]) => publicKeys.includes(key))),
+  } };
+}
+
+function encodeSessionGrantListCursor(
+  grantId: string,
+  binding: ResolvedAgentRuntimeBinding,
+  input: SessionGrantListInput,
+): string {
+  const cursor: SessionGrantListCursor = {
+    version: SESSION_GRANT_LIST_CURSOR_VERSION,
+    operation: "grant.list",
+    sort: SESSION_GRANT_LIST_SORT,
+    actorSessionId: binding.actorSessionId,
+    providerId: binding.providerId,
+    executionGeneration: binding.executionGeneration,
+    includeRevoked: input.includeRevoked === true,
+    granteeSessionId: input.granteeSessionId ?? null,
+    grantId,
+  };
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeSessionGrantListCursor(
+  value: string,
+  binding: ResolvedAgentRuntimeBinding,
+  input: SessionGrantListInput,
+): string {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<SessionGrantListCursor>;
+    if (
+      parsed.version !== SESSION_GRANT_LIST_CURSOR_VERSION
+      || parsed.operation !== "grant.list"
+      || parsed.sort !== SESSION_GRANT_LIST_SORT
+      || parsed.actorSessionId !== binding.actorSessionId
+      || parsed.providerId !== binding.providerId
+      || parsed.executionGeneration !== binding.executionGeneration
+      || parsed.includeRevoked !== (input.includeRevoked === true)
+      || parsed.granteeSessionId !== (input.granteeSessionId ?? null)
+      || typeof parsed.grantId !== "string"
+      || !parsed.grantId
+    ) throw new Error("invalid cursor");
+    return parsed.grantId;
+  } catch {
+    throw new SessionRuntimeValidationError("The grant list cursor is invalid.", { field: "cursor" }, "INVALID_CURSOR");
+  }
 }
 
 function resolveScopes(
@@ -281,7 +427,8 @@ function resolveScopes(
         }];
       }
     }
-    return sessionScopes(db, actor, targetSessionId, definition.resourceKind);
+    const replay = operation === "session.move" ? committedRootMoveReplayScope(db, actor, record) : null;
+    return replay ? [replay] : sessionScopes(db, actor, targetSessionId, definition.resourceKind);
   }
   if (definition.scopeSource === "work_item" || definition.scopeSource === "parent_work_item") {
     const key = definition.scopeSource === "parent_work_item" ? "parentWorkItemId" : "workItemId";
@@ -314,6 +461,30 @@ function resolveScopes(
   throw new SessionAuthorityError("AUTHORITY_SCOPE_INVALID", "The operation authority scope cannot be resolved.", { operation });
 }
 
+function committedRootMoveReplayScope(db: DatabaseSync, actor: SessionIdentity, input: Record<string, unknown>): ScopeCandidate | null {
+  if (input.kind !== "cross_root" || input.destinationParentSessionId !== null
+    || typeof input.sessionId !== "string" || typeof input.destinationRootSessionId !== "string"
+    || typeof input.idempotencyKey !== "string") return null;
+  const row = db.prepare(`SELECT manifest_json, effects_json FROM session_lifecycle_operations_v6
+    WHERE operation = 'session.move' AND principal_kind = 'agent' AND principal_id = ? AND idempotency_key = ?
+      AND target_session_id = ? AND source_root_session_id = ? AND destination_root_session_id = ?`)
+    .get(actor.sessionId, input.idempotencyKey, input.sessionId, input.sessionId, input.destinationRootSessionId) as
+    { manifest_json: string; effects_json: string } | undefined;
+  if (!row) return null;
+  const manifest = objectInput(JSON.parse(row.manifest_json));
+  if (objectInput(JSON.parse(row.effects_json)).database !== "committed" || !isDeepStrictEqual(manifest.input, input)) return null;
+  const destinationProof = objectInput(manifest.destinationProof);
+  if (typeof destinationProof.grantId !== "string") return null;
+  const target = requireSessionIdentity(db, input.sessionId);
+  const destination = requireSessionIdentity(db, input.destinationRootSessionId);
+  if (target.rootSessionId !== destination.sessionId || destination.rootSessionId !== destination.sessionId
+    || destination.parentSessionId !== null) return null;
+  return { scope: { resourceKind: "session", resourceId: target.sessionId, rootSessionId: destination.sessionId,
+    ownerKind: "session", ownerId: destination.sessionId, relation: "root_owner" },
+    // The committed move already admitted the original Roles; recovery only settles its remaining effects.
+    requiredGrantId: destinationProof.grantId };
+}
+
 function sessionScopes(
   db: DatabaseSync,
   actor: SessionIdentity,
@@ -321,9 +492,9 @@ function sessionScopes(
   resourceKind: ResolvedSessionAuthorityScope["resourceKind"],
 ): ScopeCandidate[] {
   const target = requireSessionIdentity(db, targetSessionId);
-  if (target.rootSessionId !== actor.rootSessionId) return [];
   const relations = sessionRelations(actor, target);
-  return relations.map((relation) => scope(actor, resourceKind, target.sessionId, target.sessionId, relation, target.role));
+  if (!relations.includes("root_member")) relations.push("root_member");
+  return relations.map((relation) => ({ ...scope(actor, resourceKind, target.sessionId, target.sessionId, relation, target.role), scope: { ...scope(actor, resourceKind, target.sessionId, target.sessionId, relation).scope, rootSessionId: target.rootSessionId } }));
 }
 
 function workItemScopes(db: DatabaseSync, actor: SessionIdentity, workItemId: string): ScopeCandidate[] {
@@ -352,7 +523,7 @@ function workItemScopes(db: DatabaseSync, actor: SessionIdentity, workItemId: st
       } catch { /* malformed tombstones remain inaccessible */ }
     }
   }
-  if (!item || item.root_session_id !== actor.rootSessionId) return [];
+  if (!item) return [];
   const target = requireSessionIdentity(db, item.target_session_id);
   const values: ScopeCandidate[] = [];
   if (item.kind === "root" && item.root_session_id === actor.sessionId && item.creator_session_id === actor.sessionId) {
@@ -361,7 +532,8 @@ function workItemScopes(db: DatabaseSync, actor: SessionIdentity, workItemId: st
   if (item.target_session_id === actor.sessionId) values.push(scope(actor, "work_item", item.id, item.target_session_id, "assigned", target.role));
   if (item.creator_session_id === actor.sessionId) values.push(scope(actor, "work_item", item.id, item.target_session_id, "created", target.role));
   if (actor.sessionId === actor.rootSessionId) values.push(scope(actor, "work_item", item.id, item.target_session_id, "root_member", target.role));
-  return values;
+  values.push({ ...scope(actor, "work_item", item.id, item.target_session_id, "root_member", target.role), scope: { ...scope(actor, "work_item", item.id, item.target_session_id, "root_member").scope, rootSessionId: item.root_session_id } });
+  return values.map((value) => ({ ...value, scope: { ...value.scope, rootSessionId: item.root_session_id } }));
 }
 
 function executionScopes(db: DatabaseSync, actor: SessionIdentity, executionId: string): ScopeCandidate[] {
@@ -373,12 +545,11 @@ function executionScopes(db: DatabaseSync, actor: SessionIdentity, executionId: 
   `).get(executionId) as { id: string; session_id: string; source_session_id: string | null } | undefined;
   if (!row) return [];
   const target = requireSessionIdentity(db, row.session_id);
-  if (target.rootSessionId !== actor.rootSessionId) return [];
   const values = sessionScopes(db, actor, row.session_id, "execution");
   if (row.source_session_id === actor.sessionId || row.session_id === actor.sessionId) {
     values.unshift(scope(actor, "execution", row.id, row.session_id, "created", target.role));
   }
-  return values.map((value) => ({ ...value, scope: { ...value.scope, resourceId: row.id } }));
+  return values.map((value) => ({ ...value, scope: { ...value.scope, resourceId: row.id, rootSessionId: target.rootSessionId } }));
 }
 
 function interactionScopes(
@@ -419,7 +590,7 @@ function coordinationEventScopes(db: DatabaseSync, actor: SessionIdentity, event
 }
 
 function sessionRelations(actor: SessionIdentity, target: SessionIdentity): SessionAuthorityRelationSelector[] {
-  if (actor.sessionId === target.sessionId) return ["self"];
+  if (actor.sessionId === target.sessionId) return actor.sessionId === actor.rootSessionId ? ["self", "root_owner"] : ["self"];
   const values: SessionAuthorityRelationSelector[] = [];
   if (actor.parentSessionId === target.sessionId) values.push("parent");
   if (target.parentSessionId === actor.sessionId) values.push("direct_child");

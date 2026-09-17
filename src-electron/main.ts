@@ -1,5 +1,5 @@
 import { createTrustedSessionInteractionResponder } from "./session-interaction-service.js";
-import { SESSION_AUTHORITY_MAPPING_REVISION, type TrustedMutationProof } from "../src/session-authority.js";
+import { SESSION_AUTHORITY_MAPPING_REVISION, SessionAuthorityError, type TrustedMutationProof } from "../src/session-authority.js";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -3521,6 +3521,23 @@ function requireSessionExecutionService(): SessionExecutionService {
       ),
       dispatchTurn: dispatchSessionExecutionTurn,
       prepareBudgetAdmission: (sessionId) => createSessionFolderResourceBudget().reconcile(sessionId),
+      validateQueuedAdmission: ({ proof }) => {
+        if (proof.principal.kind !== "agent") return;
+        if (typeof proof.providerId !== "string" || !proof.providerId.trim()) {
+          throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The queued Session runtime provider is unavailable.", {
+            actorSessionId: proof.principal.actorSessionId,
+          });
+        }
+        const currentGeneration = agentRuntimeBindingRegistry.getExecutionGeneration(
+          proof.principal.actorSessionId,
+          proof.providerId,
+        );
+        if (currentGeneration === null || currentGeneration !== proof.principal.runtimeGeneration) {
+          throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The Session runtime generation is stale.", {
+            actorSessionId: proof.principal.actorSessionId,
+          });
+        }
+      },
       cancelRunningTurn: (sessionId, executionId) => {
         cancelSessionRunFromAnySurface(sessionId, executionId);
       },

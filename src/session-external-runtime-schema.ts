@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sessionGrantExpirySchema } from "./session-grant.js";
 import { DELEGATION_MAX_ITEMS, DELEGATION_STATES } from "./delegation.js";
 
 import { APPROVAL_MODE_VALUES } from "./approval-mode.js";
@@ -40,6 +41,7 @@ import {
   SESSION_AUTHORITY_DECISION_CLASSES,
   SESSION_AUTHORITY_EFFECT_CLASSES,
   SESSION_AUTHORITY_RESOURCE_KINDS,
+  SESSION_AUTHORITY_RELATION_SELECTORS,
 } from "./session-authority.js";
 import {
   SESSION_RUNTIME_DEFAULT_LIST_LIMIT,
@@ -168,6 +170,7 @@ const mutationBaseShape = {
     targetSessionId: nonEmptyStringSchema,
   }).strict().optional(),
   workItemId: nonEmptyStringSchema.optional(),
+  consultationGrantId: nonEmptyStringSchema.optional(),
 };
 const runInputSchema = z.object({
   ...mutationBaseShape,
@@ -284,17 +287,27 @@ const sessionRestoreInputSchema = z.discriminatedUnion("kind", [
 const sessionArchiveInputSchema = z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), reason: nonEmptyStringSchema, descendantPolicy: z.enum(["retain", "archive_descendants"]), idempotencyKey: nonEmptyStringSchema }).strict();
 const sessionDeleteManifestInputSchema = sessionGetInputSchema;
 const sessionDeleteInputSchema = z.object({ sessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), manifestRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema }).strict();
-const sessionManifestResultSchema = z.object({
+const sessionLifecycleManifestBaseSchema = z.object({
   sessionId: nonEmptyStringSchema, manifestRevision: z.number().int().min(1), destinationRootSessionId: z.string().nullable(),
   descendants: z.array(z.object({ sessionId: nonEmptyStringSchema, revision: z.number().int().min(1) }).strict()),
-  workItems: z.array(z.object({ workItemId: nonEmptyStringSchema, state: nonEmptyStringSchema, revision: z.number().int().min(1) }).strict()),
+  workItems: z.array(z.object({ workItemId: nonEmptyStringSchema, state: nonEmptyStringSchema, revision: z.number().int().min(1), parentWorkItemId: z.string().nullable() }).strict()),
   artifacts: z.array(z.object({ id: nonEmptyStringSchema, ownerSessionId: nonEmptyStringSchema }).strict()),
   budgetReservations: z.array(z.object({ id: nonEmptyStringSchema, state: nonEmptyStringSchema }).strict()),
   executions: z.object({ running: z.number().int().nonnegative(), queued: z.number().int().nonnegative() }).strict(),
   grants: z.array(z.object({ id: nonEmptyStringSchema, revision: z.number().int().min(1), state: nonEmptyStringSchema }).strict()),
   openInteractions: z.number().int().nonnegative(), openCoordinationEvents: z.number().int().nonnegative(), blockers: z.array(z.string()),
 }).strict();
-const sessionDeleteManifestResultSchema = sessionManifestResultSchema.extend({ deletable: z.boolean() }).strict();
+const sessionManifestResultSchema = sessionLifecycleManifestBaseSchema.extend({
+  budgetAccounts: z.array(z.object({ id: nonEmptyStringSchema, ownerSessionId: nonEmptyStringSchema, rootSessionId: nonEmptyStringSchema, revision: z.number().int().min(1) }).strict()).optional(),
+  budgetUsage: z.array(z.object({ id: nonEmptyStringSchema, accountId: nonEmptyStringSchema, executionId: z.string().nullable(), amount: z.number(), unit: nonEmptyStringSchema, confidence: nonEmptyStringSchema }).strict()).optional(),
+  sessionFolders: z.array(z.object({ sessionId: nonEmptyStringSchema }).strict()).optional(),
+  rootWorkItems: z.array(z.object({ id: nonEmptyStringSchema, state: nonEmptyStringSchema, revision: z.number().int().min(1) }).strict()).optional(),
+  delegationRows: z.array(z.object({ id: nonEmptyStringSchema, actorSessionId: nonEmptyStringSchema, revision: z.number().int().min(1), state: nonEmptyStringSchema }).strict()).optional(),
+  grantChains: z.array(z.object({ id: nonEmptyStringSchema, issuerGrantId: z.string().nullable(), issuerGrantRevision: z.number().int().min(1).nullable(), granteeSessionId: nonEmptyStringSchema, revision: z.number().int().min(1), revokedAt: z.string().nullable(), expiresAt: z.string().nullable() }).strict()),
+  resourceHistory: z.array(z.object({ resourceKind: nonEmptyStringSchema, resourceId: nonEmptyStringSchema, eventCount: z.number().int().nonnegative(), latestRevision: z.number().int().min(1).nullable() }).strict()),
+  coordinationEventIds: z.array(nonEmptyStringSchema), interactionIds: z.array(nonEmptyStringSchema),
+}).strict();
+const sessionDeleteManifestResultSchema = sessionLifecycleManifestBaseSchema.extend({ destinationRootSessionId: z.null(), deletable: z.boolean() }).strict();
 const sessionFileListInputSchema = z.object({
   sessionId: nonEmptyStringSchema,
   limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),
@@ -355,7 +368,7 @@ const actualStartSourceIdentitySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("resolved"), workspace: z.string(), repository: z.string(), branch: z.string(), base: z.string().nullable(), head: z.string() }).strict(),
 ]);
 const workItemReassignInputSchema = z.object({ workItemId: nonEmptyStringSchema, targetSessionId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), expectedContainerRevision: z.number().int().min(1).optional(), transferPolicy: z.enum(["handoff", "successor"]), idempotencyKey: nonEmptyStringSchema }).strict();
-const workItemMoveInputSchema = z.object({ workItemId: nonEmptyStringSchema, destinationParentWorkItemId: nonEmptyStringSchema.nullable(), expectedRevision: z.number().int().min(1), expectedAggregateRevision: z.number().int().min(0).optional(), expectedDestinationAggregateRevision: z.number().int().min(0).optional(), idempotencyKey: nonEmptyStringSchema }).strict();
+const workItemMoveInputSchema = z.object({ workItemId: nonEmptyStringSchema, destinationParentWorkItemId: nonEmptyStringSchema.nullable(), destinationTargetSessionId: nonEmptyStringSchema.optional(), expectedRevision: z.number().int().min(1), expectedAggregateRevision: z.number().int().min(0).optional(), expectedDestinationAggregateRevision: z.number().int().min(0).optional(), expectedDestinationTargetRevision: z.number().int().min(1).optional(), idempotencyKey: nonEmptyStringSchema }).strict();
 const workItemCloneInputSchema = z.object({ workItemId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), expectedContainerRevision: z.number().int().min(1), targetSessionId: nonEmptyStringSchema, parentWorkItemId: nonEmptyStringSchema.nullable().optional(), goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), scope: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), completionCriteria: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), authority: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), sourceIdentity: workItemSourceIdentitySchema, idempotencyKey: nonEmptyStringSchema }).strict();
 const workItemReopenInputSchema = z.object({ workItemId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), strategy: z.literal("successor"), expectedContainerRevision: z.number().int().min(1).optional(), destinationParentWorkItemId: nonEmptyStringSchema.nullable().optional(), goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), scope: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), completionCriteria: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), authority: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), sourceIdentity: workItemSourceIdentitySchema, idempotencyKey: nonEmptyStringSchema }).strict();
 const workItemArchiveInputSchema = z.object({ workItemId: nonEmptyStringSchema, expectedRevision: z.number().int().min(1), reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), idempotencyKey: nonEmptyStringSchema }).strict();
@@ -379,7 +392,7 @@ const workItemEventSchema = z.discriminatedUnion("type", [
   z.object({ ...workItemEventBase, type: z.literal("state_transitioned"), payload: z.object({ from: z.enum(WORK_ITEM_STATES), to: z.enum(WORK_ITEM_STATES) }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("result_reported"), payload: z.object({ from: z.enum(WORK_ITEM_STATES), to: z.enum(WORK_ITEM_STATES), result: workItemEventResultSchema, resultRevision: z.number().int().positive().optional(), supersededResultRevision: z.number().int().positive().optional(), correctionReason: z.string().optional(), sourceRevision: z.number().int().positive().optional(), executionRevision: z.number().int().positive().nullable().optional() }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("assignment_changed"), payload: z.object({ beforeTargetSessionId: z.string(), afterTargetSessionId: z.string() }).strict() }).strict(),
-  z.object({ ...workItemEventBase, type: z.literal("parent_changed"), payload: z.object({ beforeParentWorkItemId: z.string().nullable(), afterParentWorkItemId: z.string().nullable(), beforeCreatorSessionId: z.string().optional(), afterCreatorSessionId: z.string().optional(), supersededDecision: z.boolean() }).strict() }).strict(),
+  z.object({ ...workItemEventBase, type: z.literal("parent_changed"), payload: z.object({ beforeKind: z.enum(["root", "delegated"]).optional(), afterKind: z.enum(["root", "delegated"]).optional(), beforeOriginKind: z.enum(["native", "transferred_root"]).optional(), afterOriginKind: z.enum(["native", "transferred_root"]).optional(), beforeParentWorkItemId: z.string().nullable(), afterParentWorkItemId: z.string().nullable(), beforeCreatorSessionId: z.string().optional(), afterCreatorSessionId: z.string().optional(), beforeRootSessionId: z.string().optional(), afterRootSessionId: z.string().optional(), beforeTargetSessionId: z.string().optional(), afterTargetSessionId: z.string().optional(), supersededDecision: z.boolean() }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("archived"), payload: z.object({ archivedAt: z.string(), reason: z.string().optional() }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("restored"), payload: z.object({ restoredAt: z.string() }).strict() }).strict(),
   z.object({ ...workItemEventBase, type: z.literal("deleted"), payload: z.object({ deletedAt: z.string() }).strict() }).strict(),
@@ -654,6 +667,7 @@ function createExecutionSchema(operation: z.ZodType<"turn.run" | "turn.enqueue">
       updatedAt: z.string(),
     }).strict().nullable(),
     workItemId: z.string().nullable(),
+    consultationGrantId: z.string().nullable(),
     workItemRevision: z.number().int().positive().nullable(),
     plannedSourceIdentity: workItemSourceIdentitySchema.nullable(),
     actualStartSourceIdentity: actualStartSourceIdentitySchema.nullable(),
@@ -808,6 +822,7 @@ const workItemIdentityShape = {
   sequence: z.number().int().positive(),
   contractRevision: z.literal(2),
   kind: z.enum(["root", "delegated"]),
+  originKind: z.literal("transferred_root").optional(),
   rootSessionId: z.string(),
   creatorSessionId: z.string(),
   targetSessionId: z.string(),
@@ -834,6 +849,8 @@ function validateWorkItemKind<T extends z.ZodObject>(schema: T) {
   return schema.superRefine((value, context) => {
     const v = value as {
       kind: string;
+      originKind?: "transferred_root";
+      state?: string;
       progressSummary?: string;
       blockers?: string[];
       nextAction?: string;
@@ -841,11 +858,12 @@ function validateWorkItemKind<T extends z.ZodObject>(schema: T) {
     };
     const b = value as { rootSessionId: string; creatorSessionId: string; targetSessionId: string; parentWorkItemId: string | null; goal: string; scope: string; completionCriteria: string; authority: string };
     if (v.kind === "root" && (b.rootSessionId !== b.creatorSessionId || b.creatorSessionId !== b.targetSessionId || b.parentWorkItemId !== null)) context.addIssue({ code: "custom", path: ["kind"], message: "Root Work Item binding is invalid." });
-    if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || b.goal.length === 0 || b.scope.length === 0 || b.completionCriteria.length === 0 || b.authority.length === 0)) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Item binding is invalid." });
+    if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || (v.originKind !== "transferred_root" && (b.goal.trim().length === 0 || b.scope.trim().length === 0 || b.completionCriteria.trim().length === 0 || b.authority.trim().length === 0)))) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Item binding is invalid." });
+    if (v.originKind === "transferred_root" && (v.kind !== "delegated" || !["completed", "partially_completed", "failed", "canceled"].includes(v.state ?? ""))) context.addIssue({ code: "custom", path: ["originKind"], message: "Transferred root Work Items must be terminal delegated items." });
     const hasProgress = v.progressSummary !== undefined || v.blockers !== undefined || v.nextAction !== undefined;
-    if (v.kind === "root" && (!hasProgress || v.progressSummary === undefined || v.blockers === undefined || v.nextAction === undefined)) context.addIssue({ code: "custom", path: ["kind"], message: "Root Work Items require progress fields." });
-    if (v.kind === "delegated" && hasProgress) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Items cannot include root progress fields." });
-    if (v.kind === "delegated" && v.predecessorWorkItemId !== undefined) context.addIssue({ code: "custom", path: ["predecessorWorkItemId"], message: "Delegated Work Items cannot include root successor fields." });
+    if ((v.kind === "root" || v.originKind === "transferred_root") && (!hasProgress || v.progressSummary === undefined || v.blockers === undefined || v.nextAction === undefined)) context.addIssue({ code: "custom", path: ["kind"], message: "Root Work Items require progress fields." });
+    if (v.kind === "delegated" && v.originKind !== "transferred_root" && hasProgress) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Items cannot include root progress fields." });
+    if (v.kind === "delegated" && v.originKind !== "transferred_root" && v.predecessorWorkItemId !== undefined) context.addIssue({ code: "custom", path: ["predecessorWorkItemId"], message: "Delegated Work Items cannot include root successor fields." });
   });
 }
 const activeWorkItemSchema = validateWorkItemKind(z.object({
@@ -959,7 +977,27 @@ const delegationSchema = z.object({
   }).strict()).max(DELEGATION_MAX_ITEMS),
   recoveryActions: z.array(z.enum(["retry", "cancel", "compensate"])), createdAt: z.string(), updatedAt: z.string(),
 }).strict();
+const grantPermissionSchema = z.object({
+  mode: z.enum(["exercise", "delegate"]), action: z.enum(SESSION_RUNTIME_OPERATIONS),
+  resourceKind: z.enum(SESSION_AUTHORITY_RESOURCE_KINDS), relationSelector: z.enum(SESSION_AUTHORITY_RELATION_SELECTORS),
+  effectClass: z.enum(SESSION_AUTHORITY_EFFECT_CLASSES), targetSessionRoles: z.array(sessionRoleSchema),
+}).strict();
+const grantSchema = z.object({
+  grantId: nonEmptyStringSchema, rootSessionId: nonEmptyStringSchema,
+  issuerKind: z.enum(["agent", "user", "system"]), issuerId: nonEmptyStringSchema,
+  issuerGrantId: z.string().nullable(), issuerGrantRevision: z.number().int().positive().nullable(),
+  granteeSessionId: nonEmptyStringSchema, actions: z.array(z.enum(SESSION_RUNTIME_OPERATIONS)),
+  resourceKind: z.enum(SESSION_AUTHORITY_RESOURCE_KINDS), relationSelector: z.enum(SESSION_AUTHORITY_RELATION_SELECTORS), targetSessionRoles: z.array(sessionRoleSchema),
+  effectClass: z.enum(SESSION_AUTHORITY_EFFECT_CLASSES), delegable: z.boolean(), childCeiling: z.array(grantPermissionSchema),
+  issuedAt: z.string(), effectiveAt: z.string(), expiresAt: z.string().nullable(), revokedAt: z.string().nullable(),
+  revision: z.number().int().positive(), mappingRevision: z.number().int().positive(), provenance: z.record(z.string(), z.unknown()),
+}).strict();
+const grantResultSchema = z.object({ contractRevision: z.literal(1), grant: grantSchema }).strict();
 const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
+  "grant.create": grantResultSchema,
+  "grant.get": grantResultSchema,
+  "grant.list": z.object({ items: z.array(grantResultSchema), nextCursor: z.string().optional() }).strict(),
+  "grant.revoke": grantResultSchema,
   "delegation.create": delegationSchema,
   "delegation.get": delegationSchema,
   "delegation.list": z.object({ items: z.array(delegationSchema), nextCursor: z.string().optional() }).strict(),
@@ -1063,6 +1101,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       models: z.array(modelSchema),
     }).strict()),
     delegation: z.object({ operations: z.array(z.string()), maxItems: z.number().int().positive(), prepareStartOperation: z.literal("delegation.retry"), constraints: z.array(z.string()) }).strict().optional(),
+    grants: z.object({ contractRevision: z.literal(1), operations: z.tuple([z.literal("create"), z.literal("get"), z.literal("list"), z.literal("revoke")]), constraints: z.array(z.string()) }).strict().optional(),
     sessionLifecycle: z.object({
       operations: z.tuple([z.literal("create"), z.literal("configure"), z.literal("rename"), z.literal("move.manifest"), z.literal("move"), z.literal("clone"), z.literal("restore"), z.literal("archive"), z.literal("delete.manifest"), z.literal("delete")]),
       placement: z.tuple([z.literal("root"), z.literal("child")]),
@@ -1190,10 +1229,25 @@ const delegationItemInputSchema = z.object({
   turn: enqueueInputSchema.omit({ sessionId: true, workItemId: true, idempotencyKey: true, expectedContainerRevision: true }),
 }).strict().refine((item) => (item.target.kind === "create" && item.target.session.placement.kind === "root") === (item.work.kind === "root"), "A new root Session requires its canonical Root Work Item.");
 const delegationGetInputSchema = z.object({ delegationId: nonEmptyStringSchema }).strict();
+const grantCreateInputSchema = z.object({
+  parentGrantId: nonEmptyStringSchema, parentGrantRevision: z.number().int().positive(), granteeSessionId: nonEmptyStringSchema,
+  actions: z.array(z.enum(SESSION_RUNTIME_OPERATIONS)).min(1), resourceKind: z.enum(SESSION_AUTHORITY_RESOURCE_KINDS), relationSelector: z.enum(SESSION_AUTHORITY_RELATION_SELECTORS),
+  targetSessionRoles: z.array(sessionRoleSchema).min(1), effectClass: z.enum(SESSION_AUTHORITY_EFFECT_CLASSES), delegable: z.boolean(),
+  childCeiling: z.array(grantPermissionSchema).optional(), expiresAt: sessionGrantExpirySchema, budget: z.record(z.string(), z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)).optional(),
+  resourceIds: z.array(nonEmptyStringSchema).optional(), purpose: nonEmptyStringSchema.optional(), completionCriteria: nonEmptyStringSchema.optional(),
+  returnSessionId: nonEmptyStringSchema.optional(), budgetAccountId: nonEmptyStringSchema.optional(), idempotencyKey: nonEmptyStringSchema,
+}).strict();
+const grantGetInputSchema = z.object({ grantId: nonEmptyStringSchema }).strict();
+const grantListInputSchema = z.object({ granteeSessionId: nonEmptyStringSchema.optional(), includeRevoked: z.boolean().optional(), limit: z.number().int().positive().max(SESSION_RUNTIME_MAX_LIST_LIMIT), cursor: nonEmptyStringSchema.optional() }).strict();
+const grantRevokeInputSchema = z.object({ grantId: nonEmptyStringSchema, expectedRevision: z.number().int().positive(), idempotencyKey: nonEmptyStringSchema }).strict();
 const delegationMutationInputSchema = delegationGetInputSchema.extend({
   expectedRevision: z.number().int().positive(), idempotencyKey: nonEmptyStringSchema,
 });
 const inputSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
+  "grant.create": grantCreateInputSchema,
+  "grant.get": grantGetInputSchema,
+  "grant.list": grantListInputSchema,
+  "grant.revoke": grantRevokeInputSchema,
   "delegation.create": z.object({ idempotencyKey: nonEmptyStringSchema, dispatch: z.enum(["prepare", "enqueue"]), items: z.array(delegationItemInputSchema).min(1).max(DELEGATION_MAX_ITEMS) }).strict(),
   "delegation.get": delegationGetInputSchema,
   "delegation.list": z.object({ limit: z.number().int().positive().max(SESSION_RUNTIME_MAX_LIST_LIMIT), cursor: nonEmptyStringSchema.optional() }).strict(),

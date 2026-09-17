@@ -11,12 +11,15 @@ import { buildNewSession, type Session } from "../../src/session-state.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { applySessionMove } from "../../src-electron/session-lifecycle-move.js";
-import { issueTrustedCrossRootTransferCapability, listActiveSessionAuthorityGrants } from "../../src-electron/session-authority-storage.js";
+import { buildSessionLifecycleManifest } from "../../src-electron/session-lifecycle-manifest.js";
+import { createSessionAuthorityGrant, issueTrustedCrossRootTransferCapability, issueTrustedGrantPolicy, listActiveSessionAuthorityGrants, revokeSessionAuthorityGrant } from "../../src-electron/session-authority-storage.js";
 import { ResourceBudgetStorage, bootstrapRootResourceBudget } from "../../src-electron/resource-budget-storage.js";
+import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
 import { RESOURCE_BUDGET_DIMENSIONS } from "../../src/resource-budget.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
-import { verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
+import { appendWorkItemEventHeader, verifyResourceHistoryProjections } from "../../src-electron/resource-history-schema.js";
 import { SessionCrudError } from "../../src-electron/session-crud-service.js";
+import { SessionAuthorityError } from "../../src/session-authority.js";
 
 const NOW = "2026-09-05T12:00:00.000Z";
 
@@ -503,6 +506,36 @@ describe("Session lifecycle move", () => {
         if (scenario === "owned") allocate(destination, "destination-budget", ctx.destinationRoot.id, 3);
         const destinationAccountId = scenario === "owned" ? "destination-budget" : ctx.destinationRoot.id;
         assert.equal(budget.get(destination.id).accountId, destinationAccountId);
+        if (scenario === "subtree") {
+          db.prepare(`INSERT INTO work_items_v6
+            (id, kind, contract_revision, root_session_id, creator_session_id, target_session_id,
+             parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority,
+             source_identity_json, state, revision, progress_summary, blockers_json, next_action,
+             result_json, created_at, updated_at)
+          VALUES ('subtree-terminal-work', 'delegated', 2, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'pending', 1, '', '[]', '', NULL, ?, ?)`)
+            .run(ctx.sourceRoot.id, moving.id, descendant!.id, "terminal work", "scope", "done", "local",
+              JSON.stringify({ workspace: null, repository: null, branch: null, base: null, head: null }), NOW, NOW);
+          const terminalResult = {
+            outcome: "completed", summary: "", changes: [], verificationResults: [], findings: [],
+            unverifiedItems: [], remainingWork: [], reportingSessionId: moving.id, reportedAt: NOW,
+          };
+          db.prepare("UPDATE work_items_v6 SET state = 'completed', result_json = ? WHERE id = ?")
+            .run(JSON.stringify(terminalResult), "subtree-terminal-work");
+          db.prepare(`INSERT INTO work_item_events_v6
+            (work_item_id, revision, event_type, actor_session_id, principal_kind, payload_json, created_at)
+            VALUES ('subtree-terminal-work', 1, 'created', ?, 'agent', ?, ?)`)
+            .run(ctx.sourceRoot.id, JSON.stringify({
+              kind: "delegated", rootSessionId: ctx.sourceRoot.id, creatorSessionId: moving.id,
+              targetSessionId: descendant!.id, parentWorkItemId: null,
+              sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
+              contract: { goal: "terminal work", scope: "scope", completionCriteria: "done", authority: "local" },
+              progress: { progressSummary: "", blockers: [], nextAction: "" }, state: "completed", result: terminalResult,
+            }), NOW);
+          appendWorkItemEventHeader(db, {
+            workItemId: "subtree-terminal-work", revision: 1, eventKind: "created", proof: sourceProof,
+            operationId: "seed-subtree-terminal-work", idempotencyKey: null, occurredAt: NOW,
+          });
+        }
         applySessionMove(db, { sessionId: moving.id, expectedRevision: 1, kind: "cross_root",
           descendants: descendant ? [{ sessionId: descendant.id, revision: 1 }] : [],
           destinationRootSessionId: ctx.destinationRoot.id, destinationParentSessionId: destination.id,
@@ -518,6 +551,28 @@ describe("Session lifecycle move", () => {
           assert.equal(account.parentAccountId, parentAccountId);
           assert.equal((db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(session.id) as { root_session_id: string }).root_session_id, ctx.destinationRoot.id);
         }
+        if (scenario === "subtree") {
+          const reopenedDb = new DatabaseSync(ctx.dbPath);
+          const reopened = new WorkItemStorageV6(reopenedDb);
+          try {
+            const movedWork = reopened.get("subtree-terminal-work");
+            assert.ok(movedWork);
+            assert.equal(movedWork.rootSessionId, ctx.destinationRoot.id);
+            assert.equal(movedWork.creatorSessionId, moving.id);
+            assert.equal(movedWork.targetSessionId, descendant!.id);
+            assert.equal(movedWork.revision, 2);
+          } finally { reopened.close(); reopenedDb.close(); }
+          const header = db.prepare(`SELECT root_id FROM resource_event_headers_v6
+            WHERE resource_kind = 'work_item' AND resource_id = ? AND resource_revision = 2`)
+            .get("subtree-terminal-work") as { root_id: string } | undefined;
+          assert.ok(header);
+          assert.equal(header.root_id, ctx.destinationRoot.id);
+          const oldEvent = db.prepare(`SELECT payload_json FROM work_item_events_v6
+            WHERE work_item_id = ? AND revision = 2`).get("subtree-terminal-work") as { payload_json: string };
+          const payload = JSON.parse(oldEvent.payload_json) as { beforeRootSessionId: string; afterRootSessionId: string };
+          assert.equal(payload.beforeRootSessionId, ctx.sourceRoot.id);
+          assert.equal(payload.afterRootSessionId, ctx.destinationRoot.id);
+        }
         ensureV6Schema(db);
         verifyResourceHistoryProjections(db);
       } finally {
@@ -525,6 +580,212 @@ describe("Session lifecycle move", () => {
         await rm(ctx.directory, { recursive: true, force: true });
       }
     }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Session移管のmanifestと適用側subtreeは削除済みSessionを対象外として一致する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "tombstone化されたchildが適用側subtreeだけに残り、残存Sessionのcross-root移管を拒否する"
+  // observable = "manifestのdescendants、移管後の生存Session binding、tombstoneの履歴属性"
+  // observation_boundary = "component-behavior"
+  // scope = "session-lifecycle-cross-root-move"
+  // lifecycle = "permanent"
+  // risk_tags = ["security"]
+  // @end-test-value
+  it("tombstone化されたchildをcross-root移管の集合から除外する", async () => {
+    const ctx = await setup();
+    const service = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    let storageClosed = false;
+    try {
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        db.prepare("UPDATE session_role_bindings_v6 SET parent_session_id = ?, delegation_depth = 2 WHERE session_id = ?")
+          .run(ctx.destinationParent.id, ctx.target.id);
+        db.prepare("UPDATE sessions_v6 SET resource_revision = 2, deleted_at = ?, updated_at = ? WHERE id = ?")
+          .run(NOW, NOW, ctx.target.id);
+        const sourceGrant = provisionMoveGrant(db, ctx.sourceRoot.id)[0];
+        const destinationGrant = provisionMoveGrant(db, ctx.sourceRoot.id, ctx.destinationRoot.id)[0];
+        const destinationProof = moveProof(ctx.sourceRoot.id, destinationGrant, ctx.destinationRoot.id);
+        const manifest = buildSessionLifecycleManifest(db, ctx.destinationParent.id, ctx.destinationRoot.id);
+        assert.deepEqual(manifest.descendants, []);
+        const beforeTombstone = db.prepare("SELECT state, deleted_at, root_session_id, parent_session_id, delegation_depth, resource_revision FROM sessions_v6 INNER JOIN session_role_bindings_v6 ON session_role_bindings_v6.session_id = sessions_v6.id WHERE sessions_v6.id = ?")
+          .get(ctx.target.id);
+        const result = applySessionMove(db, {
+          sessionId: ctx.destinationParent.id,
+          expectedRevision: 1,
+          kind: "cross_root",
+          destinationRootSessionId: ctx.destinationRoot.id,
+          destinationParentSessionId: ctx.destinationRoot.id,
+          destinationExpectedRevision: 1,
+          transferManifestRevision: manifest.manifestRevision,
+          transferPolicy: "full",
+          descendants: manifest.descendants,
+          destinationProof,
+        }, moveProof(ctx.sourceRoot.id, sourceGrant), NOW, "move-live-subtree-with-tombstone");
+        assert.equal(result.revisions[ctx.destinationParent.id], 2);
+        assert.deepEqual({ ...db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?")
+          .get(ctx.destinationParent.id) as { root_session_id: string; parent_session_id: string; delegation_depth: number } },
+          { root_session_id: ctx.destinationRoot.id, parent_session_id: ctx.destinationRoot.id, delegation_depth: 1 });
+        assert.deepEqual(db.prepare("SELECT state, deleted_at, root_session_id, parent_session_id, delegation_depth, resource_revision FROM sessions_v6 INNER JOIN session_role_bindings_v6 ON session_role_bindings_v6.session_id = sessions_v6.id WHERE sessions_v6.id = ?")
+          .get(ctx.target.id), beforeTombstone);
+      } finally { db.close(); }
+      ctx.storage.close();
+      storageClosed = true;
+      const reopened = new SessionStorageV6(ctx.dbPath);
+      try {
+        assert.ok(reopened.getSession(ctx.destinationParent.id));
+        assert.equal(reopened.getSession(ctx.target.id), null);
+      } finally { reopened.close(); }
+    } finally { service.close(); if (!storageClosed) ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "cross-root Session moveは移動対象外のWork Item aggregation parentを検出し、SessionとWorkの更新前に拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "移動対象のterminal Workだけを先に移し、外部parentとのaggregation境界を壊す"
+  // observable = "拒否結果、Session binding、Work root/revision/creator/target"
+  // observation_boundary = "component-behavior"
+  // scope = "Session lifecycle cross-root Work ownership transfer"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("外部aggregation parentを含むWork移管を更新前に拒否する", async () => {
+    const ctx = await setup();
+    const service = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    try {
+      const movedDescendant = child("moved-descendant", ctx.target, "executor");
+      ctx.storage.insertSession(movedDescendant);
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        const sourceGrant = provisionMoveGrant(db, ctx.sourceRoot.id)[0];
+        const destinationGrant = provisionMoveGrant(db, ctx.sourceRoot.id, ctx.destinationRoot.id)[0];
+        const sourceProof = moveProof(ctx.sourceRoot.id, sourceGrant);
+        const destinationProof = moveProof(ctx.sourceRoot.id, destinationGrant, ctx.destinationRoot.id);
+        const insert = db.prepare(`INSERT INTO work_items_v6
+          (id, kind, contract_revision, root_session_id, creator_session_id, target_session_id,
+           parent_work_item_id, predecessor_work_item_id, goal, scope, completion_criteria, authority,
+           source_identity_json, state, revision, progress_summary, blockers_json, next_action,
+           result_json, created_at, updated_at)
+          VALUES (?, 'delegated', 2, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 1, '', '[]', '', ?, ?, ?)`);
+        const sourceIdentity = JSON.stringify({ workspace: null, repository: null, branch: null, base: null, head: null });
+        insert.run("external-parent", ctx.sourceRoot.id, ctx.sourceRoot.id, ctx.destinationRoot.id, null,
+          "external parent", "scope", "done", "local", sourceIdentity, "pending", null, NOW, NOW);
+        insert.run("terminal-child", ctx.sourceRoot.id, ctx.target.id, movedDescendant.id, "external-parent",
+          "terminal child", "scope", "done", "local", sourceIdentity, "completed",
+          JSON.stringify({ outcome: "completed" }), NOW, NOW);
+        const beforeSession = db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?")
+          .get(ctx.target.id);
+        const beforeWork = db.prepare("SELECT root_session_id, creator_session_id, target_session_id, revision FROM work_items_v6 WHERE id = ?")
+          .get("terminal-child");
+        assert.throws(() => applySessionMove(db, {
+          sessionId: ctx.target.id, expectedRevision: 1, kind: "cross_root",
+          descendants: [{ sessionId: movedDescendant.id, revision: 1 }], destinationRootSessionId: ctx.destinationRoot.id,
+          destinationParentSessionId: ctx.destinationRoot.id, destinationExpectedRevision: 1,
+          transferManifestRevision: 1, transferPolicy: "full", destinationProof,
+        }, sourceProof, NOW, "move-external-parent"), /aggregation parent/i);
+        assert.deepEqual(db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?")
+          .get(ctx.target.id), beforeSession);
+        assert.deepEqual(db.prepare("SELECT root_session_id, creator_session_id, target_session_id, revision FROM work_items_v6 WHERE id = ?")
+          .get("terminal-child"), beforeWork);
+      } finally { db.close(); }
+    } finally { service.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "移動対象Sessionの未解決resource reservationはmoveを拒否しtopologyを変更しない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "未解決reservationを残したままSession bindingを移動する"
+  // observable = "拒否結果、Session binding、最初のrunning reservation state"
+  // observation_boundary = "component-behavior"
+  // scope = "session-lifecycle-move resource reservation guard"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // @end-test-value
+  it("未解決resource reservationを拒否する", async () => {
+    const ctx = await setup();
+    const service = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    try {
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        bootstrapRootResourceBudget(db, { rootSessionId: ctx.sourceRoot.id, rootCreatedAt: NOW, createdAt: NOW });
+        const budget = new ResourceBudgetStorage(db);
+        const proof = service.authorize(runtimeBinding(ctx.sourceRoot.id), "budget.configure", { sessionId: ctx.sourceRoot.id }).proof;
+        budget.allocateChild({ accountId: "reservation-target", accountKind: "session", rootSessionId: ctx.sourceRoot.id,
+          ownerSessionId: ctx.target.id, parentAccountId: ctx.sourceRoot.id,
+          hardLimits: Object.fromEntries(RESOURCE_BUDGET_DIMENSIONS.map((dimension) => [dimension, dimension === "storageBytes" ? 0 : 2])),
+          authorityGrantId: proof.grantId, authorityGrantRevision: proof.grantRevision, expiresAt: null,
+          deadlineAt: "2026-10-01T00:00:00.000Z", idempotencyKey: "allocate-reservation-target", proof, createdAt: NOW });
+        budget.reconcileCommitted({ sessionId: ctx.target.id, dimension: "storageBytes", absoluteAmount: 0, idempotencyKey: "known-storage", reconciledAt: NOW });
+        const reservation = budget.reserve({ sessionId: ctx.target.id, reservationId: "move-reservation", dimension: "concurrentTurns", amount: 1, kind: "running_turn", idempotencyKey: "move-reservation-key", createdAt: NOW });
+        const beforeBinding = db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id);
+        const moveGrant = provisionMoveGrant(db, ctx.sourceRoot.id)[0];
+        assert.throws(() => applySessionMove(db, { sessionId: ctx.target.id, expectedRevision: 1, kind: "same_root",
+          destinationParentSessionId: ctx.destinationParent.id, destinationExpectedRevision: 1 }, moveProof(ctx.sourceRoot.id, moveGrant), NOW, "move-reservation"), /reservation/i);
+        assert.deepEqual(db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id), beforeBinding);
+        assert.equal((db.prepare("SELECT state FROM resource_budget_reservations_v6 WHERE reservation_id = 'move-reservation'").get() as { state: string }).state, "reserved");
+        budget.releaseReservation(reservation.reservationId, NOW);
+        const storageReservation = budget.reserveStorage({ sessionId: ctx.target.id, bytes: 1, operationId: "moving-folder", createdAt: NOW });
+        assert.equal(storageReservation.accountId, budget.get(ctx.sourceRoot.id).accountId);
+        budget.markReservationForReconciliation(storageReservation.reservationId, NOW);
+        assert.throws(() => applySessionMove(db, { sessionId: ctx.target.id, expectedRevision: 1, kind: "same_root",
+          destinationParentSessionId: ctx.destinationParent.id, destinationExpectedRevision: 1 }, moveProof(ctx.sourceRoot.id, moveGrant), NOW, "move-storage-reservation"), /reservation/i);
+        assert.deepEqual(db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id), beforeBinding);
+      } finally { db.close(); }
+    } finally { service.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "失効したissuerに依存するactive child grantをSession移管で再発行せず、外側transactionがtopology変更をrollbackする"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
+  // fault = "revoked parentの子grantをdestination issuerへ付け替えて権限を復活させる"
+  // observable = "revoked parentとactive childのissuer chain拒否、rollback後のSession root/revisionと移管先grant件数"
+  // observation_boundary = "component-behavior"
+  // scope = "SQLite applySessionMove inside caller transaction with real grant revocation"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("失効issuer chainを移管で復活させない", async () => {
+    const ctx = await setup();
+    const db = new DatabaseSync(ctx.dbPath);
+    try {
+      const sourceGrant = provisionMoveGrant(db, ctx.sourceRoot.id)[0];
+      const destinationGrant = provisionMoveGrant(db, ctx.sourceRoot.id, ctx.destinationRoot.id)[0];
+      const parentGrant = issueTrustedGrantPolicy(db, {
+        rootSessionId: ctx.sourceRoot.id, granteeSessionId: ctx.sourceRoot.id,
+        actions: ["session.get"], resourceKind: "session", relationSelector: "root_member",
+        targetSessionRoles: ["executor"], effectClass: "read", delegable: true,
+        childCeiling: [{ mode: "exercise", action: "session.get", resourceKind: "session", relationSelector: "root_member", effectClass: "read", targetSessionRoles: ["executor"] }],
+        principal: { kind: "system", service: "session-move-test" }, proof: {
+          principal: { kind: "system", service: "session-move-test" }, providerId: null,
+          operation: "session.move", mappingRevision: 2, action: "session.move", effectClass: "local_mutation",
+          grantId: null, grantRevision: null,
+          resolvedScope: { resourceKind: "session", resourceId: null, rootSessionId: ctx.sourceRoot.id, ownerKind: "session", ownerId: ctx.sourceRoot.id, relation: "root_owner" }, evaluatedAt: NOW,
+        }, expiresAt: null, issuedAt: NOW,
+      })[0];
+      createSessionAuthorityGrant(db, { issuerSessionId: ctx.sourceRoot.id, issuedAt: NOW, grant: {
+        parentGrantId: parentGrant.grantId, parentGrantRevision: parentGrant.revision, idempotencyKey: "revoked-parent-child",
+        granteeSessionId: ctx.target.id, actions: ["session.get"], resourceKind: "session", relationSelector: "root_member",
+        targetSessionRoles: ["executor"], effectClass: "read", delegable: false, childCeiling: [], expiresAt: null,
+      }});
+      revokeSessionAuthorityGrant(db, { grantId: parentGrant.grantId, expectedRevision: parentGrant.revision,
+        principal: { kind: "system", service: "test-policy" }, revokedAt: NOW });
+      const before = db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id);
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        assert.throws(() => applySessionMove(db, { sessionId: ctx.target.id, expectedRevision: 1, kind: "cross_root",
+          descendants: [], destinationRootSessionId: ctx.destinationRoot.id, destinationParentSessionId: ctx.destinationRoot.id,
+          destinationExpectedRevision: 1, transferManifestRevision: 1, transferPolicy: "full",
+          destinationProof: moveProof(ctx.sourceRoot.id, destinationGrant, ctx.destinationRoot.id) },
+        moveProof(ctx.sourceRoot.id, sourceGrant), NOW, "revoked-chain-transfer"),
+        (error) => error instanceof SessionAuthorityError && error.code === "AUTHORITY_GRANT_REVISION_CONFLICT");
+      } finally { db.exec("ROLLBACK"); }
+      assert.deepEqual(db.prepare("SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = ?").get(ctx.target.id), before);
+      assert.equal((db.prepare("SELECT resource_revision FROM sessions_v6 WHERE id = ?").get(ctx.target.id) as { resource_revision: number }).resource_revision, 1);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_authority_grants_v6 WHERE grantee_session_id = ? AND root_session_id = ?").get(ctx.target.id, ctx.destinationRoot.id) as { count: number }).count, 0);
+    } finally { db.close(); ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
   });
 
 });

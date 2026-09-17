@@ -75,6 +75,10 @@ export type SessionExecutionServiceDeps = {
   >;
   validateTurn(sessionId: string, request: unknown): Promise<unknown> | unknown;
   prepareBudgetAdmission?(sessionId: string): Promise<void> | void;
+  validateQueuedAdmission?(input: {
+    execution: SessionExecutionStorageRecord;
+    proof: MutationAuthorityProof;
+  }): void;
   dispatchTurn(
     sessionId: string,
     executionId: string,
@@ -551,7 +555,11 @@ export class SessionExecutionService {
         return;
       }
       await this.deps.prepareBudgetAdmission?.(sessionId);
-      const admitted = this.deps.storage.admitNextQueued(sessionId, this.deps.currentTimestamp());
+      const admitted = this.deps.storage.admitNextQueued(
+        sessionId,
+        this.deps.currentTimestamp(),
+        this.deps.validateQueuedAdmission,
+      );
       if (admitted) {
         this.drainFailureCounts.delete(sessionId);
         this.notifyChanged(admitted.id);
