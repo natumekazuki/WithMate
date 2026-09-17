@@ -339,7 +339,7 @@ export type SessionRuntimeSessionMoveManifestResult = {
   grants: Array<{ id: string; revision: number; state: string }>;
   budgetAccounts?: Array<{ id: string; ownerSessionId: string; rootSessionId: string; revision: number }>;
   budgetUsage?: Array<{ id: string; accountId: string; executionId: string | null; amount: number; unit: string; confidence: string }>;
-  sessionFolders?: Array<{ sessionId: string; path: string }>;
+  sessionFolders?: Array<{ sessionId: string }>;
   rootWorkItems?: Array<{ id: string; state: string; revision: number }>;
   delegationRows?: Array<{ id: string; actorSessionId: string; revision: number; state: string }>;
   grantChains: Array<{ id: string; issuerGrantId: string | null; issuerGrantRevision: number | null; granteeSessionId: string; revision: number; revokedAt: string | null; expiresAt: string | null }>;

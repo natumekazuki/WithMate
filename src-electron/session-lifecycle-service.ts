@@ -104,7 +104,7 @@ export class SessionLifecycleService {
       try {
         const stat = lstatSync(path);
         if (!stat.isDirectory() || stat.isSymbolicLink()) throw new SessionCrudError("SESSION_STATE_CONFLICT", "The SessionFolder is not a canonical directory.");
-        return [{ sessionId: id, path }];
+        return [{ sessionId: id }];
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
         throw error;

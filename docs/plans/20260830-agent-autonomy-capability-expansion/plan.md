@@ -676,3 +676,9 @@ grant public入口は現行のauthority owner境界を維持する。各ownerが
 関連検証はgrant 3件、manifest/public contract 25件、Work/Session move 44件（補強delta後のWork 31件を含む）、Skill契約16件、authority/budget/lifecycle/root transfer統合49件が成功した。型検査、本番build、Skill validator、差分checkも成功した。buildにはchunk size warningがある。全suite・GUI目視・実Provider起動は未実施。
 
 開始baseから9 tests／9 transitions（SURVIVED 9）をdiagnostic／warning 0で抽出し、通常のread-only general_lunaが全recordを審査した。Skill testのoracleはsame-rootだけでなくconsultation/transferを含む設計全体へ修正し、claimを配布説明の存在という宣言観測へ限定した。旧文言の不在だけを確認する恒久testは追加しない。確定6件の独立targeted closureでもblocking・契約退行はなかった。今回の変更test審査は完了し、過去の46 record全体を再審査したとは扱わない。残る判断は上記SessionFolder pathの公開要否のみ。依頼範囲を通常の追加commitへ保存し、push、PR作成、mergeは実施しない。
+
+### 移管manifestのSessionFolder公開範囲確定（2026-09-17）
+
+開始baseは `4a2f73f0d29fe8aa7ccbff4e6be51197d947b09f`。ユーザー承認により、移管manifestの`sessionFolders`は実在するcanonical directoryに対応するSession IDだけを返す契約へ限定した。絶対pathを返却値・公開型・strict schemaから除去し、配布CLIを再生成した。filesystemでのdirectory確認は維持し、既存`session.get`のpath公開は変更しない。これにより前項の公開範囲の判断待ちは解消した。
+
+既存のprojection testを更新し、実FolderのSession IDと公開entryを直接確認する。開始baseから1 test／1 transition（SURVIVED）をdiagnostic／warning 0で抽出し、通常のread-only general_lunaが本文・実装経路・privacy契約に対する恒久保持価値を確認した。未解決指摘はない。関連39 test、型検査、Electron/CLI build、差分checkが成功した。UI変更はなく、全suite・GUI・実Provider検証は実施していない。通常の追加commitへ保存し、pushは実施しない。

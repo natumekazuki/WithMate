@@ -10304,10 +10304,7 @@ var sessionManifestResultSchema = sessionLifecycleManifestBaseSchema.extend({
 		unit: nonEmptyStringSchema,
 		confidence: nonEmptyStringSchema
 	}).strict()).optional(),
-	sessionFolders: array(object$1({
-		sessionId: nonEmptyStringSchema,
-		path: nonEmptyStringSchema
-	}).strict()).optional(),
+	sessionFolders: array(object$1({ sessionId: nonEmptyStringSchema }).strict()).optional(),
 	rootWorkItems: array(object$1({
 		id: nonEmptyStringSchema,
 		state: nonEmptyStringSchema,

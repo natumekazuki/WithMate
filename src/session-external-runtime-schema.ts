@@ -299,7 +299,7 @@ const sessionLifecycleManifestBaseSchema = z.object({
 const sessionManifestResultSchema = sessionLifecycleManifestBaseSchema.extend({
   budgetAccounts: z.array(z.object({ id: nonEmptyStringSchema, ownerSessionId: nonEmptyStringSchema, rootSessionId: nonEmptyStringSchema, revision: z.number().int().min(1) }).strict()).optional(),
   budgetUsage: z.array(z.object({ id: nonEmptyStringSchema, accountId: nonEmptyStringSchema, executionId: z.string().nullable(), amount: z.number(), unit: nonEmptyStringSchema, confidence: nonEmptyStringSchema }).strict()).optional(),
-  sessionFolders: z.array(z.object({ sessionId: nonEmptyStringSchema, path: nonEmptyStringSchema }).strict()).optional(),
+  sessionFolders: z.array(z.object({ sessionId: nonEmptyStringSchema }).strict()).optional(),
   rootWorkItems: z.array(z.object({ id: nonEmptyStringSchema, state: nonEmptyStringSchema, revision: z.number().int().min(1) }).strict()).optional(),
   delegationRows: z.array(z.object({ id: nonEmptyStringSchema, actorSessionId: nonEmptyStringSchema, revision: z.number().int().min(1), state: nonEmptyStringSchema }).strict()).optional(),
   grantChains: z.array(z.object({ id: nonEmptyStringSchema, issuerGrantId: z.string().nullable(), issuerGrantRevision: z.number().int().min(1).nullable(), granteeSessionId: nonEmptyStringSchema, revision: z.number().int().min(1), revokedAt: z.string().nullable(), expiresAt: z.string().nullable() }).strict()),

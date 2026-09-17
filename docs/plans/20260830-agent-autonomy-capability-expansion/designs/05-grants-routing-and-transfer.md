@@ -77,6 +77,8 @@ transfer manifestは次を列挙する。
 - open Coordination Eventとpending interaction
 - root resultとhistory
 
+SessionFolderは実在するcanonical directoryを確認し、公開manifestには対応するSession IDだけを列挙する。移管処理に不要な絶対pathは含めない。既存の`session.get`によるSessionFolder pathの公開は変更しない。
+
 transfer中は対象rootを`draining`にして新規mutationを制限する。ただしread、cancel、transfer recoveryは許可する。commit後publication failureはtransfer IDとeffect certaintyを返し、両rootを二重ownerにしない。
 
 ## Revoke と実行中operation

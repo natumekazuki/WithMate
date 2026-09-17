@@ -211,13 +211,15 @@ function issueTransferCapability(dbPath: string, actorSessionId: string, rootSes
 
 // @test-value v2
 // kind = "invariant"
-// claim = "session.move.manifestは実在するcanonical SessionFolderを移動manifestへ投影する"
+// claim = "session.move.manifestは実在するcanonical SessionFolderをSession IDだけで移動manifestへ投影する"
 // oracle = { type = "contract", ref = "src/session-external-runtime-contract.ts#SessionRuntimeSessionMoveManifestResult" }
-// fault = "実在するSessionFolderがmanifestへ投影されない"
-// observable = "moveManifestのsessionFoldersに含まれるsessionIdとcanonical directory path"
+// fault = "実在するSessionFolderの識別子がmanifestから欠落する、または不要なhost pathを公開する"
+// observable = "moveManifestのsessionFoldersに含まれるSession IDのみのentry"
 // observation_boundary = "component-behavior"
 // scope = "SessionLifecycleService.moveManifest SessionFolder enrichment"
 // lifecycle = "permanent"
+// impact = "移管対象Folderの欠落と不要なprivate pathの公開を防ぐ"
+// distinction = "既存service testで実filesystemのFolder確認から返却projectionまでを観測し、型だけでは防げない余分なfieldも最小のassertionで確認する"
 // @end-test-value
 test("SessionLifecycleService moveManifestは実在SessionFolderだけを返す", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-lifecycle-manifest-folder-"));
@@ -228,7 +230,7 @@ test("SessionLifecycleService moveManifestは実在SessionFolderだけを返す"
     const folder = path.join(root, "session-files", "session-created");
     await mkdir(folder, { recursive: true });
     const manifest = service.moveManifest("session-created", "session-created");
-    assert.deepEqual(manifest.sessionFolders, [{ sessionId: "session-created", path: folder }]);
+    assert.deepEqual(manifest.sessionFolders, [{ sessionId: "session-created" }]);
   } finally {
     close();
     await rm(root, { recursive: true, force: true });
