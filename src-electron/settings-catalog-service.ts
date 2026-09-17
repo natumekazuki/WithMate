@@ -406,6 +406,13 @@ export class SettingsCatalogService {
     if (resetTargets.length === 0) {
       throw new Error("初期化対象が選ばれていないよ。");
     }
+    const previousAuxiliarySessionIds = resetTargets.includes("sessions")
+      ? (await this.deps.listAuxiliarySessions()).map((session) => session.id)
+      : [];
+    const previousSessionNotificationIds = [
+      ...previousSessionIds,
+      ...previousAuxiliarySessionIds,
+    ];
 
     if (resetTargets.includes("sessions")) {
       this.deps.closeResetTargetWindows();
@@ -416,7 +423,7 @@ export class SettingsCatalogService {
 
     if (areAllResetAppDatabaseTargetsSelected(resetTargets)) {
       modelCatalog = await this.deps.recreateDatabaseFile();
-      this.dismissSessionTurnNotifications(previousSessionIds);
+      this.dismissSessionTurnNotifications(previousSessionNotificationIds);
       this.deps.resetSessionRuntime();
       this.deps.clearAllSessionBackgroundActivities();
       await this.deps.invalidateAllProviderSessionThreads();
@@ -431,7 +438,7 @@ export class SettingsCatalogService {
       }
       if (appliedTargets.has("sessions")) {
         await this.deps.replaceAllSessions([], { broadcast: false });
-        this.dismissSessionTurnNotifications(previousSessionIds);
+        this.dismissSessionTurnNotifications(previousSessionNotificationIds);
         this.deps.resetSessionRuntime();
         this.deps.clearAllSessionBackgroundActivities();
         await this.deps.invalidateAllProviderSessionThreads();

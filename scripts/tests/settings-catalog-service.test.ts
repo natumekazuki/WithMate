@@ -1006,10 +1006,25 @@ describe("SettingsCatalogService", () => {
     assert.deepEqual(service.exportModelCatalogDocument(1), document);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Sessionsを含むpartial/full DB resetは親SessionとAuxiliaryの通知を永続化成功後に閉じる"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "reset失敗前に通知を閉じる、または成功したSessions reset後もAuxiliary通知を開いたままにする"
+  // observable = "dismissSessionTurnNotificationへ渡されたIDと呼び出し順"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-session-reset-notification-cleanup"
+  // lifecycle = "permanent"
+  // distinction = "Session単体削除とは異なるDB resetのpartial/full分岐で、保存成功後の親・Auxiliary通知撤去を検証する"
+  // @end-test-value
   it("session の partial/full reset は永続化成功後に全通知を閉じる", async () => {
     let sessions = [
       { ...createSession(), id: "session-partial-1" },
       { ...createSession(), id: "session-partial-2" },
+    ];
+    let auxiliarySessions = [
+      createAuxiliarySession({ id: "aux-partial-1", parentSessionId: "session-partial-1" }),
+      createAuxiliarySession({ id: "aux-partial-2", parentSessionId: "session-partial-2" }),
     ];
     const calls: string[] = [];
     const firstReplacementStarted = createDeferred();
@@ -1032,7 +1047,7 @@ describe("SettingsCatalogService", () => {
         return sessions;
       },
       listAuxiliarySessions() {
-        return [];
+        return auxiliarySessions;
       },
       getAppSettings() {
         return createDefaultAppSettings();
@@ -1161,6 +1176,8 @@ describe("SettingsCatalogService", () => {
       "replace:0",
       "dismissNotification:session-partial-1",
       "dismissNotification:session-partial-2",
+      "dismissNotification:aux-partial-1",
+      "dismissNotification:aux-partial-2",
       "resetRuntime",
       "clearAllActivity",
       "invalidateAllThreads",
@@ -1176,6 +1193,10 @@ describe("SettingsCatalogService", () => {
     sessions = [
       { ...createSession(), id: "session-full-1" },
       { ...createSession(), id: "session-full-2" },
+    ];
+    auxiliarySessions = [
+      createAuxiliarySession({ id: "aux-full-1", parentSessionId: "session-full-1" }),
+      createAuxiliarySession({ id: "aux-full-2", parentSessionId: "session-full-2" }),
     ];
 
     const failedFullReset = service.resetAppDatabase();
@@ -1203,6 +1224,8 @@ describe("SettingsCatalogService", () => {
       "recreateDb",
       "dismissNotification:session-full-1",
       "dismissNotification:session-full-2",
+      "dismissNotification:aux-full-1",
+      "dismissNotification:aux-full-2",
       "resetRuntime",
       "clearAllActivity",
       "invalidateAllThreads",

@@ -65,14 +65,14 @@ function setup(
 
 // @test-value v2
 // kind = "contract"
-// claim = "通知から指定されたAuxiliary IDは一覧取得後の初期選択へ反映され、Auxiliary選択はMain/Auxiliaryの送信対象を変更しない"
+// claim = "Auxiliary workspaceへ指定された初期IDは一覧取得後の初期選択へ反映され、Auxiliary選択はMain/Auxiliaryの送信対象を変更しない"
 // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
-// fault = "新規Session WindowのAuxiliary queryを無視する、または対象会話の選択時に送信対象までAuxiliaryへ切り替える"
+// fault = "一覧取得後の初期選択IDを無視する、または対象会話の選択時に送信対象までAuxiliaryへ切り替える"
 // observable = "hookのselectedId、selectedSession、target"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-workspace-notification-navigation"
 // lifecycle = "permanent"
-// distinction = "通常の一覧選択testでは検証できない通知由来の初期選択と送信対象の独立性を専用に検証する"
+// distinction = "通常の一覧選択testでは検証できない初期選択と送信対象の独立性をhookのcomponent behaviorとして検証する"
 // @end-test-value
 test("通知由来のAuxiliary選択は送信対象を変更しない", async () => {
   const a = session("a", "2026-01-01");

@@ -58,14 +58,14 @@ test("buildChatEntrySearch は chat mode ごとの session.html query を組み�
 
 // @test-value v2
 // kind = "contract"
-// claim = "既存Session WindowをAuxiliary対象で新規作成すると、dev/prodのsession.html load経路へ親Session IDとAuxiliary Session IDを渡す"
+// claim = "新規Session Windowのdev/prod session.html load経路は、親Session IDとAuxiliary Session IDをqueryへ保持する"
 // oracle = { type = "contract", ref = "ChatEntryMode and session.html location contract" }
-// fault = "Auxiliary通知から新規Windowを開いた時にdevまたはproductionのload経路で対象Auxiliaryのqueryを落とし、一覧先頭や保存済み選択へ誤って移動する"
+// fault = "devまたはproductionのsession.html load経路でAuxiliary Session IDをqueryへ渡さず、対象Auxiliaryの初期選択情報を失う"
 // observable = "WindowEntryLoaderのloadURL/loadFileへ渡したsession.html URLまたはquery"
 // observation_boundary = "public-boundary"
 // scope = "window-entry-auxiliary-navigation"
 // lifecycle = "permanent"
-// distinction = "通常のchat mode query testとは分離し、通知起点のAuxiliary初期選択に必要なdev/prod共通queryを専用に検証する"
+// distinction = "通常のchat mode query testとは分離し、新規Windowのentry loaderがdev/prod共通queryを保持することを専用に検証する"
 // @end-test-value
 test("WindowEntryLoader はAuxiliary対象のagent queryをdev/prodで保持する", async () => {
   const devStub = createWindowStub();

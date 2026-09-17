@@ -288,6 +288,7 @@ export type DeleteSessionsResult = {
   cutoffDate?: string;
   cutoffTimestampMs?: number;
   deletedSessionIds: string[];
+  deletedAuxiliarySessionIds?: string[];
   skippedRunningSessionIds: string[];
 };
 
