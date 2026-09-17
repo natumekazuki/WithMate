@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
@@ -396,6 +397,18 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "File PreviewのCopy File利用可否とcopied/effect-unknown結果は操作群と分離した共通通知overlayでsuccess/error toneとARIA roleを持って表示される"
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8A" }
+// fault = "Copy Fileを利用可能時に表示しない、利用不可時に表示する、effect-unknownをsuccess toneまたはstatusとして表示する、copiedをerror toneまたはalertとして表示する、または操作群を構成する要素として表示する"
+// observable = "Copy Fileの表示可否、copied/effect-unknownのmessage、success/error class、role、aria-live、header notification layer包含関係、操作群からの分離、下部feedbackの不在"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview Copy File availability and feedback"
+// lifecycle = "permanent"
+// impact = "利用者が操作直後にファイルコピー結果を確認でき、成功を失敗と誤認しない"
+// distinction = "copy serviceのstatus返却ではなく、File Previewの利用者向け配置・視認性・ARIA表示を直接検証する"
+// @end-test-value
 test("File Preview はWindowsだけCopy Fileを表示しCopy Imageと別contractで結果を表示する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -405,6 +418,7 @@ test("File Preview はWindowsだけCopy Fileを表示しCopy Imageと別contract
   const restoreElementSize = installElementSize(dom);
   const copyRequests: SessionFileResourceRequest[] = [];
   const harness = createPreviewApi(async () => IMAGE_DESCRIPTOR);
+  let copyResult: "effect-unknown" | "copied" = "effect-unknown";
   const api: PreviewApi = {
     ...harness.api,
     isSessionFileObjectCopyAvailable() {
@@ -412,7 +426,9 @@ test("File Preview はWindowsだけCopy Fileを表示しCopy Imageと別contract
     },
     async copySessionFileObject(request) {
       copyRequests.push(request.resource);
-      return { status: "effect-unknown", message: "File copy status is unknown." };
+      return copyResult === "copied"
+        ? { status: "copied", message: "File copied." }
+        : { status: "effect-unknown", message: "File copy status is unknown." };
     },
   };
   const container = dom.window.document.getElementById("root");
@@ -432,10 +448,30 @@ test("File Preview はWindowsだけCopy Fileを表示しCopy Imageと別contract
       await Promise.resolve();
     });
     assert.deepEqual(copyRequests, [IMAGE_DESCRIPTOR]);
-    assert.equal(
-      container.querySelector(".session-file-preview-feedback")?.textContent,
-      "File copy status is unknown.",
-    );
+    const copyFeedback = container.querySelector<HTMLElement>(".session-file-preview-copy-feedback");
+    assert.equal(copyFeedback?.textContent, "File copy status is unknown.");
+    assert.ok(copyFeedback?.classList.contains("error"));
+    assert.equal(copyFeedback?.getAttribute("role"), "alert");
+    assert.equal(copyFeedback?.getAttribute("aria-live"), "assertive");
+    assert.equal(copyFeedback?.closest(".session-file-preview-header") !== null, true);
+    assert.equal(copyFeedback?.closest(".session-file-preview-notification-layer") !== null, true);
+    assert.equal(copyFeedback?.closest(".session-file-preview-actions"), null);
+    assert.equal(container.querySelector(".session-file-preview-feedback"), null);
+
+    copyResult = "copied";
+    await act(async () => {
+      copyFile.click();
+      await Promise.resolve();
+    });
+    const successFeedback = container.querySelector<HTMLElement>(".session-file-preview-copy-feedback");
+    assert.equal(successFeedback?.textContent, "File copied.");
+    assert.ok(successFeedback?.classList.contains("success"));
+    assert.equal(successFeedback?.getAttribute("role"), "status");
+    assert.equal(successFeedback?.getAttribute("aria-live"), "polite");
+    assert.equal(successFeedback?.closest(".session-file-preview-header") !== null, true);
+    assert.equal(successFeedback?.closest(".session-file-preview-notification-layer") !== null, true);
+    assert.equal(successFeedback?.closest(".session-file-preview-actions"), null);
+    assert.equal(container.querySelector(".session-file-preview-feedback"), null);
 
     const unavailableApi: PreviewApi = {
       ...api,
@@ -1377,6 +1413,18 @@ test("拡大画像を主ポインターでドラッグするとスクロール�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "単体画像previewのCopy Image操作（buttonと右クリック）の成功結果は操作群と分離した共通通知overlayでsuccess toneとstatus roleを持って表示される"
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8" }
+// fault = "Copy Image操作の成功結果を下部のerror表示として出す、または操作群を構成する要素として表示する"
+// observable = "Copy Image結果のmessage、success class、status role、aria-live、header notification layer包含関係、操作群からの分離、下部feedbackの不在"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview Copy Image feedback"
+// lifecycle = "permanent"
+// impact = "画像コピー直後の成功結果を操作位置の近くで確認できる"
+// distinction = "画像座標をcopy境界へ渡す既存検証に加え、rendererの結果通知の視認性とARIA契約を直接検証する"
+// @end-test-value
 test("単体画像previewはbuttonと右クリックから現在の画像座標をcopy境界へ渡す", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -1448,21 +1496,56 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
       sessionId: "session-1",
       point: { x: 70, y: 80 },
     }]);
-    assert.match(container.textContent ?? "", /Image copied\./);
+    const imageCopyFeedback = container.querySelector<HTMLElement>(".session-file-preview-copy-feedback");
+    assert.equal(imageCopyFeedback?.textContent, "Image copied.");
+    assert.ok(imageCopyFeedback?.classList.contains("success"));
+    assert.equal(imageCopyFeedback?.getAttribute("role"), "status");
+    assert.equal(imageCopyFeedback?.getAttribute("aria-live"), "polite");
+    assert.equal(imageCopyFeedback?.closest(".session-file-preview-header") !== null, true);
+    assert.equal(imageCopyFeedback?.closest(".session-file-preview-notification-layer") !== null, true);
+    assert.equal(imageCopyFeedback?.closest(".session-file-preview-actions"), null);
+    assert.equal(container.querySelector(".session-file-preview-feedback"), null);
 
+    const contextMenuRequest: SessionFileResourceRequest = {
+      ...IMAGE_DESCRIPTOR,
+      relativePath: "docs/context-menu.png",
+    };
+    await act(async () => {
+      root?.render(React.createElement(SessionFilePreview, {
+        api,
+        request: contextMenuRequest,
+        onClose() {},
+        onCopyText() {},
+        onQuoteText() {},
+      }));
+    });
+    await waitFor(() => container.querySelector<HTMLImageElement>(".session-file-image") !== null);
+    await waitFor(() => container.querySelector(".session-file-preview-copy-feedback") === null);
+    const contextMenuImage = container.querySelector<HTMLImageElement>(".session-file-image");
+    assert.ok(contextMenuImage);
     const contextMenuEvent = new dom.window.MouseEvent("contextmenu", {
       bubbles: true,
       cancelable: true,
       clientX: 44,
       clientY: 55,
     });
-    await act(async () => image.dispatchEvent(contextMenuEvent));
+    await act(async () => contextMenuImage.dispatchEvent(contextMenuEvent));
     await waitFor(() => contextMenuRequests.length === 1);
     assert.equal(contextMenuEvent.defaultPrevented, true);
     assert.deepEqual(contextMenuRequests, [{
       sessionId: "session-1",
       point: { x: 44, y: 55 },
     }]);
+    await waitFor(() => container.querySelector<HTMLElement>(".session-file-preview-copy-feedback")?.textContent === "Image copied.");
+    const contextMenuFeedback = container.querySelector<HTMLElement>(".session-file-preview-copy-feedback");
+    assert.equal(contextMenuFeedback?.textContent, "Image copied.");
+    assert.ok(contextMenuFeedback?.classList.contains("success"));
+    assert.equal(contextMenuFeedback?.getAttribute("role"), "status");
+    assert.equal(contextMenuFeedback?.getAttribute("aria-live"), "polite");
+    assert.equal(contextMenuFeedback?.closest(".session-file-preview-header") !== null, true);
+    assert.equal(contextMenuFeedback?.closest(".session-file-preview-notification-layer") !== null, true);
+    assert.equal(contextMenuFeedback?.closest(".session-file-preview-actions"), null);
+    assert.equal(container.querySelector(".session-file-preview-feedback"), null);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -1472,6 +1555,45 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
     restoreGlobals();
     dom.window.close();
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "別窓File Previewのcopy通知は暗色theme token上でsuccess/errorの文字・背景・borderを保ち、操作群外のabsolute overlayとして表示される"
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8" }
+// fault = "別窓が明色surfaceと明色文字を継承する、success/errorの背景またはborderが欠ける、または通知layerが通常の操作列へ参加する"
+// observable = "file-preview-window-page、app-notificationのsuccess/error、session-file-preview-notification-layer各CSS declaration"
+// observation_boundary = "declaration"
+// scope = "File Preview detached notification stylesheet"
+// lifecycle = "permanent"
+// impact = "別窓でcopy結果の通知が背景に埋もれず、既存操作の位置を変えない"
+// distinction = "JSDOMでは算出できないtheme継承とlayout参加条件をstylesheet declarationから確認し、DOMの通知内容・ARIA・親境界の検証と分担する"
+// @end-test-value
+test("別窓File Previewのcopy通知CSSは暗色themeと操作群外overlayを定義する", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const pageRule = styles.match(/\.file-preview-window-page\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const notificationRule = styles.match(/\.app-notification\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const successRule = styles.match(/\.app-notification\.success\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const errorRule = styles.match(/\.app-notification\.error\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const layerRule = styles.match(/\.session-file-preview-notification-layer\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+
+  assert.match(pageRule, /--surface-strong:\s*rgba\(28,\s*33,\s*43,\s*0\.98\);/);
+  assert.match(pageRule, /--line:\s*rgba\(203,\s*213,\s*225,\s*0\.12\);/);
+  assert.match(pageRule, /--ink:\s*#e5edf8;/);
+  assert.match(pageRule, /--teal:\s*#6fb8c7;/);
+  assert.match(pageRule, /--teal-soft:\s*rgba\(111,\s*184,\s*199,\s*0\.14\);/);
+  assert.match(notificationRule, /border:\s*1px solid var\(--line\);/);
+  assert.match(notificationRule, /background:\s*var\(--surface-strong\);/);
+  assert.match(notificationRule, /color:\s*var\(--ink\);/);
+  assert.match(successRule, /border-color:\s*var\(--teal\);/);
+  assert.match(successRule, /background:\s*color-mix\(in srgb,\s*var\(--teal-soft\)\s*72%,\s*var\(--surface-strong\)\);/);
+  assert.match(errorRule, /border-color:\s*var\(--danger,\s*#fca5a5\);/);
+  assert.match(errorRule, /background:\s*color-mix\(in srgb,\s*var\(--danger,\s*#fca5a5\)\s*14%,\s*var\(--surface-strong\)\);/);
+  assert.match(layerRule, /position:\s*absolute;/);
+  assert.match(layerRule, /top:\s*calc\(100%\s*\+\s*8px\);/);
+  assert.match(layerRule, /right:\s*10px;/);
+  assert.match(layerRule, /z-index:\s*2;/);
+  assert.match(layerRule, /pointer-events:\s*none;/);
 });
 
 test("画像previewは初回Fitの実効倍率を表示しZoom Inの基準にする", async () => {

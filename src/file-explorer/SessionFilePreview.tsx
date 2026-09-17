@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { MessageRichText } from "../MessageRichText.js";
+import { AppNotification, type AppNotificationState } from "../app-notification.js";
 import { BackNavigationButton } from "../back-navigation-button.js";
 import { ImageViewport, ImageZoomControls, useImageViewport } from "../image-viewport.js";
 import { SelectionTextActionSurface } from "../session-components.js";
@@ -28,6 +29,7 @@ import {
   isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "./file-explorer-contract.js";
+import { getSessionFileObjectCopyFeedbackTone } from "./session-file-object-copy-contract.js";
 import {
   decodeSessionFileBytes,
   findPreviewTextMatches,
@@ -584,6 +586,7 @@ export function SessionFilePreview({
   const [imageObjectUrl, setImageObjectUrl] = useState("");
   const [roots, setRoots] = useState<SessionFileRoot[]>([]);
   const [feedback, setFeedback] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState<AppNotificationState | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [currentMatch, setCurrentMatch] = useState(0);
@@ -674,6 +677,7 @@ export function SessionFilePreview({
     setStructuredTextProjection({ status: "idle" });
     setImageObjectUrl("");
     setFeedback("");
+    setCopyFeedback(null);
     setFindOpen(false);
     setFindQuery("");
     setCurrentMatch(0);
@@ -962,11 +966,14 @@ export function SessionFilePreview({
     try {
       const result = await api.copySessionFileObject({ resource: request });
       if (loadRevisionRef.current === revision) {
-        setFeedback(result.message);
+        setCopyFeedback({
+          message: result.message,
+          tone: getSessionFileObjectCopyFeedbackTone(result),
+        });
       }
     } catch {
       if (loadRevisionRef.current === revision) {
-        setFeedback("File could not be copied.");
+        setCopyFeedback({ message: "File could not be copied.", tone: "error" });
       }
     }
   }, [api, fileObjectCopyAvailable, request]);
@@ -977,7 +984,7 @@ export function SessionFilePreview({
     }
     const point = resolveVisibleImageCopyPoint(imageViewport.imageRef.current, imageViewport.viewportRef.current);
     if (!point) {
-      setFeedback("The image is not currently visible.");
+      setCopyFeedback({ message: "The image is not currently visible.", tone: "error" });
       return;
     }
     const revision = loadRevisionRef.current;
@@ -987,11 +994,14 @@ export function SessionFilePreview({
         point,
       });
       if (loadRevisionRef.current === revision) {
-        setFeedback(result.status === "copied" ? "Image copied." : result.message);
+        setCopyFeedback({
+          message: result.status === "copied" ? "Image copied." : result.message,
+          tone: result.status === "copied" ? "success" : "error",
+        });
       }
     } catch {
       if (loadRevisionRef.current === revision) {
-        setFeedback("Image could not be copied.");
+        setCopyFeedback({ message: "Image could not be copied.", tone: "error" });
       }
     }
   }, [api, request.sessionId]);
@@ -1013,11 +1023,14 @@ export function SessionFilePreview({
         },
       });
       if (loadRevisionRef.current === revision && result.status !== "dismissed") {
-        setFeedback(result.status === "copied" ? "Image copied." : result.message);
+        setCopyFeedback({
+          message: result.status === "copied" ? "Image copied." : result.message,
+          tone: result.status === "copied" ? "success" : "error",
+        });
       }
     } catch {
       if (loadRevisionRef.current === revision) {
-        setFeedback("Image context menu could not be opened.");
+        setCopyFeedback({ message: "Image context menu could not be opened.", tone: "error" });
       }
     }
   }, [api, request.sessionId]);
@@ -1226,6 +1239,14 @@ export function SessionFilePreview({
             </>
           ) : null}
         </div>
+        {copyFeedback ? (
+          <div className="session-file-preview-notification-layer">
+            <AppNotification
+              notification={copyFeedback}
+              className="session-file-preview-copy-feedback"
+            />
+          </div>
+        ) : null}
       </header>
 
       {findOpen && descriptor && (previewKind === "text" || previewKind === "markdown") ? (

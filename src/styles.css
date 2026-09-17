@@ -5421,6 +5421,7 @@ button:disabled {
 
 .session-file-preview-header {
   grid-area: header;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -5508,6 +5509,45 @@ button:disabled {
   flex: 0 0 auto;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.app-notification {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  max-width: min(520px, calc(100vw - 36px));
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.app-notification.success {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal-soft) 72%, var(--surface-strong));
+}
+
+.app-notification.error {
+  border-color: var(--danger, #fca5a5);
+  background: color-mix(in srgb, var(--danger, #fca5a5) 14%, var(--surface-strong));
+}
+
+.session-file-preview-notification-layer {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 10px;
+  z-index: 2;
+  max-width: calc(100% - 20px);
+  pointer-events: none;
+}
+
+.session-file-preview-copy-feedback {
+  max-width: min(320px, calc(100vw - 36px));
 }
 
 .session-file-preview-actions button,
@@ -6096,9 +6136,17 @@ button:disabled {
 }
 
 .file-preview-window-page {
+  --surface: rgba(25, 29, 38, 0.94);
+  --surface-strong: rgba(28, 33, 43, 0.98);
   --ink: #e5edf8;
   --muted: #aab6c8;
   --surface-deep: rgba(18, 22, 30, 0.98);
+  --line: rgba(203, 213, 225, 0.12);
+  --orange: #6f8cff;
+  --orange-soft: rgba(111, 140, 255, 0.16);
+  --teal: #6fb8c7;
+  --teal-soft: rgba(111, 184, 199, 0.14);
+  --shadow: 0 24px 48px rgba(0, 0, 0, 0.34);
   width: 100vw;
   height: 100vh;
   min-width: 0;

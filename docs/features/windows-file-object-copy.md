@@ -33,6 +33,12 @@ helperには認可済みの絶対path一件だけを渡します。shell command
 
 clipboardへの書き込みに失敗した場合、path文字列へfallbackせず、成功通知も表示しません。元のclipboard内容を意図的に別形式へ置き換えません。
 
+## Copy結果の通知
+
+File Previewの`Copy File`成功・失敗は、headerの操作群の直下に重なる通知として表示します。通知は操作群のレイアウト領域に参加しないため、既存の`Find`、`Reload`、`Open`などの位置を動かしません。
+
+成功はsuccess tone、失敗はerror toneで表示し、成功をエラー表示と誤認しないようにします。通知は共通の`AppNotification` primitiveを使いますが、現在の適用先はFile Previewだけです。preview本文の読み込み・表示エラーに使う下端のfeedbackとは別の表示領域です。
+
 この機能はWindows限定です。他のOSでは`Copy File`を表示しません。
 
 ## 関連文書
