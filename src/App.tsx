@@ -4312,6 +4312,7 @@ export default function AgentSessionWindowApp() {
             label: summary.preview ?? "新しい会話",
             searchText: summary.preview ?? "新しい会話",
             icon: <CharacterAvatar key={summary.id} character={{ name: "", iconPath: summary.characterIconPath ?? "" }} size="tiny" />,
+            isProcessing: summary.runState === "running",
           })),
           onAddAuxiliary: handleOpenAuxiliaryLaunchDialog,
           isAddAuxiliaryDisabled: isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable || isAuxiliaryActionPending,

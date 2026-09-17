@@ -1951,10 +1951,10 @@ test("ConcurrentChatSplitter は幅0をclickだけで既定幅へ戻す", async 
 
 // @test-value v2
 // kind = "contract"
-// claim = "共通switcherは中央triggerから検索一覧を開き、検索中の矢印・IME入力を壊さず、候補確定・outside click・Escape後のfocus復帰と候補消滅時のpopover閉鎖を扱う"
+// claim = "共通switcherは中央triggerから検索一覧を開き、処理中候補を一覧optionのindicatorで示し、検索中の矢印・IME入力を壊さず、候補確定・outside click・Escape後のfocus復帰と候補消滅時のpopover閉鎖を扱う"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "検索中のArrowDownで候補を飛ばす、IMEのEscapeで一覧を閉じる、候補を選べない、候補がなくなってもpopoverが残る、または閉じた後にtriggerへfocusが戻らない"
-// observable = "候補一覧、選択callback、options空化後を含むpopoverの表示状態、document.activeElement"
+// fault = "処理中候補のindicatorがDOMから欠落する、検索中のArrowDownで候補を飛ばす、IMEのEscapeで一覧を閉じる、候補を選べない、候補がなくなってもpopoverが残る、または閉じた後にtriggerへfocusが戻らない"
+// observable = "候補一覧、処理中候補のindicator、選択callback、options空化後を含むpopoverの表示状態、document.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "session-switcher"
 // lifecycle = "permanent"
@@ -1989,8 +1989,8 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
       root.render(React.createElement(SessionSwitcher, {
         ariaLabel: "Auxiliary会話切り替え",
         options: [
-          { id: "a", label: "Alpha", preview: "first" },
-          { id: "b", label: "Beta", preview: "second" },
+          { id: "a", label: "Alpha", preview: "first", isProcessing: true, icon: React.createElement("span", null, "A") },
+          { id: "b", label: "Beta", preview: "second", icon: React.createElement("span", null, "B") },
         ],
         selectedId: "a",
         searchable: true,
@@ -2004,6 +2004,11 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     const search = dom.window.document.querySelector<HTMLInputElement>(".session-switcher-search");
     assert.ok(search);
     assert.equal(dom.window.document.querySelectorAll('[role="option"]').length, 2);
+    const initialOptions = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    assert.ok(initialOptions[0]?.querySelector(".session-switcher-processing-indicator"));
+    assert.equal(initialOptions[1]?.querySelector(".session-switcher-processing-indicator"), null);
+    assert.equal(initialOptions[0]?.getAttribute("title"), "Processing");
+    assert.equal(initialOptions[1]?.getAttribute("title"), null);
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
       valueSetter?.call(search, "beta");
@@ -2013,6 +2018,7 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     const filteredOptions = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
     assert.equal(filteredOptions.length, 1);
     assert.equal(filteredOptions[0]?.querySelector(".session-switcher-option-label")?.textContent, "Beta");
+    assert.equal(filteredOptions[0]?.querySelector(".session-switcher-processing-indicator"), null);
     await act(async () => search.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
     assert.equal(dom.window.document.activeElement, dom.window.document.querySelector('[role="option"]'));
     await act(async () => trigger.click());

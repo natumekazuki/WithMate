@@ -14,6 +14,7 @@ export type SessionSwitcherOption = {
   icon?: ReactNode;
   preview?: string;
   searchText?: string;
+  isProcessing?: boolean;
 };
 
 export type SessionSwitcherProps = {
@@ -203,15 +204,25 @@ export function SessionSwitcher({
                 role="option"
                 aria-selected={option.id === selectedId}
                 className="session-switcher-option"
+                title={option.isProcessing ? "Processing" : undefined}
                 onClick={() => {
                   onSelect(option.id);
                   close();
                 }}
               >
-                {option.icon ? <span className="session-switcher-icon" aria-hidden="true">{option.icon}</span> : null}
+                {option.icon ? (
+                  <span
+                    className={`session-switcher-icon${option.isProcessing ? " session-switcher-option-icon-processing" : ""}`}
+                    aria-hidden="true"
+                  >
+                    {option.icon}
+                    {option.isProcessing ? <span className="session-switcher-processing-indicator" /> : null}
+                  </span>
+                ) : null}
                 <span className="session-switcher-option-copy">
                   <span className="session-switcher-option-label">{option.label}</span>
                   {option.preview ? <span className="session-switcher-option-preview">{option.preview}</span> : null}
+                  {option.isProcessing ? <span className="visually-hidden">Processing</span> : null}
                 </span>
               </button>
             )) : <span className="session-switcher-empty">一致する候補はありません。</span>}
