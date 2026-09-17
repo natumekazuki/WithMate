@@ -14,6 +14,7 @@ import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
+  WITHMATE_AUXILIARY_SESSION_SELECTION_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT,
@@ -96,6 +97,13 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
 
   public broadcastLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void {
     this.broadcast(WITHMATE_LIVE_SESSION_RUN_EVENT, { sessionId, state });
+  }
+
+  public broadcastAuxiliarySessionSelection(parentSessionId: string, auxiliarySessionId: string): void {
+    this.broadcast(WITHMATE_AUXILIARY_SESSION_SELECTION_EVENT, {
+      parentSessionId,
+      auxiliarySessionId,
+    });
   }
 
   public broadcastProviderQuotaTelemetry(providerId: string, telemetry: ProviderQuotaTelemetry | null): void {

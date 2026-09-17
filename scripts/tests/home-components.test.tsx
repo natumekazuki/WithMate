@@ -11,6 +11,7 @@ import { filterCharactersByName } from "../../src/home/HomeCharactersPanel.js";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
+import type { AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
 import type { HomeSessionSummary, SessionSummary } from "../../src/session-state.js";
 import type { CompanionSessionSummary } from "../../src/companion-state.js";
@@ -935,6 +936,30 @@ describe("HomeMonitorContent", () => {
     runState: "idle",
   });
 
+  const createMonitorAuxiliary = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id,
+    parentSessionId: "session-1",
+    status: "active",
+    runState: "idle",
+    title: "Auxiliary",
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    approvalMode: "untrusted",
+    codexSandboxMode: "danger-full-access",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
+    threadId: "",
+    displayAfterMessageIndex: null,
+    createdAt: "2026-03-28T00:00:00.000Z",
+    updatedAt: "2026-03-30T00:00:00.000Z",
+    closedAt: "",
+    characterIconPath: "mate.png",
+    preview: "Auxiliary preview",
+    ...overrides,
+  } as AuxiliarySessionSummary);
+
   const createMonitorCompanion = (id: string, taskTitle: string): CompanionSessionSummary => ({
     id,
     groupId: "group-1",
@@ -968,10 +993,10 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home MonitorのAgent/Companion entryは種別、実行状態、キャラアイコンとセッション情報を表示する"
-  // oracle = { type = "contract", ref = "home-monitor rendering" }
-  // fault = "Monitor entryの種別や実行状態が誤表示される、またはキャラアイコンやセッション情報が欠落する"
-  // observable = "HomeMonitorContentのrender済みHTMLにおけるAgent/Companion/status badge、avatarとセッション情報"
+  // claim = "Home Monitorの親カードはavatarとtitleを1行目、Mainを独立した状態iconとして2行目へ表示し、Auxiliaryが存在する親だけ集約を追加する"
+  // oracle = { type = "contract", ref = "issue-722 monitor two-row aggregate rendering" }
+  // fault = "workspaceを常設する、Main/Auxiliaryの状態表示を混同する、Auxiliaryなしの親へ集約を出す、またはavatar/titleが欠落する"
+  // observable = "親cardごとの2行構造、Main/Auxiliary status cluster、状態icon、avatar、title、未展開時のAuxiliary detail rowの不在"
   // observation_boundary = "component-behavior"
   // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
@@ -982,25 +1007,37 @@ describe("HomeMonitorContent", () => {
         kind: "agent",
         session: createMonitorSession("session-1", "Agent task"),
         state: { kind: "running", label: "実行中" },
+        mainState: { kind: "neutral", label: "待機" },
+        auxiliarySessions: [
+          createMonitorAuxiliary("aux-1", { runState: "error", preview: "Auxiliary error" }),
+          createMonitorAuxiliary("aux-closed", {
+            status: "closed",
+            preview: "Closed auxiliary",
+          }),
+        ],
       },
       {
         kind: "agent",
         session: createMonitorSession("session-2", "Auxiliary task"),
         state: { kind: "running", label: "実行中" },
+        mainState: { kind: "running", label: "実行中" },
+        auxiliarySessions: [],
       },
       {
         kind: "companion",
         session: createMonitorCompanion("companion-1", "Companion task"),
         isWindowOpen: true,
-        state: { kind: "neutral", label: "待機" },
-        groupLabel: "demo",
+        state: { kind: "interrupted", label: "中断" },
+        mainState: { kind: "interrupted", label: "中断" },
+        auxiliarySessions: [],
       },
       {
         kind: "companion",
         session: createMonitorCompanion("companion-2", "Companion Auxiliary task"),
         isWindowOpen: true,
         state: { kind: "running", label: "実行中" },
-        groupLabel: "demo",
+        mainState: { kind: "running", label: "実行中" },
+        auxiliarySessions: [],
       },
     ];
     const html = renderToStaticMarkup(
@@ -1012,27 +1049,287 @@ describe("HomeMonitorContent", () => {
         onShowContextMenu={noOp}
       />,
     );
+    const document = new JSDOM(html).window.document;
+    const cards = Array.from(document.querySelectorAll(".home-monitor-card"));
+    const expectedMainStates = ["neutral", "running", "interrupted", "running"] as const;
 
     assert.ok(html.includes("Agent task"));
     assert.ok(html.includes("Auxiliary task"));
-    assert.ok(html.includes("workspace"));
     assert.ok(html.includes("Companion task"));
     assert.ok(html.includes("Companion Auxiliary task"));
-    assert.ok(html.includes("demo"));
-    assert.equal(html.match(/>Agent<\/span>/g)?.length, 2);
-    assert.equal(html.match(/>Auxiliary<\/span>/g)?.length ?? 0, 0);
-    assert.equal(html.match(/>Companion<\/span>/g)?.length, 2);
-    assert.equal(html.match(/class="session-status home-monitor-status running"/g)?.length, 3);
-    assert.equal(html.match(/class="session-status home-monitor-status neutral"/g)?.length, 1);
-    assert.equal(html.match(/>実行中<\/span>/g)?.length, 3);
-    assert.ok(html.includes(">待機</span>"));
+    assert.equal(html.includes("workspace"), false);
+    assert.equal(cards.length, 4);
+    for (const [index, card] of cards.entries()) {
+      const parentRow = card.querySelector(".home-monitor-parent-row");
+      const summaryRow = card.querySelector(".home-monitor-summary-row");
+      assert.equal(card.querySelectorAll(".home-monitor-parent-row").length, 1);
+      assert.equal(card.querySelectorAll(".home-monitor-summary-row").length, 1);
+      assert.equal(card.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
+      assert.equal(card.querySelectorAll(".home-monitor-parent-title").length, 1);
+      assert.equal(card.querySelectorAll(".home-monitor-avatar").length, 1);
+      assert.equal(parentRow?.querySelector(".home-monitor-avatar")?.classList.contains("home-monitor-avatar"), true);
+      assert.equal(parentRow?.querySelector(".home-monitor-parent-title")?.textContent, entries[index]?.session.taskTitle);
+      assert.equal(parentRow?.querySelector(".home-monitor-status-cluster"), null);
+      assert.equal(summaryRow?.querySelector(".home-monitor-avatar"), null);
+      assert.equal(summaryRow?.querySelector(".home-monitor-parent-title"), null);
+      assert.equal(summaryRow?.querySelectorAll(".home-monitor-status-cluster").length, index === 0 ? 2 : 1);
+      assert.equal(
+        summaryRow?.querySelectorAll(`.home-monitor-status-icon.${expectedMainStates[index]}`).length,
+        1,
+      );
+    }
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-cluster").length, 2);
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-auxiliary-status").length, 1);
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length, 1);
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.error").length, 1);
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.closed").length, 1);
+    assert.equal(cards[1]?.querySelectorAll(".home-monitor-status-cluster").length, 1);
+    assert.equal(cards[1]?.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
+    assert.equal(html.match(/>Main<\/span>/g)?.length, 4);
+    assert.equal(html.match(/>Aux<\/span>/g)?.length, 1);
+    assert.equal(html.match(/class="home-monitor-status-icon running"/g)?.length, 2);
+    assert.equal(html.match(/class="home-monitor-status-icon neutral"/g)?.length, 1);
+    assert.equal(html.match(/class="home-monitor-status-icon interrupted"/g)?.length, 1);
+    assert.equal(html.match(/class="home-monitor-status-icon error"/g)?.length, 1);
+    assert.equal(html.match(/class="home-monitor-status-icon closed"/g)?.length, 1);
+    assert.equal(html.match(/aria-label="Main 実行中"/g)?.length, 2);
+    assert.equal(html.match(/aria-label="Main 待機"/g)?.length, 1);
+    assert.ok(html.includes('aria-label="Main 中断"'));
+    assert.ok(html.includes('aria-label="Auxiliary 終了"'));
+    assert.ok(html.includes('aria-label="Companion Reviewを開く: Companion task"'));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 4);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 4);
   });
 
   // @test-value v2
+  // kind = "invariant"
+  // claim = "Auxiliary summaryが未確定でもAuxiliaryなしの親カードへ誤った集約を表示せず、loading/errorをMonitor feedbackで知らせる"
+  // oracle = { type = "contract", ref = "issue-722 auxiliary summary loading feedback" }
+  // fault = "loading/errorをAuxiliary存在として各親カードへ重複表示するか、未確定状態を0件・待機として隠す、またはfeedbackのaccessible statusを欠落させる"
+  // observable = "loading/error各状態でのAuxiliary status clusterの不在とrole=status feedbackの文言"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent auxiliary data state"
+  // lifecycle = "permanent"
+  // impact = "Auxiliaryの有無とsummary取得状態を混同させず、復旧可能な状態を利用者へ伝える"
+  // @end-test-value
+  it("Auxiliary summary未確定時は親カードへAuxiliaryを作らずMonitor feedbackを表示する", () => {
+    const entries = [{
+      kind: "agent" as const,
+      session: createMonitorSession("loading-session", "Loading task"),
+      state: { kind: "neutral" as const, label: "待機" },
+      mainState: { kind: "neutral" as const, label: "待機" },
+      auxiliarySessions: [],
+    }];
+    for (const [auxiliaryDataState, expectedFeedback] of [
+      ["loading", "Auxiliaryを確認中…"],
+      ["error", "Auxiliaryの読み込みに失敗したよ。"],
+    ] as const) {
+      const html = renderToStaticMarkup(
+        <HomeMonitorContent
+          runningEntries={[]}
+          nonRunningEntries={entries}
+          auxiliaryDataState={auxiliaryDataState}
+          onOpenSession={noOp}
+          onOpenCompanionReview={noOp}
+          onShowContextMenu={noOp}
+        />,
+      );
+      const document = new JSDOM(html).window.document;
+
+      assert.equal(document.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
+      assert.equal(document.querySelector('[role="status"]')?.textContent, expectedFeedback);
+    }
+  });
+
+  // @test-value v2
   // kind = "contract"
-  // claim = "開いているAgent/CompanionのMonitor rowは右クリックとContextMenu/Shift+F10を対象entryと座標へ変換し、閉じているCompanion rowはmenu対象外としてbrowser default menuを抑止する"
+  // claim = "Home Monitorは親カードの展開を独立に保持し、Auxiliary rowから親と安定IDを指定して対象Windowを開く"
+  // oracle = { type = "contract", ref = "issue-722 monitor disclosure and auxiliary navigation" }
+  // fault = "親のopen操作と展開操作が混線する、Auxiliary rowが入れ子buttonになる、または別Auxiliaryへfallbackする"
+  // observable = "展開後のAuxiliary row数、button nestingの不在、親/Auxiliary navigation callbackの引数"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent Auxiliary expansion"
+  // lifecycle = "permanent"
+  // impact = "複数Auxiliaryを一覧から正確に再開し、既存親のopen操作を壊さない"
+  // distinction = "Main IPCの親子validationではなく、rendererのdisclosureとstable ID mappingを検証する"
+  // @end-test-value
+  it("Auxiliary一覧を独立に展開し、親とAuxiliaryを別導線で開く", async () => {
+    const previousGlobals = {
+      window: globalThis.window,
+      document: globalThis.document,
+      Node: globalThis.Node,
+      HTMLElement: globalThis.HTMLElement,
+      Event: globalThis.Event,
+      MouseEvent: globalThis.MouseEvent,
+      KeyboardEvent: globalThis.KeyboardEvent,
+      PointerEvent: globalThis.PointerEvent,
+    };
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+      pretendToBeVisual: true,
+    });
+    const container = dom.window.document.getElementById("root") as HTMLElement;
+    const root = createRoot(container);
+    const openedSessions: Array<{ sessionId: string; auxiliarySessionId?: string }> = [];
+    const openedCompanions: Array<{ sessionId: string; auxiliarySessionId?: string }> = [];
+    const auxiliarySessions = [
+      {
+        id: "aux-a",
+        parentSessionId: "session-expand",
+        status: "active",
+        runState: "idle",
+        preview: "First auxiliary",
+        createdAt: "2026-03-28T00:00:00.000Z",
+      },
+      {
+        id: "aux-b",
+        parentSessionId: "session-expand",
+        status: "closed",
+        runState: "error",
+        preview: "Second auxiliary",
+        createdAt: "2026-03-29T00:00:00.000Z",
+      },
+    ] as AuxiliarySessionSummary[];
+    const entry: HomeMonitorEntry = {
+      kind: "agent",
+      session: createMonitorSession("session-expand", "Expandable task"),
+      state: { kind: "neutral", label: "待機" },
+      mainState: { kind: "neutral", label: "待機" },
+      auxiliarySessions,
+    };
+    const secondEntry: HomeMonitorEntry = {
+      kind: "agent",
+      session: createMonitorSession("session-expand-2", "Second expandable task"),
+      state: { kind: "neutral", label: "待機" },
+      mainState: { kind: "neutral", label: "待機" },
+      auxiliarySessions: [
+        createMonitorAuxiliary("aux-c", {
+          parentSessionId: "session-expand-2",
+          preview: "Third auxiliary",
+        }),
+      ],
+    };
+    const companionEntry: HomeMonitorEntry = {
+      kind: "companion",
+      session: createMonitorCompanion("companion-expand", "Companion expandable task"),
+      isWindowOpen: true,
+      state: { kind: "neutral", label: "待機" },
+      mainState: { kind: "neutral", label: "待機" },
+      auxiliarySessions: [
+        createMonitorAuxiliary("aux-companion", {
+          parentSessionId: "companion-expand",
+          preview: "Companion auxiliary",
+        }),
+      ],
+    };
+
+    Object.defineProperties(globalThis, {
+      window: { configurable: true, value: dom.window },
+      document: { configurable: true, value: dom.window.document },
+      Node: { configurable: true, value: dom.window.Node },
+      HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+      Event: { configurable: true, value: dom.window.Event },
+      MouseEvent: { configurable: true, value: dom.window.MouseEvent },
+      KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
+      PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+    });
+
+    try {
+      await act(async () => root.render(
+        <HomeMonitorContent
+          runningEntries={[]}
+          nonRunningEntries={[entry, secondEntry, companionEntry]}
+          onOpenSession={(sessionId, auxiliarySessionId) => openedSessions.push({ sessionId, auxiliarySessionId })}
+          onOpenCompanionReview={(sessionId, auxiliarySessionId) => openedCompanions.push({ sessionId, auxiliarySessionId })}
+          onShowContextMenu={noOp}
+        />,
+      ));
+
+      const disclosures = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-disclosure"));
+      const parentButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-parent-button"));
+      assert.equal(disclosures.length, 3);
+      assert.equal(parentButtons.length, 3);
+      assert.equal(container.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
+
+      await act(async () => disclosures[0]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      let cards = Array.from(container.querySelectorAll<HTMLElement>(".home-monitor-card"));
+      assert.equal(cards.length, 3);
+      assert.equal(cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 2);
+      assert.equal(cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
+      assert.equal(cards[2]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
+      const auxiliaryRows = Array.from(cards[0]?.querySelectorAll<HTMLButtonElement>("button.home-monitor-auxiliary-row") ?? []);
+      assert.ok(auxiliaryRows[0]?.textContent?.includes("First auxiliary"));
+      assert.equal(
+        Array.from(container.querySelectorAll("button")).some((button) => button.querySelector("button")),
+        false,
+      );
+
+      await act(async () => auxiliaryRows[1]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      assert.deepEqual(openedSessions, [{ sessionId: "session-expand", auxiliarySessionId: "aux-b" }]);
+
+      await act(async () => parentButtons[0]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      assert.deepEqual(openedSessions, [
+        { sessionId: "session-expand", auxiliarySessionId: "aux-b" },
+        { sessionId: "session-expand", auxiliarySessionId: undefined },
+      ]);
+
+      await act(async () => root.render(
+        <HomeMonitorContent
+          runningEntries={[entry]}
+          nonRunningEntries={[secondEntry, companionEntry]}
+          onOpenSession={(sessionId, auxiliarySessionId) => openedSessions.push({ sessionId, auxiliarySessionId })}
+          onOpenCompanionReview={(sessionId, auxiliarySessionId) => openedCompanions.push({ sessionId, auxiliarySessionId })}
+          onShowContextMenu={noOp}
+        />,
+      ));
+      cards = Array.from(container.querySelectorAll<HTMLElement>(".home-monitor-card"));
+      assert.equal(cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 2);
+      assert.equal(cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
+      assert.equal(cards[2]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
+
+      const movedDisclosures = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-disclosure"));
+      await act(async () => movedDisclosures[1]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      cards = Array.from(container.querySelectorAll<HTMLElement>(".home-monitor-card"));
+      assert.equal(cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 2);
+      assert.equal(cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 1);
+
+      const latestDisclosures = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-disclosure"));
+      await act(async () => latestDisclosures[2]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      const companionRows = Array.from(
+        container.querySelectorAll<HTMLElement>(".home-monitor-card"),
+      )[2]?.querySelectorAll<HTMLButtonElement>("button.home-monitor-auxiliary-row");
+      assert.equal(companionRows?.length, 1);
+      await act(async () => companionRows?.[0]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      assert.deepEqual(openedCompanions, [
+        { sessionId: "companion-expand", auxiliarySessionId: "aux-companion" },
+      ]);
+      assert.equal(
+        parentButtons[2]?.getAttribute("aria-label"),
+        "Companion Reviewを開く: Companion expandable task",
+      );
+      await act(async () => parentButtons[2]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      assert.deepEqual(openedCompanions, [
+        { sessionId: "companion-expand", auxiliarySessionId: "aux-companion" },
+        { sessionId: "companion-expand", auxiliarySessionId: undefined },
+      ]);
+    } finally {
+      await act(async () => root.unmount());
+      dom.window.close();
+      Object.defineProperties(globalThis, {
+        window: { configurable: true, value: previousGlobals.window },
+        document: { configurable: true, value: previousGlobals.document },
+        Node: { configurable: true, value: previousGlobals.Node },
+        HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
+        Event: { configurable: true, value: previousGlobals.Event },
+        MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
+        KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
+        PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+      });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "開いているAgent/CompanionのMonitor parent buttonは右クリックとContextMenu/Shift+F10を対象entryと座標へ変換し、閉じているCompanion cardはmenu対象外としてbrowser default menuを抑止する"
   // oracle = { type = "contract", ref = "HomeMonitorContent session monitor context menu contract" }
   // fault = "Agent/Companionの種別またはkeyboard context menuの分岐が別entryへ送られる、keyboard座標が原点に固定される、または閉じたCompanion rowからmenu操作が送られる"
   // observable = "callbackへ渡されたkind、sessionId、point、非ゼロgetBoundingClientRectから生成されたkeyboard座標、aria-haspopup、およびcontext menu eventのdefaultPrevented"
@@ -1070,6 +1367,8 @@ describe("HomeMonitorContent", () => {
         characterIconPath: "mate.png",
       },
       state: { kind: "neutral", label: "待機" },
+      mainState: { kind: "neutral", label: "待機" },
+      auxiliarySessions: [],
     } as HomeMonitorEntry;
     const companionEntry: HomeMonitorEntry = {
       kind: "companion",
@@ -1082,7 +1381,8 @@ describe("HomeMonitorContent", () => {
       },
       isWindowOpen: true,
       state: { kind: "neutral", label: "待機" },
-      groupLabel: "context menu",
+      mainState: { kind: "neutral", label: "待機" },
+      auxiliarySessions: [],
     } as HomeMonitorEntry;
     const closedCompanionEntry: HomeMonitorEntry = {
       kind: "companion",
@@ -1095,7 +1395,8 @@ describe("HomeMonitorContent", () => {
       },
       isWindowOpen: false,
       state: { kind: "neutral", label: "待機" },
-      groupLabel: "context menu",
+      mainState: { kind: "neutral", label: "待機" },
+      auxiliarySessions: [],
     } as HomeMonitorEntry;
 
     Object.defineProperties(globalThis, {
@@ -1120,7 +1421,7 @@ describe("HomeMonitorContent", () => {
         />,
       ));
 
-      const [row, companionRow, closedCompanionRow] = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-row"));
+      const [row, companionRow, closedCompanionRow] = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-parent-button"));
       assert.ok(row);
       assert.ok(companionRow);
       assert.ok(closedCompanionRow);

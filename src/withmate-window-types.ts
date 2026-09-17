@@ -18,6 +18,32 @@ export type OpenSessionWindowIdsPageResult = {
 
 export type SessionMonitorEntryKind = "agent" | "companion";
 
+export type AuxiliarySessionSelectionPayload = {
+  parentSessionId: string;
+  auxiliarySessionId: string;
+};
+
+export function normalizeAuxiliarySessionSelectionPayload(
+  value: unknown,
+): AuxiliarySessionSelectionPayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.parentSessionId !== "string"
+    || typeof candidate.auxiliarySessionId !== "string"
+    || !candidate.parentSessionId.trim()
+    || !candidate.auxiliarySessionId.trim()
+  ) {
+    return null;
+  }
+  return {
+    parentSessionId: candidate.parentSessionId.trim(),
+    auxiliarySessionId: candidate.auxiliarySessionId.trim(),
+  };
+}
+
 export type SessionMonitorContextMenuPoint = {
   x: number;
   y: number;

@@ -927,6 +927,15 @@ test("History detail はref種別、commit metadata、changed file tree、file d
     assert.match(dom.window.document.body.textContent ?? "", /history detail/);
     const detailHeader = dom.window.document.querySelector(".file-history-detail-header");
     assert.ok(detailHeader);
+    assert.equal(detailHeader.querySelector("code")?.textContent, targetCommit.id);
+    assert.equal(
+      detailHeader.querySelector(".file-history-commit-meta span")?.textContent,
+      targetCommit.authorName,
+    );
+    assert.equal(
+      detailHeader.querySelector("time")?.getAttribute("dateTime"),
+      targetCommit.authoredAt,
+    );
     assert.deepEqual(badgeStates(detailHeader), expectedBadges);
     const fileButton = dom.window.document.querySelector<HTMLButtonElement>(
       ".workspace-change-row[title='src/example.ts']",
@@ -935,12 +944,14 @@ test("History detail はref種別、commit metadata、changed file tree、file d
     await act(async () => fileButton.click());
     await flush();
     assert.equal(diffRequests.at(-1)?.relativePath, "src/example.ts");
+    assert.equal(diffRequests.at(-1)?.commitId, targetCommit.id);
     const openChanges = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent === "Open All Changes");
     assert.ok(openChanges);
     await act(async () => openChanges.click());
     await flush();
     assert.equal(diffRequests.at(-1)?.relativePath, null);
+    assert.equal(diffRequests.at(-1)?.commitId, targetCommit.id);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -1023,9 +1034,9 @@ test("History Compareはentryとtoolbarから起動し、固定comparisonをdeta
     assert.ok(entryCompare);
     await act(async () => entryCompare.click());
     await flush();
-    assert.match(
-      dom.window.document.querySelector<HTMLButtonElement>(".file-history-comparison-picker-trigger")?.textContent ?? "",
-      /Commit/,
+    assert.equal(
+      dom.window.document.querySelector<HTMLButtonElement>(".file-history-comparison-picker-trigger")?.textContent?.trim(),
+      "Commit " + targetCommit.id.slice(0, 7),
     );
     const comparisonBack = dom.window.document.querySelector<HTMLButtonElement>(".file-history-back");
     assert.ok(comparisonBack);

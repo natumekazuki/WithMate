@@ -1335,8 +1335,11 @@ test("ChatWindow はAuxiliaryを幅0で残しsplitterの再展開導線を表示
     },
   }));
 
-  assert.match(html, /var\(--session-auxiliary-header-min-width\)/);
   const dom = new JSDOM(html);
+  const auxiliaryColumn = dom.window.document.querySelector<HTMLElement>(".session-concurrent-chat-auxiliary");
+  assert.ok(auxiliaryColumn);
+  assert.equal(auxiliaryColumn.classList.contains("is-zero-width"), true);
+  assert.equal(auxiliaryColumn.getAttribute("aria-hidden"), "false");
   const auxiliaryAddButton = dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Auxiliaryを追加']");
   assert.ok(auxiliaryAddButton);
   assert.ok(auxiliaryAddButton.closest(".session-switcher-current-group"));

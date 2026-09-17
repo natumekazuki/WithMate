@@ -43,6 +43,7 @@ import { startCompanionSessionSummariesSubscription } from "./companion-session-
 import { buildHomeMateProfileHandlers } from "./home/home-mate-profile-handlers.js";
 import {
   buildHomeSessionProjection,
+  type HomeMonitorAuxiliaryDataState,
 } from "./home/home-session-projection.js";
 import { buildHomeLaunchHandlers } from "./home/home-launch-handlers.js";
 import {
@@ -105,8 +106,8 @@ import type {
   SessionMonitorEntryKind,
 } from "./withmate-window-types.js";
 import {
-  createHomeActiveAuxiliarySessionRefresher,
-  resolveHomeActiveAuxiliarySessionsState,
+  createHomeAuxiliarySessionRefresher,
+  resolveHomeAuxiliarySessionSummariesState,
 } from "./home/home-active-auxiliary-refresh.js";
 
 type HomeRightPaneView = "monitor" | "characters";
@@ -177,7 +178,8 @@ export default function HomeApp() {
   );
   const sessions = sessionSummariesState.summaries;
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
-  const [activeAuxiliarySessions, setActiveAuxiliarySessions] = useState<AuxiliarySessionSummary[]>([]);
+  const [auxiliarySessionSummaries, setAuxiliarySessionSummaries] = useState<AuxiliarySessionSummary[]>([]);
+  const [auxiliaryDataState, setAuxiliaryDataState] = useState<HomeMonitorAuxiliaryDataState>("loading");
   const [openSessionWindowIdsState, setOpenSessionWindowIdsState] = useState<OpenSessionWindowIdsState>({
     status: "loading",
     sessionIds: [],
@@ -190,6 +192,7 @@ export default function HomeApp() {
   const [sessionWindowRestorePending, setSessionWindowRestorePending] = useState(false);
   const [sessionWindowRestoreFeedback, setSessionWindowRestoreFeedback] = useState("");
   const [sessionMonitorFeedback, setSessionMonitorFeedback] = useState("");
+  const [auxiliaryLoadFeedback, setAuxiliaryLoadFeedback] = useState("");
   const pendingSessionWindowRestoreIds = useMemo(
     () => openSessionWindowIdsState.status === "loaded"
       ? selectPendingSessionWindowRestoreIds(sessionWindowRestoreIds, openSessionWindowIds)
@@ -669,28 +672,42 @@ export default function HomeApp() {
   useEffect(() => {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
-      setActiveAuxiliarySessions([]);
+      setAuxiliarySessionSummaries([]);
+      setAuxiliaryDataState("ready");
       return;
     }
 
-    const refresher = createHomeActiveAuxiliarySessionRefresher({
-      fetchActiveAuxiliarySessions: () => withmateApi.listOpenActiveAuxiliarySessionSummaries(),
-      setActiveAuxiliarySessions: (sessions) => {
-        setActiveAuxiliarySessions((current) =>
-          resolveHomeActiveAuxiliarySessionsState(current, sessions),
+    const refresher = createHomeAuxiliarySessionRefresher({
+      fetchAuxiliarySessionSummaries: () => withmateApi.listOpenAuxiliarySessionSummaries(),
+      setAuxiliarySessionSummaries: (sessions) => {
+        setAuxiliarySessionSummaries((current) =>
+          resolveHomeAuxiliarySessionSummariesState(current, sessions),
         );
       },
-      onError: (error) => console.error(error),
+      onLoadState: (state) => {
+        setAuxiliaryDataState(state);
+        if (state === "ready") {
+          setAuxiliaryLoadFeedback("");
+        }
+      },
+      onError: (error) => {
+        console.error(error);
+        setAuxiliaryLoadFeedback(error instanceof Error ? error.message : "Auxiliaryの読み込みに失敗したよ。");
+      },
     });
 
     refresher.refresh();
     const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRun(() => {
       refresher.refresh();
     });
+    const unsubscribeSessionInvalidation = withmateApi.subscribeSessionInvalidation(() => {
+      refresher.refresh();
+    });
 
     return () => {
       refresher.dispose();
       unsubscribeLiveRun();
+      unsubscribeSessionInvalidation();
     };
   }, [openCompanionReviewWindowIds, openSessionWindowIds]);
 
@@ -701,10 +718,10 @@ export default function HomeApp() {
       sessionSearchText,
       companionSessions,
       openCompanionReviewWindowIds,
-      activeAuxiliarySessions,
+      auxiliarySessionSummaries,
     ),
     [
-      activeAuxiliarySessions,
+      auxiliarySessionSummaries,
       companionSessions,
       openCompanionReviewWindowIds,
       openSessionWindowIds,
@@ -905,6 +922,27 @@ export default function HomeApp() {
     runSessionMonitorContextMenu(api, { kind, sessionId, point }, setSessionMonitorFeedback);
   };
 
+  const openMonitorSession = async (sessionId: string, auxiliarySessionId?: string) => {
+    setSessionMonitorFeedback("");
+    try {
+      await openSessionWindow(sessionId, auxiliarySessionId);
+    } catch (error) {
+      setSessionMonitorFeedback(error instanceof Error ? error.message : "Session Windowを開けなかったよ。");
+    }
+  };
+
+  const openMonitorCompanionReview = async (sessionId: string, auxiliarySessionId?: string) => {
+    setSessionMonitorFeedback("");
+    try {
+      await openCompanionReviewWindow(sessionId, auxiliarySessionId);
+    } catch (error) {
+      setSessionMonitorFeedback(error instanceof Error ? error.message : "Companion Windowを開けなかったよ。");
+    }
+  };
+
+  const monitorFeedback = sessionMonitorFeedback
+    || (auxiliaryDataState === "loading" ? "Auxiliaryを確認中…" : auxiliaryLoadFeedback);
+
   const { settingsContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
     settingsContent: buildHomeSettingsContentProps(baseSettingsContentProps),
     mateSetupContent: buildHomeMateSetupContentProps({
@@ -924,9 +962,10 @@ export default function HomeApp() {
     monitorContent: buildHomeMonitorContentProps({
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
-      feedback: sessionMonitorFeedback,
-      onOpenSession: (sessionId) => void openSessionWindow(sessionId),
-      onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+      auxiliaryDataState,
+      feedback: monitorFeedback,
+      onOpenSession: openMonitorSession,
+      onOpenCompanionReview: openMonitorCompanionReview,
       onShowContextMenu: showSessionMonitorContextMenu,
     }),
   });
@@ -955,7 +994,8 @@ export default function HomeApp() {
       rightPaneView,
       runningMonitorEntries,
       nonRunningMonitorEntries,
-      sessionMonitorFeedback,
+      auxiliaryDataState,
+      sessionMonitorFeedback: monitorFeedback,
       characterEntries,
       characterListFeedback,
       monitorWindowIcon: renderHomeMonitorWindowIcon(),
@@ -966,8 +1006,8 @@ export default function HomeApp() {
         onRestoreSessionWindows: () => void restoreSessionWindows(),
         onCreateCharacter: () => void openCharacterEditorWindow(),
         onEditCharacter: (characterId) => void openCharacterEditorWindow(characterId),
-        onOpenSession: (sessionId) => void openSessionWindow(sessionId),
-        onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+        onOpenSession: openMonitorSession,
+        onOpenCompanionReview: openMonitorCompanionReview,
         onShowSessionMonitorContextMenu: showSessionMonitorContextMenu,
       },
       canUsePrimaryFeatures,

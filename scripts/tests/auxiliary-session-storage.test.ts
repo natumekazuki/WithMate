@@ -1237,15 +1237,15 @@ test("Auxiliary更新は保存済みApprovalがneverの間Reviewerを保持す�
 
 // @test-value v2
 // kind = "contract"
-// claim = "active Auxiliary一覧は軽量summary列だけを読み、payload transcriptを再parseしない"
+// claim = "指定parent集合のAuxiliary一覧は全statusを軽量summary列から返し、payload transcriptを再parseしない"
 // oracle = { type = "contract", ref = "issue-710-lightweight-summary-read-path" }
-// fault = "一覧取得のたびにpayload_jsonを読み直してtranscriptを投影する"
-// observable = "listActiveAuxiliarySessionSummariesのJSON.parse入力"
-// observation_boundary = "public-boundary"
+// fault = "closedを除外する、summaryへmessagesを混ぜる、または一覧取得のたびにpayload_jsonを読み直してtranscriptを投影する"
+// observable = "listAuxiliarySessionSummariesとlistActiveAuxiliarySessionSummariesの返却順・status・JSON.parse入力"
+// observation_boundary = "implementation"
 // scope = "auxiliary-session-storage-summary"
 // lifecycle = "permanent"
 // @end-test-value
-test("AuxiliarySessionStorage は指定した parent の active summary だけを返す", async () => {
+test("AuxiliarySessionStorage は指定parent集合の全status summaryを返す", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-active-auxiliary-summary-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   let auxiliaryStorage: AuxiliarySessionStorage | null = null;
@@ -1255,18 +1255,21 @@ test("AuxiliarySessionStorage は指定した parent の active summary だけ�
     auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
       id: "aux-active-session-1",
       parentSessionId: "session-1",
+      createdAt: "2026-07-30T00:00:00.000Z",
       messages: [{ role: "assistant", text: "full payload" }],
     }));
     auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
       id: "aux-closed-session-1",
       parentSessionId: "session-1",
       status: "closed",
+      createdAt: "2026-07-30T00:01:00.000Z",
       messages: [{ role: "assistant", text: "closed-payload-sentinel" }],
       closedAt: "2026-07-30T00:10:00.000Z",
     }));
     auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
       id: "aux-active-session-2",
       parentSessionId: "session-2",
+      createdAt: "2026-07-30T00:00:00.000Z",
     }));
 
     const parsedPayloads: string[] = [];
@@ -1276,8 +1279,16 @@ test("AuxiliarySessionStorage は指定した parent の active summary だけ�
       return originalJsonParse(text, reviver);
     }) as typeof JSON.parse;
     let summaries: AuxiliarySessionSummary[];
+    let allSummaries: AuxiliarySessionSummary[];
     try {
       summaries = auxiliaryStorage.listActiveAuxiliarySessionSummaries([
+        "session-1",
+        "session-1",
+        " ",
+        "unknown-session",
+      ]);
+      allSummaries = auxiliaryStorage.listAuxiliarySessionSummaries([
+        "session-2",
         "session-1",
         "session-1",
         " ",
@@ -1292,7 +1303,15 @@ test("AuxiliarySessionStorage は指定した parent の active summary だけ�
     assert.equal("composerDraft" in summaries[0]!, false);
     assert.equal(parsedPayloads.some((payload) => payload.includes("full payload")), false);
     assert.equal(parsedPayloads.some((payload) => payload.includes("closed-payload-sentinel")), false);
+    assert.deepEqual(allSummaries.map((session) => session.id), [
+      "aux-active-session-1",
+      "aux-closed-session-1",
+      "aux-active-session-2",
+    ]);
+    assert.equal(allSummaries[1]?.status, "closed");
+    assert.equal("messages" in allSummaries[1]!, false);
     assert.deepEqual(auxiliaryStorage.listActiveAuxiliarySessionSummaries([]), []);
+    assert.deepEqual(auxiliaryStorage.listAuxiliarySessionSummaries([]), []);
   } finally {
     auxiliaryStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);

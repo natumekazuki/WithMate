@@ -62,13 +62,15 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Session Monitor`
   - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
   - 初期表示は `Session Monitor`
-  - compact な session row を表示する
+  - 親Session単位の2行集約カードを表示する。1行目はdisclosure、avatar、親title、2行目は`Main`と、Auxiliaryが存在する場合だけ`Aux`の状態アイコンを表示する
   - source は `src-electron/main.ts` の `sessionWindows: Map<string, BrowserWindow>` を truth source にした open session ids と、`Recent Sessions` と同じ filtered session list の交差集合を使う
   - section
     - `実行中`: `running`
     - `停止・完了`: `interrupted` / `error` / `neutral` を含む non-running
-  - row では `avatar / taskTitle / workspace / state badge` を表示し、クリックで session を開く
-  - interrupted / error は non-running section でも badge で判別できる
+  - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
+  - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
+  - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
+  - Auxiliaryの取得中・失敗時はカードごとにAuxiliaryがあるように表示せず、Monitor領域のstatus feedbackで状態を示す
   - open な SessionWindow がないときは、その旨が分かる empty state を出す
   - `Monitor Window` button から独立した monitor window を開ける
 - `Recent Sessions`
@@ -175,7 +177,14 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 表示内容は Home 右ペインの `Session Monitor` と同じ truth source を使う
   - open な `Session Window` のみ表示する
   - `実行中` / `停止・完了` の 2 section を持つ
-  - row では `avatar / taskTitle / workspace / state badge` を表示し、クリックで session を開く
+  - 表示単位は親Sessionの集約カードとし、親カードを2行で固定する。1行目はdisclosure、avatar、親title、2行目は`Main`と`Aux`の状態アイコンを表示する
+  - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
+  - `running` はaccent色のspinner、待機と終了はsubduedな中空円、errorはwarning triangleで表し、カード点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
+  - Auxiliaryが存在する親だけdisclosureと`Aux`集約を表示し、Auxiliaryがない場合もMainだけの2行を維持する。展開時は親カード内へ作成順のAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する
+  - Auxiliaryの状態集約では`実行中`、`エラー`、`待機`、`終了`を別々に数え、closed Auxiliaryを待機へ変換しない。待機と終了は同じ円形だが、状態ラベルと集約を分ける。interruptedとerrorも別の形状で表示する
+  - section countは親カード数とし、Auxiliaryをtop-level rowとして重複表示しない。親の状態はMainとAuxiliaryを分離して保持し、Auxiliaryのいずれかが実行中なら親カードを`実行中`へ分類する
+  - 親titleは既存の親Windowを開き、Auxiliary rowは同じ親Windowを指定したstable Auxiliary IDで開いて選択する。対象が消えた、親が一致しない、Windowを開けない場合はfallbackせずMonitor内へ失敗を返す
+  - 展開状態は親kindとstable IDごとのWindow local stateとし、複数親を同時に展開できる。再描画、状態更新、section移動で失わず、Homeと独立Monitor Windowの間で永続化・同期しない
 - window 内の `Home` button から通常の `Home Window` を前面へ戻せる
 - close は通常の window close と同じ扱いで、session 実行自体は止めない
 
@@ -374,7 +383,9 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - Session の作成・更新・削除は Main Process 経由で永続化する
 - Session の実行中イベントは Main Process から live state として IPC 中継する
 - Home の `Session Monitor` は Main Process の `sessionWindows` を thin IPC bridge で参照し、開いている `Session Window` の session だけを表示する
-- `Session Monitor Window` も同じ IPC bridge と truth source を使い、`Home` と別 window でも monitor 内容を同期する
+- Home の `Session Monitor` と `Session Monitor Window` は同じ projection / component を使い、open parentに紐づく保存済みAuxiliary summaryを同じ順序で集約する。状態更新は既存のlive eventと軽量summary再読込で反映し、pollingやMonitor専用storageは持たない
+- Auxiliary summary再読込はopen parent集合を一括取得し、親数に比例した個別SQLite取得を行わない
+- MonitorからAuxiliaryを選択して開いたときは、Mainがstable Auxiliary IDとparent IDを検証してnavigationし、既存Windowにはselection event、新規Windowにはentry queryで正確な会話を渡す
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
 - `Settings Window` は app 共通 system prompt や Character 本文を編集しない。V5 Character 定義は `Character Editor Window` と session / companion snapshot を正本にする

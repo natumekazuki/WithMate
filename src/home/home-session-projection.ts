@@ -8,10 +8,14 @@ export type HomeSessionState = {
   label: string;
 };
 
+export type HomeMonitorAuxiliaryDataState = "loading" | "ready" | "error";
+
 export type HomeAgentMonitorEntry = {
   kind: "agent";
   session: HomeSessionSummary;
   state: HomeSessionState;
+  mainState: HomeSessionState;
+  auxiliarySessions: AuxiliarySessionSummary[];
 };
 
 export type HomeCompanionMonitorEntry = {
@@ -19,7 +23,8 @@ export type HomeCompanionMonitorEntry = {
   session: CompanionSessionSummary;
   isWindowOpen: boolean;
   state: HomeSessionState;
-  groupLabel: string;
+  mainState: HomeSessionState;
+  auxiliarySessions: AuxiliarySessionSummary[];
 };
 
 export type HomeMonitorEntry = HomeAgentMonitorEntry | HomeCompanionMonitorEntry;
@@ -125,12 +130,6 @@ export function getHomeCompanionSessionState(
   };
 }
 
-export function buildCompanionGroupLabel(session: Pick<CompanionSessionSummary, "groupId" | "repoRoot">): string {
-  const normalizedRepoRoot = session.repoRoot.replace(/[\\/]+$/, "");
-  const pathParts = normalizedRepoRoot.split(/[\\/]/).filter(Boolean);
-  return pathParts.at(-1) || session.groupId;
-}
-
 function normalizePathKey(value: string): string {
   return value.replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
 }
@@ -144,6 +143,13 @@ function normalizeAuxiliarySessions(
   return Array.isArray(value)
     ? Array.from(value as readonly AuxiliarySessionSummary[])
     : [value as AuxiliarySessionSummary];
+}
+
+function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
+  return [...sessions].sort((left, right) => {
+    const createdAtOrder = left.createdAt.localeCompare(right.createdAt);
+    return createdAtOrder || left.id.localeCompare(right.id);
+  });
 }
 
 export function isWorkspaceInCompanionGroup(workspacePath: string, repoRoot: string): boolean {
@@ -196,13 +202,16 @@ export function buildHomeCompanionMonitorEntries(
       return haystacks.some((value) => value.includes(normalizedSessionSearch));
     })
     .map((session) => {
-      const auxiliarySessions = normalizeAuxiliarySessions(auxiliarySessionsByParentId.get(session.id));
+      const auxiliarySessions = sortAuxiliarySessions(
+        normalizeAuxiliarySessions(auxiliarySessionsByParentId.get(session.id)),
+      );
       return {
         kind: "companion" as const,
         session,
         isWindowOpen: openCompanionIdSet.has(session.id),
         state: getHomeCompanionSessionState(session, auxiliarySessions),
-        groupLabel: buildCompanionGroupLabel(session),
+        mainState: getHomeCompanionSessionState(session),
+        auxiliarySessions,
       };
     });
 }
@@ -224,14 +233,17 @@ export function buildHomeSessionProjection(
   sessionSearchText: string,
   companionSessions: readonly CompanionSessionSummary[] = [],
   openCompanionReviewWindowIds: readonly string[] = [],
-  activeAuxiliarySessions: readonly AuxiliarySessionSummary[] = [],
+  auxiliarySessionSummaries: readonly AuxiliarySessionSummary[] = [],
 ): HomeSessionProjection {
   const normalizedSessionSearch = sessionSearchText.trim().toLocaleLowerCase();
   const auxiliarySessionsByParentId = new Map<string, AuxiliarySessionSummary[]>();
-  for (const auxiliary of activeAuxiliarySessions) {
+  for (const auxiliary of auxiliarySessionSummaries) {
     const siblings = auxiliarySessionsByParentId.get(auxiliary.parentSessionId) ?? [];
     siblings.push(auxiliary);
     auxiliarySessionsByParentId.set(auxiliary.parentSessionId, siblings);
+  }
+  for (const [parentSessionId, auxiliarySessions] of auxiliarySessionsByParentId) {
+    auxiliarySessionsByParentId.set(parentSessionId, sortAuxiliarySessions(auxiliarySessions));
   }
   const filteredSessionEntries = sessions
     .filter((session) => {
@@ -254,6 +266,8 @@ export function buildHomeSessionProjection(
         kind: "agent" as const,
         session,
         state: getHomeSessionState(session, auxiliarySessions),
+        mainState: getHomeSessionState(session),
+        auxiliarySessions,
       };
     });
 
@@ -267,18 +281,7 @@ export function buildHomeSessionProjection(
   const monitorEntries = [
     ...filteredSessionEntries.filter(({ session }) => openSessionWindowIdSet.has(session.id)),
     ...companionMonitorEntries,
-  ].sort((left, right) => {
-    const getAuxiliarySessions = (entry: HomeMonitorEntry): readonly AuxiliarySessionSummary[] =>
-      auxiliarySessionsByParentId.get(entry.session.id) ?? [];
-    const latestAuxiliaryUpdatedAt = (entry: HomeMonitorEntry): string =>
-      getAuxiliarySessions(entry).reduce(
-        (latest, auxiliary) => Date.parse(auxiliary.updatedAt) > Date.parse(latest) ? auxiliary.updatedAt : latest,
-        entry.session.updatedAt,
-      );
-    const leftTime = Date.parse(latestAuxiliaryUpdatedAt(left));
-    const rightTime = Date.parse(latestAuxiliaryUpdatedAt(right));
-    return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
-  });
+  ];
   const runningMonitorEntries = monitorEntries.filter(({ state }) => state.kind === "running");
   const nonRunningMonitorEntries = monitorEntries.filter(({ state }) => state.kind !== "running");
 

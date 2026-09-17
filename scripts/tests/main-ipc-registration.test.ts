@@ -34,6 +34,7 @@ import {
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
@@ -61,6 +62,7 @@ import {
   WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL,
   WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
+  WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
   WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
@@ -172,12 +174,12 @@ function createSessionRequest(workspace: Record<string, unknown>) {
 // kind = "contract"
 // claim = "Main IPC registrationは代表的な現行公開channel（History Compareを含む）を登録し、列挙した廃止channelを登録しない"
 // oracle = { type = "contract", ref = "withmate-ipc-channels public surface" }
-// fault = "History Compareを含む代表的な公開channelにMain handlerがないか、列挙した廃止channelが再び呼び出し可能になる"
-// observable = "registerMainIpcHandlers後のhandler mapにある代表channelと列挙したremoved channelの不在"
+// fault = "列挙した現行channelにMain handlerがないか、廃止済みchannelが再び呼び出し可能になる"
+// observable = "registerMainIpcHandlers後のhandler mapにある代表channelとremoved channelの不在"
 // observation_boundary = "public-boundary"
 // scope = "Main IPC public channel registration"
 // lifecycle = "permanent"
-// impact = "rendererからHistory Compareを含む現行機能へ到達でき、廃止済みAPIを再公開しない"
+// impact = "rendererからHistory Compareを含む現行機能へ到達でき、廃止済み操作をIPC経由で再実行できない"
 // distinction = "file tree context menuとHistory Compareを含む代表的な公開channel、およびremoved channel不在を検証する"
 // @end-test-value
 test("registerMainIpcHandlers は保持する public IPC だけを登録する", () => {
@@ -234,6 +236,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_DELETE_SESSION_CHANNEL));
   assert.ok(handlers.has(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_RUN_SESSION_TURN_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL));
 
   const removedChannels = [
     "withmate:open-memory-management-window",
@@ -305,6 +308,59 @@ test("Session Window restore IPC はHomeだけからsnapshot取得と一括復�
     /only available from the Home window/,
   );
   assert.deepEqual(calls, ["get", "restore"]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Session MonitorのAuxiliary選択は存在確認と親ID一致を経て、対象IDをWindow navigationへ保持する"
+// oracle = { type = "contract", ref = "issue-722 exact Auxiliary navigation" }
+// fault = "存在しないAuxiliaryや別親のAuxiliaryを黙ってMainへfallbackし、誤った会話を開く"
+// observable = "openSessionWindow/openCompanionReviewWindowへ渡されたparentとAuxiliary ID、および不正選択時の拒否"
+// observation_boundary = "public-boundary"
+// scope = "Main IPC Session Monitor Auxiliary navigation"
+// lifecycle = "permanent"
+// impact = "展開一覧から選択した会話だけを再開し、対象消失や親不一致を利用者へ返す"
+// distinction = "renderer callbackの引数変換ではなく、Mainの永続化照会と親子認可を検証する"
+// @end-test-value
+test("Session MonitorのAuxiliary navigationは対象と親を検証してWindowへ渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const calls: unknown[] = [];
+  const { deps } = createDeps({
+    getAuxiliarySession: async (auxiliarySessionId: string) => {
+      if (auxiliarySessionId === "aux-main") {
+        return createAuxiliarySessionStub({ id: "aux-main", parentSessionId: "session-1" });
+      }
+      if (auxiliarySessionId === "aux-other") {
+        return createAuxiliarySessionStub({ id: "aux-other", parentSessionId: "session-2" });
+      }
+      return null;
+    },
+    openSessionWindow: async (sessionId: string, auxiliarySessionId?: string) => {
+      calls.push({ kind: "session", sessionId, auxiliarySessionId });
+    },
+    openCompanionReviewWindow: async (sessionId: string, auxiliarySessionId?: string) => {
+      calls.push({ kind: "companion", sessionId, auxiliarySessionId });
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await handlers.get(WITHMATE_OPEN_SESSION_CHANNEL)?.({}, "session-1", "aux-main");
+  await handlers.get(WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL)?.({}, "session-1", "aux-main");
+  assert.deepEqual(calls, [
+    { kind: "session", sessionId: "session-1", auxiliarySessionId: "aux-main" },
+    { kind: "companion", sessionId: "session-1", auxiliarySessionId: "aux-main" },
+  ]);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_CHANNEL)?.({}, "session-1", "missing") as Promise<unknown>,
+    /対象のAuxiliary Sessionが見つからないよ。/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_CHANNEL)?.({}, "session-1", "aux-other") as Promise<unknown>,
+    /Auxiliary Sessionの親が一致しないよ。/,
+  );
+  assert.equal(calls.length, 2);
 });
 
 test("Session summary IPC は bounded requestをparseしてpage / Character usageへ委譲する", async () => {
@@ -2222,6 +2278,41 @@ test("Home 用 Auxiliary summary IPC は main が確定した open parent scope 
   assert.deepEqual(calls, ["listOpenActiveAuxiliarySessionSummaries"]);
   assert.equal("messages" in summary, false);
   assert.equal("composerDraft" in summary, false);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Home Monitor用Auxiliary summary IPC handlerは依存serviceからactive/closedを含むsummaryをそのまま返す"
+// oracle = { type = "contract", ref = "issue-722 all stored Auxiliary summaries" }
+// fault = "handlerが依存serviceのclosed summaryを落とし、展開一覧へ渡すsummary集合を欠損させる"
+// observable = "listOpenAuxiliarySessionSummaries channelの返却summary一覧とdependency呼び出し"
+// observation_boundary = "public-boundary"
+// scope = "Home Monitor Auxiliary summary IPC"
+// lifecycle = "permanent"
+// impact = "Monitorの展開一覧がserviceから渡された親ごとのsummaryを欠損なく表示できる"
+// distinction = "Main側のopen parent ID集約とstorage/service経路ではなく、IPC handlerのdelegationとpayload保持を検証する"
+// @end-test-value
+test("Home Monitor用Auxiliary summary IPCは全保存済みsummaryを返す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const summaries = [
+    createAuxiliarySessionStub({ id: "aux-open", closedAt: "" }),
+    createAuxiliarySessionStub({ id: "aux-closed", closedAt: "2026-07-05T00:00:00.000Z", status: "closed" }),
+  ].map(({ messages: _messages, composerDraft: _composerDraft, ...summary }) => summary);
+  const calls: string[] = [];
+  const { deps } = createDeps({
+    listOpenAuxiliarySessionSummaries: async () => {
+      calls.push("listOpenAuxiliarySessionSummaries");
+      return summaries;
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL)?.({}),
+    summaries,
+  );
+  assert.deepEqual(calls, ["listOpenAuxiliarySessionSummaries"]);
 });
 
 test("Auxiliary update IPC は payload parent と既存 parent の不一致を拒否する", async () => {

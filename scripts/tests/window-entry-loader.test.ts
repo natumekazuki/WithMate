@@ -48,11 +48,31 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Chat Window entry queryは親Sessionのmodeを維持し、指定されたAuxiliary IDだけを追加する"
+// oracle = { type = "contract", ref = "issue-722 exact Auxiliary window navigation" }
+// fault = "Auxiliary選択がqueryから欠落するか、未指定時の既存queryが変わる"
+// observable = "agent/companionのbuildChatEntrySearch結果"
+// observation_boundary = "public-boundary"
+// scope = "WindowEntryLoader chat navigation"
+// lifecycle = "permanent"
+// impact = "開いたWindowが選択済みAuxiliaryへ初期選択を渡せる"
+// distinction = "Main IPCの存在確認とは分離して、Window entryのquery serializationを検証する"
+// @end-test-value
 test("buildChatEntrySearch は chat mode ごとの session.html query を組み立てる", () => {
   assert.equal(buildChatEntrySearch({ kind: "agent", sessionId: "session 1" }), "?sessionId=session%201");
   assert.equal(
+    buildChatEntrySearch({ kind: "agent", sessionId: "session 1", auxiliarySessionId: "aux 1" }),
+    "?sessionId=session%201&auxiliarySessionId=aux%201",
+  );
+  assert.equal(
     buildChatEntrySearch({ kind: "companion", sessionId: "companion 1" }),
     "?companionSessionId=companion%201&mode=companion",
+  );
+  assert.equal(
+    buildChatEntrySearch({ kind: "companion", sessionId: "companion 1", auxiliarySessionId: "aux 1" }),
+    "?companionSessionId=companion%201&mode=companion&auxiliarySessionId=aux%201",
   );
 });
 

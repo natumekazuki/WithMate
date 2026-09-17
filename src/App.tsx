@@ -11,9 +11,9 @@ import {
 
 import {
   currentTimestampLabel,
+  getAuxiliarySessionIdFromLocation,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
-  getAuxiliarySessionIdFromLocation,
   getSessionIdFromLocation,
   type LiveApprovalRequest,
   type LiveElicitationRequest,
@@ -653,7 +653,6 @@ export default function AgentSessionWindowApp() {
     if (!withmateApi || !selectedId) {
       return;
     }
-
     return withmateApi.subscribeAuxiliarySessionNavigation((payload) => {
       if (payload.parentSessionId !== selectedId) {
         return;

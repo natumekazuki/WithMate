@@ -1,28 +1,30 @@
 import type { AuxiliarySessionSummary } from "../auxiliary-session-state.js";
 
-export type HomeActiveAuxiliarySessionRefresherInput = {
-  fetchActiveAuxiliarySessions: () => Promise<AuxiliarySessionSummary[]>;
-  setActiveAuxiliarySessions: (sessions: AuxiliarySessionSummary[]) => void;
+export type HomeAuxiliarySessionRefresherInput = {
+  fetchAuxiliarySessionSummaries: () => Promise<AuxiliarySessionSummary[]>;
+  setAuxiliarySessionSummaries: (sessions: AuxiliarySessionSummary[]) => void;
+  onLoadState?: (state: "loading" | "ready" | "error") => void;
   onError?: (error: unknown) => void;
 };
 
-export type HomeActiveAuxiliarySessionRefresher = {
+export type HomeAuxiliarySessionRefresher = {
   refresh(): void;
   dispose(): void;
 };
 
-export function resolveHomeActiveAuxiliarySessionsState(
+export function resolveHomeAuxiliarySessionSummariesState(
   current: AuxiliarySessionSummary[],
   next: AuxiliarySessionSummary[],
 ): AuxiliarySessionSummary[] {
   return JSON.stringify(current) === JSON.stringify(next) ? current : next;
 }
 
-export function createHomeActiveAuxiliarySessionRefresher({
-  fetchActiveAuxiliarySessions,
-  setActiveAuxiliarySessions,
+export function createHomeAuxiliarySessionRefresher({
+  fetchAuxiliarySessionSummaries,
+  setAuxiliarySessionSummaries,
+  onLoadState,
   onError,
-}: HomeActiveAuxiliarySessionRefresherInput): HomeActiveAuxiliarySessionRefresher {
+}: HomeAuxiliarySessionRefresherInput): HomeAuxiliarySessionRefresher {
   let active = true;
   let refreshInFlight = false;
   let refreshRequestedWhileInFlight = false;
@@ -39,22 +41,27 @@ export function createHomeActiveAuxiliarySessionRefresher({
 
     refreshInFlight = true;
     refreshRequestedWhileInFlight = false;
-    void fetchActiveAuxiliarySessions().then((sessions) => {
+    if (lastAppliedSessions === null) {
+      onLoadState?.("loading");
+    }
+    void fetchAuxiliarySessionSummaries().then((sessions) => {
       if (!active) {
         return;
       }
+      onLoadState?.("ready");
       if (
         lastAppliedSessions
-        && resolveHomeActiveAuxiliarySessionsState(lastAppliedSessions, sessions) === lastAppliedSessions
+        && resolveHomeAuxiliarySessionSummariesState(lastAppliedSessions, sessions) === lastAppliedSessions
       ) {
         return;
       }
-      setActiveAuxiliarySessions(sessions);
+      setAuxiliarySessionSummaries(sessions);
       lastAppliedSessions = sessions;
     }).catch((error) => {
       if (!active) {
         return;
       }
+      onLoadState?.("error");
       onError?.(error);
     }).finally(() => {
       refreshInFlight = false;

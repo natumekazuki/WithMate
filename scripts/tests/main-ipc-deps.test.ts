@@ -5,10 +5,10 @@ import { createMainIpcRegistrationDeps } from "../../src-electron/main-ipc-deps.
 
 // @test-value v2
 // kind = "contract"
-// claim = "createMainIpcRegistrationDepsはSession Monitor context menu delegateをwindow groupからregistration depsへ保持する"
+// claim = "createMainIpcRegistrationDepsはSession Monitorのcontext menuとAuxiliary ID付きwindow delegateをwindow groupからregistration depsへ保持する"
 // oracle = { type = "contract", ref = "createMainIpcRegistrationDeps window delegate mapping" }
-// fault = "window groupに追加したcontext menu delegateがregistration depsから欠落するか、別delegateへ置き換わる"
-// observable = "生成されたregistration depsのshowSessionMonitorContextMenu function"
+// fault = "window groupに追加したdelegateがregistration depsから欠落するか、Auxiliary IDを親Window delegateへ渡さない"
+// observable = "生成されたregistration depsのcontext menuとwindow delegateの呼び出し引数"
 // observation_boundary = "public-boundary"
 // scope = "main IPC dependency grouping"
 // lifecycle = "permanent"
@@ -27,8 +27,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       resolveEventWindow: () => null,
       resolveHomeWindow: () => null,
       resolveSessionWindow: () => null,
-      async openSessionWindow(sessionId) {
-        calls.push(`openSession:${sessionId}`);
+      async openSessionWindow(sessionId, auxiliarySessionId) {
+        calls.push(`openSession:${sessionId}:${auxiliarySessionId ?? "none"}`);
         return {} as never;
       },
       async getSessionWindowRestoreSet() {
@@ -75,7 +75,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async openDiffWindow() {
         return {} as never;
       },
-      async openCompanionReviewWindow() {
+      async openCompanionReviewWindow(sessionId, auxiliarySessionId) {
+        calls.push(`openCompanionReview:${sessionId}:${auxiliarySessionId ?? "none"}`);
         return {} as never;
       },
       async openCompanionMergeWindow() {
@@ -297,7 +298,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   assert.equal(await deps.openMemoryV6ReviewWindow(), undefined);
   assert.equal(deps.isMemoryV6ReviewWindow({} as never), true);
   assert.equal(deps.isSettingsWindow({} as never), true);
-  assert.equal(await deps.openSessionWindow("session-1"), undefined);
+  assert.equal(await deps.openSessionWindow("session-1", "aux-1"), undefined);
+  assert.equal(await deps.openCompanionReviewWindow("companion-1", "aux-2"), undefined);
   assert.deepEqual(await deps.getSessionWindowRestoreSet(), ["session-1"]);
   assert.deepEqual((await deps.restoreSessionWindows()).openedSessionIds, ["session-1"]);
   assert.deepEqual(await deps.showSessionMonitorContextMenu({} as never, {} as never), { status: "dismissed" });
@@ -312,7 +314,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     "openMemoryReview",
     "isMemoryReview",
     "isSettings",
-    "openSession:session-1",
+    "openSession:session-1:aux-1",
+    "openCompanionReview:companion-1:aux-2",
     "getSessionWindowRestoreSet",
     "restoreSessionWindows",
     "showSessionMonitorContextMenu",

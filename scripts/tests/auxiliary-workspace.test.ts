@@ -347,6 +347,7 @@ test("hidden sessionのsaveとterminalでdraft・previewを維持する", async 
     });
   });
   assert.equal(savedRequests.length, 1);
+  assert.equal(binding.sessionRef.current?.id, a.id);
   assert.equal(savedRequests[0]?.composerDraft, "hidden draft");
   assert.equal(saveResult?.request.composerDraft, "hidden draft");
   assert.equal(saveResult?.saved.composerDraft, "hidden draft");
@@ -355,7 +356,10 @@ test("hidden sessionのsaveとterminalでdraft・previewを維持する", async 
   assert.ok(terminal);
   await act(async () => { terminal?.("a", null); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(binding.sessionRef.current?.id, a.id);
   assert.equal(binding.sessionRef.current?.composerDraft, "hidden draft");
+  assert.equal(binding.sessionRef.current?.preview, "terminal answer");
+  assert.equal(binding.sessionRef.current?.messages.at(-1)?.text, "terminal answer");
   assert.equal(binding.mutationRevision.current, revision + 1);
   assert.equal(bindingB.mutationRevision.current, 1);
   assert.equal(view.current.summaries.find((summary) => summary.id === "a")?.preview, "terminal answer");

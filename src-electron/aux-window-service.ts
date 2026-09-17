@@ -395,7 +395,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     }
   }
 
-  async openCompanionReviewWindow(sessionId: string): Promise<TWindow> {
+  async openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<TWindow> {
     const existing = this.reuseWindow(this.companionReviewWindows.get(sessionId) ?? null);
     if (existing) {
       return existing;
@@ -412,7 +412,11 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.companionReviewWindows.delete(sessionId);
       this.deps.onCompanionReviewWindowsChanged();
     });
-    await this.deps.loadChatEntry(window, { kind: "companion", sessionId });
+    await this.deps.loadChatEntry(window, {
+      kind: "companion",
+      sessionId,
+      ...(auxiliarySessionId ? { auxiliarySessionId } : {}),
+    });
     return window;
   }
 

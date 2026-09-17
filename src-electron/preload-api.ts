@@ -6,6 +6,7 @@ import {
   normalizeAuxiliarySessionNavigationPayload,
   normalizeOpenSessionWindowIdsChangedPayload,
   normalizeOpenSessionWindowIdsPageResult,
+  normalizeAuxiliarySessionSelectionPayload,
   OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
 } from "../src/withmate-window-types.js";
 import {
@@ -62,6 +63,7 @@ import {
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
@@ -126,6 +128,7 @@ import {
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
+  WITHMATE_AUXILIARY_SESSION_SELECTION_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
@@ -258,8 +261,8 @@ function subscribe<EventArgs extends unknown[]>(
 
 function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigationApi {
   return {
-    openSession(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_CHANNEL, sessionId);
+    openSession(sessionId, auxiliarySessionId) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_CHANNEL, sessionId, auxiliarySessionId ?? null);
     },
     showSessionMonitorContextMenu(request) {
       return ipcRenderer.invoke(WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL, request);
@@ -303,8 +306,12 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     openSessionFilePreviewWindow(request) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL, request);
     },
-    openCompanionReviewWindow(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL, sessionId);
+    openCompanionReviewWindow(sessionId, auxiliarySessionId) {
+      return ipcRenderer.invoke(
+        WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
+        sessionId,
+        auxiliarySessionId ?? null,
+      );
     },
     openCompanionMergeWindow(sessionId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL, sessionId);
@@ -509,6 +516,9 @@ function createAuxiliaryApi(ipcRenderer: IpcRendererLike): WithMateWindowAuxilia
     },
     listOpenActiveAuxiliarySessionSummaries() {
       return ipcRenderer.invoke(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL);
+    },
+    listOpenAuxiliarySessionSummaries() {
+      return ipcRenderer.invoke(WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL);
     },
     getActiveAuxiliarySession(parentSessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, parentSessionId);
@@ -848,6 +858,14 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     subscribeLiveSessionRun(listener) {
       return subscribe(ipcRenderer, WITHMATE_LIVE_SESSION_RUN_EVENT, (payload: LiveSessionRunPayload) => {
         listener(payload.sessionId, payload.state ?? null);
+      });
+    },
+    subscribeAuxiliarySessionSelection(listener) {
+      return subscribe(ipcRenderer, WITHMATE_AUXILIARY_SESSION_SELECTION_EVENT, (payload: unknown) => {
+        const normalized = normalizeAuxiliarySessionSelectionPayload(payload);
+        if (normalized) {
+          listener(normalized);
+        }
       });
     },
     subscribeProviderQuotaTelemetry(listener) {

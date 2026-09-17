@@ -99,6 +99,35 @@ export class AuxiliarySessionStorage {
     });
   }
 
+  listAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[] {
+    this.ensureLegacySummaryBackfill();
+    const normalizedParentSessionIds = Array.from(new Set(
+      parentSessionIds
+        .map((parentSessionId) => parentSessionId.trim())
+        .filter(Boolean),
+    ));
+    if (normalizedParentSessionIds.length === 0) {
+      return [];
+    }
+
+    return this.withDb((db) => {
+      const placeholders = normalizedParentSessionIds.map(() => "?").join(", ");
+      const rows = db.prepare(`
+        SELECT parent_session_id, created_at, updated_at, summary_json
+        FROM auxiliary_sessions
+        WHERE parent_session_id IN (${placeholders})
+        ORDER BY parent_session_id ASC, created_at ASC, id ASC
+      `).all(...normalizedParentSessionIds) as Array<ScopedAuxiliarySessionRow & { summary_json: string }>;
+      return rows.flatMap((row) => {
+        const summary = parseAuxiliarySessionSummaryRow(row);
+        if (!summary || summary.parentSessionId !== row.parent_session_id) {
+          return [];
+        }
+        return [summary];
+      });
+    });
+  }
+
   listActiveAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[] {
     this.ensureLegacySummaryBackfill();
     const normalizedParentSessionIds = Array.from(new Set(

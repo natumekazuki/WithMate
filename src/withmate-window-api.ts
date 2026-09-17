@@ -72,6 +72,7 @@ import type {
   SavePastedSessionFileRequest,
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
+  AuxiliarySessionSelectionPayload,
   AuxiliarySessionNavigationPayload,
 } from "./withmate-window-types.js";
 import type {
@@ -143,7 +144,7 @@ import type {
 import type { SessionWindowRestoreResult } from "./session-window-restore.js";
 
 export type WithMateWindowNavigationApi = {
-  openSession(sessionId: string): Promise<void>;
+  openSession(sessionId: string, auxiliarySessionId?: string): Promise<void>;
   showSessionMonitorContextMenu(
     request: SessionMonitorContextMenuRequest,
   ): Promise<SessionMonitorContextMenuResult>;
@@ -158,7 +159,7 @@ export type WithMateWindowNavigationApi = {
   openSessionFilePreviewWindow(
     request: SessionFilePreviewWindowOpenRequest,
   ): Promise<SessionFilePreviewWindowOpenResult>;
-  openCompanionReviewWindow(sessionId: string): Promise<void>;
+  openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
   showMarkdownLinkContextMenu(
@@ -266,6 +267,7 @@ export type WithMateWindowSessionApi = {
 export type WithMateWindowAuxiliaryApi = {
   listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
   listOpenActiveAuxiliarySessionSummaries(): Promise<AuxiliarySessionSummary[]>;
+  listOpenAuxiliarySessionSummaries(): Promise<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
   createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession>;
@@ -370,6 +372,7 @@ export type WithMateWindowSubscriptionApi = {
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;
+  subscribeAuxiliarySessionSelection(listener: (payload: AuxiliarySessionSelectionPayload) => void): () => void;
   subscribeProviderQuotaTelemetry(listener: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void): () => void;
   subscribeSessionContextTelemetry(listener: (sessionId: string, telemetry: SessionContextTelemetry | null) => void): () => void;
   subscribeSessionBackgroundActivity(

@@ -68,4 +68,10 @@ export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
       .getWindowBroadcastService()
       .broadcastOpenCompanionReviewWindowIds(this.deps.listOpenCompanionReviewWindowIds());
   }
+
+  broadcastAuxiliarySessionSelection(parentSessionId: string, auxiliarySessionId: string): void {
+    this.deps
+      .getWindowBroadcastService()
+      .broadcastAuxiliarySessionSelection(parentSessionId, auxiliarySessionId);
+  }
 }

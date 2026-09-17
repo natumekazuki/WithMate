@@ -8,7 +8,7 @@ export type WindowLike = {
 export type HomeEntryMode = "home" | "monitor" | "settings" | "memory-review";
 export type ChatEntryMode =
   | { kind: "agent"; sessionId: string; auxiliarySessionId?: string | null }
-  | { kind: "companion"; sessionId: string };
+  | { kind: "companion"; sessionId: string; auxiliarySessionId?: string | null };
 
 export type WindowEntryLoaderDeps = {
   devServerUrl?: string | null;
@@ -70,15 +70,14 @@ export class WindowEntryLoader {
 }
 
 export function buildChatEntrySearch(mode: ChatEntryMode): string {
+  const auxiliarySessionQuery = mode.auxiliarySessionId?.trim()
+    ? `&auxiliarySessionId=${encodeURIComponent(mode.auxiliarySessionId.trim())}`
+    : "";
   if (mode.kind === "agent") {
-    const auxiliarySessionId = mode.auxiliarySessionId?.trim() ?? "";
-    const auxiliaryQuery = auxiliarySessionId
-      ? `&auxiliarySessionId=${encodeURIComponent(auxiliarySessionId)}`
-      : "";
-    return `?sessionId=${encodeURIComponent(mode.sessionId)}${auxiliaryQuery}`;
+    return `?sessionId=${encodeURIComponent(mode.sessionId)}${auxiliarySessionQuery}`;
   }
   if (mode.kind === "companion") {
-    return `?companionSessionId=${encodeURIComponent(mode.sessionId)}&mode=companion`;
+    return `?companionSessionId=${encodeURIComponent(mode.sessionId)}&mode=companion${auxiliarySessionQuery}`;
   }
   throw new Error(`Unsupported chat entry mode: ${(mode as { kind: string }).kind}`);
 }

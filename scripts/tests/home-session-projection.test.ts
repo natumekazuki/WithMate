@@ -256,17 +256,17 @@ describe("home-session-projection", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Companion Monitor projectionはopen groupの全兄弟を表示し、各entryへ実Windowの開閉状態を投影する"
+  // claim = "Companion Monitor projectionはopen groupの全兄弟を表示し、各entryへ実Windowの開閉状態、Auxiliary、Main/Auxiliary stateを投影する"
   // oracle = { type = "contract", ref = "Home Session Monitor Companion window state projection" }
   // fault = "開いていないCompanion siblingまでopen扱いになり、存在しないWindowへの閉じる操作が表示される"
-  // observable = "monitor entryのkind、session ID、isWindowOpen、group表示情報"
+  // observable = "monitor entryのkind、session ID、isWindowOpen、Auxiliary、Main/Auxiliary state"
   // observation_boundary = "implementation"
   // scope = "buildHomeSessionProjection Companion Monitor entries"
   // lifecycle = "permanent"
   // impact = "Companion rowの操作対象を実在するReview Windowに限定する"
   // distinction = "group選択やstate labelではなく、row操作可否へ使うWindow identity projectionを検証する"
   // @end-test-value
-  it("Monitor entries に Companion session と group 表示情報を含める", () => {
+  it("Monitor entries に Companion session と state projection を含める", () => {
     const projection = buildHomeSessionProjection(
       [createSession({ id: "agent", taskTitle: "Agent Task", runState: "running", updatedAt: "2026-03-28T00:00:00.000Z" })],
       ["agent"],
@@ -285,7 +285,7 @@ describe("home-session-projection", () => {
           groupId: "companion-group-1",
           taskTitle: "Sibling Task",
           repoRoot: "F:/workspace/WithMate",
-          runState: "running",
+          runState: "idle",
           updatedAt: "2026-03-27T00:00:00.000Z",
         }),
         createCompanionSession({
@@ -297,44 +297,79 @@ describe("home-session-projection", () => {
         }),
       ],
       ["companion"],
+      [
+        createAuxiliarySession({ id: "companion-aux", parentSessionId: "companion", runState: "running" }),
+        createAuxiliarySession({ id: "sibling-aux", parentSessionId: "sibling", status: "closed", closedAt: "2026-03-30T00:00:00.000Z" }),
+      ],
     );
 
     assert.deepEqual(projection.monitorEntries.map((entry) => `${entry.kind}:${entry.session.id}`), [
-      "companion:companion",
       "agent:agent",
+      "companion:companion",
       "companion:sibling",
     ]);
     assert.deepEqual(
       projection.monitorEntries
         .filter((entry) => entry.kind === "companion")
-        .map(({ session, isWindowOpen, groupLabel }) => [session.id, isWindowOpen, groupLabel]),
-      [["companion", true, "WithMate"], ["sibling", false, "WithMate"]],
+        .map(({ session, isWindowOpen }) => [session.id, isWindowOpen]),
+      [["companion", true], ["sibling", false]],
     );
-    assert.equal(projection.monitorEntries[0]?.kind, "companion");
+    assert.equal(projection.monitorEntries[0]?.kind, "agent");
+    assert.equal(projection.monitorEntries[1]?.mainState.label, "待機");
+    assert.deepEqual(
+      projection.monitorEntries
+        .filter((entry) => entry.kind === "companion")
+        .map(({ session, state, mainState, auxiliarySessions }) => [
+          session.id,
+          state.kind,
+          mainState.kind,
+          auxiliarySessions.map(({ id, status }) => [id, status]),
+        ]),
+      [
+        ["companion", "running", "neutral", [["companion-aux", "active"]]],
+        ["sibling", "neutral", "neutral", [["sibling-aux", "closed"]]],
+      ],
+    );
     assert.equal(projection.nonRunningMonitorEntries[0]?.state.label, "待機");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "開いているCompanion ReviewのGroupだけをMonitorへ投影し、open Reviewがなければ空にする"
+  // oracle = { type = "contract", ref = "companion-group-monitor" }
+  // fault = "無関係なGroupまで表示するか、open ReviewがないのにMonitor entriesを生成する"
+  // observable = "buildCompanionGroupMonitorEntriesの返却Session ID一覧"
+  // observation_boundary = "declaration"
+  // scope = "home-companion-monitor group filtering"
+  // lifecycle = "permanent"
+  // distinction = "同一GroupのSiblingをrepoRoot一致なしで含める挙動とは分離して、Group filterとopen状態の境界だけを検証する"
+  // @end-test-value
   it("開いている Companion Review と同じ CompanionGroup の monitor entries を返す", () => {
-    const entries = buildCompanionGroupMonitorEntries(
-      [
-        createCompanionSession({
-          id: "matched",
-          groupId: "companion-group-1",
-          taskTitle: "Matched",
-          repoRoot: "F:/workspace/WithMate",
-        }),
-        createCompanionSession({
-          id: "other",
-          groupId: "companion-group-2",
-          taskTitle: "Other",
-          repoRoot: "F:/workspace/Other",
-        }),
-      ],
-      ["matched"],
+    const sessions = [
+      createCompanionSession({
+        id: "matched",
+        groupId: "companion-group-1",
+        taskTitle: "Matched",
+        repoRoot: "F:/workspace/WithMate",
+      }),
+      createCompanionSession({
+        id: "sibling",
+        groupId: "companion-group-1",
+        taskTitle: "Sibling",
+        repoRoot: "F:/workspace/WithMate",
+      }),
+      createCompanionSession({
+        id: "other",
+        groupId: "companion-group-2",
+        taskTitle: "Other",
+        repoRoot: "F:/workspace/Other",
+      }),
+    ];
+    assert.deepEqual(
+      buildCompanionGroupMonitorEntries(sessions, ["matched"]).map((entry) => entry.session.id),
+      ["matched", "sibling"],
     );
-
-    assert.deepEqual(entries.map((entry) => entry.session.id), ["matched"]);
-    assert.equal(entries[0]?.groupLabel, "WithMate");
+    assert.deepEqual(buildCompanionGroupMonitorEntries(sessions, []), []);
   });
 
   // @test-value v2
@@ -402,6 +437,58 @@ describe("home-session-projection", () => {
 
     assert.equal(projection.monitorEntries[0]?.state.kind, "running");
     assert.deepEqual(projection.nonRunningMonitorEntries, []);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Home Monitorは親MainのstateをAuxiliaryの集約stateから分離し、全AuxiliaryをcreatedAtとidで安定順に投影する"
+  // oracle = { type = "contract", ref = "issue-722 monitor aggregate projection" }
+  // fault = "Auxiliaryの実行状態でMainを実行中扱いにする、表示対象を一件に絞る、またはupdatedAtで表示順が揺れる"
+  // observable = "monitor entryのmainState、state、auxiliarySessionsのID一覧"
+  // observation_boundary = "implementation"
+  // scope = "buildHomeSessionProjection Main and Auxiliary projection"
+  // lifecycle = "permanent"
+  // impact = "2行の集約表示と展開一覧がMain/Auxiliaryの状態を混同せず再描画で順序を維持する"
+  // distinction = "親のsection分類とMain表示、Auxiliary個別表示の契約を分離して検証する"
+  // @end-test-value
+  it("Main stateとAuxiliary一覧を分離し、Auxiliaryを作成順で投影する", () => {
+    const projection = buildHomeSessionProjection(
+      [createSession({ id: "parent", taskTitle: "Parent", runState: "error" })],
+      ["parent"],
+      "",
+      [],
+      [],
+      [
+        createAuxiliarySession({
+          id: "aux-b",
+          parentSessionId: "parent",
+          runState: "running",
+          createdAt: "2026-03-29T00:00:00.000Z",
+          updatedAt: "2026-03-31T00:00:00.000Z",
+        }),
+        createAuxiliarySession({
+          id: "aux-z",
+          parentSessionId: "parent",
+          status: "closed",
+          closedAt: "2026-03-30T00:00:00.000Z",
+          createdAt: "2026-03-28T00:00:00.000Z",
+          updatedAt: "2026-04-01T00:00:00.000Z",
+        }),
+        createAuxiliarySession({
+          id: "aux-a",
+          parentSessionId: "parent",
+          createdAt: "2026-03-28T00:00:00.000Z",
+          updatedAt: "2026-04-02T00:00:00.000Z",
+        }),
+      ],
+    );
+
+    const entry = projection.monitorEntries[0];
+    assert.deepEqual(entry?.auxiliarySessions.map(({ id }) => id), ["aux-a", "aux-z", "aux-b"]);
+    assert.equal(entry?.auxiliarySessions[1]?.status, "closed");
+    assert.equal(entry?.mainState.kind, "error");
+    assert.equal(entry?.state.kind, "running");
+    assert.deepEqual(projection.runningMonitorEntries.map(({ session }) => session.id), ["parent"]);
   });
 
 });

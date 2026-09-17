@@ -48,8 +48,8 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().openCharacterEditorWindow(characterId);
   }
 
-  async openSessionWindow(sessionId: string): Promise<BrowserWindow> {
-    return this.deps.getSessionWindowBridge().openSessionWindow(sessionId);
+  async openSessionWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow> {
+    return this.deps.getSessionWindowBridge().openSessionWindow(sessionId, { auxiliarySessionId });
   }
 
   closeSessionWindow(sessionId: string): void {
@@ -93,8 +93,8 @@ export class MainWindowFacade {
     this.deps.getAuxWindowService().closeFilePreviewWindowsForSession(sessionId);
   }
 
-  async openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow> {
-    return this.deps.getAuxWindowService().openCompanionReviewWindow(sessionId);
+  async openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow> {
+    return this.deps.getAuxWindowService().openCompanionReviewWindow(sessionId, auxiliarySessionId);
   }
 
   async openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow> {
