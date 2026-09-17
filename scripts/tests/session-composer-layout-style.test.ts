@@ -64,15 +64,15 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
 
 // @test-value v2
 // kind = "contract"
-// claim = "ActionDockのCancel予約領域は通常幅で固定幅を持ち、非実行中は領域を保ったまま不可視になり、狭幅では操作列へ追従する"
+// claim = "Session composerのSend領域とActionDockのCancel予約領域は、通常幅で必要な幅を確保し、狭幅では指定した折り返しと操作列追従を行う"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "CSS宣言からCancel slotの固定幅、非実行中の不可視、狭幅overrideのいずれかが欠け、予約領域の幅契約が崩れる"
-// observable = "src/styles.cssのCancel slot固定幅・不可視・狭幅上書き宣言"
+// fault = "expandedのSend最小幅、Cancel slotの固定幅・非実行中の不可視・狭幅overrideのいずれかが欠け、ActionDockの主操作領域が崩れる"
+// observable = "src/styles.cssのexpanded Send最小幅、Cancel slot固定幅・不可視・狭幅上書き宣言"
 // observation_boundary = "declaration"
-// scope = "ActionDock Cancel slot CSS"
+// scope = "Session composer action controls CSS"
 // lifecycle = "permanent"
-// impact = "compact / expandedが共有するCancel slotの幅・visibility・狭幅挙動をCSS上で保つ"
-// distinction = "component render testはDOM上のslot位置を確認し、typecheck/buildはCSSの固定幅とresponsive overrideを確認しない"
+// impact = "compact / expandedのSendとCancelの主操作領域を、通常幅と狭幅のActionDockで到達可能に保つ"
+// distinction = "component render testはDOM上のslot位置と状態を確認し、typecheck/buildはCSSの幅とresponsive overrideを確認しない"
 // @end-test-value
 test("Session composer の Cancel slot は固定幅と狭幅上書きを持つ", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
@@ -82,24 +82,31 @@ test("Session composer の Cancel slot は固定幅と狭幅上書きを持つ",
     /\.composer-control-row > \.session-send-button\s*{[\s\S]*?min-width:\s*86px;/,
     "expandedのSend buttonは最小幅86pxを使う",
   );
-  assert.match(
-    stylesSource,
-    /\.session-action-dock-cancel-slot\s*{\s*flex:\s*0 0 86px;\s*width:\s*86px;\s*min-width:\s*86px;/,
-    "ActionDockのCancel領域は固定幅を予約する",
-  );
-  assert.match(
-    stylesSource,
-    /\.session-action-dock-cancel-slot > \.session-send-button\s*{\s*width:\s*100%;/,
-    "Cancel buttonは予約slotいっぱいに表示する",
-  );
-  assert.match(
-    stylesSource,
-    /\.session-action-dock-cancel-slot:not\(\.is-active\)\s*{\s*visibility:\s*hidden;/,
-    "非実行中のCancelは領域を保ったまま不可視にする",
-  );
-  assert.match(
-    stylesSource,
-    /@media \(max-width:\s*760px\)\s*{(?:(?!@media\b)[\s\S])*?\.session-action-dock-cancel-slot\s*{\s*flex:\s*0 0 auto;\s*width:\s*100%;\s*min-width:\s*0;/,
-    "狭幅ではCancel領域を操作列幅へ追従させる",
-  );
+  const cancelSlotRule = stylesSource.match(
+    /\.session-action-dock-cancel-slot\s*{(?<body>[^}]*)}/,
+  )?.groups?.body;
+  assert.ok(cancelSlotRule, "Cancel slotの通常幅ruleを取得できる");
+  assert.match(cancelSlotRule, /flex:\s*0 0 86px;/, "Cancel領域は固定flex幅を予約する");
+  assert.match(cancelSlotRule, /width:\s*86px;/, "Cancel領域は固定widthを予約する");
+  assert.match(cancelSlotRule, /min-width:\s*86px;/, "Cancel領域は最小幅を固定する");
+
+  const cancelButtonRule = stylesSource.match(
+    /\.session-action-dock-cancel-slot > \.session-send-button\s*{(?<body>[^}]*)}/,
+  )?.groups?.body;
+  assert.ok(cancelButtonRule, "Cancel buttonのslot内ruleを取得できる");
+  assert.match(cancelButtonRule, /width:\s*100%;/, "Cancel buttonは予約slotいっぱいに表示する");
+
+  const idleCancelSlotRule = stylesSource.match(
+    /\.session-action-dock-cancel-slot:not\(\.is-active\)\s*{(?<body>[^}]*)}/,
+  )?.groups?.body;
+  assert.ok(idleCancelSlotRule, "非実行中Cancel slotのruleを取得できる");
+  assert.match(idleCancelSlotRule, /visibility:\s*hidden;/, "非実行中のCancelは領域を保ったまま不可視にする");
+
+  const narrowCancelSlotRule = stylesSource.match(
+    /@media \(max-width:\s*760px\)\s*{(?:(?!@media\b)[\s\S])*?\.session-action-dock-cancel-slot\s*{(?<body>[^}]*)}/,
+  )?.groups?.body;
+  assert.ok(narrowCancelSlotRule, "狭幅Cancel slotのoverride ruleを取得できる");
+  assert.match(narrowCancelSlotRule, /flex:\s*0 0 auto;/, "狭幅ではCancel領域を内容幅に戻す");
+  assert.match(narrowCancelSlotRule, /width:\s*100%;/, "狭幅ではCancel領域を操作列幅へ追従させる");
+  assert.match(narrowCancelSlotRule, /min-width:\s*0;/, "狭幅ではCancel領域の固定最小幅を解除する");
 });

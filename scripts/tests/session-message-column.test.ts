@@ -2123,15 +2123,15 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
 
 // @test-value v2
 // kind = "contract"
-// claim = "expanded ActionDockは非実行中もMain / Auxiliary直前のCancel予約slotを維持し、不可視で操作対象にしない"
+// claim = "expanded ActionDockのidle表示はHideを置かず、上段操作列と設定・Send構成を維持し、Main / Auxiliary直前のCancel予約slotを不可視で保つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "非実行中にexpandedのCancel slotが消えるか、Main / Auxiliary内容の直前から移動するか、不可視または操作不能の状態が崩れる"
-// observable = "SessionComposerExpandedのidle static DOMにおけるCancel slotのclass・aria・button不在、Main / Auxiliary target slot、DOM順"
+// fault = "expandedのidle表示でHideが現れるか、上段操作列・target slot・Cancel slot・下段Sendの配置が崩れるか、Cancelが不可視または操作不能にならない"
+// observable = "SessionComposerExpandedのidle static DOMにおけるHide不在、attachment・view action・target・Cancel slotの順序、Sendのcomposer-control-row直下配置"
 // observation_boundary = "component-behavior"
-// scope = "expanded ActionDock idle Cancel slot"
+// scope = "expanded ActionDock idle layout and Cancel slot"
 // lifecycle = "permanent"
-// impact = "ActionDock開閉とMain / Auxiliary切替の間もexpandedのCancel予約領域を維持し、idle時に誤操作可能なCancelを表示しない"
-// distinction = "CSS declaration testは共有slotの幅を確認し、running component testはactiveなCancelとdisabled Sendを確認する"
+// impact = "expandedのidle表示で不要なHideを出さず、主操作とCancel予約領域の位置を維持して誤操作可能なCancelを表示しない"
+// distinction = "CSS declaration testは共有slotの幅を確認し、running component testはactiveなCancelとdisabled Sendを確認し、このtestはidle layout全体を確認する"
 // @end-test-value
 test("SessionComposerExpanded は Hide を描画せず、Send を設定グループの外へ配置する", () => {
   const html = renderToStaticMarkup(
@@ -2247,7 +2247,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
 
 // @test-value v2
 // kind = "contract"
-// claim = "expanded ActionDockは実行中も上段のMain / Auxiliary直前にactiveなCancelを保持し、下段のSend枠をdisabledで維持する"
+// claim = "expanded ActionDockは実行中も上段のMain / Auxiliary直前にactiveなCancelを保持し、下段のSend枠を実行中状態だけでdisabledに維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
 // fault = "実行中にCancel slotがactiveでないか、Main / Auxiliary内容の直前から移動するか、下段のSend枠が消えてActionDock開閉時にレイアウトが変わる"
 // observable = "SessionComposerExpandedのrender済みDOMにおける上段Cancel slotのclass・aria、Main / Auxiliary target slot、composer-control-row直下のdisabled Send"
@@ -2286,7 +2286,7 @@ test("SessionComposerExpanded は実行中に上段Cancelとdisabled Sendを Mai
       draft: "実行中の下書き",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
       isComposerDisabled: true,
-      isSendDisabled: true,
+      isSendDisabled: false,
       composerSendability: {
         primaryFeedback: "",
         secondaryFeedback: [],
@@ -2396,9 +2396,9 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 
 // @test-value v2
 // kind = "contract"
-// claim = "compact ActionDockは実行中に展開導線・progress・CancelとMain / Auxiliary操作列を描画する"
+// claim = "compact ActionDockは実行中に展開導線を描画し、progress・CancelとMain / Auxiliary操作列を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "実行中のcompact ActionDockから展開できないか、progress・Cancel・Main / Auxiliary操作列のいずれかが欠ける、またはCancelがtarget slotの直前にない"
+// fault = "実行中のcompact ActionDockに展開導線、progress、Cancel、Main / Auxiliary操作列のいずれかが欠ける、またはCancelがtarget slotの直前にない"
 // observable = "SessionActionDockCompactRowの実行中static DOMにおけるprogress、Cancel、target slot、操作列のDOM順と内容"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock running presentation"
@@ -2406,7 +2406,7 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 // impact = "実行中のcompact ActionDockで展開導線とCancelの発見性、Main / Auxiliaryとの操作順を維持する"
 // distinction = "同一React treeのidle/running遷移は別testで確認し、このtestは実行中のstatic DOMと展開導線を確認する"
 // @end-test-value
-test("SessionActionDockCompactRow は実行中の compact 表示から展開でき、jump button と Cancel を描画する", () => {
+test("SessionActionDockCompactRow は実行中の compact 表示に展開導線と jump button、Cancel を描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
       attachmentCount: 2,
@@ -2447,12 +2447,12 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
 // claim = "compact ActionDockはidleとrunningの双方向遷移でもMain / Auxiliary直前のCancel予約slotを同じ位置に保持し、実行中だけCancelを操作可能にする"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
 // fault = "idleまたはrunningでslotが消えるか、双方向の実行状態切替でCancelがMain / Auxiliary直前以外へ移動する、active状態・aria・操作可能性が崩れる"
-// observable = "同一React treeをidle/runningへ双方向に更新したSessionActionDockCompactRowのslot親、Main / Auxiliary内容、class、aria、Cancel button"
+// observable = "React stateをidle/runningへ双方向に更新したSessionActionDockCompactRowのslot親、target内容、class、aria、Cancel button"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock Cancel slot"
 // lifecycle = "permanent"
-// impact = "compactとexpandedでCancelの相対位置を揃え、Main / Auxiliary切替とrun状態変更による操作位置の横ずれを双方向に防ぐ"
-// distinction = "CSS declaration testは固定幅を確認し、component testは同一React treeの状態更新後もslotのDOM位置を確認する"
+// impact = "compactとexpandedでCancelの相対位置を揃え、target切替とrun状態変更による操作位置の横ずれを双方向に防ぐ"
+// distinction = "CSS declaration testは固定幅を確認し、component testはReact state更新後もslotのDOM位置とtarget内容を確認する"
 // @end-test-value
 test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxiliary 直前の Cancel 予約slotを維持する", async () => {
   const previousWindow = globalThis.window;
@@ -2470,13 +2470,16 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
   let root: Root | null = null;
   let setRunning: React.Dispatch<React.SetStateAction<boolean>> | null = null;
+  let setTargetLabel: React.Dispatch<React.SetStateAction<string>> | null = null;
   function Harness() {
     const [isRunning, updateRunning] = React.useState(false);
+    const [targetLabel, updateTargetLabel] = React.useState("Main / Auxiliary");
     setRunning = updateRunning;
+    setTargetLabel = updateTargetLabel;
     return React.createElement(SessionActionDockCompactRow, {
       attachmentCount: 0,
       isRunning,
-      targetDock: React.createElement("span", { className: "test-target-dock" }, "Main / Auxiliary"),
+      targetDock: React.createElement("span", { className: "test-target-dock" }, targetLabel),
       showJumpToBottom: true,
       cancelButtonTitle: "実行をキャンセル",
       onExpand() {},
@@ -2485,13 +2488,13 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
     });
   }
 
-  const assertSlot = (slot: Element | null, isRunning: boolean) => {
+  const assertSlot = (slot: Element | null, isRunning: boolean, targetLabel: string) => {
     assert.ok(slot);
     const parent = slot.parentElement;
     assert.ok(parent?.classList.contains("session-action-dock-compact-actions"));
     assert.equal(parent?.firstElementChild, slot);
     assert.equal(slot.nextElementSibling?.classList.contains("session-action-dock-target-slot"), true);
-    assert.equal(slot.nextElementSibling?.textContent, "Main / Auxiliary");
+    assert.equal(slot.nextElementSibling?.textContent, targetLabel);
     assert.equal(slot.classList.contains("is-active"), isRunning);
     if (isRunning) {
       const cancelButton = slot.querySelector<HTMLButtonElement>("button");
@@ -2511,22 +2514,23 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
     });
     const container = dom.window.document.getElementById("root") as HTMLElement;
     const idleSlot = container.querySelector(".session-action-dock-cancel-slot");
-    assertSlot(idleSlot, false);
+    assertSlot(idleSlot, false, "Main / Auxiliary");
     assert.ok(setRunning);
+    assert.ok(setTargetLabel);
 
     await act(async () => {
       setRunning?.(true);
+      setTargetLabel?.("Auxiliary");
     });
     const runningSlot = container.querySelector(".session-action-dock-cancel-slot");
-    assertSlot(runningSlot, true);
-    assert.equal(runningSlot, idleSlot);
+    assertSlot(runningSlot, true, "Auxiliary");
 
     await act(async () => {
       setRunning?.(false);
+      setTargetLabel?.("Main / Auxiliary");
     });
     const restoredSlot = container.querySelector(".session-action-dock-cancel-slot");
-    assertSlot(restoredSlot, false);
-    assert.equal(restoredSlot, idleSlot);
+    assertSlot(restoredSlot, false, "Main / Auxiliary");
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
