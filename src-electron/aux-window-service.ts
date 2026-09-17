@@ -1,5 +1,6 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
 import type {
+  FileRootGitHistoryDiffRequest,
   SessionFilePreviewWindowPayload,
   SessionFilePreviewResourceRequest,
 } from "../src/file-explorer/file-explorer-contract.js";
@@ -28,6 +29,23 @@ type BaseWindowLike = WindowLike & {
   once(event: "ready-to-show", listener: () => void): void;
   on(event: "closed", listener: () => void): void;
 };
+
+function getFilePreviewPayloadSessionId(payload: SessionFilePreviewWindowPayload): string {
+  return "historyDiff" in payload
+    ? payload.historyDiff.request.sessionId
+    : payload.resource.sessionId;
+}
+
+function getFilePreviewPayloadResource(
+  payload: SessionFilePreviewWindowPayload,
+): SessionFilePreviewResourceRequest | null {
+  if ("historyDiff" in payload) {
+    return payload.historyDiff.previewResource
+      ?? payload.historyDiff.previewAfterResource
+      ?? payload.historyDiff.previewBeforeResource;
+  }
+  return payload.resource;
+}
 
 export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   createWindow(options: {
@@ -106,7 +124,18 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   }
 
   isFilePreviewWindow(window: TWindow, sessionId: string): boolean {
-    return this.getFilePreviewWindowResource(window, sessionId) !== null;
+    for (const [token, candidate] of this.filePreviewWindows.entries()) {
+      const payload = this.filePreviewStore.get(token);
+      if (
+        candidate === window
+        && !candidate.isDestroyed()
+        && payload
+        && getFilePreviewPayloadSessionId(payload) === sessionId
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   getFilePreviewWindowResource(
@@ -114,12 +143,14 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     sessionId: string,
   ): SessionFilePreviewResourceRequest | null {
     for (const [token, candidate] of this.filePreviewWindows.entries()) {
+      const payload = this.filePreviewStore.get(token);
       if (
         candidate === window
         && !candidate.isDestroyed()
-        && this.filePreviewStore.get(token)?.resource.sessionId === sessionId
+        && payload
+        && getFilePreviewPayloadSessionId(payload) === sessionId
       ) {
-        return this.filePreviewStore.get(token)?.resource ?? null;
+        return getFilePreviewPayloadResource(payload);
       }
     }
     return null;
@@ -136,7 +167,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       const payload = this.filePreviewStore.get(token);
       if (
         payload
-        && (payload.resource.sessionId === sessionId || payload.ownerSessionId === sessionId)
+        && (getFilePreviewPayloadSessionId(payload) === sessionId || payload.ownerSessionId === sessionId)
         && !window.isDestroyed()
       ) {
         window.close();
@@ -305,8 +336,9 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   async openFilePreviewWindow(
     payload: SessionFilePreviewWindowPayload,
   ): Promise<{ window: TWindow; disposition: "created" | "focused" }> {
+    const payloadSessionId = getFilePreviewPayloadSessionId(payload);
     if (
-      this.closedFilePreviewSessionIds.has(payload.resource.sessionId)
+      this.closedFilePreviewSessionIds.has(payloadSessionId)
       || this.closedFilePreviewSessionIds.has(payload.ownerSessionId)
     ) {
       throw new Error("The Session is no longer active for file preview navigation.");
@@ -315,7 +347,9 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       ...payload,
       windowTitle: resolveSessionFilePreviewWindowTitle(payload.windowTitle),
     };
-    const resourceKey = this.makeFilePreviewResourceKey(payload.resource);
+    const resourceKey = "historyDiff" in payload
+      ? this.makeHistoryDiffResourceKey(payload.historyDiff.request)
+      : this.makeFilePreviewResourceKey(payload.resource);
     const existingToken = this.filePreviewResourceTokens.get(resourceKey);
     const existing = existingToken ? this.reuseWindow(this.filePreviewWindows.get(existingToken) ?? null) : null;
     if (existing && existingToken) {
@@ -463,10 +497,10 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   ): void {
     const storedPayload = this.filePreviewStore.get(token);
     if (
-      this.closedFilePreviewSessionIds.has(requestedPayload.resource.sessionId)
+      this.closedFilePreviewSessionIds.has(getFilePreviewPayloadSessionId(requestedPayload))
       || this.closedFilePreviewSessionIds.has(requestedPayload.ownerSessionId)
       || !storedPayload
-      || this.closedFilePreviewSessionIds.has(storedPayload.resource.sessionId)
+      || this.closedFilePreviewSessionIds.has(getFilePreviewPayloadSessionId(storedPayload))
       || this.closedFilePreviewSessionIds.has(storedPayload.ownerSessionId)
       || window.isDestroyed()
       || this.filePreviewResourceTokens.get(resourceKey) !== token
@@ -498,6 +532,19 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       resource.sessionId,
       resource.rootId,
       resource.relativePath.replaceAll("\\", "/"),
+    ]);
+  }
+
+  private makeHistoryDiffResourceKey(request: FileRootGitHistoryDiffRequest): string {
+    return JSON.stringify([
+      request.sessionId,
+      "git-history-diff",
+      request.rootId,
+      request.repositoryId,
+      "comparison" in request
+        ? request.comparison
+        : { commitId: request.commitId },
+      request.relativePath?.replaceAll("\\", "/") ?? null,
     ]);
   }
 }

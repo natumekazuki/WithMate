@@ -115,6 +115,10 @@ import type {
   FileRootGitHistoryCommitDetailResult,
   FileRootGitHistoryCommitsRequest,
   FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryComparison,
+  FileRootGitHistoryComparisonRequest,
+  FileRootGitHistoryComparisonResult,
+  FileRootGitHistoryComparisonSelector,
   FileRootGitHistoryDiffRequest,
   FileRootGitHistoryDiffResult,
   FileRootGitHistoryRepositoriesRequest,
@@ -134,6 +138,7 @@ import type {
 } from "../src/glossary-contract.js";
 import {
   areSessionFileResourcesEqual,
+  isFileRootGitHistoryComparisonDiffRequest,
   isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "../src/file-explorer/file-explorer-contract.js";
@@ -218,6 +223,7 @@ import {
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
   WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL,
   WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
@@ -494,6 +500,9 @@ export type MainIpcRegistrationDeps = {
   getFileRootGitHistoryCommitDetail(
     request: FileRootGitHistoryCommitDetailRequest,
   ): Awaitable<FileRootGitHistoryCommitDetailResult>;
+  getFileRootGitHistoryComparison(
+    request: FileRootGitHistoryComparisonRequest,
+  ): Awaitable<FileRootGitHistoryComparisonResult>;
   getFileRootGitHistoryDiff(
     request: FileRootGitHistoryDiffRequest,
   ): Awaitable<FileRootGitHistoryDiffResult>;
@@ -728,6 +737,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "listFileRootGitHistoryRepositories"
   | "listFileRootGitHistoryCommits"
   | "getFileRootGitHistoryCommitDetail"
+  | "getFileRootGitHistoryComparison"
   | "getFileRootGitHistoryDiff"
   | "getSessionMessageArtifact"
   | "getDiffPreview"
@@ -1083,6 +1093,74 @@ function assertValidGitHistoryCommitId(commitId: unknown): asserts commitId is s
   if (typeof commitId !== "string" || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(commitId)) {
     throw new TypeError("Git history commit id is invalid.");
   }
+}
+
+function assertValidGitHistoryComparisonSelector(
+  input: unknown,
+): asserts input is FileRootGitHistoryComparisonSelector {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Git history comparison selector is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (candidate.kind === "head") {
+    return;
+  }
+  if (candidate.kind === "branch" || candidate.kind === "remote" || candidate.kind === "tag") {
+    if (
+      typeof candidate.name !== "string"
+      || !candidate.name
+      || candidate.name.trim() !== candidate.name
+      || candidate.name.includes("\\")
+      || candidate.name.includes("..")
+      || /[\u0000-\u001f\u007f]/u.test(candidate.name)
+    ) {
+      throw new TypeError("Git history comparison ref is invalid.");
+    }
+    return;
+  }
+  if (candidate.kind === "commit") {
+    if (typeof candidate.objectId !== "string" || !/^[0-9a-f]{7,64}$/iu.test(candidate.objectId)) {
+      throw new TypeError("Git history comparison commit id is invalid.");
+    }
+    return;
+  }
+  throw new TypeError("Git history comparison selector is invalid.");
+}
+
+function assertValidGitHistoryComparison(input: unknown): asserts input is FileRootGitHistoryComparison {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Git history comparison is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (candidate.mode !== "direct" && candidate.mode !== "branch") {
+    throw new TypeError("Git history comparison mode is invalid.");
+  }
+  assertValidGitHistoryComparisonSelector(candidate.base);
+  assertValidGitHistoryComparisonSelector(candidate.target);
+  if (
+    typeof candidate.baseCommitId !== "string"
+    || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(candidate.baseCommitId)
+    || typeof candidate.targetCommitId !== "string"
+    || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(candidate.targetCommitId)
+    || (
+      candidate.mergeBaseCommitId !== null
+      && (typeof candidate.mergeBaseCommitId !== "string"
+        || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(candidate.mergeBaseCommitId))
+    )
+  ) {
+    throw new TypeError("Git history comparison snapshot is invalid.");
+  }
+}
+
+function assertValidGitHistoryDiffRequest(input: unknown): asserts input is FileRootGitHistoryDiffRequest {
+  assertValidGitHistoryRequest(input);
+  const candidate = input as FileRootGitHistoryDiffRequest;
+  if (isFileRootGitHistoryComparisonDiffRequest(candidate)) {
+    assertValidGitHistoryComparison(candidate.comparison);
+  } else {
+    assertValidGitHistoryCommitId(candidate.commitId);
+  }
+  assertValidGitHistoryRelativePath(candidate.relativePath);
 }
 
 function assertValidGitHistoryCursor(cursor: unknown): asserts cursor is string | null | undefined {
@@ -1807,10 +1885,13 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   ipcMain.handle(
     WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
     async (event, request: SessionFilePreviewWindowOpenRequest) => {
-      if (!request || (request.kind !== "resource" && request.kind !== "link")) {
+      if (!request || (request.kind !== "resource" && request.kind !== "link" && request.kind !== "history-diff")) {
         throw new TypeError("File preview navigation request is invalid.");
       }
-      if (request.kind === "resource") {
+      if (request.kind === "history-diff") {
+        assertValidGitHistoryDiffRequest(request.request);
+        await assertOwningSessionFileExplorerSender(event, request.request.sessionId, deps);
+      } else if (request.kind === "resource") {
         assertValidSessionFilePreviewResourceRequest(request.resource);
         if (!isSessionFileRootResource(request.resource) && !isSessionFileGitCommitResource(request.resource)) {
           throw new TypeError("Direct file preview resources must be root-scoped or commit-scoped.");
@@ -1992,10 +2073,27 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     },
   );
   ipcMain.handle(
+    WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL,
+    async (event, request: FileRootGitHistoryComparisonRequest) => {
+      assertValidGitHistoryRequest(request);
+      if (request.mode !== "direct" && request.mode !== "branch") {
+        throw new TypeError("Git history comparison mode is invalid.");
+      }
+      assertValidGitHistoryComparisonSelector(request.base);
+      assertValidGitHistoryComparisonSelector(request.target);
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.getFileRootGitHistoryComparison(request);
+    },
+  );
+  ipcMain.handle(
     WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
     async (event, request: FileRootGitHistoryDiffRequest) => {
       assertValidGitHistoryRequest(request);
-      assertValidGitHistoryCommitId(request.commitId);
+      if (isFileRootGitHistoryComparisonDiffRequest(request)) {
+        assertValidGitHistoryComparison(request.comparison);
+      } else {
+        assertValidGitHistoryCommitId(request.commitId);
+      }
       assertValidGitHistoryRelativePath(request.relativePath);
       await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
       return deps.getFileRootGitHistoryDiff(request);

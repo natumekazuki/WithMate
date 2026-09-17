@@ -4,12 +4,15 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { SessionDiffPreview, SessionFilePreview } from "./file-explorer/SessionFilePreview.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import type {
+  FileRootGitHistoryComparisonSelector,
+  FileRootGitHistoryDiffRequest,
   FileRootGitDiffScope,
   SessionFilePreviewWindowPayload,
 } from "./file-explorer/file-explorer-contract.js";
 import {
   areSessionFileResourcesEqual,
   getSessionFileResourceDisplayPath,
+  isFileRootGitHistoryComparisonDiffRequest,
   isSessionFileRootResource,
 } from "./file-explorer/file-explorer-contract.js";
 
@@ -21,6 +24,46 @@ type DiffState = {
 
 function getToken(): string {
   return new URLSearchParams(window.location.search).get("token")?.trim() ?? "";
+}
+
+function formatHistoryDiffSelector(selector: FileRootGitHistoryComparisonSelector): string {
+  if (selector.kind === "head") {
+    return "HEAD";
+  }
+  if (selector.kind === "commit") {
+    return `Commit ${selector.objectId.slice(0, 7)}`;
+  }
+  return selector.name;
+}
+
+function formatHistoryDiffTitle(request: FileRootGitHistoryDiffRequest): string {
+  if (isFileRootGitHistoryComparisonDiffRequest(request)) {
+    return request.relativePath
+      ?? `${formatHistoryDiffSelector(request.comparison.base)} → ${formatHistoryDiffSelector(request.comparison.target)}`;
+  }
+  return request.relativePath ?? `Commit ${request.commitId.slice(0, 7)}`;
+}
+
+function formatHistoryDiffContext(request: FileRootGitHistoryDiffRequest): string | undefined {
+  if (!isFileRootGitHistoryComparisonDiffRequest(request)) {
+    return undefined;
+  }
+  const mergeBase = request.comparison.mergeBaseCommitId
+    ? ` · merge-base ${request.comparison.mergeBaseCommitId.slice(0, 7)}`
+    : "";
+  return `${request.comparison.mode === "branch" ? "Branch changes" : "Direct comparison"} · ${request.comparison.baseCommitId.slice(0, 7)} → ${request.comparison.targetCommitId.slice(0, 7)}${mergeBase}`;
+}
+
+function areFilePreviewPayloadsEqual(
+  left: SessionFilePreviewWindowPayload,
+  right: SessionFilePreviewWindowPayload,
+): boolean {
+  if ("historyDiff" in left || "historyDiff" in right) {
+    return "historyDiff" in left
+      && "historyDiff" in right
+      && JSON.stringify(left.historyDiff.request) === JSON.stringify(right.historyDiff.request);
+  }
+  return areSessionFileResourcesEqual(left.resource, right.resource);
 }
 
 function FilePreviewWindowLoading({ label }: { label: string }) {
@@ -85,7 +128,7 @@ export default function FilePreviewApp() {
     }
     return api.subscribeSessionFilePreviewNavigation((nextPayload) => {
       setPayload((current) => (
-        current && areSessionFileResourcesEqual(current.resource, nextPayload.resource)
+        current && areFilePreviewPayloadsEqual(current, nextPayload)
           ? nextPayload
           : current
       ));
@@ -100,7 +143,7 @@ export default function FilePreviewApp() {
 
   useEffect(() => {
     let active = true;
-    if (!api || !payload || !isSessionFileRootResource(payload.resource)) {
+    if (!api || !payload || "historyDiff" in payload || !isSessionFileRootResource(payload.resource)) {
       setDiffScopes([]);
       return () => {
         active = false;
@@ -125,7 +168,7 @@ export default function FilePreviewApp() {
   }, [api, payload]);
 
   const loadDiff = useCallback(async (scope: FileRootGitDiffScope): Promise<string | null> => {
-    if (!api || !payload || !isSessionFileRootResource(payload.resource)) {
+    if (!api || !payload || "historyDiff" in payload || !isSessionFileRootResource(payload.resource)) {
       return "Git diff is not available for this file.";
     }
     const revision = diffRequestRevisionRef.current + 1;
@@ -153,13 +196,16 @@ export default function FilePreviewApp() {
     setDiffLoadingScope(null);
     setDiffState(null);
     setNavigationMessage("");
-    setPayload((current) => current?.view?.kind === "diff"
+    setPayload((current) => current && !("historyDiff" in current) && current.view?.kind === "diff"
       ? { ...current, view: { kind: "preview" } }
       : current);
   }, []);
 
   useEffect(() => {
-    if (!payload) {
+    if (!payload || "historyDiff" in payload) {
+      setDiffState(null);
+      setDiffLoadingScope(null);
+      setNavigationMessage("");
       return;
     }
     const view = payload.view ?? { kind: "preview" as const };
@@ -193,6 +239,19 @@ export default function FilePreviewApp() {
           <h2>No file is available to preview</h2>
           <p>Open the file again from the originating Session.</p>
         </section>
+      </main>
+    );
+  }
+  if ("historyDiff" in payload) {
+    return (
+      <main className="file-preview-window-page">
+        <SessionDiffPreview
+          title={formatHistoryDiffTitle(payload.historyDiff.request)}
+          contextLabel={formatHistoryDiffContext(payload.historyDiff.request)}
+          previewRevision={1}
+          patch={payload.historyDiff.patch}
+          onCopyText={(text) => void navigator.clipboard.writeText(text)}
+        />
       </main>
     );
   }

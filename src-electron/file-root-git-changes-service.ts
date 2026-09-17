@@ -28,6 +28,11 @@ import type {
   FileRootGitHistoryCommitDetailResult,
   FileRootGitHistoryCommitsRequest,
   FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryAvailableRef,
+  FileRootGitHistoryComparison,
+  FileRootGitHistoryComparisonRequest,
+  FileRootGitHistoryComparisonResult,
+  FileRootGitHistoryComparisonSelector,
   FileRootGitHistoryDiffRequest,
   FileRootGitHistoryDiffResult,
   FileRootGitHistoryRequest,
@@ -44,6 +49,7 @@ import {
   detectSessionFileEncoding,
   detectSessionFileResourceKind,
 } from "../src/file-explorer/file-content-detection.js";
+import { isFileRootGitHistoryComparisonDiffRequest } from "../src/file-explorer/file-explorer-contract.js";
 
 export type FileRootGitContext = {
   rootPath: string;
@@ -699,7 +705,7 @@ export function parseGitHistoryLog(output: Buffer): FileRootGitHistoryCommit[] {
   return commits;
 }
 
-export function parseGitHistoryNameStatusZ(output: Buffer): FileRootGitChangeEntry[] {
+export function parseGitHistoryNameStatusZ(output: Buffer, workspacePrefix = ""): FileRootGitChangeEntry[] {
   const fields = output.toString("utf8").split("\0");
   const entries: FileRootGitChangeEntry[] = [];
   for (let index = 0; index < fields.length; index += 1) {
@@ -711,9 +717,9 @@ export function parseGitHistoryNameStatusZ(output: Buffer): FileRootGitChangeEnt
     if (!status || !/^[A-Z]$/u.test(status)) {
       throw new Error("Git history returned an unsupported file status.");
     }
-    const firstPath = normalizeGitRelativePath(fields[index + 1] ?? "");
+    const firstRepositoryPath = normalizeGitRelativePath(fields[index + 1] ?? "");
     const isRenameOrCopy = status === "R" || status === "C";
-    const secondPath = isRenameOrCopy
+    const secondRepositoryPath = isRenameOrCopy
       ? normalizeGitRelativePath(fields[index + 2] ?? "")
       : null;
     if (isRenameOrCopy) {
@@ -721,10 +727,27 @@ export function parseGitHistoryNameStatusZ(output: Buffer): FileRootGitChangeEnt
     } else {
       index += 1;
     }
-    const kind = changeKind(status);
+    const firstPath = toWorkspaceRelativePath(firstRepositoryPath, workspacePrefix);
+    const secondPath = secondRepositoryPath
+      ? toWorkspaceRelativePath(secondRepositoryPath, workspacePrefix)
+      : null;
+    if (!firstPath && !secondPath) {
+      continue;
+    }
+    const resolvedPath = secondPath ?? firstPath;
+    if (!resolvedPath) {
+      continue;
+    }
+    const kind = !isRenameOrCopy
+      ? changeKind(status)
+      : firstPath && secondPath
+        ? changeKind(status)
+        : secondPath
+          ? "added"
+          : "deleted";
     entries.push({
-      relativePath: secondPath ?? firstPath,
-      previousRelativePath: secondPath ? firstPath : null,
+      relativePath: resolvedPath,
+      previousRelativePath: secondPath && firstPath ? firstPath : null,
       kinds: { commit: kind },
       scopes: ["commit"],
     });
@@ -752,6 +775,61 @@ function normalizeHistoryBranch(value: string): string {
     throw new Error("Git history branch is invalid.");
   }
   return value;
+}
+
+function normalizeHistoryComparisonSelector(
+  selector: FileRootGitHistoryComparisonSelector,
+): FileRootGitHistoryComparisonSelector {
+  if (!selector || typeof selector !== "object") {
+    throw new HistoryComparisonFailure("invalid-selector", "The Git comparison selector is invalid.");
+  }
+  if (selector.kind === "head") {
+    return { kind: "head" };
+  }
+  if (selector.kind === "branch" || selector.kind === "remote" || selector.kind === "tag") {
+    try {
+      const name = normalizeHistoryBranch(selector.name);
+      if (name.trim() !== name || name.includes("\\") || name.includes("..")) {
+        throw new Error("invalid ref name");
+      }
+      return { kind: selector.kind, name };
+    } catch {
+      throw new HistoryComparisonFailure("invalid-selector", "The Git comparison ref is invalid.");
+    }
+  }
+  if (selector.kind === "commit") {
+    if (typeof selector.objectId !== "string" || !/^[0-9a-f]{7,64}$/iu.test(selector.objectId)) {
+      throw new HistoryComparisonFailure("invalid-selector", "The Git comparison commit id is invalid.");
+    }
+    return { kind: "commit", objectId: selector.objectId.toLowerCase() };
+  }
+  throw new HistoryComparisonFailure("invalid-selector", "The Git comparison selector is invalid.");
+}
+
+export function parseGitHistoryAvailableRefs(output: Buffer): FileRootGitHistoryAvailableRef[] {
+  const refs: FileRootGitHistoryAvailableRef[] = [];
+  const seen = new Set<string>();
+  const add = (kind: FileRootGitHistoryAvailableRef["kind"], name: string) => {
+    if (!name || /[\u0000-\u001f\u007f]/u.test(name)) {
+      return;
+    }
+    const key = `${kind}:${name}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    refs.push({ kind, name });
+  };
+  for (const rawLine of output.toString("utf8").split(/\r?\n/u)) {
+    if (rawLine.startsWith("refs/heads/")) {
+      add("branch", rawLine.slice("refs/heads/".length));
+    } else if (rawLine.startsWith("refs/remotes/")) {
+      add("remote", rawLine.slice("refs/remotes/".length));
+    } else if (rawLine.startsWith("refs/tags/")) {
+      add("tag", rawLine.slice("refs/tags/".length));
+    }
+  }
+  return refs;
 }
 
 function parseHistoryBranchList(output: Buffer): string[] {
@@ -802,6 +880,21 @@ type HistoryBranchState = {
   branches: string[];
   currentBranch: string | null;
 };
+
+type HistoryComparisonFailureStatus =
+  | "invalid-selector"
+  | "commit-not-found"
+  | "merge-base-unavailable"
+  | "ambiguous-merge-base";
+
+class HistoryComparisonFailure extends Error {
+  constructor(
+    readonly status: HistoryComparisonFailureStatus,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 function failedStatus(message: string): WorkspaceGitFailure {
   return { status: "failed", message: message || "Git status failed." };
@@ -2087,6 +2180,23 @@ export class FileRootGitChangesService {
     };
   }
 
+  async #readHistoryAvailableRefs(operation: WorkspaceGitOperation): Promise<FileRootGitHistoryAvailableRef[]> {
+    const result = await this.#runIdentityBoundGit(operation, [
+      "for-each-ref",
+      "--format=%(refname)",
+      "refs/heads",
+      "refs/remotes",
+      "refs/tags",
+    ], undefined, {
+      maxStdoutBytes: MAX_HISTORY_LIST_STDOUT_BYTES,
+      maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr || "Git refs could not be read.");
+    }
+    return parseGitHistoryAvailableRefs(result.stdout);
+  }
+
   async #listHistoryRepositoriesRequest(
     request: FileRootGitHistoryRepositoriesRequest,
     signal: AbortSignal,
@@ -2101,6 +2211,7 @@ export class FileRootGitChangesService {
       displayPath: string;
       branches: string[];
       currentBranch: string | null;
+      refs: FileRootGitHistoryAvailableRef[];
     }>();
     const contexts = await this.#resolveHistoryRootContexts(request.sessionId);
     for (const context of contexts) {
@@ -2118,11 +2229,13 @@ export class FileRootGitChangesService {
       try {
         if (!repositories.has(repositoryId)) {
           const branchState = await this.#readHistoryBranches(operation);
+          const refs = await this.#readHistoryAvailableRefs(operation);
           repositories.set(repositoryId, {
             repositoryId,
             rootId: context.rootId,
             label: context.label,
             displayPath: context.displayPath,
+            refs,
             ...branchState,
           });
         }
@@ -2181,7 +2294,9 @@ export class FileRootGitChangesService {
     operation: WorkspaceGitOperation,
     commitId: string,
     relativePath: string,
+    workspacePrefix: string,
   ): Promise<HistoryFileBlobEntry | null> {
+    const repositoryRelativePath = `${normalizeWorkspacePrefix(workspacePrefix)}${relativePath}`;
     const result = await this.#runIdentityBoundGit(operation, [
       "ls-tree",
       "-z",
@@ -2189,7 +2304,7 @@ export class FileRootGitChangesService {
       "--full-tree",
       commitId,
       "--",
-      `:(top,literal)${relativePath}`,
+      `:(top,literal)${repositoryRelativePath}`,
     ], undefined, {
       maxStdoutBytes: MAX_HISTORY_DETAIL_STDOUT_BYTES,
       maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
@@ -2202,7 +2317,7 @@ export class FileRootGitChangesService {
       return null;
     }
     const separatorIndex = records[0]!.indexOf("\t");
-    if (separatorIndex < 0 || records[0]!.slice(separatorIndex + 1) !== relativePath) {
+    if (separatorIndex < 0 || records[0]!.slice(separatorIndex + 1) !== repositoryRelativePath) {
       return null;
     }
     const [mode, objectType, objectId, byteLengthText] = records[0]!
@@ -2263,6 +2378,7 @@ export class FileRootGitChangesService {
   async #resolveHistoryFile(
     operation: WorkspaceGitOperation,
     request: SessionFileGitCommitResourceRequest,
+    workspacePrefix: string,
   ): Promise<{
     commit: FileRootGitHistoryCommit;
     entry: HistoryFileBlobEntry;
@@ -2273,7 +2389,7 @@ export class FileRootGitChangesService {
     if (!commit) {
       throw new Error("The selected commit could not be found.");
     }
-    const entry = await this.#readHistoryFileBlobEntry(operation, commit.id, relativePath);
+    const entry = await this.#readHistoryFileBlobEntry(operation, commit.id, relativePath, workspacePrefix);
     if (!entry) {
       throw new Error("The selected file is not previewable at this commit.");
     }
@@ -2293,7 +2409,8 @@ export class FileRootGitChangesService {
       throw new Error(operation.message);
     }
     try {
-      const { commit, entry, relativePath } = await this.#resolveHistoryFile(operation, request);
+      const workspacePrefix = await this.#readWorkspacePrefix(operation);
+      const { commit, entry, relativePath } = await this.#resolveHistoryFile(operation, request, workspacePrefix);
       const inspectedBytes = await this.#readHistoryFileBlobPrefix(operation, entry);
       const resource = detectSessionFileResourceKind(relativePath, inspectedBytes);
       return {
@@ -2339,7 +2456,8 @@ export class FileRootGitChangesService {
       throw new Error(operation.message);
     }
     try {
-      const { relativePath } = await this.#resolveHistoryFile(operation, request);
+      const workspacePrefix = await this.#readWorkspacePrefix(operation);
+      const { relativePath } = await this.#resolveHistoryFile(operation, request, workspacePrefix);
       return { name: path.posix.basename(relativePath) };
     } finally {
       const cleanupError = await this.#closeOperation(operation);
@@ -2374,7 +2492,8 @@ export class FileRootGitChangesService {
       throw new Error(operation.message);
     }
     try {
-      const { entry } = await this.#resolveHistoryFile(operation, request);
+      const workspacePrefix = await this.#readWorkspacePrefix(operation);
+      const { entry } = await this.#resolveHistoryFile(operation, request, workspacePrefix);
       if (entry.objectId !== request.expectedRevision) {
         throw new Error("The Git commit file revision is no longer available.");
       }
@@ -2510,7 +2629,7 @@ export class FileRootGitChangesService {
     }
   }
 
-  async #resolveHistoryComparison(
+  async #resolveSingleCommitComparison(
     operation: WorkspaceGitOperation,
     commit: FileRootGitHistoryCommit,
   ): Promise<[string, string]> {
@@ -2533,10 +2652,185 @@ export class FileRootGitChangesService {
     return [normalizeHistoryObjectId(emptyTreeResult.stdout.toString("utf8")), commit.id];
   }
 
+  async #resolveHistoryCommitExpression(
+    operation: WorkspaceGitOperation,
+    expression: string,
+  ): Promise<string | null> {
+    const result = await this.#runIdentityBoundGit(operation, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `${expression}^{commit}`,
+    ], undefined, {
+      maxStdoutBytes: 256,
+      maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
+    });
+    if (result.exitCode !== 0) {
+      return null;
+    }
+    return normalizeObjectId(result.stdout);
+  }
+
+  async #resolveHistorySelector(
+    operation: WorkspaceGitOperation,
+    selector: FileRootGitHistoryComparisonSelector,
+    refs: FileRootGitHistoryAvailableRef[],
+  ): Promise<{ selector: FileRootGitHistoryComparisonSelector; commitId: string }> {
+    const normalizedSelector = normalizeHistoryComparisonSelector(selector);
+    let expression: string;
+    if (normalizedSelector.kind === "head") {
+      expression = "HEAD";
+    } else if (normalizedSelector.kind === "commit") {
+      expression = normalizedSelector.objectId;
+    } else {
+      const availableRef = refs.find((candidate) => (
+        candidate.kind === normalizedSelector.kind && candidate.name === normalizedSelector.name
+      ));
+      if (!availableRef) {
+        throw new HistoryComparisonFailure("invalid-selector", "The selected Git ref is no longer available.");
+      }
+      const refPrefix = normalizedSelector.kind === "branch"
+        ? "refs/heads/"
+        : normalizedSelector.kind === "remote"
+          ? "refs/remotes/"
+          : "refs/tags/";
+      expression = `${refPrefix}${availableRef.name}`;
+    }
+    const commitId = await this.#resolveHistoryCommitExpression(operation, expression);
+    if (!commitId) {
+      throw new HistoryComparisonFailure("commit-not-found", "The selected Git ref does not point to a commit.");
+    }
+    return {
+      selector: normalizedSelector.kind === "commit"
+        ? { kind: "commit", objectId: commitId }
+        : normalizedSelector,
+      commitId,
+    };
+  }
+
+  async #resolveHistoryMergeBase(
+    operation: WorkspaceGitOperation,
+    baseCommitId: string,
+    targetCommitId: string,
+  ): Promise<string> {
+    const result = await this.#runIdentityBoundGit(operation, [
+      "merge-base",
+      "--all",
+      baseCommitId,
+      targetCommitId,
+    ], undefined, {
+      maxStdoutBytes: MAX_HISTORY_DETAIL_STDOUT_BYTES,
+      maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
+    });
+    if (result.exitCode !== 0) {
+      throw new HistoryComparisonFailure(
+        "merge-base-unavailable",
+        result.stderr || "Git could not resolve a common ancestor for the selected commits.",
+      );
+    }
+    const mergeBases = result.stdout.toString("utf8")
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map(normalizeHistoryObjectId);
+    if (mergeBases.length === 0) {
+      throw new HistoryComparisonFailure(
+        "merge-base-unavailable",
+        "The selected commits do not have a common ancestor available locally.",
+      );
+    }
+    if (mergeBases.length > 1) {
+      throw new HistoryComparisonFailure(
+        "ambiguous-merge-base",
+        "The selected commits have multiple possible common ancestors.",
+      );
+    }
+    return mergeBases[0]!;
+  }
+
+  async #resolveHistoryComparisonPair(
+    operation: WorkspaceGitOperation,
+    request: FileRootGitHistoryComparisonRequest,
+  ): Promise<FileRootGitHistoryComparison> {
+    const refs = await this.#readHistoryAvailableRefs(operation);
+    const base = await this.#resolveHistorySelector(operation, request.base, refs);
+    const target = await this.#resolveHistorySelector(operation, request.target, refs);
+    const mergeBaseCommitId = request.mode === "branch"
+      ? await this.#resolveHistoryMergeBase(operation, base.commitId, target.commitId)
+      : null;
+    return {
+      mode: request.mode,
+      base: base.selector,
+      target: target.selector,
+      baseCommitId: base.commitId,
+      targetCommitId: target.commitId,
+      mergeBaseCommitId: request.mode === "branch" ? mergeBaseCommitId : null,
+    };
+  }
+
+  async #validateHistoryComparison(
+    operation: WorkspaceGitOperation,
+    input: FileRootGitHistoryComparison,
+  ): Promise<FileRootGitHistoryComparison> {
+    if (input.mode !== "direct" && input.mode !== "branch") {
+      throw new HistoryComparisonFailure("invalid-selector", "The Git comparison mode is invalid.");
+    }
+    const base = normalizeHistoryComparisonSelector(input.base);
+    const target = normalizeHistoryComparisonSelector(input.target);
+    if (!/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(input.baseCommitId)
+      || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(input.targetCommitId)
+      || (input.mergeBaseCommitId !== null
+        && !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(input.mergeBaseCommitId))) {
+      throw new HistoryComparisonFailure("invalid-selector", "The Git comparison snapshot is invalid.");
+    }
+    const baseCommitId = normalizeHistoryObjectId(input.baseCommitId);
+    const targetCommitId = normalizeHistoryObjectId(input.targetCommitId);
+    const resolvedBaseId = await this.#resolveHistoryCommitExpression(operation, baseCommitId);
+    const resolvedTargetId = await this.#resolveHistoryCommitExpression(operation, targetCommitId);
+    if (resolvedBaseId !== baseCommitId || resolvedTargetId !== targetCommitId) {
+      throw new HistoryComparisonFailure("invalid-selector", "The Git comparison snapshot is no longer available.");
+    }
+    if (input.mode === "direct") {
+      if (input.mergeBaseCommitId !== null) {
+        throw new HistoryComparisonFailure("invalid-selector", "The direct comparison snapshot has an unexpected merge-base.");
+      }
+      return {
+        mode: "direct",
+        base,
+        target,
+        baseCommitId,
+        targetCommitId,
+        mergeBaseCommitId: null,
+      };
+    }
+    if (!input.mergeBaseCommitId) {
+      throw new HistoryComparisonFailure("invalid-selector", "The branch comparison snapshot has no merge-base.");
+    }
+    const mergeBaseCommitId = normalizeHistoryObjectId(input.mergeBaseCommitId);
+    const resolvedMergeBaseId = await this.#resolveHistoryCommitExpression(operation, mergeBaseCommitId);
+    if (resolvedMergeBaseId !== mergeBaseCommitId) {
+      throw new HistoryComparisonFailure("invalid-selector", "The Git comparison merge-base is no longer available.");
+    }
+    const currentMergeBaseId = await this.#resolveHistoryMergeBase(operation, baseCommitId, targetCommitId);
+    if (currentMergeBaseId !== mergeBaseCommitId) {
+      throw new HistoryComparisonFailure("invalid-selector", "The Git comparison snapshot is no longer valid.");
+    }
+    return {
+      mode: "branch",
+      base,
+      target,
+      baseCommitId,
+      targetCommitId,
+      mergeBaseCommitId,
+    };
+  }
+
   async #readHistoryChangedFiles(
     operation: WorkspaceGitOperation,
     comparison: [string, string],
+    workspacePrefix: string,
+    isComparison = false,
   ): Promise<FileRootGitChangeEntry[]> {
+    const normalizedPrefix = normalizeWorkspacePrefix(workspacePrefix);
     const result = await this.#runIdentityBoundGit(operation, [
       "diff-tree",
       "--no-commit-id",
@@ -2549,14 +2843,77 @@ export class FileRootGitChangesService {
       "-r",
       ...comparison,
       "--",
+      ...(normalizedPrefix ? [`:(top,literal)${normalizedPrefix}`] : []),
     ], undefined, {
       maxStdoutBytes: MAX_HISTORY_DETAIL_STDOUT_BYTES,
       maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
     });
     if (result.exitCode !== 0) {
-      throw new Error(result.stderr || "Git commit changes could not be read.");
+      throw new Error(result.stderr || (isComparison
+        ? "Git comparison changes could not be read."
+        : "Git commit changes could not be read."));
     }
-    return parseGitHistoryNameStatusZ(result.stdout);
+    return parseGitHistoryNameStatusZ(result.stdout, normalizedPrefix);
+  }
+
+  async #getHistoryComparisonRequest(
+    request: FileRootGitHistoryComparisonRequest,
+    signal: AbortSignal,
+  ): Promise<FileRootGitHistoryComparisonResult> {
+    const pendingCleanupError = await this.#cleanupPendingResources();
+    if (pendingCleanupError) {
+      return { status: "failed", message: pendingCleanupError.message };
+    }
+    throwIfAborted(signal);
+    const operation = await this.#resolveHistoryOperation(request, signal);
+    if (!("workspacePath" in operation)) {
+      throwIfAborted(signal);
+      return operation;
+    }
+    let response: FileRootGitHistoryComparisonResult;
+    try {
+      const comparison = await this.#resolveHistoryComparisonPair(operation, request);
+      const workspacePrefix = await this.#readWorkspacePrefix(operation);
+      const beforeCommitId = comparison.mergeBaseCommitId ?? comparison.baseCommitId;
+      const entries = await this.#readHistoryChangedFiles(
+        operation,
+        [beforeCommitId, comparison.targetCommitId],
+        workspacePrefix,
+        true,
+      );
+      response = { status: "ok", comparison, entries };
+    } catch (error) {
+      response = error instanceof HistoryComparisonFailure
+        ? { status: error.status, message: error.message }
+        : { status: "failed", message: error instanceof Error ? error.message : "Git comparison could not be read." };
+    }
+    const cleanupError = await this.#closeOperation(operation);
+    if (cleanupError) {
+      return { status: "failed", message: cleanupError.message };
+    }
+    throwIfAborted(signal);
+    return response;
+  }
+
+  async getHistoryComparison(
+    request: FileRootGitHistoryComparisonRequest,
+  ): Promise<FileRootGitHistoryComparisonResult> {
+    try {
+      if (request.mode !== "direct" && request.mode !== "branch") {
+        throw new HistoryComparisonFailure("invalid-selector", "The Git comparison mode is invalid.");
+      }
+      normalizeHistoryComparisonSelector(request.base);
+      normalizeHistoryComparisonSelector(request.target);
+      return await runWorkspaceGitOperationWithAdmission(
+        `${request.sessionId}:${request.repositoryId}:history:comparison:${request.mode}:${JSON.stringify([request.base, request.target])}`,
+        this.#operationTimeoutMs,
+        (signal) => this.#getHistoryComparisonRequest(request, signal),
+      );
+    } catch (error) {
+      return error instanceof HistoryComparisonFailure
+        ? { status: error.status, message: error.message }
+        : { status: "failed", message: error instanceof Error ? error.message : "Git comparison could not be read." };
+    }
   }
 
   async #getHistoryCommitDetailRequest(
@@ -2579,8 +2936,9 @@ export class FileRootGitChangesService {
       if (!commit) {
         response = { status: "commit-not-found", message: "The selected commit could not be found." };
       } else {
-        const comparison = await this.#resolveHistoryComparison(operation, commit);
-        const entries = await this.#readHistoryChangedFiles(operation, comparison);
+        const comparison = await this.#resolveSingleCommitComparison(operation, commit);
+        const workspacePrefix = await this.#readWorkspacePrefix(operation);
+        const entries = await this.#readHistoryChangedFiles(operation, comparison, workspacePrefix);
         response = { status: "ok", commit, entries };
       }
     } catch (error) {
@@ -2624,60 +2982,135 @@ export class FileRootGitChangesService {
       throwIfAborted(signal);
       return operation;
     }
+    const isComparisonDiff = isFileRootGitHistoryComparisonDiffRequest(request);
     let response: FileRootGitHistoryDiffResult = {
       status: "failed",
-      message: "Git commit diff could not be read.",
+      message: isComparisonDiff ? "Git comparison diff could not be read." : "Git commit diff could not be read.",
     };
     try {
-      const commit = await this.#readHistoryCommit(operation, request.commitId);
-      if (!commit) {
-        response = { status: "commit-not-found", message: "The selected commit could not be found." };
+      const workspacePrefix = await this.#readWorkspacePrefix(operation);
+      let commit: FileRootGitHistoryCommit | null = null;
+      let resolvedComparison: FileRootGitHistoryComparison | null = null;
+      let comparison: [string, string] | null = null;
+      if (isComparisonDiff) {
+        resolvedComparison = await this.#validateHistoryComparison(operation, request.comparison);
+        comparison = [
+          resolvedComparison.mergeBaseCommitId ?? resolvedComparison.baseCommitId,
+          resolvedComparison.targetCommitId,
+        ];
       } else {
-        const comparison = await this.#resolveHistoryComparison(operation, commit);
-        let entry: FileRootGitChangeEntry | undefined;
-        if (relativePath) {
-          entry = (await this.#readHistoryChangedFiles(operation, comparison))
-            .find((candidate) => candidate.relativePath === relativePath);
-          if (!entry) {
-            response = { status: "not-changed", message: "The selected file is not changed in this commit." };
-          }
+        commit = await this.#readHistoryCommit(operation, request.commitId);
+        if (!commit) {
+          response = { status: "commit-not-found", message: "The selected commit could not be found." };
+        } else {
+          comparison = await this.#resolveSingleCommitComparison(operation, commit);
         }
-        if (!relativePath || entry) {
-          const pathspecs = entry
-            ? [entry.relativePath, ...(entry.previousRelativePath ? [entry.previousRelativePath] : [])]
-            : [];
-          const workTreeConfigArgs = await this.#readWorkTreeConfigArgs(operation);
-          const result = await this.#runIdentityBoundGit(operation, [
-            ...workTreeConfigArgs,
-            "diff-tree",
-            "--no-commit-id",
-            "--patch",
-            "--full-index",
-            "--find-renames",
-            "--find-copies",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-color",
-            "--unified=3",
-            "-r",
-            ...comparison,
-            "--",
-            ...pathspecs.map((value) => `:(top,literal)${value}`),
-          ], undefined, {
-            maxStdoutBytes: MAX_HISTORY_DIFF_STDOUT_BYTES,
-            maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
-          });
-          if (result.exitCode !== 0) {
-            response = { status: "failed", message: result.stderr || "Git commit diff could not be read." };
-          } else {
-            const patch = result.stdout.toString("utf8");
-            if (patch) {
-              const previewEntry = relativePath
-                ? await this.#readHistoryFileBlobEntry(operation, commit.id, relativePath)
+      }
+      let entry: FileRootGitChangeEntry | undefined;
+      if (relativePath && comparison && (resolvedComparison || commit)) {
+        const entries = await this.#readHistoryChangedFiles(operation, comparison, workspacePrefix, isComparisonDiff);
+        entry = entries.find((candidate) => (
+          candidate.relativePath === relativePath
+          || (resolvedComparison !== null && candidate.previousRelativePath === relativePath)
+        ));
+        if (!entry) {
+          response = {
+            status: "not-changed",
+            message: resolvedComparison
+              ? "The selected file is not changed in this comparison."
+              : "The selected file is not changed in this commit.",
+          };
+        }
+      }
+      if ((resolvedComparison || commit) && comparison && (!relativePath || entry)) {
+        const normalizedPrefix = normalizeWorkspacePrefix(workspacePrefix);
+        const pathspecs = entry
+          ? [entry.relativePath, ...(entry.previousRelativePath ? [entry.previousRelativePath] : [])]
+              .map((value) => `${normalizedPrefix}${value}`)
+          : (normalizedPrefix ? [normalizedPrefix] : []);
+        const workTreeConfigArgs = await this.#readWorkTreeConfigArgs(operation);
+        const result = await this.#runIdentityBoundGit(operation, [
+          ...workTreeConfigArgs,
+          "diff-tree",
+          "--no-commit-id",
+          "--patch",
+          "--full-index",
+          "--find-renames",
+          "--find-copies",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--no-color",
+          "--unified=3",
+          "-r",
+          ...comparison,
+          "--",
+          ...pathspecs.map((value) => `:(top,literal)${value}`),
+        ], undefined, {
+          maxStdoutBytes: MAX_HISTORY_DIFF_STDOUT_BYTES,
+          maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
+        });
+        if (result.exitCode !== 0) {
+          response = {
+            status: "failed",
+            message: result.stderr || (isComparisonDiff
+              ? "Git comparison diff could not be read."
+              : "Git commit diff could not be read."),
+          };
+        } else {
+          const patch = result.stdout.toString("utf8");
+          if (patch) {
+            if (resolvedComparison) {
+              const beforeRelativePath = entry?.previousRelativePath ?? entry?.relativePath ?? null;
+              const afterRelativePath = entry?.relativePath ?? null;
+              const beforeEntry = beforeRelativePath
+                ? await this.#readHistoryFileBlobEntry(
+                    operation,
+                    comparison[0],
+                    beforeRelativePath,
+                    workspacePrefix,
+                  )
+                : null;
+              const afterEntry = afterRelativePath
+                ? await this.#readHistoryFileBlobEntry(
+                    operation,
+                    comparison[1],
+                    afterRelativePath,
+                    workspacePrefix,
+                  )
                 : null;
               response = {
                 status: "ok",
-                commitId: commit.id,
+                comparison: resolvedComparison,
+                relativePath,
+                patch,
+                previewBeforeResource: beforeRelativePath && beforeEntry
+                  ? {
+                      resourceKind: "git-commit-file",
+                      sessionId: request.sessionId,
+                      rootId: request.rootId,
+                      repositoryId: request.repositoryId,
+                      commitId: comparison[0],
+                      relativePath: beforeRelativePath,
+                    }
+                  : null,
+                previewAfterResource: afterRelativePath && afterEntry
+                  ? {
+                      resourceKind: "git-commit-file",
+                      sessionId: request.sessionId,
+                      rootId: request.rootId,
+                      repositoryId: request.repositoryId,
+                      commitId: comparison[1],
+                      relativePath: afterRelativePath,
+                    }
+                  : null,
+              };
+            } else {
+              const previewEntry = relativePath && commit
+                ? await this.#readHistoryFileBlobEntry(operation, commit.id, relativePath, workspacePrefix)
+                : null;
+              response = {
+                status: "ok",
+                commitId: commit!.id,
                 relativePath,
                 patch,
                 previewResource: relativePath && previewEntry
@@ -2686,19 +3119,31 @@ export class FileRootGitChangesService {
                       sessionId: request.sessionId,
                       rootId: request.rootId,
                       repositoryId: request.repositoryId,
-                      commitId: commit.id,
+                      commitId: commit!.id,
                       relativePath,
                     }
                   : null,
               };
-            } else {
-              response = { status: "not-changed", message: "Git returned an empty diff for this commit." };
             }
+          } else {
+            response = {
+              status: "not-changed",
+              message: resolvedComparison
+                ? "Git returned an empty diff for this comparison."
+                : "Git returned an empty diff for this commit.",
+            };
           }
         }
       }
     } catch (error) {
-      response = { status: "failed", message: error instanceof Error ? error.message : "Git commit diff could not be read." };
+      response = error instanceof HistoryComparisonFailure
+        ? { status: error.status, message: error.message }
+        : {
+            status: "failed",
+            message: error instanceof Error
+              ? error.message
+              : (isComparisonDiff ? "Git comparison diff could not be read." : "Git commit diff could not be read."),
+          };
     }
     const cleanupError = await this.#closeOperation(operation);
     if (cleanupError) {
@@ -2710,18 +3155,35 @@ export class FileRootGitChangesService {
 
   async getHistoryDiff(request: FileRootGitHistoryDiffRequest): Promise<FileRootGitHistoryDiffResult> {
     let relativePath: string | null = null;
+    let isComparisonDiff = false;
     try {
-      normalizeHistoryObjectId(request.commitId);
+      isComparisonDiff = isFileRootGitHistoryComparisonDiffRequest(request);
+      if (isFileRootGitHistoryComparisonDiffRequest(request)) {
+        normalizeHistoryComparisonSelector(request.comparison.base);
+        normalizeHistoryComparisonSelector(request.comparison.target);
+      } else {
+        normalizeHistoryObjectId(request.commitId);
+      }
       if (request.relativePath !== undefined && request.relativePath !== null) {
         relativePath = normalizeGitRelativePath(request.relativePath);
       }
+      const comparisonKey = isFileRootGitHistoryComparisonDiffRequest(request)
+        ? JSON.stringify(request.comparison)
+        : request.commitId;
       return await runWorkspaceGitOperationWithAdmission(
-        `${request.sessionId}:${request.repositoryId}:history:diff:${request.commitId}:${relativePath ?? "all"}`,
+        `${request.sessionId}:${request.repositoryId}:history:diff:${comparisonKey}:${relativePath ?? "all"}`,
         this.#operationTimeoutMs,
         (signal) => this.#getHistoryDiffRequest(request, relativePath, signal),
       );
     } catch (error) {
-      return { status: "failed", message: error instanceof Error ? error.message : "Git commit diff could not be read." };
+      return error instanceof HistoryComparisonFailure
+        ? { status: error.status, message: error.message }
+        : {
+            status: "failed",
+            message: error instanceof Error
+              ? error.message
+              : (isComparisonDiff ? "Git comparison diff could not be read." : "Git commit diff could not be read."),
+          };
     }
   }
 }
