@@ -5162,6 +5162,7 @@ button:disabled {
 
 .session-file-preview-header {
   grid-area: header;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -5245,29 +5246,41 @@ button:disabled {
   justify-content: flex-end;
 }
 
-.session-file-preview-copy-feedback {
+.app-notification {
   display: inline-flex;
   align-items: center;
   min-height: 30px;
-  max-width: min(320px, 100%);
+  max-width: min(520px, calc(100vw - 36px));
   padding: 5px 8px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow);
   font-size: 0.76rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
-.session-file-preview-copy-feedback.success {
-  border-color: color-mix(in srgb, var(--character-sub) 52%, transparent);
-  background: color-mix(in srgb, var(--character-sub-soft) 60%, rgba(15, 23, 42, 0.66));
-  color: #b5f5ea;
+.app-notification.success {
+  border-color: var(--teal);
 }
 
-.session-file-preview-copy-feedback.error {
-  border-color: rgba(255, 124, 124, 0.32);
-  background: rgba(127, 29, 29, 0.22);
-  color: var(--session-file-error);
+.app-notification.error {
+  border-color: var(--danger, #fca5a5);
+}
+
+.session-file-preview-notification-layer {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 10px;
+  z-index: 2;
+  max-width: calc(100% - 20px);
+  pointer-events: none;
+}
+
+.session-file-preview-copy-feedback {
+  max-width: min(320px, calc(100vw - 36px));
 }
 
 .session-file-preview-actions button,

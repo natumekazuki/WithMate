@@ -398,12 +398,12 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
 
 // @test-value v2
 // kind = "contract"
-// claim = "File PreviewのCopy File結果は操作群内で成功・失敗のtoneとARIA roleを持って表示される"
+// claim = "File PreviewのCopy File可否と結果は操作群と分離した共通通知overlayで成功・失敗のtoneとARIA roleを持って表示される"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8A" }
-// fault = "Copy File結果を下部共通feedbackへ表示する、copiedをerror toneまたはalertとして表示する、または操作群内に表示しない"
-// observable = "Copy File結果のmessage、success/error class、role、操作群内包含関係、下部feedbackの不在"
+// fault = "Copy Fileを利用可能時に表示しない、利用不可時に表示する、結果を下部共通feedbackへ表示する、copiedをerror toneまたはalertとして表示する、または操作群を構成する要素として表示する"
+// observable = "Copy Fileの表示可否、結果のmessage、success/error class、role、aria-live、header notification layer包含関係、操作群からの分離、下部feedbackの不在"
 // observation_boundary = "component-behavior"
-// scope = "SessionFilePreview Copy File feedback"
+// scope = "SessionFilePreview Copy File availability and feedback"
 // lifecycle = "permanent"
 // impact = "利用者が操作直後にファイルコピー結果を確認でき、成功を失敗と誤認しない"
 // distinction = "copy serviceのstatus返却ではなく、File Previewの利用者向け配置・視認性・ARIA表示を直接検証する"
@@ -451,7 +451,10 @@ test("File Preview はWindowsだけCopy Fileを表示しCopy Imageと別contract
     assert.equal(copyFeedback?.textContent, "File copy status is unknown.");
     assert.ok(copyFeedback?.classList.contains("error"));
     assert.equal(copyFeedback?.getAttribute("role"), "alert");
-    assert.equal(copyFeedback?.closest(".session-file-preview-actions") !== null, true);
+    assert.equal(copyFeedback?.getAttribute("aria-live"), "assertive");
+    assert.equal(copyFeedback?.closest(".session-file-preview-header") !== null, true);
+    assert.equal(copyFeedback?.closest(".session-file-preview-notification-layer") !== null, true);
+    assert.equal(copyFeedback?.closest(".session-file-preview-actions"), null);
     assert.equal(container.querySelector(".session-file-preview-feedback"), null);
 
     copyResult = "copied";
@@ -463,7 +466,10 @@ test("File Preview はWindowsだけCopy Fileを表示しCopy Imageと別contract
     assert.equal(successFeedback?.textContent, "File copied.");
     assert.ok(successFeedback?.classList.contains("success"));
     assert.equal(successFeedback?.getAttribute("role"), "status");
-    assert.equal(successFeedback?.closest(".session-file-preview-actions") !== null, true);
+    assert.equal(successFeedback?.getAttribute("aria-live"), "polite");
+    assert.equal(successFeedback?.closest(".session-file-preview-header") !== null, true);
+    assert.equal(successFeedback?.closest(".session-file-preview-notification-layer") !== null, true);
+    assert.equal(successFeedback?.closest(".session-file-preview-actions"), null);
     assert.equal(container.querySelector(".session-file-preview-feedback"), null);
 
     const unavailableApi: PreviewApi = {
@@ -1408,10 +1414,10 @@ test("拡大画像を主ポインターでドラッグするとスクロール�
 
 // @test-value v2
 // kind = "contract"
-// claim = "単体画像previewのCopy Image操作（buttonと右クリック）の成功結果は操作群内でsuccess toneとstatus roleを持って表示される"
+// claim = "単体画像previewのCopy Image操作（buttonと右クリック）の成功結果は操作群と分離した共通通知overlayでsuccess toneとstatus roleを持って表示される"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8" }
-// fault = "Copy Image操作の成功結果を下部のerror表示として出す、または操作群から離れた位置に表示する"
-// observable = "Copy Image結果のmessage、success class、status role、操作群内包含関係、下部feedbackの不在"
+// fault = "Copy Image操作の成功結果を下部のerror表示として出す、または操作群を構成する要素として表示する"
+// observable = "Copy Image結果のmessage、success class、status role、aria-live、header notification layer包含関係、操作群からの分離、下部feedbackの不在"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview Copy Image feedback"
 // lifecycle = "permanent"
@@ -1493,7 +1499,10 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
     assert.equal(imageCopyFeedback?.textContent, "Image copied.");
     assert.ok(imageCopyFeedback?.classList.contains("success"));
     assert.equal(imageCopyFeedback?.getAttribute("role"), "status");
-    assert.equal(imageCopyFeedback?.closest(".session-file-preview-actions") !== null, true);
+    assert.equal(imageCopyFeedback?.getAttribute("aria-live"), "polite");
+    assert.equal(imageCopyFeedback?.closest(".session-file-preview-header") !== null, true);
+    assert.equal(imageCopyFeedback?.closest(".session-file-preview-notification-layer") !== null, true);
+    assert.equal(imageCopyFeedback?.closest(".session-file-preview-actions"), null);
     assert.equal(container.querySelector(".session-file-preview-feedback"), null);
 
     const contextMenuRequest: SessionFileResourceRequest = {
@@ -1510,6 +1519,7 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
       }));
     });
     await waitFor(() => container.querySelector<HTMLImageElement>(".session-file-image") !== null);
+    await waitFor(() => container.querySelector(".session-file-preview-copy-feedback") === null);
     const contextMenuImage = container.querySelector<HTMLImageElement>(".session-file-image");
     assert.ok(contextMenuImage);
     const contextMenuEvent = new dom.window.MouseEvent("contextmenu", {
@@ -1530,7 +1540,10 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
     assert.equal(contextMenuFeedback?.textContent, "Image copied.");
     assert.ok(contextMenuFeedback?.classList.contains("success"));
     assert.equal(contextMenuFeedback?.getAttribute("role"), "status");
-    assert.equal(contextMenuFeedback?.closest(".session-file-preview-actions") !== null, true);
+    assert.equal(contextMenuFeedback?.getAttribute("aria-live"), "polite");
+    assert.equal(contextMenuFeedback?.closest(".session-file-preview-header") !== null, true);
+    assert.equal(contextMenuFeedback?.closest(".session-file-preview-notification-layer") !== null, true);
+    assert.equal(contextMenuFeedback?.closest(".session-file-preview-actions"), null);
     assert.equal(container.querySelector(".session-file-preview-feedback"), null);
   } finally {
     if (root) {

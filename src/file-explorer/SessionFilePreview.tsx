@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { MessageRichText } from "../MessageRichText.js";
+import { AppNotification, type AppNotificationState } from "../app-notification.js";
 import { BackNavigationButton } from "../back-navigation-button.js";
 import { ImageViewport, ImageZoomControls, useImageViewport } from "../image-viewport.js";
 import { SelectionTextActionSurface } from "../session-components.js";
@@ -108,11 +109,6 @@ type SessionFilePreviewProps = {
   diffLoadingScope?: FileRootGitDiffScope | null;
   diffAvailabilityMessage?: string;
   chatNotice?: string;
-};
-
-type SessionFilePreviewCopyFeedback = {
-  message: string;
-  tone: "success" | "error";
 };
 
 type LoadedFile = {
@@ -590,7 +586,7 @@ export function SessionFilePreview({
   const [imageObjectUrl, setImageObjectUrl] = useState("");
   const [roots, setRoots] = useState<SessionFileRoot[]>([]);
   const [feedback, setFeedback] = useState("");
-  const [copyFeedback, setCopyFeedback] = useState<SessionFilePreviewCopyFeedback | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<AppNotificationState | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [currentMatch, setCurrentMatch] = useState(0);
@@ -1226,16 +1222,6 @@ export function SessionFilePreview({
           {currentFileActionsAvailable && fileObjectCopyAvailable ? (
             <button type="button" onClick={() => void copyCurrentFile()}>Copy File</button>
           ) : null}
-          {copyFeedback ? (
-            <span
-              className={`session-file-preview-copy-feedback ${copyFeedback.tone}`}
-              role={copyFeedback.tone === "success" ? "status" : "alert"}
-              aria-live={copyFeedback.tone === "success" ? "polite" : "assertive"}
-              aria-atomic="true"
-            >
-              {copyFeedback.message}
-            </span>
-          ) : null}
           {previewKind === "text" || previewKind === "markdown" ? (
             <button
               type="button"
@@ -1253,6 +1239,14 @@ export function SessionFilePreview({
             </>
           ) : null}
         </div>
+        {copyFeedback ? (
+          <div className="session-file-preview-notification-layer">
+            <AppNotification
+              notification={copyFeedback}
+              className="session-file-preview-copy-feedback"
+            />
+          </div>
+        ) : null}
       </header>
 
       {findOpen && descriptor && (previewKind === "text" || previewKind === "markdown") ? (
