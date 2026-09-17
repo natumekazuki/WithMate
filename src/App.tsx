@@ -13,6 +13,7 @@ import {
   currentTimestampLabel,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
+  getAuxiliarySessionIdFromLocation,
   getSessionIdFromLocation,
   type LiveApprovalRequest,
   type LiveElicitationRequest,
@@ -607,7 +608,24 @@ export default function AgentSessionWindowApp() {
     onActionDockChange: handleActionDockPreferenceChange,
   });
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
-  const auxiliaryWorkspace = useAuxiliaryWorkspace({ parentSessionId: selectedId, api: withmateApi });
+  const initialAuxiliarySessionId = useMemo(() => getAuxiliarySessionIdFromLocation(), []);
+  const auxiliaryWorkspace = useAuxiliaryWorkspace({
+    parentSessionId: selectedId,
+    api: withmateApi,
+    initialSelectedId: initialAuxiliarySessionId,
+  });
+  useEffect(() => {
+    if (!withmateApi || !selectedId) {
+      return;
+    }
+
+    return withmateApi.subscribeAuxiliarySessionNavigation((payload) => {
+      if (payload.parentSessionId !== selectedId) {
+        return;
+      }
+      auxiliaryWorkspace.selectSession(payload.auxiliarySessionId);
+    });
+  }, [auxiliaryWorkspace.selectSession, selectedId, withmateApi]);
   const activeAuxiliarySession = auxiliaryWorkspace.target === "auxiliary" ? auxiliaryWorkspace.selectedSession : null;
   const auxiliaryBinding = auxiliaryWorkspace.getBinding(auxiliaryWorkspace.selectedId);
   const setActiveAuxiliarySession = auxiliaryBinding.setSession;

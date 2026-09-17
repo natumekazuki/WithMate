@@ -174,6 +174,7 @@ export const WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT = "withmate:session-back
 export const WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT = "withmate:session-glossary-changed";
 export const WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT = "withmate:open-session-windows-changed";
 export const WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT = "withmate:session-window-restore-set-changed";
+export const WITHMATE_OPEN_AUXILIARY_SESSION_EVENT = "withmate:open-auxiliary-session";
 export const WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT = "withmate:open-companion-review-windows-changed";
 export const WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT = "withmate:companion-sessions-changed";
 export const WITHMATE_APP_BOOT_STATUS_EVENT = "withmate:app-boot-status";

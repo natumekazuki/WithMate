@@ -274,6 +274,7 @@ import { getGlossaryAgentRuntimeOperations } from "../src/glossary-operation-sch
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
+  WITHMATE_OPEN_AUXILIARY_SESSION_EVENT,
   WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
 } from "../src/withmate-ipc-channels.js";
@@ -2860,6 +2861,17 @@ function requireSessionTurnNotificationService(): SessionTurnNotificationService
       openSessionWindow: async (sessionId) => {
         await openSessionWindow(sessionId);
       },
+      openAuxiliarySessionWindow: async (parentSessionId, auxiliarySessionId) => {
+        const auxiliary = requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
+        if (
+          !auxiliary
+          || auxiliary.parentSessionId !== parentSessionId
+          || !requireSessionStorage().getSession(parentSessionId)
+        ) {
+          throw new Error("Auxiliary Session の通知対象が見つからないよ。");
+        }
+        await requireSessionWindowBridge().openAuxiliarySessionWindow(parentSessionId, auxiliarySessionId);
+      },
       openHomeWindow: async () => {
         await createHomeWindow();
       },
@@ -2957,6 +2969,17 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         if (requestId) {
           requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
         }
+      },
+      notifySessionTurnTerminal: (notification) => {
+        const auxiliary = requireAuxiliarySessionService().getAuxiliarySession(notification.session.id);
+        if (!auxiliary || !requireSessionStorage().getSession(auxiliary.parentSessionId)) {
+          return;
+        }
+        requireSessionTurnNotificationService().notifyTurnTerminal(notification, {
+          kind: "auxiliary",
+          parentSessionId: auxiliary.parentSessionId,
+          auxiliarySessionId: auxiliary.id,
+        });
       },
       currentTimestampLabel,
     });
@@ -3133,6 +3156,9 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
           title: getSession(sessionId)?.taskTitle.trim() || `WithMate Session - ${sessionId}`,
         }),
       loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
+      sendAuxiliarySessionNavigation: (window, payload) => {
+        window.webContents.send(WITHMATE_OPEN_AUXILIARY_SESSION_EVENT, payload);
+      },
       getSession,
       isRunInFlight: isSessionRunInFlight,
       getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,

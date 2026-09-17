@@ -3,6 +3,7 @@ import type { IpcRenderer } from "electron";
 import type { RendererLogInput } from "../src/app-log-types.js";
 import { normalizeSessionSummaryInvalidation } from "./session-summary-query.js";
 import {
+  normalizeAuxiliarySessionNavigationPayload,
   normalizeOpenSessionWindowIdsChangedPayload,
   normalizeOpenSessionWindowIdsPageResult,
   OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
@@ -134,6 +135,7 @@ import {
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_OPEN_AUXILIARY_SESSION_EVENT,
   WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
   WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
@@ -812,6 +814,14 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     },
     subscribeSessionFilePreviewNavigation(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, listener);
+    },
+    subscribeAuxiliarySessionNavigation(listener) {
+      return subscribe(ipcRenderer, WITHMATE_OPEN_AUXILIARY_SESSION_EVENT, (payload: unknown) => {
+        const normalized = normalizeAuxiliarySessionNavigationPayload(payload);
+        if (normalized) {
+          listener(normalized);
+        }
+      });
     },
     subscribeSessionInvalidation(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSIONS_INVALIDATED_EVENT, (payload: unknown) => {

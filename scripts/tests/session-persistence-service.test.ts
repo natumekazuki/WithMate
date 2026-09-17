@@ -1078,6 +1078,17 @@ describe("SessionPersistenceService", () => {
     assert.equal(storedSessions[0]?.taskTitle, legacySession.taskTitle);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "親Session削除時のDeleteSessionsResultはcascade削除対象のAuxiliary IDを返す"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "親Sessionに紐づくAuxiliaryのIDを削除結果へ含めず、Auxiliary通知の撤去対象を失う"
+  // observable = "DeleteSessionsResult.deletedAuxiliarySessionIds"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-delete-notification-targets"
+  // lifecycle = "permanent"
+  // distinction = "Auxiliaryのruntime cleanupだけでは確認できない、削除結果から通知keyを上位へ渡す契約を検証する"
+  // @end-test-value
   it("deleteSession は関連状態を片付けて window close を呼ぶ", async () => {
     const session = createSession();
     const storedSessions: Session[] = [session];
@@ -1147,8 +1158,9 @@ describe("SessionPersistenceService", () => {
       },
     });
 
-    await service.deleteSession(session.id);
+    const result = await service.deleteSession(session.id);
 
+    assert.deepEqual(result.deletedAuxiliarySessionIds, ["auxiliary-a"]);
     assert.deepEqual(deleted, [session.id]);
     assert.deepEqual(clearedBackground, [session.id, "auxiliary-a"]);
     assert.deepEqual(closedWindows, [session.id, "auxiliary-a"]);

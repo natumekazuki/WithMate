@@ -78,6 +78,49 @@ function createMainSessionCommandFacade(
   });
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Session削除結果に含まれる親SessionとAuxiliaryの通知対象をすべて撤去する"
+// oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+// fault = "削除結果に含まれるAuxiliary通知の追跡keyを通知撤去へ渡さない"
+// observable = "dismissSessionTurnNotificationへ渡されたID"
+// observation_boundary = "component-behavior"
+// scope = "main-session-command-facade-notification-cleanup"
+// lifecycle = "permanent"
+// distinction = "通知service単体ではなく、削除結果から親・Auxiliaryの通知撤去へ渡すfacade境界を検証する"
+// @end-test-value
+test("MainSessionCommandFacade は削除結果に含まれるAuxiliary通知も撤去する", async () => {
+  const dismissedIds: string[] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({
+      deleteSession: () => ({
+        deletedSessionIds: ["session-1"],
+        deletedAuxiliarySessionIds: ["auxiliary-1"],
+        skippedRunningSessionIds: [],
+      }),
+    }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+    dismissSessionTurnNotification(sessionId) {
+      dismissedIds.push(sessionId);
+    },
+  });
+
+  await facade.deleteSession("session-1");
+
+  assert.deepEqual(dismissedIds, ["session-1", "auxiliary-1"]);
+});
+
 test("MainSessionCommandFacade は create/update/delete/cancel を各 service に委譲する", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({

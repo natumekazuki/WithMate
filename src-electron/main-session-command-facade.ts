@@ -181,8 +181,11 @@ export class MainSessionCommandFacade {
     result: DeleteSessionsResult,
     sessionsById: ReadonlyMap<string, Pick<Session, "id" | "workspacePath">>,
   ): Promise<void> {
-    for (const sessionId of result.deletedSessionIds) {
-      this.deps.dismissSessionTurnNotification(sessionId);
+    for (const notificationTargetId of [
+      ...result.deletedSessionIds,
+      ...(result.deletedAuxiliarySessionIds ?? []),
+    ]) {
+      this.deps.dismissSessionTurnNotification(notificationTargetId);
     }
 
     for (const sessionId of result.deletedSessionIds) {

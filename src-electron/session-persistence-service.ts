@@ -292,6 +292,7 @@ export class SessionPersistenceService {
         cutoffDate: options.cutoff?.cutoffDate,
         cutoffTimestampMs: options.cutoff?.cutoffTimestampMs,
         deletedSessionIds: [],
+        deletedAuxiliarySessionIds: [],
         skippedRunningSessionIds,
       };
     }
@@ -317,6 +318,9 @@ export class SessionPersistenceService {
       this.deps.closeSessionWindow(sessionId);
     }
     const deletableParentIds = new Set(deletableSessionIds);
+    const deletedAuxiliarySessionIds = auxiliaryRuntimeIdentities
+      .filter((auxiliary) => deletableParentIds.has(auxiliary.parentSessionId))
+      .map((auxiliary) => auxiliary.id);
     for (const auxiliary of auxiliaryRuntimeIdentities) {
       if (!deletableParentIds.has(auxiliary.parentSessionId)) {
         continue;
@@ -334,6 +338,7 @@ export class SessionPersistenceService {
       cutoffDate: options.cutoff?.cutoffDate,
       cutoffTimestampMs: options.cutoff?.cutoffTimestampMs,
       deletedSessionIds: deletableSessionIds,
+      deletedAuxiliarySessionIds,
       skippedRunningSessionIds,
     };
   }

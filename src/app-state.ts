@@ -4,6 +4,7 @@ export {
   cloneSessionSummaries,
   cloneSessions,
   CURRENT_SESSION_SCHEMA_VERSION,
+  getAuxiliarySessionIdFromLocation,
   getDiffTokenFromLocation,
   getSessionIdFromLocation,
   isLegacyReadOnlySession,
