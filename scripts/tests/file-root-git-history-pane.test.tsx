@@ -215,6 +215,11 @@ async function flush(): Promise<void> {
   });
 }
 
+const unusedHistoryComparison = async (): Promise<FileRootGitHistoryComparisonResult> => ({
+  status: "failed",
+  message: "unused",
+});
+
 // @test-value v2
 // kind = "contract"
 // claim = "History paginationは専用scroll rootのsentinelから次pageを一度だけ取得し、完了後sentinelを隠す"
@@ -241,6 +246,7 @@ test("History pagination は Load more buttonを出さず sentinel と専用scro
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: first, entries: [] }),
     getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, relativePath: null, patch: "", previewResource: null }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -326,6 +332,7 @@ test("History 追加pageの失敗は既存一覧を維持し、sentinelから再
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: first, entries: [] }),
     getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: first.id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -376,6 +383,7 @@ test("History はrepository 0件とcommit 0件を別のempty stateで表示す�
       }),
       getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "none" }),
       getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "none" }),
+      getFileRootGitHistoryComparison: unusedHistoryComparison,
     };
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
@@ -455,6 +463,7 @@ test("History repository切り替えは古いpageを捨てて新repositoryの先
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "ok" as const, commit: commit("d", "detail"), entries: [] }),
     getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: commit("d", "detail").id, relativePath: null, patch: "", previewResource: null }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -542,6 +551,7 @@ test("History repository一覧の再読込開始時に旧Diffを即座に失効�
     }),
     getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "none" }),
     getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "none" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -656,6 +666,7 @@ test("History branch選択は同一rootのrefreshで保持しroot変更でcurren
     },
     getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "none" }),
     getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "none" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -828,6 +839,7 @@ test("History detail はref種別、commit metadata、changed file tree、file d
       diffRequests.push(request);
       return { status: "ok" as const, commitId: request.commitId, relativePath: request.relativePath ?? null, patch: "diff --git" };
     },
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -896,15 +908,15 @@ test("History detail はref種別、commit metadata、changed file tree、file d
 
 // @test-value v2
 // kind = "contract"
-// claim = "HistoryのCompareは履歴entryとbranch toolbarから同じpane内で起動し、branch/remote refとmodeを固定comparisonのdiff callbackへ渡す"
+// claim = "HistoryのCompareは履歴entryとbranch toolbarから同じpane内で起動し、pickerのlabel・focus・closeを保ったままbranch/remote refとmodeを固定comparisonのdiff callbackへ渡す"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Compare" }
-// fault = "Compare用の別tabを増やす、履歴entryから起動できない、branch/remote refを選べない、modeを失う、またはCtrl+clickをcentralへ固定する"
-// observable = "Compare trigger、picker options、mode select、comparison request、resolved OID header、changed file DOM、onOpenDiff openInWindow"
+// fault = "Compare用の別tabを増やす、履歴entryから起動できない、endpoint labelのないpicker、外側クリックやEscapeで閉じないpicker、focusを失うpicker、branch/remote refを選べない、modeを失う、またはCtrl+clickをcentralへ固定する"
+// observable = "Compare trigger、picker ARIA label、ArrowDown option focus、outside pointer close、Escape focus restore、picker options、mode select、comparison request、resolved OID header、changed file DOM、onOpenDiff openInWindow"
 // observation_boundary = "component-behavior"
 // scope = "FileRootGitHistoryPane comparison"
 // lifecycle = "permanent"
 // impact = "履歴画面から比較条件を指定して、detached diff callbackへ同じcomparisonを渡せる"
-// distinction = "履歴entryのCompare起動後に戻り、toolbarからbase/targetとdirect modeを選択し、fileをCtrl+clickしてpublic callback requestを観測する"
+// distinction = "履歴entryのCompare起動後に戻り、toolbarからbase/targetをpicker keyboard操作と外側クリック・Escapeを含めて選択し、direct modeとfileのCtrl+clickでpublic callback requestを観測する"
 // @end-test-value
 test("History Compareはentryとtoolbarから起動し、固定comparisonをdetached diff callbackへ渡す", async () => {
   const { dom, restore } = installDom();
@@ -983,6 +995,37 @@ test("History Compareはentryとtoolbarから起動し、固定comparisonをdeta
     await flush();
     const pickers = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".file-history-comparison-picker-trigger")];
     assert.equal(pickers.length, 2);
+    const baseLabelIds = pickers[0]?.getAttribute("aria-labelledby")?.split(/\s+/u) ?? [];
+    assert.equal(baseLabelIds.length, 2);
+    assert.equal(dom.window.document.getElementById(baseLabelIds[0] ?? "")?.textContent, "Base");
+    assert.ok(dom.window.document.getElementById(baseLabelIds[1] ?? ""));
+    await act(async () => pickers[0]?.click());
+    await flush();
+    assert.equal(dom.window.document.querySelectorAll(".file-history-comparison-picker-menu").length, 1);
+    const baseSearch = dom.window.document.querySelector<HTMLInputElement>("input[aria-label='Base search']");
+    assert.ok(baseSearch);
+    await act(async () => {
+      baseSearch?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
+      await Promise.resolve();
+    });
+    assert.equal(dom.window.document.activeElement?.getAttribute("role"), "option");
+    const comparisonMode = dom.window.document.querySelector<HTMLElement>(".file-history-comparison-mode");
+    assert.ok(comparisonMode);
+    await act(async () => {
+      comparisonMode?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flush();
+    assert.equal(dom.window.document.querySelectorAll(".file-history-comparison-picker-menu").length, 0);
+    await act(async () => pickers[0]?.click());
+    await flush();
+    await act(async () => {
+      dom.window.document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+      await Promise.resolve();
+    });
+    await flush();
+    assert.equal(dom.window.document.querySelectorAll(".file-history-comparison-picker-menu").length, 0);
+    assert.equal(dom.window.document.activeElement, pickers[0]);
     await act(async () => pickers[0]?.click());
     await flush();
     const baseOption = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".file-history-comparison-picker-option")]
@@ -1094,6 +1137,7 @@ test("History は古いcommit detail結果を現在のcommitへ混入させな�
       assert.ok(request.commitId === firstCommit.id || request.commitId === secondCommit.id);
     }),
     getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {
@@ -1165,6 +1209,7 @@ test("History は古いfile Diff結果をBack後のcommitへ混入させない",
       entries: [changedEntry(request.commitId === firstCommit.id ? "first.ts" : "second.ts")],
     }),
     getFileRootGitHistoryDiff: async () => ({ status: "ok" as const, commitId: firstCommit.id, relativePath: null, patch: "" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
   };
   let root: Root | null = null;
   try {

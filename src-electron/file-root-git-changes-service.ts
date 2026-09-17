@@ -2828,6 +2828,7 @@ export class FileRootGitChangesService {
     operation: WorkspaceGitOperation,
     comparison: [string, string],
     workspacePrefix: string,
+    isComparison = false,
   ): Promise<FileRootGitChangeEntry[]> {
     const normalizedPrefix = normalizeWorkspacePrefix(workspacePrefix);
     const result = await this.#runIdentityBoundGit(operation, [
@@ -2848,7 +2849,9 @@ export class FileRootGitChangesService {
       maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
     });
     if (result.exitCode !== 0) {
-      throw new Error(result.stderr || "Git commit changes could not be read.");
+      throw new Error(result.stderr || (isComparison
+        ? "Git comparison changes could not be read."
+        : "Git commit changes could not be read."));
     }
     return parseGitHistoryNameStatusZ(result.stdout, normalizedPrefix);
   }
@@ -2876,6 +2879,7 @@ export class FileRootGitChangesService {
         operation,
         [beforeCommitId, comparison.targetCommitId],
         workspacePrefix,
+        true,
       );
       response = { status: "ok", comparison, entries };
     } catch (error) {
@@ -2978,16 +2982,17 @@ export class FileRootGitChangesService {
       throwIfAborted(signal);
       return operation;
     }
+    const isComparisonDiff = isFileRootGitHistoryComparisonDiffRequest(request);
     let response: FileRootGitHistoryDiffResult = {
       status: "failed",
-      message: "Git commit diff could not be read.",
+      message: isComparisonDiff ? "Git comparison diff could not be read." : "Git commit diff could not be read.",
     };
     try {
       const workspacePrefix = await this.#readWorkspacePrefix(operation);
       let commit: FileRootGitHistoryCommit | null = null;
       let resolvedComparison: FileRootGitHistoryComparison | null = null;
       let comparison: [string, string] | null = null;
-      if (isFileRootGitHistoryComparisonDiffRequest(request)) {
+      if (isComparisonDiff) {
         resolvedComparison = await this.#validateHistoryComparison(operation, request.comparison);
         comparison = [
           resolvedComparison.mergeBaseCommitId ?? resolvedComparison.baseCommitId,
@@ -3003,7 +3008,7 @@ export class FileRootGitChangesService {
       }
       let entry: FileRootGitChangeEntry | undefined;
       if (relativePath && comparison && (resolvedComparison || commit)) {
-        const entries = await this.#readHistoryChangedFiles(operation, comparison, workspacePrefix);
+        const entries = await this.#readHistoryChangedFiles(operation, comparison, workspacePrefix, isComparisonDiff);
         entry = entries.find((candidate) => (
           candidate.relativePath === relativePath
           || (resolvedComparison !== null && candidate.previousRelativePath === relativePath)
@@ -3047,7 +3052,9 @@ export class FileRootGitChangesService {
         if (result.exitCode !== 0) {
           response = {
             status: "failed",
-            message: result.stderr || "Git commit diff could not be read.",
+            message: result.stderr || (isComparisonDiff
+              ? "Git comparison diff could not be read."
+              : "Git commit diff could not be read."),
           };
         } else {
           const patch = result.stdout.toString("utf8");
@@ -3131,7 +3138,12 @@ export class FileRootGitChangesService {
     } catch (error) {
       response = error instanceof HistoryComparisonFailure
         ? { status: error.status, message: error.message }
-        : { status: "failed", message: error instanceof Error ? error.message : "Git commit diff could not be read." };
+        : {
+            status: "failed",
+            message: error instanceof Error
+              ? error.message
+              : (isComparisonDiff ? "Git comparison diff could not be read." : "Git commit diff could not be read."),
+          };
     }
     const cleanupError = await this.#closeOperation(operation);
     if (cleanupError) {
@@ -3143,7 +3155,9 @@ export class FileRootGitChangesService {
 
   async getHistoryDiff(request: FileRootGitHistoryDiffRequest): Promise<FileRootGitHistoryDiffResult> {
     let relativePath: string | null = null;
+    let isComparisonDiff = false;
     try {
+      isComparisonDiff = isFileRootGitHistoryComparisonDiffRequest(request);
       if (isFileRootGitHistoryComparisonDiffRequest(request)) {
         normalizeHistoryComparisonSelector(request.comparison.base);
         normalizeHistoryComparisonSelector(request.comparison.target);
@@ -3153,15 +3167,23 @@ export class FileRootGitChangesService {
       if (request.relativePath !== undefined && request.relativePath !== null) {
         relativePath = normalizeGitRelativePath(request.relativePath);
       }
+      const comparisonKey = isFileRootGitHistoryComparisonDiffRequest(request)
+        ? JSON.stringify(request.comparison)
+        : request.commitId;
       return await runWorkspaceGitOperationWithAdmission(
-        `${request.sessionId}:${request.repositoryId}:history:diff:${isFileRootGitHistoryComparisonDiffRequest(request) ? JSON.stringify(request.comparison) : request.commitId}:${relativePath ?? "all"}`,
+        `${request.sessionId}:${request.repositoryId}:history:diff:${comparisonKey}:${relativePath ?? "all"}`,
         this.#operationTimeoutMs,
         (signal) => this.#getHistoryDiffRequest(request, relativePath, signal),
       );
     } catch (error) {
       return error instanceof HistoryComparisonFailure
         ? { status: error.status, message: error.message }
-        : { status: "failed", message: error instanceof Error ? error.message : "Git commit diff could not be read." };
+        : {
+            status: "failed",
+            message: error instanceof Error
+              ? error.message
+              : (isComparisonDiff ? "Git comparison diff could not be read." : "Git commit diff could not be read."),
+          };
     }
   }
 }

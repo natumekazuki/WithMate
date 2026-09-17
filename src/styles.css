@@ -6744,8 +6744,14 @@ button:disabled {
 
 .file-history-comparison-picker-option span,
 .file-history-comparison-picker-empty {
+  min-width: 0;
   color: var(--muted);
   font-size: 0.65rem;
+}
+
+.file-history-comparison-picker-option strong,
+.file-history-comparison-picker-option span {
+  overflow-wrap: anywhere;
 }
 
 .file-history-comparison-picker-empty {

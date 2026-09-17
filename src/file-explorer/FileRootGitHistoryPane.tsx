@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import {
@@ -29,7 +37,8 @@ type FileRootGitHistoryApi = Pick<
   | "listFileRootGitHistoryCommits"
   | "getFileRootGitHistoryCommitDetail"
   | "getFileRootGitHistoryDiff"
-> & Partial<Pick<WithMateWindowApi, "getFileRootGitHistoryComparison">>;
+  | "getFileRootGitHistoryComparison"
+>;
 
 export type FileRootGitHistoryPaneProps = {
   api: FileRootGitHistoryApi | null;
@@ -125,10 +134,14 @@ function defaultComparisonBase(
   repository: FileRootGitHistoryRepository,
   target: FileRootGitHistoryComparisonSelector,
 ): FileRootGitHistoryComparisonSelector | null {
-  const refs = (repository.refs ?? []).filter((ref) => ref.kind === "branch");
+  const refs = repository.refs.filter((ref) => ref.kind === "branch");
   const available = refs.filter((ref) => !(target.kind === "branch" && ref.name === target.name));
   const preferred = available.find((ref) => ref.name === "main" || ref.name === "master") ?? available[0];
   return preferred ? { kind: preferred.kind, name: preferred.name } : null;
+}
+
+function focusHistoryComparisonOption(list: HTMLElement | null, index: number): void {
+  list?.querySelectorAll<HTMLButtonElement>('[role="option"]')[index]?.focus();
 }
 
 function HistoryComparisonRefPicker({
@@ -136,16 +149,27 @@ function HistoryComparisonRefPicker({
   value,
   refs,
   onChange,
+  isOpen,
+  onToggle,
+  onClose,
   disabled = false,
 }: {
   label: string;
   value: FileRootGitHistoryComparisonSelector | null;
   refs: FileRootGitHistoryAvailableRef[];
   onChange: (value: FileRootGitHistoryComparisonSelector) => void;
+  isOpen: boolean;
+  onToggle: () => void;
+  onClose: (restoreFocus?: boolean) => void;
   disabled?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const controlRef = useRef<HTMLDivElement | null>(null);
+  const optionsRef = useRef<HTMLDivElement | null>(null);
+  const labelId = useId();
+  const valueId = useId();
+  const menuId = useId();
   const queryText = query.trim().toLowerCase();
   const filteredRefs = useMemo(() => refs.filter((ref) => (
     !queryText || ref.name.toLowerCase().includes(queryText)
@@ -154,41 +178,90 @@ function HistoryComparisonRefPicker({
     ? query.trim().toLowerCase()
     : null;
 
+  const close = useCallback((restoreFocus = true) => {
+    onClose(restoreFocus);
+    if (restoreFocus) {
+      triggerRef.current?.focus();
+    }
+  }, [onClose]);
+
   useEffect(() => {
-    if (!open) {
+    if (!isOpen) {
       setQuery("");
       return;
     }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!controlRef.current?.contains(event.target as Node)) {
+        onClose(false);
       }
     };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing) {
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open]);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [close, isOpen, onClose]);
 
   const choose = (next: FileRootGitHistoryComparisonSelector) => {
     onChange(next);
-    setOpen(false);
+    close();
+  };
+
+  const handleOptionsKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
+    const optionElements = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    const currentIndex = optionElements.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (optionElements.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      focusHistoryComparisonOption(optionsRef.current, (currentIndex + direction + optionElements.length) % optionElements.length);
+      return;
+    }
+    if (event.key === "Enter" && currentIndex >= 0) {
+      event.preventDefault();
+      optionElements[currentIndex]?.click();
+    }
   };
 
   return (
     <div className="file-history-comparison-picker">
-      <span className="file-history-comparison-picker-label">{label}</span>
-      <div className="file-history-comparison-picker-control">
+      <span className="file-history-comparison-picker-label" id={labelId}>{label}</span>
+      <div className="file-history-comparison-picker-control" ref={controlRef}>
         <button
+          ref={triggerRef}
           className="file-history-comparison-picker-trigger"
           type="button"
           aria-haspopup="dialog"
-          aria-expanded={open}
+          aria-expanded={isOpen}
+          aria-controls={menuId}
+          aria-labelledby={`${labelId} ${valueId}`}
           disabled={disabled}
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => (isOpen ? close() : onToggle())}
         >
-          {selectorLabel(value)}
+          <span id={valueId}>{selectorLabel(value)}</span>
         </button>
-        {open ? (
-          <div className="file-history-comparison-picker-menu" role="dialog" aria-label={`${label} ref picker`}>
+        {isOpen ? (
+          <div
+            className="file-history-comparison-picker-menu"
+            id={menuId}
+            role="dialog"
+            aria-labelledby={labelId}
+          >
             <input
               autoFocus
               aria-label={`${label} search`}
@@ -196,8 +269,23 @@ function HistoryComparisonRefPicker({
               placeholder="Search refs or enter commit SHA"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) {
+                  return;
+                }
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  focusHistoryComparisonOption(optionsRef.current, 0);
+                }
+              }}
             />
-            <div className="file-history-comparison-picker-options" role="listbox" aria-label={`${label} refs`}>
+            <div
+              ref={optionsRef}
+              className="file-history-comparison-picker-options"
+              role="listbox"
+              aria-label={`${label} refs`}
+              onKeyDown={handleOptionsKeyDown}
+            >
               {(!queryText || "head".includes(queryText)) ? (
                 <button
                   className="file-history-comparison-picker-option"
@@ -345,6 +433,10 @@ export function FileRootGitHistoryPane({
   const [comparisonMessage, setComparisonMessage] = useState("");
   const [comparisonFilter, setComparisonFilter] = useState("");
   const [comparisonReturnToDetail, setComparisonReturnToDetail] = useState(false);
+  const [openComparisonPicker, setOpenComparisonPicker] = useState<"base" | "target" | null>(null);
+  const closeComparisonPicker = useCallback(() => {
+    setOpenComparisonPicker(null);
+  }, []);
 
   const isCurrentRepository = useCallback((generation: number, repository: FileRootGitHistoryRepository) => (
     generationRef.current === generation
@@ -469,6 +561,7 @@ export function FileRootGitHistoryPane({
     setComparisonMessage("");
     setComparisonFilter("");
     setComparisonReturnToDetail(false);
+    setOpenComparisonPicker(null);
     if (!preserveComparisonDraft) {
       setComparisonDraft({ base: null, target: null, mode: "branch" });
     }
@@ -694,7 +787,7 @@ export function FileRootGitHistoryPane({
     options: HistoryComparisonOpenOptions = {},
   ) => {
     const repository = selectedRepositoryRef.current;
-    if (!repository || !api?.getFileRootGitHistoryComparison) {
+    if (!repository || !api) {
       return;
     }
     const target = options.target ?? branchSelector(selectedBranchRef.current);
@@ -715,6 +808,7 @@ export function FileRootGitHistoryPane({
     setComparisonMessage("");
     setComparisonFilter("");
     setComparisonReturnToDetail(returnToDetail);
+    setOpenComparisonPicker(null);
     setLoadingDiffKey("");
     setSelectedEntryPath(null);
   }, [api, comparisonDraft.base, comparisonDraft.mode]);
@@ -729,14 +823,14 @@ export function FileRootGitHistoryPane({
     setComparisonMessage("");
     setComparisonFilter("");
     setComparisonReturnToDetail(false);
+    setOpenComparisonPicker(null);
     setLoadingDiffKey("");
     setSelectedEntryPath(null);
   }, []);
 
   const applyComparison = useCallback(async () => {
     const repository = selectedRepositoryRef.current;
-    const comparisonApi = api?.getFileRootGitHistoryComparison;
-    if (!comparisonApi || !sessionId || !repository) {
+    if (!api || !sessionId || !repository) {
       return;
     }
     if (!comparisonDraft.base || !comparisonDraft.target) {
@@ -751,7 +845,7 @@ export function FileRootGitHistoryPane({
     setComparisonEntries([]);
     setComparisonMessage("");
     try {
-      const result: FileRootGitHistoryComparisonResult = await comparisonApi({
+      const result: FileRootGitHistoryComparisonResult = await api.getFileRootGitHistoryComparison({
         sessionId,
         repositoryId: repository.repositoryId,
         rootId: repository.rootId,
@@ -976,7 +1070,7 @@ export function FileRootGitHistoryPane({
         })
       : `${selectedRepository?.repositoryId ?? ""}:commit:${selectedEntryPath}`
     : null;
-  const canCompare = Boolean(api?.getFileRootGitHistoryComparison);
+  const canCompare = Boolean(api);
   const isBusy = loadingRepositories || loadingCommits || loadingDetail || comparisonLoading || !!loadingDiffKey;
 
   return (
@@ -1003,7 +1097,7 @@ export function FileRootGitHistoryPane({
       {selectedRepository && (
         selectedRepository.branches.length > 0
         || selectedBranch !== null
-        || (selectedRepository.refs ?? []).length > 0
+        || selectedRepository.refs.length > 0
       ) ? (
         <div className="file-history-history-toolbar">
           <label className="file-history-repository-selector">
@@ -1051,15 +1145,21 @@ export function FileRootGitHistoryPane({
                 <HistoryComparisonRefPicker
                   label="Base"
                   value={comparisonDraft.base}
-                  refs={selectedRepository.refs ?? []}
+                  refs={selectedRepository.refs}
                   disabled={comparisonLoading}
+                  isOpen={openComparisonPicker === "base"}
+                  onToggle={() => setOpenComparisonPicker((current) => current === "base" ? null : "base")}
+                  onClose={closeComparisonPicker}
                   onChange={(base) => setComparisonDraft((current) => ({ ...current, base }))}
                 />
                 <HistoryComparisonRefPicker
                   label="Target"
                   value={comparisonDraft.target}
-                  refs={selectedRepository.refs ?? []}
+                  refs={selectedRepository.refs}
                   disabled={comparisonLoading}
+                  isOpen={openComparisonPicker === "target"}
+                  onToggle={() => setOpenComparisonPicker((current) => current === "target" ? null : "target")}
+                  onClose={closeComparisonPicker}
                   onChange={(target) => setComparisonDraft((current) => ({ ...current, target }))}
                 />
                 <label className="file-history-comparison-mode">
