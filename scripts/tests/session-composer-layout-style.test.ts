@@ -87,7 +87,7 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session composerのexpanded SendとActionDock Cancel予約領域に、通常幅の固定幅・非active時の不可視・狭幅時の操作列追従に必要なCSS宣言が定義されている"
+// claim = "Session composerのexpanded Send最小幅とActionDock Cancel予約領域に、通常幅の固定幅・非active時の不可視・狭幅時の操作列追従に必要なCSS宣言が定義されている"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
 // fault = "expandedのSend最小幅、Cancel slotの固定幅・非実行中の不可視・狭幅overrideのいずれかが欠け、ActionDockの主操作領域が崩れる"
 // observable = "src/styles.cssのexpanded Send最小幅、Cancel slot固定幅・不可視・狭幅上書き宣言"

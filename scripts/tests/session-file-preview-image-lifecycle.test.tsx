@@ -1417,13 +1417,13 @@ test("拡大画像を主ポインターでドラッグするとスクロール�
 // kind = "contract"
 // claim = "単体画像previewのCopy Image操作（buttonと右クリック）の成功結果は操作群と分離した共通通知overlayでsuccess toneとstatus roleを持って表示される"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8" }
-// fault = "Copy Image操作の成功結果を下部のerror表示として出す、または操作群を構成する要素として表示する"
+// fault = "Copy Image操作の成功結果がsuccess tone・status role・polite announcementを持たない、下部のerror表示になる、または操作群を構成する要素として表示される"
 // observable = "Copy Image結果のmessage、success class、status role、aria-live、header notification layer包含関係、操作群からの分離、下部feedbackの不在"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview Copy Image feedback"
 // lifecycle = "permanent"
 // impact = "画像コピー直後の成功結果を操作位置の近くで確認できる"
-// distinction = "画像座標をcopy境界へ渡す既存検証に加え、rendererの結果通知の視認性とARIA契約を直接検証する"
+// distinction = "画像座標をcopy境界へ渡す既存検証に加え、rendererの結果通知DOM配置とARIA契約を直接検証する"
 // @end-test-value
 test("単体画像previewはbuttonと右クリックから現在の画像座標をcopy境界へ渡す", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
