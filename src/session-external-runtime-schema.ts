@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sessionGrantExpirySchema } from "./session-grant.js";
 import { DELEGATION_MAX_ITEMS, DELEGATION_STATES } from "./delegation.js";
 
 import { APPROVAL_MODE_VALUES } from "./approval-mode.js";
@@ -1232,7 +1233,7 @@ const grantCreateInputSchema = z.object({
   parentGrantId: nonEmptyStringSchema, parentGrantRevision: z.number().int().positive(), granteeSessionId: nonEmptyStringSchema,
   actions: z.array(z.enum(SESSION_RUNTIME_OPERATIONS)).min(1), resourceKind: z.enum(SESSION_AUTHORITY_RESOURCE_KINDS), relationSelector: z.enum(SESSION_AUTHORITY_RELATION_SELECTORS),
   targetSessionRoles: z.array(sessionRoleSchema).min(1), effectClass: z.enum(SESSION_AUTHORITY_EFFECT_CLASSES), delegable: z.boolean(),
-  childCeiling: z.array(grantPermissionSchema).optional(), expiresAt: z.string().nullable(), budget: z.record(z.string(), z.number()).optional(),
+  childCeiling: z.array(grantPermissionSchema).optional(), expiresAt: sessionGrantExpirySchema, budget: z.record(z.string(), z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)).optional(),
   resourceIds: z.array(nonEmptyStringSchema).optional(), purpose: nonEmptyStringSchema.optional(), completionCriteria: nonEmptyStringSchema.optional(),
   returnSessionId: nonEmptyStringSchema.optional(), budgetAccountId: nonEmptyStringSchema.optional(), idempotencyKey: nonEmptyStringSchema,
 }).strict();

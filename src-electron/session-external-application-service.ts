@@ -1744,6 +1744,8 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
       code: error.code,
       message: error.message,
       effect: ["delegation.create", "delegation.retry", "delegation.cancel", "delegation.compensate"].includes(operation)
+        || operation === "grant.create"
+        || operation === "grant.revoke"
         || operation === "session.create"
         || operation === "session.rename"
         || operation === "session.configure"

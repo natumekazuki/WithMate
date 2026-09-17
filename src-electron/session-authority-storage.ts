@@ -965,10 +965,13 @@ export function transferSessionAuthority(db: DatabaseSync, input: {
     assertGrantActive(grant, grant.granteeSessionId, grant.revision, now);
     assertIssuerChainCurrent(db, grant, now);
     if (grant.grantId === retiredCapabilityId) continue;
-    if (!grant.actions.every((action) => destinationIssuer.childCeiling.some((ceiling) =>
-      samePermission(ceiling, { mode: grant.delegable ? "delegate" : "exercise", action,
-        resourceKind: grant.resourceKind, relationSelector: grant.relationSelector,
-        effectClass: grant.effectClass, targetSessionRoles: grant.targetSessionRoles })))) {
+    const grantPermission = (action: SessionRuntimeOperation): SessionAuthorityPermission => ({
+      mode: grant.delegable ? "delegate" : "exercise", action,
+      resourceKind: grant.resourceKind, relationSelector: grant.relationSelector,
+      effectClass: grant.effectClass, targetSessionRoles: grant.targetSessionRoles,
+    });
+    if (!grant.actions.every((action) => ceilingAllowsPermission(destinationIssuer.childCeiling, grantPermission(action)))
+      || !grant.childCeiling.every((ceiling) => ceilingAllowsPermission(destinationIssuer.childCeiling, ceiling))) {
       throw new SessionAuthorityError("AUTHORITY_FORBIDDEN", "The destination transfer ceiling does not permit the source grant.");
     }
     if (grant.expiresAt !== null && destinationIssuer.expiresAt !== null && grant.expiresAt > destinationIssuer.expiresAt) {
@@ -1468,6 +1471,11 @@ function samePermission(left: SessionAuthorityPermission, right: SessionAuthorit
     && left.relationSelector === right.relationSelector
     && left.effectClass === right.effectClass
     && right.targetSessionRoles.every((role) => left.targetSessionRoles.includes(role));
+}
+
+function ceilingAllowsPermission(ceiling: readonly SessionAuthorityPermission[], requested: SessionAuthorityPermission): boolean {
+  return ceiling.some((candidate) => samePermission(candidate, requested)
+    && (requested.mode !== "delegate" || candidate.mode === "delegate"));
 }
 
 function relationCanNarrow(parent: SessionAuthorityRelationSelector, child: SessionAuthorityRelationSelector): boolean {

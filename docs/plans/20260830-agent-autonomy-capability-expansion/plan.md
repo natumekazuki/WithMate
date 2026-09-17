@@ -682,3 +682,12 @@ grant public入口は現行のauthority owner境界を維持する。各ownerが
 開始baseは `4a2f73f0d29fe8aa7ccbff4e6be51197d947b09f`。ユーザー承認により、移管manifestの`sessionFolders`は実在するcanonical directoryに対応するSession IDだけを返す契約へ限定した。絶対pathを返却値・公開型・strict schemaから除去し、配布CLIを再生成した。filesystemでのdirectory確認は維持し、既存`session.get`のpath公開は変更しない。これにより前項の公開範囲の判断待ちは解消した。
 
 既存のprojection testを更新し、実FolderのSession IDと公開entryを直接確認する。開始baseから1 test／1 transition（SURVIVED）をdiagnostic／warning 0で抽出し、通常のread-only general_lunaが本文・実装経路・privacy契約に対する恒久保持価値を確認した。未解決指摘はない。関連39 test、型検査、Electron/CLI build、差分checkが成功した。UI変更はなく、全suite・GUI・実Provider検証は実施していない。通常の追加commitへ保存し、pushは実施しない。
+### 追加レビュー F1–F4 対応（2026-09-17）
+
+開始baseは `7a559cff3aade38f80ecbcae396e6812c1592fe9`。移管するgrant本体の委譲modeとchild ceilingをdestination ceilingで検証する。削除済みSessionはユーザーの判断に従い移管対象から除外し、manifestとapply側の生存subtreeを一致させる。保存済みtombstoneやbindingの削除・復活・移動は行わない。grant.create/revokeのowner成功後にresponseがサイズ上限を超えた場合は、grantIdを保持した適用済みerrorを返す。
+
+grant.createのexpiresAtはtimezone付きISO日時またはnullの共通schemaへ揃え、budgetは非負safe integerをadvertised schemaにも反映した。日付だけ・timezoneなし日時は入力境界で拒否し、既存DBの保存日時は書き換えない。配布Session CLIを再生成した。
+
+関連83 test、型検査、Electron/CLI buildが成功した。独立closureで、移管対象から除外したtombstoneのbindingが現在の親と一致しなくなり、DB再openを拒否する問題を検出した。起動時のbinding基本検証は維持し、現在の親とのroot・depth・Role比較だけを生存Sessionへ限定した。修正後のschema・child/root移管50 test、型検査、Electron/CLI buildが成功し、再openを含むF2の限定closureも完了した。
+
+固定baseから8 tests／8 transitionsをdiagnostic 0で抽出し、review-test-valueに従って通常のread-only general_lunaが全recordを審査した。F1のchild ceiling拒否と通常grantの誤退役拒否を補強し、最終authority移管4 testが成功した。child ceiling条件だけを外す一時変異で対象testが失敗することを確認し、条件を復元した。価値審査と4件限定の独立closureに未解決指摘はない。全suite・GUI・実Provider検証は今回実施していない。通常の追加commitへ保存し、pushは実施しない。

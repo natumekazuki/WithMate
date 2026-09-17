@@ -28,6 +28,7 @@ import {
 import type { ComposerAttachmentKind } from "./runtime-state.js";
 import {
   SESSION_GRANT_CONTRACT_REVISION,
+  sessionGrantExpirySchema,
   type SessionGrantCreateInput,
   type SessionGrantGetInput,
   type SessionGrantListInput,
@@ -2050,7 +2051,7 @@ function parseSessionGrantCreateInput(value: unknown): SessionRuntimeGrantCreate
   assertKeys(r, ["parentGrantId", "parentGrantRevision", "granteeSessionId", "actions", "resourceKind", "relationSelector", "targetSessionRoles", "effectClass", "delegable", "childCeiling", "expiresAt", "budget", "resourceIds", "purpose", "completionCriteria", "returnSessionId", "budgetAccountId", "idempotencyKey"], "input");
   if (!Array.isArray(r.actions) || r.actions.length === 0 || !r.actions.every((v) => typeof v === "string" && SESSION_RUNTIME_OPERATIONS.includes(v as SessionRuntimeOperation))) throw invalid("actions", "actions must contain known runtime operations.");
   if (!Array.isArray(r.targetSessionRoles) || r.targetSessionRoles.length === 0 || !r.targetSessionRoles.every((v) => ["standalone", "overall-coordinator", "task-coordinator", "executor"].includes(v as string))) throw invalid("targetSessionRoles", "targetSessionRoles must contain known Session roles.");
-  if (r.expiresAt !== null && typeof r.expiresAt !== "string" || (typeof r.expiresAt === "string" && Number.isNaN(Date.parse(r.expiresAt)))) throw invalid("expiresAt", "expiresAt must be an ISO timestamp or null.");
+  if (!sessionGrantExpirySchema.safeParse(r.expiresAt).success) throw invalid("expiresAt", "expiresAt must be an ISO timestamp with a timezone or null.");
   if (r.resourceIds !== undefined && (!Array.isArray(r.resourceIds) || !r.resourceIds.every((v) => typeof v === "string" && v.length > 0))) throw invalid("resourceIds", "resourceIds must be a string array.");
   if (typeof r.delegable !== "boolean") throw invalid("delegable", "delegable must be boolean.");
   if (r.childCeiling !== undefined) {

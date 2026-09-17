@@ -75,9 +75,14 @@ function assertManifest(db: DatabaseSync, input: SessionMoveInput, sourceRoot: s
     return row;
   });
   const actualChildren = (db.prepare(`WITH RECURSIVE subtree(session_id) AS (
-      SELECT session_id FROM session_role_bindings_v6 WHERE session_id = ? AND root_session_id = ?
+      SELECT binding.session_id
+      FROM session_role_bindings_v6 AS binding
+      INNER JOIN sessions_v6 AS session ON session.id = binding.session_id AND session.deleted_at IS NULL
+      WHERE binding.session_id = ? AND binding.root_session_id = ?
       UNION ALL
-      SELECT child.session_id FROM session_role_bindings_v6 AS child
+      SELECT child.session_id
+      FROM session_role_bindings_v6 AS child
+      INNER JOIN sessions_v6 AS child_session ON child_session.id = child.session_id AND child_session.deleted_at IS NULL
       INNER JOIN subtree AS parent ON parent.session_id = child.parent_session_id
       WHERE child.root_session_id = ?
     ) SELECT session_id FROM subtree ORDER BY session_id`).all(input.sessionId, sourceRoot, sourceRoot) as Array<{ session_id: string }>).map((row) => row.session_id);

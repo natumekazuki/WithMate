@@ -1079,11 +1079,13 @@ function hasValidSessionRoleBindingData(db: DatabaseSync): boolean {
            parent.id IS NULL
            OR parent.session_kind = 'character-authoring'
            OR pb.session_id IS NULL
-           OR b.root_session_id <> pb.root_session_id
-           OR b.delegation_depth <> pb.delegation_depth + 1
-           OR (pb.session_role = 'overall-coordinator' AND b.session_role NOT IN ('task-coordinator', 'executor'))
-           OR (pb.session_role = 'task-coordinator' AND b.session_role <> 'executor')
-           OR pb.session_role IN ('standalone', 'executor')
+           OR (s.deleted_at IS NULL AND (
+             b.root_session_id <> pb.root_session_id
+             OR b.delegation_depth <> pb.delegation_depth + 1
+             OR (pb.session_role = 'overall-coordinator' AND b.session_role NOT IN ('task-coordinator', 'executor'))
+             OR (pb.session_role = 'task-coordinator' AND b.session_role <> 'executor')
+             OR pb.session_role IN ('standalone', 'executor')
+           ))
          )
        )
     LIMIT 1

@@ -50,10 +50,10 @@ test("RUNTIME-CATALOG-01: runtime.catalog accepts only an explicit empty input",
 
 // @test-value v2
 // kind = "security"
-// claim = "grant公開入力は必須boolean、permissionの分類値と未知fieldをparser/schemaの両境界で検証する"
+// claim = "grant公開入力は必須boolean、permission分類、未知field、timezone付きISO日時と非負safe integer budgetをparser/schemaで検証し、広告schemaにも日時・数値制約を示す"
 // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/05-grants-routing-and-transfer.md" }
-// fault = "公開grant入力が不明なscope分類または未知fieldを通過し、issuer ceiling外の権限発行へ到達する"
-// observable = "grant.createのcanonical parserとZod input schemaの拒否結果"
+// fault = "公開grant入力が不明なscope分類や未知fieldを通過する、または広告schemaがruntimeで拒否する不正日時・budget値を許可する"
+// observable = "grant.createのcanonical parserとZod input schemaの受理・拒否、および広告schemaの日時formatと整数上下限"
 // observation_boundary = "component-behavior"
 // scope = "session-runtime-grant-contract"
 // lifecycle = "permanent"
@@ -67,6 +67,27 @@ test("GRANT-CONTRACT-01: grant.create rejects unknown classification and fields"
   const validWithCeiling = { ...valid, childCeiling: [{ mode: "delegate", action: "turn.run", resourceKind: "execution", relationSelector: "self", effectClass: "external_side_effect", targetSessionRoles: [] }] };
   assert.deepEqual(parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input: validWithCeiling }).input, validWithCeiling);
   assert.deepEqual(createSessionRuntimeInputSchema("grant.create").parse(validWithCeiling), validWithCeiling);
+  for (const expiresAt of [null, "2026-10-01T00:00:00.000Z", "2026-10-01T09:00:00+09:00"]) {
+    const input = { ...valid, expiresAt, budget: { turnStarts: Number.MAX_SAFE_INTEGER, retries: 0 } };
+    assert.deepEqual(parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input }).input, input);
+    assert.deepEqual(createSessionRuntimeInputSchema("grant.create").parse(input), input);
+  }
+  for (const [field, value] of [
+    ["expiresAt", "not-a-date"], ["expiresAt", "2026-10-01"], ["expiresAt", "2026-10-01T00:00:00"],
+    ["budget", { turnStarts: -1 }], ["budget", { turnStarts: 0.5 }], ["budget", { turnStarts: Number.MAX_SAFE_INTEGER + 1 }],
+  ] as const) {
+    const input = { ...valid, [field]: value };
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input }), (error) => error instanceof SessionRuntimeValidationError && error.code === "INVALID_INPUT" && error.details.field === field);
+    assert.throws(() => createSessionRuntimeInputSchema("grant.create").parse(input), z.ZodError);
+  }
+  const advertised = z.toJSONSchema(createSessionRuntimeAdvertisedInputSchema("grant.create")) as {
+    properties: { expiresAt: { anyOf: Array<{ type: string; format?: string }> }; budget: { additionalProperties: { type: string; minimum: number; maximum: number } } };
+  };
+  assert.ok(advertised.properties.expiresAt.anyOf.some((entry) => entry.type === "string" && entry.format === "date-time"));
+  assert.ok(advertised.properties.expiresAt.anyOf.some((entry) => entry.type === "null"));
+  assert.equal(advertised.properties.budget.additionalProperties.type, "integer");
+  assert.equal(advertised.properties.budget.additionalProperties.minimum, 0);
+  assert.equal(advertised.properties.budget.additionalProperties.maximum, Number.MAX_SAFE_INTEGER);
   const { delegable: _delegable, ...missingDelegable } = valid;
   assert.throws(() => parseSessionRuntimeRequestEnvelope({ schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION, operation: "grant.create", input: missingDelegable }), (error) => error instanceof SessionRuntimeValidationError && error.code === "INVALID_INPUT" && error.details.field === "delegable");
   assert.throws(() => createSessionRuntimeInputSchema("grant.create").parse(missingDelegable), z.ZodError);

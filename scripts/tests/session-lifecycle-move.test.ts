@@ -11,6 +11,7 @@ import { buildNewSession, type Session } from "../../src/session-state.js";
 import { SessionAuthorityService } from "../../src-electron/session-authority-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { applySessionMove } from "../../src-electron/session-lifecycle-move.js";
+import { buildSessionLifecycleManifest } from "../../src-electron/session-lifecycle-manifest.js";
 import { createSessionAuthorityGrant, issueTrustedCrossRootTransferCapability, issueTrustedGrantPolicy, listActiveSessionAuthorityGrants, revokeSessionAuthorityGrant } from "../../src-electron/session-authority-storage.js";
 import { ResourceBudgetStorage, bootstrapRootResourceBudget } from "../../src-electron/resource-budget-storage.js";
 import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
@@ -579,6 +580,64 @@ describe("Session lifecycle move", () => {
         await rm(ctx.directory, { recursive: true, force: true });
       }
     }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Session移管のmanifestと適用側subtreeは削除済みSessionを対象外として一致する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-agent-autonomy-capability-expansion/designs/01-session-lifecycle.md#Move、adopt、reuse" }
+  // fault = "tombstone化されたchildが適用側subtreeだけに残り、残存Sessionのcross-root移管を拒否する"
+  // observable = "manifestのdescendants、移管後の生存Session binding、tombstoneの履歴属性"
+  // observation_boundary = "component-behavior"
+  // scope = "session-lifecycle-cross-root-move"
+  // lifecycle = "permanent"
+  // risk_tags = ["security"]
+  // @end-test-value
+  it("tombstone化されたchildをcross-root移管の集合から除外する", async () => {
+    const ctx = await setup();
+    const service = new SessionAuthorityService({ databasePath: ctx.dbPath, getExecutionGeneration: () => "generation-1", now: () => new Date(NOW) });
+    let storageClosed = false;
+    try {
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        db.prepare("UPDATE session_role_bindings_v6 SET parent_session_id = ?, delegation_depth = 2 WHERE session_id = ?")
+          .run(ctx.destinationParent.id, ctx.target.id);
+        db.prepare("UPDATE sessions_v6 SET resource_revision = 2, deleted_at = ?, updated_at = ? WHERE id = ?")
+          .run(NOW, NOW, ctx.target.id);
+        const sourceGrant = provisionMoveGrant(db, ctx.sourceRoot.id)[0];
+        const destinationGrant = provisionMoveGrant(db, ctx.sourceRoot.id, ctx.destinationRoot.id)[0];
+        const destinationProof = moveProof(ctx.sourceRoot.id, destinationGrant, ctx.destinationRoot.id);
+        const manifest = buildSessionLifecycleManifest(db, ctx.destinationParent.id, ctx.destinationRoot.id);
+        assert.deepEqual(manifest.descendants, []);
+        const beforeTombstone = db.prepare("SELECT state, deleted_at, root_session_id, parent_session_id, delegation_depth, resource_revision FROM sessions_v6 INNER JOIN session_role_bindings_v6 ON session_role_bindings_v6.session_id = sessions_v6.id WHERE sessions_v6.id = ?")
+          .get(ctx.target.id);
+        const result = applySessionMove(db, {
+          sessionId: ctx.destinationParent.id,
+          expectedRevision: 1,
+          kind: "cross_root",
+          destinationRootSessionId: ctx.destinationRoot.id,
+          destinationParentSessionId: ctx.destinationRoot.id,
+          destinationExpectedRevision: 1,
+          transferManifestRevision: manifest.manifestRevision,
+          transferPolicy: "full",
+          descendants: manifest.descendants,
+          destinationProof,
+        }, moveProof(ctx.sourceRoot.id, sourceGrant), NOW, "move-live-subtree-with-tombstone");
+        assert.equal(result.revisions[ctx.destinationParent.id], 2);
+        assert.deepEqual({ ...db.prepare("SELECT root_session_id, parent_session_id, delegation_depth FROM session_role_bindings_v6 WHERE session_id = ?")
+          .get(ctx.destinationParent.id) as { root_session_id: string; parent_session_id: string; delegation_depth: number } },
+          { root_session_id: ctx.destinationRoot.id, parent_session_id: ctx.destinationRoot.id, delegation_depth: 1 });
+        assert.deepEqual(db.prepare("SELECT state, deleted_at, root_session_id, parent_session_id, delegation_depth, resource_revision FROM sessions_v6 INNER JOIN session_role_bindings_v6 ON session_role_bindings_v6.session_id = sessions_v6.id WHERE sessions_v6.id = ?")
+          .get(ctx.target.id), beforeTombstone);
+      } finally { db.close(); }
+      ctx.storage.close();
+      storageClosed = true;
+      const reopened = new SessionStorageV6(ctx.dbPath);
+      try {
+        assert.ok(reopened.getSession(ctx.destinationParent.id));
+        assert.equal(reopened.getSession(ctx.target.id), null);
+      } finally { reopened.close(); }
+    } finally { service.close(); if (!storageClosed) ctx.storage.close(); await rm(ctx.directory, { recursive: true, force: true }); }
   });
 
   // @test-value v2

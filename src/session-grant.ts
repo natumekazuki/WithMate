@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type {
   SessionAuthorityEffectClass,
   SessionAuthorityGrant,
@@ -9,6 +11,7 @@ import type { SessionRuntimeOperation } from "./session-external-runtime-contrac
 import type { SessionRole } from "./session-role-binding.js";
 
 export const SESSION_GRANT_CONTRACT_REVISION = 1 as const;
+export const sessionGrantExpirySchema = z.iso.datetime({ offset: true }).nullable();
 
 export type SessionGrantCreateInput = Readonly<{
   parentGrantId: string;
