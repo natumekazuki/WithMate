@@ -148,6 +148,16 @@ Sessionごとのqueueは、待機中のqueued executionを最大10件まで保�
 
 `turn.run`と`turn.enqueue`は別operationとしてidempotency scopeを分ける。同じkeyを使って一方を他方へ変更しても、既存executionへ合流させない。
 
+### Session移管・削除と複数Auxiliary（2026-09-18 方針更新）
+
+本節は採用した設計方針であり、実装追従は`docs/plans/20260830-agent-autonomy-capability-expansion/plan.md`の「設計更新・統合の追従管理」で管理する。この文書更新ではruntimeの挙動を変更していない。
+
+- Session移管・削除の確認対象は、処理対象の各Mainに所属するAuxiliary全件とする。選択中の一件、表示中のWindow、paneの開閉を対象集合の根拠にしない。通常Sessionのdescendantまで対象となる操作では、それぞれに所属するAuxiliaryも含める。
+- 移管では全Auxiliaryの実行状態を既存の移管可否判定へ含め、非表示の実行を見落として移管しない。移管可能な場合は、全Auxiliaryについて所属に依存する情報を既存の移管境界と整合させる。Auxiliary自身のstable ID、会話、provider thread、Character snapshotを作り直さず、親Mainへの紐づきを維持する。
+- 削除では既存の認可・実行中拒否等の削除条件を維持する。停止を伴う削除経路では全Auxiliaryを停止対象とし、保存データ・所有resourceのcleanupも全件へ適用する。全件化を理由に既存の拒否を強制停止へ変更せず、遅延callbackによる削除済みデータの復活を防ぐ。共有Workspaceを削除対象へ広げない。
+- 確認から移管・削除の確定までにAuxiliaryの作成・実行開始が競合しても判定をすり抜けないよう、既存のadmission・draining・削除境界へ接続する。確認時点の一覧を取得するだけで競合対策が完了したとは扱わない。
+- 新しい移管ルールやAuxiliary専用のgrant・budget体系を追加する判断ではない。既存の安全条件と後続処理を所属全件へ揃える。Main／Auxiliaryの送信方式・MCP公開権限は引き続き別途検討し、本変更の前提にしない。
+
 ### Session間Turn authorityと送信元projection
 
 #### v6.4 方針更新: 自己宛Turnとスケジュールの分離（2026-09-18）

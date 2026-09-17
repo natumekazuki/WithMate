@@ -259,6 +259,17 @@ transport ごとに入出力形式を変える必要がある場合も、resourc
 | 10 | Role policy cleanup | 残存Role判定を削除し、default grant template、表示、managed Skillを更新 | 7、9 |
 | 11 | Integrated release closure | migration rehearsal、full test、build、visual／smoke、cross-slice interaction review | 0 から 10 |
 
+## 設計更新・統合の追従管理
+
+2026-09-18の設計議論に伴う追従事項を管理する。既存Sliceの完了記録とは区別し、設計更新を実装完了として扱わない。別branchでの対応は統合差分と検証結果を確認してから状態を更新する。
+
+| 項目 | 状態 | 残作業・完了確認 | 正本・関連 |
+| --- | --- | --- | --- |
+| Session移管・削除のAuxiliary全件化 | 方針確定・実装追従待ち | `src-electron/main.ts`の選択中Auxiliaryを参照する実行判定を含め、所属全件の移管可否・停止・cleanupへ揃える。非表示実行、新規作成／実行開始との競合、遅延callbackを検証する。既存の削除拒否条件は維持する | `docs/design/session-external-runtime.md`「Session移管・削除と複数Auxiliary」。Slice 3／7およびmaster統合 |
+| 自己宛direct Turnとscheduleの権限分離 | 方針確定・実装追従待ち | baselineと対象条件、公開adapter、既存保存grant／queued executionの扱い、schedule作成・発火の認可を確認・反映する | 同設計「v6.4 方針更新: 自己宛Turnとスケジュールの分離」、`designs/05-grants-routing-and-transfer.md` |
+| Main／Auxiliaryの送信・公開権限 | 設計保留 | 送信主体と操作対象の境界を別途確定する。移管・削除の全件化とは切り離す | 同設計のAuxiliary未決定事項、[#716](https://github.com/natumekazuki/WithMate/issues/716) |
+| 完了結果通知 | 別Issueで設計検討 | 登録、通知不要、未登録時処理、配送先・認可と正常完了配送の契約を確定する。会話中の候補案を採用済みにしない | [#724](https://github.com/natumekazuki/WithMate/issues/724)、[#716](https://github.com/natumekazuki/WithMate/issues/716) |
+
 ## 個別設計
 
 - `designs/00-shared-authority-and-history.md`
