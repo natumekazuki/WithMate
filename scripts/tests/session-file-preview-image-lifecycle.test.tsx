@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
@@ -398,10 +399,10 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
 
 // @test-value v2
 // kind = "contract"
-// claim = "File PreviewのCopy File可否と結果は操作群と分離した共通通知overlayで成功・失敗のtoneとARIA roleを持って表示される"
+// claim = "File PreviewのCopy File利用可否とcopied/effect-unknown結果は操作群と分離した共通通知overlayでsuccess/error toneとARIA roleを持って表示される"
 // oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8A" }
-// fault = "Copy Fileを利用可能時に表示しない、利用不可時に表示する、結果を下部共通feedbackへ表示する、copiedをerror toneまたはalertとして表示する、または操作群を構成する要素として表示する"
-// observable = "Copy Fileの表示可否、結果のmessage、success/error class、role、aria-live、header notification layer包含関係、操作群からの分離、下部feedbackの不在"
+// fault = "Copy Fileを利用可能時に表示しない、利用不可時に表示する、effect-unknownをsuccess toneまたはstatusとして表示する、copiedをerror toneまたはalertとして表示する、または操作群を構成する要素として表示する"
+// observable = "Copy Fileの表示可否、copied/effect-unknownのmessage、success/error class、role、aria-live、header notification layer包含関係、操作群からの分離、下部feedbackの不在"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview Copy File availability and feedback"
 // lifecycle = "permanent"
@@ -1554,6 +1555,45 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
     restoreGlobals();
     dom.window.close();
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "別窓File Previewのcopy通知は暗色theme token上でsuccess/errorの文字・背景・borderを保ち、操作群外のabsolute overlayとして表示される"
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md: MT-023D8" }
+// fault = "別窓が明色surfaceと明色文字を継承する、success/errorの背景またはborderが欠ける、または通知layerが通常の操作列へ参加する"
+// observable = "file-preview-window-page、app-notificationのsuccess/error、session-file-preview-notification-layer各CSS declaration"
+// observation_boundary = "declaration"
+// scope = "File Preview detached notification stylesheet"
+// lifecycle = "permanent"
+// impact = "別窓でcopy結果の通知が背景に埋もれず、既存操作の位置を変えない"
+// distinction = "JSDOMでは算出できないtheme継承とlayout参加条件をstylesheet declarationから確認し、DOMの通知内容・ARIA・親境界の検証と分担する"
+// @end-test-value
+test("別窓File Previewのcopy通知CSSは暗色themeと操作群外overlayを定義する", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const pageRule = styles.match(/\.file-preview-window-page\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const notificationRule = styles.match(/\.app-notification\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const successRule = styles.match(/\.app-notification\.success\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const errorRule = styles.match(/\.app-notification\.error\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const layerRule = styles.match(/\.session-file-preview-notification-layer\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+
+  assert.match(pageRule, /--surface-strong:\s*rgba\(28,\s*33,\s*43,\s*0\.98\);/);
+  assert.match(pageRule, /--line:\s*rgba\(203,\s*213,\s*225,\s*0\.12\);/);
+  assert.match(pageRule, /--ink:\s*#e5edf8;/);
+  assert.match(pageRule, /--teal:\s*#6fb8c7;/);
+  assert.match(pageRule, /--teal-soft:\s*rgba\(111,\s*184,\s*199,\s*0\.14\);/);
+  assert.match(notificationRule, /border:\s*1px solid var\(--line\);/);
+  assert.match(notificationRule, /background:\s*var\(--surface-strong\);/);
+  assert.match(notificationRule, /color:\s*var\(--ink\);/);
+  assert.match(successRule, /border-color:\s*var\(--teal\);/);
+  assert.match(successRule, /background:\s*color-mix\(in srgb,\s*var\(--teal-soft\)\s*72%,\s*var\(--surface-strong\)\);/);
+  assert.match(errorRule, /border-color:\s*var\(--danger,\s*#fca5a5\);/);
+  assert.match(errorRule, /background:\s*color-mix\(in srgb,\s*var\(--danger,\s*#fca5a5\)\s*14%,\s*var\(--surface-strong\)\);/);
+  assert.match(layerRule, /position:\s*absolute;/);
+  assert.match(layerRule, /top:\s*calc\(100%\s*\+\s*8px\);/);
+  assert.match(layerRule, /right:\s*10px;/);
+  assert.match(layerRule, /z-index:\s*2;/);
+  assert.match(layerRule, /pointer-events:\s*none;/);
 });
 
 test("画像previewは初回Fitの実効倍率を表示しZoom Inの基準にする", async () => {
