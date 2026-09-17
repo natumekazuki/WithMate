@@ -6,6 +6,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { useAuxiliaryWorkspace, type AuxiliaryWorkspaceApi, type AuxiliaryWorkspace } from "../../src/chat/use-auxiliary-workspace.js";
+import { runAuxiliaryDraftChangeAndSaveOperation } from "../../src/auxiliary-draft-save-context.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 
 function session(id: string, createdAt: string, overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
@@ -258,6 +259,7 @@ test("hidden sessionのsaveとterminalでdraft・previewを維持する", async 
   const b = session("b", "2026-01-02");
   let terminal: ((id: string, state: null) => void) | null = null;
   let latest = a;
+  const savedRequests: AuxiliarySession[] = [];
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => [a, b],
     getAuxiliarySession: async (id) => id === "a" ? latest : b,
@@ -274,13 +276,40 @@ test("hidden sessionのsaveとterminalでdraft・previewを維持する", async 
   bindingB.mutationRevision.current += 1;
   await act(async () => { view.current.selectSession("b"); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  await act(async () => { view.current.setTarget("main"); binding.setSession((current) => current ? { ...current, composerDraft: "hidden draft" } : current); });
-  latest = { ...a, composerDraft: "hidden draft", preview: "terminal answer", messages: [...a.messages, { role: "assistant", text: "terminal answer" }] };
+  let saveResult: Awaited<ReturnType<typeof runAuxiliaryDraftChangeAndSaveOperation>> = null;
+  await act(async () => {
+    view.current.setTarget("main");
+    saveResult = await runAuxiliaryDraftChangeAndSaveOperation({
+      draft: "hidden draft",
+      selectionStart: "hidden draft".length,
+      clearBlockedFeedback: () => {},
+      setComposerCaret: () => {},
+      currentSession: binding.getSession(),
+      createTimestampLabel: () => "2026-01-03T00:00:00.000Z",
+      draftSaveQueue: binding.draftSaveQueue.current,
+      getCurrentSession: binding.getSession,
+      saveAuxiliarySession: async (request) => {
+        savedRequests.push(request);
+        latest = request;
+        return request;
+      },
+      mutationRevision: binding.mutationRevision,
+      activeSessionRef: binding.sessionRef,
+      draftSaveQueueRef: binding.draftSaveQueue,
+      setActiveSession: (update) => binding.setSession(update),
+    });
+  });
+  assert.equal(savedRequests.length, 1);
+  assert.equal(savedRequests[0]?.composerDraft, "hidden draft");
+  assert.equal(saveResult?.request.composerDraft, "hidden draft");
+  assert.equal(saveResult?.saved.composerDraft, "hidden draft");
+  assert.equal(binding.sessionRef.current?.composerDraft, "hidden draft");
+  latest = { ...latest, preview: "terminal answer", messages: [...latest.messages, { role: "assistant", text: "terminal answer" }] };
   assert.ok(terminal);
   await act(async () => { terminal?.("a", null); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   assert.equal(binding.sessionRef.current?.composerDraft, "hidden draft");
-  assert.equal(binding.mutationRevision.current, revision);
+  assert.equal(binding.mutationRevision.current, revision + 1);
   assert.equal(bindingB.mutationRevision.current, 1);
   assert.equal(view.current.summaries.find((summary) => summary.id === "a")?.preview, "terminal answer");
   await view.unmount();
