@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { ProviderQuotaTelemetry, RunSessionTurnRequest } from "../src/runtime-state.js";
 import {
   parseSetSessionPinnedRequest,
@@ -24,6 +25,7 @@ type MainSessionCommandFacadeDeps = {
   getSession(sessionId: string): Session | null;
   getSessions(): readonly Session[];
   getStoredSessionSummaries(): Promise<readonly SessionSummary[]> | readonly SessionSummary[];
+  getSessionStorageIdentity(): object;
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
   resolveSessionLaunchSelection(providerId?: string | null): Promise<SessionLaunchSelection>;
   getSessionPersistenceService(): SessionPersistenceService;
@@ -53,9 +55,12 @@ export class MainSessionCommandFacade {
   }
 
   async createSessionFromRequest(input: CreateSessionRequest): Promise<Session> {
-    const session = await this.deps.runProviderRuntimeOperationExclusive(
-      () => this.createSessionFromRequestExclusive(input),
-    );
+    const parsed = parseCreateSessionRequest(input);
+    const session = parsed.workspace?.kind === "session-folder"
+      ? await this.createSessionFolderSession(parsed.sessionInput)
+      : await this.deps.runProviderRuntimeOperationExclusive(
+        () => this.createSessionFromRequestExclusive(parsed),
+      );
     try {
       await this.deps.initializeCreatedSession(session);
       return session;
@@ -72,8 +77,10 @@ export class MainSessionCommandFacade {
     }
   }
 
-  private async createSessionFromRequestExclusive(input: CreateSessionRequest): Promise<Session> {
-    const { workspace, sessionInput: requestSessionInput } = parseCreateSessionRequest(input);
+  private async createSessionFromRequestExclusive(
+    parsed: ReturnType<typeof parseCreateSessionRequest>,
+  ): Promise<Session> {
+    const { workspace, sessionInput: requestSessionInput } = parsed;
     const launchSelection = await this.deps.resolveSessionLaunchSelection(requestSessionInput.provider);
     const sessionInput = {
       ...requestSessionInput,
@@ -91,23 +98,53 @@ export class MainSessionCommandFacade {
         branch: workspace.branch,
       });
     }
-    if (workspace?.kind !== "session-folder") {
-      throw new Error("workspace の作成方法を解釈できないよ。");
-    }
+    throw new Error("workspace の作成方法を解釈できないよ。");
+  }
 
+  private async createSessionFolderSession(
+    requestSessionInput: ReturnType<typeof parseCreateSessionRequest>["sessionInput"],
+  ): Promise<Session> {
+    const storageIdentity = this.deps.getSessionStorageIdentity();
+    const initialSelection = await this.deps.resolveSessionLaunchSelection(requestSessionInput.provider);
     const sessionId = this.issueSessionId();
     const workspacePath = await this.deps.createSessionFilesDirectory(sessionId);
     if (!workspacePath.trim()) {
       throw new Error("SessionFolder を作成できなかったよ。");
     }
 
-    return this.persistCreatedSession({
-      ...sessionInput,
-      id: sessionId,
-      workspaceLabel: "SessionFolder",
-      workspacePath,
-      branch: "",
-    });
+    let persistenceStarted = false;
+    try {
+      return await this.deps.runProviderRuntimeOperationExclusive(async () => {
+        if (this.deps.getSessionStorageIdentity() !== storageIdentity) {
+          throw new Error("Session storage が作成中に切り替わったため、Session 作成を再試行してね。");
+        }
+        const latestSelection = await this.deps.resolveSessionLaunchSelection(requestSessionInput.provider);
+        if (!isDeepStrictEqual(latestSelection, initialSelection)) {
+          throw new Error("起動設定が作成中に変わったため、Session 作成を再試行してね。");
+        }
+        if (this.deps.getSessionStorageIdentity() !== storageIdentity) {
+          throw new Error("Session storage が作成中に切り替わったため、Session 作成を再試行してね。");
+        }
+        persistenceStarted = true;
+        return this.persistCreatedSession({
+          ...requestSessionInput,
+          ...latestSelection,
+          id: sessionId,
+          workspaceLabel: "SessionFolder",
+          workspacePath,
+          branch: "",
+        });
+      });
+    } catch (error) {
+      if (!persistenceStarted) {
+        try {
+          await this.deps.cleanupSessionFilesDirectory?.(sessionId);
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], "SessionFolder の後始末に失敗しました。", { cause: error });
+        }
+      }
+      throw error;
+    }
   }
 
   private async persistCreatedSession(input: CreateSessionInput & { id: string }): Promise<Session> {

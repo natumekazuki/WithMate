@@ -60,7 +60,7 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 
 - 棚卸し: 上表の経路を確認。Companion 実利用可否と全 caller の移行対象確定は未完了。
 - 実装単位 1: 実装済み。Affect の評価は ownership 外、owner 再検証・appraise・settlement 確定は同じ境界に配置。V6 runtime の通常保存と terminal 保存を既存行限定 API へ配線した。全体の排他方式はまだ置換していない。
-- 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。Settings 失敗時に書込みを試みていない collection を rollback しない境界を追加。作成準備、Settings / catalog の限定 field 更新、親子 admission は未完了。
+- 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。Settings 失敗時に書込みを試みていない collection を rollback しない境界を追加。Main SessionFolder の作成準備を provider coordinator 外へ分離。他の作成準備、Settings / catalog の限定 field 更新、親子 admission は未完了。
 - 実装単位 3〜5: 未完了。
 
 ### 第一段階レビューへの対応と削除後処理
@@ -98,6 +98,14 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 - Settings 更新では Session / Auxiliary の thread reset 書込みを試みたかを個別に記録し、試みていない collection は rollback で全体置換しない。設定だけの保存後の失敗で並行削除・更新を復元前値へ戻さない。
 - controlled deps の deferred を使い、設定保存待ち中の Session 削除と Auxiliary 本文更新を再現した。projection 失敗の伝播、設定の rollback、並行 collection 変更の保持を検証。関連 Settings 14 tests が成功し、変更 test 1件を上記 22 records に含めて審査した。
 - 実際に thread を変更した場合の限定 field 更新と catalog migration の全 snapshot 廃止は引き続き未完了。Worker 化や Turn admission の完了を意味しない。
+
+### 第三回レビューの要確認対応（ffa38606 起点）
+
+- 確定指摘は 0 件。Q1 は runtime 交換時の未保存評価と durable evaluation を文書が区別していなかったため、ADR 020 の既存 idempotency 契約に合わせて明確化した。未保存結果は破棄し、保存済み candidate / expected version / key は同一のまま再照合する。新しい評価や key を runtime 交換だけで発行しない。
+- Main で確認した Memory runtime の lifecycle は起動時 start と終了時 stop であり、通常操作による runtime-only restart の到達を確認したとは扱わない。component test で保存後の ownership 待ち・appraise 応答待ちを明示的に中断し、次回 drain まで検証した。
+- 続きは Main SessionFolder の外部準備を provider coordinator 外へ分離した。commit 前に現行 storage identity と launch selection を再検証し、準備途中の変更を別の権限や provider へ救済しない。再検証失敗時は今回の folder のみを cleanup し、保存呼出し開始後の結果不明エラーでは folder を保持する。directory workspace、Character authoring、Companion、Auxiliary の外部準備はこの単位には含めない。
+- 検証: Affect / Main 作成 / Settings / launch selection / SessionFolder の関連 81 tests、`npm run typecheck`、`npm run build` が成功。保存中の Settings 待機 assertion 補強後も Main 作成の 24 tests が成功。renderer の既存 chunk サイズ warning は残る。全体 `npm test`、Electron E2E、実ユーザーデータコピーの検証は今回未実施。
+- 変更 test は今回の起点から 5 records / 5 transitions を抽出し、diagnostics は 0 件。通常の read-only `general_luna` で全件を審査した。保存中の Settings 更新待機を直接観測する assertion を補強し、最新差分で追加指摘なし。保存済み評価の再利用と起動設定・storage 再検証は継続する契約であり、恒久保持する。
 
 ### 未確認・残作業（継続）
 

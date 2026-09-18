@@ -2031,6 +2031,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getSession,
       getSessions: () => sessions,
       getStoredSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
+      getSessionStorageIdentity: () => requireSessionStorage(),
       resolveSessionLaunchSelection: (providerId) =>
         requireSessionLaunchSelectionService().resolve(providerId),
       runProviderRuntimeOperationExclusive: (operation) =>

@@ -60,20 +60,22 @@ function createSessionRequest(workspace: Record<string, unknown>): Record<string
 type MainSessionCommandFacadeTestDeps =
   Omit<
     ConstructorParameters<typeof MainSessionCommandFacade>[0],
-    "dismissSessionTurnNotification" | "validateWorkspaceDirectory" | "initializeCreatedSession"
+    "dismissSessionTurnNotification" | "validateWorkspaceDirectory" | "initializeCreatedSession" | "getSessionStorageIdentity"
   >
   & Partial<Pick<
     ConstructorParameters<typeof MainSessionCommandFacade>[0],
-    "dismissSessionTurnNotification" | "validateWorkspaceDirectory" | "initializeCreatedSession"
+    "dismissSessionTurnNotification" | "validateWorkspaceDirectory" | "initializeCreatedSession" | "getSessionStorageIdentity"
   >>;
 
 function createMainSessionCommandFacade(
   deps: MainSessionCommandFacadeTestDeps,
 ): MainSessionCommandFacade {
+  const defaultStorageIdentity = {};
   return new MainSessionCommandFacade({
     initializeCreatedSession: async () => undefined,
     dismissSessionTurnNotification: () => undefined,
     validateWorkspaceDirectory: async () => ({ valid: true }),
+    getSessionStorageIdentity: () => defaultStorageIdentity,
     ...deps,
   });
 }
@@ -242,6 +244,16 @@ test("MainSessionCommandFacade は Session 削除失敗時に通知を撤去し�
   assert.deepEqual(calls, ["delete:s-1"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "SessionFolderと保存するSessionは同じMain発行IDを使い、再検証済みの起動設定で保存する"
+// oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md" }
+// fault = "folderとSessionのIDが分岐する、またはworkspace情報や継承する起動設定を欠落させる"
+// observable = "folder作成・保存へ渡すID、永続化入力のworkspaceと起動設定"
+// observation_boundary = "component-behavior"
+// scope = "MainSessionCommandFacadeのSessionFolder作成入力"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID の session を永続化する", async () => {
   const calls: string[] = [];
   let persistedInput: Record<string, unknown> | null = null;
@@ -289,6 +301,7 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
     "resolve:codex",
     "issue-id",
     "mkdir:launch-managed",
+    "resolve:codex",
     "persist:launch-managed",
   ]);
   assert.deepEqual(
@@ -647,12 +660,26 @@ test("MainSessionCommandFacade は Character ID と runtime snapshot owner の�
   assert.deepEqual(calls, []);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "SessionFolder準備中のSettings更新は待機せず、起動設定の最終解決と保存中のSettings更新だけを直列化する"
+// oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md" }
+// fault = "folder準備がprovider coordinatorを保持してSettings更新を待たせる、または再検証と保存の途中にSettings更新が割り込む"
+// observable = "folder barrier解放前のSettings更新完了、再解決・永続化event、保存後の次Settings更新event"
+// observation_boundary = "component-behavior"
+// scope = "実provider coordinatorとSettingsCatalogServiceを接続したMain作成境界"
+// lifecycle = "permanent"
+// impact = "filesystem待機がSettings操作を停止させるか、古い起動設定で作成する"
+// distinction = "任意sleepではなくfolder barrierを保持した状態で別の実service操作が完了することを確認する"
+// @end-test-value
 test("Session 作成中は Settings 更新を同じ runtime 選択境界の完了まで待機させる", async () => {
   const coordinator = new ProviderRuntimeOperationCoordinator();
   const runExclusive: RunProviderRuntimeOperationExclusive =
     (operation) => coordinator.runExclusive(operation);
   const folderEntered = createDeferred();
   const releaseFolder = createDeferred();
+  const persistenceEntered = createDeferred();
+  const releasePersistence = createDeferred();
   const events: string[] = [];
   let settings = createDefaultAppSettings();
   const settingsService = new SettingsCatalogService({
@@ -681,7 +708,9 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
     },
     getSessionPersistenceService: () =>
       ({
-        createSession(input) {
+        async createSession(input) {
+          persistenceEntered.resolve();
+          await releasePersistence.promise;
           events.push("session:persist");
           return input as never;
         },
@@ -710,23 +739,144 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
     launchAtLoginEnabled: !settings.launchAtLoginEnabled,
   });
 
-  await Promise.resolve();
-  assert.deepEqual(events, [
-    "selection:resolve",
-    "folder:start",
-  ]);
-
+  await settingsPromise;
+  assert.deepEqual(events, ["selection:resolve", "folder:start", "settings:update", "settings:broadcast"]);
   releaseFolder.resolve();
-  await Promise.all([createPromise, settingsPromise]);
+  await persistenceEntered.promise;
+  const nextSettingsPromise = settingsService.updateAppSettings({
+    ...settings,
+    launchAtLoginEnabled: !settings.launchAtLoginEnabled,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(events.filter((event) => event === "settings:update").length, 1);
+  releasePersistence.resolve();
+  await Promise.all([createPromise, nextSettingsPromise]);
 
   assert.deepEqual(events, [
     "selection:resolve",
     "folder:start",
+    "settings:update",
+    "settings:broadcast",
     "folder:end",
+    "selection:resolve",
     "session:persist",
     "settings:update",
     "settings:broadcast",
   ]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "SessionFolder準備後のcommitは初回に解決したstorage identityとlaunch selectionを再検証し、不一致時は保存せず今回のfolderだけを後始末する"
+// oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md" }
+// fault = "準備中のSettings/catalog/providerまたはDB resetの変更を検知せず古い選択でSessionを保存する、または再検証失敗後にfolderを残す"
+// observable = "再解決回数、Persistence Service呼出し、今回のSession IDに対するfolder cleanup呼出し"
+// observation_boundary = "public-boundary"
+// scope = "main-session-create-session-folder-revalidation"
+// lifecycle = "permanent"
+// distinction = "SessionFolder準備中の外部待機とcoordinator内のcommit再検証を、Persistence Serviceの保存結果ではなく作成境界で確認する"
+// @end-test-value
+test("SessionFolder のcommit前再検証は selection と storage の変更を保存せず今回のfolderだけcleanupする", async () => {
+  const selectionChanges: Partial<SessionLaunchSelection>[] = [
+    { provider: "copilot" },
+    { catalogRevision: 4 },
+    { model: "gpt-5.6-pro" },
+    { reasoningEffort: "medium" },
+    { approvalMode: "never" },
+    { codexSandboxMode: "read-only" },
+    { codexSpeed: "fast" },
+    { codexReviewer: "auto-review" },
+    { customAgentName: "reviewer" },
+  ];
+  for (const change of selectionChanges) {
+    const calls: string[] = [];
+    let resolveCount = 0;
+    let persisted = false;
+    const baseSelection = createLaunchSelection();
+    const facade = createMainSessionCommandFacade({
+      getSession: () => null,
+      getSessions: () => [],
+      getStoredSessionSummaries: () => [],
+      runProviderRuntimeOperationExclusive,
+      resolveSessionLaunchSelection: async () => {
+        resolveCount += 1;
+        calls.push(`resolve:${resolveCount}`);
+        return resolveCount === 1
+          ? baseSelection
+          : { ...baseSelection, ...change };
+      },
+      getSessionPersistenceService: () => ({
+        createSession() {
+          persisted = true;
+          return {} as never;
+        },
+      }) as never,
+      getSessionRuntimeService: () => ({} as never),
+      getProviderQuotaTelemetry: () => null,
+      isProviderQuotaTelemetryStale: () => false,
+      refreshProviderQuotaTelemetry: async () => null,
+      createSessionId: () => "launch-selection-changed",
+      createSessionFilesDirectory: () => "C:/WithMate/session-files/launch-selection-changed",
+      isSessionFilesWorkspace: () => false,
+      cleanupSessionFilesDirectory: async (sessionId) => {
+        calls.push(`cleanup:${sessionId}`);
+      },
+    });
+
+    await assert.rejects(
+      facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
+      /起動設定が作成中に変わった/,
+    );
+    assert.equal(persisted, false);
+    assert.deepEqual(calls, ["resolve:1", "resolve:2", "cleanup:launch-selection-changed"]);
+  }
+
+  for (const mode of ["storage", "resolve-error"] as const) {
+    const calls: string[] = [];
+    const initialStorage = {};
+    let currentStorage = initialStorage;
+    let resolveCount = 0;
+    const facade = createMainSessionCommandFacade({
+      getSession: () => null,
+      getSessions: () => [],
+      getStoredSessionSummaries: () => [],
+      runProviderRuntimeOperationExclusive,
+      getSessionStorageIdentity: () => currentStorage,
+      resolveSessionLaunchSelection: async () => {
+        resolveCount += 1;
+        if (mode === "resolve-error" && resolveCount === 2) {
+          throw new Error("latest selection read failed");
+        }
+        return createLaunchSelection();
+      },
+      getSessionPersistenceService: () => ({
+        createSession() {
+          throw new Error("should not persist");
+        },
+      }) as never,
+      getSessionRuntimeService: () => ({} as never),
+      getProviderQuotaTelemetry: () => null,
+      isProviderQuotaTelemetryStale: () => false,
+      refreshProviderQuotaTelemetry: async () => null,
+      createSessionId: () => "launch-storage-changed",
+      createSessionFilesDirectory: () => {
+        if (mode === "storage") {
+          currentStorage = {};
+        }
+        return "C:/WithMate/session-files/launch-storage-changed";
+      },
+      isSessionFilesWorkspace: () => false,
+      cleanupSessionFilesDirectory: async (sessionId) => {
+        calls.push(`cleanup:${sessionId}`);
+      },
+    });
+
+    await assert.rejects(
+      facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
+      mode === "storage" ? /storage が作成中に切り替わった/ : /latest selection read failed/,
+    );
+    assert.deepEqual(calls, ["cleanup:launch-storage-changed"]);
+  }
 });
 
 test("MainSessionCommandFacade は Browse で選んだ directory をそのまま session に使う", async () => {
