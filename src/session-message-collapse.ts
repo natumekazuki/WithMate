@@ -54,10 +54,8 @@ function messageSourceIdentity(source: MessageListSource): string {
 export function isMessageCollapseTarget(
   source: MessageListSource | undefined,
   role: Message["role"] | undefined,
-  key?: string,
 ): source is Extract<MessageListSource, { kind: "session" | "auxiliary" }> {
   return (source?.kind === "session" || source?.kind === "auxiliary")
-    && !key?.startsWith("live-assistant-")
     && (role === "user" || role === "assistant");
 }
 
@@ -96,7 +94,7 @@ export function buildMessageCollapseTargets(
     const message = messages[index];
     const source = sources[index];
     const key = keys[index];
-    if (!message || !key || !isMessageCollapseTarget(source, message.role, key)) {
+    if (!message || !key || !isMessageCollapseTarget(source, message.role)) {
       continue;
     }
 

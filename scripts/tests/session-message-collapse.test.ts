@@ -40,6 +40,16 @@ test("plain-text projection は Markdown と空白を正規化し、160 code poi
   assert.equal(projected.slice(0, -1), "あ".repeat(159));
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "persisted session/auxiliary の user/assistant は live bridge key を含め collapse target になり、synthetic live assistant は除外される"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "message sourceとdisplay keyの差だけで保存済みレスポンスがcollapse targetから除外される"
+// observable = "buildMessageCollapseTargetsのkey・sourceKind・role配列"
+// observation_boundary = "component-behavior"
+// scope = "session-message-collapse"
+// lifecycle = "permanent"
+// @end-test-value
 test("collapse target は persisted session/auxiliary の user/assistantだけを採用する", () => {
   const targets = buildMessageCollapseTargets(
     [
@@ -57,6 +67,7 @@ test("collapse target は persisted session/auxiliary の user/assistantだけ�
     ["session-session-1-0", "session", "user"],
     ["auxiliary-aux-1-0", "auxiliary", "assistant"],
     ["error-row", "session", "assistant"],
+    ["live-assistant-session-1-4-thread", "session", "assistant"],
   ]);
 });
 
