@@ -184,8 +184,6 @@ import {
 } from "./session-telemetry-subscription.js";
 import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
 import { resolvePendingAuxiliaryMessageGroupId } from "./auxiliary-session-message-projection.js";
-import type { MessageCollapseTarget } from "./session-message-collapse.js";
-import { setMessageBookmarked } from "./session-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   buildContextPaneProjection,
@@ -1739,58 +1737,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     })(recipe);
   }
 
-  async function handleToggleMessageBookmark(target: MessageCollapseTarget): Promise<void> {
-    const nextIsBookmarked = !target.isBookmarked;
-    if (target.source.kind === "auxiliary") {
-      if (
-        !snapshot
-        || snapshot.session.status !== "active"
-        || !activeAuxiliarySession
-        || activeAuxiliarySession.id !== target.source.sessionId
-      ) {
-        return;
-      }
-
-      await updateActiveAuxiliarySession((current) => {
-        const message = current.messages[target.source.messageIndex];
-        if (!message) {
-          return current;
-        }
-
-        return {
-          ...current,
-          updatedAt: currentTimestampLabel(),
-          messages: current.messages.map((currentMessage, index) => (
-            index === target.source.messageIndex
-              ? setMessageBookmarked(currentMessage, nextIsBookmarked)
-              : currentMessage
-          )),
-        };
-      });
-      return;
-    }
-
-    if (!snapshot || snapshot.session.status !== "active") {
-      return;
-    }
-
-    const message = snapshot.session.messages[target.source.messageIndex];
-    if (!message) {
-      return;
-    }
-
-    await persistCompanionSession({
-      ...snapshot.session,
-      updatedAt: currentTimestampLabel(),
-      messages: snapshot.session.messages.map((currentMessage, index) => (
-        index === target.source.messageIndex
-          ? setMessageBookmarked(currentMessage, nextIsBookmarked)
-          : currentMessage
-      )),
-    });
-  }
-
-
   async function handleAuxiliaryDraftChange(value: string, selectionStart: number): Promise<void> {
     const withmateApi = getWithMateApi();
     await runAuxiliaryDraftChangeAndSaveOperation({
@@ -2836,9 +2782,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           mainSession: snapshot.session,
           auxiliarySession: auxiliaryDisplayedSession,
           auxiliaryProps: auxiliaryWorkspace.selectedSession ? {
-            onToggleMessageBookmark: auxiliaryWorkspace.target === "auxiliary" && snapshot.session.status === "active"
-              ? handleToggleMessageBookmark
-              : undefined,
             onLoadArtifactDetail: async (messageIndex) => auxiliaryWorkspace.selectedSession?.messages[messageIndex]?.artifact ?? null,
             onOpenPath: (target: string) => void openCompanionInlinePath(
               getWithMateApi(),
@@ -2878,9 +2821,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onOpenSessionFilesExplorer: () => void openCompanionSessionFilesDirectory(),
         onOpenMergeWindow: () => void openCompanionMergeWindow(),
         onMessageListScroll: handleMessageListScroll,
-        onToggleMessageBookmark: auxiliaryWorkspace.target === "main" && snapshot.session.status === "active"
-          ? handleToggleMessageBookmark
-          : undefined,
         onToggleArtifact: toggleArtifact,
         onLoadArtifactDetail: (messageIndex) =>
           Promise.resolve(withmateApi?.getCompanionMessageArtifact(snapshot.session.id, messageIndex) ?? null),

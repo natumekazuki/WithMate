@@ -315,7 +315,6 @@ export const CREATE_V3_COMPANION_TABLES_SQL = `
     text_original_bytes INTEGER NOT NULL DEFAULT 0,
     text_stored_bytes INTEGER NOT NULL DEFAULT 0,
     accent INTEGER NOT NULL DEFAULT 0,
-    is_bookmarked INTEGER NOT NULL DEFAULT 0,
     artifact_available INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     FOREIGN KEY (text_blob_id) REFERENCES blob_objects(blob_id),

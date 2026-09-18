@@ -7527,6 +7527,16 @@ button:disabled {
   margin-top: auto;
 }
 
+.command-monitor-shell.messages .command-monitor-content {
+  overflow: hidden;
+}
+
+.command-monitor-shell.messages .command-monitor-stack {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 0;
+}
+
 .command-monitor-stack.companion-group {
   align-content: start;
   margin-top: auto;
@@ -7890,8 +7900,16 @@ button:disabled {
 
 .messages-navigator {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   gap: 6px;
+  height: 100%;
+  min-height: 0;
   min-width: 0;
+  overflow: hidden;
+}
+
+.messages-navigator.has-filter-toolbar {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .messages-navigator-filter-toolbar {
@@ -7931,8 +7949,12 @@ button:disabled {
 
 .messages-navigator-list {
   display: grid;
+  align-content: start;
   gap: 6px;
+  min-height: 0;
   min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .messages-navigator-row {
@@ -8433,20 +8455,16 @@ button:disabled {
   background: rgba(255, 255, 255, 0.82);
 }
 
-.message-card.has-message-bookmark-control {
-  padding-right: 56px;
-}
-
 .message-bookmark-toggle {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 2;
+  position: sticky;
+  top: 8px;
+  float: right;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
+  margin: 8px;
   padding: 0;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
@@ -8455,6 +8473,7 @@ button:disabled {
   font: inherit;
   line-height: 1;
   cursor: pointer;
+  pointer-events: none;
 }
 
 .message-bookmark-toggle svg {
@@ -8533,7 +8552,9 @@ button:disabled {
 }
 
 .message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle {
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle,
+.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-bookmark-toggle,
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-bookmark-toggle {
   pointer-events: auto;
 }
 

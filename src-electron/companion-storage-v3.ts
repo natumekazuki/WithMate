@@ -92,7 +92,6 @@ type CompanionMessageRow = {
   text_preview: string;
   text_blob_id: string | null;
   accent: number;
-  is_bookmarked: number;
   artifact_available: number;
   artifact_summary_json: string | null;
   artifact_blob_id: string | null;
@@ -532,7 +531,6 @@ async function rowToMessage(row: CompanionMessageRow, blobStore: TextBlobStore):
     role: row.role === "assistant" ? "assistant" : "user",
     text: row.text_blob_id ? await blobStore.getText(row.text_blob_id) : row.text_preview,
     accent: row.accent === 1 ? true : undefined,
-    ...(row.is_bookmarked === 1 ? { isBookmarked: true } : {}),
     artifact: row.artifact_available === 1 ? parseArtifactSummary(row.artifact_summary_json) : undefined,
   };
 }
@@ -872,13 +870,6 @@ export class CompanionStorageV3 {
     }
     if (!columns.has("codex_reviewer")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN codex_reviewer TEXT NOT NULL DEFAULT 'user';");
-    }
-    const messageColumns = new Set(
-      (this.db.prepare("PRAGMA table_info(companion_messages)").all() as TableColumnRow[])
-        .map((column) => column.name),
-    );
-    if (!messageColumns.has("is_bookmarked")) {
-      this.db.exec("ALTER TABLE companion_messages ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0;");
     }
   }
 
@@ -1236,10 +1227,9 @@ export class CompanionStorageV3 {
         text_original_bytes,
         text_stored_bytes,
         accent,
-        is_bookmarked,
         artifact_available,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const artifactStatement = this.db.prepare(`
       INSERT INTO companion_message_artifacts (
@@ -1265,7 +1255,6 @@ export class CompanionStorageV3 {
         payload.text.originalBytes,
         payload.text.storedBytes,
         message.accent ? 1 : 0,
-        message.isBookmarked === true ? 1 : 0,
         message.artifact ? 1 : 0,
         createdAt,
       );
@@ -1289,7 +1278,6 @@ export class CompanionStorageV3 {
         m.text_preview,
         m.text_blob_id,
         m.accent,
-        m.is_bookmarked,
         m.artifact_available,
         a.artifact_summary_json,
         a.artifact_blob_id

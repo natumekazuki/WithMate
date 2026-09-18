@@ -511,7 +511,9 @@ export function ChatWindow({
     ? {
       ...screenProps.rightPaneProps,
       messageNavigatorEntries: targetColumnControls?.messageNavigatorEntries ?? screenProps.rightPaneProps.messageNavigatorEntries,
-      messageNavigatorSessionId: targetColumnControls?.sessionId ?? screenProps.rightPaneProps.messageNavigatorSessionId,
+      messageNavigatorSessionId: screenProps.rightPaneProps.messageNavigatorSessionId === undefined
+        ? undefined
+        : targetColumnControls?.sessionId ?? screenProps.rightPaneProps.messageNavigatorSessionId,
       onJumpToMessage: targetColumnControls?.onJumpToMessage ?? screenProps.rightPaneProps.onJumpToMessage,
     }
     : screenProps.rightPaneProps;

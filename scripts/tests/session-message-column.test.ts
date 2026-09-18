@@ -807,7 +807,7 @@ test("SessionMessageColumn はbookmark controlをnative buttonで操作する", 
   try {
     const button = mounted.container.querySelector<HTMLButtonElement>("button.message-bookmark-toggle");
     assert.ok(button);
-    assert.equal(button.getAttribute("aria-label"), "ブックマークを解除");
+    assert.equal(button.getAttribute("aria-label"), "Remove bookmark");
     assert.equal(button.getAttribute("aria-pressed"), "true");
     await act(async () => {
       button.click();

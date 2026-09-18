@@ -242,7 +242,6 @@ type CompanionMessageRow = {
   role: string;
   text: string;
   accent: number;
-  is_bookmarked: number;
   artifact_json: string;
 };
 
@@ -540,7 +539,6 @@ function rowToCompanionMessage(row: CompanionMessageRow): CompanionSession["mess
     role: row.role === "assistant" ? "assistant" : "user",
     text: row.text,
     accent: row.accent === 1 ? true : undefined,
-    ...(row.is_bookmarked === 1 ? { isBookmarked: true } : {}),
     artifact: row.artifact_json.trim()
       ? parseJsonObject(row.artifact_json, {}) as CompanionSession["messages"][number]["artifact"]
       : undefined,
@@ -874,11 +872,8 @@ function readCompanionMessages(db: DatabaseSync, sessionId: string): CompanionMe
   if (!tableExists(db, "companion_messages")) {
     return [];
   }
-  const bookmarkColumn = tableHasColumn(db, "companion_messages", "is_bookmarked")
-    ? "is_bookmarked"
-    : "0";
   return db.prepare(`
-    SELECT role, text, accent, ${bookmarkColumn} AS is_bookmarked, artifact_json
+    SELECT role, text, accent, artifact_json
     FROM companion_messages
     WHERE session_id = ?
     ORDER BY position ASC

@@ -1890,11 +1890,12 @@ export function SessionContextPane({
   const [messageNavigatorFocusIndex, setMessageNavigatorFocusIndex] = useState(0);
   const [messageNavigatorFilter, setMessageNavigatorFilter] = useState<"all" | "bookmarks">("all");
   const taskEntries = backgroundTasks ?? [];
+  const messageNavigatorBookmarksEnabled = messageNavigatorSessionId !== undefined;
   const visibleMessageNavigatorEntries = useMemo(
-    () => messageNavigatorFilter === "bookmarks"
+    () => messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks"
       ? messageNavigatorEntries.filter((entry) => entry.isBookmarked)
       : messageNavigatorEntries,
-    [messageNavigatorEntries, messageNavigatorFilter],
+    [messageNavigatorBookmarksEnabled, messageNavigatorEntries, messageNavigatorFilter],
   );
   const glossaryContentSignature = [
     glossaryPaneProps?.projection?.scopeRevision ?? "",
@@ -2229,30 +2230,31 @@ export function SessionContextPane({
             ) : null}
 
             {activeContextPaneTab === "messages" ? (
-              <div className="messages-navigator">
-                <div className="messages-navigator-filter-toolbar" role="group" aria-label="Messagesの絞り込み">
-                  <button
-                    className={`messages-navigator-filter${messageNavigatorFilter === "all" ? " is-active" : ""}`}
-                    type="button"
-                    aria-pressed={messageNavigatorFilter === "all"}
-                    onClick={() => setMessageNavigatorFilter("all")}
-                  >
-                    すべて
-                  </button>
-                  <button
-                    className={`messages-navigator-filter${messageNavigatorFilter === "bookmarks" ? " is-active" : ""}`}
-                    type="button"
-                    aria-pressed={messageNavigatorFilter === "bookmarks"}
-                    onClick={() => setMessageNavigatorFilter("bookmarks")}
-                  >
-                    ブックマーク
-                  </button>
-                </div>
-                {visibleMessageNavigatorEntries.length > 0 ? (
-                  <div className="messages-navigator-list" role="list" aria-label="Messages">
-                  {visibleMessageNavigatorEntries.map((entry, index) => {
+              <div className={`messages-navigator${messageNavigatorBookmarksEnabled ? " has-filter-toolbar" : ""}`}>
+                {messageNavigatorBookmarksEnabled ? (
+                  <div className="messages-navigator-filter-toolbar" role="group" aria-label="Messages filter">
+                    <button
+                      className={`messages-navigator-filter${messageNavigatorFilter === "all" ? " is-active" : ""}`}
+                      type="button"
+                      aria-pressed={messageNavigatorFilter === "all"}
+                      onClick={() => setMessageNavigatorFilter("all")}
+                    >
+                      All
+                    </button>
+                    <button
+                      className={`messages-navigator-filter${messageNavigatorFilter === "bookmarks" ? " is-active" : ""}`}
+                      type="button"
+                      aria-pressed={messageNavigatorFilter === "bookmarks"}
+                      onClick={() => setMessageNavigatorFilter("bookmarks")}
+                    >
+                      Bookmark
+                    </button>
+                  </div>
+                ) : null}
+                <div className="messages-navigator-list" role="list" aria-label="Messages">
+                  {visibleMessageNavigatorEntries.length > 0 ? visibleMessageNavigatorEntries.map((entry, index) => {
                     const speakerLabel = messageNavigatorSpeakerLabel(entry);
-                    const bookmarkStateLabel = entry.isBookmarked ? ", ブックマーク済み" : "";
+                    const bookmarkStateLabel = entry.isBookmarked ? ", Bookmark saved" : "";
                     return (
                       <button
                         key={entry.key}
@@ -2279,20 +2281,19 @@ export function SessionContextPane({
                         </span>
                       </button>
                     );
-                  })}
-                  </div>
-                ) : (
-                <div className="command-monitor-empty-shell">
-                  <p className="command-monitor-empty">
-                    {messageNavigatorEntries.length > 0 && messageNavigatorFilter === "bookmarks"
-                      ? "ブックマークしたメッセージはまだないよ。"
-                      : "メッセージはまだないよ。"}
-                  </p>
-                  {messageNavigatorEntries.length > 0 && messageNavigatorFilter === "bookmarks" ? (
-                    <p className="command-monitor-empty-subtle">本文のブックマークボタンから追加できます。</p>
-                  ) : null}
+                  }) : (
+                    <div className="command-monitor-empty-shell">
+                      <p className="command-monitor-empty">
+                        {messageNavigatorEntries.length > 0 && messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks"
+                          ? "No bookmarked messages yet."
+                          : "No messages yet."}
+                      </p>
+                      {messageNavigatorEntries.length > 0 && messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks" ? (
+                        <p className="command-monitor-empty-subtle">Use the bookmark button in a message to add one.</p>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
-                )}
               </div>
             ) : null}
 
@@ -3429,7 +3430,7 @@ export function SessionMessageColumn({
             const messageBodyId = `message-body-${messageKey.replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
             const messageCollapseLabel = isMessageCollapsed ? "メッセージを展開" : "メッセージを縮小";
             const isMessageBookmarked = messageCollapseTarget?.isBookmarked === true;
-            const messageBookmarkLabel = isMessageBookmarked ? "ブックマークを解除" : "ブックマークに追加";
+            const messageBookmarkLabel = isMessageBookmarked ? "Remove bookmark" : "Add bookmark";
 
             return (
               <div
@@ -3481,22 +3482,7 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}${messageCollapseTarget && onToggleMessageBookmark ? " has-message-bookmark-control" : ""}`}>
-                  {messageCollapseTarget && onToggleMessageBookmark ? (
-                    <button
-                      className={`message-bookmark-toggle${isMessageBookmarked ? " is-bookmarked" : ""}`}
-                      type="button"
-                      aria-pressed={isMessageBookmarked}
-                      aria-label={messageBookmarkLabel}
-                      title={messageBookmarkLabel}
-                      onClick={() => void onToggleMessageBookmark(messageCollapseTarget)}
-                    >
-                      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                        <path d="M4 2.25h8a.75.75 0 0 1 .75.75v10.2l-4.75-2.55-4.75 2.55V3a.75.75 0 0 1 .75-.75Z" />
-                      </svg>
-                      <span className="visually-hidden">{messageBookmarkLabel}</span>
-                    </button>
-                  ) : null}
+                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
                   <div className="message-card-content">
                     {artifact && !isAssistant ? (
                       <button
@@ -3516,21 +3502,38 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    <div className={`message-text-wrapper${messageCollapseTarget ? " has-message-collapse-control" : ""}`}>
-                      {messageCollapseTarget && onToggleMessageCollapse ? (
+                    <div className={`message-text-wrapper${messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? " has-message-collapse-control" : ""}`}>
+                      {messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? (
                         <div className="message-collapse-control">
-                          <button
-                            className="message-collapse-toggle"
-                            type="button"
-                            onClick={() => onToggleMessageCollapse(messageKey)}
-                            aria-expanded={!isMessageCollapsed}
-                            aria-controls={messageBodyId}
-                            aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
-                            title={messageCollapseLabel}
-                          >
-                            <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
-                            <span className="visually-hidden">{messageCollapseLabel}</span>
-                          </button>
+                          {onToggleMessageCollapse ? (
+                            <button
+                              className="message-collapse-toggle"
+                              type="button"
+                              onClick={() => onToggleMessageCollapse(messageKey)}
+                              aria-expanded={!isMessageCollapsed}
+                              aria-controls={messageBodyId}
+                              aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
+                              title={messageCollapseLabel}
+                            >
+                              <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
+                              <span className="visually-hidden">{messageCollapseLabel}</span>
+                            </button>
+                          ) : null}
+                          {onToggleMessageBookmark ? (
+                            <button
+                              className={`message-bookmark-toggle${isMessageBookmarked ? " is-bookmarked" : ""}`}
+                              type="button"
+                              aria-pressed={isMessageBookmarked}
+                              aria-label={messageBookmarkLabel}
+                              title={messageBookmarkLabel}
+                              onClick={() => void onToggleMessageBookmark(messageCollapseTarget)}
+                            >
+                              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                                <path d="M4 2.25h8a.75.75 0 0 1 .75.75v10.2l-4.75-2.55-4.75 2.55V3a.75.75 0 0 1 .75-.75Z" />
+                              </svg>
+                              <span className="visually-hidden">{messageBookmarkLabel}</span>
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                       <div

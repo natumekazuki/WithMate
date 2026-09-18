@@ -128,6 +128,7 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
         isBookmarked: false,
       },
     ],
+    messageNavigatorSessionId: "session-test",
     onCycleContextPaneTab() {},
     onJumpToMessage: (key) => jumpedKeys.push(key),
     onOpenCompanionReview() {},
@@ -170,7 +171,7 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
     assert.equal(bookmarkFilter.getAttribute("aria-pressed"), "true");
     const bookmarkedRows = Array.from(rootElement.querySelectorAll<HTMLButtonElement>(".messages-navigator-row"));
     assert.equal(bookmarkedRows.length, 1);
-    assert.equal(bookmarkedRows[0]?.getAttribute("aria-label")?.includes("ブックマーク済み"), true);
+    assert.equal(bookmarkedRows[0]?.getAttribute("aria-label")?.includes("Bookmark saved"), true);
     assert.equal(bookmarkedRows[0]?.textContent?.includes("assistant first"), true);
     bookmarkedRows[0]?.focus();
     await act(async () => {
