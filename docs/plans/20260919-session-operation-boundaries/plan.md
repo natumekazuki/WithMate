@@ -125,6 +125,14 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 - 変更 test は今回の起点から 9 records / 9 transitions を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が全件を審査し、storage / cache の現行内容保持、service の rollback 対象選択、空 thread の runtime invalidation を直接観測するよう補強した。oracle を実在する設計書と ADR へ揃え、最終審査は追加指摘なし。Main 配線と Auxiliary の実 storage 経路も別途 read-only で確認した。
 - catalog import/reset の全 snapshot 更新、provider 後処理待機、Turn admission、Worker 化は別の残作業とする。
 
+### 第六回レビューと続き（c43cdf3d 起点）
+
+- 確定指摘は 0 件。Q1 の同期通知例外が provider 後処理を省く経路へ対応した。削除 commit 後の個々の投影失敗を保持し、残りの親子投影と全 provider detach を ownership 内で試みる。ownership 外で後処理を待ち、通知と provider の失敗を合わせて AggregateError で返す。DB 削除を巻き戻さない。
+- 単体・期間削除それぞれで close / broadcast の同期例外と provider 後処理失敗を組み合わせ、別 Session 削除の進行、後処理完了前の未応答、親子 detach、同一 ID 再作成後の DB / cache / runtime 保持を検証した。これは依存への例外注入であり、実 Electron の window 破棄競合を再現した証拠ではない。本番で同じ同期例外になる条件は未確認。
+- 検証: 関連 55 tests（削除後処理の 1 test 内に 12 組合せ）、`npm run typecheck`、`npm run build:electron` が成功。今回の変更に対する全体 `npm test` と renderer build は未実施。U2 の実環境統合・コピー DB migration は引き続き未確認。
+- `review-test-value` で今回起点から 1 record / 1 transition を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が全件を審査し、追加指摘なし。削除済み runtime の失効と非同期後処理のエラー伝播は型検査だけでは担保できず、実 DB を使う約 0.4 秒の test として保持する。
+- 続きとして Character authoring の作成経路を確認した。既存 Character directory に Skill と managed files を上書きするため、`prepareWorkspace` をそのまま排他外へ移すと、競合した試行が共有ファイルを破壊し得る。次の実装では試行専用の準備領域と managed files 反映の境界、Character / provider / storage の再検証が必要である。Character directory 全体の削除による cleanup は採用しない。現時点では調査までで、この準備分離は未実装。
+
 ### 未確認・残作業（継続）
 
 - 上記は Main が使用する production adapter / lifecycle と一時 DB を接続した component 検証であり、Electron Main 全体を起動した E2E ではない。Main の依存注入と IPC 登録は diff で確認し、bootstrap / IPC 配線の取り違えを検出する E2E は未実施。

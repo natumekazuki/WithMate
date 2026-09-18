@@ -106,6 +106,7 @@ function assertSessionWritable(session: Session): void {
 
 type CommittedSessionDeletion = {
   result: DeleteSessionsResult;
+  projectionFailures: unknown[];
   providerCleanup: Promise<PromiseSettledResult<void>>[];
 };
 
@@ -281,9 +282,12 @@ export class SessionPersistenceService {
 
   private async finishSessionDeletion(committed: CommittedSessionDeletion): Promise<DeleteSessionsResult> {
     const results = await Promise.all(committed.providerCleanup);
-    const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+    const failures = [
+      ...committed.projectionFailures,
+      ...results.flatMap((result) => result.status === "rejected" ? [result.reason] : []),
+    ];
     if (failures.length > 0) {
-      throw new AggregateError(failures, "Session は削除済みですが、provider thread の後処理に失敗しました。");
+      throw new AggregateError(failures, "Session は削除済みですが、削除後の投影または provider thread の後処理に失敗しました。");
     }
     return committed.result;
   }
@@ -340,6 +344,7 @@ export class SessionPersistenceService {
           skippedRunningSessionIds,
         },
         providerCleanup: [],
+        projectionFailures: [],
       };
     }
 
@@ -353,16 +358,24 @@ export class SessionPersistenceService {
       throw new Error("session delete storage dependency is not configured.");
     }
     const deletableSessionIdSet = new Set(deletableSessionIds);
-    this.deps.setSessions(this.deps.getSessions().filter((entry) => !deletableSessionIdSet.has(entry.id)));
+    const projectionFailures: unknown[] = [];
+    const projectDeletion = (operation: () => void): void => {
+      try {
+        operation();
+      } catch (error) {
+        projectionFailures.push(error);
+      }
+    };
+    projectDeletion(() => this.deps.setSessions(this.deps.getSessions().filter((entry) => !deletableSessionIdSet.has(entry.id))));
     const runtimeIdentities: { id: string; provider: string | null }[] = [];
 
     for (const sessionId of deletableSessionIds) {
       const deletedSession = currentSessionsById.get(sessionId);
-      this.deps.revokeSessionAgentRuntimeBindings?.(sessionId);
+      projectDeletion(() => this.deps.revokeSessionAgentRuntimeBindings?.(sessionId));
       runtimeIdentities.push({ id: sessionId, provider: deletedSession?.provider ?? null });
-      this.deps.clearSessionContextTelemetry(sessionId);
-      this.deps.clearSessionBackgroundActivities(sessionId);
-      this.deps.closeSessionWindow(sessionId);
+      projectDeletion(() => this.deps.clearSessionContextTelemetry(sessionId));
+      projectDeletion(() => this.deps.clearSessionBackgroundActivities(sessionId));
+      projectDeletion(() => this.deps.closeSessionWindow(sessionId));
     }
     const deletableParentIds = new Set(deletableSessionIds);
     const deletedAuxiliarySessionIds = auxiliaryRuntimeIdentities
@@ -372,14 +385,14 @@ export class SessionPersistenceService {
       if (!deletableParentIds.has(auxiliary.parentSessionId)) {
         continue;
       }
-      this.deps.revokeSessionAgentRuntimeBindings?.(auxiliary.id);
+      projectDeletion(() => this.deps.revokeSessionAgentRuntimeBindings?.(auxiliary.id));
       runtimeIdentities.push({ id: auxiliary.id, provider: auxiliary.provider });
-      this.deps.clearSessionContextTelemetry(auxiliary.id);
-      this.deps.clearSessionBackgroundActivities(auxiliary.id);
-      this.deps.closeSessionWindow(auxiliary.id);
+      projectDeletion(() => this.deps.clearSessionContextTelemetry(auxiliary.id));
+      projectDeletion(() => this.deps.clearSessionBackgroundActivities(auxiliary.id));
+      projectDeletion(() => this.deps.closeSessionWindow(auxiliary.id));
     }
 
-    this.deps.broadcastSessions(deletableSessionIds);
+    projectDeletion(() => this.deps.broadcastSessions(deletableSessionIds));
 
     // Detach every old runtime synchronously before the ownership boundary opens.
     // Provider adapters capture old resources before their first asynchronous wait.
@@ -403,6 +416,7 @@ export class SessionPersistenceService {
         skippedRunningSessionIds,
       },
       providerCleanup,
+      projectionFailures,
     };
   }
 

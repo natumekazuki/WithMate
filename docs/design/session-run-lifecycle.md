@@ -138,6 +138,8 @@ Session の owner は ID だけでなく行の `incarnationId` で識別する�
 
 provider 後処理は ownership 解放前に全対象の旧 runtime 参照を同期的に切り離してから、外部切断の完了だけを解放後に待つ。古い切断の完了が、同じ ID で作成された新 runtime を無効化してはならない。
 
+削除 commit 後に window close や broadcast 等の同期投影が失敗しても、残りの親子投影と全対象の provider 後処理を試みる。投影失敗は成功扱いせず、ownership 外で provider 後処理の完了を待ってから、その失敗と合わせて AggregateError で返す。削除済み DB 行を復元しない。
+
 ### Character Affect の完了後評価
 
 pending は Session incarnation を保存し、回収時と評価適用時に current owner と照合する。既存 V6 行は `legacy:<id>` へ移行し、incarnation 列のない旧 pending も同じ owner と解釈する。新規行には UUID を発行するため、旧 pending は同じ ID の再作成行に適用されない。既存の要求 fingerprint は変更しない。
