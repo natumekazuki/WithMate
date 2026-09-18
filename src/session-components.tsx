@@ -2050,7 +2050,7 @@ export function SessionContextPane({
 
   return (
     <aside className="session-context-pane session-context-pane-header-expanded">
-      <section className={`command-monitor-shell ${activeContextPaneTab}`} aria-label="右ペイン">
+      <section className={`command-monitor-shell ${activeContextPaneTab}${messageNavigatorBookmarksEnabled ? " has-message-filter-toolbar" : ""}`} aria-label="右ペイン">
         <div className="command-monitor-head">
           <SessionSwitcher
             ariaLabel="右ペイン表示切り替え"
@@ -2063,6 +2063,27 @@ export function SessionContextPane({
             onSelect={(tab) => onSelectContextPaneTab?.(tab as ContextPaneTabKey)}
           />
         </div>
+
+        {activeContextPaneTab === "messages" && messageNavigatorBookmarksEnabled ? (
+          <div className="messages-navigator-filter-toolbar" role="group" aria-label="Messages filter">
+            <button
+              className={`messages-navigator-filter${messageNavigatorFilter === "all" ? " is-active" : ""}`}
+              type="button"
+              aria-pressed={messageNavigatorFilter === "all"}
+              onClick={() => setMessageNavigatorFilter("all")}
+            >
+              All
+            </button>
+            <button
+              className={`messages-navigator-filter${messageNavigatorFilter === "bookmarks" ? " is-active" : ""}`}
+              type="button"
+              aria-pressed={messageNavigatorFilter === "bookmarks"}
+              onClick={() => setMessageNavigatorFilter("bookmarks")}
+            >
+              Bookmark
+            </button>
+          </div>
+        ) : null}
 
         <div ref={contentRef} className="command-monitor-content">
           <div className={`command-monitor-stack ${activeContextPaneTab}`}>
@@ -2230,27 +2251,7 @@ export function SessionContextPane({
             ) : null}
 
             {activeContextPaneTab === "messages" ? (
-              <div className={`messages-navigator${messageNavigatorBookmarksEnabled ? " has-filter-toolbar" : ""}`}>
-                {messageNavigatorBookmarksEnabled ? (
-                  <div className="messages-navigator-filter-toolbar" role="group" aria-label="Messages filter">
-                    <button
-                      className={`messages-navigator-filter${messageNavigatorFilter === "all" ? " is-active" : ""}`}
-                      type="button"
-                      aria-pressed={messageNavigatorFilter === "all"}
-                      onClick={() => setMessageNavigatorFilter("all")}
-                    >
-                      All
-                    </button>
-                    <button
-                      className={`messages-navigator-filter${messageNavigatorFilter === "bookmarks" ? " is-active" : ""}`}
-                      type="button"
-                      aria-pressed={messageNavigatorFilter === "bookmarks"}
-                      onClick={() => setMessageNavigatorFilter("bookmarks")}
-                    >
-                      Bookmark
-                    </button>
-                  </div>
-                ) : null}
+              <div className="messages-navigator">
                 <div className="messages-navigator-list" role="list" aria-label="Messages">
                   {visibleMessageNavigatorEntries.length > 0 ? visibleMessageNavigatorEntries.map((entry, index) => {
                     const speakerLabel = messageNavigatorSpeakerLabel(entry);
@@ -2281,16 +2282,11 @@ export function SessionContextPane({
                         </span>
                       </button>
                     );
-                  }) : (
+                  }) : messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks" ? null : (
                     <div className="command-monitor-empty-shell">
                       <p className="command-monitor-empty">
-                        {messageNavigatorEntries.length > 0 && messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks"
-                          ? "No bookmarked messages yet."
-                          : "No messages yet."}
+                        No messages yet.
                       </p>
-                      {messageNavigatorEntries.length > 0 && messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks" ? (
-                        <p className="command-monitor-empty-subtle">Use the bookmark button in a message to add one.</p>
-                      ) : null}
                     </div>
                   )}
                 </div>

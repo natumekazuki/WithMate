@@ -7527,14 +7527,23 @@ button:disabled {
   margin-top: auto;
 }
 
-.command-monitor-shell.messages .command-monitor-content {
-  overflow: hidden;
-}
-
 .command-monitor-shell.messages .command-monitor-stack {
   flex: 1 1 auto;
   min-height: 0;
   margin-top: 0;
+}
+
+.command-monitor-shell.messages.has-message-filter-toolbar {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  row-gap: 6px;
+}
+
+.command-monitor-shell.messages.has-message-filter-toolbar .messages-navigator-filter-toolbar {
+  margin-top: 8px;
+}
+
+.command-monitor-shell.messages.has-message-filter-toolbar .command-monitor-content {
+  padding-top: 0;
 }
 
 .command-monitor-stack.companion-group {
@@ -7901,15 +7910,9 @@ button:disabled {
 .messages-navigator {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  gap: 6px;
   height: 100%;
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
-}
-
-.messages-navigator.has-filter-toolbar {
-  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .messages-navigator-filter-toolbar {
@@ -7953,8 +7956,6 @@ button:disabled {
   gap: 6px;
   min-height: 0;
   min-width: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 .messages-navigator-row {
