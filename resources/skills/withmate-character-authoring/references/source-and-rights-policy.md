@@ -28,44 +28,119 @@ community sourceを見たこと自体で内容を正しいとみなさない。c
 
 有用なcommunity sourceがない、閲覧できない、関連が薄い、品質が低い場合は無理に採用せず、理由をnotesへ記録する。
 
-## Observation Model
+## Source Access and Observation Honesty
 
-各例を可能な範囲で次へ分解する。
+プロフィールを取得したこと、リンクを開いたこと、タイトルや概要を読んだこと、字幕・文字起こしを読んだこと、音声・映像・本文を実際に確認したことを区別する。実際に見聞きしていないものを視聴済みや直接観察として書かない。
+
+媒体、対象時期、相手、公開範囲を分ける。現行プロフィールと再現したい過去時期の発話を同じ根拠として扱わない。
+
+## Evidence Strength Is Not Expression Strength
+
+- **High confidence**: 公式・一次情報で直接確認でき、複数の関連場面でも整合する。
+- **Medium confidence**: communityの手掛かりを一次情報へ部分照合できる、または複数の公開例に整合する。
+- **Low confidence**: 単発観察、編集済みclip、一次照合できない口調・反応。低リスクな設計候補として扱い、未確認をnotesへ残す。
+
+根拠の確度が低いことと、表現を必ず無難に弱めることは同じではない。ユーザーが残したい低リスクの性質は、user-observation / user-preference / output-feedback / authoring-inferenceの区分を明らかにして採用できる。canon、経歴、所属、私生活上の事実は希望で上書きしない。
+
+## User Input Classification
+
+| 種類 | 扱い |
+| --- | --- |
+| user-observation | 「普段こう話す」等。重要な調査の手掛かり。一次照合と分ける |
+| user-preference | 「この側面を残したい」等。対象personaと強調する側面の設計要件 |
+| output-feedback | 「この返答は丁寧すぎる」等。候補版の品質評価。対応する入力と出力を記録 |
+| authoring-inference | 作成側が推定した選び方・関係性・文字表現。仮説として記録 |
+
+ユーザーを評価者として尊重することと、事実の裏付けを好みで置き換えることは別である。未確認の特徴を黙って捨てず、確認方法または合意した解釈を記録する。
+
+## Observation to Runtime
+
+観察を次の要素へ分解する。
 
 ```text
 状況・相手・媒体・時期
-→ 最初に拾ったもの
+→ 最初に拾ったもの・連想
 → 評価・意味づけ
 → 相手へ行った働きかけ
 → 感情の立ち上がりと収まり
 → 一人称・呼称・構文・語彙・表記
-→ 条件による変化
+→ 条件による変化と平常への復帰
 ```
 
 単発の台詞より、異なる状況で繰り返される選択の偏りを優先する。観察をruntimeへ渡す時は完成台詞をコピーせず、注意、評価、social intent、emotional dynamics、state modulation、voiceの生成規則へ変換する。
 
-## Voice Evidence
+「気遣いがある」を、常時の優しい助言や弱いからかいへ変換しない。通常の雑な絡み方と、本気の不快への修復を別々に観察する。
 
-- 一人称とユーザー呼称は正確な表記、相手、場面、頻度、時期、語気、通常の省略を確認する。
-- `私 / わたし / あたし / 僕 / ぼく / ボク`、`君 / きみ / キミ`を同一視しない。
-- 公式fan nameや集団呼称を、任意の一人へ使う基本呼称へ直接転用しない。
-- 公開例が不足する基本呼称は、口調・敬語度に合う低リスクな一般呼称をWithMate上の解釈として選び、理由とconfidenceをnotesへ残す。
-- markerは単語の存在だけで採用せず、trigger、function、intensity、placement、frequency、variation、時期・媒体差を確認する。
-- 字幕や切り抜き編集者の表記を、本人の公式表記と誤認しない。
+## Frontmatter Description Sources
+
+公式サイトのプロフィール・自己紹介、本人YouTube概要、公式X bioを優先する。1〜3文、160文字以内を目安に、所属、立場、活動、得意、好き、目標、象徴的特徴から重要な2〜4要素へ絞る。第三者の人物説明、WithMateの機能説明、会話開始文、支援約束にはしない。
+
+URL、確認日、媒体差、採用要素、未取得の現行bioはnotesへ記録する。公式の第三者文は、事実を保ちながら本人のbioとして自然な形へ言い換える。
+
+## Voice Identity Sources
+
+### First Person and User Address
+
+一人称の正確な表記、主語省略、状態・相手・媒体による切り替えを確認する。`私`と`わたし`、`あたし`、`僕`等を同一視しない。
+
+一対一呼称は集団のfan呼称と分け、表記、語気、相手、頻度、時期を調べる。特定個人向けの愛称や強い単発呼びかけを任意ユーザーへの常用にしない。
+
+基本呼称が直接確定しない場合も空欄にせず、口調と合意した距離に合う一般呼称を設計候補にする。選定理由、確認範囲、confidenceをnotesへ残す。
+
+### Syntax, Rhythm, and Orthography
+
+文長、切り方、間、言い直し、反語、語順、語尾、接続、主語省略、俗語、笑い、伸ばしを見る。音声の特徴を文字へ移す方法は設計であり、音声から漢字・かな表記が確定したとはしない。
+
+標準的にきれいな文章へ直すことを校正と取り違えない。情報が読める範囲で、本人の崩れ方や馴れ馴れしさを残す。
+
+## Triggered Marker Sources
+
+短い口癖・反応語・決まり文句は、habitual / reactive / signatureを区別する。各採用語にTrigger / Function / Intensity / Placement / Frequency / Variationを持たせる。
+
+Triggerは明確な事件だけでなく、考え中、話し始め、言い直し等でもよい。Functionは意味の薄い口調や間つなぎでもよい。本人の観察頻度、生成上の出やすさ、語気の強さを別々に扱う。
+
+普通に使う条件では候補として選びやすくするが、毎返答のノルマにはしない。全項目へ低頻度・一回上限を付けない。単発台詞、長い引用、歌詞を常用句へしない。
+
+## Meme and Association Sources
+
+本人が使うことと、一般に有名なミームであることを分ける。採用する語・構文の出所、本人使用の確認範囲、時期、使う機能を記録する。
+
+連想の手掛かり、最初の反応、話題への変形、自己ツッコミ、相手の返しを観察する。タイトルだけから実際の応酬を創作せず、未知の流行や使用歴を作らない。
 
 ## Relationship Handoff
 
-公開場面で観察した反応、fanや共演者との固有関係、任意のWithMateユーザーへ一般化できるsocial intent、authoring上の解釈を分ける。fanとの距離を個人ユーザーへ無批判に移植せず、褒め方、心配、からかい、意見不一致、成功・失敗への乗り方へ変換する。
+公開場面の反応、相手固有の関係、任意の一人へ移せる対人様式、ユーザー希望による調整を区別する。集団への動員や内輪の履歴を、そのまま個人への忠誠要求や共有記憶へ変換しない。
+
+遠慮の薄さ、甘え、張り合い、雑な反応のうち何を残すかを照合し、使用範囲を肯定形で定める。恋愛・独占・依存は自動では加えない。
+
+## Work-context Transfer and Task Evidence
+
+作業中の声を調べる時は、作業を進める最中の発見、地道な試行、自分の予想違い、部分的な達成、他者の割り込み、集中から平常への復帰を見る。結果を後から語るインタビューと、作業中に実際に出た発話は資料として区別する。
+
+本人のコーディング資料がない場合、ゲーム・練習・制作等から得た反応をWithMateの作業へ移せるが、`authoring-inference`として、元の観察、移す特徴、変える文脈、ユーザーの確認をnotesへ残す。ユーザー指定を採用する場合もその区分を記録する。本人の開発経験、技術的な能力、未確認のtool使用歴を創作しない。
+
+公開personaの失敗や気だるさを、作業品質の低下、検証省略、わざと起こすミスへ変換しない。ユーザー、自分、環境のどこに原因があるかは、各作業の証拠から別途確認する。
+
+synthetic-event、recorded-tool-replay、live-tool-executionは作成した候補の検証資料であり、本人の性質を裏付ける公開sourceではない。シミュレーション内の出来事を本人の履歴へ戻したり、実toolの結果を候補に都合よく書き換えたりしない。
+
+検証コード・ログの出所、使用範囲、実行環境、改変・省略・秘匿化を分かる範囲で記録する。非公開リポジトリ、認証情報、個人情報は必要以上に記録・配布しない。tool結果の秘密部分を伏せた場合、伏せたこととその部分の再検証限界を残す。保存するのは観察可能な行為と発話・短い説明で、非公開の内部思考を取得する工程にはしない。
+
+標準Packは引き続き2ファイルのみ。notesにはtask ID、会話・ログ参照と最小抜粋を置き、実験用repository、完全なログ、テスト用データを自動で同梱しない。別の検証資料が明示依頼された場合は権利と内容を確認し、標準Packから分離して渡す。
+
+## Conflicts and Rejected Items
+
+公式とcommunityが競合する場合は事実を公式優先とし、解釈・媒体・時期差をnotesに残す。矛盾する資料を無理に平均化しない。
+
+不採用候補、比較語、旧台詞はnotesだけに置き、runtimeへ否定形で戻さない。センシティブ情報は比較用としても詳しく転記しない。
 
 ## Rights And Privacy
 
 - visible behaviorに必要な公開persona情報だけを使う。
-- 中の人、前世、実名、住所、家族、学校、職場、病歴、交際、leak、噂、非公開personal dataを推測または採用しない。
-- 長い台詞、歌詞、script、作品本文を転載せず、behavioral observationへ要約する。
-- direct quoteは短く、Character識別に必要かつ権利上問題のない範囲に限る。
-- third-party image / assetを作成、添付、配布しない。色やcatalog metadataの更新もこのSkillの責務に含めない。
-- misidentificationやprivate-person inferenceのriskがあるclaimは除外するか、notesでuncertaintyを明示する。
+- VTuberの中の人、前世、実名、住所、家族、学校、職場、病歴、交際、leak、噂、非公開personal dataを推測または採用しない。
+- 版権Characterは原作・canonとfan解釈を分ける。長い台詞、歌詞、script、作品本文を転載せずbehavioral observationへ要約する。
+- 公認・監修・許諾を実際に確認していない場合、それらを得たと装わない。
+- third-party image / assetの生成、添付、配布、catalog metadataの色更新はこのSkillの責務に含めない。
 
 ## Notes
 
-source title / owner、URLまたはreference、確認日、観察、照合結果、採否、confidence、uncertainty、rights limitationを`character-notes.md`へ記録する。不採用候補を否定文で`character.md`へ戻さず、Character rootへ別のsource reportを作らない。
+source title / owner、URLまたはreference、確認日、対象時期、観察範囲、照合結果、採否、confidence、uncertainty、rights limitationを`character-notes.md`へ記録する。不採用候補を否定文で`character.md`へ戻さず、Character rootへ別のsource reportを作らない。

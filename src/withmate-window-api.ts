@@ -95,6 +95,8 @@ import type {
   ResetAppDatabaseRequest,
   ResetAppDatabaseResult,
   SavePastedSessionFileRequest,
+  SessionMonitorContextMenuRequest,
+  SessionMonitorContextMenuResult,
 } from "./withmate-window-types.js";
 import type {
   CreateMateInput,
@@ -192,6 +194,9 @@ import type { SessionWindowRestoreResult } from "./session-window-restore.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
+  showSessionMonitorContextMenu(
+    request: SessionMonitorContextMenuRequest,
+  ): Promise<SessionMonitorContextMenuResult>;
   getSessionWindowRestoreSet(): Promise<string[]>;
   restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
   openHomeWindow(): Promise<void>;

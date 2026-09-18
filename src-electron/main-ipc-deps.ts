@@ -152,6 +152,8 @@ import type {
   OpenPathResult,
   OpenSessionWindowIdsPageRequest,
   OpenSessionWindowIdsPageResult,
+  SessionMonitorContextMenuRequest,
+  SessionMonitorContextMenuResult,
 } from "../src/withmate-window-types.js";
 import type {
   CreateMateInput,
@@ -191,6 +193,10 @@ export type MainIpcWindowDepsArgs = {
   resolveSessionWindow(sessionId: string): MaybeWindow;
   resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<BrowserWindow>;
+  showSessionMonitorContextMenu(
+    event: IpcMainInvokeEvent,
+    request: SessionMonitorContextMenuRequest,
+  ): Awaitable<SessionMonitorContextMenuResult>;
   getSessionWindowRestoreSet(): Promise<string[]>;
   restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
   openHomeWindow(): Promise<BrowserWindow>;
@@ -198,6 +204,7 @@ export type MainIpcWindowDepsArgs = {
   openSettingsWindow(): Promise<BrowserWindow>;
   openMemoryV6ReviewWindow(): Promise<BrowserWindow>;
   openCoordinationWindow(): Promise<BrowserWindow>;
+  isSessionMonitorWindow(window: BrowserWindow): boolean;
   isSettingsWindow(window: BrowserWindow): boolean;
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   isCoordinationWindow(window: BrowserWindow): boolean;
@@ -523,6 +530,7 @@ export function createMainIpcRegistrationDeps(
     openSessionWindow: async (sessionId) => {
       await args.window.openSessionWindow(sessionId);
     },
+    showSessionMonitorContextMenu: args.window.showSessionMonitorContextMenu,
     getSessionWindowRestoreSet: () => args.window.getSessionWindowRestoreSet(),
     restoreSessionWindows: () => args.window.restoreSessionWindows(),
     openHomeWindow: async () => {
@@ -540,6 +548,7 @@ export function createMainIpcRegistrationDeps(
     openCoordinationWindow: async () => {
       await args.window.openCoordinationWindow();
     },
+    isSessionMonitorWindow: args.window.isSessionMonitorWindow,
     isSettingsWindow: args.window.isSettingsWindow,
     isMemoryV6ReviewWindow: args.window.isMemoryV6ReviewWindow,
     isCoordinationWindow: args.window.isCoordinationWindow,

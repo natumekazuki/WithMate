@@ -84,8 +84,8 @@ export class SessionLaunchSelectionService {
       reasoningEffort: modelSelection.resolvedReasoningEffort,
       approvalMode: latestSession?.approvalMode ?? DEFAULT_APPROVAL_MODE,
       codexSandboxMode: latestSession?.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
-      codexSpeed: DEFAULT_CODEX_SPEED,
-      codexReviewer: DEFAULT_CODEX_REVIEWER,
+      codexSpeed: latestSession?.codexSpeed ?? DEFAULT_CODEX_SPEED,
+      codexReviewer: latestSession?.codexReviewer ?? DEFAULT_CODEX_REVIEWER,
       customAgentName: latestSession?.customAgentName ?? "",
     };
   }

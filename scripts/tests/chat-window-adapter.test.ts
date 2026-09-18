@@ -22,7 +22,6 @@ import {
   createStaticTextChatCompactActionDockProps,
   createStaticTextConversationMessageColumnProps,
   isStaticChatSendDisabled,
-  resolveAuxiliaryModeLabel,
   staticTextChatRuntimeComposerCapabilityDefaults,
   toConversationMessages,
 } from "../../src/chat/chat-window-adapter.js";
@@ -39,7 +38,7 @@ import {
   resolveRunningSessionCancelTargetId,
   runRunningSessionCancelOperation,
 } from "../../src/chat/send-or-cancel.js";
-import type { ChatWindowProps } from "../../src/chat/chat-window.js";
+import { ChatWindow, type ChatWindowProps } from "../../src/chat/chat-window.js";
 import { buildLiveSessionWindowShellProps } from "../../src/chat/live-session-window-props.js";
 import { createSessionFilesActions } from "../../src/chat/session-files-actions.js";
 
@@ -54,12 +53,6 @@ test("createSessionFilesActions は共通の session files action group を描�
   assert.match(html, /title="Open session files directory">Explorer<\/button>/);
   assert.match(html, /title="Open terminal in session files directory">Terminal<\/button>/);
   assert.match(html, /class="drawer-toggle compact secondary"/);
-});
-
-test("resolveAuxiliaryModeLabel は Auxiliary mode だけ label を返す", () => {
-  assert.equal(resolveAuxiliaryModeLabel(true), "Auxiliary");
-  assert.equal(resolveAuxiliaryModeLabel(false), undefined);
-  assert.equal(resolveAuxiliaryModeLabel(undefined), undefined);
 });
 
 test("buildAuxiliaryAwareSendOrCancelHandler は auxiliary が running のときに優先 cancel する", () => {
@@ -676,6 +669,16 @@ test("staticTextChatRuntimeComposerCapabilityDefaults は runtime controls だ�
   assert.equal(staticTextChatRuntimeComposerCapabilityDefaults.showSkillPicker, false);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "buildLiveSessionComposerDockPropsはcomposerとcompact ActionDockへ共通のjump・send・cancel情報を投影する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
+// fault = "composerとcompact ActionDockで末尾移動、送信・cancel、noticeまたは添付数のpropsが不一致になる"
+// observable = "composer.showJumpToBottom/chatNoticeとcompactActionDockのattachmentCount・showJumpToBottom・cancelButtonTitle・callback identity"
+// observation_boundary = "public-boundary"
+// scope = "live-session-composer-dock-adapter"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildLiveSessionComposerDockProps は composer と compact dock の共通 props を対応付ける", () => {
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
   const onJumpToBottom = () => {};
@@ -686,7 +689,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     pendingRunIndicatorAnnouncement: "実行中",
     pendingRunIndicatorText: "応答を生成中",
     chatNotice: "New messages",
-    modeLabel: "Auxiliary",
     composerBlocked: false,
     canSelectCustomAgent: true,
     isAgentPickerOpen: false,
@@ -750,7 +752,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
   assert.equal(props.composer.chatNotice, "New messages");
   assert.equal("onCollapse" in props.composer, false);
   assert.equal(props.compactActionDock.attachmentCount, 1);
-  assert.equal(props.compactActionDock.modeLabel, "Auxiliary");
   assert.equal(props.compactActionDock.chatNotice, "New messages");
   assert.equal(props.compactActionDock.showJumpToBottom, true);
   assert.equal(props.compactActionDock.cancelButtonTitle, "Stop");
@@ -775,6 +776,16 @@ test("buildLiveSessionSplitterProps は context rail resize state を反映す�
   assert.equal(splitterProps.onTogglePanel, onToggle);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AgentとCompanionのmodeを共通shellへ反映し、右ペインの内容と操作をChatWindowへ渡す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Agent / Companion shared chat screen" }
+// fault = "mode classや右ペイン入力が失われ、対応する共通画面を表示できない"
+// observable = "shellのclassName、mainContent、rightPanePropsとChatWindow内のLatestCommand表示"
+// observation_boundary = "component-behavior"
+// scope = "live-session-window-shell"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む shell を組み立てる", () => {
   const headerProps = createStaticChatHeaderProps({
     taskTitle: "agent session",
@@ -787,7 +798,7 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     messageListRef: React.createRef<HTMLDivElement>(),
     isRunning: false,
   });
-  const composerProps = createHiddenControlsChatComposerProps({
+  const composerProps = createHiddenControlsTextChatComposerProps({
     draft: "",
     composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
     isRunning: false,
@@ -883,17 +894,16 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     isAuxiliaryMode: true,
   });
 
-  const rightPane = agentProps.rightPane as React.ReactElement<{
-    children: React.ReactElement;
-  }>;
-
   assert.equal(agentProps.mode, "agent");
   assert.equal(agentProps.messageColumnProps.isContentActive, false);
   assert.equal(companionProps.messageColumnProps.isContentActive, true);
   assert.equal(agentProps.className, "");
   assert.equal(companionProps.className, "theme-accent auxiliary-session-mode");
-  assert.equal(rightPane.props.children.props.taskTitle, "Right pane");
-  assert.equal(rightPane.type, companionProps.rightPane.type);
+  assert.match(renderToStaticMarkup(agentProps.mainContent), /Preview/);
+  assert.match(renderToStaticMarkup(React.createElement(ChatWindow, agentProps)), /LatestCommand/);
+  assert.equal(agentProps.rightPaneProps?.taskTitle, "Right pane");
+
+  assert.equal(companionProps.rightPaneProps, rightPaneProps);
 });
 
 test("buildLiveSessionChatBodyProps は live session body props をまとめて組み立てる", () => {

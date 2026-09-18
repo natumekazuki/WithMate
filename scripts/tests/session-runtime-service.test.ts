@@ -216,11 +216,13 @@ describe("SessionRuntimeService provider cleanup", () => {
 });
 describe("SessionRuntimeService", () => {
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
   // claim = "completed Sessionのterminal commit後に通知を依頼し、background settlementを待たず次turnを受け付ける"
   // oracle = { type = "contract", ref = "accepted contract: terminal notification after persisted terminal state" }
-  // failure_mode = "永続化前の通知またはbackground settlement待機により、通知先が未保存状態を読むか次turn受付が停止する"
+  // fault = "永続化前の通知またはbackground settlement待機により、通知先が未保存状態を読むか次turn受付が停止する"
+  // observable = "terminal commit後の通知順序と次turnの完了結果"
+  // observation_boundary = "public-boundary"
   // scope = "session-runtime-terminal-completion-order"
   // lifecycle = "permanent"
   // @end-test-value
@@ -248,6 +250,13 @@ describe("SessionRuntimeService", () => {
     let lastCommittedAt: string | null = null;
     let blockCompletedAudit = false;
     let releaseCompletedAudit: (() => void) | null = null;
+    const confirmedPreviewTexts: Array<string | null | undefined> = [];
+    let terminalUpsertCount = 0;
+    let terminalUpsertStarted = false;
+    let releaseFirstTerminalUpsert!: () => void;
+    const firstTerminalUpsertReleased = new Promise<void>((resolve) => {
+      releaseFirstTerminalUpsert = resolve;
+    });
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -265,7 +274,10 @@ describe("SessionRuntimeService", () => {
       invalidateAllSessionThreads() {},
       async runSessionTurn(input) {
         providerSessions.push(input.session);
-        return createPartialResult({ assistantText: "完了" });
+        return {
+          ...createPartialResult({ assistantText: "完了" }),
+          lastNonEmptyAssistantMessageText: "完了",
+        };
       },
     };
     const context = (version: number): CharacterContextResponse => ({
@@ -292,10 +304,20 @@ describe("SessionRuntimeService", () => {
         storedSession = next;
         return next;
       },
-      upsertTerminalSession(next, terminalCommit) {
+      upsertTerminalSession(next, terminalCommit, options) {
         if (next.status === "idle" && next.messages.at(-1)?.role === "assistant") {
+          terminalUpsertCount += 1;
+          terminalUpsertStarted = true;
           callOrder.push(`completed-upsert:${terminalCommit.auditLogId}`);
           assert.equal(terminalCommit.assistantMessageSeq, next.messages.length - 1);
+          confirmedPreviewTexts.push(options?.confirmedFinalAssistantText);
+        }
+        if (terminalUpsertCount === 1) {
+          return firstTerminalUpsertReleased.then(() => {
+            lastCommittedAt = terminalCommit.completedAt;
+            storedSession = next;
+            return next;
+          });
         }
         lastCommittedAt = terminalCommit.completedAt;
         storedSession = next;
@@ -412,7 +434,7 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    await service.runExternalSessionTurn(storedSession.id, 7, {
+    const firstRun = service.runExternalSessionTurn(storedSession.id, 7, {
       userMessage: "first",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b1",
       submitSource: "composer",
@@ -421,6 +443,10 @@ describe("SessionRuntimeService", () => {
       approvalMode: "never",
       codexSandboxMode: "read-only",
     }, "execution-1");
+    await waitForCondition(() => terminalUpsertStarted, "terminal upsertが通知前に開始されること");
+    assert.equal(completionNotificationCount, 0);
+    releaseFirstTerminalUpsert();
+    await firstRun;
     assert.deepEqual({
       model: providerSessions[0]?.model,
       reasoningEffort: providerSessions[0]?.reasoningEffort,
@@ -453,6 +479,7 @@ describe("SessionRuntimeService", () => {
     callOrder.push("first-returned");
     const firstCompletedAt = lastCommittedAt;
     assert.equal(service.isRunInFlight(storedSession.id), false);
+    assert.equal(confirmedPreviewTexts[0], "完了");
     assert.equal(callOrder.some((entry) => entry === `pending-ready:turn:${storedSession.id}:audit:1`), false);
     assert.equal(callOrder.some((entry) => entry === "terminal-audit:1"), false);
     await service.runSessionTurn(storedSession.id, {

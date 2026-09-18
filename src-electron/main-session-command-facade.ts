@@ -68,6 +68,7 @@ type MainSessionCommandFacadeDeps = {
   getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null;
   isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null): boolean;
   refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
+  initializeCreatedSession(session: Session): Promise<void>;
   createSessionId(): string;
   createSessionFilesDirectory(sessionId: string): Promise<string> | string;
   resolveSessionFilesDirectory(sessionId: string): string;
@@ -106,9 +107,23 @@ export class MainSessionCommandFacade {
   }
 
   async createSessionFromRequest(input: CreateSessionRequest): Promise<Session> {
-    return this.deps.runProviderRuntimeOperationExclusive(
+    const session = await this.deps.runProviderRuntimeOperationExclusive(
       () => this.createSessionFromRequestExclusive(input),
     );
+    try {
+      await this.deps.initializeCreatedSession(session);
+      return session;
+    } catch (cause) {
+      try {
+        await this.deleteSession(session.id);
+        if (this.deps.isSessionFilesWorkspace(session)) {
+          await this.deps.cleanupSessionFilesDirectory?.(session.id);
+        }
+      } catch (cleanupError) {
+        throw new AggregateError([cause, cleanupError], "Session初期化と作成済みデータの後始末に失敗しました。", { cause });
+      }
+      throw cause;
+    }
   }
 
   private async createSessionFromRequestExclusive(input: CreateSessionRequest): Promise<Session> {

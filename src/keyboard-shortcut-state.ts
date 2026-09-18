@@ -112,6 +112,17 @@ export const DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES: readonly KeyboardShortcut
     bindingKind: "letter",
   },
   {
+    id: "session.conversation.toggle-target",
+    scope: "session",
+    accelerators: {
+      windows: { key: "j", ctrlKey: true, shiftKey: true },
+      linux: { key: "j", ctrlKey: true, shiftKey: true },
+      macos: { key: "j", metaKey: true, shiftKey: true },
+    },
+    customizable: true,
+    bindingKind: "letter",
+  },
+  {
     id: "session.file-preview.find",
     scope: "file-preview",
     exclusiveScopeGroup: "session-content",

@@ -39,6 +39,10 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private readonly openingSessionWindows = new Map<string, Promise<TWindow>>();
   private readonly allowCloseSessionWindows = new Set<TWindow>();
   private readonly snapshotEligibleWindows = new Set<TWindow>();
+  private readonly pendingCloseRequests = new Map<TWindow, {
+    promise: Promise<boolean>;
+    resolve: (closed: boolean) => void;
+  }>();
   private snapshotUpdatesSuspended = false;
 
   constructor(private readonly deps: SessionWindowBridgeDeps<TWindow>) {}
@@ -163,6 +167,39 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     window.close();
   }
 
+  requestCloseSessionWindow(sessionId: string): Promise<boolean> {
+    const window = this.sessionWindows.get(sessionId);
+    if (!window) {
+      return Promise.resolve(false);
+    }
+    if (window.isDestroyed()) {
+      this.releaseWindowClaim(sessionId, window);
+      return Promise.resolve(false);
+    }
+
+    const pending = this.pendingCloseRequests.get(window);
+    if (pending) {
+      return pending.promise;
+    }
+    let resolveRequest!: (closed: boolean) => void;
+    let rejectRequest!: (error: unknown) => void;
+    const result = new Promise<boolean>((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+    this.pendingCloseRequests.set(window, {
+      promise: result,
+      resolve: resolveRequest,
+    });
+    try {
+      window.close();
+    } catch (error) {
+      this.pendingCloseRequests.delete(window);
+      rejectRequest(error);
+    }
+    return result;
+  }
+
   closeAllSessionWindows(): void {
     for (const sessionId of Array.from(this.sessionWindows.keys())) {
       this.closeSessionWindow(sessionId);
@@ -210,6 +247,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     event.preventDefault();
 
     if (!this.deps.confirmCloseWhileRunning(window, sessionId)) {
+      this.resolveCloseRequest(window, false);
       return;
     }
 
@@ -218,6 +256,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   }
 
   private releaseWindowClaim(sessionId: string, window: TWindow): void {
+    this.resolveCloseRequest(window, true);
     this.allowCloseSessionWindows.delete(window);
     if (this.sessionWindows.get(sessionId) !== window) {
       return;
@@ -229,6 +268,15 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     if (wasSnapshotEligible) {
       void this.persistSnapshotBestEffort();
     }
+  }
+
+  private resolveCloseRequest(window: TWindow, closed: boolean): void {
+    const pending = this.pendingCloseRequests.get(window);
+    if (!pending) {
+      return;
+    }
+    this.pendingCloseRequests.delete(window);
+    pending.resolve(closed);
   }
 
   private broadcast(): void {

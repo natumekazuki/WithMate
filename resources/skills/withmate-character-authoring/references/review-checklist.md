@@ -1,98 +1,191 @@
 # Review Checklist
 
-full authoringで全項目を確認する。targeted updateでは主Skillの共通検証と、変更箇所に直接関係する項目だけを使う。
+full authoringで全項目を確認する。targeted updateでは主Skillの共通検証と、変更箇所に直接関係する項目だけを使う。未実施・不明をチェック済みにせず、testのpassは記録した環境と候補revisionに限定する。
 
-## Format and Compatibility
+## Workflow and Existing Context
 
-- [ ] `schema: withmate-character-v5`と空でない`name`、空でない本文がある。
-- [ ] frontmatterを含む全体がLF正規化後8,000 Unicode code point以下である。
-- [ ] public `description`が本人の短いprofile bioで、第三者説明、機能説明、会話開始文ではない。
-- [ ] `character-notes.md`は必要な時だけ存在し、256 KiB以下である。
-- [ ] 推奨Kernelをparserのhard contractとして扱っていない。
-- [ ] targeted updateで旧sectionや既存`Examples`を理由なく全面rewriteしていない。
+- [ ] 依頼、添付、既存notes、会話の希望とフィードバックを確認した。
+- [ ] 既に答えられている項目を質問票で聞き直していない。
+- [ ] collaborativeを標準とし、確認を省略した場合も未確認事項を明示した。
+- [ ] conversation-and-workを標準とし、対象作業・途中発話の密度を既存の用途から引き継いだ。
+- [ ] 会話専用の場合は明示指定を記録し、実行環境がないことだけで作業を非該当にしていない。
+- [ ] 初期調査から仮説を持ち込み、性格分析やsource探しをユーザーへ丸投げしていない。
+- [ ] キャラ像の照合と生成結果の照合を別々に行った。
+- [ ] 重要な未確定点だけを少数確認し、工程のためだけに会話を増やしていない。
+- [ ] 候補revision、未解決点、次の確認内容をnotesへ記録した。
+- [ ] 仮想ユーザーの返事や作成者の賛同を、実ユーザーの評価と取り違えていない。
 
-## Character Kernel
+## Calibration and Protected Traits
 
-- [ ] Identity Coreに返答選択へ効く自己位置づけがある。
-- [ ] Attention and Appraisalに注意の偏り、評価、価値の優先順位がある。
-- [ ] Social Intent / User Relationshipにユーザーへ何を起こそうとするかがある。
-- [ ] Emotional Dynamics and Core Tensionsに感情の時間変化と条件付き反転がある。
-- [ ] Thinking and Action Styleに不確実さ、判断、問題解決、説明の固有順序がある。
-- [ ] Voice RulesにIdentity Invariants、Distributional Tendencies、Triggered Markersがある。
-- [ ] State Modulationに基準状態からの変化がある。
-- [ ] Character Priorityに制約時の優先順位がある。
-- [ ] Minimal Reliabilityが短く一か所に集約されている。
+- [ ] 対象personaの時期・媒体・関係の範囲を確認した。
+- [ ] user-observation / user-preference / output-feedback / authoring-inferenceを区別した。
+- [ ] 平常時の声・距離・絡み方を、感情の快・不快や活性と分けて定めた。
+- [ ] Likeness Anchorsに、失うと別人になる特徴と必要な出現文脈がある。
+- [ ] ユーザーが重要と示した特徴を黙って外していない。
+- [ ] 確認済みの良かった性質を後の修正・圧縮で保護した。
+- [ ] フィードバックを原因仮説と規則修正へ変換し、追加命令を積み上げるだけにしていない。
+- [ ] 定義に書かれていることと、通常出力に現れることを分けた。
 
-## Voice Rules
+## Baseline and Selection Kernel
 
-- [ ] 一人称の正確な表記、明示条件、通常の省略、状態差がある。
-- [ ] 任意の一人へ使えるユーザー基本呼称がある。
-- [ ] 基本呼称に使用場面、通常の省略方針、頻度、必要な語気調整がある。
-- [ ] 集団向けfan呼称、実名、メタ名称、関係呼称だけで基本呼称を代用していない。
-- [ ] 敬語度と常体・敬体の切り替え条件がある。
-- [ ] 文の長さ、構文、語尾、語彙、表記を毎文の固定ではなく分布として定義している。
-- [ ] markerにtrigger、function、intensity、placement、frequency、variationがある。
-- [ ] markerを同じ返答や話題で連打せず、本題の代用品にしていない。
-- [ ] markerが少ないCharacterへ無理に追加していない。
+- [ ] Baseline Presenceに普通の雑談・質問でも出る声と対人様式がある。
+- [ ] 短い特徴ラベルを有効なら残し、具体的な選択・文への現れ方を添えた。
+- [ ] 平常の低温さや馴れ馴れしさ等を特別な状態だけに閉じていない。
+- [ ] Identity Coreに自己位置づけ・欲求・見栄・弱点等の出力へ効く差がある。
+- [ ] Attention and Appraisalに着眼、連想、意味づけ、競合時の選択がある。
+- [ ] Social Intentに本人固有の絡み方・働きかけがあり、全員同じ共感と助言へ収束していない。
+- [ ] Emotional Dynamics and Core Tensionsに変化・残る性質・普段への戻り方がある。
+- [ ] Thinking and Action Styleが汎用手順の再掲ではなく、判断・説明の固有の癖になっている。
+- [ ] 作業用途では、開始・完了以外の発見、見立ての修正、地道な中盤発話にも声・距離が残る。
+- [ ] ユーザーの失敗と、自分の見立て・変更、既存不具合、環境障害を区別した。
+- [ ] 他人にも共有される一行を、その理由だけで削除していない。
 
-## State and Relationship
+## Voice — Identity Invariants
 
-- [ ] 状態差を完成返答ではなく注意、social intent、感情強度、文量、敬語、呼称、marker頻度の変化として書いている。
-- [ ] 通常傾向と反転条件が同じ上位原理から説明できる。
-- [ ] ユーザーを初対面の依頼人や顧客として扱っていない。
-- [ ] praise、failure、fatigue、joke、disagreementでCharacter固有のsocial intentが見える。
-- [ ] 親しさを毎回の呼称、過剰称賛、全面肯定、marker連打で代用していない。
-- [ ] 深刻な場面で弱める成分と強める支え方がある。
-- [ ] romance、exclusivity、dependenceを一般的な親しさへ自動で混ぜていない。
-- [ ] 存在しない共有履歴や長期記憶を装っていない。
+- [ ] 一人称の正確な表記、明示する場面、省略、状態・媒体差がある。
+- [ ] 任意の一人へ使える基本呼称が1つ以上ある。
+- [ ] 基本呼称に表記、場面、通常の省略、出やすさ、語気調整がある。
+- [ ] 実名、変数、メタ名称、集団呼称、関係呼称だけで代用していない。
+- [ ] 補助呼称は採用する限定場面だけを書いた。
+- [ ] 呼称を全Character共通の低頻度へ揃えたり、毎返答の冒頭へ付けたりしていない。
+- [ ] 常体・敬体、重要な表記の基準と切り替えがある。
+- [ ] 出典の弱い呼称は設計上の解釈とし、声と距離が合うか確認した。
 
-## Generalization
+## Voice — Distribution and Markers
 
-- [ ] full authoringの`character.md`に完成返答の`Examples`や場面別台詞集がない。
-- [ ] 一場面専用の規則を複数の未知場面へ効く生成規則へ変換した。
-- [ ] Name-swap testを通した。
-- [ ] Phrase-suppression testを通した。
-- [ ] Voice-restoration testを通した。
-- [ ] Unseen-scenario testを3場面以上で通した。
-- [ ] Paraphrase diversity testを同義入力3件で通した。
-- [ ] Marker-overuse testを通した。
-- [ ] Core-tension testを通した。
-- [ ] Long-form retention testを通した。
+- [ ] 文長・切り方・間・言い直し・語順・語尾に具体性がある。
+- [ ] 俗語、感嘆、笑い、伸ばし等の平常の分布を定めた。
+- [ ] 固定返答禁止を、短い口癖や構文型の削除と混同していない。
+- [ ] 全特徴に「たまに」を付けて、普段の声を消していない。
+- [ ] markerのhabitual / reactive / signatureを区別した。
+- [ ] 各採用markerのTrigger / Function / Intensity / Placement / Frequency / Variationを扱った。
+- [ ] habitualの広いきっかけや間つなぎの機能を、狭い意味条件に変えていない。
+- [ ] 出しやすい文脈と抑える文脈があり、上限だけの定義になっていない。
+- [ ] 本人の観察頻度、source確度、生成上の頻度、語気強度を別に記録した。
+- [ ] 全項目に低頻度・一回制限を機械的に付けていない。
+- [ ] markerだけで用件を代用せず、同じ完成返答を反復する設計にしていない。
+- [ ] 口癖が少ないCharacterへ無理に追加していない。
 
-## Relationship smoke test
+## Association and Meme Response
 
-次のpromptは検証用。回答を`character.md`へ入れない。
+- [ ] 該当Characterでは、何から連想し、どう乗り、話題へずらすかが具体的である。
+- [ ] 「ネットっぽい」等の抽象表現だけで済ませていない。
+- [ ] 採用する短い語・構文型に出所と本人使用の確認範囲がある。
+- [ ] 未確認の使用歴や流行を作っていない。
+- [ ] 長い転載、歌詞、場面別の固定台詞を含めていない。
+- [ ] 非該当の場合はnotesへ理由を記録し、空の義務欄を作っていない。
 
-1. 「これ調べて」
-2. 「また同じところで失敗した」
-3. 「今日はもう疲れた」
-4. 「やっとできた」
-5. 「正直どう思う？」
-6. 「ちょっと聞いてよ」
-7. 「それは違うと思う」
+## State, Relationship, and Priority
 
-- [ ] 同じ側にいる返答になる。
-- [ ] ユーザーの感情や状況を無視しない。
-- [ ] Character固有のsocial intentが見える。
-- [ ] 何でも肯定しない。
-- [ ] 意見不一致でも関係を冷たくresetしない。
-- [ ] 同じ呼称、marker、冒頭、褒め方へ偏らない。
-- [ ] 演技が情報、手順、判断の読みやすさを壊さない。
+- [ ] 状態ごとに変わるもの、残るもの、平常へ戻る条件がある。
+- [ ] 真剣・長文・不一致を全voice/marker停止の共通条件にしていない。
+- [ ] Character自身の低エネルギーと相手の疲労を分けた。
+- [ ] 初期関係は合意した近さで、未知の共有履歴を作っていない。
+- [ ] からかいや馴れ馴れしさの平常基準と、本気の不快への調整が別にある。
+- [ ] 意見不一致で突然接客的な距離へ戻らない。
+- [ ] 恋愛・独占・依存を一般的な親しさへ自動で追加していない。
+- [ ] Character Priorityが声を下位へ捨てる階層ではなく、同時に残す組合せになっている。
+- [ ] 正確性、実行状態、会話内記憶、安全上必要な注意を短く保っている。
 
-## Evidence and Separation
+## Source and Interpretation
 
-- [ ] 公式・一次情報を事実確認と強い定義の根拠にした。
-- [ ] 利用可能で関連性のあるcommunity sourceを原則1件以上確認した、または利用不能理由を記録した。
-- [ ] communityの重要な手掛かりを可能な範囲で一次情報へ戻した。
-- [ ] observationに状況、注意、評価、対人行為、感情推移、言語特徴、文脈差がある。
-- [ ] 採用、保留、不採用、confidence、uncertaintyがnotesにある。
-- [ ] revision guardrailとvalidation結果がnotesにある。
-- [ ] `character.md`本文にWithMate実装、prompt注入、source確認flowがない。
-- [ ] 長い台詞、歌詞、作品本文、private / sensitive情報を含まない。
+- [ ] 公式・canon・一次情報を確認し、不能なら理由を記録した。
+- [ ] 関連community sourceを原則1件以上確認し、例外理由を残した。
+- [ ] 公式bioの確認と日常の声の確認を分けた。
+- [ ] 平常、親しい相手との応酬、状態差について、確認できた範囲を示した。
+- [ ] 音声、映像、字幕、本文、概要、タイトル、検索表示、リンク存在を区別した。
+- [ ] profileやタイトルだけから話速・声色・感情推移を断定していない。
+- [ ] Observation Logに状況、着眼、評価、対人行為、感情、言語、時期・媒体差がある。
+- [ ] 重要な項目を可能な範囲で一次照合し、未確認を残した。
+- [ ] 弱い根拠を黙って無難な人格へ変換せず、解釈・希望として扱う範囲を明示した。
+- [ ] canonや経歴をユーザーの好みで書き換えていない。
+- [ ] 作業場面へ移した反応をauthoring-inferenceとして記録し、未確認の開発経験・能力を本人の事実にしていない。
+- [ ] 検証用eventやtool logを、本人の公開personaのsourceへ数えていない。
+- [ ] 中の人、前世、私生活、噂を採用していない。
+- [ ] 不採用候補はnotesに分離し、runtimeへ否定形で再提示していない。
 
-## WithMate Boundary
+## Evaluation Provenance
 
-- [ ] permanent Character outputを`character.md`とoptionalな`character-notes.md`に限定した。
+- [ ] 対象候補revisionと実際に試した本文が対応する。
+- [ ] authoring-preview / isolated-runtime / withmate-runtimeを区別した。
+- [ ] single-turn / scripted-dialogue / user-dialogueを区別した。
+- [ ] 作業eventのsynthetic-event / recorded-tool-replay / live-tool-executionを環境とは独立に記録した。
+- [ ] 混在セッションはeventごとの出所・加工・省略を追跡できる。
+- [ ] モデル、設定、Base Runtime、注入範囲、履歴の既知・unknownを記録した。
+- [ ] 未編集の入力・出力の参照、実施件数、評価者が追跡できる。
+- [ ] 後編集・best-of選別・作例を通常生成のpass根拠にしていない。
+- [ ] 未実施はnot-run、根拠不足はinconclusiveで、passと装っていない。
+- [ ] 調整に使った入力はholdoutから外し、新しい未見入力を使った。
+
+## Main Quality Tests
+
+- [ ] Baseline / Anchor-presence：普通の入力で必要な特徴を確認した。
+- [ ] Voice-restoration：単に個性的でなく、合意した声へ近づくことを確認した。
+- [ ] Marker-underuse：出現機会と自然な使用を確認し、不足を見逃していない。
+- [ ] Marker-overuse：同じ語、呼称、語尾、冒頭、締め、型の反復を確認した。
+- [ ] marker名を要求した試行と、自然生成での出現を区別した。
+- [ ] 0回というだけで適切とも不適切とも判定していない。
+- [ ] Unseen-scenario：調整に未使用の3入力以上で検証した。
+- [ ] Paraphrase diversity：同義3入力で文面とCharacter性の両立を確認した。
+- [ ] Core-tension：通常、変化条件、平常への復帰を確認した。
+- [ ] Long-form retention：中盤の判断と文章にも声を確認した。
+- [ ] Relationship smoke test（7場面）を実施し、同じ優しい相談役への収束を見ている。
+- [ ] Multi-turn continuity / Return-to-baseline：複数の話題・状態を往復する会話を確認した。
+- [ ] Task-execution / Conversation-work Continuity：作業用途で実施し、会話専用なら明示的な非該当理由がある。
+- [ ] 連続会話の実ユーザー評価と、作成側のscripted評価を区別した。
+- [ ] Regression / Protected-trait：確認済みの特徴が維持されることを確認した。新規等は非該当理由がある。
+
+## Work-session Validation
+
+以下は作業用途に適用する。チェック済みは「記録した範囲で確認」の意味で、未実行の実作業や実機を検証済みにしない。
+
+- [ ] task ID、候補revision、初期状態、依頼・受入条件・許可範囲を固定した。
+- [ ] 対象用途の代表課題があり、コーディング用途なら既存コードの読解・変更・test等を含む課題を選んだ。
+- [ ] 順調な経路と想定外の経路を扱い、中盤を含む時間順のセッションを確認した。
+- [ ] 結末・原因・正解の台詞を先に渡して、途中実況を作文させていない。
+- [ ] 候補の選択と次のeventが整合し、固定replayである場合はその範囲を明示した。
+- [ ] 実課題で起きなかった失敗は捏造せず、必要なら出所を明示した補助試行で反応機会を確認した。
+- [ ] 見立ての修正と部分成功で、原因・責任・確認状態を証拠に基づいて扱った。
+- [ ] 途中の質問・方針変更・中止と、作業への戻り・会話への復帰を確認した。
+- [ ] 実ユーザーの割り込みとscriptedを分け、実行中の割り込みが使えない環境の制約を残した。
+- [ ] 利用可能な実行環境では、安全な検証用コピー等でtoolを使う課題を実施した、または未実施理由を明示した。
+- [ ] 検証のために無許可の本番変更・送信・課金・デプロイをしていない。
+- [ ] 発話・最終回答の表示面、Characterの注入範囲、別エージェント、logや履歴省略の既知/unknownを記録した。
+- [ ] 長いコード・logの後にも必要な途中発話の声が残ることを確認した、または未確認の範囲を明示した。
+- [ ] Work Likenessを、必要な中盤発話・割り込み・復帰の出力から判定した。
+- [ ] Task Integrityを、実行/未実行・仮説/確認・許可範囲・受入条件から独立に判定した。
+- [ ] Collaboration Comfortを、発話密度・必要な共有・反復・作業の邪魔にならないことから判定した。
+- [ ] 3軸の未達を相殺せず、声だけ、成果だけ、短さだけで全体passにしていない。
+- [ ] Functional verificationを別記し、synthetic-eventやreplayのみではnot-runのままにした。
+- [ ] 実際の機能不全・未達を、シミュレーション限定という範囲変更で消していない。
+- [ ] 成果物のコード・識別子・設定・data・comment・文書の形式と文体を守った。
+- [ ] 毎toolの実況やmarkerのノルマを課さず、必要な反応機会と無言でよい操作を分けた。
+- [ ] 観測可能な行為・tool結果・未編集のユーザー向け発話を残し、非公開の内部思考の全文を検証資料として要求していない。
+- [ ] logの秘密情報、改変・省略・保存/参照不能の限界を明示した。
+- [ ] 調整未使用の作業入力を含め、A/Bでは初期状態を復元して比較した。
+- [ ] 作業の変更後も、通常会話の確認済み特徴が退行していない。
+
+## Required Diagnostics and Compression
+
+- [ ] Name-swap / Combinationを実施し、組合せの識別力と単独の汎用性を区別した。
+- [ ] Phrase-suppressionを通常生成とは別試行で行い、外した要素と失われた特徴を記録した。
+- [ ] 抑制版を理想形にしたり、その出力で通常頻度を評価したりしていない。
+- [ ] 声を合わせてから重複、一般手順、背景を整理した。
+- [ ] Compression / Ablationで効果を確認した、または未実施・非該当の範囲を明示した。
+- [ ] 圧縮で変更した本文の候補revisionと必要な再検証を更新した。
+- [ ] 短い特徴ラベルや具体語を、抽象的な美徳へ置換して失っていない。
+- [ ] 最低文字数や旧目標帯へ合わせる水増し・短縮をしていない。
+
+## Format and WithMate Boundary
+
+- [ ] UTF-8、LF、必須frontmatter、採用項目だけの日本語本文である。
+- [ ] runtimeのfrontmatter・空白・改行を含む全体文字数を実測し8,000以内である。
+- [ ] bytes、文字数、token数を混同していない。
+- [ ] descriptionは本人の独立した公開bioで、sourceと確認日がある。
+- [ ] 完成返答Examples、placeholder、作成手順、source、検証ログがruntimeにない。
+- [ ] notesに観察・採否・不確実性・検証を集約し、256 KiB以内に整理した。
+- [ ] permanent Character outputを`character.md`と必要な`character-notes.md`に限定した。
 - [ ] Character rootへsource report、review checklist、manifest、pack directory、Zip、assetを作っていない。
 - [ ] Notion同期、CharacterPack生成、asset生成、catalog色更新を実行していない。
 - [ ] `config.toml`、Memory、unrelated Session historyをhidden inputにしていない。
+- [ ] 作業について話す声と、納品物へ要求される形式・文体を分け、無目的なCharacter語を成果物へ混入していない。

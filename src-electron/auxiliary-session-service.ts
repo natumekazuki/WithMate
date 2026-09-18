@@ -8,6 +8,7 @@ import type {
   AuxiliarySessionSummary,
   CreateAuxiliarySessionInput,
 } from "../src/auxiliary-session-state.js";
+import { resolveAuxiliaryPreview } from "../src/auxiliary-session-state.js";
 import {
   CODEX_SANDBOX_MODE_VALUES,
   DEFAULT_CODEX_SANDBOX_MODE,
@@ -22,9 +23,12 @@ import {
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
+import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
+import { selectWeightedRandomLaunchCharacterId } from "../src/home/home-launch-state.js";
 import type { Awaitable, AuxiliarySessionStorageAccess } from "./persistent-store-lifecycle-service.js";
 import type { SessionLaunchSelection } from "./session-launch-selection-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
+import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
 
 type AuxiliarySessionServiceDeps = {
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
@@ -32,11 +36,11 @@ type AuxiliarySessionServiceDeps = {
   getParentSession(parentSessionId: string): Awaitable<Session | null>;
   getStorage(): AuxiliarySessionStorageAccess;
   getModelCatalogSnapshot?(): ModelCatalogSnapshot | null;
+  listActiveCharacters(): readonly CharacterCatalogEntry[];
+  createCharacterRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null;
+  randomCharacter?: () => number;
+  runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
 };
-
-function buildAuxiliaryTitle(parent: Session): string {
-  return parent.taskTitle.trim() || "Session";
-}
 
 function buildInterruptedMessages(messages: AuxiliarySession["messages"]): AuxiliarySession["messages"] {
   const interruptedMessage = "前回の Auxiliary 実行はアプリ終了で中断された可能性があります。必要ならもう一度送信してください。";
@@ -144,7 +148,9 @@ export class AuxiliarySessionService {
   }
 
   getAuxiliarySession(auxiliarySessionId: string): AuxiliarySession | null {
-    return this.deps.getStorage().getAuxiliarySession(auxiliarySessionId);
+    const session = this.deps.getStorage().getAuxiliarySession(auxiliarySessionId);
+    if (session) this.assertCharacterSnapshotValid(session);
+    return session;
   }
 
   listRunningActiveAuxiliarySessions(): AuxiliarySessionSummary[] {
@@ -153,7 +159,9 @@ export class AuxiliarySessionService {
 
   async createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession> {
     return this.deps.runProviderRuntimeOperationExclusive(
-      () => this.createAuxiliarySessionExclusive(input),
+      () => this.deps.runCharacterAffectTurnOwnershipExclusive
+        ? this.deps.runCharacterAffectTurnOwnershipExclusive(() => this.createAuxiliarySessionExclusive(input))
+        : this.createAuxiliarySessionExclusive(input),
     );
   }
 
@@ -192,9 +200,15 @@ export class AuxiliarySessionService {
       throw new Error("親セッションが見つからないよ。");
     }
 
-    const currentActive = this.getActiveAuxiliarySession(input.parentSessionId);
-    if (currentActive) {
-      return currentActive;
+    const requestId = input.clientRequestId?.trim() ?? "";
+    if (requestId) {
+      const existing = this.listAuxiliarySessions(input.parentSessionId)
+        .find((summary) => summary.clientRequestId === requestId);
+      if (existing) {
+        return this.getAuxiliarySession(existing.id) ?? (() => {
+          throw new Error("Auxiliary Session の再送対象が見つからないよ。");
+        })();
+      }
     }
 
     const launchSelection = runtimeSelectionMode === "latest-session"
@@ -207,12 +221,13 @@ export class AuxiliarySessionService {
       );
 
     const now = currentTimestampLabel();
+    const characterSelection = this.resolveAuxiliaryCharacter(parent);
     return this.deps.getStorage().upsertAuxiliarySession({
       id: `aux-${randomUUID()}`,
       parentSessionId: parent.id,
       status: "active",
       runState: "idle",
-      title: buildAuxiliaryTitle(parent),
+      title: "",
       provider: launchSelection.provider,
       catalogRevision: launchSelection.catalogRevision,
       model: launchSelection.model,
@@ -230,7 +245,35 @@ export class AuxiliarySessionService {
       createdAt: now,
       updatedAt: now,
       closedAt: "",
+      characterId: characterSelection.characterId,
+      characterRuntimeSnapshot: characterSelection.characterRuntimeSnapshot,
+      characterIconPath: characterSelection.characterRuntimeSnapshot?.iconFilePath ?? "",
+      preview: "",
+      clientRequestId: requestId || undefined,
     });
+  }
+
+  private resolveAuxiliaryCharacter(parent: Session): {
+    characterId?: string;
+    characterRuntimeSnapshot: CharacterRuntimeSnapshot | null;
+  } {
+    const listActiveCharacters = this.deps.listActiveCharacters;
+    const mainCharacterId = parent.characterRuntimeSnapshot?.characterId || parent.characterId;
+    const candidates = listActiveCharacters().filter((entry) => entry.id !== mainCharacterId);
+    const selectedId = selectWeightedRandomLaunchCharacterId(
+      candidates,
+      [],
+      [],
+      this.deps.randomCharacter ?? Math.random,
+    );
+    if (!selectedId) {
+      throw new Error("Auxiliary Session に割り当て可能な Character がないよ。");
+    }
+    const snapshot = this.deps.createCharacterRuntimeSnapshot(selectedId);
+    if (!snapshot || snapshot.characterId !== selectedId) {
+      throw new Error("Auxiliary Session の Character snapshot を作成できないよ。");
+    }
+    return { characterId: selectedId, characterRuntimeSnapshot: snapshot };
   }
 
   private resolveExplicitLaunchSelection(
@@ -267,17 +310,18 @@ export class AuxiliarySessionService {
     return await this.toRuntimeSession(auxiliary);
   }
 
-  upsertAuxiliaryRuntimeSession(runtimeSession: Session): AuxiliarySession {
+  upsertAuxiliaryRuntimeSession(
+    runtimeSession: Session,
+    options: { confirmedFinalAssistantText?: string | null } = {},
+  ): AuxiliarySession {
     const current = this.getAuxiliarySession(runtimeSession.id);
     if (!current) {
       throw new Error("Auxiliary Session が見つからないよ。");
     }
-    if (current.status === "closed") {
-      throw new Error("Closed Auxiliary Session は更新できないよ。");
-    }
-
     return this.deps.getStorage().upsertAuxiliarySession({
       ...current,
+      status: "active",
+      closedAt: "",
       runState:
         runtimeSession.runState === "running" || runtimeSession.runState === "error"
           ? runtimeSession.runState
@@ -296,6 +340,7 @@ export class AuxiliarySessionService {
       threadId: runtimeSession.threadId,
       composerDraft: "",
       messages: runtimeSession.messages,
+      preview: resolveAuxiliaryPreview(runtimeSession.messages, current.preview, options.confirmedFinalAssistantText),
       updatedAt: runtimeSession.updatedAt,
     });
   }
@@ -304,9 +349,6 @@ export class AuxiliarySessionService {
     const current = this.getAuxiliarySession(session.id);
     if (!current) {
       throw new Error("Auxiliary Session が見つからないよ。");
-    }
-    if (current.status === "closed") {
-      throw new Error("Closed Auxiliary Session は更新できないよ。");
     }
     if (current.runState === "running") {
       throw new Error("実行中の Auxiliary Session は更新できないよ。");
@@ -354,6 +396,8 @@ export class AuxiliarySessionService {
 
     return this.deps.getStorage().upsertAuxiliarySession({
       ...current,
+      status: "active",
+      closedAt: "",
       title: shouldPreserveEditableSettings ? current.title : session.title,
       provider: shouldPreserveRuntimeMetadata ? current.provider : session.provider,
       catalogRevision: shouldPreserveRuntimeMetadata ? current.catalogRevision : session.catalogRevision,
@@ -450,7 +494,18 @@ export class AuxiliarySessionService {
       allowedAdditionalDirectories: [...auxiliary.allowedAdditionalDirectories],
       threadId: auxiliary.threadId,
       messages: auxiliary.messages,
+      characterId: auxiliary.characterId ?? parent.characterId,
+      character: auxiliary.characterRuntimeSnapshot?.name ?? parent.character,
+      characterIconPath: auxiliary.characterRuntimeSnapshot?.iconFilePath ?? parent.characterIconPath,
+      characterThemeColors: auxiliary.characterRuntimeSnapshot?.theme ?? parent.characterThemeColors,
+      characterRuntimeSnapshot: auxiliary.characterRuntimeSnapshot ?? parent.characterRuntimeSnapshot,
       stream: [],
     };
+  }
+
+  private assertCharacterSnapshotValid(session: AuxiliarySession): void {
+    if (session.characterRuntimeSnapshotInvalid) {
+      throw new Error("Auxiliary Session の Character snapshot が不正だよ。会話を親 Characterへ差し替えず、再確認が必要です。");
+    }
   }
 }

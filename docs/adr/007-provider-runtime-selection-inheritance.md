@@ -5,7 +5,7 @@
 
 ## Context
 
-New Session と New Companion の launch dialog には、model、reasoning effort、approval mode、sandbox mode、custom agent を表示しない。一方、同じ provider を使う新規作業では、直近 Session の選択を維持したい。
+New Session と New Companion の launch dialog には、model、reasoning effort、approval mode、sandbox mode、Codex Reviewer、Codex Speed、custom agent を表示しない。一方、同じ provider を使う新規作業では、直近 Session の選択を維持したい。
 
 Home が保持する Session summary は Character のランダム選択にも使われるが、固定 Character では読み込み完了を待たない。このキャッシュから実行権限を決めると、未取得または取得失敗時だけ既定値で起動し、直近 Session と異なる権限になる。
 
@@ -14,12 +14,12 @@ Home が保持する Session summary は Character のランダム選択にも�
 ## Decision
 
 - New Session と New Companion の実行設定は、renderer の Home キャッシュではなく、Main Process の共通 service で作成直前に解決する。
-- 選択された有効な provider ごとに、通常 Session storage から Session kind を区別せず、`last_active_at DESC, id DESC` の最新一件だけを取得する。provider の照合は Session summary と同じ正規化規則を使い、legacy の `Codex` も `codex` として扱う。これは既存の model / reasoning effort の継承規則を五項目へ拡張するものである。
-- 最新 Session がある場合は、model、reasoning effort、approval mode、sandbox mode、custom agent の五項目を一組として引き継ぐ。model と reasoning effort は現在の model catalog に対して検証する。
+- 選択された有効な provider ごとに、通常 Session storage から Session kind を区別せず、`last_active_at DESC, id DESC` の最新一件だけを取得する。provider の照合は Session summary と同じ正規化規則を使い、legacy の `Codex` も `codex` として扱う。これは既存の model / reasoning effort の継承規則を七項目へ拡張するものである。
+- 最新 Session がある場合は、model、reasoning effort、approval mode、sandbox mode、Codex Reviewer、Codex Speed、custom agent の七項目を一組として引き継ぐ。model と reasoning effort は現在の model catalog に対して検証する。
 - 保存済みの runtime 値は、legacy approval mode の変換を含む既存の Session summary 正規化を経た値を継承元とする。
-- 履歴がない場合は、model と reasoning effort に provider default、approval mode に `untrusted`、sandbox mode に `workspace-write`、custom agent に未選択を使う。
+- 履歴がない場合は、model と reasoning effort に provider default、approval mode に `untrusted`、sandbox mode に `workspace-write`、Codex Reviewer に `User`、Codex Speed に `Standard`、custom agent に未選択を使う。
 - 最新一件の取得、Session summary への変換、または catalog 検証に失敗した場合は既定値へ戻さず、Session ID 発行、SessionFolder または Companion worktree 作成、Session 永続化より前に作成を失敗させる。
-- New Session / New Companion の作成 request は五項目を受け取らず、Main Process が解決した値だけを永続化する。
+- New Session / New Companion の作成 request は七項目を受け取らず、Main Process が解決した値だけを永続化する。
 - Session Window から Auxiliary Session を作成する場合、renderer は選択 provider と `latest-session` という選択意図だけを送る。Main Process は認証済みの送信元 window 種別と selection mode を結び付け、Session Window からの explicit selection と runtime option の直接指定を拒否する。Companion Review Window では explicit selection だけを許可する。
 - Main Process は共通 service を使って provider 別の最新一件を直接取得し、取得または検証に失敗した場合は Auxiliary ID 発行と永続化より前に作成を中止する。renderer が保持する一覧へは fallback しない。
 - Auxiliary Session の approval mode と sandbox mode は、未指定の場合だけ安全側の既定値を使う。値が存在する場合は現行 enum との完全一致を要求し、空白付き、旧値、型違い、enum 外の値を拒否する。親 Session の値へは fallback しない。
@@ -60,7 +60,7 @@ Main Process 内の追加待機は不要だが、選択後に App Settings ま�
 ### Positive
 
 - Home の履歴読み込み状態にかかわらず、作成時点の直近設定を一貫して使える。
-- Session と Companion で五項目の選択規則と failure semantics が揃う。
+- Session と Companion で七項目の選択規則と failure semantics が揃う。
 - 一件 query だけを追加し、全履歴取得を起動の前提にしない。
 - renderer 由来の不正値や stale cache が実行権限の正本にならない。
 - Auxiliary の malformed IPC 入力が親 Session の強い権限へ変換されない。

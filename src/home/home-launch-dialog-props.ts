@@ -42,7 +42,6 @@ export function buildHomeLaunchDialogProps({
     title: draft.title,
     sessionPurpose: draft.sessionPurpose,
     sessionFolderSelected: projection.sessionFolderSelected,
-    launchWorkspacePathLabel: projection.launchWorkspacePathLabel,
     workspacePathInput: projection.workspacePathInput,
     workspaceValidation: projection.workspaceValidation,
     workspaceValidationMessage: projection.workspaceValidationMessage,

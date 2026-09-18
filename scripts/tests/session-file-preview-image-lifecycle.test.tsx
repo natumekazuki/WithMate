@@ -940,6 +940,110 @@ test("encoding 切替は表示済みの同一 local image を現行 generation �
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "SessionFilePreviewのReload操作はMarkdown画像resolverを現行generationへ再登録し、旧blob URLを解放する"
+// oracle = { type = "contract", ref = "Issue #714: 明示Reload後は現行resourceを再解決し古いresourceを表示しない" }
+// fault = "Reload後に同じMarkdown画像のresolverが再実行されない、旧画像が残る、または旧blob URLが解放されない"
+// observable = "Reload button、画像resolverのinspect回数、画像srcの変化、URL.revokeObjectURL呼出し"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreviewのMarkdown画像Reload lifecycle"
+// lifecycle = "permanent"
+// impact = "明示的な再読込で更新されたローカル画像を表示し、前世代の画像resourceを保持しない"
+// distinction = "encoding変更によるgeneration再登録とは別に、利用者が実際のReload操作を行った経路を観測する"
+// @end-test-value
+test("Markdown File Preview のReloadは同一画像を現行generationへ再登録する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const originalCreateObjectUrl = URL.createObjectURL;
+  const originalRevokeObjectUrl = URL.revokeObjectURL;
+  const revoked: string[] = [];
+  const createdBlobs: Blob[] = [];
+  let objectUrlSequence = 0;
+  URL.createObjectURL = (value) => {
+    createdBlobs.push(value);
+    return `blob:reload-preview-${++objectUrlSequence}`;
+  };
+  URL.revokeObjectURL = (value) => revoked.push(value);
+  const changedImageBytes = Uint8Array.of(137, 80, 78, 71, 1);
+  const changedImageDescriptor: SessionFileDescriptor = {
+    ...IMAGE_DESCRIPTOR,
+    byteLength: changedImageBytes.byteLength,
+    modifiedAt: "2026-08-02T00:01:00.000Z",
+    revision: "image-r2",
+  };
+  const imageReadRevisions: string[] = [];
+  const harness = createPreviewApi(async (callCount) => (
+    callCount === 1 ? IMAGE_DESCRIPTOR : changedImageDescriptor
+  ));
+  const api: PreviewApi = {
+    ...harness.api,
+    async readSessionFileChunk(request) {
+      const source = request.relativePath === MARKDOWN_REQUEST.relativePath
+        ? MARKDOWN_BYTES
+        : request.expectedRevision === changedImageDescriptor.revision
+          ? changedImageBytes
+          : IMAGE_BYTES;
+      if (request.relativePath === IMAGE_DESCRIPTOR.relativePath) {
+        imageReadRevisions.push(request.expectedRevision ?? "");
+      }
+      const chunk = source.slice(request.offset, request.offset + request.length);
+      const nextOffset = request.offset + chunk.byteLength;
+      return {
+        data: copyArrayBuffer(chunk),
+        offset: request.offset,
+        nextOffset,
+        totalBytes: source.byteLength,
+        done: nextOffset >= source.byteLength,
+        revision: request.expectedRevision,
+      };
+    },
+  };
+  const { getImageInspectCount } = harness;
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container);
+    await waitFor(() => container.querySelector("img")?.getAttribute("src")?.startsWith("blob:reload-preview-") ?? false);
+    const firstSource = container.querySelector("img")?.getAttribute("src");
+    const baselineInspectCount = getImageInspectCount();
+    const reload = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Reload");
+    assert.ok(firstSource);
+    assert.ok(reload);
+
+    await act(async () => reload.click());
+    await waitFor(() => getImageInspectCount() >= baselineInspectCount + 1);
+    await waitFor(() => {
+      const nextSource = container.querySelector("img")?.getAttribute("src");
+      return Boolean(nextSource && nextSource !== firstSource);
+    });
+
+    const nextSource = container.querySelector("img")?.getAttribute("src");
+    assert.ok(revoked.includes(firstSource));
+    assert.ok(nextSource);
+    assert.notEqual(nextSource, firstSource);
+    assert.ok(!revoked.includes(nextSource));
+    assert.deepEqual(imageReadRevisions, [IMAGE_DESCRIPTOR.revision, changedImageDescriptor.revision]);
+    assert.equal(createdBlobs.length, 2);
+    assert.deepEqual(Array.from(new Uint8Array(await createdBlobs[0].arrayBuffer())), Array.from(IMAGE_BYTES));
+    assert.deepEqual(Array.from(new Uint8Array(await createdBlobs[1].arrayBuffer())), Array.from(changedImageBytes));
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    URL.createObjectURL = originalCreateObjectUrl;
+    URL.revokeObjectURL = originalRevokeObjectUrl;
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("encoding 切替は実行中の同一 local image も現行 generation へ再登録する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
