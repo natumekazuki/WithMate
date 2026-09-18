@@ -411,6 +411,17 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 
 ## Interaction Notes
 
+### Main／Auxiliaryのスケジュールと共有ActionDock（採用方針・実装追従待ち）
+
+- MainとAuxiliaryでActionDockを共有し、独自composerを追加しない。通常時はMainまたは選択中Auxiliaryを操作対象とする。
+- スケジュール新規作成では開始時の会話ID、編集では保存済みの対象会話IDを固定する。作成・編集中はDock付近に対象会話を簡潔に表示し、送信操作を保存操作へ切り替える。閲覧する会話が変わっても対象を変更しない。
+- 保存またはキャンセルまでDockの操作対象切替を無効にする。同等のshortcutにも適用するが、会話の閲覧自体は禁止しない。終了後は編集対象会話の通常入力へ戻し、そのchat draftと実行設定を復元する。
+- schedule draftは通常入力と独立させ、閲覧中の会話や現在の入力設定で上書きしない。中央surface、左右pane、splitterと既存Dockを維持する。
+- Auxiliaryのスケジュールは安定したAuxiliary IDに結び付け、非表示でも発火対象とする。対象会話が実行中なら共通queueへ渡し、同じ会話のTurnを並列実行しない。対象削除時にMainや別Auxiliaryへ振り替えない。
+- UIの対象表示だけで対応完了としない。対象解決、queue、削除時の扱い、実行認可の接続が必要である。GUIのスケジュール操作とAgentによるスケジュール作成・発火の権限は区別し、Agentの自己宛direct Turn禁止やMain／Auxiliaryの公開権限の未決定事項を変更しない。
+
+以下の既存スケジュール操作規則を共通の基準とする。本節は採用済み設計であり、実装・実描画の確認完了を意味しない。
+
 - Home から Session / Coordination / Settings / Session Monitor を開く
 - Home のスケジュール一覧は全Sessionの状態確認専用とし、各行全体から所有Sessionを開ける。作成、編集、pause、resume、run now、deleteは表示しない
 - Session Headerのschedule iconは中央message listをschedule一覧へ置き換える。一覧中は通常のActionDockを維持し、作成・編集時だけ既存ActionDockをschedule draftのprompt、attachment、Model、Depth、Approval、Sandbox、Custom Agent入力へ切り替える
