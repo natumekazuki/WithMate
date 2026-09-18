@@ -95,11 +95,13 @@ function insertCharacter(dbPath: string, snapshot: CharacterRuntimeSnapshot): vo
   }
 }
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "running turn開始は既存messageとartifact detailと非所有metadataを維持し、user messageとrunning metadataだけを追加する"
 // oracle = { type = "contract", ref = "running-turn-start-persistence#1,#4,#5,#8" }
-// failure_mode = "古いSession snapshotの全体保存によりpin、既存message、artifact detailが上書きまたは欠落する"
+// fault = "古いSession snapshotの全体保存によりpin、既存message、artifact detailが上書きまたは欠落する"
+// observable = "保存後のSession summary、message本文、artifact detail、workspacePath、およびretry時の競合例外"
+// observation_boundary = "component-behavior"
 // scope = "SessionStorageV6.appendRunningTurnStart"
 // lifecycle = "permanent"
 // distinction = "generic upsertのartifact保持ではなく、専用incremental operationの所有範囲とretry競合を同じDB境界で観測する"
@@ -126,6 +128,7 @@ it("running turn開始は既存内容と非所有metadataを保持し、retryを
 
     const storedResult = storage.appendRunningTurnStart({
       sessionId: initial.id,
+      incarnationId: initial.incarnationId,
       expectedMessageCount: 2,
       userMessage: { role: "user", text: "new prompt" },
       updatedAt: "2026-08-30T00:01:00.000Z",
@@ -152,6 +155,7 @@ it("running turn開始は既存内容と非所有metadataを保持し、retryを
     assert.throws(
       () => storage.appendRunningTurnStart({
         sessionId: initial.id,
+        incarnationId: initial.incarnationId,
         expectedMessageCount: 2,
         userMessage: { role: "user", text: "new prompt" },
         updatedAt: "2026-08-30T00:02:00.000Z",
@@ -165,11 +169,13 @@ it("running turn開始は既存内容と非所有metadataを保持し、retryを
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "invalid character-authoring snapshotの専用metadata transactionはsnapshot、relational owner、threadだけをatomicにclearし、message、run state、stable owner、display metadataを維持する"
 // oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
-// failure_mode = "composer前のclearが部分commitするか、user message、running metadata、stable owner、display metadataを変更する"
+// fault = "composer前のclearが部分commitするか、user message、running metadata、stable owner、display metadataを変更する"
+// observable = "clear失敗後と成功後のSession summary、runtime snapshot、thread、message、state、およびruntime policyのDB read-back"
+// observation_boundary = "component-behavior"
 // scope = "SessionStorageV6.clearCharacterAuthoringRuntimeState"
 // lifecycle = "permanent"
 // distinction = "running開始transactionではなく、message tableを触らないvalidation前metadata clearのrollbackとcommitをDB read-backで観測する"
@@ -204,7 +210,7 @@ it("character-authoring runtime metadataだけをatomicにclearしてmessageとr
     }
 
     assert.throws(
-      () => storage.clearCharacterAuthoringRuntimeState({ sessionId: initial.id }),
+      () => storage.clearCharacterAuthoringRuntimeState({ sessionId: initial.id, incarnationId: initial.incarnationId }),
       /authoring runtime clear failed/,
     );
     const rolledBack = storage.getSession(initial.id);
@@ -220,7 +226,7 @@ it("character-authoring runtime metadataだけをatomicにclearしてmessageとr
     } finally {
       cleanupDb.close();
     }
-    const storedResult = storage.clearCharacterAuthoringRuntimeState({ sessionId: initial.id });
+    const storedResult = storage.clearCharacterAuthoringRuntimeState({ sessionId: initial.id, incarnationId: initial.incarnationId });
 
     assert.equal(storedResult.characterRuntimeSnapshot, null);
     assert.equal(storedResult.summary.characterId, oldSnapshot.characterId);
@@ -270,11 +276,13 @@ it("character-authoring runtime metadataだけをatomicにclearしてmessageとr
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
 // claim = "character-authoringのrunning turn開始は最新runtime snapshotと表示metadataをuser messageと同じtransactionへ保存し、中間失敗時は全て戻す"
 // oracle = { type = "contract", ref = "docs/design/character-storage.md#Runtime-Snapshot" }
-// failure_mode = "providerだけ最新snapshotを使ってDBには旧情報が残るか、message失敗時にsnapshotとrunning metadataだけがcommitされる"
+// fault = "providerだけ最新snapshotを使ってDBには旧情報が残るか、message失敗時にsnapshotとrunning metadataだけがcommitされる"
+// observable = "失敗後と成功後のstoredResultおよびhydrated Sessionのsnapshot、表示metadata、message、status、runState"
+// observation_boundary = "component-behavior"
 // scope = "SessionStorageV6.appendRunningTurnStart"
 // lifecycle = "permanent"
 // distinction = "通常Sessionのimmutable snapshotではなく、turnごとに再生成するcharacter-authoring例外をDB read-backで観測する"
@@ -315,6 +323,7 @@ it("character-authoringのrunning turn開始は最新snapshotと表示metadata�
     }
     assert.throws(() => storage.appendRunningTurnStart({
       sessionId: initial.id,
+      incarnationId: initial.incarnationId,
       expectedMessageCount: 1,
       userMessage: { role: "user", text: "new prompt" },
       updatedAt: "2026-08-30T00:01:00.000Z",
@@ -335,6 +344,7 @@ it("character-authoringのrunning turn開始は最新snapshotと表示metadata�
 
     const storedResult = storage.appendRunningTurnStart({
       sessionId: initial.id,
+      incarnationId: initial.incarnationId,
       expectedMessageCount: 1,
       userMessage: { role: "user", text: "new prompt" },
       updatedAt: "2026-08-30T00:01:00.000Z",
@@ -359,11 +369,13 @@ it("character-authoringのrunning turn開始は最新snapshotと表示metadata�
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
 // claim = "character-authoringのsnapshot clear、provider thread clear、running metadata、user messageは同一transactionで成功またはrollbackする"
 // oracle = { type = "contract", ref = "running-turn-start-persistence#1,#2,#6,#8;docs/design/character-storage.md#Runtime-Snapshot" }
-// failure_mode = "message append失敗時にsnapshotまたはthreadだけをclearするか、成功時に古いsnapshotとthreadを残す"
+// fault = "message append失敗時にsnapshotまたはthreadだけをclearするか、成功時に古いsnapshotとthreadを残す"
+// observable = "失敗後と成功後のSession snapshot、thread、summary表示metadata、message、status、runState"
+// observation_boundary = "component-behavior"
 // scope = "SessionStorageV6.appendRunningTurnStart"
 // lifecycle = "permanent"
 // distinction = "snapshot値の更新ではなく、有効なsnapshotからnullへ遷移するtransactionのcommitとrollbackをDB read-backで観測する"
@@ -399,6 +411,7 @@ it("character-authoringのsnapshotとthreadをuser messageとatomicにclearし�
 
     assert.throws(() => storage.appendRunningTurnStart({
       sessionId: initial.id,
+      incarnationId: initial.incarnationId,
       expectedMessageCount: 1,
       userMessage: { role: "user", text: "new prompt" },
       updatedAt: "2026-08-30T00:01:00.000Z",
@@ -422,6 +435,7 @@ it("character-authoringのsnapshotとthreadをuser messageとatomicにclearし�
     }
     const storedResult = storage.appendRunningTurnStart({
       sessionId: initial.id,
+      incarnationId: initial.incarnationId,
       expectedMessageCount: 1,
       userMessage: { role: "user", text: "new prompt" },
       updatedAt: "2026-08-30T00:01:00.000Z",
@@ -446,11 +460,13 @@ it("character-authoringのsnapshotとthreadをuser messageとatomicにclearし�
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
 // claim = "snapshot clearを要求したrunning turn開始でmessage sequenceが不一致ならsnapshot、thread、messages、running metadataを変更しない"
 // oracle = { type = "contract", ref = "running-turn-start-persistence#2,#8" }
-// failure_mode = "競合検出より先にsnapshotまたはthreadをclearし、user messageなしのpartial stateを残す"
+// fault = "競合検出より先にsnapshotまたはthreadをclearし、user messageなしのpartial stateを残す"
+// observable = "sequence conflict後にread-backしたSession snapshot、thread、message、status、runState"
+// observation_boundary = "component-behavior"
 // scope = "SessionStorageV6.appendRunningTurnStart"
 // lifecycle = "permanent"
 // distinction = "message INSERT failureではなく、transaction内のsequence precondition failure timingを観測する"
@@ -472,6 +488,7 @@ it("snapshot clearを含むrunning turn開始のsequence conflictはsnapshotとt
 
     assert.throws(() => storage.appendRunningTurnStart({
       sessionId: initial.id,
+      incarnationId: initial.incarnationId,
       expectedMessageCount: 0,
       userMessage: { role: "user", text: "new prompt" },
       updatedAt: "2026-08-30T00:01:00.000Z",
@@ -490,11 +507,13 @@ it("snapshot clearを含むrunning turn開始のsequence conflictはsnapshotとt
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "snapshot入力のundefinedは既存値を保持し、snapshot値またはnullを所有できるのはcharacter-authoring Sessionだけである"
 // oracle = { type = "contract", ref = "running-turn-start-persistence#7,#8" }
-// failure_mode = "undefinedをclearとして扱うか、通常Sessionのimmutable snapshotをrunning開始境界から更新またはclearする"
+// fault = "undefinedをclearとして扱うか、通常Sessionのimmutable snapshotをrunning開始境界から更新またはclearする"
+// observable = "authoring Sessionのsnapshot/thread保持結果、通常Sessionの拒否例外、および拒否後のsnapshot/thread/message/status"
+// observation_boundary = "component-behavior"
 // scope = "SessionStorageV6.appendRunningTurnStart"
 // lifecycle = "permanent"
 // distinction = "authoringのvalue/null更新ではなく、三状態入力の非所有状態とSession kindによる拒否を観測する"
@@ -516,6 +535,7 @@ it("snapshot入力のundefinedは既存値を保持し、通常Sessionのvalue�
     });
     storage.appendRunningTurnStart({
       sessionId: authoring.id,
+      incarnationId: authoring.incarnationId,
       expectedMessageCount: 1,
       userMessage: { role: "user", text: "new prompt" },
       updatedAt: "2026-08-30T00:01:00.000Z",
@@ -532,6 +552,7 @@ it("snapshot入力のundefinedは既存値を保持し、通常Sessionのvalue�
     for (const snapshotInput of [freshSnapshot, null] as const) {
       assert.throws(() => storage.appendRunningTurnStart({
         sessionId: defaultSession.id,
+        incarnationId: defaultSession.incarnationId,
         expectedMessageCount: 0,
         userMessage: { role: "user", text: "must reject" },
         updatedAt: "2026-08-30T00:01:00.000Z",
@@ -549,11 +570,13 @@ it("snapshot入力のundefinedは既存値を保持し、通常Sessionのvalue�
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "running metadata更新またはuser message追加が失敗するとtransaction全体がrollbackされる"
 // oracle = { type = "contract", ref = "running-turn-start-persistence#1,#2" }
-// failure_mode = "transaction中間の失敗でrunning metadataまたはuser messageの片方だけが永続化される"
+// fault = "transaction中間の失敗でrunning metadataまたはuser messageの片方だけが永続化される"
+// observable = "metadataまたはmessageの書き込み失敗後にread-backしたSession status、runState、updatedAt、messages"
+// observation_boundary = "component-behavior"
 // scope = "SessionStorageV6.appendRunningTurnStart"
 // lifecycle = "permanent"
 // distinction = "metadata failureとmessage append failureの両方でcommit前のDB postconditionを観測する"
@@ -589,6 +612,7 @@ it("running turn開始はmetadataまたはmessage書き込み失敗時に全体�
 
       assert.throws(() => storage.appendRunningTurnStart({
         sessionId: initial.id,
+        incarnationId: initial.incarnationId,
         expectedMessageCount: 1,
         userMessage: { role: "user", text: "must rollback" },
         updatedAt: "2026-08-30T00:01:00.000Z",
@@ -606,11 +630,13 @@ it("running turn開始はmetadataまたはmessage書き込み失敗時に全体�
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
 // claim = "snapshot clearを含むrunning turn開始のmessage write量は既存履歴件数にかかわらずINSERT 1件、DELETE 0件、UPDATE 0件である"
 // oracle = { type = "contract", ref = "running-turn-start-persistence#3,#4,#8" }
-// failure_mode = "snapshot clearでgeneric upsertへ戻り、長いSessionほど既存messageの削除、再挿入、更新が増える"
+// fault = "snapshot clearでgeneric upsertへ戻り、長いSessionほど既存messageの削除、再挿入、更新が増える"
+// observable = "短い履歴と長い履歴で取得したrunning_start_write_metricsのinsert、delete、update、session update件数"
+// observation_boundary = "component-behavior"
 // scope = "SessionStorageV6.appendRunningTurnStart"
 // lifecycle = "permanent"
 // distinction = "通常のundefined入力ではなく、問題になったauthoring snapshot clearをDB triggerでshort/long比較する"
@@ -657,6 +683,7 @@ it("snapshot clearを含むrunning turn開始のmessage write件数はshortとlo
         const startedAt = performance.now();
         storage.appendRunningTurnStart({
           sessionId: session.id,
+          incarnationId: session.incarnationId,
           expectedMessageCount: historyMessageCount,
           userMessage: { role: "user", text: "new prompt" },
           updatedAt: "2026-08-30T00:01:00.000Z",

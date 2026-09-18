@@ -64,6 +64,7 @@ export type SessionAccessMode = typeof SESSION_ACCESS_MODE_VALUES[number];
 
 export type Session = {
   id: string;
+  incarnationId?: string;
   taskTitle: string;
   status: "running" | "idle" | "saved";
   updatedAt: string;
@@ -385,6 +386,10 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
 
   return {
     id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `legacy-${Date.now()}`,
+    incarnationId:
+      typeof candidate.incarnationId === "string" && candidate.incarnationId.trim()
+        ? candidate.incarnationId.trim()
+        : undefined,
     taskTitle:
       typeof candidate.taskTitle === "string" && candidate.taskTitle.trim()
         ? candidate.taskTitle
@@ -453,6 +458,10 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
           ? (candidate as { threadLabel?: string }).threadLabel ?? ""
           : "",
   };
+}
+
+export function getSessionIncarnationId(session: Pick<Session, "id" | "incarnationId">): string {
+  return session.incarnationId?.trim() || `legacy:${session.id}`;
 }
 
 export function normalizeSessionSummary(value: unknown): SessionSummary | null {
@@ -707,6 +716,7 @@ export function getDiffTokenFromLocation(): string | null {
 export function buildSessionSummarySignature(summary: SessionSummary): string {
   return [
     summary.id,
+    getSessionIncarnationId(summary),
     summary.updatedAt,
     String(summary.isPinned),
     summary.status,

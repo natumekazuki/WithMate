@@ -52,6 +52,7 @@ import {
 } from "../src/app-state.js";
 import {
   type DiffPreviewPayload,
+  getSessionIncarnationId,
   type MessageArtifact,
   type Session,
 } from "../src/session-state.js";
@@ -2526,6 +2527,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
           correlationId,
           characterId: session.characterId,
           sessionId: session.id,
+          sessionIncarnationId: getSessionIncarnationId(session),
           userMessage,
           assistantMessage,
           assistantMessageIndex,
@@ -3190,6 +3192,7 @@ function closePersistentStores(): void {
   stopWalMaintenance();
   characterAffectTurnSettlementStorage?.close();
   characterAffectTurnSettlementStorage = null;
+  characterAffectTurnDrainCursor = undefined;
   promptTemplateStorage?.close();
   companionStorage?.close();
   companionAuditLogStorage?.close();
@@ -3254,6 +3257,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   stopWalMaintenance();
   characterAffectTurnSettlementStorage?.close();
   characterAffectTurnSettlementStorage = null;
+  characterAffectTurnDrainCursor = undefined;
   await requireMateStorage().deleteMateProjectionDirectory();
   mateProfileItemStorage?.close();
   mateProfileItemStorage = null;

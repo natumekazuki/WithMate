@@ -691,6 +691,7 @@ export const CREATE_V6_PROJECT_SCOPES_TABLE_SQL = `
 export const CREATE_V6_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS sessions_v6 (
     id TEXT PRIMARY KEY,
+    incarnation_id TEXT NOT NULL DEFAULT '',
     title TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('active', 'completed', 'failed', 'archived')),
     session_kind TEXT NOT NULL DEFAULT 'default',
@@ -1441,6 +1442,11 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   if (!sessionColumns.has("is_pinned")) {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1));");
   }
+
+  if (!sessionColumns.has("incarnation_id")) {
+    db.exec("ALTER TABLE sessions_v6 ADD COLUMN incarnation_id TEXT NOT NULL DEFAULT '';");
+  }
+  db.exec("UPDATE sessions_v6 SET incarnation_id = 'legacy:' || id WHERE TRIM(COALESCE(incarnation_id, '')) = '';");
 
   if (!tableExists(db, "auxiliary_sessions")) {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);

@@ -24,6 +24,8 @@ V5以前のsession / legacy Memory / Growth互換を引き継がず、Character-
 
 ## Migration Boundary
 
+V6 内の Session owner identity は `sessions_v6.incarnation_id` で保持する。同じ ID の削除・再作成では別 incarnation とし、既存行限定保存と Affect owner 検証に用いる。既存 V6 行と旧 pending の追加列 migration は `database-schema.md`、保存時の契約は `session-run-lifecycle.md` を参照する。
+
 V6はV5以前DBをin-place更新しない。
 V6 runtimeに必要な継続データだけを新規V6 DBへ自動移行し、V5以前のsession履歴、legacy Memory、Growth、provider instruction projectionは保持要件にしない。
 旧DBは移行元またはbackup sourceとして残してよいが、V6 runtimeの正本にはしない。

@@ -22,6 +22,8 @@ WithMate が現在どこに何を保存しているかを、1 枚で把握でき
 
 ## Column Conventions
 
+V6 Session は `sessions_v6.incarnation_id` で同じ ID の削除・再作成を区別する。新規行は UUID、既存行の schema 更新は `legacy:<id>` を設定し、更新・一括置換で残る行は値を保持する。`character_affect_turn_settlements.session_incarnation_id` は評価対象の行 identity を保持し、旧 pending の NULL は `legacy:<session_id>` と解釈する。既存 V6 DB 内の追加列 migration であり、本文や既存 correlation fingerprint は変更しない。
+
 新規の first-class entity table は、原則として `id`、`created_at`、`updated_at` を持つ。
 
 - `created_at`: row の生成時刻。復元順、履歴表示、debug の基準に使う。

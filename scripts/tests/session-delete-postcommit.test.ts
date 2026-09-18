@@ -18,10 +18,10 @@ function deferred() {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "単体・期間削除のprovider後処理待機中にも別Session削除が完了し、削除済みDB・cacheと親子binding失効は維持される。後処理失敗は子の後処理も試みた上で呼出元へ返す"
+// claim = "単体・期間削除のprovider後処理待機中にも別Session削除が完了し、親子bindingを失効する。後処理は同じIDで再作成されたDB・cache・runtimeを壊さず、失敗を呼出元へ返す"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-delete" }
-// fault = "provider待機がownershipを占有して別削除を止める、削除投影やbinding失効を遅延させる、または後処理失敗を隠すか子の後処理を省く"
-// observable = "barrier解放前の別削除結果、SQLite行・cache・binding失効・window close・broadcast、後処理呼出先と削除結果またはAggregateError"
+// fault = "provider待機がownershipを占有して別削除を止める、削除投影やbinding失効を遅延させる、後処理が新ownerのruntimeを無効化する、または失敗を隠すか子の後処理を省く"
+// observable = "barrier解放前の別削除結果、SQLite行・cache・binding失効・window close・broadcast、runtime detach先、再作成行の不変、削除結果またはAggregateError"
 // observation_boundary = "public-boundary"
 // scope = "SessionPersistenceServiceと実ownership coordinator・V6 DBによる削除commitとprovider後処理の境界"
 // lifecycle = "permanent"
@@ -52,6 +52,8 @@ it("deletion commits before provider cleanup and releases ownership for unrelate
         const closed: string[] = [];
         const broadcasts: string[][] = [];
         const invalidated: string[] = [];
+        const runtimeOwners = new Map([[first.id, "old-parent"], ["first-child", "old-child"], [second.id, "other"]]);
+        const detachedOwners: string[] = [];
         const failure = new Error("provider cleanup failed");
         const service = new SessionPersistenceService({
           ...createSessionStorageCommandAdapter(() => storage),
@@ -76,6 +78,8 @@ it("deletion commits before provider cleanup and releases ownership for unrelate
           runCharacterAffectTurnOwnershipExclusive: (operation) => ownership.runExclusive(operation),
           invalidateProviderSessionThread: async (_provider, id) => {
             invalidated.push(id);
+            detachedOwners.push(runtimeOwners.get(id) ?? "missing");
+            runtimeOwners.delete(id);
             if (id === first.id) {
               entered.resolve();
               await release.promise;
@@ -96,6 +100,9 @@ it("deletion commits before provider cleanup and releases ownership for unrelate
         assert.deepEqual(broadcasts, [[first.id]]);
         assert.deepEqual((await service.deleteSession(second.id)).deletedSessionIds, [second.id]);
         assert.deepEqual(storage.listSessions(), []);
+        const replacement = await service.upsertSession(makeSession(first.id, first.updatedAt), "create");
+        runtimeOwners.set(first.id, "new-parent");
+        runtimeOwners.set("first-child", "new-child");
         release.resolve();
         const completed = await outcome;
         assert.deepEqual([...invalidated].sort(), [first.id, second.id, "first-child"].sort());
@@ -107,8 +114,10 @@ it("deletion commits before provider cleanup and releases ownership for unrelate
           assert.deepEqual(completed.result?.deletedSessionIds, [first.id]);
           assert.deepEqual(completed.result?.deletedAuxiliarySessionIds, ["first-child"]);
         }
-        assert.deepEqual(cached, []);
-        assert.deepEqual(storage.listSessions(), []);
+        assert.deepEqual([...detachedOwners].sort(), ["old-parent", "old-child", "other"].sort());
+        assert.deepEqual([...runtimeOwners], [[first.id, "new-parent"], ["first-child", "new-child"]]);
+        assert.equal(cached[0]?.incarnationId, replacement.incarnationId);
+        assert.deepEqual(storage.getSession(first.id), replacement);
       } finally {
         release.resolve();
         storage.close();

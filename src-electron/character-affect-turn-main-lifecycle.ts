@@ -1,7 +1,7 @@
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { ProviderBackgroundAdapter } from "./provider-runtime.js";
 import type { AppLogService } from "./app-log-service.js";
-import type { Session } from "../src/session-state.js";
+import { getSessionIncarnationId, type Session } from "../src/session-state.js";
 import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 import { CHARACTER_CONTEXT_SCHEMA_VERSION, isCharacterContextError } from "../src/character-context/character-context-contract.js";
 import {
@@ -234,6 +234,7 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
           const currentSession = await deps.getSession(request.session.id);
           return Boolean(
             currentSession
+            && getSessionIncarnationId(currentSession) === getSessionIncarnationId(request.session)
             && currentSession.characterId === request.session.characterId
             && hasCommittedAssistantMessage(currentSession.messages, request),
           );
@@ -290,6 +291,7 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
     const settlementStorage = requireStorage();
     const result = await drainCharacterAffectTurnSettlementBatch({
       storage: settlementStorage,
+      isCurrentGeneration: () => settlementStorage === deps.getSettlementStorage(),
       startupRecoveryCutoff: deps.startupRecoveryCutoff,
       readyCursor: deps.getDrainCursor(),
       getSession: deps.getSession,

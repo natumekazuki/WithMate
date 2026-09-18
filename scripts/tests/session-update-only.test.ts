@@ -83,7 +83,7 @@ describe("Session update-only persistence", () => {
   // kind = "invariant"
   // claim = "既存Session限定のupdateは削除後にSessionを復活させない"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-delete" }
-  // fault = "削除後のstale updateがupsertとして行とmessageを再作成する"
+  // fault = "削除後のstale updateがupsertとしてSession行を再作成する"
   // observable = "updateのSessionNotFoundErrorとlistSessionsの結果"
   // observation_boundary = "public-boundary"
   // scope = "session-storage-v6-update-only"
@@ -95,11 +95,11 @@ describe("Session update-only persistence", () => {
     await withStorage(async (storage) => {
       const session = createSession("deleted-before-update");
       const commands = createSessionStorageCommandAdapter(() => storage);
-      commands.upsertStoredSession(session, "create");
+      const storedSession = commands.upsertStoredSession(session, "create") as Session;
       storage.deleteSession(session.id);
 
       assert.throws(
-        () => commands.upsertStoredSession({ ...session, taskTitle: "stale update" }, "upsert"),
+        () => commands.upsertStoredSession({ ...storedSession, taskTitle: "stale update" }, "upsert"),
         (error: unknown) => error instanceof Error && error.name === "SessionNotFoundError",
       );
       assert.deepEqual(storage.listSessions(), []);
@@ -123,19 +123,19 @@ describe("Session update-only persistence", () => {
       for (const deletion of ["single", "cutoff"] as const) {
         const session = createSession(`race-${deletion}`);
         const commands = createSessionStorageCommandAdapter(() => storage);
-        commands.upsertStoredSession(session, "create");
+        const storedSession = commands.upsertStoredSession(session, "create") as Session;
         let release!: () => void;
         let reached!: () => void;
         const reachedPromise = new Promise<void>((resolve) => { reached = resolve; });
         const barrier = new Promise<void>((resolve) => { release = resolve; });
-        const sharedState = { cached: [session], revoked: [] as string[], broadcasts: [] as string[][] };
-        const { service, getCached } = createService(storage, session, async (next, operation) => {
+        const sharedState = { cached: [storedSession], revoked: [] as string[], broadcasts: [] as string[][] };
+        const { service, getCached } = createService(storage, storedSession, async (next, operation) => {
           assert.equal(operation, "upsert");
           reached();
           await barrier;
           return commands.upsertStoredSession(next, operation);
         }, sharedState);
-        const update = service.updateSession({ ...session, taskTitle: "stale update" });
+        const update = service.updateSession({ ...storedSession, taskTitle: "stale update" });
         await reachedPromise;
         const deleteResult = deletion === "single"
           ? await service.deleteSession(session.id)
@@ -174,21 +174,72 @@ describe("Session update-only persistence", () => {
     await withStorage(async (storage) => {
       const session = createSession("successful-adapter-update");
       const commands = createSessionStorageCommandAdapter(() => storage);
-      commands.upsertStoredSession(session, "create");
-      const sharedState = { cached: [session], revoked: [] as string[], broadcasts: [] as string[][] };
+      const storedSession = commands.upsertStoredSession(session, "create") as Session;
+      const sharedState = { cached: [storedSession], revoked: [] as string[], broadcasts: [] as string[][] };
       const { service, getCached } = createService(
         storage,
-        session,
+        storedSession,
         async (next, operation) => commands.upsertStoredSession(next, operation),
         sharedState,
       );
 
-      const updated = await service.updateSession({ ...session, taskTitle: "updated through adapter" });
+      const updated = await service.updateSession({ ...storedSession, taskTitle: "updated through adapter" });
 
       assert.equal(updated.taskTitle, "updated through adapter");
       assert.equal(getCached()[0]?.taskTitle, "updated through adapter");
-      assert.deepEqual(sharedState.broadcasts, [[session.id]]);
+      assert.deepEqual(sharedState.broadcasts, [[storedSession.id]]);
       assert.equal(storage.getSession(session.id)?.taskTitle, "updated through adapter");
+    });
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "同じSession IDを再利用した場合、旧incarnationの通常更新とterminal保存は新しい行へ適用されない"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-delete" }
+  // fault = "削除後に同じIDで再作成されたSessionへstale updateまたはterminal commitが本文・threadを上書きする"
+  // observable = "incarnationIdの差異、旧更新と旧terminal保存の拒否、新行・running marker・cache・broadcastの不変、現行incarnationによる更新成功"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-incarnation-update-only"
+  // lifecycle = "permanent"
+  // impact = "削除済みSessionのstale処理が新しい会話へ混入することを防ぐ"
+  // distinction = "同じID・同じupdatedAt・同じ内容を再利用したABA競合を、通常更新とterminal保存の両方で確認する"
+  // @end-test-value
+  it("rejects stale updates after same-id session recreation", async () => {
+    await withStorage(async (storage, dbPath) => {
+      const first = storage.insertSession(createSession("same-id-recreated"));
+      const commands = createSessionStorageCommandAdapter(() => storage);
+      const { service, state } = createService(storage, first,
+        async (next, operation) => commands.upsertStoredSession(next, operation),
+        undefined, async (next, commit) => commands.upsertStoredTerminalSession(next, commit));
+      await service.deleteSession(first.id);
+      const recreated = await service.upsertSession({ ...first }, "create");
+      const broadcastsBefore = structuredClone(state.broadcasts);
+      const cacheBefore = structuredClone(state.cached);
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare(`INSERT INTO session_turns_v6 (session_id, phase, started_at, updated_at)
+          VALUES (?, 'running', ?, ?)`).run(first.id, first.updatedAt, first.updatedAt);
+        const marker = db.prepare("SELECT id, phase FROM session_turns_v6 WHERE session_id = ?").get(first.id) as { id: number; phase: string };
+        assert.notEqual(first.incarnationId, recreated.incarnationId);
+        await assert.rejects(service.updateSession({ ...first, taskTitle: "stale update" }),
+          (error: unknown) => error instanceof Error && error.name === "SessionNotFoundError");
+        await assert.rejects(service.upsertTerminalSession({ ...first, threadId: "stale-thread" }, {
+          auditLogId: marker.id,
+          sessionId: first.id,
+          phase: "completed",
+          assistantMessageSeq: 0,
+          threadId: "stale-thread",
+          errorMessage: "",
+          completedAt: first.updatedAt,
+        }), (error: unknown) => error instanceof Error && error.name === "SessionNotFoundError");
+        assert.deepEqual(storage.getSession(recreated.id), recreated);
+        assert.deepEqual(db.prepare("SELECT id, phase FROM session_turns_v6 WHERE session_id = ?").get(first.id), marker);
+        assert.deepEqual(state.cached, cacheBefore);
+        assert.deepEqual(state.broadcasts, broadcastsBefore);
+        const updated = await service.updateSession({ ...recreated, taskTitle: "fresh update" });
+        assert.equal(updated.taskTitle, "fresh update");
+        assert.equal(updated.incarnationId, recreated.incarnationId);
+      } finally { db.close(); }
     });
   });
 
@@ -208,8 +259,8 @@ describe("Session update-only persistence", () => {
     await withStorage(async (storage, dbPath) => {
       const session = createSession("terminal-owner");
       const commands = createSessionStorageCommandAdapter(() => storage);
-      commands.upsertStoredSession(session, "create");
-      const sharedState = { cached: [session], revoked: [] as string[], broadcasts: [] as string[][] };
+      const storedSession = commands.upsertStoredSession(session, "create") as Session;
+      const sharedState = { cached: [storedSession], revoked: [] as string[], broadcasts: [] as string[][] };
       const db = new DatabaseSync(dbPath);
       try {
         db.prepare(`
@@ -230,25 +281,27 @@ describe("Session update-only persistence", () => {
         };
         const { service, getCached } = createService(
           storage,
-          session,
+          storedSession,
           async (next, operation) => commands.upsertStoredSession(next, operation),
           sharedState,
           async (next, terminalCommit) => commands.upsertStoredTerminalSession(next, terminalCommit),
         );
-        await service.upsertTerminalSession({ ...session, threadId: commit.threadId }, commit);
+        await service.upsertTerminalSession({ ...storedSession, threadId: commit.threadId }, commit);
         assert.equal(storage.getSession(session.id)?.threadId, commit.threadId);
         assert.equal(getCached()[0]?.threadId, commit.threadId);
         assert.deepEqual(sharedState.broadcasts, [[session.id]]);
         assert.equal((db.prepare("SELECT phase FROM session_turns_v6 WHERE id = ?").get(turnId) as { phase: string }).phase, "completed");
+        const markerBeforeMismatch = db.prepare("SELECT * FROM session_turns_v6 WHERE id = ?").get(turnId);
         await assert.rejects(
-          service.upsertTerminalSession({ ...session, threadId: "uncommitted-thread" }, commit),
+          service.upsertTerminalSession({ ...storedSession, threadId: "uncommitted-thread" }, commit),
           /terminal commit target mismatch/,
         );
+        assert.deepEqual(db.prepare("SELECT * FROM session_turns_v6 WHERE id = ?").get(turnId), markerBeforeMismatch);
         assert.equal(storage.getSession(session.id)?.threadId, commit.threadId);
         assert.equal(getCached()[0]?.threadId, commit.threadId);
         assert.deepEqual(sharedState.broadcasts, [[session.id]]);
         await service.deleteSession(session.id);
-        await assert.rejects(service.upsertTerminalSession(session, commit), /対象セッションが見つからないよ/);
+        await assert.rejects(service.upsertTerminalSession(storedSession, commit), /対象セッションが見つからないよ/);
         assert.equal(storage.getSession(session.id), null);
         assert.deepEqual(getCached(), []);
         assert.deepEqual(sharedState.broadcasts, [[session.id], [session.id]]);

@@ -25,7 +25,7 @@ import type {
   DeleteSessionsLastActiveBeforeCutoff,
   DeleteSessionsResult,
 } from "../src/withmate-window-types.js";
-import { SessionIdCollisionError } from "./session-storage-errors.js";
+import { SessionIdCollisionError, SessionNotFoundError } from "./session-storage-errors.js";
 import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import type {
@@ -103,7 +103,7 @@ function assertSessionWritable(session: Session): void {
 
 type CommittedSessionDeletion = {
   result: DeleteSessionsResult;
-  runtimeIdentities: { id: string; provider: string | null }[];
+  providerCleanup: Promise<PromiseSettledResult<void>>[];
 };
 
 export class SessionPersistenceService {
@@ -176,7 +176,7 @@ export class SessionPersistenceService {
   async updateSession(nextSession: Session): Promise<Session> {
     const currentSession = this.deps.getSession(nextSession.id);
     if (!currentSession) {
-      throw new Error("対象セッションが見つからないよ。");
+      throw new SessionNotFoundError(nextSession.id);
     }
 
     assertSessionWritable(currentSession);
@@ -253,14 +253,8 @@ export class SessionPersistenceService {
   }
 
   private async finishSessionDeletion(committed: CommittedSessionDeletion): Promise<DeleteSessionsResult> {
-    const failures: unknown[] = [];
-    for (const identity of committed.runtimeIdentities) {
-      try {
-        await this.deps.invalidateProviderSessionThread(identity.provider, identity.id);
-      } catch (error) {
-        failures.push(error);
-      }
-    }
+    const results = await Promise.all(committed.providerCleanup);
+    const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
     if (failures.length > 0) {
       throw new AggregateError(failures, "Session は削除済みですが、provider thread の後処理に失敗しました。");
     }
@@ -318,7 +312,7 @@ export class SessionPersistenceService {
           deletedAuxiliarySessionIds: [],
           skippedRunningSessionIds,
         },
-        runtimeIdentities: [],
+        providerCleanup: [],
       };
     }
 
@@ -333,7 +327,7 @@ export class SessionPersistenceService {
     }
     const deletableSessionIdSet = new Set(deletableSessionIds);
     this.deps.setSessions(this.deps.getSessions().filter((entry) => !deletableSessionIdSet.has(entry.id)));
-    const runtimeIdentities: CommittedSessionDeletion["runtimeIdentities"] = [];
+    const runtimeIdentities: { id: string; provider: string | null }[] = [];
 
     for (const sessionId of deletableSessionIds) {
       const deletedSession = currentSessionsById.get(sessionId);
@@ -360,6 +354,19 @@ export class SessionPersistenceService {
 
     this.deps.broadcastSessions(deletableSessionIds);
 
+    // Detach every old runtime synchronously before the ownership boundary opens.
+    // Provider adapters capture old resources before their first asynchronous wait.
+    const providerCleanup = runtimeIdentities.map((identity): Promise<PromiseSettledResult<void>> => {
+      try {
+        return Promise.resolve(this.deps.invalidateProviderSessionThread(identity.provider, identity.id)).then(
+          () => ({ status: "fulfilled", value: undefined }),
+          (reason: unknown) => ({ status: "rejected", reason }),
+        );
+      } catch (reason) {
+        return Promise.resolve({ status: "rejected", reason });
+      }
+    });
+
     return {
       result: {
         cutoffDate: options.cutoff?.cutoffDate,
@@ -368,7 +375,7 @@ export class SessionPersistenceService {
         deletedAuxiliarySessionIds,
         skippedRunningSessionIds,
       },
-      runtimeIdentities,
+      providerCleanup,
     };
   }
 
@@ -411,6 +418,7 @@ export class SessionPersistenceService {
 
       const storedResult = await this.deps.appendStoredRunningTurnStart({
         sessionId: nextSession.id,
+        incarnationId: nextSession.incarnationId,
         expectedMessageCount,
         userMessage,
         updatedAt: nextSession.updatedAt,
@@ -448,6 +456,7 @@ export class SessionPersistenceService {
 
       const storedResult = await this.deps.clearStoredCharacterAuthoringRuntimeState({
         sessionId: nextSession.id,
+        incarnationId: nextSession.incarnationId,
       });
       const stored = cloneSessions([{
         ...nextSession,
