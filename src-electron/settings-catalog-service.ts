@@ -348,6 +348,9 @@ export class SettingsCatalogService {
     }
 
     let importedSnapshot: ModelCatalogSnapshot | null = null;
+    let sessionReplacementAttempted = false;
+    let auxiliaryReplacementAttempted = false;
+    let companionReplacementAttempted = false;
     try {
       importedSnapshot = this.deps.importModelCatalogDocument(normalizedDocument, "imported");
       const nextSnapshot = importedSnapshot;
@@ -367,12 +370,17 @@ export class SettingsCatalogService {
         previousCompanionSessions,
         migratedCompanionSessions,
       );
+      sessionReplacementAttempted = true;
       await this.deps.replaceAllSessions(migratedSessions, {
         broadcast: false,
         invalidateSessionIds: invalidatedSessionIds,
       });
+      auxiliaryReplacementAttempted = true;
       await this.deps.replaceAuxiliarySessions(migratedAuxiliarySessions);
-      await this.deps.replaceCompanionSessions?.(migratedCompanionSessions);
+      if (this.deps.replaceCompanionSessions) {
+        companionReplacementAttempted = true;
+        await this.deps.replaceCompanionSessions(migratedCompanionSessions);
+      }
       for (const sessionId of invalidatedAuxiliarySessionIds) {
         const sessionProvider = previousAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
         await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
@@ -391,9 +399,15 @@ export class SettingsCatalogService {
 
       try {
         this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
-        await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
-        await this.deps.replaceAuxiliarySessions(previousAuxiliarySessions);
-        await this.deps.replaceCompanionSessions?.(previousCompanionSessions);
+        if (sessionReplacementAttempted) {
+          await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
+        }
+        if (auxiliaryReplacementAttempted) {
+          await this.deps.replaceAuxiliarySessions(previousAuxiliarySessions);
+        }
+        if (companionReplacementAttempted) {
+          await this.deps.replaceCompanionSessions?.(previousCompanionSessions);
+        }
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],

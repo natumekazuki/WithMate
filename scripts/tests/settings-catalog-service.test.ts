@@ -1773,3 +1773,106 @@ describe("SettingsCatalogService", () => {
   });
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "catalog import の失敗時は試行済み collection を復元し、未試行 collection の並行更新・削除を保持する"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+// fault = "先行 collection の保存失敗で未試行 collection まで古い snapshot に置換される"
+// observable = "失敗後の各 collection、catalog rollback、元の例外と rollback 失敗の伝播"
+// observation_boundary = "component-behavior"
+// scope = "catalog-import-rollback-ownership"
+// lifecycle = "permanent"
+// impact = "catalog import の失敗で無関係な会話更新が失われ、削除済み会話が復活する"
+// distinction = "制御した非同期保存失敗と並行変更の組合せは正常系 test や型検査では検出できない"
+// @end-test-value
+it("catalog import の rollback は試行済み collection に限定する", { timeout: 10_000 }, async () => {
+  for (const failedCollection of ["main", "auxiliary", "companion"] as const) {
+    for (const rollbackFails of [false, true]) {
+      const original = {
+        main: [createSession()],
+        auxiliary: [createAuxiliarySession()],
+        companion: [createCompanionSession(), createCompanionSession({ id: "companion-2" })],
+      };
+      const current = structuredClone(original);
+      const entered = createDeferred();
+      const resume = createDeferred();
+      const importError = new Error("import replacement failed");
+      const rollbackError = new Error("rollback failed");
+      const sources: string[] = [];
+      let rollingBack = false;
+      let catalog = createCatalogSnapshot(1);
+      const replace = async <K extends keyof typeof current>(key: K, rows: typeof current[K]) => {
+        current[key] = rows;
+        if (!rollingBack && key === failedCollection) {
+          entered.resolve();
+          await resume.promise;
+          rollingBack = true;
+          throw importError;
+        }
+        if (rollingBack && rollbackFails && key === failedCollection) {
+          throw rollbackError;
+        }
+        return rows;
+      };
+      const service = new SettingsCatalogService({
+        hasInFlightSessionRuns: () => false,
+        isSessionRunInFlight: () => false,
+        isRunningSession: () => false,
+        listSessions: () => current.main,
+        listAuxiliarySessions: () => current.auxiliary,
+        listCompanionSessions: () => current.companion,
+        getAppSettings: createDefaultAppSettings,
+        updateAppSettings: (settings) => settings,
+        getModelCatalog: () => catalog,
+        ensureModelCatalogSeeded: () => catalog,
+        importModelCatalogDocument(document, source) {
+          sources.push(source);
+          catalog = { revision: source === "rollback" ? 3 : 2, providers: document.providers };
+          return catalog;
+        },
+        exportModelCatalogDocument: () => ({ providers: catalog.providers }),
+        replaceAllSessions: (rows) => replace("main", rows),
+        replaceAuxiliarySessions: (rows) => replace("auxiliary", rows),
+        replaceCompanionSessions: (rows) => replace("companion", rows),
+        clearProviderQuotaTelemetry() {},
+        clearSessionContextTelemetry() {},
+        invalidateProviderSessionThread() {},
+        broadcastSessions() {},
+        broadcastAppSettings() {},
+        broadcastModelCatalog() {},
+      });
+      const incomingCatalog = createCatalogSnapshot(2);
+      incomingCatalog.providers[0].label = "Imported Codex";
+      const pending = service.importModelCatalogDocument({ providers: incomingCatalog.providers });
+      const rejection = assert.rejects(pending, (error: unknown) => {
+        if (!rollbackFails) {
+          assert.equal(error, importError);
+        } else {
+          assert.ok(error instanceof AggregateError);
+          assert.deepEqual(error.errors, [importError, rollbackError]);
+        }
+        return true;
+      });
+      await entered.promise;
+      assert.deepEqual(catalog.providers, incomingCatalog.providers);
+      if (failedCollection === "main") {
+        current.auxiliary = [];
+      }
+      if (failedCollection !== "companion") {
+        current.companion = [
+          { ...original.companion[0], title: "concurrent edit", messages: [] },
+        ];
+      }
+      const expectedAuxiliary = structuredClone(current.auxiliary);
+      const expectedCompanion = structuredClone(current.companion);
+      resume.resolve();
+      await rejection;
+      assert.deepEqual(current.main, original.main);
+      assert.deepEqual(current.auxiliary, failedCollection === "main" ? expectedAuxiliary : original.auxiliary);
+      assert.deepEqual(current.companion, failedCollection === "companion" ? original.companion : expectedCompanion);
+      assert.deepEqual(sources, ["imported", "rollback"]);
+      assert.deepEqual(catalog.providers, createCatalogSnapshot(1).providers);
+    }
+  }
+});
+

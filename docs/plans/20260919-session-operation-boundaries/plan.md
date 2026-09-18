@@ -24,7 +24,7 @@
 | Memory review | `memory-v6-review-service.ts` が要求ごとに直接 DB 接続 | Main の同期接続の抜け道を閉じる |
 | 起動・maintenance | database path/bootstrap、schema、WAL、診断、Auxiliary read 内 backfill | 明示的な Worker command と中断・再開契約 |
 
-Companion の create IPC 配線と `requireCompanionStorage()` は存在する。V6 での実利用可否は、UI の admission と storage schema を含め追加確認が必要であり、現時点で未使用とは断定しない。legacy を復活させない。
+Companion の作成 service と依存配線は残るが、現行 create IPC handler は退役エラーを返し、作成 service に到達しない。新規作成の準備分離は今回の対象に含めず、legacy を復活させない。既存会話の閲覧・merge・discard と catalog 更新の対象は維持する。
 
 ## 実装単位と完了条件
 
@@ -58,7 +58,7 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 
 ## 進捗
 
-- 棚卸し: 上表の経路を確認。Companion 実利用可否と全 caller の移行対象確定は未完了。
+- 棚卸し: 上表の経路を確認。Companion の新規作成は IPC で退役済み。全 caller の移行対象確定は未完了。
 - 実装単位 1: 実装済み。Affect の評価は ownership 外、owner 再検証・appraise・settlement 確定は同じ境界に配置。V6 runtime の通常保存と terminal 保存を既存行限定 API へ配線した。全体の排他方式はまだ置換していない。
 - 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。Settings credential 更新の thread reset / rollback を条件付き field 更新へ移行。Main SessionFolder と Auxiliary の作成準備を provider coordinator 外へ分離。Character authoring も Character / Skill 読込みと生成内容の準備を分離したが、managed files 書込みは coordinator 内。他の作成準備、catalog の限定 field 更新、親子 Turn admission は未完了。
 - 実装単位 3〜5: 未完了。
@@ -140,6 +140,14 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 - 最終反映の前に storage identity、provider、Character、workspace directory を再検証する。managed files 反映と Session 保存は引き続き coordinator 内で行う。書込み I/O 待機の排他外への分離、filesystem transaction、Character 更新・削除との完全な admission 統合は未完了。
 - 検証: Character authoring の 18 tests、全体 `npm test`（2,898 pass / 0 fail / 1 skip）、`npm run typecheck`、`npm run build` が成功。renderer の既存 chunk サイズ warning は継続。固定起点そのものではなく、今回変更を含む working tree の結果である。実 Electron、実 Provider、実ユーザー DB コピーは未確認。
 - `review-test-value` で今回起点から 7 records / 7 transitions を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が全件を審査し、追加指摘なし。既存 test の正規表現内の backtick 1 文字は、抽出器の字句誤認を避けるため同義の `\x60` に変更した。assertion の契約は変えていない。実 coordinator と一時 filesystem、制御した provider / Character / storage identity を使う component test として保持する。実 DB 更新や Electron E2E の競合再現とは扱わない。
+
+### catalog import rollback の対象限定（4d24f808 起点）
+
+- Main / Auxiliary / Companion の置換試行を個別に記録し、失敗時に未試行 collection を復元しない。試行済み collection の全 snapshot 復元は維持し、限定 field 更新や結果不明の解消まで完了したとは扱わない。
+- controlled deps の保存待ちで未試行 collection の並行更新・削除を再現する。書込み後の失敗と rollback 失敗も組み合わせ、保存内容と元の例外・AggregateError を検証する。実 DB / Electron の競合再現ではない。
+- Companion の作成は現行 IPC handler が退役エラーを返すため、残存 service の準備分離は実施しない。
+- 検証: Settings の 17 tests（追加 test は失敗位置と rollback 成否の 6 組合せ）、`npm run typecheck`、`npm run build:electron` が成功。今回の変更で全体 test、renderer build、実 Electron / 実 DB の競合検証は実施していない。
+- `review-test-value` で今回起点から 1 record / 1 transition を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が最新版を審査し、追加修正要求なし。catalog の入力と復元値を区別する assertion を補強した。未試行 collection のデータ保護は継続する契約で、型検査では代替できず、約 1 ms の component test として保持する。
 
 ### 未確認・残作業（継続）
 
