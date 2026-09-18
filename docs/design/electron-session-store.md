@@ -101,7 +101,11 @@ session 実行後の memory 補助処理を persistence 側へつなぐ。
 
 session 以外の app-wide persistence をまとめて扱う。
 
-Settings 更新の失敗時、thread reset の collection 書込みを試みていない Session / Auxiliary は rollback 対象にしない。設定だけの更新失敗で、並行する Session 削除や Auxiliary 更新を以前の snapshot へ戻してはならない。実際に thread reset を行った collection と catalog import/reset はまだ全 snapshot rollback を使っており、限定 field 更新への移行は Issue #726 の残作業である。
+Settings credential 更新時の thread reset は collection 全体の置換を使わず、対象行の thread と更新時刻だけを条件付き更新する。Main は ID・incarnation・provider・元 thread、Auxiliary は ID・親 ID・作成時刻・provider・元 thread を照合し、削除済み行や別 thread を上書きしない。Auxiliary の payload / summary は transaction 内で現行値から更新し、本文・draft・他会話を保持する。Main の cache も現行行の対象 field のみ更新し、保存結果から削除済み cache を復活させない。
+
+後続処理に失敗した場合は設定を rollback し、更新成功を確認できた thread だけを同じ identity と更新後 thread を条件に戻す。本文等の並行更新は戻さず、削除・再作成・別 thread への変更はスキップする。書込み結果が不明な例外を成功扱いせず、その対象へ無条件の逆書込みをしない。この場合は thread がリセットされたまま残る可能性がある。設定だけの失敗で collection snapshot を復元しない。
+
+model catalog import/reset の全 snapshot 更新、provider thread の外部後処理の待機分離、Turn admission と Worker 化は Issue #726 の残作業である。
 
 ### PersistentStoreLifecycleService
 

@@ -6,7 +6,7 @@ import {
   normalizeAppSettings,
   type AppSettings,
 } from "../src/provider-settings-state.js";
-import { type Session } from "../src/session-state.js";
+import { getSessionIncarnationId, type Session } from "../src/session-state.js";
 import {
   coerceModelSelection,
   getProviderCatalog,
@@ -28,6 +28,8 @@ import type { AuxiliarySession } from "../src/auxiliary-session-state.js";
 import type { CompanionSession } from "../src/companion-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
+import type { SessionThreadPatchInput } from "./session-storage-v6.js";
+import type { AuxiliarySessionThreadPatchInput } from "./auxiliary-session-storage.js";
 
 export type SettingsCatalogServiceDeps = {
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
@@ -54,6 +56,8 @@ export type SettingsCatalogServiceDeps = {
     },
   ): Awaitable<Session[]>;
   replaceAuxiliarySessions(nextSessions: AuxiliarySession[]): Awaitable<AuxiliarySession[]>;
+  updateSessionThreadIfMatches(input: SessionThreadPatchInput): Awaitable<Session | null>;
+  updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): Awaitable<AuxiliarySession | null>;
   replaceCompanionSessions?: (nextSessions: CompanionSession[]) => Awaitable<CompanionSession[]>;
   clearProviderQuotaTelemetry(providerId: string): void;
   clearSessionContextTelemetry(sessionId: string): void;
@@ -203,46 +207,18 @@ export class SettingsCatalogService {
     const previousSessions = await this.deps.listSessions();
     const previousAuxiliarySessions = await this.deps.listAuxiliarySessions();
     const providersWithApiKeyChangeSet = new Set(providersWithApiKeyChange);
-    const nextSessions = previousSessions.map((session) => {
-      if (!providersWithApiKeyChangeSet.has(session.provider) || !session.threadId) {
-        return session;
-      }
-
-      return {
-        ...session,
-        threadId: "",
-        updatedAt: currentTimestampLabel(),
-      };
-    });
-    const nextAuxiliarySessions = previousAuxiliarySessions.map((session) => {
-      if (!providersWithApiKeyChangeSet.has(session.provider) || !session.threadId) {
-        return session;
-      }
-
-      return {
-        ...session,
-        threadId: "",
-        updatedAt: currentTimestampLabel(),
-      };
-    });
-    const providerInvalidatedSessionIds = previousSessions
-      .filter((session) => providersWithApiKeyChangeSet.has(session.provider))
-      .map((session) => session.id);
-    const providerInvalidatedAuxiliarySessionIds = previousAuxiliarySessions
-      .filter((session) => providersWithApiKeyChangeSet.has(session.provider))
-      .map((session) => session.id);
-    const threadResetSessionIds = nextSessions
-      .filter((session, index) => session.threadId !== previousSessions[index]?.threadId)
-      .map((session) => session.id);
-    const threadResetAuxiliarySessionIds = nextAuxiliarySessions
-      .filter((session, index) => session.threadId !== previousAuxiliarySessions[index]?.threadId)
-      .map((session) => session.id);
-    const hasSessionThreadReset = threadResetSessionIds.length > 0;
-    const hasAuxiliarySessionThreadReset = threadResetAuxiliarySessionIds.length > 0;
+    const sessionThreadResetTargets = previousSessions.filter((session) =>
+      providersWithApiKeyChangeSet.has(session.provider) && session.threadId
+    );
+    const auxiliaryThreadResetTargets = previousAuxiliarySessions.filter((session) =>
+      providersWithApiKeyChangeSet.has(session.provider) && session.threadId
+    );
+    const appliedSessionPatches: Array<{ previous: Session; current: Session }> = [];
+    const appliedAuxiliaryPatches: Array<{ previous: AuxiliarySession; current: AuxiliarySession }> = [];
+    const updateSessionThreadIfMatches = this.deps.updateSessionThreadIfMatches;
+    const updateAuxiliarySessionThreadIfMatches = this.deps.updateAuxiliarySessionThreadIfMatches;
 
     let savedSettings: AppSettings | null = null;
-    let sessionCollectionWriteAttempted = false;
-    let auxiliaryCollectionWriteAttempted = false;
     try {
       savedSettings = await this.deps.updateAppSettings(nextSettings);
       for (const providerId of providersWithApiKeyChange) {
@@ -258,26 +234,45 @@ export class SettingsCatalogService {
           this.deps.clearSessionContextTelemetry(session.id);
         }
       }
-      if (hasSessionThreadReset) {
-        sessionCollectionWriteAttempted = true;
-        await this.deps.replaceAllSessions(nextSessions, {
-          broadcast: false,
-          invalidateSessionIds: providerInvalidatedSessionIds,
+      for (const previous of sessionThreadResetTargets) {
+        const current = await updateSessionThreadIfMatches({
+          sessionId: previous.id,
+          incarnationId: getSessionIncarnationId(previous),
+          provider: previous.provider,
+          expectedThreadId: previous.threadId,
+          nextThreadId: "",
+          updatedAt: currentTimestampLabel(),
         });
-        this.deps.broadcastSessions(threadResetSessionIds);
-      } else {
-        for (const sessionId of providerInvalidatedSessionIds) {
-          const sessionProvider = previousSessions.find((session) => session.id === sessionId)?.provider ?? null;
-          await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+        if (current) {
+          appliedSessionPatches.push({ previous, current });
         }
       }
-      if (hasAuxiliarySessionThreadReset) {
-        auxiliaryCollectionWriteAttempted = true;
-        await this.deps.replaceAuxiliarySessions(nextAuxiliarySessions);
+      for (const previous of auxiliaryThreadResetTargets) {
+        const current = await updateAuxiliarySessionThreadIfMatches({
+          auxiliarySessionId: previous.id,
+          parentSessionId: previous.parentSessionId,
+          provider: previous.provider,
+          expectedThreadId: previous.threadId,
+          nextThreadId: "",
+          updatedAt: currentTimestampLabel(),
+          createdAt: previous.createdAt,
+        });
+        if (current) {
+          appliedAuxiliaryPatches.push({ previous, current });
+        }
       }
-      for (const sessionId of providerInvalidatedAuxiliarySessionIds) {
-        const sessionProvider = previousAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
-        await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+      for (const session of previousSessions) {
+        if (providersWithApiKeyChangeSet.has(session.provider)) {
+          await this.deps.invalidateProviderSessionThread(session.provider, session.id);
+        }
+      }
+      for (const session of previousAuxiliarySessions) {
+        if (providersWithApiKeyChangeSet.has(session.provider)) {
+          await this.deps.invalidateProviderSessionThread(session.provider, session.id);
+        }
+      }
+      if (appliedSessionPatches.length > 0) {
+        this.deps.broadcastSessions(appliedSessionPatches.map(({ current }) => current.id));
       }
       const currentSettings = this.deps.getAppSettings();
       this.deps.broadcastAppSettings(currentSettings);
@@ -289,11 +284,26 @@ export class SettingsCatalogService {
 
       try {
         await this.deps.updateAppSettings(previousSettings);
-        if (sessionCollectionWriteAttempted) {
-          await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
+        for (const { previous, current } of appliedSessionPatches) {
+          await updateSessionThreadIfMatches({
+            sessionId: previous.id,
+            incarnationId: getSessionIncarnationId(previous),
+            provider: previous.provider,
+            expectedThreadId: current.threadId,
+            nextThreadId: previous.threadId,
+            updatedAt: currentTimestampLabel(),
+          });
         }
-        if (auxiliaryCollectionWriteAttempted) {
-          await this.deps.replaceAuxiliarySessions(previousAuxiliarySessions);
+        for (const { previous, current } of appliedAuxiliaryPatches) {
+          await updateAuxiliarySessionThreadIfMatches({
+            auxiliarySessionId: previous.id,
+            parentSessionId: previous.parentSessionId,
+            provider: previous.provider,
+            expectedThreadId: current.threadId,
+            nextThreadId: previous.threadId,
+            updatedAt: currentTimestampLabel(),
+            createdAt: previous.createdAt,
+          });
         }
       } catch (rollbackError) {
         throw new AggregateError(

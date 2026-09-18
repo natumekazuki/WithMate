@@ -30,6 +30,7 @@ import type { Awaitable, AuxiliarySessionStorageAccess } from "./persistent-stor
 import type { SessionLaunchSelection } from "./session-launch-selection-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
 import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
+import type { AuxiliarySessionThreadPatchInput } from "./auxiliary-session-storage.js";
 
 type AuxiliarySessionServiceDeps = {
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
@@ -192,6 +193,14 @@ export class AuxiliarySessionService {
         ? this.deps.runCharacterAffectTurnOwnershipExclusive(() => this.commitAuxiliarySession(input, storage, prepared))
         : this.commitAuxiliarySession(input, storage, prepared),
     );
+  }
+
+  updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): AuxiliarySession | null {
+    const patch = this.deps.getStorage().updateAuxiliarySessionThreadIfMatches;
+    if (!patch) {
+      throw new Error("Auxiliary thread の条件付き更新storageが利用できないよ。");
+    }
+    return patch.call(this.deps.getStorage(), input);
   }
 
   private async prepareAuxiliarySession(

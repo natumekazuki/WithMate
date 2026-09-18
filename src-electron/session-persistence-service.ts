@@ -2,6 +2,7 @@ import { getProviderAppSettings, type AppSettings } from "../src/provider-settin
 import {
   buildNewSession,
   cloneSessions,
+  getSessionIncarnationId,
   isReadOnlySession,
   projectSessionSummary,
   type CreateSessionInput,
@@ -34,6 +35,7 @@ import type {
   SessionRunningTurnStartInput,
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
+import type { SessionThreadPatchInput } from "./session-storage-v6.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -55,6 +57,7 @@ export type SessionPersistenceServiceDeps = {
     parentSessionIds: readonly string[],
   ): Awaitable<readonly { id: string; parentSessionId: string; provider: string }[]>;
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
+  updateStoredSessionThreadIfMatches?(input: SessionThreadPatchInput): Awaitable<Session | null>;
   upsertStoredTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendStoredRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
   clearStoredCharacterAuthoringRuntimeState?(
@@ -250,6 +253,30 @@ export class SessionPersistenceService {
       return this.deleteSessionsByIds(sessionIds, { runningPolicy: "skip", cutoff, allowUncachedDeletion: true });
     });
     return this.finishSessionDeletion(committed);
+  }
+
+  async updateSessionThreadIfMatches(input: SessionThreadPatchInput): Promise<Session | null> {
+    return this.enqueueSessionMutation(async () => {
+      if (!this.deps.updateStoredSessionThreadIfMatches) {
+        throw new Error("Session thread の条件付き更新storageが利用できないよ。");
+      }
+      const stored = await this.deps.updateStoredSessionThreadIfMatches(input);
+      if (!stored) {
+        return null;
+      }
+      const current = this.deps.getSession(input.sessionId);
+      if (
+        current
+        && getSessionIncarnationId(current) === input.incarnationId
+        && current.provider === input.provider
+        && current.threadId === input.expectedThreadId
+      ) {
+        this.deps.setSessions(this.deps.getSessions().map((session) => session.id === input.sessionId
+          ? { ...session, threadId: input.nextThreadId, updatedAt: stored.updatedAt }
+          : session));
+      }
+      return stored;
+    });
   }
 
   private async finishSessionDeletion(committed: CommittedSessionDeletion): Promise<DeleteSessionsResult> {

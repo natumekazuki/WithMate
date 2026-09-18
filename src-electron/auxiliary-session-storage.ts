@@ -32,6 +32,16 @@ type ScopedAuxiliarySessionRow = AuxiliarySessionRow & {
   parent_session_id: string;
 };
 
+export type AuxiliarySessionThreadPatchInput = {
+  auxiliarySessionId: string;
+  parentSessionId: string;
+  provider: string;
+  expectedThreadId: string;
+  nextThreadId: string;
+  updatedAt: string;
+  createdAt: string;
+};
+
 type TableInfoRow = {
   name: string;
 };
@@ -201,6 +211,39 @@ export class AuxiliarySessionStorage {
         WHERE id = ?
       `).get(auxiliarySessionId) as AuxiliarySessionRow | undefined;
       return row ? parseAuxiliarySessionRow(row) : null;
+    });
+  }
+
+  updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): AuxiliarySession | null {
+    this.ensureLegacySummaryBackfill();
+    return this.withDb((db) => {
+      db.exec("BEGIN IMMEDIATE TRANSACTION");
+      try {
+        const row = db.prepare(`
+          SELECT created_at, updated_at, payload_json
+          FROM auxiliary_sessions
+          WHERE id = ? AND parent_session_id = ?
+        `).get(input.auxiliarySessionId, input.parentSessionId) as AuxiliarySessionRow | undefined;
+        const current = row ? parseAuxiliarySessionRow(row) : null;
+        if (!current || current.provider !== input.provider || current.threadId !== input.expectedThreadId || (input.createdAt !== undefined && current.createdAt !== input.createdAt)) {
+          db.exec("ROLLBACK");
+          return null;
+        }
+        const next = { ...current, threadId: input.nextThreadId, updatedAt: input.updatedAt };
+        const result = db.prepare(`
+          UPDATE auxiliary_sessions SET updated_at = ?, payload_json = ?, summary_json = ?
+          WHERE id = ? AND parent_session_id = ? AND updated_at = ?
+        `).run(input.updatedAt, JSON.stringify(next), JSON.stringify(projectAuxiliarySessionSummary(next)), input.auxiliarySessionId, input.parentSessionId, current.updatedAt);
+        if (Number(result.changes) !== 1) {
+          db.exec("ROLLBACK");
+          return null;
+        }
+        db.exec("COMMIT");
+        return next;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     });
   }
 

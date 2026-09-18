@@ -9,14 +9,52 @@ import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import { getSessionIncarnationId } from "../../src/session-state.js";
+import type { SessionThreadPatchInput } from "../../src-electron/session-storage-v6.js";
+import type { AuxiliarySessionThreadPatchInput } from "../../src-electron/auxiliary-session-storage.js";
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 import { SettingsCatalogService as SettingsCatalogServiceImpl } from "../../src-electron/settings-catalog-service.js";
 
 class SettingsCatalogService extends SettingsCatalogServiceImpl {
-  constructor(deps: ConstructorParameters<typeof SettingsCatalogServiceImpl>[0]) {
+  constructor(deps: Omit<ConstructorParameters<typeof SettingsCatalogServiceImpl>[0], "updateSessionThreadIfMatches" | "updateAuxiliarySessionThreadIfMatches"> & Partial<Pick<ConstructorParameters<typeof SettingsCatalogServiceImpl>[0], "updateSessionThreadIfMatches" | "updateAuxiliarySessionThreadIfMatches">>) {
     super({
       runProviderRuntimeOperationExclusive: async (operation) => await operation(),
       ...deps,
+      updateSessionThreadIfMatches: deps.updateSessionThreadIfMatches ?? (async (input: SessionThreadPatchInput) => {
+        const sessions = await deps.listSessions();
+        const target = sessions.find((session) =>
+          session.id === input.sessionId
+          && getSessionIncarnationId(session) === input.incarnationId
+          && session.provider === input.provider
+          && session.threadId === input.expectedThreadId,
+        );
+        if (!target) return null;
+        const next = { ...target, threadId: input.nextThreadId, updatedAt: input.updatedAt };
+        if (deps.replaceAllSessions) {
+          const replaced = await deps.replaceAllSessions(sessions.map((session) => session.id === next.id ? next : session), { broadcast: false });
+          return replaced.find((session) => session.id === next.id) ?? next;
+        }
+        Object.assign(target, next);
+        return next;
+      }),
+      updateAuxiliarySessionThreadIfMatches: deps.updateAuxiliarySessionThreadIfMatches ?? (async (input: AuxiliarySessionThreadPatchInput) => {
+        const sessions = await deps.listAuxiliarySessions();
+        const target = sessions.find((session) =>
+          session.id === input.auxiliarySessionId
+          && session.parentSessionId === input.parentSessionId
+          && session.provider === input.provider
+          && session.threadId === input.expectedThreadId
+          && (input.createdAt === undefined || session.createdAt === input.createdAt),
+        );
+        if (!target) return null;
+        const next = { ...target, threadId: input.nextThreadId, updatedAt: input.updatedAt };
+        if (deps.replaceAuxiliarySessions) {
+          const replaced = await deps.replaceAuxiliarySessions(sessions.map((session) => session.id === next.id ? next : session));
+          return replaced.find((session) => session.id === next.id) ?? next;
+        }
+        Object.assign(target, next);
+        return next;
+      }),
     });
   }
 }
@@ -55,6 +93,7 @@ function createSession(overrides?: Partial<Session>): Session {
     messages: [{ role: "user", text: "hello" }],
     stream: [],
     allowedAdditionalDirectories: [],
+    ...overrides,
   };
 }
 
@@ -316,7 +355,7 @@ describe("SettingsCatalogService", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "通常 settings 保存後の layout 更新を最新 projection へ反映する"
-  // oracle = { type = "contract", ref = "Settings catalog latest projection" }
+  // oracle = { type = "adr", ref = "docs/adr/015-chat-layout-preference-boundary.md" }
   // fault = "保存待機中の layout 更新が broadcast projection から欠落する"
   // observable = "updated/broadcast chatLayoutPreference"
   // observation_boundary = "public-boundary"
@@ -370,10 +409,13 @@ describe("SettingsCatalogService", () => {
         exportModelCatalogDocument() {
           return { providers: createCatalogSnapshot().providers };
         },
-        async replaceAllSessions(nextSessions) {
+        async updateSessionThreadIfMatches(input) {
+          const current = previousSessions[0];
+          current.threadId = input.nextThreadId;
+          current.updatedAt = input.updatedAt;
           sessionReplacementStarted.resolve();
           await resumeSessionReplacement.promise;
-          return nextSessions;
+          return { ...current };
         },
         replaceAuxiliarySessions(nextSessions) {
           return nextSessions;
@@ -425,7 +467,7 @@ describe("SettingsCatalogService", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "通常 settings 更新の rollback は並行保存された chat layout を巻き戻さない"
-  // oracle = { type = "contract", ref = "Settings catalog rollback boundary" }
+  // oracle = { type = "adr", ref = "docs/adr/015-chat-layout-preference-boundary.md" }
   // fault = "失敗 rollback が最新 layout まで復元前値へ戻す"
   // observable = "rollback 後の chatLayoutPreference"
   // observation_boundary = "public-boundary"
@@ -479,14 +521,17 @@ describe("SettingsCatalogService", () => {
         exportModelCatalogDocument() {
           return { providers: createCatalogSnapshot().providers };
         },
-        async replaceAllSessions(nextSessions) {
+        async updateSessionThreadIfMatches(input) {
           replaceCallCount += 1;
+          const current = previousSessions[0];
+          current.threadId = input.nextThreadId;
+          current.updatedAt = input.updatedAt;
           if (replaceCallCount === 1) {
             firstSessionReplacementStarted.resolve();
             await rejectFirstSessionReplacement.promise;
             throw new Error("session replacement failed");
           }
-          return nextSessions;
+          return { ...current };
         },
         replaceAuxiliarySessions(nextSessions) {
           return nextSessions;
@@ -516,7 +561,7 @@ describe("SettingsCatalogService", () => {
       rejectFirstSessionReplacement.resolve();
 
       await assert.rejects(() => updating, /session replacement failed/);
-      assert.equal(replaceCallCount, 2);
+      assert.equal(replaceCallCount, 1);
       assert.deepEqual(storage.getSettings().chatLayoutPreference, {
         header: "visible",
         actionDock: "expanded",
@@ -628,9 +673,21 @@ describe("SettingsCatalogService", () => {
     assert.deepEqual(currentAuxiliarySessions, updatedAuxiliarySessions);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "credential変更時は対象Sessionのthreadを条件付き更新し、provider runtime invalidationを実行する"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // fault = "全Session snapshot replaceを使う、または空threadのprovider runtime invalidationを省略する"
+  // observable = "threadId、messages、telemetry clear、provider invalidation、旧collection replace呼出し"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-credential-session-thread"
+  // lifecycle = "permanent"
+  // distinction = "thread patchとprovider invalidationのservice orchestrationを直接確認する"
+  // @end-test-value
   it("settings 更新時に API key 変更 provider の thread と telemetry を無効化する", async () => {
     const previousSettings = createDefaultAppSettings();
-    const previousSessions = [createSession()];
+    const previousSessions = [createSession(), createSession({ id: "session-empty-thread", threadId: "" })];
+    const patchedIds: string[] = [];
     const clearQuotaCalls: string[] = [];
     const clearContextCalls: string[] = [];
     const invalidated: string[] = [];
@@ -672,12 +729,28 @@ describe("SettingsCatalogService", () => {
       exportModelCatalogDocument() {
         return { providers: createCatalogSnapshot().providers };
       },
-      replaceAllSessions(nextSessions) {
-        replacedSessions = nextSessions;
-        return nextSessions;
+      replaceAllSessions() {
+        throw new Error("credential thread test must not replace the full Session collection");
       },
-      replaceAuxiliarySessions(nextSessions) {
-        return nextSessions;
+      updateSessionThreadIfMatches(input) {
+        patchedIds.push(input.sessionId);
+        const current = previousSessions.find((session) =>
+          session.id === input.sessionId
+          && getSessionIncarnationId(session) === input.incarnationId
+          && session.provider === input.provider
+          && session.threadId === input.expectedThreadId,
+        );
+        if (!current) return null;
+        current.threadId = input.nextThreadId;
+        current.updatedAt = input.updatedAt;
+        replacedSessions = previousSessions;
+        return { ...current };
+      },
+      replaceAuxiliarySessions() {
+        throw new Error("credential thread test must not replace the full Auxiliary collection");
+      },
+      updateAuxiliarySessionThreadIfMatches() {
+        return null;
       },
       clearProviderQuotaTelemetry(providerId) {
         clearQuotaCalls.push(providerId);
@@ -707,12 +780,24 @@ describe("SettingsCatalogService", () => {
     assert.equal(savedSettings?.codingProviderSettings.codex.apiKey, "changed-key");
     assert.equal(next.codingProviderSettings.codex.apiKey, "changed-key");
     assert.deepEqual(clearQuotaCalls, ["codex"]);
-    assert.deepEqual(clearContextCalls, ["session-1"]);
+    assert.deepEqual(clearContextCalls, ["session-1", "session-empty-thread"]);
+    assert.deepEqual(patchedIds, ["session-1"]);
     assert.equal(replacedSessions[0]?.threadId, "");
     assert.deepEqual(replacedSessions[0]?.messages, previousSessions[0].messages);
-    assert.deepEqual(invalidated, []);
+    assert.deepEqual(invalidated, ["codex:session-1", "codex:session-empty-thread"]);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "credential変更時は対象Auxiliaryのthreadを条件付き更新し、親Sessionを含むprovider runtime invalidationを実行する"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // fault = "Auxiliary collection全体をreplaceする、または親Sessionのprovider invalidationを省略する"
+  // observable = "Auxiliary threadId、messages、telemetry clear、provider invalidation、旧collection replace呼出し"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-credential-auxiliary-thread"
+  // lifecycle = "permanent"
+  // distinction = "Auxiliaryの条件付きpatchと全provider invalidationの境界を直接確認する"
+  // @end-test-value
   it("settings 更新時に API key 変更 provider の auxiliary thread も無効化する", async () => {
     const previousSettings = createDefaultAppSettings();
     const previousSessions = [createSession({ threadId: "" })];
@@ -755,12 +840,28 @@ describe("SettingsCatalogService", () => {
       exportModelCatalogDocument() {
         return { providers: createCatalogSnapshot().providers };
       },
-      replaceAllSessions(nextSessions) {
-        return nextSessions;
+      replaceAllSessions() {
+        throw new Error("credential thread test must not replace the full Session collection");
       },
-      replaceAuxiliarySessions(nextSessions) {
-        replacedAuxiliarySessions = nextSessions;
-        return nextSessions;
+      updateSessionThreadIfMatches() {
+        return null;
+      },
+      replaceAuxiliarySessions() {
+        throw new Error("credential thread test must not replace the full Auxiliary collection");
+      },
+      updateAuxiliarySessionThreadIfMatches(input) {
+        const current = previousAuxiliarySessions.find((session) =>
+          session.id === input.auxiliarySessionId
+          && session.parentSessionId === input.parentSessionId
+          && session.provider === input.provider
+          && session.threadId === input.expectedThreadId
+          && session.createdAt === input.createdAt,
+        );
+        if (!current) return null;
+        current.threadId = input.nextThreadId;
+        current.updatedAt = input.updatedAt;
+        replacedAuxiliarySessions = previousAuxiliarySessions;
+        return { ...current };
       },
       clearProviderQuotaTelemetry() {},
       clearSessionContextTelemetry(sessionId) {
@@ -788,7 +889,156 @@ describe("SettingsCatalogService", () => {
     assert.equal(replacedAuxiliarySessions[0]?.threadId, "");
     assert.deepEqual(replacedAuxiliarySessions[0]?.messages, previousAuxiliarySessions[0].messages);
     assert.deepEqual(clearContextCalls, ["session-1", "aux-1"]);
-    assert.deepEqual(invalidated, ["codex:aux-1"]);
+    assert.deepEqual(invalidated, ["codex:session-1", "codex:aux-1"]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "credential変更中の結果確定済みthread patchだけをCAS rollbackし、並行する本文・draft更新と別row削除を保持する"
+  // fault = "invalidation失敗時に全Session/Auxiliary snapshotを復元して、並行更新または削除を失う"
+  // observable = "settings error、threadId、Main本文、Auxiliary draft、削除済みrow、reverse patch対象"
+  // observation_boundary = "component-behavior"
+  // scope = "credential-thread-cas-rollback-preserves-concurrent-state"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // lifecycle = "permanent"
+  // impact = "credential更新失敗が同時編集内容を巻き戻す、または削除済みAuxiliaryを復活させる"
+  // distinction = "storage単体の条件判定ではなく、serviceのsettings失敗・invalidation失敗・reverse CASの対象選択を検証する"
+  // @end-test-value
+  it("credential更新のinvalidation失敗はthreadだけをCAS rollbackし並行状態を保持する", async () => {
+    const previousSettings = createDefaultAppSettings();
+    const main = createSession();
+    const auxiliary = createAuxiliarySession();
+    const deletedAuxiliary = createAuxiliarySession({ id: "aux-deleted", threadId: "deleted-thread" });
+    const sessions = [main];
+    const auxiliaries = [auxiliary, deletedAuxiliary];
+    const invalidationStarted = createDeferred();
+    const releaseInvalidation = createDeferred();
+    const reverseInputs: string[] = [];
+    let savedSettings = previousSettings;
+    let invalidationCalls = 0;
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns: () => false,
+      isSessionRunInFlight: () => false,
+      isRunningSession: () => false,
+      listSessions: () => sessions.map((session) => ({ ...session, messages: [...session.messages] })),
+      listAuxiliarySessions: () => auxiliaries.map((session) => ({ ...session, messages: [...session.messages] })),
+      getAppSettings: () => savedSettings,
+      updateAppSettings: (settings) => { savedSettings = settings; return settings; },
+      getModelCatalog: () => createCatalogSnapshot(),
+      ensureModelCatalogSeeded: () => createCatalogSnapshot(),
+      importModelCatalogDocument: () => createCatalogSnapshot(),
+      exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+      replaceAllSessions: () => { throw new Error("must use thread patch"); },
+      replaceAuxiliarySessions: () => { throw new Error("must use auxiliary thread patch"); },
+      updateSessionThreadIfMatches: (input) => {
+        const current = sessions.find((session) => session.id === input.sessionId && getSessionIncarnationId(session) === input.incarnationId && session.provider === input.provider && session.threadId === input.expectedThreadId);
+        if (!current) return null;
+        if (input.expectedThreadId === "") reverseInputs.push(`main:${input.nextThreadId}`);
+        current.threadId = input.nextThreadId;
+        current.updatedAt = input.updatedAt;
+        return { ...current };
+      },
+      updateAuxiliarySessionThreadIfMatches: (input) => {
+        const current = auxiliaries.find((session) => session.id === input.auxiliarySessionId && session.parentSessionId === input.parentSessionId && session.provider === input.provider && session.threadId === input.expectedThreadId && session.createdAt === input.createdAt);
+        if (!current) return null;
+        if (input.expectedThreadId === "") reverseInputs.push(`aux:${input.nextThreadId}`);
+        current.threadId = input.nextThreadId;
+        current.updatedAt = input.updatedAt;
+        return { ...current };
+      },
+      clearProviderQuotaTelemetry: () => {},
+      clearSessionContextTelemetry: () => {},
+      invalidateProviderSessionThread: async () => {
+        invalidationCalls += 1;
+        if (invalidationCalls === 1) {
+          invalidationStarted.resolve();
+          await releaseInvalidation.promise;
+          throw new Error("invalidation failed");
+        }
+      },
+      broadcastSessions: () => {},
+      broadcastAppSettings: () => {},
+      broadcastModelCatalog: () => {},
+    });
+
+    const updating = service.updateAppSettings({
+      ...previousSettings,
+      codingProviderSettings: {
+        ...previousSettings.codingProviderSettings,
+        codex: { ...previousSettings.codingProviderSettings.codex, apiKey: "changed-key" },
+      },
+    });
+    await invalidationStarted.promise;
+    main.messages = [{ role: "user", text: "concurrent body" }];
+    auxiliary.composerDraft = "concurrent draft";
+    auxiliaries.splice(1, 1);
+    releaseInvalidation.resolve();
+
+    await assert.rejects(() => updating, /invalidation failed/);
+    assert.equal(main.threadId, "thread-1");
+    assert.deepEqual(main.messages, [{ role: "user", text: "concurrent body" }]);
+    assert.equal(auxiliary.threadId, "aux-thread-1");
+    assert.equal(auxiliary.composerDraft, "concurrent draft");
+    assert.equal(auxiliaries.some((session) => session.id === "aux-deleted"), false);
+    assert.deepEqual(reverseInputs, ["main:thread-1", "aux:aux-thread-1"]);
+    assert.equal(savedSettings.codingProviderSettings.codex.apiKey, "");
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "結果不明のthread patchに対してserviceがreverse CASを実行せず元のstorage errorを伝播する"
+  // fault = "storageがthreadを書いた後にthrowした結果不明状態を成功扱いし、推測rollbackで別更新を上書きする"
+  // observable = "元error、settings、threadId、reverse patch呼出し数、全collection replace呼出し"
+  // observation_boundary = "component-behavior"
+  // scope = "credential-thread-cas-unknown-write"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // lifecycle = "permanent"
+  // impact = "結果不明のprovider threadを推測で再利用または上書きする"
+  // distinction = "成功戻りのCAS rollbackではなく、write-then-throwの不確実性を検証する"
+  // @end-test-value
+  it("credential更新の結果不明patchはreverseせず元errorを伝播する", async () => {
+    const previousSettings = createDefaultAppSettings();
+    const main = createSession();
+    let savedSettings = previousSettings;
+    let reverseCalls = 0;
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns: () => false,
+      isSessionRunInFlight: () => false,
+      isRunningSession: () => false,
+      listSessions: () => [main],
+      listAuxiliarySessions: () => [],
+      getAppSettings: () => savedSettings,
+      updateAppSettings: (settings) => { savedSettings = settings; return settings; },
+      getModelCatalog: () => createCatalogSnapshot(),
+      ensureModelCatalogSeeded: () => createCatalogSnapshot(),
+      importModelCatalogDocument: () => createCatalogSnapshot(),
+      exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+      replaceAllSessions: () => { throw new Error("must use thread patch"); },
+      replaceAuxiliarySessions: () => { throw new Error("must use auxiliary thread patch"); },
+      updateSessionThreadIfMatches: (input) => {
+        if (input.expectedThreadId === "") reverseCalls += 1;
+        main.threadId = input.nextThreadId;
+        throw new Error("write result unknown");
+      },
+      updateAuxiliarySessionThreadIfMatches: () => null,
+      clearProviderQuotaTelemetry: () => {},
+      clearSessionContextTelemetry: () => {},
+      invalidateProviderSessionThread: () => {},
+      broadcastSessions: () => {},
+      broadcastAppSettings: () => {},
+      broadcastModelCatalog: () => {},
+    });
+
+    await assert.rejects(() => service.updateAppSettings({
+      ...previousSettings,
+      codingProviderSettings: {
+        ...previousSettings.codingProviderSettings,
+        codex: { ...previousSettings.codingProviderSettings.codex, apiKey: "changed-key" },
+      },
+    }), /write result unknown/);
+    assert.equal(savedSettings.codingProviderSettings.codex.apiKey, "");
+    assert.equal(main.threadId, "");
+    assert.equal(reverseCalls, 0);
   });
 
   it("model catalog import で session を新 revision に移行して broadcast する", async () => {

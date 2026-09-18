@@ -82,6 +82,7 @@ export type SessionStorageWrite = AwaitableStorageMethods<
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
 > & SessionStorageRead & {
   updateSession?(session: Session): Awaitable<Session>;
+  updateSessionThreadIfMatches?(input: import("./session-storage-v6.js").SessionThreadPatchInput): Awaitable<Session | null>;
   updateTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
@@ -119,6 +120,7 @@ export type AuxiliarySessionStorageAccess = {
   getActiveAuxiliarySession(parentSessionId: string): AuxiliarySession | null;
   getAuxiliarySession(auxiliarySessionId: string): AuxiliarySession | null;
   upsertAuxiliarySession(session: AuxiliarySession): AuxiliarySession;
+  updateAuxiliarySessionThreadIfMatches?(input: import("./auxiliary-session-storage.js").AuxiliarySessionThreadPatchInput): AuxiliarySession | null;
   deleteAuxiliarySessionsForParent(parentSessionId: string): void;
   deleteAuxiliarySessionsExceptParents(parentSessionIds: Iterable<string>): void;
   close(): void;

@@ -2857,6 +2857,13 @@ function requireSessionPersistenceService(): SessionPersistenceService {
           })),
         ),
       upsertStoredSession: sessionStorageCommands.upsertStoredSession,
+      updateStoredSessionThreadIfMatches: (input) => {
+        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
+        if (!storage.updateSessionThreadIfMatches) {
+          throw new Error("Session thread の条件付き更新storageが利用できないよ。");
+        }
+        return storage.updateSessionThreadIfMatches(input);
+      },
       appendStoredRunningTurnStart: (input) => {
         const storage = requireSessionStorageForWrite() as SessionStorageWrite;
         if (!storage.appendRunningTurnStart) {
@@ -2988,8 +2995,12 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       exportModelCatalogDocument: (revision) => requireModelCatalogStorage().exportCatalogDocument(revision),
       replaceAllSessions: (nextSessions, options) =>
         requireMainSessionPersistenceFacade().replaceAllSessions(nextSessions, options),
+      updateSessionThreadIfMatches: (input) =>
+        requireMainSessionPersistenceFacade().updateSessionThreadIfMatches(input),
       replaceAuxiliarySessions: (nextSessions) =>
         requireAuxiliarySessionService().replaceAuxiliarySessions(nextSessions),
+      updateAuxiliarySessionThreadIfMatches: (input) =>
+        requireAuxiliarySessionService().updateAuxiliarySessionThreadIfMatches(input),
       replaceCompanionSessions: async (nextSessions) =>
         Promise.all(nextSessions.map((session) => requireCompanionStorage().updateSession(session))),
       clearProviderQuotaTelemetry,

@@ -4,6 +4,7 @@ import type { SessionPersistenceService } from "./session-persistence-service.js
 import type { SessionStorageRead } from "./persistent-store-lifecycle-service.js";
 import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
+import type { SessionThreadPatchInput } from "./session-storage-v6.js";
 
 type ReplaceAllSessionsOptions = {
   broadcast?: boolean;
@@ -73,6 +74,10 @@ export class MainSessionPersistenceFacade {
 
   async replaceAllSessions(nextSessions: Session[], options?: ReplaceAllSessionsOptions): Promise<Session[]> {
     return this.deps.getSessionPersistenceService().replaceAllSessions(nextSessions, options);
+  }
+
+  async updateSessionThreadIfMatches(input: SessionThreadPatchInput): Promise<Session | null> {
+    return this.deps.getSessionPersistenceService().updateSessionThreadIfMatches(input);
   }
 
   async recoverInterruptedSessions(): Promise<void> {

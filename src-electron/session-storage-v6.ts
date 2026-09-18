@@ -131,6 +131,15 @@ type SessionCharacterUsageRow = {
   character_id: string | null;
 };
 
+export type SessionThreadPatchInput = {
+  sessionId: string;
+  incarnationId: string;
+  provider: string;
+  expectedThreadId: string;
+  nextThreadId: string;
+  updatedAt: string;
+};
+
 type DecodedSessionV6RuntimeState = {
   runtimePolicy: Record<string, unknown>;
   characterId: string;
@@ -498,6 +507,31 @@ export class SessionStorageV6 {
 
   upsertSession(session: Session): Session {
     return this.storeSession(session, "upsert");
+  }
+
+  updateSessionThreadIfMatches(input: SessionThreadPatchInput): Session | null {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const result = this.db.prepare(`
+        UPDATE sessions_v6
+        SET thread_id = ?, updated_at = ?, last_active_at = ?
+        WHERE id = ? AND incarnation_id = ? AND provider_id = ? AND thread_id = ?
+      `).run(input.nextThreadId, input.updatedAt, input.updatedAt, input.sessionId, input.incarnationId, input.provider, input.expectedThreadId);
+      if (Number(result.changes) !== 1) {
+        this.db.exec("ROLLBACK");
+        return null;
+      }
+      const stored = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(input.sessionId) as SessionV6Row | undefined;
+      if (!stored) {
+        throw new SessionNotFoundError(input.sessionId);
+      }
+      const resultSession = this.rowToSession(stored);
+      this.db.exec("COMMIT");
+      return resultSession;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   updateSession(session: Session): Session {
