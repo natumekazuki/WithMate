@@ -150,7 +150,9 @@ unready pending の Session 読取待ちでも storage identity を再確認し�
 
 非同期処理中に settlement storage または Memory runtime の instance が交換された場合、その評価試行は `invalidated` とする。await 後と適用前に instance identity を確認し、閉じた storage へ評価結果や failure を書かず、新 instance の同名要求にも結果を引き継がない。これは現行 Main の lifecycle 保護であり、Worker 全体の generation 契約の実装完了を意味しない。
 
-Memory runtime だけが交換され、元の settlement storage がまだ current の場合は、その correlation の attempt を既存の中断回収処理へ戻す。評価結果を引き継がず、閉じた storage を操作せず、current DB に試行中のまま残ることを防ぐ。
+Memory runtime だけが交換され、元の settlement storage がまだ current の場合は、その correlation の attempt を既存の中断回収処理へ戻す。旧試行の未保存評価・遅延応答は採用せず、閉じた storage を操作せず、current DB に試行中のまま残ることを防ぐ。
+
+交換前に durable pending へ保存済みの評価は、この失効だけでは破棄しない。appraise 開始前の ownership 待ち・owner 読取待ちで交換した場合も、次回 drain は同じ candidate 列・expected version・評価世代・idempotency key を使い、現 owner と version を再検証する。appraise dispatch 後に交換した場合は適用の有無を失効した応答から確定せず、同じ保存済み評価を再照合する。runtime 交換だけを理由に新しい key で再評価すると、既に commit した event を二重化し得る。新しい評価世代へ進むのは、既存 ADR 020 の `effect: none` version conflict で未commitを確認できた場合等の明示された遷移だけとする。
 
 この分離は Issue #726 の一部である。作成準備の広域排他、Settings の全 snapshot 更新、storage Worker、Auxiliary 作成取消の残作業は `docs/plans/20260919-session-operation-boundaries/plan.md` で管理する。
 
