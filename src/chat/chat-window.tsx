@@ -183,8 +183,22 @@ export function ConcurrentChatSplitter({
 function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps }) {
   return (
     <div className="concurrent-chat-target-dock" role="group" aria-label="操作対象チャット">
-      <button type="button" className={chats.target === "main" ? "is-active" : ""} onClick={() => chats.onTargetChange("main")}>Main</button>
-      <button type="button" className={chats.target === "auxiliary" ? "is-active" : ""} onClick={() => chats.onTargetChange("auxiliary")}>Auxiliary</button>
+      <button
+        type="button"
+        className={chats.target === "main" ? "is-active" : ""}
+        aria-pressed={chats.target === "main"}
+        onClick={() => chats.onTargetChange("main")}
+      >
+        Main
+      </button>
+      <button
+        type="button"
+        className={chats.target === "auxiliary" ? "is-active" : ""}
+        aria-pressed={chats.target === "auxiliary"}
+        onClick={() => chats.onTargetChange("auxiliary")}
+      >
+        Auxiliary
+      </button>
     </div>
   );
 }

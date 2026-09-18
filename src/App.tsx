@@ -1881,22 +1881,31 @@ export default function AgentSessionWindowApp() {
   const resolveSessionMicrocopy = (
     slot: MicrocopySlot,
     seedParts: Array<string | number | null | undefined>,
+  ) => resolveSessionMicrocopyForCharacter(slot, seedParts, selectedSessionCharacter?.name);
+  const resolveSessionMicrocopyForCharacter = (
+    slot: MicrocopySlot,
+    seedParts: Array<string | number | null | undefined>,
+    characterName: string | null | undefined,
   ) => resolveMicrocopy({
     slot,
     userCatalog: appSettings.userMicrocopyCatalog,
     seedParts,
-    replacements: { name: selectedSessionCharacter?.name || DEFAULT_SESSION_RUNTIME_NAME },
+    replacements: { name: characterName?.trim() || DEFAULT_SESSION_RUNTIME_NAME },
   });
+  const resolveChangedFilesEmptyText = (
+    characterName: string | null | undefined,
+    artifactKey: string,
+    artifactHasSnapshotRisk: boolean,
+  ) => artifactHasSnapshotRisk
+    ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
+    : resolveSessionMicrocopyForCharacter(
+      "empty.changed_files",
+      ["changed-files-empty", artifactKey],
+      characterName,
+    );
   const getChangedFilesEmptyText = useCallback(
     (artifactKey: string, artifactHasSnapshotRisk: boolean) =>
-      artifactHasSnapshotRisk
-        ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
-        : resolveMicrocopy({
-            slot: "empty.changed_files",
-            userCatalog: appSettings.userMicrocopyCatalog,
-            seedParts: ["changed-files-empty", artifactKey],
-            replacements: { name: selectedSessionCharacter?.name || DEFAULT_SESSION_RUNTIME_NAME },
-          }),
+      resolveChangedFilesEmptyText(selectedSessionCharacter?.name, artifactKey, artifactHasSnapshotRisk),
     [appSettings.userMicrocopyCatalog, selectedSessionCharacter?.name],
   );
   const isSelectedProviderEnabled = useMemo(
@@ -5390,6 +5399,13 @@ export default function AgentSessionWindowApp() {
             sessionId: selectedSession.id,
             messages: selectedSession.messages,
             turnExecutions: sessionTurnExecutions,
+            pendingMessageText: resolveSessionMicrocopyForCharacter(
+              "chat.pending.response_waiting",
+              ["chat", "pending", selectedSession.id, selectedSessionLiveRun?.threadId],
+              selectedSession.character,
+            ),
+            getChangedFilesEmptyText: (artifactKey, artifactHasSnapshotRisk) =>
+              resolveChangedFilesEmptyText(selectedSession.character, artifactKey, artifactHasSnapshotRisk),
             onLoadArtifactDetail: (index) => withmateApi?.getSessionMessageArtifact(selectedSession.id, index) ?? Promise.resolve(null),
             onOpenPath: (target) => handleOpenInlinePath(target, selectedSession.id),
           },
@@ -5398,6 +5414,13 @@ export default function AgentSessionWindowApp() {
             sessionId: auxiliaryWorkspace.selectedSession.id,
             messages: auxiliaryWorkspace.selectedSession.messages,
             turnExecutions: [],
+            pendingMessageText: resolveSessionMicrocopyForCharacter(
+              "chat.pending.response_waiting",
+              ["chat", "pending", auxiliaryWorkspace.selectedSession.id, selectedSessionLiveRun?.threadId],
+              selectedAuxiliaryRuntimeSession?.character,
+            ),
+            getChangedFilesEmptyText: (artifactKey, artifactHasSnapshotRisk) =>
+              resolveChangedFilesEmptyText(selectedAuxiliaryRuntimeSession?.character, artifactKey, artifactHasSnapshotRisk),
             onLoadArtifactDetail: (index) => Promise.resolve(auxiliaryWorkspace.selectedSession?.messages[index]?.artifact ?? null),
             onOpenPath: (target) => handleOpenInlinePath(target, auxiliaryWorkspace.selectedId),
           } : null,
