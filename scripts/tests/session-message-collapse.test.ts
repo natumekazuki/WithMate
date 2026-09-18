@@ -10,7 +10,7 @@ import {
   toggleAllMessageCollapseState,
   toggleMessageCollapseState,
 } from "../../src/session-message-collapse.js";
-import type { MessageListSource } from "../../src/auxiliary-session-message-projection.js";
+import { buildMessageListProjection, type MessageListSource } from "../../src/auxiliary-session-message-projection.js";
 import type { Message } from "../../src/session-state.js";
 
 function sessionSource(messageIndex: number): MessageListSource {
@@ -27,6 +27,20 @@ function liveSource(sessionId: string): MessageListSource {
 
 function message(role: Message["role"], text: string, accent = false): Message {
   return { role, text, ...(accent ? { accent: true } : {}) };
+}
+
+function buildBookmarkProjectionTargets() {
+  const projection = buildMessageListProjection(
+    [{ role: "user", text: "bookmarked", isBookmarked: true }],
+    [{
+      id: "aux-1",
+      messages: [message("assistant", "ordinary")],
+      displayAfterMessageIndex: 0,
+      createdAt: "2026-05-24T00:00:00.000Z",
+    }],
+    "session-1",
+  );
+  return buildMessageCollapseTargets(projection.messages, projection.sources, projection.keys);
 }
 
 test("plain-text projection は Markdown と空白を正規化し、160 code pointsへ収める", () => {
@@ -73,21 +87,17 @@ test("collapse target は persisted session/auxiliary の user/assistantだけ�
 // distinction = "DOM操作ではなく、Messages filterと本文toggleが参照するprojection contractを直接確認する"
 // @end-test-value
 test("collapse target は bookmark state と persisted source identity を navigatorへ引き継ぐ", () => {
-  const targets = buildMessageCollapseTargets(
-    [{ role: "user", text: "bookmarked", isBookmarked: true }, message("assistant", "ordinary")],
-    [sessionSource(0), auxiliarySource("aux-1", 4)],
-    ["session-key", "aux-key"],
-  );
+  const targets = buildBookmarkProjectionTargets();
 
   assert.equal(targets[0]?.isBookmarked, true);
   assert.deepEqual(targets[0]?.source, sessionSource(0));
   assert.equal(targets[1]?.isBookmarked, false);
-  assert.deepEqual(targets[1]?.source, auxiliarySource("aux-1", 4));
+  assert.deepEqual(targets[1]?.source, auxiliarySource("aux-1", 0));
 
   const entries = buildMessageNavigatorEntries(targets, new Map());
   assert.deepEqual(entries.map((entry) => [entry.key, entry.isBookmarked]), [
-    ["session-key", true],
-    ["aux-key", false],
+    ["session-session-1-0", true],
+    ["auxiliary-aux-1-0", false],
   ]);
 });
 
