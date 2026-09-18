@@ -35,6 +35,16 @@ export function updateAutoCollapseActionDockOnSend(
   };
 }
 
+export function updateCharacterDefinitionEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    characterDefinitionEnabled: enabled,
+  };
+}
+
 export function updateCharacterAffectContextEnabled(
   draft: AppSettings,
   enabled: boolean,

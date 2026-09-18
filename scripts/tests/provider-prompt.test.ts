@@ -578,17 +578,17 @@ describe("composeProviderPrompt", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "foreground prompt context の3つの toggle は対象 section だけを省略し、他の注入と User Input 境界を保持する"
+  // claim = "foreground prompt context の4つの toggle は対象 section だけを省略し、作業境界と User Input を保持する"
   // oracle = { type = "contract", ref = "Prompt context settings" }
-  // fault = "1つの設定をOFFにしたとき別の context まで消える、または空の section 見出しが provider prompt に残る"
+  // fault = "1つの設定をOFFにしたとき別の context や作業境界まで消える、または空の section 見出しが provider prompt に残る"
   // observable = "composeProviderPrompt の systemBodyText、inputBodyText、logicalPrompt"
   // observation_boundary = "public-boundary"
   // scope = "composeProviderPrompt prompt-context-toggles"
   // lifecycle = "permanent"
   // impact = "Settings の個別切替と Codex/Copilot 共通の論理 prompt が一致しない"
-  // distinction = "既存の default-on 順序・authoring test とは別に、各 toggle の単独 OFF を確認する"
+  // distinction = "既存の default-on 順序・authoring test とは別に、各 toggle の単独 OFF と固定 boundary の保持を確認する"
   // @end-test-value
-  it("foreground prompt context の3項目を個別にOFFにできる", () => {
+  it("foreground prompt context の4項目を個別にOFFにできる", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -652,6 +652,10 @@ describe("composeProviderPrompt", () => {
       ...baseInput,
       appSettings: { ...defaultSettings, characterAffectContextEnabled: false },
     });
+    const characterDefinitionOff = composeProviderPrompt({
+      ...baseInput,
+      appSettings: { ...defaultSettings, characterDefinitionEnabled: false },
+    });
     const timingOff = composeProviderPrompt({
       ...baseInput,
       appSettings: { ...defaultSettings, conversationTimingEnabled: false },
@@ -660,20 +664,45 @@ describe("composeProviderPrompt", () => {
       ...baseInput,
       appSettings: { ...defaultSettings, toolCallPresenceEnabled: false },
     });
+    const assertLogicalPromptViews = (prompt: ReturnType<typeof composeProviderPrompt>) => {
+      assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
+      assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
+      assert.equal(
+        prompt.logicalPrompt.composedText,
+        [prompt.systemBodyText, prompt.inputBodyText].filter((section) => section.trim().length > 0).join("\n\n"),
+      );
+    };
+
+    for (const prompt of [affectOff, characterDefinitionOff, timingOff, toolCallPresenceOff]) {
+      assertLogicalPromptViews(prompt);
+    }
 
     assert.doesNotMatch(affectOff.systemBodyText, /# Character Affect Context/);
     assert.doesNotMatch(affectOff.systemBodyText, /affect-v1-provider-prompt|relatedCharacterMemory/);
+    assert.match(affectOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
+    assert.match(affectOff.systemBodyText, /# Output Boundary/);
     assert.match(affectOff.inputBodyText, /# Conversation Timing/);
     assert.match(affectOff.systemBodyText, /# Tool Call Presence/);
     assert.match(affectOff.systemBodyText, /# Workspace/);
     assert.match(affectOff.inputBodyText, /# User Input\n\n続けて/);
+    assert.doesNotMatch(characterDefinitionOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
+    assert.match(characterDefinitionOff.systemBodyText, /# Output Boundary/);
+    assert.match(characterDefinitionOff.systemBodyText, /# Tool Call Presence/);
+    assert.match(characterDefinitionOff.systemBodyText, /# Character Affect Context/);
+    assert.match(characterDefinitionOff.inputBodyText, /# Conversation Timing/);
+    assert.match(characterDefinitionOff.systemBodyText, /# Workspace/);
+    assert.match(characterDefinitionOff.inputBodyText, /# User Input\n\n続けて/);
     assert.match(timingOff.systemBodyText, /# Character Affect Context/);
     assert.doesNotMatch(timingOff.inputBodyText, /# Conversation Timing/);
     assert.doesNotMatch(timingOff.inputBodyText, /Observed local time|2026-08-04T21:32/);
+    assert.match(timingOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
+    assert.match(timingOff.systemBodyText, /# Output Boundary/);
     assert.match(timingOff.systemBodyText, /# Tool Call Presence/);
     assert.match(timingOff.systemBodyText, /# Workspace/);
     assert.match(timingOff.inputBodyText, /# User Input\n\n続けて/);
     assert.match(toolCallPresenceOff.systemBodyText, /# Character Affect Context/);
+    assert.match(toolCallPresenceOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
+    assert.match(toolCallPresenceOff.systemBodyText, /# Output Boundary/);
     assert.match(toolCallPresenceOff.inputBodyText, /# Conversation Timing/);
     assert.doesNotMatch(toolCallPresenceOff.systemBodyText, /# Tool Call Presence/);
     assert.doesNotMatch(toolCallPresenceOff.systemBodyText, /最初の tool call より前に/);

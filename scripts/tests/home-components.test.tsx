@@ -74,6 +74,7 @@ describe("HomeSettingsContent", () => {
     sessionCleanupCutoffDate: "",
     deletingOldSessions: false,
     onChangeAutoCollapseActionDockOnSend: noOp,
+    onChangeCharacterDefinitionEnabled: noOp,
     onChangeCharacterAffectContextEnabled: noOp,
     onChangeConversationTimingEnabled: noOp,
     onChangeScrollToLatestOnSend: noOp,
@@ -115,28 +116,49 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Settings は foreground prompt context の3項目を個別 checkbox として表示し、既定値を checked にする"
+  // claim = "Settings は foreground prompt context の4項目を個別 checkbox として表示し、既定値を checked にする"
   // oracle = { type = "contract", ref = "Prompt context settings UI" }
-  // fault = "設定項目の説明または3つの checkbox が表示されず、初期状態が注入有効と一致しない"
+  // fault = "設定項目の説明または4つの checkbox が表示されず、初期状態が注入有効と一致しない"
   // observable = "HomeSettingsContent の static markup にある Prompt Context labels と checkbox state"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-prompt-context-ui"
   // lifecycle = "permanent"
-  // impact = "ユーザーが3つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
+  // impact = "ユーザーが4つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
   // distinction = "個別 state/action の確認は draft test に分け、新規 section のラベルと checked 数を確認する"
   // @end-test-value
-  it("Prompt Context に3項目の個別 toggle を既定有効で表示する", () => {
+  it("Prompt Context に4項目の個別 toggle を既定有効で表示する", () => {
     const html = renderSettings();
     const document = new JSDOM(html).window.document;
     const promptContextSection = Array.from(document.querySelectorAll("section.settings-section-card"))
       .find((section) => section.textContent?.includes("会話の雰囲気・関連情報（Character Affect Context）"));
 
     assert.ok(promptContextSection);
+    assert.equal(promptContextSection.querySelector("strong")?.textContent, "Prompt Context");
+    assert.ok(promptContextSection.textContent?.includes("Character の話し方・反応（Character Definition）"));
     assert.ok(promptContextSection.textContent?.includes("会話の時間情報（Conversation Timing）"));
     assert.ok(promptContextSection.textContent?.includes("作業開始前の短い応答（Tool Call Presence）"));
-    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, 3);
-    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, 3);
+    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, 4);
+    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, 4);
     assert.ok(promptContextSection.textContent?.includes("保存後の次のターンから provider への注入を切り替える"));
+
+    const promptContextFields = [
+      ["characterDefinitionEnabled", "Character の話し方・反応（Character Definition）"],
+      ["characterAffectContextEnabled", "会話の雰囲気・関連情報（Character Affect Context）"],
+      ["conversationTimingEnabled", "会話の時間情報（Conversation Timing）"],
+      ["toolCallPresenceEnabled", "作業開始前の短い応答（Tool Call Presence）"],
+    ] as const;
+    for (const [field, labelText] of promptContextFields) {
+      const disabledDocument = new JSDOM(renderSettings({
+        settingsDraft: { ...settingsDraft, [field]: false },
+      })).window.document;
+      const disabledSection = Array.from(disabledDocument.querySelectorAll("section.settings-section-card"))
+        .find((section) => section.textContent?.includes(labelText));
+      const fieldLabel = Array.from(disabledSection?.querySelectorAll("label") ?? [])
+        .find((label) => label.textContent?.includes(labelText));
+
+      assert.equal(fieldLabel?.querySelector<HTMLInputElement>("input")?.checked, false);
+      assert.equal(disabledSection?.querySelectorAll('input[type="checkbox"]:checked').length, 3);
+    }
   });
 
   it("Repository Glossaryにproactive create上限を0から100のnumber inputで表示する", () => {

@@ -31,10 +31,12 @@ WithMate が保持する system 指示、character 定義、ユーザー入力�
 - `character-notes.md` は保存してよいが、runtime 常設 prompt には入れない
 - app 共通 system prompt を Settings で編集する仕組みは持たない
 - foreground の prompt context は `AppSettings` の次の個別設定で注入を切り替える。既定値はすべて `true` とし、保存後の次の turn から反映する
+- `characterDefinitionEnabled`: `Character Definition Snapshot` section を切り替える。OFFでもCharacter snapshotに対応する作業境界は残す
   - `characterAffectContextEnabled`: `Character Affect Context` の section と、その turn の context resolver を切り替える
   - `conversationTimingEnabled`: input 側の `Conversation Timing` section と、その turn の timing resolver を切り替える
   - `toolCallPresenceEnabled`: 通常の provider prompt に置く `Tool Call Presence` section を切り替える
-- 個別設定を `false` にした場合は対象 section 全体を省略し、空の見出しは残さない。Character 定義、`Output Boundary`、`Folder Context` など対象外の固定境界は変更しない
+- 個別設定を `false` にした場合は対象 section 全体を省略し、空の見出しは残さない。`Output Boundary`、`Folder Context`、`User Input`、添付 reference、provider 固有の組み込み指示は切り替わらない
+- `characterAffectContextEnabled` は foreground の read projection と resolver だけを切り替える。turn 後に別経路で動く Character Affect 評価・保存は切り替えない
 - `Session Memory` / `Project Memory` / `Character Memory` は保存済みデータとして残してよいが、coding plane prompt の常設入力正本にはしない
 - provider instruction sync は V5 Character 注入の主経路にしない
 
@@ -57,10 +59,9 @@ coding plane に渡す turn prompt は、次のレイヤーを基本にする。
 3. `Tool Call Presence`
 4. `Folder Context`
 5. `Character Affect Context`
-6. 必要最小限の WithMate run marker
-7. `Conversation Timing`
-8. ユーザー入力
-9. 添付 reference
+6. `Conversation Timing`
+7. ユーザー入力
+8. 添付 reference
 
 通常 session / companion の Character snapshot は session / companion 開始時点の保存済み値を使い、catalog の現在値へ追従しない。`character-authoring` session は turn 開始時に最新の `character.md` から runtime snapshot を作り直す。app 共通 system prompt は挿入しない。
 `Folder Context` は毎 turn system 側へ置き、実行 workspace、Main Process が解決した SessionFolder、実効 Additional Directories 一覧だけを明示する。Character、`Output Boundary`、`Tool Call Presence` の安定した section の後ろ、turn ごとに変動する `Character Affect Context` の前に置き、folder 値が変わっても固定 system prefix の再利用を保ちやすくする。各 directory の利用方針は repository instruction、filesystem access grant は provider adapter と既存 allowlist が所有し、Folder Context に説明文を重ねない。
@@ -71,15 +72,38 @@ Character Contextを取得できたturnでは、turnごとに変動する`Charac
 通常 session では可変な `Conversation Timing` を input 側の `User Input` 直前に置く。Copilotの`session.systemMessage`へは入れず、Codexのlogical promptとCopilotの`session.send.prompt`から同じ論理sectionを監査できるようにする。Auxiliary、Companion、`character-authoring` sessionには注入しない。
 `character-authoring` session は `character.md` / `character-notes.md` 自体が成果物なので、`Output Boundary`、`Tool Call Presence`、coding agent 境界の固定 guard を注入しない。
 
+foreground prompt の切替範囲は次の通りとする。
+
+| 設定 | OFFで省略するもの | OFFでも残るもの |
+| --- | --- | --- |
+| `characterDefinitionEnabled` | Character の名前・説明・`character.md` 本文 | `Output Boundary`、`Folder Context`、ユーザー入力、添付 reference |
+| `characterAffectContextEnabled` | `Character Affect Context` と通常 session の turn 開始時 resolver | Background Affect 評価・保存、他経路の context |
+| `conversationTimingEnabled` | input 側の `Conversation Timing` と通常 session の turn 開始時 resolver | system 側の section、ユーザー入力 |
+| `toolCallPresenceEnabled` | `Tool Call Presence` | Character 定義、`Output Boundary`、作業操作の実行 |
+
+Character snapshot が存在する通常 session / companion では、`characterDefinitionEnabled` を OFF にしても `Output Boundary` と、ON の `Tool Call Presence` は残す。snapshot がない場合や `character-authoring` では、従来どおりそれらの section 自体を作らない。
+
+### Other prompt sources
+
+foreground の4項目とは別に、次の指示経路がある。これらは今回の `Prompt Context` 設定では切り替えない。
+
+| 経路 | 内容 | 4項目をOFFにしたとき |
+| --- | --- | --- |
+| Background Character Affect evaluator | `src-electron/character-affect-turn-evaluator.ts` がturn後のAffect候補を評価するための専用 system 指示 | 影響しない。`characterAffectContextEnabled` はforegroundのcontext projectionとresolverだけを切り替える |
+| Character authoring | Character本文を成果物として編集するためのauthoring prompt、workspace instruction、Skill projection | `Character Definition` OFFではsnapshot本文も省略するが、authoringの成果物境界・Skillは維持する。その他の3項目は従来どおり注入しない |
+| Provider-native instruction | provider組み込みsystem prompt、custom agent、provider instruction file、provider側のSkill解釈 | 影響しない。WithMateのforeground composer外でproviderが所有する |
+| Attachments / workspace access | folder metadata、`allowedAdditionalDirectories`、画像のstructured input | 影響しない。本文promptのsection切替とは別のtransport / access metadataである |
+
+`src-electron/session-memory-extraction.ts` のsystem指示は、現行runtimeのforeground turnでは呼び出されず、Prompt Contextの切替対象でもない。将来この経路を有効化する場合は、foregroundの4項目とは別に実行条件と保存境界を定義する。
+
 foreground prompt context の個別設定は、既存の session 種別境界を拡張しない。`Character Affect Context` と `Conversation Timing` は既存 resolver が対象にする通常 session のみで取得し、設定が `false` の場合は resolver 自体を呼ばない。背景処理や Companion の別経路で使う context には適用しない。`Tool Call Presence` は既存の character snapshot 有無と `character-authoring` 除外条件を保ち、その条件を満たす provider prompt だけで切り替える。
 
 ### 4.0.0 SingleMate target
 
 coding plane に渡す turn prompt は、次を基本にする。
 
-1. 必要最小限の WithMate run marker
-2. ユーザー入力
-3. 添付 reference
+1. ユーザー入力
+2. 添付 reference
 
 Mate Core / Bond Profile / Work Style は provider instruction file へ同期し、毎 turn prompt へ全文合成しない。
 
@@ -88,13 +112,13 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 ### current runtime
 
 論理 prompt では `Folder Context` section を Character、`Output Boundary`、`Tool Call Presence` の後ろ、`Character Affect Context` の前に置く。Character section がない場合は system 側の先頭になる。`Workspace` は `resolveRunWorkspacePath` の実行値、`SessionFolder` は `session-files.ts` を経由して Main Process が解決した値、`Additional Directories` は実行 workspace を基準に `normalizeAllowedAdditionalDirectories` で正規化した値を使う。空の Additional Directories は `なし`、取得できない path は `利用不可` と明示する。
-論理 prompt では `Character Definition Snapshot` section を system 側に置く。
+論理 prompt では `Character Definition Snapshot` section が有効な場合に system 側へ置く。
 通常 session / companion では `Output Boundary` section も system 側に置く。`character-authoring` session では置かない。
 通常 session / companion では `Tool Call Presence` section も system 側に置く。`character-authoring` session では置かない。
 Character Contextを取得できたturnでは、`Character Affect Context` sectionをsystem側の固定sectionより後ろに置く。
 通常 session では `Conversation Timing` sectionをinput側の`User Input`直前に置く。値の解決は`src-electron/conversation-timing.ts`、sectionの合成は`src-electron/provider-prompt.ts`を参照する。
 
-3つの切替は同じ `AppSettings` payload から provider prompt 合成へ渡す。保存値が欠損した既存 DB では既定値 `true` に戻し、既存の注入内容と順序を保つ。`Conversation Timing` は input 側のため Copilot の `systemMessage` session cache を無効化せず、system 側の2項目は合成後の system message が既存の cache key に反映される。
+4つの切替は同じ `AppSettings` payload から provider prompt 合成へ渡す。保存値が欠損した既存 DB では既定値 `true` に戻し、既存の注入内容と順序を保つ。`Conversation Timing` は input 側のため Copilot の `systemMessage` session cache を無効化せず、system 側の3項目は合成後の system message が既存の cache key に反映される。
 
 `# Session Memory`、`# Project Memory`、`# Project Context`、`# Character Memory` も coding plane prompt では作らない。
 
@@ -146,10 +170,12 @@ Character Contextを取得できたturnでは、`Character Affect Context` secti
 - source:
   - WithMate 固定の成果物境界
 - 形式:
-  - Character Definition Snapshot の直後に置く
+  - Character Definition Snapshot の直後に置く。Character section が省略された場合は system 側の先頭になる
   - Character 定義はユーザーへ返す自然言語の話し方・温度・反応にだけ使うことを明示する
   - コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary へ Character の口調・設定・台詞・メタ説明を混ぜないことを明示する
-  - `character-authoring` session では注入しない
+- `character-authoring` session では注入しない
+
+`characterDefinitionEnabled` が `false` の場合も、通常 session / companion の Character snapshot が存在すれば `Output Boundary` は残る。これは Character の口調ではなく、coding agent の成果物へ Character 表現を混ぜないための固定境界である。
 
 ### `# Tool Call Presence`
 

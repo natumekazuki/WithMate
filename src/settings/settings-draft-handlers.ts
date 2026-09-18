@@ -5,6 +5,7 @@ import type { HomeSettingsContentBaseProps } from "./home-settings-content-props
 import {
   handleChangeAutoCollapseActionDockOnSend,
   handleChangeCharacterAffectContextEnabled,
+  handleChangeCharacterDefinitionEnabled,
   handleChangeConversationTimingEnabled,
   handleChangeGlossaryProactiveCreateLimit,
   handleChangeKeyboardShortcuts,
@@ -29,6 +30,7 @@ export type SettingsDraftHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onChangeAutoCollapseActionDockOnSend"
   | "onChangeCharacterAffectContextEnabled"
+  | "onChangeCharacterDefinitionEnabled"
   | "onChangeConversationTimingEnabled"
   | "onChangeScrollToLatestOnSend"
   | "onChangeKeyboardShortcuts"
@@ -51,6 +53,9 @@ export function buildSettingsDraftHandlers({
   return {
     onChangeAutoCollapseActionDockOnSend: (enabled) => {
       handleChangeAutoCollapseActionDockOnSend({ enabled, setSettingsDraft });
+    },
+    onChangeCharacterDefinitionEnabled: (enabled) => {
+      handleChangeCharacterDefinitionEnabled({ enabled, setSettingsDraft });
     },
     onChangeCharacterAffectContextEnabled: (enabled) => {
       handleChangeCharacterAffectContextEnabled({ enabled, setSettingsDraft });

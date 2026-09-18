@@ -14,6 +14,7 @@ import {
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
   SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL,
+  SETTINGS_CHARACTER_DEFINITION_LABEL,
   SETTINGS_CONVERSATION_TIMING_LABEL,
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_LABEL,
@@ -54,6 +55,7 @@ export type HomeSettingsContentProps = {
   sessionCleanupCutoffDate: string;
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
+  onChangeCharacterDefinitionEnabled: (enabled: boolean) => void;
   onChangeCharacterAffectContextEnabled: (enabled: boolean) => void;
   onChangeConversationTimingEnabled: (enabled: boolean) => void;
   onChangeScrollToLatestOnSend: (enabled: boolean) => void;
@@ -119,6 +121,7 @@ export function HomeSettingsContent({
   sessionCleanupCutoffDate,
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
+  onChangeCharacterDefinitionEnabled,
   onChangeCharacterAffectContextEnabled,
   onChangeConversationTimingEnabled,
   onChangeScrollToLatestOnSend,
@@ -210,6 +213,14 @@ export function HomeSettingsContent({
             <div className="settings-field">
               <strong>Prompt Context</strong>
               <p className="settings-help">{SETTINGS_PROMPT_CONTEXT_HELP}</p>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_CHARACTER_DEFINITION_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.characterDefinitionEnabled}
+                  onChange={(event) => onChangeCharacterDefinitionEnabled(event.target.checked)}
+                />
+              </label>
               <label className="settings-provider-toggle-row settings-section-toggle">
                 <span className="settings-provider-name">{SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL}</span>
                 <input

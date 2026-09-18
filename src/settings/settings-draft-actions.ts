@@ -7,6 +7,7 @@ import {
   removeMateMemoryGenerationPriorityDraft,
   updateAutoCollapseActionDockOnSend,
   updateCharacterAffectContextEnabled,
+  updateCharacterDefinitionEnabled,
   updateConversationTimingEnabled,
   updateGlossaryProactiveCreateLimitDraft,
   updateCodingProviderEnabledDraft,
@@ -87,6 +88,12 @@ export function handleChangeAutoCollapseActionDockOnSend(input: SettingsDraftAct
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, input.enabled));
+}
+
+export function handleChangeCharacterDefinitionEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateCharacterDefinitionEnabled(current, input.enabled));
 }
 
 export function handleChangeCharacterAffectContextEnabled(input: SettingsDraftActionInput & {

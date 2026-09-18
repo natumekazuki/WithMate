@@ -166,16 +166,18 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   );
   const folderContextBody = buildFolderContextSection(input, workspacePath, additionalDirectories);
   const isCharacterAuthoringSession = input.session.sessionKind === "character-authoring";
-  const characterPromptBody = buildCharacterRuntimePromptSection(input.session.characterRuntimeSnapshot, {
+  const characterDefinitionBody = buildCharacterRuntimePromptSection(input.session.characterRuntimeSnapshot, {
     includeRuntimeBoundary: !isCharacterAuthoringSession,
   });
+  const hasCharacterSnapshot = characterDefinitionBody.trim().length > 0;
+  const characterPromptBody = input.appSettings.characterDefinitionEnabled ? characterDefinitionBody : "";
   const outputBoundaryBody = buildCharacterOutputBoundarySection(
-    !isCharacterAuthoringSession && characterPromptBody.trim().length > 0,
+    !isCharacterAuthoringSession && hasCharacterSnapshot,
   );
   const toolCallPresenceBody = buildToolCallPresenceSection(
     input.appSettings.toolCallPresenceEnabled
       && !isCharacterAuthoringSession
-      && characterPromptBody.trim().length > 0,
+      && hasCharacterSnapshot,
   );
   const characterAffectContextBody = input.appSettings.characterAffectContextEnabled
     ? buildCharacterAffectContextSection(input.characterContext)

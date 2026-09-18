@@ -16,6 +16,7 @@ const LAUNCH_AT_LOGIN_ENABLED_KEY = "launch_at_login_enabled";
 const SESSION_TURN_NOTIFICATION_ENABLED_KEY = "session_turn_notification_enabled";
 const SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY =
   "session_turn_notification_response_preview_enabled";
+const CHARACTER_DEFINITION_ENABLED_KEY = "character_definition_enabled";
 const CHARACTER_AFFECT_CONTEXT_ENABLED_KEY = "character_affect_context_enabled";
 const CONVERSATION_TIMING_ENABLED_KEY = "conversation_timing_enabled";
 const TOOL_CALL_PRESENCE_ENABLED_KEY = "tool_call_presence_enabled";
@@ -105,6 +106,17 @@ export class AppSettingsStorage {
       .run(
         SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY,
         String(DEFAULT_APP_SETTINGS.sessionTurnNotificationResponsePreviewEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        CHARACTER_DEFINITION_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.characterDefinitionEnabled),
         updatedAt,
       );
     this.db
@@ -286,6 +298,12 @@ export class AppSettingsStorage {
         }
         continue;
       }
+      if (row.setting_key === CHARACTER_DEFINITION_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.characterDefinitionEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
       if (row.setting_key === CHARACTER_AFFECT_CONTEXT_ENABLED_KEY) {
         if (row.setting_value === "true" || row.setting_value === "false") {
           settings.characterAffectContextEnabled = row.setting_value === "true";
@@ -462,6 +480,19 @@ export class AppSettingsStorage {
         .run(
           SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY,
           String(normalized.sessionTurnNotificationResponsePreviewEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          CHARACTER_DEFINITION_ENABLED_KEY,
+          String(normalized.characterDefinitionEnabled),
           updatedAt,
         );
       this.db

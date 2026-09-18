@@ -35,11 +35,12 @@ export const SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL =
   "Windows 通知に返答の冒頭を表示する";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
 export const SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL = "送信時にチャット末尾へ移動する";
+export const SETTINGS_CHARACTER_DEFINITION_LABEL = "Character の話し方・反応（Character Definition）";
 export const SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL = "会話の雰囲気・関連情報（Character Affect Context）";
 export const SETTINGS_CONVERSATION_TIMING_LABEL = "会話の時間情報（Conversation Timing）";
 export const SETTINGS_TOOL_CALL_PRESENCE_LABEL = "作業開始前の短い応答（Tool Call Presence）";
 export const SETTINGS_PROMPT_CONTEXT_HELP =
-  "保存後の次のターンから provider への注入を切り替える。Character 定義、Output Boundary、Workspace などの固定境界は変わらない。Conversation Timing は入力側に入る。";
+  "保存後の次のターンから provider への注入を切り替える。Character の話し方・反応、Affect、Timing、Tool Call Presence は任意の補助情報。Output Boundary、Workspace などの作業境界は切り替わらない。";
 export const SETTINGS_MEMORY_FILE_QUOTA_LABEL = "Memory file quota";
 export const SETTINGS_MEMORY_FILE_QUOTA_HELP =
   "Protected Object の全体容量上限。現在使用量が上限を超えている場合、新しい file append は失敗する。";
