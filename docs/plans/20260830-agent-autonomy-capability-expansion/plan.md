@@ -265,6 +265,7 @@ transport ごとに入出力形式を変える必要がある場合も、resourc
 
 | 項目 | 状態 | 残作業・完了確認 | 正本・関連 |
 | --- | --- | --- | --- |
+| 初期Auxiliaryを含むSession作成の共通化 | 基本方針合意・詳細検討／実装着手保留（#726待ち） | GUI・MCP・CLIの基本動作共通化、初期Auxiliary必須、共通lifecycle利用の方針を保持する。#726の実装・検証が片付いた後、着手時に作成経路、commit、取消・失敗処理、回復・冪等性の接続を再検討する。細部は検討中とし、旧処理を前提に実装を先行しない | `designs/01-session-lifecycle.md`「初期Auxiliaryを含むSession作成の統合方針」、[#726](https://github.com/natumekazuki/WithMate/issues/726) |
 | Session移管・削除のAuxiliary全件化 | 方針確定・実装追従待ち | `src-electron/main.ts`の選択中Auxiliaryを参照する実行判定を含め、所属全件の移管可否・停止・cleanupへ揃える。非表示実行、新規作成／実行開始との競合、遅延callbackを検証する。既存の削除拒否条件は維持する | `docs/design/session-external-runtime.md`「Session移管・削除と複数Auxiliary」。Slice 3／7およびmaster統合 |
 | Main／Auxiliaryのスケジュールと共有ActionDock | 方針確定・実装追従待ち | 作成・編集対象の会話ID固定、対象表示、Dock切替抑止と通常draft復元を実装する。Auxiliaryの非表示発火、同一会話queue、対象削除時の非振替、GUI／Agentの認可分離を接続・検証する | `docs/design/desktop-ui.md`「Main／Auxiliaryのスケジュールと共有ActionDock」 |
 | 自己宛direct Turnとscheduleの権限分離 | 方針確定・実装追従待ち | baselineと対象条件、公開adapter、既存保存grant／queued executionの扱い、schedule作成・発火の認可を確認・反映する | 同設計「v6.4 方針更新: 自己宛Turnとスケジュールの分離」、`designs/05-grants-routing-and-transfer.md` |

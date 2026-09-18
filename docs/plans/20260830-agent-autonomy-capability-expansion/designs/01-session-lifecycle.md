@@ -30,6 +30,16 @@ Session ID、作成時刻、過去eventは不変とする。root、parent、Role
 
 Character変更は会話履歴の所有者を偽装しない。過去messageとaffect eventは当時のCharacter identityを保持し、新しいCharacterは変更後のTurnから適用する。Character-owned MemoryのownerをSession moveやCharacter changeで自動移管しない。
 
+## 初期Auxiliaryを含むSession作成の統合方針（詳細検討保留）
+
+通常Sessionの作成はGUI・MCP・CLIで基本的に同じ動作とし、初期Auxiliaryを必須とする。入口ごとの後処理ではなく、共通lifecycleでSession本体、Role・権限・予算と初期Auxiliaryの確定、失敗処理、冪等な再試行を扱う方針とする。共通化は呼出元ごとの認可の違いをなくすことを意味しない。
+
+ただし、[Issue #726](https://github.com/natumekazuki/WithMate/issues/726)でSession操作の排他・取消・永続化とAuxiliary作成処理の改修が進められているため、本統合の詳細設計・実装には着手しない。同Issueの実装・検証が片付いた後、変更後の作成経路と操作lifecycleを確認して再検討する。
+
+- 通常Sessionの作成成功は、必須の初期Auxiliaryが揃った状態とする。Mainだけの作成を成功扱いし、Auxiliary失敗時に後から親を削除する方式をそのまま移植しない。
+- transaction／commit境界、準備・取消・失敗時の後始末、回復と冪等性の接続、各作成経路への具体的な配置は、着手時まで検討中とする。旧masterの後処理や今回の会話上の候補を、確定した実装手順として扱わない。
+- 下記の既存Root作成契約を維持しつつ、初期Auxiliaryとの接続は#726完了後に確認する。本節は方針の記録であり、統合実装の完了を示さない。
+
 ## Root 作成
 
 Agentによるroot作成は、現在のrootから独立した作業領域を作る`session.create`のroot placementである。作成元Agentのgrantにroot placementを許可する`session.create` actionが必要で、次を同じtransactionまたは一つのrecovery可能なapplication operationで確定する。
