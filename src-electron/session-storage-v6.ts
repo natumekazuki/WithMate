@@ -39,6 +39,7 @@ import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import {
   SessionIdCollisionError,
+  SessionNotFoundError,
   SessionRunningTurnStartConflictError,
 } from "./session-storage-errors.js";
 import {
@@ -495,8 +496,16 @@ export class SessionStorageV6 {
     return this.storeSession(session, "upsert");
   }
 
+  updateSession(session: Session): Session {
+    return this.storeSession(session, "update");
+  }
+
   upsertTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Session {
     return this.storeSession(session, "upsert", terminalCommit);
+  }
+
+  updateTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Session {
+    return this.storeSession(session, "update", terminalCommit);
   }
 
   clearCharacterAuthoringRuntimeState(
@@ -675,7 +684,7 @@ export class SessionStorageV6 {
 
   private storeSession(
     session: Session,
-    operation: "create" | "upsert",
+    operation: "create" | "upsert" | "update",
     terminalCommit?: SessionTurnTerminalCommit,
   ): Session {
     const normalized = normalizeSessionForStorage(session);
@@ -686,6 +695,12 @@ export class SessionStorageV6 {
     const startedAt = Date.now();
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      if (operation === "update") {
+        const existing = this.db.prepare("SELECT id FROM sessions_v6 WHERE id = ?").get(normalized.id) as SessionIdRow | undefined;
+        if (!existing) {
+          throw new SessionNotFoundError(normalized.id);
+        }
+      }
       this.writeSession(normalized, operation);
       if (terminalCommit) {
         writeSessionTurnTerminalCommit(this.db, terminalCommit);
@@ -793,7 +808,7 @@ export class SessionStorageV6 {
     this.db.close();
   }
 
-  private writeSession(session: Session, operation: "create" | "upsert" = "upsert"): void {
+  private writeSession(session: Session, operation: "create" | "upsert" | "update" = "upsert"): void {
     const startedAt = Date.now();
     const snapshot = session.characterRuntimeSnapshot;
     const runtimePolicy = {

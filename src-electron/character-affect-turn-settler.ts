@@ -12,6 +12,7 @@ import type {
 
 export type CharacterAffectTurnSettlementResult =
   | { status: "settled"; appraisal: CharacterAffectAppraiseResponse | null }
+  | { status: "invalidated" }
   | { status: "pending"; phase: "context" | "appraisal"; error: CharacterContextErrorResponse };
 
 export function characterAffectTurnIdempotencyPrefix(
@@ -46,6 +47,7 @@ function savedCandidateIndices(error: CharacterContextErrorResponse): number[] {
 
 export async function settleCharacterAffectTurnWithRetry(deps: {
   correlationId: string;
+  isCurrentGeneration(): boolean;
   getPending(): PendingCharacterAffectTurnSettlement | null;
   getContext(): Promise<CharacterContextResponse | CharacterContextErrorResponse>;
   evaluate(context: CharacterContextResponse, idempotencyPrefix: string): Promise<AffectEventInput[]>;
@@ -65,9 +67,13 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
     prepareReevaluation: boolean;
   }): { reevaluationPrepared: boolean };
   validateOwner?(): Promise<boolean>;
+  runAppraisalExclusive<T>(operation: () => T | Promise<T>): Promise<T>;
   markDiscarded?(): void;
   markSettled(): void;
 }): Promise<CharacterAffectTurnSettlementResult> {
+  if (!deps.isCurrentGeneration()) {
+    return { status: "invalidated" };
+  }
   let pending = deps.getPending();
   if (!pending) {
     return { status: "settled", appraisal: null };
@@ -75,6 +81,9 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
 
   if (!pending.evaluation) {
     const context = await deps.getContext();
+    if (!deps.isCurrentGeneration()) {
+      return { status: "invalidated" };
+    }
     if (isCharacterContextError(context)) {
       return { status: "pending", phase: "context", error: context };
     }
@@ -82,6 +91,9 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
       context,
       characterAffectTurnIdempotencyPrefix(deps.correlationId, pending.evaluationAttempt),
     );
+    if (!deps.isCurrentGeneration()) {
+      return { status: "invalidated" };
+    }
     deps.persistEvaluation({
       evaluationAttempt: pending.evaluationAttempt,
       expectedVersion: context.affect.version,
@@ -94,28 +106,40 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
   }
 
   const evaluation = pending.evaluation;
-  if (evaluation.candidates.length === 0) {
-    deps.markSettled();
-    return { status: "settled", appraisal: null };
-  }
+  return deps.runAppraisalExclusive(async () => {
+    if (!deps.isCurrentGeneration()) {
+      return { status: "invalidated" };
+    }
+    const ownerIsValid = !deps.validateOwner || await deps.validateOwner();
+    if (!deps.isCurrentGeneration()) {
+      return { status: "invalidated" };
+    }
+    if (!ownerIsValid) {
+      (deps.markDiscarded ?? deps.markSettled)();
+      return { status: "settled", appraisal: null };
+    }
 
-  if (deps.validateOwner && !await deps.validateOwner()) {
-    (deps.markDiscarded ?? deps.markSettled)();
-    return { status: "settled", appraisal: null };
-  }
+    if (evaluation.candidates.length === 0) {
+      deps.markSettled();
+      return { status: "settled", appraisal: null };
+    }
 
-  const appraisal = await deps.appraise(evaluation.expectedVersion, evaluation.candidates);
-  if (!isCharacterContextError(appraisal)) {
-    deps.markSettled();
-    return { status: "settled", appraisal };
-  }
+    const appraisal = await deps.appraise(evaluation.expectedVersion, evaluation.candidates);
+    if (!deps.isCurrentGeneration()) {
+      return { status: "invalidated" };
+    }
+    if (!isCharacterContextError(appraisal)) {
+      deps.markSettled();
+      return { status: "settled", appraisal };
+    }
 
-  const effect = appraisalEffect(appraisal);
-  deps.recordAppraisalFailure({
-    evaluationAttempt: evaluation.evaluationAttempt,
-    effect,
-    savedCandidateIndices: savedCandidateIndices(appraisal),
-    prepareReevaluation: appraisal.error.code === "version_conflict" && effect === "none",
+    const effect = appraisalEffect(appraisal);
+    deps.recordAppraisalFailure({
+      evaluationAttempt: evaluation.evaluationAttempt,
+      effect,
+      savedCandidateIndices: savedCandidateIndices(appraisal),
+      prepareReevaluation: appraisal.error.code === "version_conflict" && effect === "none",
+    });
+    return { status: "pending", phase: "appraisal", error: appraisal };
   });
-  return { status: "pending", phase: "appraisal", error: appraisal };
 }

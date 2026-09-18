@@ -2416,6 +2416,7 @@ type CharacterAffectTurnSettlementRequest = {
   assistantMessage: string;
   assistantMessageIndex: number;
   occurredAt: string;
+  runAppraisalExclusive<T>(operation: () => T | Promise<T>): Promise<T>;
 };
 
 function requireCharacterAffectTurnSettlementStorage(): CharacterAffectTurnSettlementStorage {
@@ -2456,6 +2457,22 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
   if (attemptCount === null) {
     return true;
   }
+  const runtimeApi = memoryV6RuntimeApi;
+  const isCurrentGeneration = () => settlementStorage === characterAffectTurnSettlementStorage
+    && runtimeApi === memoryV6RuntimeApi;
+  const reportInvalidatedSettlement = (): boolean => {
+    if (settlementStorage === characterAffectTurnSettlementStorage) {
+      settlementStorage.recoverInterruptedAttempts(new Date().toISOString(), request.correlationId);
+    }
+    writeAppLog({
+      level: "info",
+      kind: "character-affect.lifecycle.settlement-invalidated",
+      process: "main",
+      message: "Character affect settlement stopped after its storage or runtime was replaced",
+      data: { sessionId: request.session.id, correlationId: request.correlationId },
+    });
+    return true;
+  };
   let activeStage = "runtime" as import("./character-affect-turn-settlement-storage.js").CharacterAffectTurnFailureStage;
   let stageStartedAt = Date.now();
   let dispositionFailure: unknown;
@@ -2465,6 +2482,9 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
     effect?: string;
     error?: unknown;
   }): boolean => {
+    if (!isCurrentGeneration()) {
+      return reportInvalidatedSettlement();
+    }
     const diagnostic = createCharacterAffectTurnFailureDiagnostic({
       code: input.code,
       stage: activeStage,
@@ -2512,10 +2532,9 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
     });
     return disposition.state === "quarantined";
   };
-  if (!memoryV6RuntimeApi) {
+  if (!runtimeApi) {
     return recordFailure({ code: "runtime_unavailable", retryable: true });
   }
-  const runtimeApi = memoryV6RuntimeApi;
   const character = request.session.characterRuntimeSnapshot
     ?? requireCharacterService().createRuntimeSnapshot(request.session.characterId);
   if (!character) {
@@ -2525,6 +2544,7 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
   try {
     const settlement = await settleCharacterAffectTurnWithRetry({
     correlationId: request.correlationId,
+    isCurrentGeneration,
     getPending: () => settlementStorage.getPending(request.correlationId),
     getContext: async () => {
       activeStage = "context_response_assembly";
@@ -2595,6 +2615,7 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
     recordAppraisalFailure: (input) => {
       return settlementStorage.recordAppraisalFailure({ correlationId: request.correlationId, ...input });
     },
+    runAppraisalExclusive: request.runAppraisalExclusive,
     validateOwner: async () => {
       const currentSession = await getRuntimeSession(request.session.id);
       return Boolean(
@@ -2610,6 +2631,9 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
       settlementStorage.markSettled(request.correlationId);
     },
     });
+    if (settlement.status === "invalidated") {
+      return reportInvalidatedSettlement();
+    }
     if (settlement.status === "pending") {
       if (settlement.phase === "appraisal") {
         activeStage = "appraisal";
@@ -2655,16 +2679,18 @@ async function drainPendingCharacterAffectTurns(): Promise<boolean> {
     startupRecoveryCutoff: characterAffectTurnStartupRecoveryCutoff,
     readyCursor: characterAffectTurnDrainCursor,
     getSession: getRuntimeSession,
-    settle: (item, session) => characterAffectTurnOwnershipCoordinator.runExclusive(
-      () => settleCharacterAffectTurn({
+    settle: (item, session) => settlementStorage !== characterAffectTurnSettlementStorage
+      ? Promise.resolve(true)
+      : settleCharacterAffectTurn({
         session,
         correlationId: item.correlationId,
         userMessage: item.userMessage,
         assistantMessage: item.assistantMessage,
         assistantMessageIndex: item.assistantMessageIndex,
         occurredAt: item.occurredAt,
+        runAppraisalExclusive: (operation) =>
+          characterAffectTurnOwnershipCoordinator.runExclusive(operation),
       }),
-    ),
     onDiscard: (item) => {
       writeAppLog({
         level: "warn",
@@ -2687,7 +2713,15 @@ async function drainPendingCharacterAffectTurns(): Promise<boolean> {
         },
       });
     },
+  }).catch((error: unknown) => {
+    if (settlementStorage !== characterAffectTurnSettlementStorage) {
+      return { retryRequired: characterAffectTurnSettlementStorage !== null, nextReadyCursor: undefined };
+    }
+    throw error;
   });
+  if (settlementStorage !== characterAffectTurnSettlementStorage) {
+    return characterAffectTurnSettlementStorage !== null;
+  }
   characterAffectTurnDrainCursor = result.nextReadyCursor;
   return result.retryRequired;
 }
@@ -3109,10 +3143,14 @@ function requireSessionPersistenceService(): SessionPersistenceService {
           })),
         ),
       upsertStoredSession: (session, operation) => {
-        const storage = requireSessionStorageForWrite();
-        return operation === "create"
-          ? storage.insertSession(session)
-          : storage.upsertSession(session);
+        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
+        if (operation === "create") {
+          return storage.insertSession(session);
+        }
+        if (!storage.updateSession) {
+          throw new Error("既存 Session の更新 storage が利用できないよ。");
+        }
+        return storage.updateSession(session);
       },
       appendStoredRunningTurnStart: (input) => {
         const storage = requireSessionStorageForWrite() as SessionStorageWrite;
@@ -3152,10 +3190,10 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       },
       upsertStoredTerminalSession: (session, terminalCommit) => {
         const storage = requireSessionStorageForWrite() as SessionStorageWrite;
-        if (!storage.upsertTerminalSession) {
+        if (!storage.updateTerminalSession) {
           throw new Error("terminal Session の atomic commit storage が利用できないよ。");
         }
-        return storage.upsertTerminalSession(session, terminalCommit);
+        return storage.updateTerminalSession(session, terminalCommit);
       },
       broadcastSessions,
       runCharacterAffectTurnOwnershipExclusive: (operation) =>

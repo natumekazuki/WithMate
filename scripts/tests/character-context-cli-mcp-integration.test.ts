@@ -27,13 +27,16 @@ function outputBuffer() {
 }
 
 describe("Character context CLI / MCP integration", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
-  // claim = "bound MCPはcaller identityなしでactor Sessionを解決し、CLI/MCPのaffect event列とpost-turn appraisalを同じstate、scope、versionへ収束させる"
-  // oracle = { type = "contract", ref = "Character affect settlement and ADR-023" }
-  // failure_mode = "MCPがcaller identityを要求する、またはruntime selector導入でCLIとMCPが別instanceへ分岐して同一Sessionのstateかversionが不一致になる"
+  // claim = "単一runtimeのbound MCPで保存したAffect eventとpost-turn eventをCLIから読み戻せ、CLI・MCP・lifecycleのAffect投影が一致する"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // fault = "MCPまたはpost-turnで保存したeventをCLIが読めないか、同じ時刻のCLI・MCP・lifecycle投影が不一致になる"
+  // observable = "CLI inspectのevent件数とfamily・target、CLI・MCP・lifecycleのaffect投影"
+  // observation_boundary = "public-boundary"
   // scope = "character-context-cli-mcp-runtime-binding"
   // lifecycle = "permanent"
+  // distinction = "個別adapterのschema検証と異なり、実HTTP runtimeでMCP writeとCLI readとpost-turn処理を接続する"
   // @end-test-value
   it("owner-bound runtimeで通常Sessionの即時event列とpost-turn appraisalが同じstate、scope、versionへ収束する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-character-runtime-"));
@@ -280,6 +283,7 @@ describe("Character context CLI / MCP integration", () => {
           occurredAt: "2026-08-09T03:03:00.000Z",
         });
         const settlement = await settleCharacterAffectTurnWithRetry({
+          isCurrentGeneration: () => true,
           correlationId,
           getPending: () => settlementStorage.getPending(correlationId),
           getContext: () => runtime.characterContextService.getContext({
@@ -317,6 +321,7 @@ describe("Character context CLI / MCP integration", () => {
             candidates,
           }, "lifecycle"),
           recordAppraisalFailure: (input) => settlementStorage.recordAppraisalFailure({ correlationId, ...input }),
+          runAppraisalExclusive: async (operation) => operation(),
           markSettled: () => settlementStorage.markSettled(correlationId),
         });
         assert.equal(settlement.status, "settled", JSON.stringify(settlement));

@@ -81,6 +81,8 @@ export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
 > & SessionStorageRead & {
+  updateSession?(session: Session): Awaitable<Session>;
+  updateTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
   clearCharacterAuthoringRuntimeState?(

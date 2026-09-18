@@ -5,6 +5,13 @@ export class SessionIdCollisionError extends Error {
   }
 }
 
+export class SessionNotFoundError extends Error {
+  constructor(readonly sessionId: string) {
+    super("対象セッションが見つからないよ。");
+    this.name = "SessionNotFoundError";
+  }
+}
+
 export class SessionRunningTurnStartConflictError extends Error {
   constructor(
     readonly sessionId: string,
