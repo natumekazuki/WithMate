@@ -952,7 +952,10 @@ export function SessionChatScreen({
 }: SessionChatScreenProps) {
   const ownLayoutRef = useRef<HTMLDivElement | null>(null);
   const centralRef = useRef<HTMLElement | null>(null);
+  const previousActionDockExpandedRef = useRef(isActionDockExpanded);
+  const [isActionDockTransitioning, setIsActionDockTransitioning] = useState(false);
   const [isCentralCollapsed, setIsCentralCollapsed] = useState(false);
+  const actionDockStateChanged = previousActionDockExpandedRef.current !== isActionDockExpanded;
   const setLayoutElementRefs = useCallback((node: HTMLDivElement | null) => {
     ownLayoutRef.current = node;
     if (layoutRef) {
@@ -963,6 +966,30 @@ export function SessionChatScreen({
     }
   }, [layoutRef, workbenchRef]);
   const layoutStyle = useMemo(() => ({ ...style, ...workbenchStyle }), [style, workbenchStyle]);
+  useLayoutEffect(() => {
+    if (previousActionDockExpandedRef.current === isActionDockExpanded) {
+      return;
+    }
+
+    previousActionDockExpandedRef.current = isActionDockExpanded;
+    const layout = ownLayoutRef.current;
+    const motionDuration = layout?.ownerDocument.defaultView
+      ?.getComputedStyle(layout)
+      .getPropertyValue("--session-dock-motion-duration")
+      .trim() ?? "0ms";
+    const motionDurationMs = motionDuration.endsWith("ms")
+      ? Number.parseFloat(motionDuration)
+      : motionDuration.endsWith("s")
+        ? Number.parseFloat(motionDuration) * 1000
+        : Number.parseFloat(motionDuration);
+    setIsActionDockTransitioning(Number.isFinite(motionDurationMs) && motionDurationMs > 0);
+  }, [isActionDockExpanded]);
+  const handleLayoutTransitionEnd = useCallback((event: React.TransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || event.propertyName !== "grid-template-rows") {
+      return;
+    }
+    setIsActionDockTransitioning(false);
+  }, []);
   useLayoutEffect(() => {
     const layout = ownLayoutRef.current;
     const central = centralRef.current;
@@ -1028,11 +1055,15 @@ export function SessionChatScreen({
       ref={setLayoutElementRefs}
       className={`page-shell session-page session-chat-layout${isHeaderVisible ? " is-header-visible" : ""}${
         isActionDockExpanded ? " is-action-dock-expanded" : ""
-      }${isLeftPaneVisible ? " is-left-pane-visible" : ""}${
+      }${isActionDockTransitioning || actionDockStateChanged ? " is-action-dock-transitioning" : ""}${
+        isLeftPaneVisible ? " is-left-pane-visible" : ""
+      }${
         isRightPaneVisible ? " is-right-pane-visible" : ""
       }${isCentralCollapsed ? " is-central-collapsed" : ""}${className ? ` ${className}` : ""}`}
       style={layoutStyle}
       data-session-mode={mode}
+      onTransitionEnd={handleLayoutTransitionEnd}
+      onTransitionCancel={handleLayoutTransitionEnd}
     >
       <SelectionActionOverlayBoundary>
       <div

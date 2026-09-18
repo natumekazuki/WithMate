@@ -385,6 +385,10 @@ button:disabled {
   align-content: normal;
 }
 
+.session-chat-layout.is-action-dock-transitioning .session-action-dock-slot.is-expanded .composer {
+  overflow-y: hidden;
+}
+
 .session-action-dock-slot.is-expanded .composer > :not(.composer-input-row) {
   flex: 0 0 auto;
 }
