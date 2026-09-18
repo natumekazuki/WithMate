@@ -74,10 +74,13 @@ describe("HomeSettingsContent", () => {
     sessionCleanupCutoffDate: "",
     deletingOldSessions: false,
     onChangeAutoCollapseActionDockOnSend: noOp,
+    onChangeCharacterAffectContextEnabled: noOp,
+    onChangeConversationTimingEnabled: noOp,
     onChangeScrollToLatestOnSend: noOp,
     onChangeLaunchAtLoginEnabled: noOp,
     onChangeSessionTurnNotificationEnabled: noOp,
     onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
+    onChangeToolCallPresenceEnabled: noOp,
     onChangeGlossaryProactiveCreateLimit: noOp,
     onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
@@ -108,6 +111,32 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Windows 通知に返答の冒頭を表示する"));
     assert.ok(html.includes("送信後に Action Dock を自動で閉じる"));
     assert.ok(html.includes("送信時にチャット末尾へ移動する"));
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Settings は foreground prompt context の3項目を個別 checkbox として表示し、既定値を checked にする"
+  // oracle = { type = "contract", ref = "Prompt context settings UI" }
+  // fault = "設定項目の説明または3つの checkbox が表示されず、初期状態が注入有効と一致しない"
+  // observable = "HomeSettingsContent の static markup にある Prompt Context labels と checkbox state"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-prompt-context-ui"
+  // lifecycle = "permanent"
+  // impact = "ユーザーが3つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
+  // distinction = "個別 state/action の確認は draft test に分け、新規 section のラベルと checked 数を確認する"
+  // @end-test-value
+  it("Prompt Context に3項目の個別 toggle を既定有効で表示する", () => {
+    const html = renderSettings();
+    const document = new JSDOM(html).window.document;
+    const promptContextSection = Array.from(document.querySelectorAll("section.settings-section-card"))
+      .find((section) => section.textContent?.includes("会話の雰囲気・関連情報（Character Affect Context）"));
+
+    assert.ok(promptContextSection);
+    assert.ok(promptContextSection.textContent?.includes("会話の時間情報（Conversation Timing）"));
+    assert.ok(promptContextSection.textContent?.includes("作業開始前の短い応答（Tool Call Presence）"));
+    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, 3);
+    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, 3);
+    assert.ok(promptContextSection.textContent?.includes("保存後の次のターンから provider への注入を切り替える"));
   });
 
   it("Repository Glossaryにproactive create上限を0から100のnumber inputで表示する", () => {

@@ -185,6 +185,81 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "foreground prompt context の3項目は app settings DB に個別保存され、旧DBの欠損・不正値は既定有効へ戻る"
+  // oracle = { type = "contract", ref = "Prompt context settings persistence" }
+  // fault = "toggle を保存しても次回読み込みで失われるか、既存DBの欠損・不正値で注入が意図せず無効になる"
+  // observable = "AppSettingsStorage の保存・再読込結果"
+  // observation_boundary = "public-boundary"
+  // scope = "app-settings-prompt-context-persistence"
+  // lifecycle = "permanent"
+  // impact = "Settings の次回 turn 反映と既存利用者の注入互換性が崩れる"
+  // distinction = "3つの新規 key を false 保存、再読込、欠損、不正値で横断確認する"
+  // @end-test-value
+  it("foreground prompt context の個別設定を保存・再読込し、欠損と不正値を既定へ戻す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      assert.equal(storage.getSettings().characterAffectContextEnabled, true);
+      assert.equal(storage.getSettings().conversationTimingEnabled, true);
+      assert.equal(storage.getSettings().toolCallPresenceEnabled, true);
+      storage.updateSettings({
+        ...storage.getSettings(),
+        characterAffectContextEnabled: false,
+        conversationTimingEnabled: false,
+        toolCallPresenceEnabled: false,
+      });
+      assert.equal(storage.getSettings().characterAffectContextEnabled, false);
+      assert.equal(storage.getSettings().conversationTimingEnabled, false);
+      assert.equal(storage.getSettings().toolCallPresenceEnabled, false);
+      storage.close();
+
+      const reopenedStorage = new AppSettingsStorage(dbPath);
+      assert.equal(reopenedStorage.getSettings().characterAffectContextEnabled, false);
+      assert.equal(reopenedStorage.getSettings().conversationTimingEnabled, false);
+      assert.equal(reopenedStorage.getSettings().toolCallPresenceEnabled, false);
+      reopenedStorage.updateSettings({
+        ...reopenedStorage.getSettings(),
+        characterAffectContextEnabled: true,
+        conversationTimingEnabled: false,
+        toolCallPresenceEnabled: true,
+      });
+      assert.equal(reopenedStorage.getSettings().characterAffectContextEnabled, true);
+      assert.equal(reopenedStorage.getSettings().conversationTimingEnabled, false);
+      assert.equal(reopenedStorage.getSettings().toolCallPresenceEnabled, true);
+      reopenedStorage.close();
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key IN (?, ?, ?)")
+        .run("invalid", "character_affect_context_enabled", "conversation_timing_enabled", "tool_call_presence_enabled");
+      invalidDatabase.close();
+
+      const invalidValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidValueStorage.getSettings().characterAffectContextEnabled, true);
+      assert.equal(invalidValueStorage.getSettings().conversationTimingEnabled, true);
+      assert.equal(invalidValueStorage.getSettings().toolCallPresenceEnabled, true);
+      invalidValueStorage.close();
+
+      const missingValueStorage = new AppSettingsStorage(dbPath);
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key IN (?, ?, ?)")
+        .run("character_affect_context_enabled", "conversation_timing_enabled", "tool_call_presence_enabled");
+      missingDatabase.close();
+
+      assert.equal(missingValueStorage.getSettings().characterAffectContextEnabled, true);
+      assert.equal(missingValueStorage.getSettings().conversationTimingEnabled, true);
+      assert.equal(missingValueStorage.getSettings().toolCallPresenceEnabled, true);
+      missingValueStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("send scroll setting の欠損値と不正値は既定の有効へ戻す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

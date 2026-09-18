@@ -10,6 +10,8 @@ import {
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
   updateAutoCollapseActionDockOnSend,
+  updateCharacterAffectContextEnabled,
+  updateConversationTimingEnabled,
   updateScrollToLatestOnSend,
   updateCodingProviderApiKey,
   updateCodingProviderApiKeyDraft,
@@ -34,6 +36,7 @@ import {
   updateMemoryGenerationEnabled,
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
+  updateToolCallPresenceEnabled,
   updateMateMemoryGenerationTriggerIntervalMinutesDraft,
   updateMateMemoryGenerationPriorityProviderDraft,
   updateMateMemoryGenerationPriorityModelDraft,
@@ -45,6 +48,8 @@ import {
 } from "../../src/settings/settings-draft.js";
 import {
   handleChangeAutoCollapseActionDockOnSend as handleChangeAutoCollapseActionDockOnSendAction,
+  handleChangeCharacterAffectContextEnabled as handleChangeCharacterAffectContextEnabledAction,
+  handleChangeConversationTimingEnabled as handleChangeConversationTimingEnabledAction,
   handleChangeMateMemoryGenerationPriorityModel as handleChangeMateMemoryGenerationPriorityModelAction,
   handleChangeMateMemoryGenerationPriorityProvider as handleChangeMateMemoryGenerationPriorityProviderAction,
   handleChangeMateMemoryGenerationPriorityReasoningEffort as handleChangeMateMemoryGenerationPriorityReasoningEffortAction,
@@ -62,6 +67,7 @@ import {
   handleChangeProviderSkillRootPath as handleChangeProviderSkillRootPathAction,
   handleChangeSessionTurnNotificationEnabled as handleChangeSessionTurnNotificationEnabledAction,
   handleChangeSessionTurnNotificationResponsePreviewEnabled as handleChangeSessionTurnNotificationResponsePreviewEnabledAction,
+  handleChangeToolCallPresenceEnabled as handleChangeToolCallPresenceEnabledAction,
   handleChangeUserMicrocopySlot as handleChangeUserMicrocopySlotAction,
   handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
   handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
@@ -301,6 +307,62 @@ describe("home-settings-draft", () => {
     const next = updateSessionTurnNotificationResponsePreviewEnabled(draft, true);
 
     assert.equal(next.sessionTurnNotificationResponsePreviewEnabled, true);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Settings の foreground prompt context 3項目は独立した draft/action 更新として false を保持する"
+  // oracle = { type = "contract", ref = "Prompt context settings UI" }
+  // fault = "3つの checkbox が同じ state を更新するか、保存前 draft に false が残らない"
+  // observable = "純粋な draft 更新結果と action handler 適用後の AppSettings"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-prompt-context-draft"
+  // lifecycle = "permanent"
+  // impact = "Settings で個別に切り替えた値が保存 payload へ届かない"
+  // distinction = "pure updater と UI action wrapper の両方で3項目を別々に検証する"
+  // @end-test-value
+  it("foreground prompt context の draft と action を項目ごとに toggle できる", () => {
+    const draft = createDefaultAppSettings();
+    const affectNext = updateCharacterAffectContextEnabled(draft, false);
+    const timingNext = updateConversationTimingEnabled(draft, false);
+    const toolCallNext = updateToolCallPresenceEnabled(draft, false);
+
+    assert.equal(affectNext.characterAffectContextEnabled, false);
+    assert.equal(affectNext.conversationTimingEnabled, true);
+    assert.equal(affectNext.toolCallPresenceEnabled, true);
+    assert.equal(timingNext.characterAffectContextEnabled, true);
+    assert.equal(timingNext.conversationTimingEnabled, false);
+    assert.equal(timingNext.toolCallPresenceEnabled, true);
+    assert.equal(toolCallNext.characterAffectContextEnabled, true);
+    assert.equal(toolCallNext.conversationTimingEnabled, true);
+    assert.equal(toolCallNext.toolCallPresenceEnabled, false);
+
+    const affectState = createDraftTracker();
+    handleChangeCharacterAffectContextEnabledAction({
+      enabled: false,
+      setSettingsDraft: affectState.setSettingsDraft,
+    });
+    assert.equal(affectState.draft.characterAffectContextEnabled, false);
+    assert.equal(affectState.draft.conversationTimingEnabled, true);
+    assert.equal(affectState.draft.toolCallPresenceEnabled, true);
+
+    const timingState = createDraftTracker();
+    handleChangeConversationTimingEnabledAction({
+      enabled: false,
+      setSettingsDraft: timingState.setSettingsDraft,
+    });
+    assert.equal(timingState.draft.characterAffectContextEnabled, true);
+    assert.equal(timingState.draft.conversationTimingEnabled, false);
+    assert.equal(timingState.draft.toolCallPresenceEnabled, true);
+
+    const toolCallState = createDraftTracker();
+    handleChangeToolCallPresenceEnabledAction({
+      enabled: false,
+      setSettingsDraft: toolCallState.setSettingsDraft,
+    });
+    assert.equal(toolCallState.draft.characterAffectContextEnabled, true);
+    assert.equal(toolCallState.draft.conversationTimingEnabled, true);
+    assert.equal(toolCallState.draft.toolCallPresenceEnabled, false);
   });
 
   it("memory file quota は MB 入力から bytes の draft に変換する", () => {

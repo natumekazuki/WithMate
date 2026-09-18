@@ -14,7 +14,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
-import type { ProviderCodingAdapter } from "../../src-electron/provider-runtime.js";
+import type { ProviderCodingAdapter, RunSessionTurnInput } from "../../src-electron/provider-runtime.js";
 import {
   SessionRuntimeService,
   type SessionRuntimeServiceDeps,
@@ -133,6 +133,111 @@ function createAdapter(runSessionTurn: ProviderCodingAdapter["runSessionTurn"]):
     runSessionTurn,
   };
 }
+
+// @test-value v2
+// kind = "invariant"
+// claim = "foreground prompt context が無効な turn では timing / affect resolver を呼ばず、provider prompt へ context を渡さない"
+// oracle = { type = "contract", ref = "Prompt context settings" }
+// fault = "表示しない context のために保存・Memory resolver を実行し、provider prompt へ古い context を渡す"
+// observable = "resolver call count と ProviderCodingAdapter.composePrompt の入力"
+// observation_boundary = "consumer"
+// scope = "session-runtime-prompt-context-resolution"
+// lifecycle = "permanent"
+// impact = "OFF設定でも不要な取得・privacy projection・token 注入が発生する"
+// distinction = "provider prompt の section omission だけでなく、turn開始時の resolver 呼び出し境界を確認する"
+// @end-test-value
+it("foreground prompt context が無効な turn では不要な resolver を呼ばない", async () => {
+  const session = createSession();
+  let timingResolverCalls = 0;
+  let affectResolverCalls = 0;
+  let composedInput: RunSessionTurnInput | null = null;
+  const adapter: ProviderCodingAdapter = {
+    ...createAdapter(async () => {
+      throw new Error("provider stopped for resolver boundary test");
+    }),
+    composePrompt(input) {
+      composedInput = input;
+      return {
+        systemBodyText: "system",
+        inputBodyText: "input",
+        logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+        imagePaths: [],
+        additionalDirectories: [],
+      };
+    },
+  };
+  const service = new SessionRuntimeService(createRuntimeDeps(session, adapter, {
+    getAppSettings: () => ({
+      ...normalizeAppSettings({}),
+      characterAffectContextEnabled: false,
+      conversationTimingEnabled: false,
+    }),
+    resolveConversationTimingContext() {
+      timingResolverCalls += 1;
+      throw new Error("timing resolver must not run");
+    },
+    resolveCharacterContext() {
+      affectResolverCalls += 1;
+      throw new Error("affect resolver must not run");
+    },
+  }));
+
+  const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+
+  assert.equal(result.runState, "error");
+  assert.equal(timingResolverCalls, 0);
+  assert.equal(affectResolverCalls, 0);
+  assert.ok(composedInput);
+  assert.equal(composedInput.conversationTimingContext, undefined);
+  assert.equal(composedInput.characterContext, undefined);
+
+  const runWithSettings = async (appSettings: ReturnType<typeof normalizeAppSettings>) => {
+    let timingCalls = 0;
+    let affectCalls = 0;
+    const partialAdapter: ProviderCodingAdapter = {
+      ...createAdapter(async () => {
+        throw new Error("provider stopped for resolver gate test");
+      }),
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+    };
+    const partialService = new SessionRuntimeService(createRuntimeDeps(session, partialAdapter, {
+      getAppSettings: () => appSettings,
+      resolveConversationTimingContext() {
+        timingCalls += 1;
+        return null;
+      },
+      resolveCharacterContext() {
+        affectCalls += 1;
+        return null;
+      },
+    }));
+
+    const partialResult = await partialService.runSessionTurn(session.id, { userMessage: "お願い" });
+    assert.equal(partialResult.runState, "error");
+    return { timingCalls, affectCalls };
+  };
+  const timingOff = await runWithSettings({
+    ...normalizeAppSettings({}),
+    characterAffectContextEnabled: true,
+    conversationTimingEnabled: false,
+  });
+  const affectOff = await runWithSettings({
+    ...normalizeAppSettings({}),
+    characterAffectContextEnabled: false,
+    conversationTimingEnabled: true,
+  });
+
+  assert.deepEqual(timingOff, { timingCalls: 0, affectCalls: 1 });
+  assert.deepEqual(affectOff, { timingCalls: 1, affectCalls: 0 });
+});
 
 // @test-value v1
 // kind = "invariant"

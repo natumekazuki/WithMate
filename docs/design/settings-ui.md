@@ -1,7 +1,7 @@
 # Settings UI
 
 - 作成日: 2026-03-14
-- 更新日: 2026-09-03
+- 更新日: 2026-09-19
 - 対象: 独立した `Settings Window`
 
 ## Goal
@@ -15,7 +15,7 @@
 - app 共通 system prompt を編集する旧設定項目は廃止する
 - V5 current では Character 定義は `Characters` editor で管理し、session / companion 開始時の `CharacterRuntimeSnapshot` を runtime prompt の主経路にする
 - provider instruction sync は V5 Character 注入の主経路ではなく、Settings current UI には置かない
-- current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog`、`Storage Maintenance` を置く
+- current 実装では `Session Window`、`Prompt Context`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog`、`Storage Maintenance` を置く
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
@@ -37,6 +37,10 @@
 - Settings Window
   - `Session Window`
     - `送信後に Action Dock を自動で閉じる`
+  - `Prompt Context`
+    - `会話の雰囲気・関連情報（Character Affect Context）`
+    - `会話の時間情報（Conversation Timing）`
+    - `作業開始前の短い応答（Tool Call Presence）`
   - `Coding Agent Providers`
     - provider 名を左、enable checkbox を右に置く
     - provider ごとの `Provider File Settings`
@@ -60,6 +64,11 @@
 ## Current Scope
 
 - `Session Window` の `送信後に Action Dock を自動で閉じる` の保存
+- `Prompt Context` の3項目を個別に保存し、既定値はすべて有効とする。保存後の次の turn から対象の foreground provider prompt 注入を切り替え、Character 定義、`Output Boundary`、`Workspace` などの固定境界は変更しない
+  - `Character Affect Context` は system 側の該当 section と context 取得を切り替える
+  - `Conversation Timing` は input 側の該当 section と timing 取得を切り替える
+  - `Tool Call Presence` は既存の通常 session / companion の character prompt 境界内で該当 section を切り替える。`character-authoring` には注入しない
+- `Conversation Timing` は Copilot の system session cache を変えず、system 側の2項目は合成された system message の変更として扱う
 - `PC 起動時に WithMate をバックグラウンドで起動する` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
 - coding provider ごとの provider file settings

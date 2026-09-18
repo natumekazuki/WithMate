@@ -6,6 +6,8 @@ import {
   addMateMemoryGenerationPriorityDraft,
   removeMateMemoryGenerationPriorityDraft,
   updateAutoCollapseActionDockOnSend,
+  updateCharacterAffectContextEnabled,
+  updateConversationTimingEnabled,
   updateGlossaryProactiveCreateLimitDraft,
   updateCodingProviderEnabledDraft,
   updateCodingProviderInstructionRelativePathDraft,
@@ -27,6 +29,7 @@ import {
   updateScrollToLatestOnSend,
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
+  updateToolCallPresenceEnabled,
   updateUserMicrocopySlotDraft,
 } from "./settings-draft.js";
 
@@ -84,6 +87,24 @@ export function handleChangeAutoCollapseActionDockOnSend(input: SettingsDraftAct
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, input.enabled));
+}
+
+export function handleChangeCharacterAffectContextEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateCharacterAffectContextEnabled(current, input.enabled));
+}
+
+export function handleChangeConversationTimingEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateConversationTimingEnabled(current, input.enabled));
+}
+
+export function handleChangeToolCallPresenceEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateToolCallPresenceEnabled(current, input.enabled));
 }
 
 export function handleChangeScrollToLatestOnSend(input: SettingsDraftActionInput & {

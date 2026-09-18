@@ -173,9 +173,13 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     !isCharacterAuthoringSession && characterPromptBody.trim().length > 0,
   );
   const toolCallPresenceBody = buildToolCallPresenceSection(
-    !isCharacterAuthoringSession && characterPromptBody.trim().length > 0,
+    input.appSettings.toolCallPresenceEnabled
+      && !isCharacterAuthoringSession
+      && characterPromptBody.trim().length > 0,
   );
-  const characterAffectContextBody = buildCharacterAffectContextSection(input.characterContext);
+  const characterAffectContextBody = input.appSettings.characterAffectContextEnabled
+    ? buildCharacterAffectContextSection(input.characterContext)
+    : "";
   const systemPromptBody = [
     characterPromptBody,
     outputBoundaryBody,
@@ -188,7 +192,9 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");
   const inputSections: string[] = [];
   const userMessageText = input.userMessage.trim();
-  const conversationTimingBody = buildConversationTimingSection(input.conversationTimingContext);
+  const conversationTimingBody = input.appSettings.conversationTimingEnabled
+    ? buildConversationTimingSection(input.conversationTimingContext)
+    : "";
 
   if (conversationTimingBody) {
     inputSections.push(conversationTimingBody);

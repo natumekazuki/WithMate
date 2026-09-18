@@ -13,6 +13,8 @@ import {
 } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
+  SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL,
+  SETTINGS_CONVERSATION_TIMING_LABEL,
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
@@ -33,9 +35,11 @@ import {
   SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER,
   SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL,
   SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER,
+  SETTINGS_PROMPT_CONTEXT_HELP,
   SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
+  SETTINGS_TOOL_CALL_PRESENCE_LABEL,
 } from "./settings-ui.js";
 import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
 
@@ -50,11 +54,14 @@ export type HomeSettingsContentProps = {
   sessionCleanupCutoffDate: string;
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
+  onChangeCharacterAffectContextEnabled: (enabled: boolean) => void;
+  onChangeConversationTimingEnabled: (enabled: boolean) => void;
   onChangeScrollToLatestOnSend: (enabled: boolean) => void;
   onChangeKeyboardShortcuts: (settings: KeyboardShortcutSettings) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
+  onChangeToolCallPresenceEnabled: (enabled: boolean) => void;
   onChangeMemoryFileQuotaMegabytes: (value: string) => void;
   onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
@@ -112,11 +119,14 @@ export function HomeSettingsContent({
   sessionCleanupCutoffDate,
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
+  onChangeCharacterAffectContextEnabled,
+  onChangeConversationTimingEnabled,
   onChangeScrollToLatestOnSend,
   onChangeKeyboardShortcuts,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
+  onChangeToolCallPresenceEnabled,
   onChangeMemoryFileQuotaMegabytes,
   onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
@@ -191,6 +201,37 @@ export function HomeSettingsContent({
                   type="checkbox"
                   checked={settingsDraft.scrollToLatestOnSend}
                   onChange={(event) => onChangeScrollToLatestOnSend(event.target.checked)}
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Prompt Context</strong>
+              <p className="settings-help">{SETTINGS_PROMPT_CONTEXT_HELP}</p>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.characterAffectContextEnabled}
+                  onChange={(event) => onChangeCharacterAffectContextEnabled(event.target.checked)}
+                />
+              </label>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_CONVERSATION_TIMING_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.conversationTimingEnabled}
+                  onChange={(event) => onChangeConversationTimingEnabled(event.target.checked)}
+                />
+              </label>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_TOOL_CALL_PRESENCE_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.toolCallPresenceEnabled}
+                  onChange={(event) => onChangeToolCallPresenceEnabled(event.target.checked)}
                 />
               </label>
             </div>

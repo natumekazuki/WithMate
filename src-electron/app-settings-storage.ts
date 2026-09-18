@@ -16,6 +16,9 @@ const LAUNCH_AT_LOGIN_ENABLED_KEY = "launch_at_login_enabled";
 const SESSION_TURN_NOTIFICATION_ENABLED_KEY = "session_turn_notification_enabled";
 const SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY =
   "session_turn_notification_response_preview_enabled";
+const CHARACTER_AFFECT_CONTEXT_ENABLED_KEY = "character_affect_context_enabled";
+const CONVERSATION_TIMING_ENABLED_KEY = "conversation_timing_enabled";
+const TOOL_CALL_PRESENCE_ENABLED_KEY = "tool_call_presence_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
 const SCROLL_TO_LATEST_ON_SEND_KEY = "scroll_to_latest_on_send";
 const SESSION_HEADER_VISIBILITY_KEY = "session_header_visibility";
@@ -102,6 +105,39 @@ export class AppSettingsStorage {
       .run(
         SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY,
         String(DEFAULT_APP_SETTINGS.sessionTurnNotificationResponsePreviewEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        CHARACTER_AFFECT_CONTEXT_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.characterAffectContextEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        CONVERSATION_TIMING_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.conversationTimingEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        TOOL_CALL_PRESENCE_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.toolCallPresenceEnabled),
         updatedAt,
       );
     this.db
@@ -247,6 +283,24 @@ export class AppSettingsStorage {
       if (row.setting_key === SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY) {
         if (row.setting_value === "true" || row.setting_value === "false") {
           settings.sessionTurnNotificationResponsePreviewEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === CHARACTER_AFFECT_CONTEXT_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.characterAffectContextEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === CONVERSATION_TIMING_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.conversationTimingEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === TOOL_CALL_PRESENCE_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.toolCallPresenceEnabled = row.setting_value === "true";
         }
         continue;
       }
@@ -408,6 +462,45 @@ export class AppSettingsStorage {
         .run(
           SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY,
           String(normalized.sessionTurnNotificationResponsePreviewEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          CHARACTER_AFFECT_CONTEXT_ENABLED_KEY,
+          String(normalized.characterAffectContextEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          CONVERSATION_TIMING_ENABLED_KEY,
+          String(normalized.conversationTimingEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          TOOL_CALL_PRESENCE_ENABLED_KEY,
+          String(normalized.toolCallPresenceEnabled),
           updatedAt,
         );
       this.db

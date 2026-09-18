@@ -1,7 +1,7 @@
 # Prompt Composition
 
 - 作成日: 2026-03-13
-- 更新日: 2026-08-15
+- 更新日: 2026-09-19
 - 対象: WithMate における coding plane の prompt 合成
 
 ## Goal
@@ -30,6 +30,11 @@ WithMate が保持する system 指示、character 定義、ユーザー入力�
 - ファイル操作、コマンド実行、検索、diff 確認、test/build 結果、repository instruction は通常の coding agent として正確に扱う
 - `character-notes.md` は保存してよいが、runtime 常設 prompt には入れない
 - app 共通 system prompt を Settings で編集する仕組みは持たない
+- foreground の prompt context は `AppSettings` の次の個別設定で注入を切り替える。既定値はすべて `true` とし、保存後の次の turn から反映する
+  - `characterAffectContextEnabled`: `Character Affect Context` の section と、その turn の context resolver を切り替える
+  - `conversationTimingEnabled`: input 側の `Conversation Timing` section と、その turn の timing resolver を切り替える
+  - `toolCallPresenceEnabled`: 通常の provider prompt に置く `Tool Call Presence` section を切り替える
+- 個別設定を `false` にした場合は対象 section 全体を省略し、空の見出しは残さない。Character 定義、`Output Boundary`、`Folder Context` など対象外の固定境界は変更しない
 - `Session Memory` / `Project Memory` / `Character Memory` は保存済みデータとして残してよいが、coding plane prompt の常設入力正本にはしない
 - provider instruction sync は V5 Character 注入の主経路にしない
 
@@ -66,6 +71,8 @@ Character Contextを取得できたturnでは、turnごとに変動する`Charac
 通常 session では可変な `Conversation Timing` を input 側の `User Input` 直前に置く。Copilotの`session.systemMessage`へは入れず、Codexのlogical promptとCopilotの`session.send.prompt`から同じ論理sectionを監査できるようにする。Auxiliary、Companion、`character-authoring` sessionには注入しない。
 `character-authoring` session は `character.md` / `character-notes.md` 自体が成果物なので、`Output Boundary`、`Tool Call Presence`、coding agent 境界の固定 guard を注入しない。
 
+foreground prompt context の個別設定は、既存の session 種別境界を拡張しない。`Character Affect Context` と `Conversation Timing` は既存 resolver が対象にする通常 session のみで取得し、設定が `false` の場合は resolver 自体を呼ばない。背景処理や Companion の別経路で使う context には適用しない。`Tool Call Presence` は既存の character snapshot 有無と `character-authoring` 除外条件を保ち、その条件を満たす provider prompt だけで切り替える。
+
 ### 4.0.0 SingleMate target
 
 coding plane に渡す turn prompt は、次を基本にする。
@@ -86,6 +93,8 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 通常 session / companion では `Tool Call Presence` section も system 側に置く。`character-authoring` session では置かない。
 Character Contextを取得できたturnでは、`Character Affect Context` sectionをsystem側の固定sectionより後ろに置く。
 通常 session では `Conversation Timing` sectionをinput側の`User Input`直前に置く。値の解決は`src-electron/conversation-timing.ts`、sectionの合成は`src-electron/provider-prompt.ts`を参照する。
+
+3つの切替は同じ `AppSettings` payload から provider prompt 合成へ渡す。保存値が欠損した既存 DB では既定値 `true` に戻し、既存の注入内容と順序を保つ。`Conversation Timing` は input 側のため Copilot の `systemMessage` session cache を無効化せず、system 側の2項目は合成後の system message が既存の cache key に反映される。
 
 `# Session Memory`、`# Project Memory`、`# Project Context`、`# Character Memory` も coding plane prompt では作らない。
 
@@ -203,6 +212,7 @@ Character Contextを取得できたturnでは、`Character Affect Context` secti
 - turn prompt の可変部分は `# User Input` と添付 reference に寄せる
 - `CharacterRuntimeSnapshot`、`Output Boundary`、`Tool Call Presence` を system 側の先頭に保ち、その直後に `Folder Context` を置く
 - `Folder Context` は同じ Session で通常は安定するが、実行 workspace や Additional Directories が変わっても固定 prefix の後ろで差分になるようにする
+- `Tool Call Presence` または `Character Affect Context` の切替で system 本文が変わる場合、Copilot の既存 `systemMessage` settings key によって session cache を分ける。`Conversation Timing` は input 側のため cache key に含めない
 
 固定 Character section と Folder Context を user input / timing / Affect より前に置き、provider が再利用できる prefix を保つ。Folder Context は固定 Character section の後ろへ置くことで、folder 値の変更が固定 prefix 全体を無効化しにくい。Mate 定義全文と Memory section を毎 turn prompt から外すことで、短い依頼での token 消費も抑える。ただし provider instruction file が provider context として読まれる場合、token 消費が完全にゼロになるわけではない。
 

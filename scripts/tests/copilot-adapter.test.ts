@@ -2039,6 +2039,43 @@ describe("CopilotAdapter session settings", () => {
     assert.equal(nextSettings.config.reasoningEffort, "low");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Copilot の system 側 prompt context 変更は session settings key を分け、input 側 Conversation Timing 変更は同じ key を使う"
+  // oracle = { type = "contract", ref = "Copilot prompt cache boundary" }
+  // fault = "system message の切替で古い session を再利用するか、timing の変化だけで不要な session 再接続を起こす"
+  // observable = "buildCopilotSessionSettings の settingsKey と systemMessage"
+  // observation_boundary = "consumer"
+  // scope = "copilot-system-prompt-cache-key"
+  // lifecycle = "permanent"
+  // impact = "Prompt Context 設定変更後の provider session が誤った固定 system prompt を使う、または毎 turn 再接続する"
+  // distinction = "既存の model / agent cache key test とは別に system/input の境界を直接確認する"
+  // @end-test-value
+  it("system prompt context の変更だけを Copilot session cache key に反映する", () => {
+    const input = createRunSessionInput({ threadId: "thread-1" });
+    const promptWithContext: ProviderPromptComposition = {
+      ...EMPTY_PROMPT,
+      systemBodyText: "# Character Affect Context\n\n{}\n\n# Tool Call Presence\n\nreply first",
+    };
+    const promptWithoutContext: ProviderPromptComposition = {
+      ...promptWithContext,
+      systemBodyText: "",
+    };
+    const promptWithLaterTiming: ProviderPromptComposition = {
+      ...promptWithContext,
+      inputBodyText: "# Conversation Timing\n\n- Observed local time: later\n\n# User Input\n\nhello",
+    };
+
+    const withContext = buildCopilotSessionSettings(input, promptWithContext, "client-key", resolveCustomAgents);
+    const withoutContext = buildCopilotSessionSettings(input, promptWithoutContext, "client-key", resolveCustomAgents);
+    const withLaterTiming = buildCopilotSessionSettings(input, promptWithLaterTiming, "client-key", resolveCustomAgents);
+
+    assert.notEqual(withContext.settingsKey, withoutContext.settingsKey);
+    assert.equal(withLaterTiming.settingsKey, withContext.settingsKey);
+    assert.equal(withContext.config.systemMessage?.content, promptWithContext.systemBodyText);
+    assert.equal(withLaterTiming.config.systemMessage?.content, promptWithContext.systemBodyText);
+  });
+
   it("allow-all permission handler は legacy approve-once を返す", async () => {
     const input = createRunSessionInput();
     input.session.approvalMode = "never";

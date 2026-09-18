@@ -4,6 +4,8 @@ import type { AppSettings } from "../provider-settings-state.js";
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
   handleChangeAutoCollapseActionDockOnSend,
+  handleChangeCharacterAffectContextEnabled,
+  handleChangeConversationTimingEnabled,
   handleChangeGlossaryProactiveCreateLimit,
   handleChangeKeyboardShortcuts,
   handleChangeLaunchAtLoginEnabled,
@@ -15,6 +17,7 @@ import {
   handleChangeProviderSkillRootPath,
   handleChangeSessionTurnNotificationEnabled,
   handleChangeSessionTurnNotificationResponsePreviewEnabled,
+  handleChangeToolCallPresenceEnabled,
   handleChangeUserMicrocopySlot,
 } from "./settings-draft-actions.js";
 
@@ -25,11 +28,14 @@ type SettingsDraftHandlersContext = {
 export type SettingsDraftHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onChangeAutoCollapseActionDockOnSend"
+  | "onChangeCharacterAffectContextEnabled"
+  | "onChangeConversationTimingEnabled"
   | "onChangeScrollToLatestOnSend"
   | "onChangeKeyboardShortcuts"
   | "onChangeLaunchAtLoginEnabled"
   | "onChangeSessionTurnNotificationEnabled"
   | "onChangeSessionTurnNotificationResponsePreviewEnabled"
+  | "onChangeToolCallPresenceEnabled"
   | "onChangeMemoryFileQuotaMegabytes"
   | "onChangeGlossaryProactiveCreateLimit"
   | "onChangeUserMicrocopySlot"
@@ -46,6 +52,12 @@ export function buildSettingsDraftHandlers({
     onChangeAutoCollapseActionDockOnSend: (enabled) => {
       handleChangeAutoCollapseActionDockOnSend({ enabled, setSettingsDraft });
     },
+    onChangeCharacterAffectContextEnabled: (enabled) => {
+      handleChangeCharacterAffectContextEnabled({ enabled, setSettingsDraft });
+    },
+    onChangeConversationTimingEnabled: (enabled) => {
+      handleChangeConversationTimingEnabled({ enabled, setSettingsDraft });
+    },
     onChangeScrollToLatestOnSend: (enabled) => {
       handleChangeScrollToLatestOnSend({ enabled, setSettingsDraft });
     },
@@ -60,6 +72,9 @@ export function buildSettingsDraftHandlers({
     },
     onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled) => {
       handleChangeSessionTurnNotificationResponsePreviewEnabled({ enabled, setSettingsDraft });
+    },
+    onChangeToolCallPresenceEnabled: (enabled) => {
+      handleChangeToolCallPresenceEnabled({ enabled, setSettingsDraft });
     },
     onChangeMemoryFileQuotaMegabytes: (value) => {
       handleChangeMemoryFileQuotaMegabytes({ value, setSettingsDraft });
