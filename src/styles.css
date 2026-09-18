@@ -9011,6 +9011,7 @@ button:disabled {
   }
 
   .message-collapse-control > .message-collapse-toggle,
+  .message-collapse-control > .message-bookmark-toggle,
   .message-code-block-actions > .message-code-copy-button {
     pointer-events: auto;
   }
