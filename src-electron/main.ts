@@ -131,29 +131,14 @@ import { CompanionStorageV3 } from "./companion-storage-v3.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
 import { resolveConversationTimingContext } from "./conversation-timing.js";
 import { SessionTurnNotificationService } from "./session-turn-notification-service.js";
-import {
-  buildCharacterAffectTurnPrompt,
-  normalizeCharacterAffectTurnEvaluation,
-  toAffectEventInputs,
-} from "./character-affect-turn-evaluator.js";
-import { settleCharacterAffectTurnWithRetry } from "./character-affect-turn-settler.js";
-import {
-  characterAffectTurnThrownFailureCode,
-  createCharacterAffectTurnFailureDiagnostic,
-  createCharacterAffectTurnRecoveryFailureLogData,
-  resolveCharacterAffectTurnContextFailureStage,
-} from "./character-affect-turn-recovery.js";
+import { createCharacterAffectTurnRecoveryFailureLogData } from "./character-affect-turn-recovery.js";
 import { CharacterAffectTurnRetryScheduler } from "./character-affect-turn-retry-scheduler.js";
 import { CharacterAffectTurnOwnershipCoordinator } from "./character-affect-turn-ownership-coordinator.js";
-import {
-  drainCharacterAffectTurnSettlementBatch,
-  type CharacterAffectTurnDrainCursor,
-} from "./character-affect-turn-drain.js";
-import {
-  CharacterAffectTurnSettlementStorage,
-  hasCommittedAssistantMessage,
-} from "./character-affect-turn-settlement-storage.js";
+import { createCharacterAffectTurnMainLifecycle } from "./character-affect-turn-main-lifecycle.js";
+import type { CharacterAffectTurnDrainCursor } from "./character-affect-turn-drain.js";
+import { CharacterAffectTurnSettlementStorage } from "./character-affect-turn-settlement-storage.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
+import { createSessionStorageCommandAdapter } from "./session-storage-command-adapter.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
 import { SessionWindowRestoreService } from "./session-window-restore-service.js";
 import { SessionWindowRestoreStorage } from "./session-window-restore-storage.js";
@@ -451,6 +436,19 @@ let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
 const characterAffectTurnOwnershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
+const characterAffectTurnMainLifecycle = createCharacterAffectTurnMainLifecycle({
+  getSettlementStorage: () => characterAffectTurnSettlementStorage,
+  getRuntimeApi: () => memoryV6RuntimeApi,
+  getCharacterSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
+  getAppSettings: () => requireAppSettingsStorage().getSettings(),
+  getProviderBackgroundAdapter,
+  getSession: getRuntimeSession,
+  startupRecoveryCutoff: characterAffectTurnStartupRecoveryCutoff,
+  runAppraisalExclusive: (operation) => characterAffectTurnOwnershipCoordinator.runExclusive(operation),
+  writeAppLog,
+  getDrainCursor: () => characterAffectTurnDrainCursor,
+  setDrainCursor: (cursor) => { characterAffectTurnDrainCursor = cursor; },
+});
 const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
 const glossaryApplicationService = new GlossaryApplicationService();
 const glossarySessionProjectionService = new GlossarySessionProjectionService({
@@ -2409,16 +2407,6 @@ function requireAuxWindowService(): AuxWindowService<BrowserWindow> {
   return requireMainInfrastructureRegistry().getAuxWindowService();
 }
 
-type CharacterAffectTurnSettlementRequest = {
-  session: Session;
-  correlationId: string;
-  userMessage: string;
-  assistantMessage: string;
-  assistantMessageIndex: number;
-  occurredAt: string;
-  runAppraisalExclusive<T>(operation: () => T | Promise<T>): Promise<T>;
-};
-
 function requireCharacterAffectTurnSettlementStorage(): CharacterAffectTurnSettlementStorage {
   if (!characterAffectTurnSettlementStorage) {
     throw new Error("Character affect turn settlement storage is not initialized.");
@@ -2444,286 +2432,8 @@ function requireCharacterAffectTurnRetryScheduler(): CharacterAffectTurnRetrySch
   return characterAffectTurnRetryScheduler;
 }
 
-async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementRequest): Promise<boolean> {
-  if (request.session.sessionKind !== "default" || !request.session.characterId) {
-    return true;
-  }
-  const settlementStorage = requireCharacterAffectTurnSettlementStorage();
-  if (!hasCommittedAssistantMessage(request.session.messages, request)) {
-    settlementStorage.markDiscarded(request.correlationId);
-    return true;
-  }
-  const attemptCount = settlementStorage.recordAttempt(request.correlationId);
-  if (attemptCount === null) {
-    return true;
-  }
-  const runtimeApi = memoryV6RuntimeApi;
-  const isCurrentGeneration = () => settlementStorage === characterAffectTurnSettlementStorage
-    && runtimeApi === memoryV6RuntimeApi;
-  const reportInvalidatedSettlement = (): boolean => {
-    if (settlementStorage === characterAffectTurnSettlementStorage) {
-      settlementStorage.recoverInterruptedAttempts(new Date().toISOString(), request.correlationId);
-    }
-    writeAppLog({
-      level: "info",
-      kind: "character-affect.lifecycle.settlement-invalidated",
-      process: "main",
-      message: "Character affect settlement stopped after its storage or runtime was replaced",
-      data: { sessionId: request.session.id, correlationId: request.correlationId },
-    });
-    return true;
-  };
-  let activeStage = "runtime" as import("./character-affect-turn-settlement-storage.js").CharacterAffectTurnFailureStage;
-  let stageStartedAt = Date.now();
-  let dispositionFailure: unknown;
-  const recordFailure = (input: {
-    code: string;
-    retryable: boolean;
-    effect?: string;
-    error?: unknown;
-  }): boolean => {
-    if (!isCurrentGeneration()) {
-      return reportInvalidatedSettlement();
-    }
-    const diagnostic = createCharacterAffectTurnFailureDiagnostic({
-      code: input.code,
-      stage: activeStage,
-      error: input.error,
-      durationMs: Date.now() - stageStartedAt,
-    });
-    let disposition: ReturnType<CharacterAffectTurnSettlementStorage["recordFailure"]>;
-    try {
-      disposition = settlementStorage.recordFailure({
-        correlationId: request.correlationId,
-        retryable: input.retryable,
-        diagnostic,
-      });
-    } catch (error) {
-      dispositionFailure = error;
-      settlementStorage.recoverInterruptedAttempts(new Date().toISOString(), request.correlationId);
-      throw error;
-    }
-    writeAppLog({
-      level: "warn",
-      kind: disposition.state === "quarantined"
-        ? "character-affect.lifecycle.settlement-quarantined"
-        : "character-affect.lifecycle.settlement-deferred",
-      process: "main",
-      message: disposition.state === "quarantined"
-        ? "Character affect appraisal was quarantined after a bounded failure"
-        : "Character affect appraisal was deferred after a retryable failure",
-      data: {
-        sessionId: request.session.id,
-        correlationId: request.correlationId,
-        provider: request.session.provider,
-        model: request.session.model,
-        userMessageLength: request.userMessage.length,
-        assistantMessageLength: request.assistantMessage.length,
-        attemptCount: disposition.attemptCount,
-        code: diagnostic.code,
-        retryable: input.retryable,
-        effect: input.effect ?? "none",
-        stage: diagnostic.stage,
-        errorName: diagnostic.errorName,
-        durationMs: diagnostic.durationMs,
-        nextAttemptAt: disposition.nextAttemptAt,
-        quarantinedAt: disposition.quarantinedAt,
-      },
-    });
-    return disposition.state === "quarantined";
-  };
-  if (!runtimeApi) {
-    return recordFailure({ code: "runtime_unavailable", retryable: true });
-  }
-  const character = request.session.characterRuntimeSnapshot
-    ?? requireCharacterService().createRuntimeSnapshot(request.session.characterId);
-  if (!character) {
-    return recordFailure({ code: "unknown_character", retryable: false });
-  }
-
-  try {
-    const settlement = await settleCharacterAffectTurnWithRetry({
-    correlationId: request.correlationId,
-    isCurrentGeneration,
-    getPending: () => settlementStorage.getPending(request.correlationId),
-    getContext: async () => {
-      activeStage = "context_response_assembly";
-      stageStartedAt = Date.now();
-      const result = await runtimeApi.characterContextService.getContext({
-        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-        characterId: request.session.characterId!,
-        sessionId: request.session.id,
-        query: request.userMessage,
-        memoryLimit: 3,
-      }, "lifecycle");
-      if (isCharacterContextError(result)) {
-        activeStage = resolveCharacterAffectTurnContextFailureStage(result);
-      }
-      return result;
-    },
-    evaluate: async (context, idempotencyPrefix) => {
-      activeStage = "evaluation";
-      stageStartedAt = Date.now();
-      const backgroundAdapter = getProviderBackgroundAdapter(request.session.provider);
-      const prompt = buildCharacterAffectTurnPrompt({
-        character,
-        context,
-        userMessage: request.userMessage,
-        assistantMessage: request.assistantMessage,
-      });
-      const evaluationResult = await backgroundAdapter.runBackgroundStructuredPrompt({
-        providerId: request.session.provider,
-        workspacePath: request.session.workspacePath,
-        appSettings: requireAppSettingsStorage().getSettings(),
-        model: request.session.model,
-        reasoningEffort: request.session.reasoningEffort,
-        timeoutMs: 15_000,
-        approvalMode: request.session.approvalMode,
-        codexSandboxMode: request.session.codexSandboxMode,
-        prompt,
-      });
-      const evaluation = normalizeCharacterAffectTurnEvaluation(
-        evaluationResult.output ?? evaluationResult.structuredOutput ?? evaluationResult.parsedJson,
-      );
-      if (!evaluation) {
-        throw new Error("Character affect evaluator returned an invalid structured result.");
-      }
-      return toAffectEventInputs({
-        evaluation,
-        characterId: request.session.characterId!,
-        sessionId: request.session.id,
-        userId: "local-user",
-        occurredAt: request.occurredAt,
-        idempotencyPrefix,
-      });
-    },
-    persistEvaluation: (input) => {
-      settlementStorage.saveEvaluation({ correlationId: request.correlationId, ...input });
-    },
-    appraise: (expectedVersion, candidates) => {
-      activeStage = "appraisal";
-      stageStartedAt = Date.now();
-      return runtimeApi.characterContextService.appraise({
-        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-        characterId: request.session.characterId!,
-        sessionId: request.session.id,
-        expectedVersion,
-        authority: { kind: "conversation" },
-        candidates,
-      }, "lifecycle");
-    },
-    recordAppraisalFailure: (input) => {
-      return settlementStorage.recordAppraisalFailure({ correlationId: request.correlationId, ...input });
-    },
-    runAppraisalExclusive: request.runAppraisalExclusive,
-    validateOwner: async () => {
-      const currentSession = await getRuntimeSession(request.session.id);
-      return Boolean(
-        currentSession
-        && currentSession.characterId === request.session.characterId
-        && hasCommittedAssistantMessage(currentSession.messages, request),
-      );
-    },
-    markDiscarded: () => {
-      settlementStorage.markDiscarded(request.correlationId);
-    },
-    markSettled: () => {
-      settlementStorage.markSettled(request.correlationId);
-    },
-    });
-    if (settlement.status === "invalidated") {
-      return reportInvalidatedSettlement();
-    }
-    if (settlement.status === "pending") {
-      if (settlement.phase === "appraisal") {
-        activeStage = "appraisal";
-      }
-      return recordFailure({
-        code: settlement.error.error.code,
-        retryable: settlement.error.error.retryable,
-        effect: settlement.error.error.effect,
-      });
-    }
-    if (settlement.appraisal && settlement.appraisal.rejected.length > 0) {
-      writeAppLog({
-        level: "warn",
-        kind: "character-affect.lifecycle.candidate-rejected",
-        process: "main",
-        message: "One or more Character affect candidates were rejected",
-        data: {
-          sessionId: request.session.id,
-          rejected: settlement.appraisal.rejected.map((candidate) => ({
-            candidateIndex: candidate.candidateIndex,
-            code: candidate.code,
-          })),
-        },
-      });
-    }
-    return true;
-  } catch (error) {
-    if (error === dispositionFailure) {
-      throw error;
-    }
-    return recordFailure({
-      code: characterAffectTurnThrownFailureCode(error, activeStage),
-      retryable: true,
-      error,
-    });
-  }
-}
-
 async function drainPendingCharacterAffectTurns(): Promise<boolean> {
-  const settlementStorage = requireCharacterAffectTurnSettlementStorage();
-  const result = await drainCharacterAffectTurnSettlementBatch({
-    storage: settlementStorage,
-    startupRecoveryCutoff: characterAffectTurnStartupRecoveryCutoff,
-    readyCursor: characterAffectTurnDrainCursor,
-    getSession: getRuntimeSession,
-    settle: (item, session) => settlementStorage !== characterAffectTurnSettlementStorage
-      ? Promise.resolve(true)
-      : settleCharacterAffectTurn({
-        session,
-        correlationId: item.correlationId,
-        userMessage: item.userMessage,
-        assistantMessage: item.assistantMessage,
-        assistantMessageIndex: item.assistantMessageIndex,
-        occurredAt: item.occurredAt,
-        runAppraisalExclusive: (operation) =>
-          characterAffectTurnOwnershipCoordinator.runExclusive(operation),
-      }),
-    onDiscard: (item) => {
-      writeAppLog({
-        level: "warn",
-        kind: "character-affect.lifecycle.recovery-discarded",
-        process: "main",
-        message: "Pending Character affect appraisal had no committed Session owner",
-        data: { sessionId: item.sessionId },
-      });
-    },
-    onFailure: (item, error) => {
-      writeAppLog({
-        level: "warn",
-        kind: "character-affect.lifecycle.recovery-failed",
-        process: "main",
-        message: "Pending Character affect appraisal remains available for recovery",
-        data: {
-          sessionId: item.sessionId,
-          correlationId: item.correlationId,
-          ...createCharacterAffectTurnRecoveryFailureLogData(error),
-        },
-      });
-    },
-  }).catch((error: unknown) => {
-    if (settlementStorage !== characterAffectTurnSettlementStorage) {
-      return { retryRequired: characterAffectTurnSettlementStorage !== null, nextReadyCursor: undefined };
-    }
-    throw error;
-  });
-  if (settlementStorage !== characterAffectTurnSettlementStorage) {
-    return characterAffectTurnSettlementStorage !== null;
-  }
-  characterAffectTurnDrainCursor = result.nextReadyCursor;
-  return result.retryRequired;
+  return characterAffectTurnMainLifecycle.drain();
 }
 
 function requireSessionRuntimeService(): SessionRuntimeService {
@@ -3125,6 +2835,7 @@ function requireCompanionReviewService(): CompanionReviewService {
 
 function requireSessionPersistenceService(): SessionPersistenceService {
   if (!sessionPersistenceService) {
+    const sessionStorageCommands = createSessionStorageCommandAdapter(() => requireSessionStorageForWrite());
     sessionPersistenceService = new SessionPersistenceService({
       getSessions: () => sessions,
       setSessions: (nextSessions) => {
@@ -3142,16 +2853,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
             provider: auxiliary.provider,
           })),
         ),
-      upsertStoredSession: (session, operation) => {
-        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
-        if (operation === "create") {
-          return storage.insertSession(session);
-        }
-        if (!storage.updateSession) {
-          throw new Error("既存 Session の更新 storage が利用できないよ。");
-        }
-        return storage.updateSession(session);
-      },
+      upsertStoredSession: sessionStorageCommands.upsertStoredSession,
       appendStoredRunningTurnStart: (input) => {
         const storage = requireSessionStorageForWrite() as SessionStorageWrite;
         if (!storage.appendRunningTurnStart) {
@@ -3188,13 +2890,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         requireSessionWindowBridge().closeSessionWindow(sessionId);
         requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
       },
-      upsertStoredTerminalSession: (session, terminalCommit) => {
-        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
-        if (!storage.updateTerminalSession) {
-          throw new Error("terminal Session の atomic commit storage が利用できないよ。");
-        }
-        return storage.updateTerminalSession(session, terminalCommit);
-      },
+      upsertStoredTerminalSession: sessionStorageCommands.upsertStoredTerminalSession,
       broadcastSessions,
       runCharacterAffectTurnOwnershipExclusive: (operation) =>
         characterAffectTurnOwnershipCoordinator.runExclusive(operation),

@@ -9,6 +9,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { buildNewSession, type Session } from "../../src/session-state.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
+import { createSessionStorageCommandAdapter } from "../../src-electron/session-storage-command-adapter.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
 function createSession(id: string, updatedAt = "2026-09-19T00:00:00.000Z"): Session {
@@ -44,7 +45,8 @@ function createService(
   storage: SessionStorageV6,
   session: Session,
   updateStoredSession: (next: Session, operation: "create" | "upsert") => Promise<Session>,
-  sharedState: { cached: Session[]; revoked: string[] } = { cached: [session], revoked: [] },
+  sharedState: { cached: Session[]; revoked: string[]; broadcasts: string[][] } = { cached: [session], revoked: [], broadcasts: [] },
+  updateStoredTerminalSession?: (next: Session, terminalCommit: Parameters<SessionPersistenceService["upsertTerminalSession"]>[1]) => Promise<Session>,
 ): { service: SessionPersistenceService; getCached: () => Session[]; state: typeof sharedState } {
   const service = new SessionPersistenceService({
     getSessions: () => sharedState.cached,
@@ -52,6 +54,7 @@ function createService(
     getSession: (sessionId) => sharedState.cached.find((entry) => entry.id === sessionId) ?? null,
     isSessionRunInFlight: () => false,
     upsertStoredSession: updateStoredSession,
+    upsertStoredTerminalSession: updateStoredTerminalSession,
     deleteStoredSessions: (sessionIds) => storage.deleteSessions(sessionIds),
     replaceStoredSessions: () => undefined,
     listStoredSessions: () => storage.listSessions(),
@@ -70,7 +73,7 @@ function createService(
     invalidateProviderSessionThread: () => undefined,
     revokeSessionAgentRuntimeBindings: (sessionId) => { sharedState.revoked.push(sessionId); },
     closeSessionWindow: () => undefined,
-    broadcastSessions: () => undefined,
+    broadcastSessions: (sessionIds) => { sharedState.broadcasts.push([...(sessionIds ?? [])]); },
   });
   return { service, getCached: () => sharedState.cached, state: sharedState };
 }
@@ -86,16 +89,17 @@ describe("Session update-only persistence", () => {
   // scope = "session-storage-v6-update-only"
   // lifecycle = "permanent"
   // impact = "削除済みSessionのprovider bindingやcache投影の復活を防ぐ"
-  // distinction = "通常のupsert/create互換ではなく、update-only APIの不在時動作を直接確認する"
+  // distinction = "通常のupsert/create互換ではなく、production adapterのupdate-only API経由で削除済み行への更新拒否を確認する"
   // @end-test-value
   it("deleted session is not recreated by update-only storage", async () => {
     await withStorage(async (storage) => {
       const session = createSession("deleted-before-update");
-      storage.insertSession(session);
+      const commands = createSessionStorageCommandAdapter(() => storage);
+      commands.upsertStoredSession(session, "create");
       storage.deleteSession(session.id);
 
       assert.throws(
-        () => storage.updateSession({ ...session, taskTitle: "stale update" }),
+        () => commands.upsertStoredSession({ ...session, taskTitle: "stale update" }, "upsert"),
         (error: unknown) => error instanceof Error && error.name === "SessionNotFoundError",
       );
       assert.deepEqual(storage.listSessions(), []);
@@ -107,7 +111,7 @@ describe("Session update-only persistence", () => {
   // claim = "update待機中に単体削除または期間削除が確定した場合、再開したupdateはcacheとDBを復活させない"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-delete" }
   // fault = "削除と競合するstale updateがDBへ再挿入されcacheへ投影される"
-  // observable = "update結果の拒否、storageの行、service cache"
+  // observable = "update結果の拒否、storageの行、service cache、削除時のbinding失効と失敗updateによるbroadcast非追加"
   // observation_boundary = "public-boundary"
   // scope = "session-persistence-update-delete-race"
   // lifecycle = "permanent"
@@ -118,17 +122,18 @@ describe("Session update-only persistence", () => {
     await withStorage(async (storage) => {
       for (const deletion of ["single", "cutoff"] as const) {
         const session = createSession(`race-${deletion}`);
-        storage.insertSession(session);
+        const commands = createSessionStorageCommandAdapter(() => storage);
+        commands.upsertStoredSession(session, "create");
         let release!: () => void;
         let reached!: () => void;
         const reachedPromise = new Promise<void>((resolve) => { reached = resolve; });
         const barrier = new Promise<void>((resolve) => { release = resolve; });
-        const sharedState = { cached: [session], revoked: [] as string[] };
+        const sharedState = { cached: [session], revoked: [] as string[], broadcasts: [] as string[][] };
         const { service, getCached } = createService(storage, session, async (next, operation) => {
           assert.equal(operation, "upsert");
           reached();
           await barrier;
-          return storage.updateSession(next);
+          return commands.upsertStoredSession(next, operation);
         }, sharedState);
         const update = service.updateSession({ ...session, taskTitle: "stale update" });
         await reachedPromise;
@@ -142,12 +147,48 @@ describe("Session update-only persistence", () => {
         assert.deepEqual(deleteResult.deletedSessionIds, [session.id]);
         assert.deepEqual(getCached(), []);
         assert.deepEqual(sharedState.revoked, [session.id]);
+        assert.deepEqual(sharedState.broadcasts, [ [session.id] ]);
         release();
         await assert.rejects(update, /対象セッションが見つからないよ/);
         assert.equal(storage.getSession(session.id), null);
         assert.deepEqual(getCached(), []);
         assert.deepEqual(sharedState.revoked, [session.id]);
+        assert.deepEqual(sharedState.broadcasts, [ [session.id] ]);
       }
+    });
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "productionのSession storage command adapterによる成功したupdateはcacheとbroadcastへ反映される"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#sessionpersistenceservice" }
+  // fault = "永続化成功後のcacheまたはbroadcast投影が欠落する"
+  // observable = "更新結果、service cache、broadcast対象、storageのSession行"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-command-adapter-success-projection"
+  // lifecycle = "permanent"
+  // impact = "更新済みSessionが画面へ反映されず、他windowへ通知されない"
+  // distinction = "Mainと同じproduction adapterを通るSessionPersistenceServiceの成功経路を確認する"
+  // @end-test-value
+  it("projects successful adapter update to cache and broadcast", async () => {
+    await withStorage(async (storage) => {
+      const session = createSession("successful-adapter-update");
+      const commands = createSessionStorageCommandAdapter(() => storage);
+      commands.upsertStoredSession(session, "create");
+      const sharedState = { cached: [session], revoked: [] as string[], broadcasts: [] as string[][] };
+      const { service, getCached } = createService(
+        storage,
+        session,
+        async (next, operation) => commands.upsertStoredSession(next, operation),
+        sharedState,
+      );
+
+      const updated = await service.updateSession({ ...session, taskTitle: "updated through adapter" });
+
+      assert.equal(updated.taskTitle, "updated through adapter");
+      assert.equal(getCached()[0]?.taskTitle, "updated through adapter");
+      assert.deepEqual(sharedState.broadcasts, [[session.id]]);
+      assert.equal(storage.getSession(session.id)?.taskTitle, "updated through adapter");
     });
   });
 
@@ -155,8 +196,8 @@ describe("Session update-only persistence", () => {
   // kind = "invariant"
   // claim = "terminal updateは既存Sessionとrunning markerに対してのみatomicに確定する"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-delete" }
-  // fault = "削除済みSessionへのterminal保存がSessionやterminal markerを再作成する"
-  // observable = "Session行とsession_turns_v6のphase"
+  // fault = "削除済みSessionへのterminal保存がSessionやmarkerを再作成する、marker不一致時に本文・cacheが更新される、または成功時のcache・broadcast投影が欠落する"
+  // observable = "Session行とsession_turns_v6のphase、成功時のcache・broadcast、marker不一致と削除後のterminal保存拒否時のDB・cache・broadcast不変"
   // observation_boundary = "public-boundary"
   // scope = "session-terminal-update-only"
   // lifecycle = "permanent"
@@ -166,7 +207,9 @@ describe("Session update-only persistence", () => {
   it("rejects deleted terminal owner and commits marker for existing owner", async () => {
     await withStorage(async (storage, dbPath) => {
       const session = createSession("terminal-owner");
-      storage.insertSession(session);
+      const commands = createSessionStorageCommandAdapter(() => storage);
+      commands.upsertStoredSession(session, "create");
+      const sharedState = { cached: [session], revoked: [] as string[], broadcasts: [] as string[][] };
       const db = new DatabaseSync(dbPath);
       try {
         db.prepare(`
@@ -185,17 +228,30 @@ describe("Session update-only persistence", () => {
           errorMessage: "",
           completedAt: "2026-09-19T00:01:00.000Z",
         };
-        storage.updateTerminalSession({ ...session, threadId: commit.threadId }, commit);
+        const { service, getCached } = createService(
+          storage,
+          session,
+          async (next, operation) => commands.upsertStoredSession(next, operation),
+          sharedState,
+          async (next, terminalCommit) => commands.upsertStoredTerminalSession(next, terminalCommit),
+        );
+        await service.upsertTerminalSession({ ...session, threadId: commit.threadId }, commit);
         assert.equal(storage.getSession(session.id)?.threadId, commit.threadId);
+        assert.equal(getCached()[0]?.threadId, commit.threadId);
+        assert.deepEqual(sharedState.broadcasts, [[session.id]]);
         assert.equal((db.prepare("SELECT phase FROM session_turns_v6 WHERE id = ?").get(turnId) as { phase: string }).phase, "completed");
-        assert.throws(
-          () => storage.updateTerminalSession({ ...session, threadId: "uncommitted-thread" }, commit),
+        await assert.rejects(
+          service.upsertTerminalSession({ ...session, threadId: "uncommitted-thread" }, commit),
           /terminal commit target mismatch/,
         );
         assert.equal(storage.getSession(session.id)?.threadId, commit.threadId);
-        storage.deleteSession(session.id);
-        assert.throws(() => storage.updateTerminalSession(session, commit), /対象セッションが見つからないよ/);
+        assert.equal(getCached()[0]?.threadId, commit.threadId);
+        assert.deepEqual(sharedState.broadcasts, [[session.id]]);
+        await service.deleteSession(session.id);
+        await assert.rejects(service.upsertTerminalSession(session, commit), /対象セッションが見つからないよ/);
         assert.equal(storage.getSession(session.id), null);
+        assert.deepEqual(getCached(), []);
+        assert.deepEqual(sharedState.broadcasts, [[session.id], [session.id]]);
         assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_turns_v6 WHERE id = ?").get(turnId) as { count: number }).count, 0);
       } finally {
         db.close();

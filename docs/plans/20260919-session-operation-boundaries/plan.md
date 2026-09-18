@@ -60,7 +60,19 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 
 - 棚卸し: 上表の経路を確認。Companion 実利用可否と全 caller の移行対象確定は未完了。
 - 実装単位 1: 実装済み。Affect の評価は ownership 外、owner 再検証・appraise・settlement 確定は同じ境界に配置。V6 runtime の通常保存と terminal 保存を既存行限定 API へ配線した。全体の排他方式はまだ置換していない。
-- 実装単位 2〜5: 未完了。
+- 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。作成準備、Settings / catalog、親子 admission は未完了。
+- 実装単位 3〜5: 未完了。
+
+### 第一段階レビューへの対応と削除後処理
+
+- レビュー対応開始 commit: `28e7b4d1ad62b00e2c3f69b9ef2334f5b5cfa197`。今回の変更 test はこの base から抽出する。
+- CLI/MCP integration test の metadata を実際の検証範囲へ修正。Affect 投影に加え、未知 family の拒否、Character Memory の追加・訂正・検索・忘却、storage 障害の error mapping を明記し、既存 assertion は維持する。
+- Main の通常更新・terminal 保存を共通の storage command adapter へ移し、実 V6 DB と SessionPersistenceService から同じ adapter を使用する。成功時の cache / broadcast、削除競合と terminal marker mismatch 時の非更新を検証する。
+- Affect の settle / drain orchestration を `character-affect-turn-main-lifecycle.ts` へ移し、Main が同じ実装を使用する。runtime だけの交換と storage の close / reopen、それぞれ評価成功・評価例外の 4 経路で、旧 storage への遅延 write がないこと、current pending が次回 drain で完了することを確認した。storage 交換時には、旧 drain が交換後 cursor を上書きしないことも確認した。
+- 削除 commit、cache 除去、親子 binding 失効、window / broadcast 投影を ownership 内で行い、provider thread 後処理は解放後に待つ。後処理失敗時も残りの対象を試み、削除済みであることを示す AggregateError を返す。
+- Settings / catalog は依然全 snapshot 置換である。単なるロックの移動では不十分で、対象 runtime field の限定更新、競合条件、rollback、Turn admission を一緒に扱う必要がある。
+- 今回の関連検証は Session / Affect / CLI-MCP / Auxiliary storage の 128 tests が成功。`npm run typecheck`、`npm run build` が成功し、build の warning は既存の renderer chunk サイズ警告。
+- 変更 test は今回 base から 7 records を抽出し、diagnostic は 0 件。通常の read-only `general_luna` review で oracle の実在参照、metadata の観測範囲、後処理順序への過結合を修正した。Main / IPC / GUI の E2E や Issue 全体の完了を意味しない。
 
 ### 実装単位 1 の検証
 
@@ -72,8 +84,8 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 
 ### 未確認・残作業
 
-- 上記は実 service と一時 DB を接続した検証であり、Electron Main 全体を起動した E2E ではない。Main の drain / storage 配線は diff で確認し、配線の取り違え自体を検出する E2E は未実施。
-- generation test は実 SQLite 接続の交換と settler の await 境界を検証する。Main の Memory runtime 交換、failure 記録、中断回収の実配線は直接試験していない。
+- 上記は Main が使用する production adapter / lifecycle と一時 DB を接続した component 検証であり、Electron Main 全体を起動した E2E ではない。Main の依存注入と IPC 登録は diff で確認し、bootstrap / IPC 配線の取り違えを検出する E2E は未実施。
+- generation test は実 SQLite 接続の交換と settler の await 境界を検証する。追加の Main lifecycle test は runtime identity 交換と、評価成功 / 例外後の invalidation・中断回収・drain を直接試験する。外部 LLM と Character context API は制御した依存であり、実 Memory HTTP runtime の停止・再起動を伴う E2E は未実施。
 - 同一 Character の複数 Session の並行評価、Settings rollback、親削除と Auxiliary Turn admission、Main cache と非同期 Worker 応答の先後は最終受入試験が必要。
 - storage Worker、全 caller 非同期化、backfill maintenance、Worker fault / generation / 結果不明、request 取消・重複抑止・再接続、UI、queue / DB / event-loop 診断は未実装。
 - Electron の分離環境、GUI、配布物、既存ユーザーデータコピーによる migration 確認は未実施。分離起動する場合は `scripts/start-withmate-visual-check.ps1` を使い、検証用 process の差替えを事前に明示する。

@@ -101,6 +101,11 @@ function assertSessionWritable(session: Session): void {
   }
 }
 
+type CommittedSessionDeletion = {
+  result: DeleteSessionsResult;
+  runtimeIdentities: { id: string; provider: string | null }[];
+};
+
 export class SessionPersistenceService {
   private sessionMutationQueue: Promise<void> = Promise.resolve();
 
@@ -229,13 +234,14 @@ export class SessionPersistenceService {
   }
 
   async deleteSession(sessionId: string): Promise<DeleteSessionsResult> {
-    return this.runCharacterAffectTurnOwnershipExclusive(
+    const committed = await this.runCharacterAffectTurnOwnershipExclusive(
       () => this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false }),
     );
+    return this.finishSessionDeletion(committed);
   }
 
   async deleteSessionsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): Promise<DeleteSessionsResult> {
-    return this.runCharacterAffectTurnOwnershipExclusive(async () => {
+    const committed = await this.runCharacterAffectTurnOwnershipExclusive(async () => {
       const sessionIds = this.deps.listStoredSessionIdsLastActiveBefore
         ? await this.deps.listStoredSessionIdsLastActiveBefore(cutoff)
         : (await this.deps.listStoredSessions())
@@ -243,6 +249,22 @@ export class SessionPersistenceService {
             .map((session) => session.id);
       return this.deleteSessionsByIds(sessionIds, { runningPolicy: "skip", cutoff, allowUncachedDeletion: true });
     });
+    return this.finishSessionDeletion(committed);
+  }
+
+  private async finishSessionDeletion(committed: CommittedSessionDeletion): Promise<DeleteSessionsResult> {
+    const failures: unknown[] = [];
+    for (const identity of committed.runtimeIdentities) {
+      try {
+        await this.deps.invalidateProviderSessionThread(identity.provider, identity.id);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Session は削除済みですが、provider thread の後処理に失敗しました。");
+    }
+    return committed.result;
   }
 
   private runCharacterAffectTurnOwnershipExclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -256,7 +278,7 @@ export class SessionPersistenceService {
       cutoff?: DeleteSessionsLastActiveBeforeCutoff;
       allowUncachedDeletion: boolean;
     },
-  ): Promise<DeleteSessionsResult> {
+  ): Promise<CommittedSessionDeletion> {
     const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
     const skippedRunningSessionIds: string[] = [];
     const deletableSessionIds: string[] = [];
@@ -289,11 +311,14 @@ export class SessionPersistenceService {
 
     if (deletableSessionIds.length === 0) {
       return {
-        cutoffDate: options.cutoff?.cutoffDate,
-        cutoffTimestampMs: options.cutoff?.cutoffTimestampMs,
-        deletedSessionIds: [],
-        deletedAuxiliarySessionIds: [],
-        skippedRunningSessionIds,
+        result: {
+          cutoffDate: options.cutoff?.cutoffDate,
+          cutoffTimestampMs: options.cutoff?.cutoffTimestampMs,
+          deletedSessionIds: [],
+          deletedAuxiliarySessionIds: [],
+          skippedRunningSessionIds,
+        },
+        runtimeIdentities: [],
       };
     }
 
@@ -308,11 +333,12 @@ export class SessionPersistenceService {
     }
     const deletableSessionIdSet = new Set(deletableSessionIds);
     this.deps.setSessions(this.deps.getSessions().filter((entry) => !deletableSessionIdSet.has(entry.id)));
+    const runtimeIdentities: CommittedSessionDeletion["runtimeIdentities"] = [];
 
     for (const sessionId of deletableSessionIds) {
       const deletedSession = currentSessionsById.get(sessionId);
       this.deps.revokeSessionAgentRuntimeBindings?.(sessionId);
-      await this.deps.invalidateProviderSessionThread(deletedSession?.provider ?? null, sessionId);
+      runtimeIdentities.push({ id: sessionId, provider: deletedSession?.provider ?? null });
       this.deps.clearSessionContextTelemetry(sessionId);
       this.deps.clearSessionBackgroundActivities(sessionId);
       this.deps.closeSessionWindow(sessionId);
@@ -326,7 +352,7 @@ export class SessionPersistenceService {
         continue;
       }
       this.deps.revokeSessionAgentRuntimeBindings?.(auxiliary.id);
-      await this.deps.invalidateProviderSessionThread(auxiliary.provider, auxiliary.id);
+      runtimeIdentities.push({ id: auxiliary.id, provider: auxiliary.provider });
       this.deps.clearSessionContextTelemetry(auxiliary.id);
       this.deps.clearSessionBackgroundActivities(auxiliary.id);
       this.deps.closeSessionWindow(auxiliary.id);
@@ -335,11 +361,14 @@ export class SessionPersistenceService {
     this.deps.broadcastSessions(deletableSessionIds);
 
     return {
-      cutoffDate: options.cutoff?.cutoffDate,
-      cutoffTimestampMs: options.cutoff?.cutoffTimestampMs,
-      deletedSessionIds: deletableSessionIds,
-      deletedAuxiliarySessionIds,
-      skippedRunningSessionIds,
+      result: {
+        cutoffDate: options.cutoff?.cutoffDate,
+        cutoffTimestampMs: options.cutoff?.cutoffTimestampMs,
+        deletedSessionIds: deletableSessionIds,
+        deletedAuxiliarySessionIds,
+        skippedRunningSessionIds,
+      },
+      runtimeIdentities,
     };
   }
 

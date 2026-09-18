@@ -29,12 +29,12 @@ function outputBuffer() {
 describe("Character context CLI / MCP integration", () => {
   // @test-value v2
   // kind = "invariant"
-  // claim = "単一runtimeのbound MCPで保存したAffect eventとpost-turn eventをCLIから読み戻せ、CLI・MCP・lifecycleのAffect投影が一致する"
+  // claim = "単一owner-bound runtimeでMCP・post-turnのAffect保存とCLI・MCP・lifecycle投影が一致し、未知familyを拒否する。Character Memoryのappend・correct・search・forgetがCLI/MCP間で反映され、storage障害を両adapterが失敗として返す"
   // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
-  // fault = "MCPまたはpost-turnで保存したeventをCLIが読めないか、同じ時刻のCLI・MCP・lifecycle投影が不一致になる"
-  // observable = "CLI inspectのevent件数とfamily・target、CLI・MCP・lifecycleのaffect投影"
+  // fault = "Affect投影がadapter間で不一致になる、未知familyを受理する、Character Memoryの訂正が検索へ反映されないか忘却のreadBackが成立しない、またはstorage障害を成功として返す"
+  // observable = "CLI inspectのevent件数とfamily・target、各経路のaffect投影、未知familyのsaved空配列とinvalid_input、Memoryの追加・訂正結果と検索ID・scopeとforgetのreadBack、storage障害時のCLI終了codeとMCP isError・error code・effect"
   // observation_boundary = "public-boundary"
-  // scope = "character-context-cli-mcp-runtime-binding"
+  // scope = "owner-bound Character context runtimeのAffect投影・入力拒否、Memory mutation/read-back、CLI/MCP storage error mapping"
   // lifecycle = "permanent"
   // distinction = "個別adapterのschema検証と異なり、実HTTP runtimeでMCP writeとCLI readとpost-turn処理を接続する"
   // @end-test-value

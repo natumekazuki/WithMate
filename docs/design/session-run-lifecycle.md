@@ -132,6 +132,8 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 
 V6 の通常更新と terminal 保存は、作成とは別の既存行限定 API を使う。存在確認を要求受付時だけで済ませず、保存 transaction 内で再確認する。削除が先に確定した場合は `SessionNotFoundError` で更新を拒否し、古い Session 本文、terminal marker、cache、provider binding を再作成しない。単体削除と期間指定削除で同じ契約を適用する。
 
+単体・期間指定削除は、実行中判定、DB 削除、cache 除去、親子の agent binding 失効とローカル投影までを ownership 境界内で確定する。provider thread の外部後処理はその境界を解放してから待つ。後処理が遅れても無関係な Session の削除・Affect 適用を待たせない。後処理に失敗した場合も残りの削除対象の後処理を試み、削除済みデータを復元せず、失敗を集約して呼出元へ返す。
+
 ### Character Affect の完了後評価
 
 外部 Provider による Affect 評価は ownership coordinator を保持せずに実行する。無関係な Session の作成・削除を、評価完了待ちへ結合しない。
@@ -142,7 +144,7 @@ V6 の通常更新と terminal 保存は、作成とは別の既存行限定 API
 
 Memory runtime だけが交換され、元の settlement storage がまだ current の場合は、その correlation の attempt を既存の中断回収処理へ戻す。評価結果を引き継がず、閉じた storage を操作せず、current DB に試行中のまま残ることを防ぐ。
 
-この分離は Issue #726 の一部である。作成準備・削除後処理の広域排他、Settings の全 snapshot 更新、storage Worker、Auxiliary 作成取消の残作業は `docs/plans/20260919-session-operation-boundaries/plan.md` で管理する。
+この分離は Issue #726 の一部である。作成準備の広域排他、Settings の全 snapshot 更新、storage Worker、Auxiliary 作成取消の残作業は `docs/plans/20260919-session-operation-boundaries/plan.md` で管理する。
 
 ### Home Window Close
 
