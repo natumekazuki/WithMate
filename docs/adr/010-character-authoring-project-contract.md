@@ -24,7 +24,9 @@ ChatGPT Project 形式の authoring 方針を取り込むにあたり、Editor U
 - UI は `Improve with Agent`、provider 選択、`Start` の現行導線を維持する。
 - 改善指示は起動前の専用入力ではなく、開始後の通常 Session composer から自然言語で受け取る。
 - 起動 IPC は mode、保存済み `characterId`、provider と runtime options だけを受け取る。Editor draft、theme、user instruction は渡さない。
-- provider は必須入力として空白を除去し、fallback しない catalog ID の完全一致と Settings の enabled 状態を workspace mutation 前に検証する。provider 確定、workspace 準備、Session 永続化は Settings / catalog 更新と同じ provider operation coordinator で直列化する。
+- provider は必須入力として空白を除去し、fallback しない catalog ID の完全一致と Settings の enabled 状態を workspace mutation 前に検証する。Character 読取、同梱 Skill の非同期読込み、生成内容のメモリ上の準備は provider operation coordinator 外で行う。準備中は既存 workspace を変更しない。
+- managed files の反映前に Settings / catalog 更新と同じ provider operation coordinator を取得し、同じ Session storage、選択 provider の有効性、準備元 Character と directory を再検証する。準備中に対象が削除・更新された場合や storage が交換された場合は保存を拒否し、別 provider や新しい対象へ準備結果を流用しない。
+- managed files の反映と Session 永続化は引き続き coordinator 内で行う。canonical files は変更しない。反映は filesystem transaction ではなく、反映中の I/O エラーでは managed files が一部更新された状態が残り得る。既存 Character directory 全体の削除や、保存結果不明時の自動復元は行わない。書込み待機まで排他外へ移す変更はこの段階に含めない。
 - Editor に未保存変更がある場合は起動を拒否し、先に保存を求める。
 - Session 準備処理は `character.md` / `character-notes.md` を書き直さない。保存済み files と catalog metadata を起点にする。
 - 保存済み `character.md` が hard contract を外れて metadata を parse できない場合、Editor draft は catalog metadata を維持して未保存扱いにせず、authoring session から修復できるようにする。

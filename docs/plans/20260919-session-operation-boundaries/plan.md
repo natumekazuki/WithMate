@@ -14,7 +14,7 @@
 | Affect settlement | `main.ts` の drain が ownership coordinator 内で外部評価を待つ | 評価と、owner 再検証・version 付き適用を分離 |
 | Auxiliary 作成 | Provider coordinator → ownership coordinator → 親取得・設定解決・保存 | 受付・準備・取消・親生存再検証・commit・結果照合 |
 | Main 作成 | Provider coordinator 内で設定解決・SessionFolder 作成、保存後 default Auxiliary 初期化 | 準備の分離、generation / 設定再検証、部分成功の定義 |
-| Character authoring | Provider coordinator 内で directory / skill 準備 | filesystem 準備の分離と当該試行のみの cleanup |
+| Character authoring | Skill 読込み・生成内容の準備は coordinator 外。managed files 反映と保存は coordinator 内 | 書込み待機の分離と共有 managed files の反映境界は残作業 |
 | 通常更新・terminal | Session mutation queue と UPSERT | create と既存行限定 update を分離、確定時の存在確認 |
 | 削除・期間削除 | ownership coordinator 内で削除と provider thread 無効化 | 親子 admission / 削除 commit と外部後処理を分離 |
 | Settings / catalog | Provider coordinator、全 Session / Auxiliary snapshot の保存・rollback | 対象 field / row の短い更新、利用中判定と admission の整合 |
@@ -60,7 +60,7 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 
 - 棚卸し: 上表の経路を確認。Companion 実利用可否と全 caller の移行対象確定は未完了。
 - 実装単位 1: 実装済み。Affect の評価は ownership 外、owner 再検証・appraise・settlement 確定は同じ境界に配置。V6 runtime の通常保存と terminal 保存を既存行限定 API へ配線した。全体の排他方式はまだ置換していない。
-- 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。Settings credential 更新の thread reset / rollback を条件付き field 更新へ移行。Main SessionFolder と Auxiliary の作成準備を provider coordinator 外へ分離。他の作成準備、catalog の限定 field 更新、親子 Turn admission は未完了。
+- 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。Settings credential 更新の thread reset / rollback を条件付き field 更新へ移行。Main SessionFolder と Auxiliary の作成準備を provider coordinator 外へ分離。Character authoring も Character / Skill 読込みと生成内容の準備を分離したが、managed files 書込みは coordinator 内。他の作成準備、catalog の限定 field 更新、親子 Turn admission は未完了。
 - 実装単位 3〜5: 未完了。
 
 ### 第一段階レビューへの対応と削除後処理
@@ -132,6 +132,14 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 - 検証: 関連 55 tests（削除後処理の 1 test 内に 12 組合せ）、`npm run typecheck`、`npm run build:electron` が成功。今回の変更に対する全体 `npm test` と renderer build は未実施。U2 の実環境統合・コピー DB migration は引き続き未確認。
 - `review-test-value` で今回起点から 1 record / 1 transition を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が全件を審査し、追加指摘なし。削除済み runtime の失効と非同期後処理のエラー伝播は型検査だけでは担保できず、実 DB を使う約 0.4 秒の test として保持する。
 - 続きとして Character authoring の作成経路を確認した。既存 Character directory に Skill と managed files を上書きするため、`prepareWorkspace` をそのまま排他外へ移すと、競合した試行が共有ファイルを破壊し得る。次の実装では試行専用の準備領域と managed files 反映の境界、Character / provider / storage の再検証が必要である。Character directory 全体の削除による cleanup は採用しない。現時点では調査までで、この準備分離は未実装。
+
+### 第七回レビューと続き（a81bd9c1 起点）
+
+- レビューの確定指摘は 0 件。U1 はレビュー時の実行 test / build 未実施、U2 は実環境統合・コピー DB migration の未確認であり、既存の実装時検証とは区別する。
+- Character authoring の準備を段階的に分離した。今回は同梱 Skill の非同期読込みと生成内容をメモリに保持し、共有 workspace に触れる前に provider coordinator 外の準備を完了させる。前回調査で挙げた disk staging は導入しない。既存 directory の上書きを排他外へ移さず、準備領域の cleanup や復元機構を追加しない変更とした。
+- 最終反映の前に storage identity、provider、Character、workspace directory を再検証する。managed files 反映と Session 保存は引き続き coordinator 内で行う。書込み I/O 待機の排他外への分離、filesystem transaction、Character 更新・削除との完全な admission 統合は未完了。
+- 検証: Character authoring の 18 tests、全体 `npm test`（2,898 pass / 0 fail / 1 skip）、`npm run typecheck`、`npm run build` が成功。renderer の既存 chunk サイズ warning は継続。固定起点そのものではなく、今回変更を含む working tree の結果である。実 Electron、実 Provider、実ユーザー DB コピーは未確認。
+- `review-test-value` で今回起点から 7 records / 7 transitions を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が全件を審査し、追加指摘なし。既存 test の正規表現内の backtick 1 文字は、抽出器の字句誤認を避けるため同義の `\x60` に変更した。assertion の契約は変えていない。実 coordinator と一時 filesystem、制御した provider / Character / storage identity を使う component test として保持する。実 DB 更新や Electron E2E の競合再現とは扱わない。
 
 ### 未確認・残作業（継続）
 

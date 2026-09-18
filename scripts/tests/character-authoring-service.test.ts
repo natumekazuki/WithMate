@@ -13,6 +13,7 @@ import { buildNewSession, type CreateSessionInput } from "../../src/session-stat
 import {
   CharacterAuthoringService,
   CHARACTER_AUTHORING_SKILL_NAME,
+  readBundledCharacterAuthoringSkillFiles,
   resolveCharacterAuthoringRuntimeSessionForTurn,
 } from "../../src-electron/character-authoring-service.js";
 import { ProviderRuntimeOperationCoordinator } from "../../src-electron/provider-runtime-operation-coordinator.js";
@@ -21,6 +22,15 @@ const resolveSelectedProvider = (providerId: string): string => providerId;
 const bundledSkillPath = path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME);
 const defaultDefinition = "# Existing character\n";
 const defaultNotes = "# Existing notes\n";
+const defaultStorageIdentity = {};
+
+function deferred<T = void>(): { promise: Promise<T>; resolve(value: T extends void ? void : T): void } {
+  let resolve!: (value: T extends void ? void : T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve as typeof resolve;
+  });
+  return { promise, resolve };
+}
 
 async function runProviderOperationExclusive<T>(operation: () => T | Promise<T>): Promise<T> {
   return operation();
@@ -50,6 +60,7 @@ function createService(
 ): CharacterAuthoringService {
   return new CharacterAuthoringService({
     bundledSkillPath,
+    getSessionStorageIdentity: () => defaultStorageIdentity,
     resolveProvider: resolveSelectedProvider,
     runProviderRuntimeOperationExclusive: runProviderOperationExclusive,
     getCharacter: () => buildCharacter(),
@@ -73,6 +84,26 @@ async function createWorkspace(
     await writeFile(path.join(workspacePath, "character-notes.md"), notes, "utf8");
   }
   return { tempDirectory, workspacePath };
+}
+
+async function seedManagedArtifacts(workspacePath: string): Promise<void> {
+  await writeFile(path.join(workspacePath, "AGENTS.md"), "sentinel agents\n", "utf8");
+  await writeFile(path.join(workspacePath, "AUTHORING_PROMPT.md"), "sentinel prompt\n", "utf8");
+  await writeFile(path.join(workspacePath, "input.json"), "{\"sentinel\":true}\n", "utf8");
+  const skillPath = path.join(workspacePath, ".agents", "skills", CHARACTER_AUTHORING_SKILL_NAME, "SKILL.md");
+  await mkdir(path.dirname(skillPath), { recursive: true });
+  await writeFile(skillPath, "sentinel skill\n", "utf8");
+}
+
+async function assertManagedArtifactsPreserved(workspacePath: string): Promise<void> {
+  assert.equal(await readFile(path.join(workspacePath, "character-notes.md"), "utf8"), defaultNotes);
+  assert.equal(await readFile(path.join(workspacePath, "AGENTS.md"), "utf8"), "sentinel agents\n");
+  assert.equal(await readFile(path.join(workspacePath, "AUTHORING_PROMPT.md"), "utf8"), "sentinel prompt\n");
+  assert.equal(await readFile(path.join(workspacePath, "input.json"), "utf8"), "{\"sentinel\":true}\n");
+  assert.equal(
+    await readFile(path.join(workspacePath, ".agents", "skills", CHARACTER_AUTHORING_SKILL_NAME, "SKILL.md"), "utf8"),
+    "sentinel skill\n",
+  );
 }
 
 function assertSectionContains(
@@ -514,6 +545,18 @@ description: "作業を一緒に進める相手"
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "notesが未作成でもauthoringを開始でき、起動処理はnotesを新規作成せず必要時の作成手順をSkillに配布する"
+  // oracle = { type = "adr", ref = "docs/adr/010-character-authoring-project-contract.md#fixed-project-policy" }
+  // fault = "optional notesの不存在で起動を拒否するか、起動だけで不要なnotesを作成し、または必要時の作成手順を配布しない"
+  // observable = "startSessionの成功、notes読取のENOENT、配布Skillのtargeted/full workflowとtemplate参照"
+  // observation_boundary = "public-boundary"
+  // scope = "CharacterAuthoringServiceと実filesystem"
+  // lifecycle = "permanent"
+  // impact = "notesを必要としないCharacterの起動を妨げるか、ユーザーの保存済みファイル構成を変更する"
+  // distinction = "型やbuildでは検出できないoptional fileの保存境界と配布内容を同時に観測する既存testを維持する"
+  // @end-test-value
   it("optional な character-notes.md がなくても起動し、Skill が authoring 時の初期化手順を持つ", async () => {
     const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
     const service = createService({
@@ -538,7 +581,7 @@ description: "作業を一緒に進める相手"
       );
       assert.match(skillMarkdown, /## Targeted Update Workflow/);
       assert.match(skillMarkdown, /## Full Authoring Workflow/);
-      assert.match(skillMarkdown, /character-notes\.md` は optional/);
+      assert.match(skillMarkdown, /character-notes\.md\x60 は optional/);
       assert.match(skillMarkdown, /templates\/character-notes\.md/);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -576,10 +619,25 @@ description: "作業を一緒に進める相手"
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character authoring の最終検証後の Session 保存が完了するまで Settings 更新を待機させる"
+  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+  // fault = "Session 保存前に Settings 更新が provider state を変更し、準備済みworkspaceだけが残るか、同時実行の順序が観測できない"
+  // observable = "createSession の遅延中に Settings 更新 promise が未完了であり、解放後に Session 保存と Settings 更新が完了すること"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-commit-serialization"
+  // lifecycle = "permanent"
+  // impact = "provider無効化とauthoring Session作成の競合で、開始結果と設定状態が食い違う"
+  // distinction = "実filesystemへの準備結果ではなく、Session保存完了とSettings更新の順序をdeferred createSessionと実coordinatorで観測する"
+  // @end-test-value
   it("provider 確定から workspace 準備と Session 保存まで Settings 更新と直列化する", async () => {
     const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
     const coordinator = new ProviderRuntimeOperationCoordinator();
     let providerEnabled = true;
+    const createSessionEntered = deferred();
+    const createSessionBarrier = deferred();
+    const completedOperations: string[] = [];
     const service = createService({
       resolveProvider(providerId) {
         if (!providerEnabled) {
@@ -594,6 +652,9 @@ description: "作業を一緒に進める相手"
         if (!providerEnabled) {
           throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
         }
+        createSessionEntered.resolve();
+        await createSessionBarrier.promise;
+        completedOperations.push("session");
         return buildNewSession(input);
       },
     });
@@ -604,17 +665,310 @@ description: "作業を一緒に進める相手"
         characterId: "char-muse",
         provider: "codex",
       });
+      await createSessionEntered.promise;
       const settingsUpdatePromise = coordinator.runExclusive(() => {
         providerEnabled = false;
+        completedOperations.push("settings");
       });
 
+      let settingsUpdateFinished = false;
+      void settingsUpdatePromise.then(() => {
+        settingsUpdateFinished = true;
+      });
+      await Promise.resolve();
+      assert.equal(settingsUpdateFinished, false);
+      createSessionBarrier.resolve();
       const result = await authoringPromise;
       await settingsUpdatePromise;
 
+      assert.deepEqual(completedOperations, ["session", "settings"]);
       assert.equal(result.session.provider, "codex");
       assert.equal(providerEnabled, false);
       assert.match(await readFile(path.join(workspacePath, "AGENTS.md"), "utf8"), /Character Authoring Workspace/);
     } finally {
+      createSessionBarrier.resolve();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character authoring のin-memory Skill準備中は Settings 更新を待たせず、commit時にprovider変更を拒否する"
+  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+  // fault = "固定Skillの準備読込をprovider operation lock内で実行し、Settings更新を不要に待たせるか、準備済み入力を無検証でcommitする"
+  // observable = "準備中に完了したSettings更新と、provider無効化後のauthoring拒否およびcanonical fileの内容"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-preparation-boundary"
+  // lifecycle = "permanent"
+  // impact = "Skill読込の待ち時間がSettingsを塞がず、provider変更後にworkspace/sessionを作らない"
+  // distinction = "実bundle readerに接続した制御barrierを使い、coordinatorの外側でSettings更新が完了することとcommit再検証を同じ公開結果から確認する"
+  // @end-test-value
+  it("Skill準備中はSettings更新を完了でき、provider変更後はcommitしない", { timeout: 10_000 }, async () => {
+    const { tempDirectory, workspacePath } = await createWorkspace();
+    await seedManagedArtifacts(workspacePath);
+    const coordinator = new ProviderRuntimeOperationCoordinator();
+    let providerEnabled = true;
+    const readerEntered = deferred();
+    const readerBarrier = deferred();
+    let sessionCreationCount = 0;
+    const service = createService({
+      resolveProvider(providerId) {
+        if (!providerEnabled) {
+          throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
+        }
+        return providerId;
+      },
+      runProviderRuntimeOperationExclusive: (operation) => coordinator.runExclusive(operation),
+      readBundledSkillFiles: async (rootPath) => {
+        readerEntered.resolve();
+        await readerBarrier.promise;
+        return readBundledCharacterAuthoringSkillFiles(rootPath);
+      },
+      getCharacterDirectory: () => workspacePath,
+      async createSession(input) {
+        sessionCreationCount += 1;
+        return buildNewSession(input);
+      },
+    });
+
+    try {
+      const authoringPromise = service.startSession({
+        mode: "improve",
+        characterId: "char-muse",
+        provider: "codex",
+      });
+      await readerEntered.promise;
+      await coordinator.runExclusive(() => {
+        providerEnabled = false;
+      });
+      readerBarrier.resolve();
+      await assert.rejects(authoringPromise, /provider.*無効/);
+      assert.equal(sessionCreationCount, 0);
+      assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
+      await assertManagedArtifactsPreserved(workspacePath);
+    } finally {
+      readerBarrier.resolve();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character authoring準備後のCharacter、workspace、Session storageの変更はmanaged write前に拒否する"
+  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+  // fault = "準備中にCharacter内容、Character directory、またはSession storage identityを差し替え、古いSkill wrapperをcanonical workspaceへ書き込む"
+  // observable = "authoring開始の拒否理由、canonical character files、既存managed filesの内容保持、およびSession作成回数"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-preparation-revalidation"
+  // lifecycle = "permanent"
+  // impact = "古い準備結果が別のCharacterやstorageへ反映されず、既存のcanonical filesを保護する"
+  // distinction = "Character update/delete/archive、directory change、storage exchangeを独立に実filesystemとSession creation countで確認する"
+  // @end-test-value
+  it("準備中のCharacter・directory・storage交換をcommit前に拒否する", { timeout: 10_000 }, async () => {
+    const scenarios = ["character-update", "character-delete", "character-archive", "directory", "storage"] as const;
+    for (const scenario of scenarios) {
+      const { tempDirectory, workspacePath } = await createWorkspace();
+      await seedManagedArtifacts(workspacePath);
+      const preparedCharacter = buildCharacter();
+      const changedCharacter = buildCharacter({ description: "別のCharacter" });
+      let releasePreparation!: () => void;
+      const preparationBarrier = new Promise<void>((resolve) => {
+        releasePreparation = resolve;
+      });
+      let characterReadCount = 0;
+      const preparationEntered = deferred();
+      let directoryReadCount = 0;
+      let sessionCreationCount = 0;
+      let storageIdentity: object = {};
+      const replacementStorageIdentity = {};
+      const service = createService({
+        getCharacter: async () => {
+          characterReadCount += 1;
+          if (characterReadCount === 1) {
+            preparationEntered.resolve();
+            await preparationBarrier;
+          }
+          if (characterReadCount > 1 && scenario === "character-update") return changedCharacter;
+          if (characterReadCount > 1 && scenario === "character-delete") return null;
+          if (characterReadCount > 1 && scenario === "character-archive") {
+            return buildCharacter({ state: "archived", archivedAt: "2026-09-19T00:00:00.000Z" });
+          }
+          return preparedCharacter;
+        },
+        getCharacterDirectory: () => {
+          directoryReadCount += 1;
+          return scenario === "directory" && directoryReadCount > 1
+            ? path.join(tempDirectory, "moved-character")
+            : workspacePath;
+        },
+        getSessionStorageIdentity: () => storageIdentity,
+        async createSession(input) {
+          sessionCreationCount += 1;
+          return buildNewSession(input);
+        },
+      });
+
+      try {
+        const authoringPromise = service.startSession({
+          mode: "improve",
+          characterId: "char-muse",
+          provider: "codex",
+        });
+        await preparationEntered.promise;
+        if (scenario === "storage") {
+          storageIdentity = replacementStorageIdentity;
+        }
+        releasePreparation();
+        await assert.rejects(authoringPromise, /変更されました|切り替わりました/);
+        assert.equal(sessionCreationCount, 0);
+        assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
+        await assertManagedArtifactsPreserved(workspacePath);
+      } finally {
+        releasePreparation();
+        await rm(tempDirectory, { recursive: true, force: true });
+      }
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "固定Skill bundleのin-memory read失敗はcanonical Character filesを変更しない"
+  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+  // fault = "authoring Skill bundleのreadが失敗した後もmanaged workspace writeやSession作成を続ける"
+  // observable = "read error、canonical character.mdとnotes、既存managed filesの内容保持、Session作成回数"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-preparation-failure"
+  // lifecycle = "permanent"
+  // impact = "不完全なauthoring wrapperでCharacter directoryを汚染しない"
+  // distinction = "bundle readerの実filesystem ENOENTを入口に、保存済みcanonical filesとmanaged outputを分けて観測する"
+  // @end-test-value
+  it("Skill bundleのread失敗ではworkspaceを変更しない", { timeout: 10_000 }, async () => {
+    const { tempDirectory, workspacePath } = await createWorkspace();
+    await seedManagedArtifacts(workspacePath);
+    let sessionCreationCount = 0;
+    const service = createService({
+      bundledSkillPath: path.join(tempDirectory, "missing-skill-bundle"),
+      getCharacterDirectory: () => workspacePath,
+      async createSession(input) {
+        sessionCreationCount += 1;
+        return buildNewSession(input);
+      },
+    });
+
+    try {
+      await assert.rejects(
+        () => service.startSession({ mode: "improve", characterId: "char-muse", provider: "codex" }),
+        /ENOENT|no such file/i,
+      );
+      assert.equal(sessionCreationCount, 0);
+      assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
+      await assertManagedArtifactsPreserved(workspacePath);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character authoringは準備前に取得したCharacterの値を保持し、準備中の同じobjectへの更新も検出する"
+  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+  // fault = "準備中に同じCharacter objectが書き換えられた際、commit側も同じ参照を読み直して変更を見逃す"
+  // observable = "authoring開始の拒否、Session作成回数、canonical fileとmanaged fileの状態"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-character-snapshot"
+  // lifecycle = "permanent"
+  // impact = "Character update/delete/archive相当の変更が古い準備結果へ混入せず、workspaceを汚染しない"
+  // distinction = "Skill読込みbarrier中の同一mutable objectへの書換を使い、値の再取得では検出できないsnapshot境界を観測する"
+  // @end-test-value
+  it("準備開始後の同一Character objectの変更をsnapshot不一致として拒否する", { timeout: 10_000 }, async () => {
+    const { tempDirectory, workspacePath } = await createWorkspace();
+    await seedManagedArtifacts(workspacePath);
+    const mutableCharacter = buildCharacter();
+    const readerEntered = deferred();
+    const readerBarrier = deferred();
+    let sessionCreationCount = 0;
+    const service = createService({
+      getCharacter: () => mutableCharacter,
+      readBundledSkillFiles: async (rootPath) => {
+        readerEntered.resolve();
+        await readerBarrier.promise;
+        return readBundledCharacterAuthoringSkillFiles(rootPath);
+      },
+      getCharacterDirectory: () => workspacePath,
+      async createSession(input) {
+        sessionCreationCount += 1;
+        return buildNewSession(input);
+      },
+    });
+
+    try {
+      const authoringPromise = service.startSession({ mode: "improve", characterId: "char-muse", provider: "codex" });
+      await readerEntered.promise;
+      mutableCharacter.description = "準備中に変更された説明";
+      readerBarrier.resolve();
+      await assert.rejects(authoringPromise, /Character.*変更されました/);
+      assert.equal(sessionCreationCount, 0);
+      assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
+      await assertManagedArtifactsPreserved(workspacePath);
+    } finally {
+      readerBarrier.resolve();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character authoringはcommit検証中のawait後にもSession storage identityを再検証する"
+  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+  // fault = "commit検証のCharacter read await中にSession storageが交換され、古い準備済みworkspaceを新storageへ保存する"
+  // observable = "storage交換後のauthoring拒否、Session作成回数、canonical fileとmanaged fileの状態"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-storage-revalidation"
+  // lifecycle = "permanent"
+  // impact = "storage交換をまたぐ古いCharacter authoringのSession保存を防ぐ"
+  // distinction = "commit時のCharacter read barrier中にidentityを差し替え、準備前だけでなくawait後の再検証を直接観測する"
+  // @end-test-value
+  it("commit検証のawait後にSession storageが交換された場合は保存しない", { timeout: 10_000 }, async () => {
+    const { tempDirectory, workspacePath } = await createWorkspace();
+    await seedManagedArtifacts(workspacePath);
+    let storageIdentity: object = {};
+    const replacementStorageIdentity = {};
+    let characterReadCount = 0;
+    const commitReadEntered = deferred();
+    const commitReadBarrier = deferred();
+    let sessionCreationCount = 0;
+    const service = createService({
+      getCharacter: () => {
+        characterReadCount += 1;
+        if (characterReadCount === 2) {
+          commitReadEntered.resolve();
+          return commitReadBarrier.promise.then(() => buildCharacter());
+        }
+        return buildCharacter();
+      },
+      getCharacterDirectory: () => workspacePath,
+      getSessionStorageIdentity: () => storageIdentity,
+      async createSession(input) {
+        sessionCreationCount += 1;
+        return buildNewSession(input);
+      },
+    });
+
+    try {
+      const authoringPromise = service.startSession({
+        mode: "improve",
+        characterId: "char-muse",
+        provider: "codex",
+      });
+      await commitReadEntered.promise;
+      storageIdentity = replacementStorageIdentity;
+      commitReadBarrier.resolve();
+      await assert.rejects(authoringPromise, /Session storage.*切り替わりました/);
+      assert.equal(sessionCreationCount, 0);
+      assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
+      await assertManagedArtifactsPreserved(workspacePath);
+    } finally {
+      commitReadBarrier.resolve();
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });

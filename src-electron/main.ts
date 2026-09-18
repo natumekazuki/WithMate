@@ -2272,6 +2272,7 @@ function requireCharacterAuthoringService(): CharacterAuthoringService {
       createSession: (input) => requireMainSessionCommandFacade().createSession(input),
       getCharacter: (characterId) => requireCharacterService().getCharacter(characterId),
       getCharacterDirectory: (characterId) => requireCharacterService().getCharacterDirectory(characterId),
+      getSessionStorageIdentity: () => requireSessionStorage(),
       resolveProvider: (providerId) =>
         requireSessionPersistenceService().resolveCharacterAuthoringProvider(providerId),
       runProviderRuntimeOperationExclusive: (operation) =>
