@@ -291,11 +291,12 @@ export function useAuxiliaryWorkspace(input: {
       if (!api) return;
       const terminalRevision = (terminalRevisionRef.current.get(id) ?? 0) + 1;
       terminalRevisionRef.current.set(id, terminalRevision);
-      if (state === null && !detailsRef.current.has(id)) {
-        void refreshSummaries();
-        return;
+      const terminalEpoch = state === null
+        ? (detailMutationEpochRef.current.get(id) ?? 0) + 1
+        : detailMutationEpochRef.current.get(id) ?? 0;
+      if (state === null) {
+        detailMutationEpochRef.current.set(id, terminalEpoch);
       }
-      const terminalEpoch = detailMutationEpochRef.current.get(id) ?? 0;
       void api.getAuxiliarySession(id).then((session) => {
         if (session) applySession(id, session, terminalRevision, terminalEpoch, state === null);
       }).catch((cause) => {

@@ -368,6 +368,62 @@ test("hidden sessionのsaveとterminalでdraft・previewを維持する", async 
 
 // @test-value v2
 // kind = "invariant"
+// claim = "詳細取得前に完了したAuxiliaryもterminal確定Sessionをdetailへ反映し、遅い初期取得で巻き戻さない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "詳細未取得時のterminal通知を一覧更新だけで終え、確定したassistant messageを表示せず、遅い初期取得で古いSessionへ戻す"
+// observable = "hookのselectedSessionとgetAuxiliarySession呼び出し順"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-terminal-detail-refresh"
+// lifecycle = "permanent"
+// distinction = "通常の詳細取得済みterminal testでは検出できない、初期detail loadとterminal refreshの競合を検証する"
+// @end-test-value
+test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detailで巻き戻さない", async () => {
+  const initial = session("a", "2026-01-01");
+  const terminalSession = {
+    ...initial,
+    preview: "terminal answer",
+    updatedAt: "2026-01-03",
+    messages: [...initial.messages, { role: "assistant" as const, text: "terminal answer" }],
+  };
+  const initialDetail = deferred<AuxiliarySession | null>();
+  let detailCallCount = 0;
+  let terminal: ((id: string, state: null) => void) | null = null;
+  const api: AuxiliaryWorkspaceApi = {
+    listAuxiliarySessions: async () => [initial],
+    getAuxiliarySession: async () => {
+      detailCallCount += 1;
+      return detailCallCount === 1 ? initialDetail.promise : terminalSession;
+    },
+    subscribeLiveSessionRun: (listener) => {
+      terminal = listener as (id: string, state: null) => void;
+      return () => {};
+    },
+  };
+  const view = setup(api, "parent-1", initial.id);
+
+  await view.render();
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(detailCallCount, 1);
+  assert.ok(terminal);
+
+  await act(async () => {
+    terminal?.(initial.id, null);
+    await Promise.resolve();
+  });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(detailCallCount, 2);
+  assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "terminal answer");
+
+  await act(async () => {
+    initialDetail.resolve(initial);
+    await initialDetail.promise;
+  });
+  assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "terminal answer");
+  await view.unmount();
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "非表示の複数会話は同時terminalでも互いのdetail更新を失わない"
 // oracle = { type = "contract", ref = "issue-710-independent-terminal-runs" }
 // fault = "一方の会話のterminal取得が他方の会話の更新を共有revisionで破棄する"
