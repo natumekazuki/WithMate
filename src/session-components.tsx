@@ -955,7 +955,6 @@ export function SessionChatScreen({
   const previousActionDockExpandedRef = useRef(isActionDockExpanded);
   const [isActionDockTransitioning, setIsActionDockTransitioning] = useState(false);
   const [isCentralCollapsed, setIsCentralCollapsed] = useState(false);
-  const actionDockStateChanged = previousActionDockExpandedRef.current !== isActionDockExpanded;
   const setLayoutElementRefs = useCallback((node: HTMLDivElement | null) => {
     ownLayoutRef.current = node;
     if (layoutRef) {
@@ -1055,7 +1054,7 @@ export function SessionChatScreen({
       ref={setLayoutElementRefs}
       className={`page-shell session-page session-chat-layout${isHeaderVisible ? " is-header-visible" : ""}${
         isActionDockExpanded ? " is-action-dock-expanded" : ""
-      }${isActionDockTransitioning || actionDockStateChanged ? " is-action-dock-transitioning" : ""}${
+      }${isActionDockTransitioning ? " is-action-dock-transitioning" : ""}${
         isLeftPaneVisible ? " is-left-pane-visible" : ""
       }${
         isRightPaneVisible ? " is-right-pane-visible" : ""
