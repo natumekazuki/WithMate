@@ -1,7 +1,7 @@
 # Settings UI
 
 - 作成日: 2026-03-14
-- 更新日: 2026-09-03
+- 更新日: 2026-09-19
 - 対象: 独立した `Settings Window`
 
 ## Goal
@@ -15,7 +15,7 @@
 - app 共通 system prompt を編集する旧設定項目は廃止する
 - V5 current では Character 定義は `Characters` editor で管理し、session / companion 開始時の `CharacterRuntimeSnapshot` を runtime prompt の主経路にする
 - provider instruction sync は V5 Character 注入の主経路ではなく、Settings current UI には置かない
-- current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog`、`Storage Maintenance` を置く
+- current 実装では `Session Window`、`Prompt Context`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog`、`Storage Maintenance` を置く
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
@@ -25,7 +25,7 @@
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. 独立した `Settings Window` が開く
-3. Session 表示設定、microcopy、coding provider の enable / disable と provider file settings を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
+3. Session 表示設定、Prompt Context の4項目、microcopy、coding provider の enable / disable と provider file settings を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
 4. 結果は window 内の短いフィードバックで返す
 
 ## Layout
@@ -37,6 +37,11 @@
 - Settings Window
   - `Session Window`
     - `送信後に Action Dock を自動で閉じる`
+  - `Prompt Context`
+    - `Character Definition Snapshot`
+    - `Character Affect Context`
+    - `Conversation Timing`
+    - `Tool Call Presence`
   - `Coding Agent Providers`
     - provider 名を左、enable checkbox を右に置く
     - provider ごとの `Provider File Settings`
@@ -60,6 +65,12 @@
 ## Current Scope
 
 - `Session Window` の `送信後に Action Dock を自動で閉じる` の保存
+- `Prompt Context` の4項目を個別に保存し、既定値はすべて有効とする。表示名は注入section名を使い、補足説明やHelp iconは表示しない。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
+  - `Character Definition` は Character の名前・説明・`character.md` 本文を切り替える。OFFでも通常 session / companion の Character snapshot に対する `Output Boundary` は残す
+  - `Character Affect Context` は system 側の該当 section と通常 session の context 取得を切り替える。turn後のBackground Affect評価・保存には影響しない
+  - `Conversation Timing` は input 側の該当 section と通常 session の timing 取得を切り替える
+  - `Tool Call Presence` は既存の通常 session / companion の character snapshot 境界内で該当 section を切り替える。`character-authoring` には注入しない
+- `Conversation Timing` は Copilot の system session cache を変えず、system 側の3項目は合成された system message の変更として扱う
 - `PC 起動時に WithMate をバックグラウンドで起動する` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
 - coding provider ごとの provider file settings

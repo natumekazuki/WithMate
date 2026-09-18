@@ -35,6 +35,46 @@ export function updateAutoCollapseActionDockOnSend(
   };
 }
 
+export function updateCharacterDefinitionEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    characterDefinitionEnabled: enabled,
+  };
+}
+
+export function updateCharacterAffectContextEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    characterAffectContextEnabled: enabled,
+  };
+}
+
+export function updateConversationTimingEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    conversationTimingEnabled: enabled,
+  };
+}
+
+export function updateToolCallPresenceEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    toolCallPresenceEnabled: enabled,
+  };
+}
+
 export function updateScrollToLatestOnSend(
   draft: AppSettings,
   enabled: boolean,

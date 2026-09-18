@@ -66,6 +66,7 @@ import {
   handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
   handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
 } from "../../src/settings/settings-draft-actions.js";
+import { buildSettingsDraftHandlers } from "../../src/settings/settings-draft-handlers.js";
 
 const providerCatalog: ModelCatalogProvider = {
   id: "codex",
@@ -301,6 +302,73 @@ describe("home-settings-draft", () => {
     const next = updateSessionTurnNotificationResponsePreviewEnabled(draft, true);
 
     assert.equal(next.sessionTurnNotificationResponsePreviewEnabled, true);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Home Settings の foreground prompt context 4項目の handler は、他の3つのPrompt Context値を保持したまま対象draftだけを更新する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "4つの checkbox handler が同じ state を更新するか、対象以外のPrompt Context値をdraftで巻き戻す"
+  // observable = "buildSettingsDraftHandlers 経由で checkbox handler を適用した AppSettings"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-prompt-context-draft"
+  // lifecycle = "permanent"
+  // impact = "Settings で個別に切り替えた値が保存 payload へ届かない"
+  // distinction = "混在した初期draftに実配線のhandlerを通し、checkboxから保存draftへ値が届く境界を確認する"
+  // @end-test-value
+  it("foreground prompt context の handler を項目ごとに toggle できる", () => {
+    const promptContextFields = [
+      "characterDefinitionEnabled",
+      "characterAffectContextEnabled",
+      "conversationTimingEnabled",
+      "toolCallPresenceEnabled",
+    ] as const;
+    const initialDraft = {
+      ...createDefaultAppSettings(),
+      characterDefinitionEnabled: true,
+      characterAffectContextEnabled: false,
+      conversationTimingEnabled: true,
+      toolCallPresenceEnabled: false,
+    };
+    const scenarios = [
+      {
+        field: "characterDefinitionEnabled",
+        value: false,
+        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
+          handlers.onChangeCharacterDefinitionEnabled(false),
+      },
+      {
+        field: "characterAffectContextEnabled",
+        value: true,
+        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
+          handlers.onChangeCharacterAffectContextEnabled(true),
+      },
+      {
+        field: "conversationTimingEnabled",
+        value: false,
+        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
+          handlers.onChangeConversationTimingEnabled(false),
+      },
+      {
+        field: "toolCallPresenceEnabled",
+        value: true,
+        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
+          handlers.onChangeToolCallPresenceEnabled(true),
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const state = createDraftTracker(initialDraft);
+      const handlers = buildSettingsDraftHandlers({ setSettingsDraft: state.setSettingsDraft });
+      scenario.apply(handlers);
+
+      assert.equal(state.draft[scenario.field], scenario.value);
+      for (const field of promptContextFields) {
+        if (field !== scenario.field) {
+          assert.equal(state.draft[field], initialDraft[field]);
+        }
+      }
+    }
   });
 
   it("memory file quota は MB 入力から bytes の draft に変換する", () => {

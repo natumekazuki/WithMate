@@ -74,10 +74,14 @@ describe("HomeSettingsContent", () => {
     sessionCleanupCutoffDate: "",
     deletingOldSessions: false,
     onChangeAutoCollapseActionDockOnSend: noOp,
+    onChangeCharacterDefinitionEnabled: noOp,
+    onChangeCharacterAffectContextEnabled: noOp,
+    onChangeConversationTimingEnabled: noOp,
     onChangeScrollToLatestOnSend: noOp,
     onChangeLaunchAtLoginEnabled: noOp,
     onChangeSessionTurnNotificationEnabled: noOp,
     onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
+    onChangeToolCallPresenceEnabled: noOp,
     onChangeGlossaryProactiveCreateLimit: noOp,
     onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
@@ -108,6 +112,53 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Windows 通知に返答の冒頭を表示する"));
     assert.ok(html.includes("送信後に Action Dock を自動で閉じる"));
     assert.ok(html.includes("送信時にチャット末尾へ移動する"));
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Settings は Prompt Context の4つの注入section名を個別 checkbox として表示し、既定値を checked にする"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout and #current-scope" }
+  // fault = "注入section名の表示、checkbox、または既定状態が契約と一致しない"
+  // observable = "HomeSettingsContent の static markup にある各label と checkbox state"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-prompt-context-ui"
+  // lifecycle = "permanent"
+  // impact = "ユーザーが4つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
+  // distinction = "個別 state/action の保存handlerは draft test に分け、static DOMではsection labelと既定stateだけを確認する"
+  // @end-test-value
+  it("Prompt Context に4項目の個別 toggle を既定有効で表示する", () => {
+    const html = renderSettings();
+    const document = new JSDOM(html).window.document;
+    const promptContextSection = Array.from(document.querySelectorAll("section.settings-section-card"))
+      .find((section) => section.querySelector("strong")?.textContent === "Prompt Context");
+
+    assert.ok(promptContextSection);
+    assert.equal(promptContextSection.querySelector("strong")?.textContent, "Prompt Context");
+
+    const promptContextLabels = [
+      "Character Definition Snapshot",
+      "Character Affect Context",
+      "Conversation Timing",
+      "Tool Call Presence",
+    ];
+    const promptContextRows = Array.from(promptContextSection.querySelectorAll(".settings-provider-toggle-row"));
+    assert.equal(promptContextRows.length, promptContextLabels.length);
+    assert.deepEqual(
+      promptContextRows.map((row) => row.querySelector<HTMLLabelElement>("label.settings-provider-name")?.textContent),
+      promptContextLabels,
+    );
+
+    for (const row of promptContextRows) {
+      const label = row.querySelector<HTMLLabelElement>("label.settings-provider-name");
+      const input = row.querySelector<HTMLInputElement>('input[type="checkbox"]');
+
+      assert.ok(label);
+      assert.ok(input);
+      assert.equal(input.checked, true);
+      assert.equal(label.htmlFor, input.id);
+    }
+    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, promptContextLabels.length);
+    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, promptContextLabels.length);
   });
 
   it("Repository Glossaryにproactive create上限を0から100のnumber inputで表示する", () => {
