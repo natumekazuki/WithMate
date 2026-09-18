@@ -2934,6 +2934,7 @@ export default function AgentSessionWindowApp() {
       if (
         isSelectedSessionReadOnly
         || !activeAuxiliarySession
+        || activeAuxiliarySession.runState === "running"
         || activeAuxiliarySession.id !== target.source.sessionId
       ) {
         return;
@@ -2958,7 +2959,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    if (!selectedSession || isSelectedSessionReadOnly) {
+    if (!selectedSession || isSelectedSessionReadOnly || selectedSessionRunState === "running") {
       return;
     }
 
@@ -4420,7 +4421,9 @@ export default function AgentSessionWindowApp() {
             ...chatWindowProps.messageColumnProps,
             sessionId: selectedSession.id,
             messages: selectedSession.messages,
-            onToggleMessageBookmark: auxiliaryWorkspace.target === "main" && !isSelectedSessionReadOnly
+            onToggleMessageBookmark: auxiliaryWorkspace.target === "main"
+              && !isSelectedSessionReadOnly
+              && !isSelectedSessionRunning
               ? handleToggleMessageBookmark
               : undefined,
             onLoadArtifactDetail: (index) => withmateApi?.getSessionMessageArtifact(selectedSession.id, index) ?? Promise.resolve(null),
@@ -4430,7 +4433,9 @@ export default function AgentSessionWindowApp() {
             ...chatWindowProps.messageColumnProps,
             sessionId: auxiliaryWorkspace.selectedSession.id,
             messages: auxiliaryWorkspace.selectedSession.messages,
-            onToggleMessageBookmark: auxiliaryWorkspace.target === "auxiliary" && !isSelectedSessionReadOnly
+            onToggleMessageBookmark: auxiliaryWorkspace.target === "auxiliary"
+              && !isSelectedSessionReadOnly
+              && auxiliaryWorkspace.selectedSession.runState !== "running"
               ? handleToggleMessageBookmark
               : undefined,
             onLoadArtifactDetail: (index) => Promise.resolve(auxiliaryWorkspace.selectedSession?.messages[index]?.artifact ?? null),

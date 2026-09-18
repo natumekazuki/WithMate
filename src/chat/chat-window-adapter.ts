@@ -352,6 +352,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     isContentActive: input.isContentActive,
     onToggleMessageCollapse: input.onToggleMessageCollapse,
     onToggleAllMessageCollapse: input.onToggleAllMessageCollapse,
+    onToggleMessageBookmark: input.onToggleMessageBookmark,
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isRunning,
