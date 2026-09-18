@@ -121,12 +121,15 @@ type SettingsFieldHelpProps = {
 
 function SettingsFieldHelp({ label, text, helpId }: SettingsFieldHelpProps) {
   return (
-    <details className="settings-inline-help settings-field-help-icon">
-      <summary aria-label={`${label}のヘルプ`} aria-describedby={helpId}>?</summary>
-      <div id={helpId} role="tooltip">
-        <p>{text}</p>
-      </div>
-    </details>
+    <span
+      className="settings-field-help-icon"
+      role="img"
+      tabIndex={0}
+      aria-label={`${label}のヘルプ`}
+    >
+      <span className="settings-field-help-mark" aria-hidden="true">?</span>
+      <span id={helpId} className="settings-field-help-tooltip" role="tooltip">{text}</span>
+    </span>
   );
 }
 

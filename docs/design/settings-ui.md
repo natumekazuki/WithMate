@@ -25,7 +25,7 @@
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. 独立した `Settings Window` が開く
-3. Session 表示設定、Prompt Context の4項目、microcopy、coding provider の enable / disable と provider file settings を編集して保存する。Prompt Context の各項目の説明は、項目右側の Help icon を hover / focus / click で確認できる。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
+3. Session 表示設定、Prompt Context の4項目、microcopy、coding provider の enable / disable と provider file settings を編集して保存する。Prompt Context の各項目の説明は、項目右側の Help icon を hover / focus で確認できる。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
 4. 結果は window 内の短いフィードバックで返す
 
 ## Layout
@@ -65,7 +65,7 @@
 ## Current Scope
 
 - `Session Window` の `送信後に Action Dock を自動で閉じる` の保存
-- `Prompt Context` の4項目を個別に保存し、既定値はすべて有効とする。保存後の次の turn から対象の foreground provider prompt 注入を切り替える。各項目の補足は常設せず、行ごとの Help icon から確認できる。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
+- `Prompt Context` の4項目を個別に保存し、既定値はすべて有効とする。各項目の補足は常設せず、行ごとの Help icon から確認できる。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
   - `Character Definition` は Character の名前・説明・`character.md` 本文を切り替える。OFFでも通常 session / companion の Character snapshot に対する `Output Boundary` は残す
   - `Character Affect Context` は system 側の該当 section と通常 session の context 取得を切り替える。turn後のBackground Affect評価・保存には影響しない
   - `Conversation Timing` は input 側の該当 section と通常 session の timing 取得を切り替える

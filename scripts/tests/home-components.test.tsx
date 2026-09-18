@@ -116,15 +116,15 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Settings は foreground prompt context の4項目を個別 checkbox とHelp入口として表示し、既定値を checked にする"
-  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
-  // fault = "設定項目のlabelまたはHelp本文、4つの checkbox が表示されず、初期状態が注入有効と一致しない"
-  // observable = "HomeSettingsContent の static markup にある Prompt Context labels、checkbox state、閉じたHelp入口と説明参照"
+  // claim = "Settings は foreground prompt context の4項目を個別 checkbox と補足説明への参照として表示し、既定値を checked にする"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "設定項目のlabel、checkbox、補足説明への参照、または既定状態が契約と一致しない"
+  // observable = "HomeSettingsContent の static markup にある Prompt Context labels、checkbox state、aria-describedby と説明要素の参照関係"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-prompt-context-ui"
   // lifecycle = "permanent"
   // impact = "ユーザーが4つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
-  // distinction = "個別 state/action の確認は draft test に分け、常設説明なしのラベル、checked 数、項目ごとのHelp参照を確認する"
+  // distinction = "個別 state/action の確認は draft test に分け、static DOMの情報関係と既定stateを確認する。hover/focusによる表示はlive renderの確認範囲とする"
   // @end-test-value
   it("Prompt Context に4項目の個別 toggle を既定有効で表示する", () => {
     const html = renderSettings();
@@ -139,9 +139,7 @@ describe("HomeSettingsContent", () => {
     assert.ok(promptContextSection.textContent?.includes("作業開始前の短い応答（Tool Call Presence）"));
     assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, 4);
     assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, 4);
-    assert.equal(promptContextSection.querySelectorAll(".settings-help").length, 0);
-    assert.equal(promptContextSection.querySelectorAll(".settings-field-help-icon").length, 4);
-    assert.equal(promptContextSection.querySelectorAll(".settings-field-help-icon[open]").length, 0);
+    assert.equal(promptContextSection.querySelectorAll('[role="img"][tabindex="0"]').length, 4);
 
     const promptContextFields = [
       ["characterDefinitionEnabled", "Character の定義（名前・説明・本文）"],
@@ -165,8 +163,12 @@ describe("HomeSettingsContent", () => {
     for (const input of Array.from(promptContextSection.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) {
       const helpId = input.getAttribute("aria-describedby");
       assert.ok(helpId);
-      assert.ok(document.getElementById(helpId)?.textContent?.trim());
-      assert.equal(input.closest(".settings-provider-toggle-row")?.querySelector("summary")?.getAttribute("aria-describedby"), helpId);
+      const help = document.getElementById(helpId);
+      assert.ok(help?.textContent?.trim());
+      assert.equal(help?.getAttribute("role"), "tooltip");
+      const helpIcon = input.closest(".settings-provider-toggle-row")?.querySelector<HTMLElement>('[role="img"]');
+      assert.equal(helpIcon?.getAttribute("tabindex"), "0");
+      assert.ok(helpIcon?.getAttribute("aria-label")?.endsWith("のヘルプ"));
     }
   });
 

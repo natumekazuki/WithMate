@@ -40,13 +40,13 @@ export const SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL = "会話の雰囲気・関
 export const SETTINGS_CONVERSATION_TIMING_LABEL = "会話の時間情報（Conversation Timing）";
 export const SETTINGS_TOOL_CALL_PRESENCE_LABEL = "作業開始前の短い応答（Tool Call Presence）";
 export const SETTINGS_CHARACTER_DEFINITION_HELP =
-  "Character の名前・説明・character.md 本文を通常の返答用 prompt に含める。OFFでも作業境界は残る。保存後の次のターンから反映。";
+  "Character の名前・説明・本文を返答用 prompt に含める。";
 export const SETTINGS_CHARACTER_AFFECT_CONTEXT_HELP =
-  "会話の雰囲気・関連情報を通常の返答用 prompt に含める。OFFでも背景の Affect 評価・保存は続く。保存後の次のターンから反映。";
+  "会話の雰囲気・関連情報を返答用 prompt に含める。";
 export const SETTINGS_CONVERSATION_TIMING_HELP =
-  "会話の時間情報を入力側の prompt に含める。保存後の次のターンから反映。";
+  "会話の時間情報を入力側 prompt に含める。";
 export const SETTINGS_TOOL_CALL_PRESENCE_HELP =
-  "ツール呼び出し前の短い応答を促す情報を含める。保存後の次のターンから反映。";
+  "ツール呼び出し前の短い応答を促す。";
 export const SETTINGS_MEMORY_FILE_QUOTA_LABEL = "Memory file quota";
 export const SETTINGS_MEMORY_FILE_QUOTA_HELP =
   "Protected Object の全体容量上限。現在使用量が上限を超えている場合、新しい file append は失敗する。";
