@@ -241,6 +241,8 @@ export class SettingsCatalogService {
     const hasAuxiliarySessionThreadReset = threadResetAuxiliarySessionIds.length > 0;
 
     let savedSettings: AppSettings | null = null;
+    let sessionCollectionWriteAttempted = false;
+    let auxiliaryCollectionWriteAttempted = false;
     try {
       savedSettings = await this.deps.updateAppSettings(nextSettings);
       for (const providerId of providersWithApiKeyChange) {
@@ -257,6 +259,7 @@ export class SettingsCatalogService {
         }
       }
       if (hasSessionThreadReset) {
+        sessionCollectionWriteAttempted = true;
         await this.deps.replaceAllSessions(nextSessions, {
           broadcast: false,
           invalidateSessionIds: providerInvalidatedSessionIds,
@@ -269,6 +272,7 @@ export class SettingsCatalogService {
         }
       }
       if (hasAuxiliarySessionThreadReset) {
+        auxiliaryCollectionWriteAttempted = true;
         await this.deps.replaceAuxiliarySessions(nextAuxiliarySessions);
       }
       for (const sessionId of providerInvalidatedAuxiliarySessionIds) {
@@ -285,8 +289,12 @@ export class SettingsCatalogService {
 
       try {
         await this.deps.updateAppSettings(previousSettings);
-        await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
-        await this.deps.replaceAuxiliarySessions(previousAuxiliarySessions);
+        if (sessionCollectionWriteAttempted) {
+          await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
+        }
+        if (auxiliaryCollectionWriteAttempted) {
+          await this.deps.replaceAuxiliarySessions(previousAuxiliarySessions);
+        }
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],

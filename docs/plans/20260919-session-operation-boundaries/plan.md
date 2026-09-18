@@ -60,7 +60,7 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 
 - 棚卸し: 上表の経路を確認。Companion 実利用可否と全 caller の移行対象確定は未完了。
 - 実装単位 1: 実装済み。Affect の評価は ownership 外、owner 再検証・appraise・settlement 確定は同じ境界に配置。V6 runtime の通常保存と terminal 保存を既存行限定 API へ配線した。全体の排他方式はまだ置換していない。
-- 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。作成準備、Settings / catalog、親子 admission は未完了。
+- 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。Settings 失敗時に書込みを試みていない collection を rollback しない境界を追加。作成準備、Settings / catalog の限定 field 更新、親子 admission は未完了。
 - 実装単位 3〜5: 未完了。
 
 ### 第一段階レビューへの対応と削除後処理
@@ -82,7 +82,24 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 - 変更 test は開始 commit から決定論的に抽出。7 records、抽出 diagnostic は 0 件。通常の read-only `general_luna` に Affect 4 件・CRUD 3 件を分けて review し、terminal 保存の read-back / rollback、owner discard の直接観測、fixture、metadata の観測範囲を修正した。
 - schema 変更、データ migration、UI 変更は行っていない。通常の `upsertSession` は既存の fixture / 一括置換用 API として残すが、V6 Main の通常更新・terminal 保存は使用しない。
 
-### 未確認・残作業
+### 再レビューへの対応（1032e6bf 起点）
+
+- Session に行単位の incarnation を追加した。既存 V6 行は `legacy:<id>`、新規行は UUID とし、通常更新・terminal 保存・incremental running 保存で対象行と一致することを transaction 内で確認する。同じ ID の再作成へ古い本文や marker を適用しない。
+- Affect pending に Session incarnation を保存し、drain 受付と評価適用で照合する。旧 pending と既存 correlation fingerprint の互換性を保ち、既存列構成からの migration を一時 DB で検証する。
+- unready / ready の Session 読取 await 後にも storage identity を検証し、交換前の storage に ready / discard を書かない。close / recreate は drain cursor を破棄する。
+- 削除後処理は ownership 内で全対象の旧 provider runtime 参照を切り離し、外部切断だけを解放後に待つ。同一 ID の新 runtime は古い後処理の対象にしない。
+- cache で削除済みと分かった通常更新も `SessionNotFoundError` を返す。
+- 検証: 全体 `npm test` は 2,883 pass / 0 fail / 1 skip。審査後に補強した drain / update-only の 12 tests も成功。`npm run typecheck`、`npm run build`、Settings 変更後の `npm run build:electron` が成功。renderer の既存 chunk サイズ warning は残る。
+- 変更 test はこの起点から 22 records / 22 transitions を抽出し、diagnostics は 0 件。通常の read-only `general_luna` で全件を審査し、generation test を実 storage close / reopen と次回 drain 完了へ補強、metadata の観測範囲と terminal marker 不変確認を修正した。新規 incarnation migration は一時 DB であり、実ユーザーデータや Electron Main / IPC E2E の確認ではない。
+- 再レビュー修正 commit: `c041c1d5`。
+
+### 続きの Settings rollback 境界
+
+- Settings 更新では Session / Auxiliary の thread reset 書込みを試みたかを個別に記録し、試みていない collection は rollback で全体置換しない。設定だけの保存後の失敗で並行削除・更新を復元前値へ戻さない。
+- controlled deps の deferred を使い、設定保存待ち中の Session 削除と Auxiliary 本文更新を再現した。projection 失敗の伝播、設定の rollback、並行 collection 変更の保持を検証。関連 Settings 14 tests が成功し、変更 test 1件を上記 22 records に含めて審査した。
+- 実際に thread を変更した場合の限定 field 更新と catalog migration の全 snapshot 廃止は引き続き未完了。Worker 化や Turn admission の完了を意味しない。
+
+### 未確認・残作業（継続）
 
 - 上記は Main が使用する production adapter / lifecycle と一時 DB を接続した component 検証であり、Electron Main 全体を起動した E2E ではない。Main の依存注入と IPC 登録は diff で確認し、bootstrap / IPC 配線の取り違えを検出する E2E は未実施。
 - generation test は実 SQLite 接続の交換と settler の await 境界を検証する。追加の Main lifecycle test は runtime identity 交換と、評価成功 / 例外後の invalidation・中断回収・drain を直接試験する。外部 LLM と Character context API は制御した依存であり、実 Memory HTTP runtime の停止・再起動を伴う E2E は未実施。

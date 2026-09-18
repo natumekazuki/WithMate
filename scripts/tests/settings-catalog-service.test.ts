@@ -528,6 +528,106 @@ describe("SettingsCatalogService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "settingsのみの失敗 rollback は並行する Session と Auxiliary の更新を巻き戻さない"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // fault = "Session/Auxiliary の書き込みを伴わない settings 失敗で全 snapshot rollback が実行される"
+  // observable = "rollback 後の settings、元のerror、Session削除とAuxiliary更新後のcollection"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-catalog-collection-rollback-boundary"
+  // lifecycle = "permanent"
+  // impact = "並行した削除・更新が settings 操作により復活・巻き戻しされる"
+  // distinction = "thread reset の有無で collection rollback の所有範囲を分ける"
+  // @end-test-value
+  it("settingsのみの失敗 rollback は並行する Session と Auxiliary の更新を巻き戻さない", { timeout: 10_000 }, async () => {
+    const previousSettings = createDefaultAppSettings();
+    let currentSessions = [{ ...createSession(), provider: "copilot" }];
+    let currentAuxiliarySessions = [createAuxiliarySession({ provider: "copilot" })];
+    const savedSettingsEntered = createDeferred();
+    const savedSettingsResume = createDeferred();
+    let savedSettings: AppSettings | null = null;
+
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns() {
+        return false;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      isRunningSession() {
+        return false;
+      },
+      listSessions() {
+        return currentSessions;
+      },
+      listAuxiliarySessions() {
+        return currentAuxiliarySessions;
+      },
+      getAppSettings() {
+        return savedSettings ?? previousSettings;
+      },
+      async updateAppSettings(settings) {
+        savedSettings = settings;
+        savedSettingsEntered.resolve();
+        await savedSettingsResume.promise;
+        return settings;
+      },
+      getModelCatalog() {
+        return createCatalogSnapshot();
+      },
+      ensureModelCatalogSeeded() {
+        return createCatalogSnapshot();
+      },
+      importModelCatalogDocument() {
+        return createCatalogSnapshot();
+      },
+      exportModelCatalogDocument() {
+        return { providers: createCatalogSnapshot().providers };
+      },
+      replaceAllSessions(nextSessions) {
+        currentSessions = nextSessions;
+        return nextSessions;
+      },
+      replaceAuxiliarySessions(nextSessions) {
+        currentAuxiliarySessions = nextSessions;
+        return nextSessions;
+      },
+      clearProviderQuotaTelemetry() {},
+      clearSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      broadcastSessions() {},
+      broadcastAppSettings() {
+        throw new Error("settings projection failed");
+      },
+      broadcastModelCatalog() {},
+    });
+
+    const updating = service.updateAppSettings({
+      ...previousSettings,
+      codingProviderSettings: {
+        ...previousSettings.codingProviderSettings,
+        codex: {
+          ...previousSettings.codingProviderSettings.codex,
+          apiKey: "changed-key",
+        },
+      },
+    });
+    await savedSettingsEntered.promise;
+    currentSessions = [];
+    const updatedAuxiliarySessions = [createAuxiliarySession({
+      provider: "copilot",
+      messages: [{ role: "assistant", text: "concurrent update" }],
+    })];
+    currentAuxiliarySessions = updatedAuxiliarySessions;
+    savedSettingsResume.resolve();
+
+    await assert.rejects(() => updating, /settings projection failed/);
+    assert.deepEqual(savedSettings, previousSettings);
+    assert.deepEqual(currentSessions, []);
+    assert.deepEqual(currentAuxiliarySessions, updatedAuxiliarySessions);
+  });
+
   it("settings 更新時に API key 変更 provider の thread と telemetry を無効化する", async () => {
     const previousSettings = createDefaultAppSettings();
     const previousSessions = [createSession()];

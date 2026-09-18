@@ -101,6 +101,8 @@ session 実行後の memory 補助処理を persistence 側へつなぐ。
 
 session 以外の app-wide persistence をまとめて扱う。
 
+Settings 更新の失敗時、thread reset の collection 書込みを試みていない Session / Auxiliary は rollback 対象にしない。設定だけの更新失敗で、並行する Session 削除や Auxiliary 更新を以前の snapshot へ戻してはならない。実際に thread reset を行った collection と catalog import/reset はまだ全 snapshot rollback を使っており、限定 field 更新への移行は Issue #726 の残作業である。
+
 ### PersistentStoreLifecycleService
 
 - store 初期化
