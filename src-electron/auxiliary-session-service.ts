@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import { currentTimestampLabel } from "../src/time-state.js";
 import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
@@ -22,7 +23,7 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
-import type { Session } from "../src/session-state.js";
+import { getSessionIncarnationId, type Session } from "../src/session-state.js";
 import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 import { selectWeightedRandomLaunchCharacterId } from "../src/home/home-launch-state.js";
 import type { Awaitable, AuxiliarySessionStorageAccess } from "./persistent-store-lifecycle-service.js";
@@ -128,6 +129,10 @@ function assertLatestSessionRuntimeFieldsAbsent(input: CreateAuxiliarySessionInp
   }
 }
 
+function resolveParentCharacterId(parent: Session): string {
+  return parent.characterRuntimeSnapshot?.characterId || parent.characterId || "";
+}
+
 export class AuxiliarySessionService {
   constructor(private readonly deps: AuxiliarySessionServiceDeps) {}
 
@@ -162,51 +167,93 @@ export class AuxiliarySessionService {
   }
 
   async createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession> {
-    return this.deps.runProviderRuntimeOperationExclusive(
-      () => this.deps.runCharacterAffectTurnOwnershipExclusive
-        ? this.deps.runCharacterAffectTurnOwnershipExclusive(() => this.createAuxiliarySessionExclusive(input))
-        : this.createAuxiliarySessionExclusive(input),
-    );
-  }
-
-  private async createAuxiliarySessionExclusive(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession> {
-    const runtimeSelectionMode = resolveRuntimeSelectionMode(input.runtimeSelection);
-    if (runtimeSelectionMode === "latest-session") {
-      assertLatestSessionRuntimeFieldsAbsent(input);
-    }
-    const explicitApprovalMode = runtimeSelectionMode === "explicit"
-      ? resolveInitialRuntimeOption(
-        input.approvalMode,
-        APPROVAL_MODE_VALUES,
-        DEFAULT_APPROVAL_MODE,
-        "approvalMode",
-      )
-      : null;
-    const explicitCodexSandboxMode = runtimeSelectionMode === "explicit"
-      ? resolveInitialRuntimeOption(
-        input.codexSandboxMode,
-        CODEX_SANDBOX_MODE_VALUES,
-        DEFAULT_CODEX_SANDBOX_MODE,
-        "codexSandboxMode",
-      )
-      : null;
-    const explicitCodexSpeed = runtimeSelectionMode === "explicit"
-      ? resolveInitialRuntimeOption(
-        input.codexSpeed,
-        CODEX_SPEED_VALUES,
-        DEFAULT_CODEX_SPEED,
-        "codexSpeed",
-      )
-      : null;
-
+    const options = this.validateAuxiliaryInput(input);
+    const storage = this.deps.getStorage();
     const parent = await this.deps.getParentSession(input.parentSessionId);
     if (!parent) {
       throw new Error("親セッションが見つからないよ。");
     }
-
+    if (this.deps.getStorage() !== storage) {
+      throw new Error("Auxiliary Session の保存先が作成中に切り替わったため、作成を中止したよ。");
+    }
     const requestId = input.clientRequestId?.trim() ?? "";
     if (requestId) {
-      const existing = this.listAuxiliarySessions(input.parentSessionId)
+      const existing = storage.listAuxiliarySessions(input.parentSessionId)
+        .find((summary) => summary.clientRequestId === requestId);
+      if (existing) {
+        return this.getAuxiliarySession(existing.id) ?? (() => {
+          throw new Error("Auxiliary Session の再送対象が見つからないよ。");
+        })();
+      }
+    }
+    const prepared = await this.prepareAuxiliarySession(input, parent, options);
+    return this.deps.runProviderRuntimeOperationExclusive(
+      () => this.deps.runCharacterAffectTurnOwnershipExclusive
+        ? this.deps.runCharacterAffectTurnOwnershipExclusive(() => this.commitAuxiliarySession(input, storage, prepared))
+        : this.commitAuxiliarySession(input, storage, prepared),
+    );
+  }
+
+  private async prepareAuxiliarySession(
+    input: CreateAuxiliarySessionInput,
+    parent: Session,
+    options: ReturnType<AuxiliarySessionService["validateAuxiliaryInput"]>,
+  ): Promise<{
+    parentIncarnationId: string;
+    parentCharacterId: string;
+    launchSelection: SessionLaunchSelection;
+    characterSelection: ReturnType<AuxiliarySessionService["resolveAuxiliaryCharacter"]>;
+  }> {
+    const parentIncarnationId = getSessionIncarnationId(parent);
+    const parentCharacterId = resolveParentCharacterId(parent);
+    const launchSelection = options.runtimeSelectionMode === "latest-session"
+      ? await this.deps.resolveSessionLaunchSelection(input.provider)
+      : this.resolveExplicitLaunchSelection(
+        input,
+        options.approvalMode,
+        options.codexSandboxMode,
+        options.codexSpeed,
+      );
+
+    const characterSelection = this.resolveAuxiliaryCharacter(parent);
+    return {
+      parentIncarnationId,
+      parentCharacterId,
+      launchSelection,
+      characterSelection,
+    };
+  }
+
+  private async commitAuxiliarySession(
+    input: CreateAuxiliarySessionInput,
+    storage: AuxiliarySessionStorageAccess,
+    prepared: {
+      parentIncarnationId: string;
+      parentCharacterId: string;
+      launchSelection: SessionLaunchSelection;
+      characterSelection: ReturnType<AuxiliarySessionService["resolveAuxiliaryCharacter"]>;
+    },
+  ): Promise<AuxiliarySession> {
+    if (this.deps.getStorage() !== storage) {
+      throw new Error("Auxiliary Session の保存先が作成中に切り替わったため、作成を中止したよ。");
+    }
+    const parent = await this.deps.getParentSession(input.parentSessionId);
+    if (!parent) {
+      throw new Error("親セッションが見つからないよ。");
+    }
+    if (
+      getSessionIncarnationId(parent) !== prepared.parentIncarnationId ||
+      resolveParentCharacterId(parent) !== prepared.parentCharacterId
+    ) {
+      throw new Error("Auxiliary Session の親セッションが作成中に置き換わったため、作成を中止したよ。");
+    }
+
+    if (this.deps.getStorage() !== storage) {
+      throw new Error("Auxiliary Session の保存先が作成中に切り替わったため、作成を中止したよ。");
+    }
+    const requestId = input.clientRequestId?.trim() ?? "";
+    if (requestId) {
+      const existing = storage.listAuxiliarySessions(input.parentSessionId)
         .find((summary) => summary.clientRequestId === requestId);
       if (existing) {
         return this.getAuxiliarySession(existing.id) ?? (() => {
@@ -215,18 +262,29 @@ export class AuxiliarySessionService {
       }
     }
 
+    const runtimeSelectionMode = resolveRuntimeSelectionMode(input.runtimeSelection);
     const launchSelection = runtimeSelectionMode === "latest-session"
       ? await this.deps.resolveSessionLaunchSelection(input.provider)
       : this.resolveExplicitLaunchSelection(
         input,
-        explicitApprovalMode ?? DEFAULT_APPROVAL_MODE,
-        explicitCodexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
-        explicitCodexSpeed ?? DEFAULT_CODEX_SPEED,
+        prepared.launchSelection.approvalMode,
+        prepared.launchSelection.codexSandboxMode,
+        prepared.launchSelection.codexSpeed,
       );
+    if (!isDeepStrictEqual(launchSelection, prepared.launchSelection)) {
+      throw new Error("Auxiliary Session の runtime 選択が作成中に変わったため、作成を中止したよ。");
+    }
+    if (this.deps.getStorage() !== storage) {
+      throw new Error("Auxiliary Session の保存先が作成中に切り替わったため、作成を中止したよ。");
+    }
 
+    if (!this.deps.listActiveCharacters().some((entry) =>
+      entry.id === prepared.characterSelection.characterId && entry.state === "active"
+    )) {
+      throw new Error("Auxiliary Session の Character が作成中に利用できなくなったため、作成を中止したよ。");
+    }
     const now = currentTimestampLabel();
-    const characterSelection = this.resolveAuxiliaryCharacter(parent);
-    return this.deps.getStorage().upsertAuxiliarySession({
+    return storage.upsertAuxiliarySession({
       id: `aux-${randomUUID()}`,
       parentSessionId: parent.id,
       status: "active",
@@ -249,12 +307,31 @@ export class AuxiliarySessionService {
       createdAt: now,
       updatedAt: now,
       closedAt: "",
-      characterId: characterSelection.characterId,
-      characterRuntimeSnapshot: characterSelection.characterRuntimeSnapshot,
-      characterIconPath: characterSelection.characterRuntimeSnapshot?.iconFilePath ?? "",
+      characterId: prepared.characterSelection.characterId,
+      characterRuntimeSnapshot: prepared.characterSelection.characterRuntimeSnapshot,
+      characterIconPath: prepared.characterSelection.characterRuntimeSnapshot?.iconFilePath ?? "",
       preview: "",
       clientRequestId: requestId || undefined,
     });
+  }
+
+  private validateAuxiliaryInput(input: CreateAuxiliarySessionInput) {
+    const runtimeSelectionMode = resolveRuntimeSelectionMode(input.runtimeSelection);
+    if (runtimeSelectionMode === "latest-session") {
+      assertLatestSessionRuntimeFieldsAbsent(input);
+      return {
+        runtimeSelectionMode,
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+        codexSpeed: DEFAULT_CODEX_SPEED,
+      };
+    }
+    return {
+      runtimeSelectionMode,
+      approvalMode: resolveInitialRuntimeOption(input.approvalMode, APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE, "approvalMode"),
+      codexSandboxMode: resolveInitialRuntimeOption(input.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, DEFAULT_CODEX_SANDBOX_MODE, "codexSandboxMode"),
+      codexSpeed: resolveInitialRuntimeOption(input.codexSpeed, CODEX_SPEED_VALUES, DEFAULT_CODEX_SPEED, "codexSpeed"),
+    };
   }
 
   private resolveAuxiliaryCharacter(parent: Session): {

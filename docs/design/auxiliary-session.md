@@ -64,6 +64,8 @@ MainとAuxiliaryはmessages、composer draft、live run、pending approval／eli
 
 ## Persistence
 
+作成入力の runtime selection mode と runtime option は、既存 `clientRequestId` の結果を返す場合も先に検証する。不正な入力を既存行への再送として成功扱いにしない。準備と commit の排他・再検証境界は ADR 007 に従う。
+
 `auxiliary_sessions`は少なくとも次をpayloadへ保存する。
 
 - `id`, `parentSessionId`, `status`, `createdAt`, `updatedAt`, `closedAt`

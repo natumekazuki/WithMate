@@ -60,7 +60,7 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 
 - 棚卸し: 上表の経路を確認。Companion 実利用可否と全 caller の移行対象確定は未完了。
 - 実装単位 1: 実装済み。Affect の評価は ownership 外、owner 再検証・appraise・settlement 確定は同じ境界に配置。V6 runtime の通常保存と terminal 保存を既存行限定 API へ配線した。全体の排他方式はまだ置換していない。
-- 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。Settings 失敗時に書込みを試みていない collection を rollback しない境界を追加。Main SessionFolder の作成準備を provider coordinator 外へ分離。他の作成準備、Settings / catalog の限定 field 更新、親子 admission は未完了。
+- 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。Settings 失敗時に書込みを試みていない collection を rollback しない境界を追加。Main SessionFolder と Auxiliary の作成準備を provider coordinator 外へ分離。他の作成準備、Settings / catalog の限定 field 更新、親子 Turn admission は未完了。
 - 実装単位 3〜5: 未完了。
 
 ### 第一段階レビューへの対応と削除後処理
@@ -106,6 +106,15 @@ Companion の create IPC 配線と `requireCompanionStorage()` は存在する�
 - 続きは Main SessionFolder の外部準備を provider coordinator 外へ分離した。commit 前に現行 storage identity と launch selection を再検証し、準備途中の変更を別の権限や provider へ救済しない。再検証失敗時は今回の folder のみを cleanup し、保存呼出し開始後の結果不明エラーでは folder を保持する。directory workspace、Character authoring、Companion、Auxiliary の外部準備はこの単位には含めない。
 - 検証: Affect / Main 作成 / Settings / launch selection / SessionFolder の関連 81 tests、`npm run typecheck`、`npm run build` が成功。保存中の Settings 待機 assertion 補強後も Main 作成の 24 tests が成功。renderer の既存 chunk サイズ warning は残る。全体 `npm test`、Electron E2E、実ユーザーデータコピーの検証は今回未実施。
 - 変更 test は今回の起点から 5 records / 5 transitions を抽出し、diagnostics は 0 件。通常の read-only `general_luna` で全件を審査した。保存中の Settings 更新待機を直接観測する assertion を補強し、最新差分で追加指摘なし。保存済み評価の再利用と起動設定・storage 再検証は継続する契約であり、恒久保持する。
+
+### 第四回レビューと続き（39808ada 起点）
+
+- 確定指摘は 0 件。U1 の実行検証を固定 HEAD `39808adad2aa118615f69cf20545fef04598832a`、変更なしの状態で実施した。全体 `npm test` は 2,885 pass / 0 fail / 1 skip。`npm run typecheck` と `npm run build` が成功した。テスト出力には React / jsdom の `attachEvent` 例外ログがあるが、runner の failure は 0 件。renderer の chunk サイズ warning は継続している。
+- U2 の実ユーザーデータコピー、Electron Main / IPC、実 Provider、実 Memory runtime lifecycle、実画面は未確認のままとする。上記のテスト成功で代替確認済みとはしない。
+- Auxiliary 作成の準備と commit を分離した。準備中の親削除・再作成、storage 交換、設定変更を commit 前に再検証する。親 Character の変更と選択済み Character の削除・archive も拒否し、commit 時の親の Speed / Reviewer / directory 設定を保存する。既存 requestId の再送にも入力検証を先行させ、並行再送は同じ保存行を返す。
+- 変更後は関連 49 tests と新規の競合境界 3 tests、`npm run typecheck`、`npm run build:electron` が成功。新規境界 test は実 coordinator・実 Auxiliary SQLite storage と制御した親を使い、初回と commit 側の親読取待ちで旧 storage を close して交換する。V6 親行の migration や Electron E2E の検証ではない。
+- 今回の起点から変更 test を 6 records / 6 transitions として抽出し、diagnostics は 0 件。通常の read-only `general_luna` が全件を審査した。親読取の第二 barrier、独立した identity 変更、保存直前の Character 失効を直接観測するよう補強し、既存成功 test の metadata を実際の保存値の観測範囲へ修正した。再送の入力検証優先を文書化し、最終審査で追加指摘なし。既存契約の並行実行時の破壊を検出する恒久 test として保持する。
+- Worker 化、同期 Character ファイル読取の解消、作成取消、Turn admission はこの単位の対象外。
 
 ### 未確認・残作業（継続）
 

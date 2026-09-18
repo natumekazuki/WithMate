@@ -580,10 +580,10 @@ test("旧summary未生成行は監査由来previewで初回だけ補完する", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryの新規作成はtitleとpreviewを空にし、作成・更新・再読込・終了は各会話のruntime option、draft、thread、preview、親境界を保つ"
+// claim = "Auxiliaryの新規作成はtitleとpreviewを空にし、不正optionの再送を拒否する。作成・更新・再読込・終了は各会話のruntime option、draft、thread、preview、親境界を保つ"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: per-session persistence and lifecycle" }
-// fault = "複数Auxiliaryの作成やstale保存で別会話の状態を上書きする、初期titleを意図せず表示する、previewをstreaming中に巻き戻す、または親境界を越えて残す"
-// observable = "作成時のtitleとpreview、再読込・runtime upsert・stale update・close・parent filteringの公開結果"
+// fault = "既存clientRequestIdの再送で入力検証を迂回する、複数Auxiliaryやstale保存で別会話の状態を上書きする、初期titleやpreviewを誤表示する、または親境界を越えて残す"
+// observable = "既存clientRequestId付き不正optionのreject、作成時のtitleとpreview、再読込・runtime upsert・stale update・close・parent filteringの公開結果"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-session-service"
 // lifecycle = "permanent"
@@ -632,6 +632,15 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       provider: parent.provider,
       clientRequestId: "create-1",
     });
+    await assert.rejects(
+      service.createAuxiliarySession({
+        parentSessionId: parent.id,
+        provider: "copilot",
+        approvalMode: "invalid" as never,
+        clientRequestId: "create-1",
+      }),
+      /approvalMode/,
+    );
     assert.equal(auxiliary.parentSessionId, parent.id);
     assert.equal(auxiliary.status, "active");
     assert.equal(auxiliary.runState, "idle");
@@ -1022,10 +1031,10 @@ test("AuxiliarySessionService はMain除外とsnapshot失敗時の既存状態�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "親削除とAuxiliary作成は同じCharacter ownership coordinator境界で直列化され、orphanを作らない"
-// oracle = { type = "contract", ref = "issue-710 parent delete/create race" }
-// fault = "deferred create中に親削除が割り込み、親のないAuxiliaryが残る"
-// observable = "作成後のparent別Auxiliary一覧と親なしcreateのreject"
+// claim = "Auxiliary準備待ち中も親削除は進み、commit時の親再検証でorphan作成を拒否する"
+// oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md" }
+// fault = "準備待ちが親削除を止める、または削除済み親のAuxiliaryを保存する"
+// observable = "selection解放前の親削除完了、parent別Auxiliary一覧とcreateのreject"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-parent-lifecycle"
 // lifecycle = "permanent"
@@ -1054,6 +1063,8 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
     const coordinator = new (await import("../../src-electron/character-affect-turn-ownership-coordinator.js")).CharacterAffectTurnOwnershipCoordinator();
     let releaseSelection!: () => void;
     const selectionReady = new Promise<void>((resolve) => { releaseSelection = resolve; });
+    let selectionEntered!: () => void;
+    const selectionStarted = new Promise<void>((resolve) => { selectionEntered = resolve; });
     let resolveSelectionCalls = 0;
     const service = new AuxiliarySessionService({
       getParentSession: (id) => sessionStorage.getSession(id),
@@ -1061,6 +1072,7 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
       getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
       resolveSessionLaunchSelection: async () => {
         resolveSelectionCalls += 1;
+        selectionEntered();
         await selectionReady;
         return {
           provider: "codex",
@@ -1082,15 +1094,15 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
       runtimeSelection: "latest-session",
       clientRequestId: "race-create",
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await selectionStarted;
     const deleteParent = coordinator.runExclusive(async () => {
       sessionStorage.deleteSession(parent.id);
       auxiliaryStorage.deleteAuxiliarySessionsForParent(parent.id);
     });
+    await deleteParent;
     assert.equal(resolveSelectionCalls, 1);
     releaseSelection();
-    await create;
-    await deleteParent;
+    await assert.rejects(create, /親セッションが見つからない|親セッションが作成中に置き換わった/);
     assert.deepEqual(auxiliaryStorage.listAuxiliarySessions(parent.id), []);
 
     const reverseParent = { ...parent, id: "session-race-reverse" };
@@ -1377,6 +1389,16 @@ test("AuxiliarySessionService は通常起動と同じ選択済み runtime optio
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryのlatest-session作成は再検証で同値だったresolverのruntime設定を一組で保存する"
+// oracle = { type = "contract", ref = "docs/adr/007-provider-runtime-selection-inheritance.md" }
+// fault = "resolverから受け取ったmodel・権限・custom agentを親または既定値で上書きして保存する"
+// observable = "resolverに渡したprovider、および作成済みAuxiliaryのruntime選択"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-service"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxiliarySessionService は latest-session 選択を Main の resolver から一組で取得する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-latest-selection-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
@@ -1427,7 +1449,7 @@ test("AuxiliarySessionService は latest-session 選択を Main の resolver か
       runtimeSelection: "latest-session",
     });
 
-    assert.deepEqual(resolvedProviderIds, ["codex"]);
+    assert.deepEqual(resolvedProviderIds, ["codex", "codex"]);
     assert.deepEqual(
       {
         provider: auxiliary.provider,
