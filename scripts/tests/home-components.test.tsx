@@ -116,60 +116,63 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Settings は foreground prompt context の4項目を個別 checkbox と補足説明への参照として表示し、既定値を checked にする"
-  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
-  // fault = "設定項目のlabel、checkbox、補足説明への参照、または既定状態が契約と一致しない"
-  // observable = "HomeSettingsContent の static markup にある Prompt Context labels、checkbox state、aria-describedby と説明要素の参照関係"
+  // claim = "Settings は Prompt Context の4つの注入section名を個別 checkbox と行内Help iconへの参照として表示し、既定値を checked にする"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout and #current-scope" }
+  // fault = "注入section名の表示、checkbox、行内Helpへの参照、または既定状態が契約と一致しない"
+  // observable = "HomeSettingsContent の static markup にある各label、checkbox state、focus可能なHelp icon、aria-describedby から同一行tooltipへの参照関係"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-prompt-context-ui"
   // lifecycle = "permanent"
   // impact = "ユーザーが4つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
-  // distinction = "個別 state/action の確認は draft test に分け、static DOMの情報関係と既定stateを確認する。hover/focusによる表示はlive renderの確認範囲とする"
+  // distinction = "個別 state/action の保存handlerは draft test に分け、static DOMではsection label、既定state、focus可能なHelp icon、各checkboxと同一行tooltipの参照だけを確認する。hover/focusによる表示はlive renderの確認範囲とする"
   // @end-test-value
   it("Prompt Context に4項目の個別 toggle を既定有効で表示する", () => {
     const html = renderSettings();
     const document = new JSDOM(html).window.document;
     const promptContextSection = Array.from(document.querySelectorAll("section.settings-section-card"))
-      .find((section) => section.textContent?.includes("会話の雰囲気・関連情報（Character Affect Context）"));
+      .find((section) => section.querySelector("strong")?.textContent === "Prompt Context");
 
     assert.ok(promptContextSection);
     assert.equal(promptContextSection.querySelector("strong")?.textContent, "Prompt Context");
-    assert.ok(promptContextSection.textContent?.includes("Character の定義（名前・説明・本文）"));
-    assert.ok(promptContextSection.textContent?.includes("会話の時間情報（Conversation Timing）"));
-    assert.ok(promptContextSection.textContent?.includes("作業開始前の短い応答（Tool Call Presence）"));
-    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, 4);
-    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, 4);
-    assert.equal(promptContextSection.querySelectorAll('[role="img"][tabindex="0"]').length, 4);
 
-    const promptContextFields = [
-      ["characterDefinitionEnabled", "Character の定義（名前・説明・本文）"],
-      ["characterAffectContextEnabled", "会話の雰囲気・関連情報（Character Affect Context）"],
-      ["conversationTimingEnabled", "会話の時間情報（Conversation Timing）"],
-      ["toolCallPresenceEnabled", "作業開始前の短い応答（Tool Call Presence）"],
-    ] as const;
-    for (const [field, labelText] of promptContextFields) {
-      const disabledDocument = new JSDOM(renderSettings({
-        settingsDraft: { ...settingsDraft, [field]: false },
-      })).window.document;
-      const disabledSection = Array.from(disabledDocument.querySelectorAll("section.settings-section-card"))
-        .find((section) => section.textContent?.includes(labelText));
-      const fieldRow = Array.from(disabledSection?.querySelectorAll(".settings-provider-toggle-row") ?? [])
-        .find((row) => row.textContent?.includes(labelText));
+    const promptContextLabels = [
+      "Character Definition Snapshot",
+      "Character Affect Context",
+      "Conversation Timing",
+      "Tool Call Presence",
+    ];
+    const promptContextRows = Array.from(promptContextSection.querySelectorAll(".settings-provider-toggle-row"));
+    assert.equal(promptContextRows.length, promptContextLabels.length);
+    assert.deepEqual(
+      promptContextRows.map((row) => row.querySelector<HTMLLabelElement>("label.settings-provider-name")?.textContent),
+      promptContextLabels,
+    );
 
-      assert.equal(fieldRow?.querySelector<HTMLInputElement>("input")?.checked, false);
-      assert.equal(disabledSection?.querySelectorAll('input[type="checkbox"]:checked').length, 3);
-    }
+    const helpIds = new Set<string>();
+    for (const row of promptContextRows) {
+      const label = row.querySelector<HTMLLabelElement>("label.settings-provider-name");
+      const input = row.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      const helpIcon = row.querySelector<HTMLElement>(".settings-field-help-icon");
 
-    for (const input of Array.from(promptContextSection.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) {
+      assert.ok(label);
+      assert.ok(input);
+      assert.equal(input.checked, true);
+      assert.equal(label.htmlFor, input.id);
+      assert.ok(row);
+      assert.ok(helpIcon);
+      assert.equal(helpIcon.tabIndex, 0);
+      assert.ok(helpIcon.getAttribute("aria-label"));
       const helpId = input.getAttribute("aria-describedby");
       assert.ok(helpId);
+      helpIds.add(helpId);
       const help = document.getElementById(helpId);
       assert.ok(help?.textContent?.trim());
       assert.equal(help?.getAttribute("role"), "tooltip");
-      const helpIcon = input.closest(".settings-provider-toggle-row")?.querySelector<HTMLElement>('[role="img"]');
-      assert.equal(helpIcon?.getAttribute("tabindex"), "0");
-      assert.ok(helpIcon?.getAttribute("aria-label")?.endsWith("のヘルプ"));
+      assert.ok(row.contains(help));
     }
+    assert.equal(helpIds.size, promptContextLabels.length);
+    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, promptContextLabels.length);
+    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, promptContextLabels.length);
   });
 
   it("Repository Glossaryにproactive create上限を0から100のnumber inputで表示する", () => {

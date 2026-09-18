@@ -38,10 +38,10 @@
   - `Session Window`
     - `送信後に Action Dock を自動で閉じる`
   - `Prompt Context`
-    - `Character の定義（名前・説明・本文）`
-    - `会話の雰囲気・関連情報（Character Affect Context）`
-    - `会話の時間情報（Conversation Timing）`
-    - `作業開始前の短い応答（Tool Call Presence）`
+    - `Character Definition Snapshot`
+    - `Character Affect Context`
+    - `Conversation Timing`
+    - `Tool Call Presence`
   - `Coding Agent Providers`
     - provider 名を左、enable checkbox を右に置く
     - provider ごとの `Provider File Settings`

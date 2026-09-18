@@ -35,18 +35,14 @@ export const SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL =
   "Windows 通知に返答の冒頭を表示する";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
 export const SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL = "送信時にチャット末尾へ移動する";
-export const SETTINGS_CHARACTER_DEFINITION_LABEL = "Character の定義（名前・説明・本文）";
-export const SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL = "会話の雰囲気・関連情報（Character Affect Context）";
-export const SETTINGS_CONVERSATION_TIMING_LABEL = "会話の時間情報（Conversation Timing）";
-export const SETTINGS_TOOL_CALL_PRESENCE_LABEL = "作業開始前の短い応答（Tool Call Presence）";
-export const SETTINGS_CHARACTER_DEFINITION_HELP =
-  "Character の名前・説明・本文を返答用 prompt に含める。";
-export const SETTINGS_CHARACTER_AFFECT_CONTEXT_HELP =
-  "会話の雰囲気・関連情報を返答用 prompt に含める。";
-export const SETTINGS_CONVERSATION_TIMING_HELP =
-  "会話の時間情報を入力側 prompt に含める。";
-export const SETTINGS_TOOL_CALL_PRESENCE_HELP =
-  "ツール呼び出し前の短い応答を促す。";
+export const SETTINGS_CHARACTER_DEFINITION_LABEL = "Character Definition Snapshot";
+export const SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL = "Character Affect Context";
+export const SETTINGS_CONVERSATION_TIMING_LABEL = "Conversation Timing";
+export const SETTINGS_TOOL_CALL_PRESENCE_LABEL = "Tool Call Presence";
+export const SETTINGS_CHARACTER_DEFINITION_HELP = "Character Definition Snapshot を注入。";
+export const SETTINGS_CHARACTER_AFFECT_CONTEXT_HELP = "Character Affect Context を注入。";
+export const SETTINGS_CONVERSATION_TIMING_HELP = "Conversation Timing を注入。";
+export const SETTINGS_TOOL_CALL_PRESENCE_HELP = "Tool Call Presence を注入。";
 export const SETTINGS_MEMORY_FILE_QUOTA_LABEL = "Memory file quota";
 export const SETTINGS_MEMORY_FILE_QUOTA_HELP =
   "Protected Object の全体容量上限。現在使用量が上限を超えている場合、新しい file append は失敗する。";

@@ -9029,7 +9029,7 @@ button:disabled {
   top: calc(100% + 6px);
   right: 0;
   width: max-content;
-  max-width: min(280px, calc(100vw - 48px));
+  max-width: min(360px, calc(100vw - 32px));
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
