@@ -395,6 +395,44 @@ describe("CompanionStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V4 Companion message は bookmark state を本文と同じ保存単位で roundtrip する"
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
+  // fault = "Companion messageのbookmark stateを保存せず、再読込時に解除する"
+  // observable = "CompanionStorageのgetSessionが返すmessagesのisBookmarked"
+  // observation_boundary = "public-boundary"
+  // scope = "companion-storage-message-bookmark"
+  // lifecycle = "permanent"
+  // impact = "Companion Reviewの本文状態とMessages filterが再起動後に食い違う"
+  // distinction = "CompanionStorageの実DB再読込を通し、schema/buildだけでは確認できない保存契約を確認する"
+  // @end-test-value
+  it("Companion message は bookmark state を再読込後も保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-message-bookmark-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CompanionStorage | null = null;
+
+    try {
+      storage = new CompanionStorage(dbPath);
+      const group = storage.ensureGroup(createGroup());
+      const session = storage.createSession(createSession(group.id, {
+        messages: [
+          { role: "user", text: "bookmark me", isBookmarked: true },
+          { role: "assistant", text: "leave me alone" },
+        ],
+      }));
+
+      assert.equal(storage.getSession(session.id)?.messages[0]?.isBookmarked, true);
+      assert.equal(storage.getSession(session.id)?.messages[1]?.isBookmarked, undefined);
+      storage.close();
+      storage = new CompanionStorage(dbPath);
+      assert.equal(storage.getSession(session.id)?.messages[0]?.isBookmarked, true);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("汎用 updateSession は Character owner / runtime snapshot の差し替えを拒否する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

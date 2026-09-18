@@ -1,4 +1,4 @@
-import type { Message } from "./session-state.js";
+import { isMessageBookmarked, type Message } from "./session-state.js";
 import type { MessageListSource } from "./auxiliary-session-message-projection.js";
 import { projectMessageRenderedSearchText } from "./message-rendered-search-text.js";
 
@@ -9,10 +9,12 @@ export type MessageCollapseTarget = Readonly<{
   key: string;
   sourceIdentity: string;
   sourceKind: "session" | "auxiliary";
+  source: Extract<MessageListSource, { kind: "session" | "auxiliary" }>;
   role: Message["role"];
   text: string;
   preview: string;
   accent: boolean;
+  isBookmarked: boolean;
 }>;
 
 export type MessageCollapseStateEntry = Readonly<{
@@ -30,6 +32,7 @@ export type MessageNavigatorEntry = Readonly<{
   preview: string;
   accent: boolean;
   isCollapsed: boolean;
+  isBookmarked: boolean;
 }>;
 
 export type MessageJumpRequest = Readonly<{
@@ -108,8 +111,9 @@ export function buildMessageCollapseTargets(
       && previousTarget.text === message.text
       && previousTarget.sourceKind === source.kind
       && previousTarget.accent === (message.accent === true)
+      && previousTarget.isBookmarked === isMessageBookmarked(message)
     ) {
-      targets.push(previousTarget);
+      targets.push({ ...previousTarget, source });
       continue;
     }
 
@@ -117,6 +121,7 @@ export function buildMessageCollapseTargets(
       key,
       sourceIdentity,
       sourceKind: source.kind,
+      source,
       role: message.role,
       text: message.text,
       preview: previousTarget?.sourceKind === source.kind
@@ -125,6 +130,7 @@ export function buildMessageCollapseTargets(
         ? previousTarget.preview
         : projectMessagePlainText(message.text),
       accent: message.accent === true,
+      isBookmarked: isMessageBookmarked(message),
     });
   }
   return targets;
@@ -201,6 +207,7 @@ export function buildMessageNavigatorEntries(
     preview: target.preview,
     accent: target.accent,
     isCollapsed: state.has(target.key),
+    isBookmarked: target.isBookmarked,
   }));
 }
 

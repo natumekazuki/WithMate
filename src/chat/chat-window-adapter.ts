@@ -171,6 +171,7 @@ export type LiveSessionMessageColumnProps = {
   isContentActive?: ChatMessageColumnProps["isContentActive"];
   onToggleMessageCollapse?: ChatMessageColumnProps["onToggleMessageCollapse"];
   onToggleAllMessageCollapse?: ChatMessageColumnProps["onToggleAllMessageCollapse"];
+  onToggleMessageBookmark?: ChatMessageColumnProps["onToggleMessageBookmark"];
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;

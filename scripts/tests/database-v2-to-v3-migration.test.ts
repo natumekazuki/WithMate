@@ -175,7 +175,7 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
       id: "session-1",
       threadId: "thread-1",
       messages: [
-        { role: "user", text: longMessage },
+        { role: "user", text: longMessage, isBookmarked: true },
         {
           role: "assistant",
           text: "assistant reply",
@@ -258,6 +258,7 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
         {
           role: "assistant",
           text: `${"c".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:companion-message-tail`,
+          isBookmarked: true,
           artifact: createArtifact(`${sentinel}:companion`),
         },
       ],
@@ -343,6 +344,18 @@ describe("V2 to V3 database migration dry-run", () => {
 });
 
 describe("V2 to V3 database migration write mode", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V2からV3への移行はsession/Companion messageのbookmark stateをblob-backed storageへ引き継ぐ"
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: V2/V3 migration" }
+  // fault = "V2 sourceのbookmark stateを読み落とすか、V3 targetへの書込時に解除する"
+  // observable = "V3 SessionStorageV3/CompanionStorageV3から再読込したmessagesのisBookmarked"
+  // observation_boundary = "public-boundary"
+  // scope = "database-v2-to-v3 message bookmark migration"
+  // lifecycle = "permanent"
+  // impact = "既存利用者の保存済みbookmarkがmigration後に失われる"
+  // distinction = "単体storageのroundtripとは別に、V2 sourceからV3 targetまでの変換経路を確認する"
+  // @end-test-value
   it("V3 DB と blob store に session/audit/app_settings/model_catalog を移す", async () => {
     const fixture = createV2FixtureDatabase();
     try {
@@ -399,6 +412,7 @@ describe("V2 to V3 database migration write mode", () => {
         const migratedSession = await sessionStorage.getSession("session-1");
         assert.ok(migratedSession);
         assert.equal(migratedSession.messages.length, 2);
+        assert.equal(migratedSession.messages[0]?.isBookmarked, true);
         assert.equal(migratedSession.messages[0]?.text.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:message-tail"), true);
         assert.equal(
           (await sessionStorage.getSessionMessageArtifact("session-1", 1))?.changedFiles[0]?.diffRows[0]?.rightText,
@@ -417,6 +431,7 @@ describe("V2 to V3 database migration write mode", () => {
 
         const migratedCompanion = await companionStorage.getSession("companion-session-1");
         assert.ok(migratedCompanion);
+        assert.equal(migratedCompanion.messages[0]?.isBookmarked, true);
         assert.equal(migratedCompanion.messages[0]?.text.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:companion-message-tail"), true);
         assert.equal(
           (await companionStorage.getMessageArtifact("companion-session-1", 0))?.changedFiles[0]?.diffRows[0]?.rightText,

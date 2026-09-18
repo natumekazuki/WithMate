@@ -151,6 +151,7 @@ export type CompanionChatProjectionInput = {
   onOpenSessionFilesExplorer: () => void;
   onOpenMergeWindow: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
+  onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
   onToggleArtifact: (artifactKey: string) => void;
   onLoadArtifactDetail: (messageIndex: number) => Promise<MessageArtifact | null>;
   onOpenDiff: SessionMessageColumnProps["onOpenDiff"];
@@ -352,6 +353,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       pendingMessageGroupId: input.pendingMessageGroupId,
       isMessageListFollowing: input.isMessageListFollowing,
       onMessageListScroll: input.onMessageListScroll,
+      onToggleMessageBookmark: input.onToggleMessageBookmark,
       onToggleArtifact: input.onToggleArtifact,
       onLoadArtifactDetail: input.onLoadArtifactDetail,
       onOpenDiff: input.onOpenDiff,
@@ -390,6 +392,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     selectedSessionContextTelemetry: input.selectedSessionContextTelemetry,
     selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
     contextEmptyText: "context usage はまだありません。",
+    messageNavigatorSessionId: input.session.id,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
     onSelectContextPaneTab: input.onSelectContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,

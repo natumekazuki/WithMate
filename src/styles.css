@@ -7894,6 +7894,47 @@ button:disabled {
   min-width: 0;
 }
 
+.messages-navigator-filter-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+
+.messages-navigator-filter {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.messages-navigator-filter:hover,
+.messages-navigator-filter.is-active {
+  border-color: color-mix(in srgb, var(--character-main) 52%, rgba(203, 213, 225, 0.2));
+  background: color-mix(in srgb, var(--character-sub-soft) 18%, rgba(255, 255, 255, 0.04));
+  color: var(--ink);
+}
+
+.messages-navigator-filter.is-active {
+  font-weight: 700;
+}
+
+.messages-navigator-filter:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 72%, white 28%);
+  outline-offset: 2px;
+}
+
+.messages-navigator-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .messages-navigator-row {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
@@ -8390,6 +8431,58 @@ button:disabled {
   padding: 14px 16px;
   border: 1px solid rgba(32, 36, 55, 0.08);
   background: rgba(255, 255, 255, 0.82);
+}
+
+.message-card.has-message-bookmark-control {
+  padding-right: 56px;
+}
+
+.message-bookmark-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.3);
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.message-bookmark-toggle svg {
+  width: 15px;
+  height: 15px;
+  fill: transparent;
+  stroke: currentColor;
+  stroke-width: 1.35;
+}
+
+.message-bookmark-toggle:hover,
+.message-bookmark-toggle:focus-visible,
+.message-bookmark-toggle.is-bookmarked {
+  border-color: color-mix(in srgb, var(--character-main) 58%, rgba(148, 163, 184, 0.32));
+  color: var(--ink);
+}
+
+.message-bookmark-toggle.is-bookmarked {
+  background: color-mix(in srgb, var(--character-main) 22%, rgba(15, 23, 42, 0.42));
+}
+
+.message-bookmark-toggle.is-bookmarked svg {
+  fill: currentColor;
+}
+
+.message-bookmark-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 72%, white 28%);
+  outline-offset: 2px;
 }
 
 .message-card-content {

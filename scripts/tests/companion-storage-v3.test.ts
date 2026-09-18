@@ -250,6 +250,18 @@ describe("CompanionStorageV3", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V3 Companion message はblob-backed text/artifactとbookmark stateを同時にroundtripする"
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
+  // fault = "V3 Companion message rowのbookmark stateを保存せず、再読込時に解除する"
+  // observable = "CompanionStorageV3.getSessionが返すmessagesのisBookmarked"
+  // observation_boundary = "public-boundary"
+  // scope = "companion-storage-v3 message bookmark"
+  // lifecycle = "permanent"
+  // impact = "Companion Reviewのbookmark filterが再起動後に誤った結果になる"
+  // distinction = "既存のartifact/blob roundtripと同じ保存経路を通し、bookmark stateも保持することを直接確認する"
+  // @end-test-value
   it("session と merge run を blob-backed payload で roundtrip する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-v3-"));
     const dbPath = path.join(tempDirectory, "withmate-v3.db");
@@ -265,7 +277,7 @@ describe("CompanionStorageV3", () => {
         approvalMode: "never",
         characterRuntimeSnapshot,
         messages: [
-          { role: "user", text: "Companion user text" },
+          { role: "user", text: "Companion user text", isBookmarked: true },
           {
             role: "assistant",
             text: "Companion assistant text",
@@ -290,6 +302,7 @@ describe("CompanionStorageV3", () => {
       assert.equal(session.groupId, group.id);
       assert.equal((await storage.getSession(session.id))?.approvalMode, "never");
       assert.deepEqual((await storage.getSession(session.id))?.characterRuntimeSnapshot, characterRuntimeSnapshot);
+      assert.equal((await storage.getSession(session.id))?.messages[0]?.isBookmarked, true);
       assert.equal((await storage.listActiveSessionSummaries())[0]?.approvalMode, "never");
       assert.equal("characterRuntimeSnapshot" in ((await storage.listActiveSessionSummaries())[0] ?? {}), false);
       assert.equal((await storage.getSession(session.id))?.messages[1]?.artifact?.changedFiles[0]?.diffRows.length, 0);

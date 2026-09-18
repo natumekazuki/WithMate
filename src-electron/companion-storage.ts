@@ -90,6 +90,7 @@ type CompanionMessageRow = {
   role: string;
   text: string;
   accent: number;
+  is_bookmarked: number;
   artifact_json: string;
   created_at: string;
 };
@@ -234,6 +235,7 @@ function rowToMessage(row: CompanionMessageRow): Message {
     role: row.role === "assistant" ? "assistant" : "user",
     text: row.text,
     accent: row.accent === 1 ? true : undefined,
+    ...(row.is_bookmarked === 1 ? { isBookmarked: true } : {}),
     artifact,
   };
 }
@@ -514,6 +516,7 @@ export class CompanionStorage {
         role TEXT NOT NULL,
         text TEXT NOT NULL,
         accent INTEGER NOT NULL DEFAULT 0,
+        is_bookmarked INTEGER NOT NULL DEFAULT 0,
         artifact_json TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         UNIQUE(session_id, position)
@@ -582,6 +585,13 @@ export class CompanionStorage {
     }
     if (!columns.has("character_runtime_snapshot_json")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN character_runtime_snapshot_json TEXT NOT NULL DEFAULT '';");
+    }
+    const messageColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(companion_messages)").all() as { name: string }[])
+        .map((column) => column.name),
+    );
+    if (!messageColumns.has("is_bookmarked")) {
+      this.db.exec("ALTER TABLE companion_messages ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0;");
     }
     if (!columns.has("codex_speed")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN codex_speed TEXT NOT NULL DEFAULT 'standard';");
@@ -863,7 +873,7 @@ export class CompanionStorage {
 
   private listMessages(sessionId: string): Message[] {
     const rows = this.db.prepare(`
-      SELECT id, session_id, position, role, text, accent, artifact_json, created_at
+      SELECT id, session_id, position, role, text, accent, is_bookmarked, artifact_json, created_at
       FROM companion_messages
       WHERE session_id = ?
       ORDER BY position ASC
@@ -874,8 +884,8 @@ export class CompanionStorage {
   private replaceMessages(sessionId: string, messages: Message[], createdAt: string): void {
     this.db.prepare("DELETE FROM companion_messages WHERE session_id = ?").run(sessionId);
     const statement = this.db.prepare(`
-      INSERT INTO companion_messages (session_id, position, role, text, accent, artifact_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO companion_messages (session_id, position, role, text, accent, is_bookmarked, artifact_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     messages.forEach((message, index) => {
       statement.run(
@@ -884,6 +894,7 @@ export class CompanionStorage {
         message.role,
         message.text,
         message.accent ? 1 : 0,
+        message.isBookmarked === true ? 1 : 0,
         message.artifact ? JSON.stringify(message.artifact) : "",
         createdAt,
       );

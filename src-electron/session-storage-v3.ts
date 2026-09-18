@@ -106,6 +106,7 @@ type SessionMessageRow = {
   text_preview: string;
   text_blob_id: string | null;
   accent: number;
+  is_bookmarked: number;
   artifact_available: number;
   artifact_summary_json: string | null;
   artifact_blob_id: string | null;
@@ -228,9 +229,10 @@ const INSERT_SESSION_MESSAGE_SQL = `
     text_original_bytes,
     text_stored_bytes,
     accent,
+    is_bookmarked,
     artifact_available,
     created_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 const INSERT_MESSAGE_ARTIFACT_SQL = `
@@ -352,6 +354,7 @@ const LIST_SESSION_MESSAGES_SQL = `
     m.text_preview,
     m.text_blob_id,
     m.accent,
+    m.is_bookmarked,
     m.artifact_available,
     a.artifact_summary_json,
     a.artifact_blob_id
@@ -824,6 +827,7 @@ function writeSessionMessages(
       payload.text.originalBytes,
       payload.text.storedBytes,
       message.accent === true ? 1 : 0,
+      message.isBookmarked === true ? 1 : 0,
       message.artifact ? 1 : 0,
       "",
     );
@@ -955,6 +959,12 @@ export class SessionStorageV3 {
       if (!columns.has("character_runtime_snapshot_json")) {
         db.exec("ALTER TABLE sessions ADD COLUMN character_runtime_snapshot_json TEXT NOT NULL DEFAULT '';");
       }
+      const messageColumns = new Set(
+        (db.prepare("PRAGMA table_info(session_messages)").all() as TableColumnRow[]).map((column) => column.name),
+      );
+      if (!messageColumns.has("is_bookmarked")) {
+        db.exec("ALTER TABLE session_messages ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0;");
+      }
     });
   }
 
@@ -967,6 +977,7 @@ export class SessionStorageV3 {
       role: row.role,
       text: row.text_blob_id ? await this.blobStore.getText(row.text_blob_id) : row.text_preview,
       accent: row.accent === 1 ? true : undefined,
+      ...(row.is_bookmarked === 1 ? { isBookmarked: true } : {}),
       artifact: row.artifact_available === 1 ? parseArtifactSummary(row.artifact_summary_json) : undefined,
     };
   }

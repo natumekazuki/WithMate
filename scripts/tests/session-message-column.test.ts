@@ -20,7 +20,7 @@ import { ConversationMessageColumn } from "../../src/chat/conversation-message-c
 import { useCompanionCharacterProfile } from "../../src/companion-character-profile.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
-import { buildMessageCollapseTargets } from "../../src/session-message-collapse.js";
+import { buildMessageCollapseTargets, type MessageCollapseTarget } from "../../src/session-message-collapse.js";
 import type { MessageListSource } from "../../src/auxiliary-session-message-projection.js";
 import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
@@ -238,6 +238,7 @@ function renderSessionMessageColumn(options: {
   messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
   onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
   onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
+  onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
   glossaryAnnotationMatcher?: SessionMessageColumnProps["glossaryAnnotationMatcher"];
   onActivateGlossaryEntry?: SessionMessageColumnProps["onActivateGlossaryEntry"];
@@ -272,6 +273,7 @@ function renderSessionMessageColumn(options: {
       },
       onCopyMessageText: options.withResponseActions ? () => {} : undefined,
       onQuoteMessageText: options.withResponseActions ? () => {} : undefined,
+      onToggleMessageBookmark: options.onToggleMessageBookmark,
       messageViewMode: options.messageViewMode,
       glossaryAnnotationMatcher: options.glossaryAnnotationMatcher,
       onActivateGlossaryEntry: options.onActivateGlossaryEntry,
@@ -316,6 +318,7 @@ type MountedSessionMessageColumn = {
     messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
     onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
     onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
+    onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
     messages?: Message[];
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
@@ -343,6 +346,7 @@ async function mountSessionMessageColumn(options: {
   messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
   onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
   onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
+  onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
   pendingMessageGroupId?: string | null;
   pendingMessageText?: string;
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
@@ -529,6 +533,7 @@ async function mountSessionMessageColumn(options: {
           onMessageListScroll() {},
           onToggleMessageCollapse: callbacks.onToggleMessageCollapse ?? options.onToggleMessageCollapse,
           onToggleAllMessageCollapse: callbacks.onToggleAllMessageCollapse ?? options.onToggleAllMessageCollapse,
+          onToggleMessageBookmark: callbacks.onToggleMessageBookmark ?? options.onToggleMessageBookmark,
           onToggleArtifact() {},
           onOpenDiff() {},
           onResolveLiveApproval() {},
@@ -760,6 +765,56 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
     });
     assert.equal(allToggleCount, 1);
     assert.equal(shortcutEvent.defaultPrevented, true);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "persisted message のbookmark controlは状態をaccessible nameとaria-pressedへ公開し、clickでsource targetを返す"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 本文のbookmark control" }
+// fault = "bookmark controlを表示しない、状態を支援技術へ公開しない、または対象messageを誤って返す"
+// observable = "native buttonのaria-label/aria-pressedとonToggleMessageBookmarkへ渡るtarget"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumn bookmark control"
+// lifecycle = "permanent"
+// impact = "bookmarkを追加・解除できず、本文とMessages filterの状態が更新できない"
+// distinction = "static markupだけでなくmount後のclickとtarget identityを確認し、typecheck/buildでは得られない操作契約を補う"
+// @end-test-value
+test("SessionMessageColumn はbookmark controlをnative buttonで操作する", async () => {
+  const messages: Message[] = [{ role: "assistant", text: "bookmark target", isBookmarked: true }];
+  const messageKeys = ["session-s-0"];
+  const messageCollapseTargets = buildMessageCollapseTargets(
+    messages,
+    [{ kind: "session", messageIndex: 0 }],
+    messageKeys,
+  );
+  let toggledKey: string | null = null;
+  let toggledState: boolean | null = null;
+  let toggledSource: MessageCollapseTarget["source"] | null = null;
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    messageKeys,
+    messageCollapseTargets,
+    onToggleMessageBookmark: (target) => {
+      toggledKey = target.key;
+      toggledState = target.isBookmarked;
+      toggledSource = target.source;
+    },
+  });
+
+  try {
+    const button = mounted.container.querySelector<HTMLButtonElement>("button.message-bookmark-toggle");
+    assert.ok(button);
+    assert.equal(button.getAttribute("aria-label"), "ブックマークを解除");
+    assert.equal(button.getAttribute("aria-pressed"), "true");
+    await act(async () => {
+      button.click();
+    });
+    assert.equal(toggledKey, "session-s-0");
+    assert.equal(toggledState, true);
+    assert.deepEqual(toggledSource, { kind: "session", messageIndex: 0 });
   } finally {
     await mounted.cleanup();
   }

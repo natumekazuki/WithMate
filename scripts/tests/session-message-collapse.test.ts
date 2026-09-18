@@ -60,6 +60,37 @@ test("collapse target は persisted session/auxiliary の user/assistantだけ�
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "message projection は persisted source の bookmark state を navigator entry へ引き継ぎ、source identityを保持する"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: projection と identity" }
+// fault = "projectionがbookmark stateを落とすか、Auxiliary messageをMain sourceとして扱う"
+// observable = "buildMessageCollapseTargetsとbuildMessageNavigatorEntriesのsource/isBookmarked"
+// observation_boundary = "public-boundary"
+// scope = "message-collapse-bookmark-projection"
+// lifecycle = "permanent"
+// impact = "filter対象や本文のtoggle対象を誤り、別messageのbookmarkを変更する"
+// distinction = "DOM操作ではなく、Messages filterと本文toggleが参照するprojection contractを直接確認する"
+// @end-test-value
+test("collapse target は bookmark state と persisted source identity を navigatorへ引き継ぐ", () => {
+  const targets = buildMessageCollapseTargets(
+    [{ role: "user", text: "bookmarked", isBookmarked: true }, message("assistant", "ordinary")],
+    [sessionSource(0), auxiliarySource("aux-1", 4)],
+    ["session-key", "aux-key"],
+  );
+
+  assert.equal(targets[0]?.isBookmarked, true);
+  assert.deepEqual(targets[0]?.source, sessionSource(0));
+  assert.equal(targets[1]?.isBookmarked, false);
+  assert.deepEqual(targets[1]?.source, auxiliarySource("aux-1", 4));
+
+  const entries = buildMessageNavigatorEntries(targets, new Map());
+  assert.deepEqual(entries.map((entry) => [entry.key, entry.isBookmarked]), [
+    ["session-key", true],
+    ["aux-key", false],
+  ]);
+});
+
 test("tail append と auxiliary insertion は key/source identityが同じmessageのstateを維持する", () => {
   const initialMessages = [message("user", "first"), message("assistant", "second")];
   const initialTargets = buildMessageCollapseTargets(

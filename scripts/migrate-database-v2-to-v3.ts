@@ -136,6 +136,7 @@ type SessionMessageRow = {
   role: string;
   text: string;
   accent: number;
+  is_bookmarked: number;
   artifact_json: string | null;
 };
 
@@ -241,6 +242,7 @@ type CompanionMessageRow = {
   role: string;
   text: string;
   accent: number;
+  is_bookmarked: number;
   artifact_json: string;
 };
 
@@ -333,6 +335,11 @@ const COMPANION_MERGE_RUN_COLUMNS = `
 function tableExists(db: DatabaseSync, tableName: string): boolean {
   const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName);
   return row !== undefined;
+}
+
+function tableHasColumn(db: DatabaseSync, tableName: string, columnName: string): boolean {
+  return (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>)
+    .some((column) => column.name === columnName);
 }
 
 function countRows(db: DatabaseSync, tableName: string): number {
@@ -533,6 +540,7 @@ function rowToCompanionMessage(row: CompanionMessageRow): CompanionSession["mess
     role: row.role === "assistant" ? "assistant" : "user",
     text: row.text,
     accent: row.accent === 1 ? true : undefined,
+    ...(row.is_bookmarked === 1 ? { isBookmarked: true } : {}),
     artifact: row.artifact_json.trim()
       ? parseJsonObject(row.artifact_json, {}) as CompanionSession["messages"][number]["artifact"]
       : undefined,
@@ -627,6 +635,7 @@ function rowToSession(row: SessionHeaderRow, messages: SessionMessageRow[]): Ses
       role: message.role,
       text: message.text,
       accent: message.accent === 1 ? true : undefined,
+      ...(message.is_bookmarked === 1 ? { isBookmarked: true } : {}),
       artifact: message.artifact_json ? parseJsonObject(message.artifact_json, {}) : undefined,
     })),
     stream: [],
@@ -822,11 +831,15 @@ function copyModelCatalogTables(sourceDb: DatabaseSync, targetDb: DatabaseSync):
 }
 
 function readSessionMessages(db: DatabaseSync, sessionId: string): SessionMessageRow[] {
+  const bookmarkColumn = tableHasColumn(db, "session_messages", "is_bookmarked")
+    ? "m.is_bookmarked"
+    : "0";
   return db.prepare(`
     SELECT
       m.role,
       m.text,
       m.accent,
+      ${bookmarkColumn} AS is_bookmarked,
       a.artifact_json
     FROM session_messages AS m
     LEFT JOIN session_message_artifacts AS a
@@ -861,8 +874,11 @@ function readCompanionMessages(db: DatabaseSync, sessionId: string): CompanionMe
   if (!tableExists(db, "companion_messages")) {
     return [];
   }
+  const bookmarkColumn = tableHasColumn(db, "companion_messages", "is_bookmarked")
+    ? "is_bookmarked"
+    : "0";
   return db.prepare(`
-    SELECT role, text, accent, artifact_json
+    SELECT role, text, accent, ${bookmarkColumn} AS is_bookmarked, artifact_json
     FROM companion_messages
     WHERE session_id = ?
     ORDER BY position ASC

@@ -94,6 +94,7 @@ type SessionMessageRow = {
   role: string;
   text: string;
   accent: number;
+  is_bookmarked: number;
   artifact_available: number;
   artifact_json: string | null;
 };
@@ -183,9 +184,10 @@ const INSERT_SESSION_MESSAGE_SQL = `
     role,
     text,
     accent,
+    is_bookmarked,
     artifact_available,
     created_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 const INSERT_MESSAGE_ARTIFACT_SQL = `
@@ -282,6 +284,7 @@ const LIST_SESSION_MESSAGES_SQL = `
     m.role,
     m.text,
     m.accent,
+    m.is_bookmarked,
     m.artifact_available,
     a.artifact_json
   FROM session_messages AS m
@@ -405,6 +408,7 @@ function rowToMessage(row: SessionMessageRow): Message | null {
     role: row.role,
     text: row.text,
     accent: row.accent === 1 ? true : undefined,
+    ...(row.is_bookmarked === 1 ? { isBookmarked: true } : {}),
     artifact,
   };
 }
@@ -490,6 +494,7 @@ function writeSessionMessages(
       message.role,
       message.text,
       message.accent === true ? 1 : 0,
+      message.isBookmarked === true ? 1 : 0,
       message.artifact ? 1 : 0,
       "",
     );
@@ -505,6 +510,19 @@ export class SessionStorageV2 {
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
     registerSessionProviderIdNormalizer(this.db);
+    this.ensureSchema();
+  }
+
+  private ensureSchema(): void {
+    this.withDb((db) => {
+      const columns = new Set(
+        (db.prepare("PRAGMA table_info(session_messages)").all() as Array<{ name: string }>)
+          .map((column) => column.name),
+      );
+      if (!columns.has("is_bookmarked")) {
+        db.exec("ALTER TABLE session_messages ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0;");
+      }
+    });
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {

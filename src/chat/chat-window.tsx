@@ -511,6 +511,7 @@ export function ChatWindow({
     ? {
       ...screenProps.rightPaneProps,
       messageNavigatorEntries: targetColumnControls?.messageNavigatorEntries ?? screenProps.rightPaneProps.messageNavigatorEntries,
+      messageNavigatorSessionId: targetColumnControls?.sessionId ?? screenProps.rightPaneProps.messageNavigatorSessionId,
       onJumpToMessage: targetColumnControls?.onJumpToMessage ?? screenProps.rightPaneProps.onJumpToMessage,
     }
     : screenProps.rightPaneProps;
@@ -572,6 +573,7 @@ export function ChatWindow({
           {concurrentChats ? (
             <ConversationMessageColumn
               session={concurrentChats.mainSession ?? { id: resolvedMessageColumnProps.sessionId }}
+              messageSourceKind="session"
               baseProps={{
                 ...resolvedMessageColumnProps,
                 isContentActive: (resolvedMessageColumnProps.isContentActive ?? true)
@@ -638,6 +640,7 @@ export function ChatWindow({
               <>
                 <ConversationMessageColumn
                   session={concurrentChats.auxiliarySession ?? { id: concurrentChats.auxiliary.sessionId }}
+                  messageSourceKind="auxiliary"
                   baseProps={{
                     ...concurrentChats.auxiliary,
                     isContentActive: (concurrentChats.auxiliary.isContentActive ?? true)

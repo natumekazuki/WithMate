@@ -116,6 +116,18 @@ describe("database-schema-v2", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V2 session message schema は bookmark stateを既存message detailの列として保持する"
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
+  // fault = "V2 session_messagesにis_bookmarked列がなく、bookmark stateの保存先を持てない"
+  // observable = "session_messagesのschema column names"
+  // observation_boundary = "declaration"
+  // scope = "database-schema-v2 session message columns"
+  // lifecycle = "permanent"
+  // impact = "V2 sessionのbookmark保存とV2/V3移行が成立しない"
+  // distinction = "production storageのroundtripとは別に、schema contractの列有無を直接確認する"
+  // @end-test-value
   it("sessions は一覧 header と message detail を分離し、legacy JSON を持たない", () => {
     const db = createV2Schema();
     try {
@@ -129,6 +141,7 @@ describe("database-schema-v2", () => {
       assert.ok(messageColumns.includes("session_id"));
       assert.ok(messageColumns.includes("seq"));
       assert.ok(messageColumns.includes("text"));
+      assert.ok(messageColumns.includes("is_bookmarked"));
       assert.ok(messageColumns.includes("artifact_available"));
       assert.equal(messageColumns.includes("artifact_json"), false);
       assert.deepEqual(columnNames(db, "session_message_artifacts"), ["message_id", "artifact_json"]);

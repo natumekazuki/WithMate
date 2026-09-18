@@ -24,6 +24,7 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const onJumpToBottom = useStableOptionalCallback(props.onJumpToBottom);
   const onToggleMessageCollapse = useStableOptionalCallback(props.onToggleMessageCollapse);
   const onToggleAllMessageCollapse = useStableOptionalCallback(props.onToggleAllMessageCollapse);
+  const onToggleMessageBookmark = useStableOptionalCallback(props.onToggleMessageBookmark);
   const onToggleArtifact = useStableOptionalCallback(props.onToggleArtifact);
   const onLoadArtifactDetail = useStableOptionalCallback(props.onLoadArtifactDetail);
   const onOpenDiff = useStableOptionalCallback(props.onOpenDiff);
@@ -42,6 +43,7 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
       onJumpToBottom={onJumpToBottom}
       onToggleMessageCollapse={onToggleMessageCollapse}
       onToggleAllMessageCollapse={onToggleAllMessageCollapse}
+      onToggleMessageBookmark={onToggleMessageBookmark}
       onToggleArtifact={onToggleArtifact!}
       onLoadArtifactDetail={onLoadArtifactDetail}
       onOpenDiff={onOpenDiff!}
