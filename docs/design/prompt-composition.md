@@ -66,8 +66,8 @@ coding plane に渡す turn prompt は、次のレイヤーを基本にする。
 通常 session / companion の Character snapshot は session / companion 開始時点の保存済み値を使い、catalog の現在値へ追従しない。`character-authoring` session は turn 開始時に最新の `character.md` から runtime snapshot を作り直す。app 共通 system prompt は挿入しない。
 `Folder Context` は毎 turn system 側へ置き、実行 workspace、Main Process が解決した SessionFolder、実効 Additional Directories 一覧だけを明示する。Character、`Output Boundary`、`Tool Call Presence` の安定した section の後ろ、turn ごとに変動する `Character Affect Context` の前に置き、folder 値が変わっても固定 system prefix の再利用を保ちやすくする。各 directory の利用方針は repository instruction、filesystem access grant は provider adapter と既存 allowlist が所有し、Folder Context に説明文を重ねない。
 provider に渡す `Character Definition Snapshot` では、snapshot の取得時点説明を prompt 本体には入れない。保存済み snapshot の frontmatter は除外し、Character 名と説明を metadata として示したうえで、`character.md` 本文だけを markdown block として囲む。Character section の固定説明は、話し方への反映と coding agent 境界の guard に絞る。
-通常 session / companion では Character section の直後に `Output Boundary` を置き、Character 定義の適用先をユーザー向け自然言語レスポンスへ限定する。コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary は、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜず、repository instruction、既存文体、対象ファイルの目的を優先する。
-通常 session / companion では `Output Boundary` の直後に `Tool Call Presence` を置き、tool call や command 実行前に短い自然言語レスポンスを返すことで、Character が無言のまま作業へ入ったように見える体験を避ける。
+通常 session / companion で Character snapshot が存在する場合は `Output Boundary` を system 側に置き、Character section が有効ならその直後に置いて、Character 定義の適用先をユーザー向け自然言語レスポンスへ限定する。コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary は、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜず、repository instruction、既存文体、対象ファイルの目的を優先する。
+通常 session / companion で Character snapshot が存在し、設定が有効な場合は `Output Boundary` の直後に `Tool Call Presence` を置き、tool call や command 実行前に短い自然言語レスポンスを返すことで、Character が無言のまま作業へ入ったように見える体験を避ける。
 Character Contextを取得できたturnでは、turnごとに変動する`Character Affect Context`を固定のCharacter section、`Output Boundary`、`Tool Call Presence`より後ろへ置く。providerが再利用できる固定prefixを先に保ち、Affectの意味や内容は変更しない。
 通常 session では可変な `Conversation Timing` を input 側の `User Input` 直前に置く。Copilotの`session.systemMessage`へは入れず、Codexのlogical promptとCopilotの`session.send.prompt`から同じ論理sectionを監査できるようにする。Auxiliary、Companion、`character-authoring` sessionには注入しない。
 `character-authoring` session は `character.md` / `character-notes.md` 自体が成果物なので、`Output Boundary`、`Tool Call Presence`、coding agent 境界の固定 guard を注入しない。
@@ -113,8 +113,7 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 
 論理 prompt では `Folder Context` section を Character、`Output Boundary`、`Tool Call Presence` の後ろ、`Character Affect Context` の前に置く。Character section がない場合は system 側の先頭になる。`Workspace` は `resolveRunWorkspacePath` の実行値、`SessionFolder` は `session-files.ts` を経由して Main Process が解決した値、`Additional Directories` は実行 workspace を基準に `normalizeAllowedAdditionalDirectories` で正規化した値を使う。空の Additional Directories は `なし`、取得できない path は `利用不可` と明示する。
 論理 prompt では `Character Definition Snapshot` section が有効な場合に system 側へ置く。
-通常 session / companion では `Output Boundary` section も system 側に置く。`character-authoring` session では置かない。
-通常 session / companion では `Tool Call Presence` section も system 側に置く。`character-authoring` session では置かない。
+通常 session / companion では Character snapshot が存在する場合に `Output Boundary` section を system 側に置き、`Tool Call Presence` は対応する設定が有効な場合だけ置く。`character-authoring` session ではどちらも置かない。
 Character Contextを取得できたturnでは、`Character Affect Context` sectionをsystem側の固定sectionより後ろに置く。
 通常 session では `Conversation Timing` sectionをinput側の`User Input`直前に置く。値の解決は`src-electron/conversation-timing.ts`、sectionの合成は`src-electron/provider-prompt.ts`を参照する。
 
@@ -236,9 +235,9 @@ Character Contextを取得できたturnでは、`Character Affect Context` secti
 
 - 固定的な Mate 定義は provider instruction sync 側へ移す
 - turn prompt の可変部分は `# User Input` と添付 reference に寄せる
-- `CharacterRuntimeSnapshot`、`Output Boundary`、`Tool Call Presence` を system 側の先頭に保ち、その直後に `Folder Context` を置く
+- 有効な `CharacterRuntimeSnapshot` と、Character snapshot がある場合の `Output Boundary` / 有効な `Tool Call Presence` を system 側の先頭に保ち、その直後に `Folder Context` を置く
 - `Folder Context` は同じ Session で通常は安定するが、実行 workspace や Additional Directories が変わっても固定 prefix の後ろで差分になるようにする
-- `Tool Call Presence` または `Character Affect Context` の切替で system 本文が変わる場合、Copilot の既存 `systemMessage` settings key によって session cache を分ける。`Conversation Timing` は input 側のため cache key に含めない
+- `Character Definition`、`Tool Call Presence`、または `Character Affect Context` の切替で system 本文が変わる場合、Copilot の既存 `systemMessage` settings key によって session cache を分ける。`Conversation Timing` は input 側のため cache key に含めない
 
 固定 Character section と Folder Context を user input / timing / Affect より前に置き、provider が再利用できる prefix を保つ。Folder Context は固定 Character section の後ろへ置くことで、folder 値の変更が固定 prefix 全体を無効化しにくい。Mate 定義全文と Memory section を毎 turn prompt から外すことで、短い依頼での token 消費も抑える。ただし provider instruction file が provider context として読まれる場合、token 消費が完全にゼロになるわけではない。
 

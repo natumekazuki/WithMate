@@ -25,7 +25,7 @@
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. 独立した `Settings Window` が開く
-3. Session 表示設定、microcopy、coding provider の enable / disable と provider file settings を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
+3. Session 表示設定、Prompt Context の4項目、microcopy、coding provider の enable / disable と provider file settings を編集して保存する。Prompt Context の各項目の説明は、項目右側の Help icon を hover / focus / click で確認できる。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
 4. 結果は window 内の短いフィードバックで返す
 
 ## Layout
@@ -38,7 +38,7 @@
   - `Session Window`
     - `送信後に Action Dock を自動で閉じる`
   - `Prompt Context`
-    - `Character の話し方・反応（Character Definition）`
+    - `Character の定義（名前・説明・本文）`
     - `会話の雰囲気・関連情報（Character Affect Context）`
     - `会話の時間情報（Conversation Timing）`
     - `作業開始前の短い応答（Tool Call Presence）`
@@ -65,12 +65,12 @@
 ## Current Scope
 
 - `Session Window` の `送信後に Action Dock を自動で閉じる` の保存
-- `Prompt Context` の4項目を個別に保存し、既定値はすべて有効とする。保存後の次の turn から対象の foreground provider prompt 注入を切り替える。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
+- `Prompt Context` の4項目を個別に保存し、既定値はすべて有効とする。保存後の次の turn から対象の foreground provider prompt 注入を切り替える。各項目の補足は常設せず、行ごとの Help icon から確認できる。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
   - `Character Definition` は Character の名前・説明・`character.md` 本文を切り替える。OFFでも通常 session / companion の Character snapshot に対する `Output Boundary` は残す
   - `Character Affect Context` は system 側の該当 section と通常 session の context 取得を切り替える。turn後のBackground Affect評価・保存には影響しない
   - `Conversation Timing` は input 側の該当 section と通常 session の timing 取得を切り替える
   - `Tool Call Presence` は既存の通常 session / companion の character snapshot 境界内で該当 section を切り替える。`character-authoring` には注入しない
-- `Conversation Timing` は Copilot の system session cache を変えず、system 側の2項目は合成された system message の変更として扱う
+- `Conversation Timing` は Copilot の system session cache を変えず、system 側の3項目は合成された system message の変更として扱う
 - `PC 起動時に WithMate をバックグラウンドで起動する` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
 - coding provider ごとの provider file settings

@@ -116,15 +116,15 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Settings は foreground prompt context の4項目を個別 checkbox として表示し、既定値を checked にする"
-  // oracle = { type = "contract", ref = "Prompt context settings UI" }
-  // fault = "設定項目の説明または4つの checkbox が表示されず、初期状態が注入有効と一致しない"
-  // observable = "HomeSettingsContent の static markup にある Prompt Context labels と checkbox state"
+  // claim = "Settings は foreground prompt context の4項目を個別 checkbox とHelp入口として表示し、既定値を checked にする"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
+  // fault = "設定項目のlabelまたはHelp本文、4つの checkbox が表示されず、初期状態が注入有効と一致しない"
+  // observable = "HomeSettingsContent の static markup にある Prompt Context labels、checkbox state、閉じたHelp入口と説明参照"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-prompt-context-ui"
   // lifecycle = "permanent"
   // impact = "ユーザーが4つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
-  // distinction = "個別 state/action の確認は draft test に分け、新規 section のラベルと checked 数を確認する"
+  // distinction = "個別 state/action の確認は draft test に分け、常設説明なしのラベル、checked 数、項目ごとのHelp参照を確認する"
   // @end-test-value
   it("Prompt Context に4項目の個別 toggle を既定有効で表示する", () => {
     const html = renderSettings();
@@ -134,15 +134,17 @@ describe("HomeSettingsContent", () => {
 
     assert.ok(promptContextSection);
     assert.equal(promptContextSection.querySelector("strong")?.textContent, "Prompt Context");
-    assert.ok(promptContextSection.textContent?.includes("Character の話し方・反応（Character Definition）"));
+    assert.ok(promptContextSection.textContent?.includes("Character の定義（名前・説明・本文）"));
     assert.ok(promptContextSection.textContent?.includes("会話の時間情報（Conversation Timing）"));
     assert.ok(promptContextSection.textContent?.includes("作業開始前の短い応答（Tool Call Presence）"));
     assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, 4);
     assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, 4);
-    assert.ok(promptContextSection.textContent?.includes("保存後の次のターンから provider への注入を切り替える"));
+    assert.equal(promptContextSection.querySelectorAll(".settings-help").length, 0);
+    assert.equal(promptContextSection.querySelectorAll(".settings-field-help-icon").length, 4);
+    assert.equal(promptContextSection.querySelectorAll(".settings-field-help-icon[open]").length, 0);
 
     const promptContextFields = [
-      ["characterDefinitionEnabled", "Character の話し方・反応（Character Definition）"],
+      ["characterDefinitionEnabled", "Character の定義（名前・説明・本文）"],
       ["characterAffectContextEnabled", "会話の雰囲気・関連情報（Character Affect Context）"],
       ["conversationTimingEnabled", "会話の時間情報（Conversation Timing）"],
       ["toolCallPresenceEnabled", "作業開始前の短い応答（Tool Call Presence）"],
@@ -153,11 +155,18 @@ describe("HomeSettingsContent", () => {
       })).window.document;
       const disabledSection = Array.from(disabledDocument.querySelectorAll("section.settings-section-card"))
         .find((section) => section.textContent?.includes(labelText));
-      const fieldLabel = Array.from(disabledSection?.querySelectorAll("label") ?? [])
-        .find((label) => label.textContent?.includes(labelText));
+      const fieldRow = Array.from(disabledSection?.querySelectorAll(".settings-provider-toggle-row") ?? [])
+        .find((row) => row.textContent?.includes(labelText));
 
-      assert.equal(fieldLabel?.querySelector<HTMLInputElement>("input")?.checked, false);
+      assert.equal(fieldRow?.querySelector<HTMLInputElement>("input")?.checked, false);
       assert.equal(disabledSection?.querySelectorAll('input[type="checkbox"]:checked').length, 3);
+    }
+
+    for (const input of Array.from(promptContextSection.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) {
+      const helpId = input.getAttribute("aria-describedby");
+      assert.ok(helpId);
+      assert.ok(document.getElementById(helpId)?.textContent?.trim());
+      assert.equal(input.closest(".settings-provider-toggle-row")?.querySelector("summary")?.getAttribute("aria-describedby"), helpId);
     }
   });
 

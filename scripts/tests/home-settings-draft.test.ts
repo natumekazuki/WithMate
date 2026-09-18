@@ -10,9 +10,6 @@ import {
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
   updateAutoCollapseActionDockOnSend,
-  updateCharacterAffectContextEnabled,
-  updateCharacterDefinitionEnabled,
-  updateConversationTimingEnabled,
   updateScrollToLatestOnSend,
   updateCodingProviderApiKey,
   updateCodingProviderApiKeyDraft,
@@ -37,7 +34,6 @@ import {
   updateMemoryGenerationEnabled,
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
-  updateToolCallPresenceEnabled,
   updateMateMemoryGenerationTriggerIntervalMinutesDraft,
   updateMateMemoryGenerationPriorityProviderDraft,
   updateMateMemoryGenerationPriorityModelDraft,
@@ -49,9 +45,6 @@ import {
 } from "../../src/settings/settings-draft.js";
 import {
   handleChangeAutoCollapseActionDockOnSend as handleChangeAutoCollapseActionDockOnSendAction,
-  handleChangeCharacterAffectContextEnabled as handleChangeCharacterAffectContextEnabledAction,
-  handleChangeCharacterDefinitionEnabled as handleChangeCharacterDefinitionEnabledAction,
-  handleChangeConversationTimingEnabled as handleChangeConversationTimingEnabledAction,
   handleChangeMateMemoryGenerationPriorityModel as handleChangeMateMemoryGenerationPriorityModelAction,
   handleChangeMateMemoryGenerationPriorityProvider as handleChangeMateMemoryGenerationPriorityProviderAction,
   handleChangeMateMemoryGenerationPriorityReasoningEffort as handleChangeMateMemoryGenerationPriorityReasoningEffortAction,
@@ -69,11 +62,11 @@ import {
   handleChangeProviderSkillRootPath as handleChangeProviderSkillRootPathAction,
   handleChangeSessionTurnNotificationEnabled as handleChangeSessionTurnNotificationEnabledAction,
   handleChangeSessionTurnNotificationResponsePreviewEnabled as handleChangeSessionTurnNotificationResponsePreviewEnabledAction,
-  handleChangeToolCallPresenceEnabled as handleChangeToolCallPresenceEnabledAction,
   handleChangeUserMicrocopySlot as handleChangeUserMicrocopySlotAction,
   handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
   handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
 } from "../../src/settings/settings-draft-actions.js";
+import { buildSettingsDraftHandlers } from "../../src/settings/settings-draft-handlers.js";
 
 const providerCatalog: ModelCatalogProvider = {
   id: "codex",
@@ -313,79 +306,69 @@ describe("home-settings-draft", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Settings の foreground prompt context 4項目は独立した draft/action 更新として false を保持する"
-  // oracle = { type = "contract", ref = "Prompt context settings UI" }
-  // fault = "4つの checkbox が同じ state を更新するか、保存前 draft に false が残らない"
-  // observable = "純粋な draft 更新結果と action handler 適用後の AppSettings"
+  // claim = "Home Settings の foreground prompt context 4項目の handler は、他の3つのPrompt Context値を保持したまま対象draftだけを更新する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "4つの checkbox handler が同じ state を更新するか、対象以外のPrompt Context値をdraftで巻き戻す"
+  // observable = "buildSettingsDraftHandlers 経由で checkbox handler を適用した AppSettings"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-prompt-context-draft"
   // lifecycle = "permanent"
   // impact = "Settings で個別に切り替えた値が保存 payload へ届かない"
-  // distinction = "pure updater と UI action wrapper の両方で4項目を別々に検証する"
+  // distinction = "混在した初期draftに実配線のhandlerを通し、checkboxから保存draftへ値が届く境界を確認する"
   // @end-test-value
-  it("foreground prompt context の draft と action を項目ごとに toggle できる", () => {
-    const draft = createDefaultAppSettings();
-    const characterDefinitionNext = updateCharacterDefinitionEnabled(draft, false);
-    const affectNext = updateCharacterAffectContextEnabled(draft, false);
-    const timingNext = updateConversationTimingEnabled(draft, false);
-    const toolCallNext = updateToolCallPresenceEnabled(draft, false);
+  it("foreground prompt context の handler を項目ごとに toggle できる", () => {
+    const promptContextFields = [
+      "characterDefinitionEnabled",
+      "characterAffectContextEnabled",
+      "conversationTimingEnabled",
+      "toolCallPresenceEnabled",
+    ] as const;
+    const initialDraft = {
+      ...createDefaultAppSettings(),
+      characterDefinitionEnabled: true,
+      characterAffectContextEnabled: false,
+      conversationTimingEnabled: true,
+      toolCallPresenceEnabled: false,
+    };
+    const scenarios = [
+      {
+        field: "characterDefinitionEnabled",
+        value: false,
+        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
+          handlers.onChangeCharacterDefinitionEnabled(false),
+      },
+      {
+        field: "characterAffectContextEnabled",
+        value: true,
+        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
+          handlers.onChangeCharacterAffectContextEnabled(true),
+      },
+      {
+        field: "conversationTimingEnabled",
+        value: false,
+        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
+          handlers.onChangeConversationTimingEnabled(false),
+      },
+      {
+        field: "toolCallPresenceEnabled",
+        value: true,
+        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
+          handlers.onChangeToolCallPresenceEnabled(true),
+      },
+    ] as const;
 
-    assert.equal(characterDefinitionNext.characterDefinitionEnabled, false);
-    assert.equal(characterDefinitionNext.characterAffectContextEnabled, true);
-    assert.equal(characterDefinitionNext.conversationTimingEnabled, true);
-    assert.equal(characterDefinitionNext.toolCallPresenceEnabled, true);
-    assert.equal(affectNext.characterAffectContextEnabled, false);
-    assert.equal(affectNext.characterDefinitionEnabled, true);
-    assert.equal(affectNext.conversationTimingEnabled, true);
-    assert.equal(affectNext.toolCallPresenceEnabled, true);
-    assert.equal(timingNext.characterAffectContextEnabled, true);
-    assert.equal(timingNext.characterDefinitionEnabled, true);
-    assert.equal(timingNext.conversationTimingEnabled, false);
-    assert.equal(timingNext.toolCallPresenceEnabled, true);
-    assert.equal(toolCallNext.characterAffectContextEnabled, true);
-    assert.equal(toolCallNext.characterDefinitionEnabled, true);
-    assert.equal(toolCallNext.conversationTimingEnabled, true);
-    assert.equal(toolCallNext.toolCallPresenceEnabled, false);
+    for (const scenario of scenarios) {
+      const state = createDraftTracker(initialDraft);
+      const handlers = buildSettingsDraftHandlers({ setSettingsDraft: state.setSettingsDraft });
+      scenario.apply(handlers);
 
-    const affectState = createDraftTracker();
-    handleChangeCharacterAffectContextEnabledAction({
-      enabled: false,
-      setSettingsDraft: affectState.setSettingsDraft,
-    });
-    assert.equal(affectState.draft.characterAffectContextEnabled, false);
-    assert.equal(affectState.draft.characterDefinitionEnabled, true);
-    assert.equal(affectState.draft.conversationTimingEnabled, true);
-    assert.equal(affectState.draft.toolCallPresenceEnabled, true);
-
-    const timingState = createDraftTracker();
-    handleChangeConversationTimingEnabledAction({
-      enabled: false,
-      setSettingsDraft: timingState.setSettingsDraft,
-    });
-    assert.equal(timingState.draft.characterAffectContextEnabled, true);
-    assert.equal(timingState.draft.characterDefinitionEnabled, true);
-    assert.equal(timingState.draft.conversationTimingEnabled, false);
-    assert.equal(timingState.draft.toolCallPresenceEnabled, true);
-
-    const toolCallState = createDraftTracker();
-    handleChangeToolCallPresenceEnabledAction({
-      enabled: false,
-      setSettingsDraft: toolCallState.setSettingsDraft,
-    });
-    assert.equal(toolCallState.draft.characterAffectContextEnabled, true);
-    assert.equal(toolCallState.draft.characterDefinitionEnabled, true);
-    assert.equal(toolCallState.draft.conversationTimingEnabled, true);
-    assert.equal(toolCallState.draft.toolCallPresenceEnabled, false);
-
-    const characterDefinitionState = createDraftTracker();
-    handleChangeCharacterDefinitionEnabledAction({
-      enabled: false,
-      setSettingsDraft: characterDefinitionState.setSettingsDraft,
-    });
-    assert.equal(characterDefinitionState.draft.characterDefinitionEnabled, false);
-    assert.equal(characterDefinitionState.draft.characterAffectContextEnabled, true);
-    assert.equal(characterDefinitionState.draft.conversationTimingEnabled, true);
-    assert.equal(characterDefinitionState.draft.toolCallPresenceEnabled, true);
+      assert.equal(state.draft[scenario.field], scenario.value);
+      for (const field of promptContextFields) {
+        if (field !== scenario.field) {
+          assert.equal(state.draft[field], initialDraft[field]);
+        }
+      }
+    }
   });
 
   it("memory file quota は MB 入力から bytes の draft に変換する", () => {

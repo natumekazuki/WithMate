@@ -14,8 +14,11 @@ import {
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
   SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL,
+  SETTINGS_CHARACTER_AFFECT_CONTEXT_HELP,
   SETTINGS_CHARACTER_DEFINITION_LABEL,
+  SETTINGS_CHARACTER_DEFINITION_HELP,
   SETTINGS_CONVERSATION_TIMING_LABEL,
+  SETTINGS_CONVERSATION_TIMING_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
@@ -36,11 +39,11 @@ import {
   SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER,
   SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL,
   SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER,
-  SETTINGS_PROMPT_CONTEXT_HELP,
   SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
   SETTINGS_TOOL_CALL_PRESENCE_LABEL,
+  SETTINGS_TOOL_CALL_PRESENCE_HELP,
 } from "./settings-ui.js";
 import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
 
@@ -109,6 +112,50 @@ const microcopyTextareaValue = (value: AppSettings["userMicrocopyCatalog"][Micro
 
   return (value ?? []).join("\n");
 };
+
+type SettingsFieldHelpProps = {
+  label: string;
+  text: string;
+  helpId: string;
+};
+
+function SettingsFieldHelp({ label, text, helpId }: SettingsFieldHelpProps) {
+  return (
+    <details className="settings-inline-help settings-field-help-icon">
+      <summary aria-label={`${label}のヘルプ`} aria-describedby={helpId}>?</summary>
+      <div id={helpId} role="tooltip">
+        <p>{text}</p>
+      </div>
+    </details>
+  );
+}
+
+type PromptContextToggleProps = {
+  id: string;
+  label: string;
+  help: string;
+  checked: boolean;
+  onChange: (enabled: boolean) => void;
+};
+
+function PromptContextToggle({ id, label, help, checked, onChange }: PromptContextToggleProps) {
+  const helpId = `${id}-help`;
+  return (
+    <div className="settings-provider-toggle-row settings-section-toggle">
+      <div className="settings-field-label-with-help">
+        <label className="settings-provider-name" htmlFor={id}>{label}</label>
+        <SettingsFieldHelp label={label} text={help} helpId={helpId} />
+      </div>
+      <input
+        id={id}
+        type="checkbox"
+        aria-describedby={helpId}
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </div>
+  );
+}
 
 export function HomeSettingsContent({
   settingsDraft,
@@ -212,39 +259,34 @@ export function HomeSettingsContent({
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>Prompt Context</strong>
-              <p className="settings-help">{SETTINGS_PROMPT_CONTEXT_HELP}</p>
-              <label className="settings-provider-toggle-row settings-section-toggle">
-                <span className="settings-provider-name">{SETTINGS_CHARACTER_DEFINITION_LABEL}</span>
-                <input
-                  type="checkbox"
-                  checked={settingsDraft.characterDefinitionEnabled}
-                  onChange={(event) => onChangeCharacterDefinitionEnabled(event.target.checked)}
-                />
-              </label>
-              <label className="settings-provider-toggle-row settings-section-toggle">
-                <span className="settings-provider-name">{SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL}</span>
-                <input
-                  type="checkbox"
-                  checked={settingsDraft.characterAffectContextEnabled}
-                  onChange={(event) => onChangeCharacterAffectContextEnabled(event.target.checked)}
-                />
-              </label>
-              <label className="settings-provider-toggle-row settings-section-toggle">
-                <span className="settings-provider-name">{SETTINGS_CONVERSATION_TIMING_LABEL}</span>
-                <input
-                  type="checkbox"
-                  checked={settingsDraft.conversationTimingEnabled}
-                  onChange={(event) => onChangeConversationTimingEnabled(event.target.checked)}
-                />
-              </label>
-              <label className="settings-provider-toggle-row settings-section-toggle">
-                <span className="settings-provider-name">{SETTINGS_TOOL_CALL_PRESENCE_LABEL}</span>
-                <input
-                  type="checkbox"
-                  checked={settingsDraft.toolCallPresenceEnabled}
-                  onChange={(event) => onChangeToolCallPresenceEnabled(event.target.checked)}
-                />
-              </label>
+              <PromptContextToggle
+                id="settings-prompt-context-character-definition"
+                label={SETTINGS_CHARACTER_DEFINITION_LABEL}
+                help={SETTINGS_CHARACTER_DEFINITION_HELP}
+                checked={settingsDraft.characterDefinitionEnabled}
+                onChange={onChangeCharacterDefinitionEnabled}
+              />
+              <PromptContextToggle
+                id="settings-prompt-context-character-affect"
+                label={SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL}
+                help={SETTINGS_CHARACTER_AFFECT_CONTEXT_HELP}
+                checked={settingsDraft.characterAffectContextEnabled}
+                onChange={onChangeCharacterAffectContextEnabled}
+              />
+              <PromptContextToggle
+                id="settings-prompt-context-conversation-timing"
+                label={SETTINGS_CONVERSATION_TIMING_LABEL}
+                help={SETTINGS_CONVERSATION_TIMING_HELP}
+                checked={settingsDraft.conversationTimingEnabled}
+                onChange={onChangeConversationTimingEnabled}
+              />
+              <PromptContextToggle
+                id="settings-prompt-context-tool-call-presence"
+                label={SETTINGS_TOOL_CALL_PRESENCE_LABEL}
+                help={SETTINGS_TOOL_CALL_PRESENCE_HELP}
+                checked={settingsDraft.toolCallPresenceEnabled}
+                onChange={onChangeToolCallPresenceEnabled}
+              />
             </div>
           </section>
 

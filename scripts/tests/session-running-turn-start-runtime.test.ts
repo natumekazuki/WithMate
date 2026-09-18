@@ -137,13 +137,13 @@ function createAdapter(runSessionTurn: ProviderCodingAdapter["runSessionTurn"]):
 // @test-value v2
 // kind = "invariant"
 // claim = "foreground prompt context が無効な turn では timing / affect resolver を呼ばず、provider prompt へ context を渡さない"
-// oracle = { type = "contract", ref = "Prompt context settings" }
-// fault = "表示しない context のために保存・Memory resolver を実行し、provider prompt へ古い context を渡す"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+// fault = "表示しない context のために foreground resolver を実行し、provider prompt へ古い context を渡す"
 // observable = "resolver call count と ProviderCodingAdapter.composePrompt の入力"
 // observation_boundary = "consumer"
 // scope = "session-runtime-prompt-context-resolution"
 // lifecycle = "permanent"
-// impact = "OFF設定でも不要な取得・privacy projection・token 注入が発生する"
+// impact = "OFF設定でも不要な foreground context 取得・provider prompt への token 注入が発生する"
 // distinction = "provider prompt の section omission だけでなく、turn開始時の resolver 呼び出し境界を確認する"
 // @end-test-value
 it("foreground prompt context が無効な turn では不要な resolver を呼ばない", async () => {
@@ -194,11 +194,32 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
   const runWithSettings = async (appSettings: ReturnType<typeof normalizeAppSettings>) => {
     let timingCalls = 0;
     let affectCalls = 0;
+    let composedInput: RunSessionTurnInput | null = null;
+    const timingContext = {
+      observedAt: "2026-09-19T04:00:00.000+09:00",
+      observedDayOfWeek: "saturday",
+      currentSession: null,
+      sameCharacterOtherSession: null,
+      sameCharacterSharedWork: null,
+    } satisfies NonNullable<RunSessionTurnInput["conversationTimingContext"]>;
+    const characterContext = {
+      schemaVersion: "withmate-character-context-v1",
+      baseline: { definitionSha256: "sentinel-definition", snapshotAt: "2026-09-19T04:00:00.000Z" },
+      affect: {
+        mode: "active",
+        effective: [],
+        evaluatedAt: "2026-09-19T04:00:00.000Z",
+        version: "sentinel-affect",
+        updatedAt: null,
+      },
+      memory: { items: [], updatedAt: null },
+    } satisfies NonNullable<RunSessionTurnInput["characterContext"]>;
     const partialAdapter: ProviderCodingAdapter = {
       ...createAdapter(async () => {
         throw new Error("provider stopped for resolver gate test");
       }),
-      composePrompt() {
+      composePrompt(input) {
+        composedInput = input;
         return {
           systemBodyText: "system",
           inputBodyText: "input",
@@ -212,17 +233,18 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
       getAppSettings: () => appSettings,
       resolveConversationTimingContext() {
         timingCalls += 1;
-        return null;
+        return timingContext;
       },
       resolveCharacterContext() {
         affectCalls += 1;
-        return null;
+        return characterContext;
       },
     }));
 
     const partialResult = await partialService.runSessionTurn(session.id, { userMessage: "お願い" });
     assert.equal(partialResult.runState, "error");
-    return { timingCalls, affectCalls };
+    assert.ok(composedInput);
+    return { timingCalls, affectCalls, composedInput };
   };
   const timingOff = await runWithSettings({
     ...normalizeAppSettings({}),
@@ -235,8 +257,14 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
     conversationTimingEnabled: true,
   });
 
-  assert.deepEqual(timingOff, { timingCalls: 0, affectCalls: 1 });
-  assert.deepEqual(affectOff, { timingCalls: 1, affectCalls: 0 });
+  assert.equal(timingOff.timingCalls, 0);
+  assert.equal(timingOff.affectCalls, 1);
+  assert.equal(timingOff.composedInput.conversationTimingContext, undefined);
+  assert.equal(timingOff.composedInput.characterContext?.affect.version, "sentinel-affect");
+  assert.equal(affectOff.timingCalls, 1);
+  assert.equal(affectOff.affectCalls, 0);
+  assert.equal(affectOff.composedInput.conversationTimingContext?.observedAt, "2026-09-19T04:00:00.000+09:00");
+  assert.equal(affectOff.composedInput.characterContext, undefined);
 });
 
 // @test-value v1
