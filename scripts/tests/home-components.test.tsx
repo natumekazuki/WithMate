@@ -993,10 +993,10 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorの親カードはavatarとtitleを1行目、Mainを独立した状態iconとして2行目へ表示し、Auxiliaryが存在する親だけ集約を追加する"
-  // oracle = { type = "contract", ref = "issue-722 monitor two-row aggregate rendering" }
-  // fault = "workspaceを常設する、Main/Auxiliaryの状態表示を混同する、Auxiliaryなしの親へ集約を出す、またはavatar/titleが欠落する"
-  // observable = "親cardごとの2行構造、Main/Auxiliary status cluster、状態icon、avatar、title、未展開時のAuxiliary detail rowの不在"
+  // claim = "Home Monitorの親カードはavatarとtitleを1行目、Mainを独立した状態iconとして2行目へ表示し、Auxiliaryが存在する親だけ状態集約と1件からの件数を追加する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
+  // fault = "workspaceを常設する、Main/Auxiliaryの状態表示を混同する、Auxiliaryなしの親へ集約を出す、状態別件数を1件だけ省略する、またはavatar/titleが欠落する"
+  // observable = "親cardごとの2行構造、Main/Auxiliary status cluster、状態iconと件数aria-label、avatar、title、未展開時のAuxiliary detail rowの不在"
   // observation_boundary = "component-behavior"
   // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
@@ -1095,10 +1095,59 @@ describe("HomeMonitorContent", () => {
     assert.equal(html.match(/aria-label="Main 実行中"/g)?.length, 2);
     assert.equal(html.match(/aria-label="Main 待機"/g)?.length, 1);
     assert.ok(html.includes('aria-label="Main 中断"'));
-    assert.ok(html.includes('aria-label="Auxiliary 終了"'));
+    assert.ok(html.includes('aria-label="Auxiliary エラー 1件"'));
+    assert.ok(html.includes('aria-label="Auxiliary 終了 1件"'));
     assert.ok(html.includes('aria-label="Companion Reviewを開く: Companion task"'));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 4);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 4);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "閉じたHome MonitorカードはAuxiliaryの実行中と待機の件数を1件から表示し、両方を同時に読み取れる"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
+  // fault = "count=1のAuxiliary状態から件数表示とaccessible nameを省略し、3件と1件の組合せで非実行中の存在を判別できない"
+  // observable = "閉じた親cardのAuxiliary status iconに描画された可視件数、aria-label、Auxiliary一覧の不在"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent collapsed auxiliary status summary"
+  // lifecycle = "permanent"
+  // impact = "親カードを展開しなくても、Auxiliaryの実行中3件と待機1件を正しく把握できる"
+  // distinction = "projectionのAuxiliary全件保持ではなく、折りたたみ時のstatus iconの可視テキストとaccessible nameを直接確認する"
+  // @end-test-value
+  it("閉じたMonitorカードでもAuxiliaryの状態別件数を1件から表示する", () => {
+    const auxiliarySessions = [
+      createMonitorAuxiliary("aux-running-1", { runState: "running" }),
+      createMonitorAuxiliary("aux-running-2", { runState: "running" }),
+      createMonitorAuxiliary("aux-running-3", { runState: "running" }),
+      createMonitorAuxiliary("aux-idle", { runState: "idle" }),
+    ];
+    const entry: HomeMonitorEntry = {
+      kind: "agent",
+      session: createMonitorSession("session-count-summary", "Count summary task"),
+      state: { kind: "running", label: "実行中" },
+      mainState: { kind: "neutral", label: "待機" },
+      auxiliarySessions,
+    };
+    const html = renderToStaticMarkup(
+      <HomeMonitorContent
+        runningEntries={[entry]}
+        nonRunningEntries={[]}
+        onOpenSession={noOp}
+        onOpenCompanionReview={noOp}
+        onShowContextMenu={noOp}
+      />,
+    );
+    const document = new JSDOM(html).window.document;
+    const card = document.querySelector(".home-monitor-card");
+    const auxiliaryStatus = card?.querySelector(".home-monitor-auxiliary-status");
+    const runningIcon = auxiliaryStatus?.querySelector(".home-monitor-status-icon.running");
+    const idleIcon = auxiliaryStatus?.querySelector(".home-monitor-status-icon.neutral");
+
+    assert.equal(card?.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
+    assert.equal(runningIcon?.querySelector(".home-monitor-status-icon-count")?.textContent, ": 3");
+    assert.equal(idleIcon?.querySelector(".home-monitor-status-icon-count")?.textContent, ": 1");
+    assert.equal(runningIcon?.getAttribute("aria-label"), "Auxiliary 実行中 3件");
+    assert.equal(idleIcon?.getAttribute("aria-label"), "Auxiliary 待機 1件");
   });
 
   // @test-value v2

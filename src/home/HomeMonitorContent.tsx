@@ -57,9 +57,9 @@ function MonitorStatusIcon({
   count?: number;
 }) {
   return (
-    <span className={`home-monitor-status-icon ${kind}`} aria-label={count && count > 1 ? `${label} ${count}件` : label}>
+    <span className={`home-monitor-status-icon ${kind}`} aria-label={count === undefined ? label : `${label} ${count}件`}>
       <span className="home-monitor-status-icon-mark" aria-hidden="true" />
-      {count && count > 1 ? <span className="home-monitor-status-icon-count">: {count}</span> : null}
+      {count === undefined ? null : <span className="home-monitor-status-icon-count">: {count}</span>}
     </span>
   );
 }
