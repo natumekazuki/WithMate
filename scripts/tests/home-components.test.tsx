@@ -116,15 +116,15 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Settings は Prompt Context の4つの注入section名を個別 checkbox と行内Help iconへの参照として表示し、既定値を checked にする"
+  // claim = "Settings は Prompt Context の4つの注入section名を個別 checkbox として表示し、既定値を checked にする"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout and #current-scope" }
-  // fault = "注入section名の表示、checkbox、行内Helpへの参照、または既定状態が契約と一致しない"
-  // observable = "HomeSettingsContent の static markup にある各label、checkbox state、focus可能なHelp icon、aria-describedby から同一行tooltipへの参照関係"
+  // fault = "注入section名の表示、checkbox、または既定状態が契約と一致しない"
+  // observable = "HomeSettingsContent の static markup にある各label と checkbox state"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-prompt-context-ui"
   // lifecycle = "permanent"
   // impact = "ユーザーが4つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
-  // distinction = "個別 state/action の保存handlerは draft test に分け、static DOMではsection label、既定state、focus可能なHelp icon、各checkboxと同一行tooltipの参照だけを確認する。hover/focusによる表示はlive renderの確認範囲とする"
+  // distinction = "個別 state/action の保存handlerは draft test に分け、static DOMではsection labelと既定stateだけを確認する"
   // @end-test-value
   it("Prompt Context に4項目の個別 toggle を既定有効で表示する", () => {
     const html = renderSettings();
@@ -148,29 +148,15 @@ describe("HomeSettingsContent", () => {
       promptContextLabels,
     );
 
-    const helpIds = new Set<string>();
     for (const row of promptContextRows) {
       const label = row.querySelector<HTMLLabelElement>("label.settings-provider-name");
       const input = row.querySelector<HTMLInputElement>('input[type="checkbox"]');
-      const helpIcon = row.querySelector<HTMLElement>(".settings-field-help-icon");
 
       assert.ok(label);
       assert.ok(input);
       assert.equal(input.checked, true);
       assert.equal(label.htmlFor, input.id);
-      assert.ok(row);
-      assert.ok(helpIcon);
-      assert.equal(helpIcon.tabIndex, 0);
-      assert.ok(helpIcon.getAttribute("aria-label"));
-      const helpId = input.getAttribute("aria-describedby");
-      assert.ok(helpId);
-      helpIds.add(helpId);
-      const help = document.getElementById(helpId);
-      assert.ok(help?.textContent?.trim());
-      assert.equal(help?.getAttribute("role"), "tooltip");
-      assert.ok(row.contains(help));
     }
-    assert.equal(helpIds.size, promptContextLabels.length);
     assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, promptContextLabels.length);
     assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, promptContextLabels.length);
   });

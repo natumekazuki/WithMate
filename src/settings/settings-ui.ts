@@ -39,10 +39,6 @@ export const SETTINGS_CHARACTER_DEFINITION_LABEL = "Character Definition Snapsho
 export const SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL = "Character Affect Context";
 export const SETTINGS_CONVERSATION_TIMING_LABEL = "Conversation Timing";
 export const SETTINGS_TOOL_CALL_PRESENCE_LABEL = "Tool Call Presence";
-export const SETTINGS_CHARACTER_DEFINITION_HELP = "Character Definition Snapshot を注入。";
-export const SETTINGS_CHARACTER_AFFECT_CONTEXT_HELP = "Character Affect Context を注入。";
-export const SETTINGS_CONVERSATION_TIMING_HELP = "Conversation Timing を注入。";
-export const SETTINGS_TOOL_CALL_PRESENCE_HELP = "Tool Call Presence を注入。";
 export const SETTINGS_MEMORY_FILE_QUOTA_LABEL = "Memory file quota";
 export const SETTINGS_MEMORY_FILE_QUOTA_HELP =
   "Protected Object の全体容量上限。現在使用量が上限を超えている場合、新しい file append は失敗する。";
