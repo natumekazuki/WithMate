@@ -1737,7 +1737,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     })(recipe);
   }
 
-
   async function handleAuxiliaryDraftChange(value: string, selectionStart: number): Promise<void> {
     const withmateApi = getWithMateApi();
     await runAuxiliaryDraftChangeAndSaveOperation({

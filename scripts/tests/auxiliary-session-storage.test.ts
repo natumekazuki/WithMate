@@ -373,14 +373,53 @@ test("AuxiliarySessionStorage は軽量summaryを保存して再読込する", a
 });
 
 // @test-value v2
-// kind = "contract"
-// claim = "AuxiliarySessionStorageの親ごとの一覧は最終使用時刻の降順で返し、同時刻ではIDの降順で安定する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md:75" }
-// fault = "保存順や作成時刻の順序、または同時刻のID昇順を返し、最近使ったAuxiliaryが一覧の先頭に来ない"
+// kind = "invariant"
+// claim = "Auxiliary session message は payload JSON と再起動後の読込で bookmark state を保持する"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
+// fault = "Auxiliary本文のbookmark stateをpayloadへ保存しない、または再読込時に落とす"
+// observable = "upsertAuxiliarySessionとgetAuxiliarySessionが返すmessagesのisBookmarked"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-storage-message-bookmark"
+// lifecycle = "permanent"
+// impact = "右Paneのbookmark filterと本文の状態が再起動後に食い違う"
+// distinction = "UIの表示やtypecheckでは確認できないAuxiliary payloadの永続化を実ストレージで確認する"
+// @end-test-value
+test("Auxiliary message は bookmark state を再読込後も保持する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-message-bookmark-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let storage: AuxiliarySessionStorage | null = null;
+  try {
+    storage = new AuxiliarySessionStorage(dbPath);
+    const session = storage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-message-bookmark",
+      parentSessionId: "parent-message-bookmark",
+      messages: [
+        { role: "user", text: "bookmark me", isBookmarked: true },
+        { role: "assistant", text: "ordinary message" },
+      ],
+    }));
+
+    assert.equal(session.messages[0]?.isBookmarked, true);
+    storage.close();
+    storage = new AuxiliarySessionStorage(dbPath);
+    assert.equal(storage.getAuxiliarySession(session.id)?.messages[0]?.isBookmarked, true);
+    assert.equal(storage.getAuxiliarySession(session.id)?.messages[1]?.isBookmarked, undefined);
+  } finally {
+    storage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary summaryは既存契約どおり最終使用順を維持する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: per-session persistence and lifecycle" }
+// fault = "保存時刻の比較または同時刻のID tie-breakを誤り、最終使用順の一覧を返さない"
 // observable = "listAuxiliarySessionsの返却ID順"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-session-storage-order"
 // lifecycle = "permanent"
+// distinction = "bookmark state保存の変更とは別に、一覧の既存order contractを実ストレージで確認する"
 // @end-test-value
 test("AuxiliarySessionStorage は最終使用順で一覧を返す", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-order-"));

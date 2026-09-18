@@ -295,6 +295,55 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V6 Main Session message は bookmark state を JSON projection と再起動後の読込で保持する"
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
+  // fault = "V6 message JSON projectionからbookmark stateを落とし、再起動後に解除する"
+  // observable = "SessionStorageV6のgetSessionが返すmessagesのisBookmarked"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-message-bookmark"
+  // lifecycle = "permanent"
+  // impact = "通常Sessionの本文状態とMessages filterが再起動後に食い違う"
+  // distinction = "既存のruntime policy確認とは別に、message JSONの保存と再読込を直接確認する"
+  // @end-test-value
+  it("message bookmark は V6 の再読込後も保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-message-bookmark-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const session = storage.insertSession({
+        ...buildNewSession({
+          id: "bookmark-session-v6",
+          taskTitle: "Bookmark session",
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          branch: "main",
+          characterId: "char-a",
+          character: "A",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        messages: [
+          { role: "user", text: "bookmark me", isBookmarked: true },
+          { role: "assistant", text: "ordinary message" },
+        ],
+      });
+
+      assert.equal(storage.getSession(session.id)?.messages[0]?.isBookmarked, true);
+      storage.close();
+      storage = new SessionStorageV6(dbPath);
+      assert.equal(storage.getSession(session.id)?.messages[0]?.isBookmarked, true);
+      assert.equal(storage.getSession(session.id)?.messages[1]?.isBookmarked, undefined);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("summary page は keyset境界、検索、pinned/open projection、Character usageをboundedに扱う", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");

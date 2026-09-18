@@ -116,6 +116,7 @@ export const CREATE_V2_SESSION_MESSAGES_TABLE_SQL = `
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     text TEXT NOT NULL DEFAULT '',
     accent INTEGER NOT NULL DEFAULT 0,
+    is_bookmarked INTEGER NOT NULL DEFAULT 0,
     artifact_available INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,

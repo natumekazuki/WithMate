@@ -43,6 +43,18 @@ function createCharacterProfile(): CharacterProfile {
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Messages navigator はbookmark filterの切替とnative rowのaccessible name、jump keyboard操作を提供する"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: Messages navigator filter" }
+// fault = "filter buttonが状態を公開しない、bookmark rowを絞り込めない、または既存のrow keyboard jumpを失う"
+// observable = "Messages filter buttonのaria-pressed、表示row数/label、Enterで受け取ったjump key"
+// observation_boundary = "component-behavior"
+// scope = "Messages navigator bookmark filter"
+// lifecycle = "permanent"
+// impact = "右Paneからbookmarkを探せず、keyboard利用者の既存jump操作も壊れる"
+// distinction = "filter表示切替と既存Arrow/Enter操作を同じmounted componentで確認し、buildだけでは得られないUI contractを補う"
+// @end-test-value
 test("Messages navigator はaccessible nameを持つnative rowを上下キーとEnterで操作する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
   const previousWindow = globalThis.window;
@@ -104,6 +116,7 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
         preview: "assistant first",
         accent: false,
         isCollapsed: true,
+        isBookmarked: true,
       },
       {
         key: "second",
@@ -112,8 +125,10 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
         preview: "user second",
         accent: false,
         isCollapsed: false,
+        isBookmarked: false,
       },
     ],
+    messageNavigatorSessionId: "session-test",
     onCycleContextPaneTab() {},
     onJumpToMessage: (key) => jumpedKeys.push(key),
     onOpenCompanionReview() {},
@@ -128,7 +143,6 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
     assert.match(rows[0]?.getAttribute("aria-label") ?? "", /Test Character/);
     assert.match(rows[1]?.getAttribute("aria-label") ?? "", /あなたのメッセージ/);
     assert.match(rows[0]?.getAttribute("aria-label") ?? "", /assistant first/);
-    assert.equal(rows[0]?.getAttribute("aria-expanded"), null);
     rows[0]?.focus();
     await act(async () => {
       rows[0]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
@@ -146,6 +160,38 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
       }));
     });
     assert.deepEqual(jumpedKeys, ["second"]);
+
+    const bookmarkFilter = rootElement.querySelector<HTMLButtonElement>(
+      ".messages-navigator-filter[aria-pressed='false']:nth-of-type(2)",
+    );
+    assert.ok(bookmarkFilter);
+    await act(async () => {
+      bookmarkFilter.click();
+    });
+    assert.equal(bookmarkFilter.getAttribute("aria-pressed"), "true");
+    const bookmarkedRows = Array.from(rootElement.querySelectorAll<HTMLButtonElement>(".messages-navigator-row"));
+    assert.equal(bookmarkedRows.length, 1);
+    assert.equal(bookmarkedRows[0]?.getAttribute("aria-label")?.includes("Bookmark saved"), true);
+    assert.equal(bookmarkedRows[0]?.textContent?.includes("assistant first"), true);
+    bookmarkedRows[0]?.focus();
+    await act(async () => {
+      bookmarkedRows[0]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    assert.deepEqual(jumpedKeys, ["second", "first"]);
+
+    const allFilter = rootElement.querySelector<HTMLButtonElement>(
+      ".messages-navigator-filter[aria-pressed='false']:first-of-type",
+    );
+    assert.ok(allFilter);
+    await act(async () => {
+      allFilter.click();
+    });
+    assert.equal(allFilter.getAttribute("aria-pressed"), "true");
+    assert.equal(rootElement.querySelectorAll(".messages-navigator-row").length, 2);
   } finally {
     await act(async () => {
       root.unmount();

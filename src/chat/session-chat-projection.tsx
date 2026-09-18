@@ -167,6 +167,7 @@ export type AgentSessionChatProjectionInput = {
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onToggleMessageCollapse?: (key: string) => void;
   onToggleAllMessageCollapse?: () => void;
+  onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
   onJumpToMessage?: (key: string) => void;
   onToggleArtifact: (artifactKey: string) => void;
   onLoadArtifactDetail: (messageIndex: number) => Promise<MessageArtifact | null>;
@@ -366,6 +367,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isContentActive: input.mainContent === undefined,
       onToggleMessageCollapse: input.onToggleMessageCollapse,
       onToggleAllMessageCollapse: input.onToggleAllMessageCollapse,
+      onToggleMessageBookmark: input.onToggleMessageBookmark,
       expandedArtifacts: input.expandedArtifacts,
       messageListRef: input.messageListRef,
       isRunning: input.isSelectedSessionRunning,
@@ -422,6 +424,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     contextEmptyText: input.selectedContextEmptyText,
     latestCommandEmptyText: input.latestCommandEmptyText,
     messageNavigatorEntries: input.messageNavigatorEntries,
+    messageNavigatorSessionId: input.selectedSession.id,
     messageNavigatorCharacter: input.messageNavigatorCharacter,
     glossaryPaneProps: input.glossaryPaneProps,
     onJumpToMessage: input.onJumpToMessage,

@@ -250,6 +250,18 @@ describe("CompanionStorageV3", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V3 Companion message のblob-backed text/artifact roundtripを維持する"
+  // oracle = { type = "contract", ref = "src-electron/companion-storage-v3.ts: blob-backed message/artifact storage" }
+  // fault = "Companion messageのtextまたはartifactが保存経路の整理で失われる"
+  // observable = "CompanionStorageV3のgetSession/getMessageArtifactが返すmessage textとartifact"
+  // observation_boundary = "public-boundary"
+  // scope = "companion-storage-v3 blob-backed message/artifact"
+  // lifecycle = "permanent"
+  // impact = "Companion Reviewの既存messageまたはartifactを再表示できなくなる"
+  // distinction = "Companionの既存blob-backed message/artifact契約を、schema/buildだけでなく実DB経由で確認する"
+  // @end-test-value
   it("session と merge run を blob-backed payload で roundtrip する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-v3-"));
     const dbPath = path.join(tempDirectory, "withmate-v3.db");
@@ -290,6 +302,10 @@ describe("CompanionStorageV3", () => {
       assert.equal(session.groupId, group.id);
       assert.equal((await storage.getSession(session.id))?.approvalMode, "never");
       assert.deepEqual((await storage.getSession(session.id))?.characterRuntimeSnapshot, characterRuntimeSnapshot);
+      assert.deepEqual((await storage.getSession(session.id))?.messages.map((message) => message.text), [
+        "Companion user text",
+        "Companion assistant text",
+      ]);
       assert.equal((await storage.listActiveSessionSummaries())[0]?.approvalMode, "never");
       assert.equal("characterRuntimeSnapshot" in ((await storage.listActiveSessionSummaries())[0] ?? {}), false);
       assert.equal((await storage.getSession(session.id))?.messages[1]?.artifact?.changedFiles[0]?.diffRows.length, 0);

@@ -1784,6 +1784,7 @@ export type SessionContextPaneProps = {
   contextEmptyText: string;
   latestCommandEmptyText?: string;
   messageNavigatorEntries?: readonly MessageNavigatorEntry[];
+  messageNavigatorSessionId?: string;
   messageNavigatorCharacter?: CharacterProfile;
   glossaryPaneProps?: SessionGlossaryPaneProps;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
@@ -1906,6 +1907,7 @@ export function SessionContextPane({
   contextEmptyText,
   latestCommandEmptyText = "",
   messageNavigatorEntries = [],
+  messageNavigatorSessionId,
   messageNavigatorCharacter,
   glossaryPaneProps,
   onCycleContextPaneTab,
@@ -1916,7 +1918,15 @@ export function SessionContextPane({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageNavigatorButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [messageNavigatorFocusIndex, setMessageNavigatorFocusIndex] = useState(0);
+  const [messageNavigatorFilter, setMessageNavigatorFilter] = useState<"all" | "bookmarks">("all");
   const taskEntries = backgroundTasks ?? [];
+  const messageNavigatorBookmarksEnabled = messageNavigatorSessionId !== undefined;
+  const visibleMessageNavigatorEntries = useMemo(
+    () => messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks"
+      ? messageNavigatorEntries.filter((entry) => entry.isBookmarked)
+      : messageNavigatorEntries,
+    [messageNavigatorBookmarksEnabled, messageNavigatorEntries, messageNavigatorFilter],
+  );
   const glossaryContentSignature = [
     glossaryPaneProps?.projection?.scopeRevision ?? "",
     glossaryPaneProps?.projection?.state.revision ?? "",
@@ -1946,8 +1956,8 @@ export function SessionContextPane({
           .map((entry) => `${entry.kind}:${entry.session.id}:${entry.session.taskTitle}:${entry.state.kind}:${entry.state.label}:${entry.session.updatedAt}`)
           .join("|");
       case "messages":
-        return messageNavigatorEntries
-          .map((entry) => `${entry.key}:${entry.preview}:${entry.isCollapsed ? "collapsed" : "expanded"}`)
+        return visibleMessageNavigatorEntries
+          .map((entry) => `${entry.key}:${entry.preview}:${entry.isCollapsed ? "collapsed" : "expanded"}:${entry.isBookmarked ? "bookmarked" : "unbookmarked"}`)
           .join("|");
       case "glossary":
         return glossaryContentSignature;
@@ -1963,26 +1973,32 @@ export function SessionContextPane({
     isSelectedSessionRunning,
     glossaryContentSignature,
     messageNavigatorEntries,
+    visibleMessageNavigatorEntries,
     taskEntries,
     selectedSessionLiveRunErrorMessage,
   ]);
 
   useEffect(() => {
-    setMessageNavigatorFocusIndex((current) => messageNavigatorEntries.length === 0
+    setMessageNavigatorFocusIndex((current) => visibleMessageNavigatorEntries.length === 0
       ? 0
-      : Math.min(current, messageNavigatorEntries.length - 1));
-  }, [messageNavigatorEntries.length]);
+      : Math.min(current, visibleMessageNavigatorEntries.length - 1));
+  }, [visibleMessageNavigatorEntries.length]);
+
+  useEffect(() => {
+    setMessageNavigatorFilter("all");
+    setMessageNavigatorFocusIndex(0);
+  }, [messageNavigatorSessionId]);
 
   const handleMessageNavigatorKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (messageNavigatorEntries.length === 0) {
+    if (visibleMessageNavigatorEntries.length === 0) {
       return;
     }
 
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const direction = event.key === "ArrowDown" ? 1 : -1;
-      const nextIndex = (index + direction + messageNavigatorEntries.length) % messageNavigatorEntries.length;
-      const nextEntry = messageNavigatorEntries[nextIndex];
+      const nextIndex = (index + direction + visibleMessageNavigatorEntries.length) % visibleMessageNavigatorEntries.length;
+      const nextEntry = visibleMessageNavigatorEntries[nextIndex];
       setMessageNavigatorFocusIndex(nextIndex);
       nextEntry && messageNavigatorButtonRefs.current[nextEntry.key]?.focus();
       return;
@@ -1990,12 +2006,12 @@ export function SessionContextPane({
 
     if (event.key === "Enter") {
       event.preventDefault();
-      const entry = messageNavigatorEntries[index];
+      const entry = visibleMessageNavigatorEntries[index];
       if (entry) {
         onJumpToMessage?.(entry.key);
       }
     }
-  }, [messageNavigatorEntries, onJumpToMessage]);
+  }, [onJumpToMessage, visibleMessageNavigatorEntries]);
 
   const messageNavigatorCharacterName = messageNavigatorCharacter?.name.trim() || "Character";
   const messageNavigatorSpeakerLabel = (entry: MessageNavigatorEntry): string => {
@@ -2064,7 +2080,7 @@ export function SessionContextPane({
 
   return (
     <aside className="session-context-pane session-context-pane-header-expanded">
-      <section className={`command-monitor-shell ${activeContextPaneTab}`} aria-label="右ペイン">
+      <section className={`command-monitor-shell ${activeContextPaneTab}${messageNavigatorBookmarksEnabled ? " has-message-filter-toolbar" : ""}`} aria-label="右ペイン">
         <div className="command-monitor-head">
           <SessionSwitcher
             ariaLabel="右ペイン表示切り替え"
@@ -2077,6 +2093,27 @@ export function SessionContextPane({
             onSelect={(tab) => onSelectContextPaneTab?.(tab as ContextPaneTabKey)}
           />
         </div>
+
+        {activeContextPaneTab === "messages" && messageNavigatorBookmarksEnabled ? (
+          <div className="messages-navigator-filter-toolbar" role="group" aria-label="Messages filter">
+            <button
+              className={`messages-navigator-filter${messageNavigatorFilter === "all" ? " is-active" : ""}`}
+              type="button"
+              aria-pressed={messageNavigatorFilter === "all"}
+              onClick={() => setMessageNavigatorFilter("all")}
+            >
+              All
+            </button>
+            <button
+              className={`messages-navigator-filter${messageNavigatorFilter === "bookmarks" ? " is-active" : ""}`}
+              type="button"
+              aria-pressed={messageNavigatorFilter === "bookmarks"}
+              onClick={() => setMessageNavigatorFilter("bookmarks")}
+            >
+              Bookmark
+            </button>
+          </div>
+        ) : null}
 
         <div ref={contentRef} className="command-monitor-content">
           <div className={`command-monitor-stack ${activeContextPaneTab}`}>
@@ -2244,10 +2281,11 @@ export function SessionContextPane({
             ) : null}
 
             {activeContextPaneTab === "messages" ? (
-              messageNavigatorEntries.length > 0 ? (
-                <div className="messages-navigator" role="list" aria-label="Messages">
-                  {messageNavigatorEntries.map((entry, index) => {
+              <div className="messages-navigator">
+                <div className="messages-navigator-list" role="list" aria-label="Messages">
+                  {visibleMessageNavigatorEntries.length > 0 ? visibleMessageNavigatorEntries.map((entry, index) => {
                     const speakerLabel = messageNavigatorSpeakerLabel(entry);
+                    const bookmarkStateLabel = entry.isBookmarked ? ", Bookmark saved" : "";
                     return (
                       <button
                         key={entry.key}
@@ -2257,8 +2295,8 @@ export function SessionContextPane({
                         className={`messages-navigator-row${entry.isCollapsed ? " is-collapsed" : ""}`}
                         type="button"
                         tabIndex={index === messageNavigatorFocusIndex ? 0 : -1}
-                        aria-label={`${speakerLabel}: ${entry.preview}`}
-                        title={`${speakerLabel}: ${entry.preview}`}
+                        aria-label={`${speakerLabel}${bookmarkStateLabel}: ${entry.preview}`}
+                        title={`${speakerLabel}${bookmarkStateLabel}: ${entry.preview}`}
                         onFocus={() => setMessageNavigatorFocusIndex(index)}
                         onKeyDown={(event) => handleMessageNavigatorKeyDown(event, index)}
                         onClick={() => onJumpToMessage?.(entry.key)}
@@ -2274,13 +2312,15 @@ export function SessionContextPane({
                         </span>
                       </button>
                     );
-                  })}
+                  }) : messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks" ? null : (
+                    <div className="command-monitor-empty-shell">
+                      <p className="command-monitor-empty">
+                        No messages yet.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="command-monitor-empty-shell">
-                  <p className="command-monitor-empty">メッセージはまだないよ。</p>
-                </div>
-              )
+              </div>
             ) : null}
 
             {activeContextPaneTab === "glossary" && glossaryPaneProps ? (
@@ -2464,6 +2504,7 @@ export type SessionMessageColumnProps = {
   onJumpToBottom?: () => void;
   onToggleMessageCollapse?: (key: string) => void;
   onToggleAllMessageCollapse?: () => void;
+  onToggleMessageBookmark?: (target: MessageCollapseTarget) => void;
   onToggleArtifact: (artifactKey: string) => void;
   onLoadArtifactDetail?: (messageIndex: number) => Promise<MessageArtifact | null>;
   onOpenDiff: (title: string, file: ChangedFile) => void;
@@ -2787,6 +2828,7 @@ export function SessionMessageColumn({
   onJumpToBottom,
   onToggleMessageCollapse,
   onToggleAllMessageCollapse,
+  onToggleMessageBookmark,
   onToggleArtifact,
   onLoadArtifactDetail,
   onResolveLiveApproval,
@@ -3413,6 +3455,8 @@ export function SessionMessageColumn({
             const shouldRenderFullMessage = !isMessageCollapsed || (findOpen && hasFindQuery && isFindMatch);
             const messageBodyId = `message-body-${messageKey.replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
             const messageCollapseLabel = isMessageCollapsed ? "メッセージを展開" : "メッセージを縮小";
+            const isMessageBookmarked = messageCollapseTarget?.isBookmarked === true;
+            const messageBookmarkLabel = isMessageBookmarked ? "Remove bookmark" : "Add bookmark";
 
             return (
               <div
@@ -3484,21 +3528,38 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    <div className={`message-text-wrapper${messageCollapseTarget ? " has-message-collapse-control" : ""}`}>
-                      {messageCollapseTarget && onToggleMessageCollapse ? (
+                    <div className={`message-text-wrapper${messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? " has-message-collapse-control" : ""}`}>
+                      {messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? (
                         <div className="message-collapse-control">
-                          <button
-                            className="message-collapse-toggle"
-                            type="button"
-                            onClick={() => onToggleMessageCollapse(messageKey)}
-                            aria-expanded={!isMessageCollapsed}
-                            aria-controls={messageBodyId}
-                            aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
-                            title={messageCollapseLabel}
-                          >
-                            <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
-                            <span className="visually-hidden">{messageCollapseLabel}</span>
-                          </button>
+                          {onToggleMessageCollapse ? (
+                            <button
+                              className="message-collapse-toggle"
+                              type="button"
+                              onClick={() => onToggleMessageCollapse(messageKey)}
+                              aria-expanded={!isMessageCollapsed}
+                              aria-controls={messageBodyId}
+                              aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
+                              title={messageCollapseLabel}
+                            >
+                              <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
+                              <span className="visually-hidden">{messageCollapseLabel}</span>
+                            </button>
+                          ) : null}
+                          {onToggleMessageBookmark ? (
+                            <button
+                              className={`message-bookmark-toggle${isMessageBookmarked ? " is-bookmarked" : ""}`}
+                              type="button"
+                              aria-pressed={isMessageBookmarked}
+                              aria-label={messageBookmarkLabel}
+                              title={messageBookmarkLabel}
+                              onClick={() => void onToggleMessageBookmark(messageCollapseTarget)}
+                            >
+                              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                                <path d="M4 2.25h8a.75.75 0 0 1 .75.75v10.2l-4.75-2.55-4.75 2.55V3a.75.75 0 0 1 .75-.75Z" />
+                              </svg>
+                              <span className="visually-hidden">{messageBookmarkLabel}</span>
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                       <div

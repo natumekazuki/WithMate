@@ -7535,6 +7535,25 @@ button:disabled {
   margin-top: auto;
 }
 
+.command-monitor-shell.messages .command-monitor-stack {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 0;
+}
+
+.command-monitor-shell.messages.has-message-filter-toolbar {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  row-gap: 6px;
+}
+
+.command-monitor-shell.messages.has-message-filter-toolbar .messages-navigator-filter-toolbar {
+  margin-top: 8px;
+}
+
+.command-monitor-shell.messages.has-message-filter-toolbar .command-monitor-content {
+  padding-top: 0;
+}
+
 .command-monitor-stack.companion-group {
   align-content: start;
   margin-top: auto;
@@ -7898,7 +7917,52 @@ button:disabled {
 
 .messages-navigator {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.messages-navigator-filter-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+
+.messages-navigator-filter {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.messages-navigator-filter:hover,
+.messages-navigator-filter.is-active {
+  border-color: color-mix(in srgb, var(--character-main) 52%, rgba(203, 213, 225, 0.2));
+  background: color-mix(in srgb, var(--character-sub-soft) 18%, rgba(255, 255, 255, 0.04));
+  color: var(--ink);
+}
+
+.messages-navigator-filter.is-active {
+  font-weight: 700;
+}
+
+.messages-navigator-filter:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 72%, white 28%);
+  outline-offset: 2px;
+}
+
+.messages-navigator-list {
+  display: grid;
+  align-content: start;
   gap: 6px;
+  min-height: 0;
   min-width: 0;
 }
 
@@ -8400,6 +8464,55 @@ button:disabled {
   background: rgba(255, 255, 255, 0.82);
 }
 
+.message-bookmark-toggle {
+  position: sticky;
+  top: 8px;
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 8px;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.3);
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: none;
+}
+
+.message-bookmark-toggle svg {
+  width: 15px;
+  height: 15px;
+  fill: transparent;
+  stroke: currentColor;
+  stroke-width: 1.35;
+}
+
+.message-bookmark-toggle:hover,
+.message-bookmark-toggle:focus-visible,
+.message-bookmark-toggle.is-bookmarked {
+  border-color: color-mix(in srgb, var(--character-main) 58%, rgba(148, 163, 184, 0.32));
+  color: var(--ink);
+}
+
+.message-bookmark-toggle.is-bookmarked {
+  background: color-mix(in srgb, var(--character-main) 22%, rgba(15, 23, 42, 0.42));
+}
+
+.message-bookmark-toggle.is-bookmarked svg {
+  fill: currentColor;
+}
+
+.message-bookmark-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 72%, white 28%);
+  outline-offset: 2px;
+}
+
 .message-card-content {
   grid-area: 1 / 1;
   display: grid;
@@ -8448,7 +8561,9 @@ button:disabled {
 }
 
 .message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle {
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle,
+.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-bookmark-toggle,
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-bookmark-toggle {
   pointer-events: auto;
 }
 
@@ -8904,6 +9019,7 @@ button:disabled {
   }
 
   .message-collapse-control > .message-collapse-toggle,
+  .message-collapse-control > .message-bookmark-toggle,
   .message-code-block-actions > .message-code-copy-button {
     pointer-events: auto;
   }

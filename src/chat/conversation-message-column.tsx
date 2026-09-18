@@ -34,6 +34,7 @@ export type ConversationColumnCache = {
 export type UseConversationMessageColumnInput = {
   session: ConversationColumnSession | null;
   baseProps: SessionMessageColumnProps;
+  messageSourceKind?: "session" | "auxiliary";
   enabled: boolean;
   api?: ConversationMessageColumnApi;
   liveRun?: LiveSessionRunState | null;
@@ -55,7 +56,7 @@ export type ConversationColumnControls = {
 };
 
 export function useConversationMessageColumn({
-  session, baseProps, enabled, api, liveRun: liveRunOverride, stateCache, onColumnControls,
+  session, baseProps, messageSourceKind = "session", enabled, api, liveRun: liveRunOverride, stateCache, onColumnControls,
 }: UseConversationMessageColumnInput): SessionMessageColumnProps | null {
   const localCache = useRef(new Map<string, ConversationColumnCache>());
   const caches = stateCache ?? localCache.current;
@@ -119,8 +120,10 @@ export function useConversationMessageColumn({
     conversation.bridge && (hasSavedBridge || session?.runState === "running")
       ? conversation.bridge : null
   );
-  const projection = useMemo(() => buildMessageListProjection(messages, [], sessionId, { liveAssistant: bridge }),
-    [messages, sessionId, bridge?.threadId, bridge?.messageIndex, bridge?.text]);
+  const projection = useMemo(() => buildMessageListProjection(messages, [], sessionId, {
+    liveAssistant: bridge,
+    primaryMessageSourceKind: messageSourceKind,
+  }), [messages, sessionId, messageSourceKind, bridge?.threadId, bridge?.messageIndex, bridge?.text]);
   const messageScrollSignature = useMemo(
     () => `${projection.keys.join("\u001f")}:${projection.messages.map((message) => message.text.length).join(",")}`,
     [projection],

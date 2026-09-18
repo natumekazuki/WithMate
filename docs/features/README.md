@@ -6,6 +6,7 @@ WithMateの利用者向け機能ガイドです。リリースごとの変更一
 
 - [Git履歴とcommit preview](git-history-and-commit-preview.md)
 - [Messageの縮小表示とnavigator](session-message-collapse-and-navigation.md)
+- [Messageのブックマークとnavigator絞り込み](message-bookmark-filter.md)
 - [キーボードショートカット](keyboard-shortcuts.md)
 - [Session Windowの復元](session-window-restore.md)
 - [メッセージ画像のlightbox](message-image-lightbox.md)

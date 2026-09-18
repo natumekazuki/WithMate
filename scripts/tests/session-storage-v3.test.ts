@@ -307,6 +307,18 @@ describe("SessionStorageV3", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V3 session upsert/get はblob-backed messageとbookmark stateを同時に保持する"
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
+  // fault = "V3 message insert/selectまたはrow mappingがis_bookmarkedを落とす"
+  // observable = "SessionStorageV3.getSessionが返すmessageのisBookmarked"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v3 message bookmark"
+  // lifecycle = "permanent"
+  // impact = "V3 sessionのbookmark filterが再起動後に誤った対象を表示する"
+  // distinction = "blob text/artifactの復元と同じ通常経路でbookmark stateを確認し、schema testだけに依存しない"
+  // @end-test-value
   it("upsert -> list summaries -> get で message text と artifact を blob から復元する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -328,6 +340,7 @@ describe("SessionStorageV3", () => {
               role: "user",
               text: longText,
               accent: true,
+              isBookmarked: true,
               artifact: createArtifact(sentinel),
             },
             {
@@ -352,6 +365,7 @@ describe("SessionStorageV3", () => {
         assert.deepEqual(loaded.stream, []);
         assert.deepEqual(loaded.messages.map((message) => message.text), [longText, "short assistant reply"]);
         assert.equal(loaded.messages[0]?.accent, true);
+        assert.equal(loaded.messages[0]?.isBookmarked, true);
         assert.equal(loaded.messages[0]?.artifact?.detailAvailable, true);
         assert.equal(loaded.messages[0]?.artifact?.changedFiles[0]?.diffRows.length, 0);
         assert.deepEqual(await storage.getSessionMessageArtifact("session-v3-roundtrip", 0), createArtifact(sentinel));
