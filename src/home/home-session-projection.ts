@@ -147,8 +147,13 @@ function normalizeAuxiliarySessions(
 
 function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
   return [...sessions].sort((left, right) => {
-    const createdAtOrder = left.createdAt.localeCompare(right.createdAt);
-    return createdAtOrder || left.id.localeCompare(right.id);
+    const runningOrder = Number(right.runState === "running") - Number(left.runState === "running");
+    if (runningOrder !== 0) {
+      return runningOrder;
+    }
+
+    const updatedAtOrder = right.updatedAt.localeCompare(left.updatedAt);
+    return updatedAtOrder || right.id.localeCompare(left.id);
   });
 }
 
