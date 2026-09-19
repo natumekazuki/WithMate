@@ -191,6 +191,7 @@ function ConcurrentChatTargetDock({ chats }: { chats: ConcurrentChatWindowProps 
 
 export type ChatSkillPickerPanelProps = {
   isOpen: boolean;
+  isInteractionDisabled?: boolean;
   isLoading: boolean;
   errorMessage?: string | null;
   items: SessionSkillItem[];
@@ -239,6 +240,7 @@ export function filterChatSkillItems(items: SessionSkillItem[], searchQuery: str
 
 export function ChatSkillPickerPanel({
   isOpen,
+  isInteractionDisabled = false,
   isLoading,
   errorMessage,
   items,
@@ -308,6 +310,7 @@ export function ChatSkillPickerPanel({
             aria-label="Skillを検索"
             placeholder="Skillを検索"
             autoComplete="off"
+            disabled={isInteractionDisabled}
           />
           <CloseButton ariaLabel="Close skill picker" onClose={onDismiss} />
         </div>
@@ -334,6 +337,7 @@ export function ChatSkillPickerPanel({
                 aria-selected="false"
                 tabIndex={index === 0 ? 0 : -1}
                 className="composer-path-match"
+                disabled={isInteractionDisabled}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => onSelectSkill(item.skillId)}
                 title={item.title}

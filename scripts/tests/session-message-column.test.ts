@@ -12,6 +12,7 @@ import {
   SessionComposerExpanded,
   SessionChatScreen,
   SessionMessageColumn,
+  type SessionComposerExpandedProps,
   shouldAdjustSessionMessageScrollPosition,
   type SessionMessageColumnProps,
 } from "../../src/session-components.js";
@@ -25,8 +26,107 @@ import type { MessageListSource } from "../../src/auxiliary-session-message-proj
 import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
+import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+function createComposerTestProps(
+  overrides: Partial<SessionComposerExpandedProps> = {},
+): SessionComposerExpandedProps {
+  return {
+    isRunning: false,
+    composerBlocked: false,
+    canSelectCustomAgent: true,
+    showAttachmentControls: true,
+    showCustomAgentPicker: true,
+    showSkillPicker: true,
+    showPromptTemplateButton: true,
+    showAdditionalDirectoryControls: true,
+    showExecutionModeControls: true,
+    isAgentPickerOpen: false,
+    isSkillPickerOpen: false,
+    isPromptTemplateWorkspaceOpen: false,
+    isAdditionalDirectoryListOpen: false,
+    selectedCustomAgentLabel: "Agent",
+    selectedCustomAgentTitle: "Agent",
+    additionalDirectoryCount: 1,
+    showJumpToBottom: false,
+    isCustomAgentListLoading: false,
+    customAgentItems: [{
+      key: "agent-1",
+      value: "agent-1",
+      primaryLabel: "Agent",
+      secondaryLabel: "Agent description",
+      title: "Agent",
+      isSelected: true,
+    }],
+    attachmentItems: [{
+      key: "file-1",
+      kind: "file",
+      kindLabel: "File",
+      locationLabel: "workspace",
+      primaryLabel: "README.md",
+      secondaryLabel: "",
+      title: "README.md",
+      removeTargets: ["README.md"],
+    }],
+    draft: "",
+    composerTextareaRef: createRef<HTMLTextAreaElement>(),
+    isComposerDisabled: false,
+    isSendDisabled: true,
+    composerSendability: {
+      primaryFeedback: "",
+      secondaryFeedback: [],
+      feedbackTone: null,
+      shouldShowFeedback: false,
+    },
+    sendButtonTitle: "Send",
+    isComposerBlockedFeedbackActive: false,
+    approvalOptions: [{ value: "untrusted", label: "untrusted" }],
+    selectedApprovalMode: "untrusted",
+    reviewerOptions: [],
+    selectedCodexReviewer: "user",
+    sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
+    selectedCodexSandboxMode: "workspace-write",
+    speedOptions: [],
+    selectedCodexSpeed: "standard",
+    modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4" }],
+    selectedModel: "gpt-5.4",
+    selectedModelFallbackLabel: "gpt-5.4",
+    reasoningOptions: [{ value: "high", label: "high" }],
+    selectedReasoningEffort: "high",
+    onPickFile() {},
+    onPickFolder() {},
+    onPickImage() {},
+    onAddToSessionFiles() {},
+    onPickSessionFiles() {},
+    onPickSessionFolder() {},
+    onPickSessionImage() {},
+    onToggleAgentPicker() {},
+    onToggleSkillPicker() {},
+    onOpenPromptTemplates() {},
+    onAddAdditionalDirectory() {},
+    onToggleAdditionalDirectoryList() {},
+    onJumpToBottom() {},
+    onSelectCustomAgent() {},
+    onRemoveAttachment() {},
+    onDraftChange() {},
+    onDraftFocus() {},
+    onDraftKeyDown() {},
+    onDraftPaste() {},
+    onDraftSelect() {},
+    onDraftCompositionStart() {},
+    onDraftCompositionEnd() {},
+    onSendOrCancel() {},
+    onChangeApprovalMode() {},
+    onChangeCodexReviewer() {},
+    onChangeCodexSandboxMode() {},
+    onChangeCodexSpeed() {},
+    onChangeModel() {},
+    onChangeReasoningEffort() {},
+    ...overrides,
+  };
+}
 
 function createCharacterProfile(): CharacterProfile {
   return {
@@ -2723,6 +2823,125 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
     });
     const restoredSlot = container.querySelector(".session-action-dock-cancel-slot");
     assertSlot(restoredSlot, false, "Main / Auxiliary");
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Composerがfreezeされたとき、入力を変更するtrigger・候補・添付削除をdisabledにし、空欄shortcutの強制feedbackを表示する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: close/app quit flush; docs/design/desktop-ui.md: composer feedback" }
+// fault = "終了flush中にpicker・template・directory・添付操作が実行可能なまま残る、添付削除が実行できる、または空欄shortcutのMessage is empty表示が失われる"
+// observable = "freeze済みComposerの各操作buttonのdisabled属性と、forceComposerBlockedFeedback=trueで描画されたcomposer-sendability-feedbackの本文・textarea aria-describedby"
+// observation_boundary = "component-behavior"
+// scope = "frozen composer mutation controls and forced sendability feedback"
+// lifecycle = "permanent"
+// impact = "flush中に捨てられる入力・添付操作を利用者へ実行可能と見せず、keyboard送信を抑止した理由を表示する"
+// distinction = "これは実Appのflush開始・非同期picker適用ではなく、共通ComposerのUI契約を確認する。controller通知・main handlerの統合挙動はintegration testで確認する"
+// @end-test-value
+test("SessionComposerExpanded はfreeze中の変更操作を無効化し、強制blocked feedbackを表示する", () => {
+  const registry = new ComposerControllerRegistry();
+  const owner = { kind: "auxiliary" as const, id: "aux-1" };
+  registry.setPreview(owner, {
+    attachments: [{
+      id: "attachment-1",
+      kind: "file",
+      source: "text",
+      absolutePath: "C:/workspace/README.md",
+      displayPath: "README.md",
+      workspaceRelativePath: "README.md",
+      isOutsideWorkspace: false,
+    }],
+    errors: [],
+  });
+  registry.freeze();
+  const html = renderToStaticMarkup(
+    React.createElement(SessionComposerExpanded, createComposerTestProps({
+      composerController: { owner, registry },
+      forceComposerBlockedFeedback: true,
+      isAgentPickerOpen: true,
+    })),
+  );
+  const renderedDocument = new JSDOM(html).window.document;
+  for (const selector of [
+    ".composer-attachments-toolbar button", ".composer-agent-toolbar button",
+    ".composer-path-match-list button", ".composer-attachment-list button",
+  ]) {
+    const controls = Array.from(renderedDocument.querySelectorAll<HTMLButtonElement>(selector));
+    assert.ok(controls.length > 0, selector);
+    assert.ok(controls.every((control) => control.disabled), selector);
+  }
+  const feedback = renderedDocument.querySelector("#composer-sendability-feedback");
+  const textarea = renderedDocument.querySelector("textarea");
+  assert.equal(feedback?.textContent, "Message is empty.");
+  assert.match(textarea?.getAttribute("aria-describedby") ?? "", /composer-sendability-feedback/);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "compact ActionDockの添付badgeはcontrollerのpreview通知だけでも最新の添付件数へ更新される"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
+// fault = "rootの別state更新を伴わないcontroller.setPreviewでcompact rowの添付badgeが古い件数のまま残る"
+// observable = "controller-only setPreview後のcompact row attachment badgeの表示件数"
+// observation_boundary = "component-behavior"
+// scope = "compact attachment preview projection"
+// lifecycle = "permanent"
+// impact = "折りたたみ中にも現在の添付状態を正しく示し、展開前の判断材料を欠落させない"
+// distinction = "これはAppのpreview requestや送信統合ではなく、compact rowがcontroller外部通知を購読する境界だけを確認する"
+// @end-test-value
+test("SessionActionDockCompactRow はcontroller-only preview通知で添付件数を更新する", async () => {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const registry = new ComposerControllerRegistry();
+  const owner = { kind: "auxiliary" as const, id: "aux-1" };
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(SessionActionDockCompactRow, {
+        attachmentCount: 0,
+        composerController: { owner, registry },
+        isRunning: false,
+        showJumpToBottom: false,
+        onExpand() {},
+        onJumpToBottom() {},
+        onCancel() {},
+      }));
+    });
+    assert.equal(dom.window.document.querySelector(".session-action-dock-compact-badge"), null);
+    await act(async () => {
+      registry.setPreview(owner, {
+        attachments: [{
+          id: "attachment-1",
+          kind: "file",
+          source: "text",
+          absolutePath: "C:/workspace/README.md",
+          displayPath: "README.md",
+          workspaceRelativePath: "README.md",
+          isOutsideWorkspace: false,
+        }],
+        errors: [],
+      });
+    });
+    assert.equal(dom.window.document.querySelector(".session-action-dock-compact-badge")?.textContent, "添付 1");
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

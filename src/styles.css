@@ -397,21 +397,21 @@ button:disabled {
   .composer-path-match-list,
   .composer-attachment-list
 ) {
-  flex-shrink: 1;
+  flex-shrink: 0;
   min-height: 0;
   overflow-y: auto;
 }
 
 .session-action-dock-slot.is-expanded .composer-input-row {
-  flex: 1 0 100px;
-  min-height: 100px;
-  overflow: hidden;
+  flex: 1 0 auto;
+  min-height: min-content;
 }
 
 .session-action-dock-slot.is-expanded .composer-box {
-  height: 100%;
+  height: auto;
   min-height: 0;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(100px, 1fr);
+  grid-auto-rows: auto;
 }
 
 .session-action-dock-slot.is-expanded .composer-box textarea {

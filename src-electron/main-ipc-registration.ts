@@ -247,7 +247,6 @@ import {
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
-  WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL,
@@ -352,7 +351,7 @@ type IpcHandleRegistrar = {
 };
 
 export type MainIpcRegistrationDeps = {
-  acknowledgeSessionDraftFlush?(event: IpcSenderEvent, payload: { requestId: string; success: boolean }): void;
+  acknowledgeSessionDraftFlush(event: IpcSenderEvent, payload: { requestId: string; success: boolean }): void;
   resolveEventWindow(event: IpcSenderEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
   resolveSessionWindow(sessionId: string): MaybeWindow;
@@ -430,7 +429,6 @@ export type MainIpcRegistrationDeps = {
   getAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliaryDraft?(auxiliarySessionId: string): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftRecord | null>;
   saveAuxiliaryDraft?(input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveInput): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveResult>;
-  consumeAuxiliaryDraft?(input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeInput): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeResult>;
   getAuxiliarySessionStatus?(auxiliarySessionId: string): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliarySessionStatus | null>;
   createAuxiliarySession?(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
   getAuxiliaryCreationContext?(parentSessionId: string): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationContext>;
@@ -608,7 +606,6 @@ type MainIpcWindowDeps = Pick<
   | "getAuxiliarySession"
   | "getAuxiliaryDraft"
   | "saveAuxiliaryDraft"
-  | "consumeAuxiliaryDraft"
   | "getAuxiliarySessionStatus"
   | "showSessionMonitorContextMenu"
   | "getSessionWindowRestoreSet"
@@ -688,7 +685,6 @@ type MainIpcAuxiliaryDeps = Pick<
   | "getAuxiliarySession"
   | "getAuxiliaryDraft"
   | "saveAuxiliaryDraft"
-  | "consumeAuxiliaryDraft"
   | "getAuxiliarySessionStatus"
   | "createAuxiliarySession"
   | "getAuxiliaryCreationContext"
@@ -708,7 +704,6 @@ type MainIpcAuxiliaryDepsRequired = {
   getAuxiliarySession: (auxiliarySessionId: string) => Awaitable<AuxiliarySession | null>;
   getAuxiliaryDraft: (auxiliarySessionId: string) => Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftRecord | null>;
   saveAuxiliaryDraft: (input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveInput) => Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveResult>;
-  consumeAuxiliaryDraft: (input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeInput) => Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeResult>;
   getAuxiliarySessionStatus: (auxiliarySessionId: string) => Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliarySessionStatus | null>;
   createAuxiliarySession: (input: CreateAuxiliarySessionInput) => Awaitable<AuxiliarySession>;
   updateAuxiliarySession: (session: AuxiliarySession) => Awaitable<AuxiliarySession>;
@@ -1650,14 +1645,14 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
       !deps.cancelAuxiliarySessionRun ||
       !deps.getAuxiliaryDraft ||
       !deps.saveAuxiliaryDraft ||
-      !deps.consumeAuxiliaryDraft ||
       !deps.getAuxiliarySessionStatus
     ) {
       throw new Error(
         "Auxiliary session IPC is not wired. listAuxiliarySessions, listOpenActiveAuxiliarySessionSummaries, "
         + "listOpenAuxiliarySessionSummaries, "
         + "getActiveAuxiliarySession, getAuxiliarySession, createAuxiliarySession, updateAuxiliarySession, "
-        + "closeAuxiliarySession, runAuxiliarySessionTurn, and cancelAuxiliarySessionRun are required.",
+        + "closeAuxiliarySession, runAuxiliarySessionTurn, cancelAuxiliarySessionRun, "
+        + "getAuxiliaryDraft, saveAuxiliaryDraft, and getAuxiliarySessionStatus are required.",
       );
     }
 
@@ -1674,7 +1669,6 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
       cancelAuxiliarySessionRun: deps.cancelAuxiliarySessionRun,
       getAuxiliaryDraft: deps.getAuxiliaryDraft,
       saveAuxiliaryDraft: deps.saveAuxiliaryDraft,
-      consumeAuxiliaryDraft: deps.consumeAuxiliaryDraft,
       getAuxiliarySessionStatus: deps.getAuxiliarySessionStatus,
     };
   };
@@ -1731,15 +1725,6 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
       throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
     }
     return auxiliaryDeps.saveAuxiliaryDraft(input);
-  });
-  ipcMain.handle(WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL, async (event, input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeInput) => {
-    const auxiliaryDeps = getAuxiliaryDeps(deps);
-    const status = await auxiliaryDeps.getAuxiliarySessionStatus(input.auxiliarySessionId);
-    if (!status || status.parentSessionId !== input.parentSessionId) return { outcome: "not-found" };
-    if (resolveAuxiliaryOwnerWindowSender(event, status.parentSessionId, deps) !== "session") {
-      throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
-    }
-    return auxiliaryDeps.consumeAuxiliaryDraft(input);
   });
   ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (event, input: CreateAuxiliarySessionInput) => {
     const ownerWindowKind = resolveAuxiliaryOwnerWindowSender(event, input.parentSessionId, deps);
@@ -2439,7 +2424,7 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
     deps.reportRendererLog?.(input, windowId);
   });
   ipcMain.on(WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL, (event, payload: { requestId: string; success: boolean }) => {
-    deps.acknowledgeSessionDraftFlush?.(event, payload);
+    deps.acknowledgeSessionDraftFlush(event, payload);
   });
 }
 

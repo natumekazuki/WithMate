@@ -29,7 +29,6 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   ): void;
   getSession(sessionId: string): Session | null;
   isRunInFlight(sessionId: string): boolean;
-  getAllowQuitWithInFlightRuns(): boolean;
   confirmCloseWhileRunning(window: TWindow, sessionId: string): boolean;
   broadcastOpenSessionWindowIds(openSessionIds: string[]): void;
   persistOpenSessionWindowIds?(openSessionIds: readonly string[]): Promise<void>;

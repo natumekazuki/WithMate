@@ -174,4 +174,55 @@ describe("ComposerControllerRegistry", () => {
     assert.deepEqual(saved, ["latest draft"]);
     assert.equal(loads, 3);
   });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "失敗送信の復元はconsumeした版だけへ保存し、復元済値を受理しつつ後続の永続編集と別incarnationを保護する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+  // fault = "復元をflushから漏らす、保存障害でpendingを捨てる、または再取得した新しいdraftを古い送信値で上書きする"
+  // observable = "flush成功/失敗、hasPending、永続recordと保存要求"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-failed-send-recovery"
+  // lifecycle = "permanent"
+  // distinction = "通常enqueueの集約testと異なり、Mainによるconsume/復元が保存owner外でrevisionを進めた後の限定復元を検証する"
+  // @end-test-value
+  it("recovers a consumed draft without overwriting a later durable edit", async () => {
+    const captured = { auxiliarySessionId: "a", parentSessionId: "p", incarnation: "i", durableRevision: 4, text: "restore me", updatedAt: "before" };
+    let durable = { ...captured, durableRevision: 5, text: "" };
+    let failSave = true;
+    const saves: number[] = [];
+    const owner = new AuxiliaryDraftPersistenceOwner({
+      load: async () => ({ ...durable }),
+      now: () => "now",
+      debounceMs: 0,
+      save: async (record) => {
+        saves.push(record.durableRevision);
+        if (failSave) throw new Error("disk unavailable");
+        assert.equal(record.durableRevision, durable.durableRevision);
+        durable = { ...record, durableRevision: record.durableRevision + 1 };
+        return { outcome: "saved", record: { ...durable } };
+      },
+    });
+    const recovery = owner.enqueue(captured.text, captured);
+    assert.equal(owner.hasPending, true);
+    await assert.rejects(recovery, /disk unavailable/);
+    assert.equal(owner.hasPending, true);
+    failSave = false;
+    await owner.flush();
+    assert.equal(durable.text, captured.text);
+    assert.equal(owner.hasPending, false);
+    assert.deepEqual(saves, [5, 5]);
+
+    await owner.enqueue(captured.text, captured);
+    assert.equal(durable.durableRevision, 6, "a Main-restored value needs no additional write");
+    durable = { ...durable, durableRevision: 7, text: "newer durable draft" };
+    await assert.rejects(owner.enqueue(captured.text, captured), /changed after the failed send/);
+    await assert.rejects(owner.flush(), /changed after the failed send/);
+    assert.equal(durable.text, "newer durable draft");
+    durable = { ...captured, incarnation: "replacement", durableRevision: 5, text: "" };
+    await assert.rejects(owner.flush(), /changed after the failed send/);
+    assert.equal(durable.incarnation, "replacement");
+    assert.equal(durable.text, "");
+    assert.deepEqual(saves, [5, 5]);
+  });
 });

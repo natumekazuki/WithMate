@@ -320,6 +320,7 @@ export function buildLiveSessionComposerDockProps(
     },
     compactActionDock: {
       attachmentCount,
+      composerController: input.composerController,
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,

@@ -99,6 +99,12 @@ export function ComposerAttachmentMenu({
   ];
 
   useEffect(() => {
+    if (disabled && isOpen) {
+      onOpenChange(false);
+    }
+  }, [disabled, isOpen, onOpenChange]);
+
+  useEffect(() => {
     if (isOpen) {
       menuRef.current?.querySelector<HTMLElement>("[role=\"menuitem\"]")?.focus();
     }
@@ -196,7 +202,11 @@ export function ComposerAttachmentMenu({
             className="composer-attachment-menu-item"
             aria-label={item.ariaLabel}
             title={item.title}
+            disabled={disabled}
             onClick={() => {
+              if (disabled) {
+                return;
+              }
               onOpenChange(false);
               item.onSelect();
             }}

@@ -81,7 +81,7 @@ function auxiliary(id) {
 
 const mainSession = session();
 const auxiliarySessions = Array.from({ length: auxiliaryCount }, (_, index) => auxiliary(`benchmark-aux-${index + 1}`));
-const counters = { updateAuxiliarySession: 0, getAuxiliarySession: 0, saveAuxiliaryDraft: 0, consumeAuxiliaryDraft: 0, requestBytes: 0, responseBytes: 0 };
+const counters = { updateAuxiliarySession: 0, getAuxiliarySession: 0, saveAuxiliaryDraft: 0, requestBytes: 0, responseBytes: 0 };
 const draftRecords = new Map();
 
 function resultFor(name, args) {
@@ -115,14 +115,6 @@ function resultFor(name, args) {
     draftRecords.set(payload.auxiliarySessionId, { ...payload, durableRevision });
     counters.responseBytes += JSON.stringify({ outcome: "saved", ack }).length;
     return { outcome: "saved", ack };
-  }
-  if (name === "consumeAuxiliaryDraft") {
-    counters.consumeAuxiliaryDraft += 1;
-    const payload = args[0];
-    const current = draftRecords.get(payload.auxiliarySessionId);
-    if (!current) return { outcome: "not-found" };
-    draftRecords.delete(payload.auxiliarySessionId);
-    return { outcome: "consumed", ack: { auxiliarySessionId: current.auxiliarySessionId, incarnation: current.incarnation, durableRevision: current.durableRevision, updatedAt: current.updatedAt } };
   }
   if (name === "getAuxiliarySessionStatus") {
     const current = auxiliarySessions.find((item) => item.id === args[0]);
@@ -173,7 +165,7 @@ const names = [
   "subscribeSessionDraftFlushRelease",
   "subscribeAppSettings",
   "listSessionAuditLogSummaryPage",
-  "getAuxiliaryDraft", "saveAuxiliaryDraft", "consumeAuxiliaryDraft", "getAuxiliarySessionStatus",
+  "getAuxiliaryDraft", "saveAuxiliaryDraft", "getAuxiliarySessionStatus",
   "acknowledgeSessionDraftFlush",
 ];
 for (const name of names) {

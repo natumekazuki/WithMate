@@ -1842,8 +1842,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireAuxiliarySessionService().getAuxiliaryDraft(auxiliarySessionId),
                 saveAuxiliaryDraft: (input) =>
                   requireAuxiliarySessionService().saveAuxiliaryDraft(input),
-                consumeAuxiliaryDraft: (input) =>
-                  requireAuxiliarySessionService().consumeAuxiliaryDraft(input),
                 getAuxiliarySessionStatus: (auxiliarySessionId) =>
                   requireAuxiliarySessionService().getAuxiliarySessionStatus(auxiliarySessionId),
                 createAuxiliarySession: async (input) => {
@@ -3385,7 +3383,6 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
       getSession,
       isRunInFlight: isSessionRunInFlight,
       onSessionWindowClosed: (sessionId) => auxiliarySessionService?.releaseAuxiliaryCreationOwner(sessionId),
-      getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,
       confirmCloseWhileRunning: (window) => {
         const choice = dialog.showMessageBoxSync(window, {
           type: "warning",

@@ -6,7 +6,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { useAuxiliaryWorkspace, type AuxiliaryWorkspaceApi as WorkspaceApi, type AuxiliaryWorkspace } from "../../src/chat/use-auxiliary-workspace.js";
-import { runAuxiliaryDraftChangeAndSaveOperation } from "../../src/auxiliary-draft-save-context.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 
 type AuxiliaryWorkspaceApi = Omit<WorkspaceApi, "getAuxiliarySessionStatus"> & Partial<Pick<WorkspaceApi, "getAuxiliarySessionStatus">>;
@@ -302,20 +301,19 @@ test("対象切替は選択・幅を変更せず、Auxiliaryの幅0を保持す�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "非表示会話のsaveとterminal更新は会話IDを保ったままsummaryとbindingへ反映される"
+// claim = "非表示会話のterminal詳細は保存済draftと確定応答を対象会話へ反映し、選択中の別会話を上書きしない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Goal / Context boundary / Preview contract" }
-// fault = "非表示化した会話のdraftまたはterminal応答を捨て、別会話のrevisionを進める"
-// observable = "binding.sessionRef、summary.preview、binding.mutationRevision"
+// fault = "非表示化した会話のterminal応答を捨てる、または取得したdraftと応答を別会話へ適用する"
+// observable = "対象と選択中会話のbinding.sessionRef、summary.preview"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-workspace-hidden-run"
 // lifecycle = "permanent"
 // @end-test-value
-test("hidden sessionのsaveとterminalでdraft・previewを維持する", async () => {
-  const a = session("a", "2026-01-01");
-  const b = session("b", "2026-01-02");
+test("hidden sessionのterminal詳細を保存済draftとともに正しい会話へ反映する", async () => {
+  const a = session("a", "2026-01-01", { composerDraft: "hidden draft" });
+  const b = session("b", "2026-01-02", { composerDraft: "selected draft" });
   let terminal: ((id: string, state: null) => void) | null = null;
   let latest = a;
-  const savedRequests: AuxiliarySession[] = [];
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => [a, b],
     getAuxiliarySession: async (id) => id === "a" ? latest : b,
@@ -328,38 +326,12 @@ test("hidden sessionのsaveとterminalでdraft・previewを維持する", async 
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   const binding = view.current.getBinding("a");
   const bindingB = view.current.getBinding("b");
-  const revision = binding.mutationRevision.current;
-  bindingB.mutationRevision.current += 1;
   await act(async () => { view.current.selectSession("b"); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  let saveResult: Awaited<ReturnType<typeof runAuxiliaryDraftChangeAndSaveOperation>> = null;
   await act(async () => {
     view.current.setTarget("main");
-    saveResult = await runAuxiliaryDraftChangeAndSaveOperation({
-      draft: "hidden draft",
-      selectionStart: "hidden draft".length,
-      clearBlockedFeedback: () => {},
-      setComposerCaret: () => {},
-      currentSession: binding.getSession(),
-      createTimestampLabel: () => "2026-01-03T00:00:00.000Z",
-      draftSaveQueue: binding.draftSaveQueue.current,
-      getCurrentSession: binding.getSession,
-      saveAuxiliarySession: async (request) => {
-        savedRequests.push(request);
-        latest = request;
-        return request;
-      },
-      mutationRevision: binding.mutationRevision,
-      activeSessionRef: binding.sessionRef,
-      draftSaveQueueRef: binding.draftSaveQueue,
-      setActiveSession: (update) => binding.setSession(update),
-    });
   });
-  assert.equal(savedRequests.length, 1);
   assert.equal(binding.sessionRef.current?.id, a.id);
-  assert.equal(savedRequests[0]?.composerDraft, "hidden draft");
-  assert.equal(saveResult?.request.composerDraft, "hidden draft");
-  assert.equal(saveResult?.saved.composerDraft, "hidden draft");
   assert.equal(binding.sessionRef.current?.composerDraft, "hidden draft");
   latest = { ...latest, preview: "terminal answer", messages: [...latest.messages, { role: "assistant", text: "terminal answer" }] };
   assert.ok(terminal);
@@ -369,8 +341,9 @@ test("hidden sessionのsaveとterminalでdraft・previewを維持する", async 
   assert.equal(binding.sessionRef.current?.composerDraft, "hidden draft");
   assert.equal(binding.sessionRef.current?.preview, "terminal answer");
   assert.equal(binding.sessionRef.current?.messages.at(-1)?.text, "terminal answer");
-  assert.equal(binding.mutationRevision.current, revision + 1);
-  assert.equal(bindingB.mutationRevision.current, 1);
+  assert.equal(bindingB.sessionRef.current?.id, b.id);
+  assert.equal(bindingB.sessionRef.current?.composerDraft, "selected draft");
+  assert.deepEqual(bindingB.sessionRef.current?.messages, b.messages);
   assert.equal(view.current.summaries.find((summary) => summary.id === "a")?.preview, "terminal answer");
   await view.unmount();
 });

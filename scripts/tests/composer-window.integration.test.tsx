@@ -9,17 +9,17 @@ import type { AuxiliaryDraftRecord } from "../../src/auxiliary-draft-contract.js
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Session Windowの入力はComposerだけへ即時反映され、保存済draftとowner切替を保ち、送信中ABA編集を誤消費せず、終了flush中の入力を凍結する"
+// claim = "実Session Windowは入力を局所反映し、owner/送信revisionを保ち、失敗復元を終了flushとRetryで保存し、凍結中の添付操作を止める"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
-// fault = "root入力購読が一覧全件を再読込みする、古いowner/revisionを送信する、保存済draftを失う、またはflush後close前に追加入力を受け付ける"
-// observable = "実textareaのvalue/disabled、Send buttonのdisabled/title、summary表示propertyのread回数・full Session保存要求・送信revision/対象/本文・flush ack"
+// fault = "rootが一覧全件を再計算する、古いowner/revisionを送信する、失敗復元を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
+// observable = "textarea/feedback/Sendの状態、summary read回数、保存要求・永続draft・送信対象・flush ACK、picker後のコピー回数"
 // observation_boundary = "component-behavior"
 // scope = "composer-window-input-wiring"
 // lifecycle = "permanent"
 // impact = "多数会話での入力遅延、切替による下書き消失、古い入力や別会話への誤送信を防ぐ"
 // distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証する。壁時計の性能値をCI合否にしない"
 // @end-test-value
-test("Session Windowの入力境界と切替後の最新値送信を実配線で守る", { timeout: 5000 }, async () => {
+test("Session Windowの入力境界と切替後の最新値送信を実配線で守る", { timeout: 8000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
     url: "http://withmate.test/session.html?sessionId=benchmark-main", pretendToBeVisual: true,
   });
@@ -69,6 +69,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
   let heldSave: Promise<void> | null = null;
   let notifySaveStarted: (() => void) | undefined;
   let notifySaved: ((text: string) => void) | undefined;
+  let failDraftWrites = false;
   api.getAuxiliaryDraft = async (id) => {
     if (!drafts.has(id)) {
       const session = await api.getAuxiliarySession(id);
@@ -78,6 +79,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     return drafts.get(id)!;
   };
   api.saveAuxiliaryDraft = async (input) => {
+    if (failDraftWrites) throw new Error("Draft storage unavailable");
     if (heldSave) {
       const wait = heldSave;
       heldSave = null;
@@ -104,6 +106,8 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
   let heldRun: Promise<void> | null = null;
   let notifyRunStarted: (() => void) | undefined;
   let rejectRun = false;
+  let failRunRestore = false;
+  let notifyRunFailed: (() => void) | undefined;
   api.runAuxiliarySessionTurn = async (id, request) => {
     const current = await api.getAuxiliaryDraft(id);
     assert.ok(current);
@@ -120,6 +124,12 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     }
     if (rejectRun) {
       rejectRun = false;
+      if (failRunRestore) {
+        failRunRestore = false;
+        failDraftWrites = true;
+        notifyRunFailed?.();
+        throw new Error("Auxiliary turn failed and draft restore failed.");
+      }
       drafts.set(id, { ...current, durableRevision: current.durableRevision + 2 });
       throw new Error("Auxiliary admission failed");
     }
@@ -248,10 +258,49 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.deepEqual(alerts, ["Auxiliary admission failed"]);
     alerts.length = 0;
 
+    rejectRun = true;
+    failRunRestore = true;
+    const recoveryRunFailed = new Promise<void>((resolve) => { notifyRunFailed = resolve; });
+    await input("recover after storage failure");
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
+      await recoveryRunFailed;
+    });
+    assert.equal(textarea().value, "recover after storage failure");
+    assert.equal(drafts.get(previousAuxiliaryId)?.text, "");
+    const failedFlushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
+    await act(async () => { flushRequest?.({ requestId: "recovery-close", sessionId: "benchmark-main" }); await failedFlushAck; });
+    assert.deepEqual(flushAcks, [{ id: "recovery-close", success: false }], "restored unsaved input must prevent a successful close ACK");
+    await act(async () => { flushRelease?.({ success: false }); });
+    assert.equal(textarea().value, "recover after storage failure");
+    assert.ok(dom.window.document.getElementById("composer-save-feedback"));
+    failDraftWrites = false;
+    const recovered = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "recover after storage failure") resolve(); }; });
+    await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-save-retry")!.click(); await recovered; });
+    assert.equal(drafts.get(previousAuxiliaryId)?.text, "recover after storage failure");
+    assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.disabled, false);
+    assert.deepEqual(alerts, ["Auxiliary turn failed and draft restore failed."]);
+    alerts.length = 0;
+    flushAcks.length = 0;
+
     await input("draft before close");
+    let releasePicker!: (paths: string[]) => void;
+    let copies = 0;
+    api.pickFiles = () => new Promise((resolve) => { releasePicker = resolve; });
+    api.copyFilesToSessionFiles = async () => { copies += 1; return ["/session/copied.txt"]; };
+    const attach = dom.window.document.querySelector<HTMLButtonElement>(".composer-attachment-trigger");
+    assert.ok(attach);
+    await act(async () => { attach.click(); });
+    const copy = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((button) => button.textContent === "Copy")!;
+    assert.ok(copy);
+    await act(async () => { copy.click(); });
     const flushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
     await act(async () => { flushRequest?.({ requestId: "close-1", sessionId: "benchmark-main" }); });
     assert.equal(textarea().disabled, true, "close freezes editing before awaiting persistence");
+    assert.equal(attach.disabled, true);
+    await act(async () => { releasePicker(["/picked.txt"]); });
+    assert.equal(copies, 0, "picker completion after freeze must not begin copying files");
+    assert.equal(textarea().value, "draft before close");
     assert.deepEqual(flushAcks, []);
     await act(async () => { await flushAck; });
     assert.deepEqual(flushAcks, [{ id: "close-1", success: true }]);
@@ -260,6 +309,12 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(textarea().disabled, false, "another window's failed quit releases this window");
     assert.equal(textarea().value, "draft before close");
     await target("Main");
+    await input("");
+    await act(async () => {
+      textarea().focus();
+      textarea().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", code: "Enter", ctrlKey: true, bubbles: true }));
+    });
+    assert.equal(dom.window.document.getElementById("composer-sendability-feedback")?.textContent, "Message is empty.");
     await input("invalid reference");
     await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
     assert.ok(dom.window.document.body.textContent?.includes("Invalid attachment"));

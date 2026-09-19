@@ -79,7 +79,6 @@ import {
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
-  WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
@@ -2250,7 +2249,7 @@ test("Auxiliary full read IPC は対象 Session / Companion Review window から
 // kind = "contract"
 // claim = "Auxiliary draft readはowner Session/Reviewから許可し、draft mutationはowner Sessionだけへ限定する"
 // oracle = { type = "contract", ref = "src-electron/main-ipc-registration.ts#registerAuxiliaryHandlers" }
-// fault = "Home・別Session・退役Companionからdraftを保存またはconsumeできる、または正規ownerへ届かない"
+// fault = "Home・別Session・退役Companionからdraftを保存できる、または正規ownerへ届かない"
 // observable = "draft handler result, dependency calls, and authorization errors"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-draft-ipc-authorization"
@@ -2299,10 +2298,6 @@ test("Auxiliary draft IPC はreadをownerへ、mutationをSession ownerへ限定
       calls.push("saveAuxiliaryDraft");
       return { outcome: "saved", ack: { auxiliarySessionId: "aux-1", incarnation: draft.incarnation, durableRevision: 4, updatedAt: draft.updatedAt } };
     },
-    consumeAuxiliaryDraft: async () => {
-      calls.push("consumeAuxiliaryDraft");
-      return { outcome: "consumed", ack: { auxiliarySessionId: "aux-1", incarnation: draft.incarnation, durableRevision: 4, updatedAt: draft.updatedAt } };
-    },
   });
   registerMainIpcHandlers(ipcMain, deps);
 
@@ -2317,27 +2312,12 @@ test("Auxiliary draft IPC はreadをownerへ、mutationをSession ownerへ限定
     updatedAt: draft.updatedAt,
   };
   assert.equal((await handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, input)).outcome, "saved");
-  assert.equal((await handlers.get(WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL)?.({}, {
-    auxiliarySessionId: input.auxiliarySessionId,
-    parentSessionId: input.parentSessionId,
-    incarnation: input.incarnation,
-    expectedDurableRevision: input.expectedDurableRevision,
-  })).outcome, "consumed");
 
   eventWindow = companionReviewWindow;
   assert.deepEqual(await handlers.get(WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL)?.({}, "aux-1"), status);
   assert.deepEqual(await handlers.get(WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL)?.({}, "aux-1"), draft);
   await assert.rejects(
     () => handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, input) as Promise<unknown>,
-    /Companion provider execution is retired/,
-  );
-  await assert.rejects(
-    () => handlers.get(WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL)?.({}, {
-      auxiliarySessionId: input.auxiliarySessionId,
-      parentSessionId: input.parentSessionId,
-      incarnation: input.incarnation,
-      expectedDurableRevision: input.expectedDurableRevision,
-    }) as Promise<unknown>,
     /Companion provider execution is retired/,
   );
 
@@ -2355,26 +2335,11 @@ test("Auxiliary draft IPC はreadをownerへ、mutationをSession ownerへ限定
       () => handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, input) as Promise<unknown>,
       /Auxiliary session IPC is only available/,
     );
-    await assert.rejects(
-      () => handlers.get(WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL)?.({}, {
-        auxiliarySessionId: input.auxiliarySessionId,
-        parentSessionId: input.parentSessionId,
-        incarnation: input.incarnation,
-        expectedDurableRevision: input.expectedDurableRevision,
-      }) as Promise<unknown>,
-      /Auxiliary session IPC is only available/,
-    );
   }
   eventWindow = sessionWindow;
   const mismatchedParentInput = { ...input, parentSessionId: "other-parent" };
   assert.deepEqual(await handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, mismatchedParentInput), { outcome: "not-found" });
-  assert.deepEqual(await handlers.get(WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL)?.({}, {
-    auxiliarySessionId: mismatchedParentInput.auxiliarySessionId,
-    parentSessionId: mismatchedParentInput.parentSessionId,
-    incarnation: mismatchedParentInput.incarnation,
-    expectedDurableRevision: mismatchedParentInput.expectedDurableRevision,
-  }), { outcome: "not-found" });
-  assert.deepEqual(calls, ["getAuxiliaryDraft", "saveAuxiliaryDraft", "consumeAuxiliaryDraft", "getAuxiliaryDraft"]);
+  assert.deepEqual(calls, ["getAuxiliaryDraft", "saveAuxiliaryDraft", "getAuxiliaryDraft"]);
 });
 
 test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run に到達しない", async () => {

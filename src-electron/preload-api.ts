@@ -64,7 +64,6 @@ import {
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
-  WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL,
@@ -541,9 +540,6 @@ function createAuxiliaryApi(ipcRenderer: IpcRendererLike): WithMateWindowAuxilia
     },
     saveAuxiliaryDraft(input) {
       return ipcRenderer.invoke(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL, input);
-    },
-    consumeAuxiliaryDraft(input) {
-      return ipcRenderer.invoke(WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL, input);
     },
     getAuxiliarySessionStatus(auxiliarySessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL, auxiliarySessionId);

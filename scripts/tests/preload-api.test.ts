@@ -537,7 +537,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "cancelAuxiliarySessionRun",
     "cancelSessionRun",
     "closeAuxiliarySession",
-    "consumeAuxiliaryDraft",
     "copyFilesToSessionFiles",
     "copySessionFilePreviewImage",
     "copySessionFileObject",

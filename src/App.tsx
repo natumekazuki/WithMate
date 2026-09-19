@@ -534,6 +534,7 @@ export default function AgentSessionWindowApp() {
   const [workspaceAvailabilityCheckRevision, setWorkspaceAvailabilityCheckRevision] = useState(0);
   const workspaceAvailabilityRequestIdRef = useRef(0);
   const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] = useState(false);
+  const [isComposerFrozen, setIsComposerFrozen] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -939,6 +940,7 @@ export default function AgentSessionWindowApp() {
     if (!withmateApi) return;
     const unsubscribeRequest = withmateApi.subscribeSessionDraftFlushRequest((request) => {
       composerRegistry.freeze();
+      setIsComposerFrozen(true);
       void Promise.all(Array.from(auxiliaryDraftPersistenceOwnersRef.current.values(), (owner) => owner.flush()))
         .then(() => withmateApi.acknowledgeSessionDraftFlush(request.requestId, true))
         .catch(() => withmateApi.acknowledgeSessionDraftFlush(request.requestId, false));
@@ -946,6 +948,7 @@ export default function AgentSessionWindowApp() {
     const unsubscribeRelease = withmateApi.subscribeSessionDraftFlushRelease(({ success }) => {
       if (!success) {
         composerRegistry.unfreeze();
+        setIsComposerFrozen(false);
         auxiliaryDraftPersistenceOwnersRef.current.forEach((owner, sessionId) => {
           if (owner.hasPending) {
             composerRegistry.setSaveState(
@@ -2802,7 +2805,7 @@ export default function AgentSessionWindowApp() {
   });
 
   const handleSelectCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
-    if (!selectedSession || isSelectedSessionReadOnly || selectedSession.provider !== "copilot") {
+    if (composerRegistry.isFrozen || !selectedSession || isSelectedSessionReadOnly || selectedSession.provider !== "copilot") {
       return;
     }
 
@@ -3155,6 +3158,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSelectAuxiliaryCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
+    if (composerRegistry.isFrozen) return;
     const nextCustomAgentName = (agent?.name ?? "").trim();
     await runAuxiliaryCustomAgentSelectionOperation({
       activeSession: activeAuxiliarySession,
@@ -3171,6 +3175,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSelectAuxiliarySkill = async (skill: DiscoveredSkill) => {
+    if (composerRegistry.isFrozen) return;
     const textarea = composerTextareaRef.current;
     await runAuxiliarySkillPromptInsertionOperation({
       activeSession: activeAuxiliarySession
@@ -3205,6 +3210,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const restoreLastUserMessageToDraft = (messageText: string) => {
+    if (composerRegistry.isFrozen) return;
     const textarea = composerTextareaRef.current;
     applyRetryDraftRestoreCommand({
       messageText,
@@ -3266,10 +3272,14 @@ export default function AgentSessionWindowApp() {
     );
   };
 
-  const handleToggleAgentPicker = createAgentPickerToggleHandler({
+  const toggleAgentPicker = createAgentPickerToggleHandler({
     setAgentPickerOpen: setIsAgentPickerOpen,
     setSkillPickerOpen: setIsSkillPickerOpen,
   });
+
+  const handleToggleAgentPicker = () => {
+    if (!composerRegistry.isFrozen) toggleAgentPicker();
+  };
 
   const toggleSkillPicker = createSkillPickerToggleHandler({
     setAgentPickerOpen: setIsAgentPickerOpen,
@@ -3277,15 +3287,20 @@ export default function AgentSessionWindowApp() {
   });
 
   const handleToggleSkillPicker = () => {
+    if (composerRegistry.isFrozen) return;
     if (!isSkillPickerOpen && !requestCentralSurfaceClose()) {
       return;
     }
     toggleSkillPicker();
   };
 
-  const handleToggleAdditionalDirectoryList = createAdditionalDirectoryListToggleHandler({
+  const toggleAdditionalDirectoryList = createAdditionalDirectoryListToggleHandler({
     setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
   });
+
+  const handleToggleAdditionalDirectoryList = () => {
+    if (!composerRegistry.isFrozen) toggleAdditionalDirectoryList();
+  };
 
   const handleOpenInlinePath = async (target: string, ownerSessionId = activeRunSessionId) => {
     if (!withmateApi || !ownerSessionId) {
@@ -3413,6 +3428,26 @@ export default function AgentSessionWindowApp() {
     return owner;
   };
 
+  const observeAuxiliaryDraftSave = async (
+    sessionId: string,
+    draftRevision: number,
+    operation: Promise<void>,
+  ) => {
+    const targetOwner = { kind: "auxiliary" as const, id: sessionId };
+    composerRegistry.setSaveState(targetOwner, "saving");
+    try {
+      await operation;
+      if (composerRegistry.capture(targetOwner).revision === draftRevision) {
+        composerRegistry.setSaveState(targetOwner, "saved");
+      }
+    } catch (error) {
+      console.error(error);
+      if (composerRegistry.capture(targetOwner).revision === draftRevision) {
+        composerRegistry.setSaveState(targetOwner, "error", "Draft could not be saved.");
+      }
+    }
+  };
+
   const handleAuxiliaryDraftChange = async (value: string, selectionStart: number) => {
     const session = activeAuxiliarySession;
     if (!session || composerRegistry.isFrozen) return;
@@ -3428,18 +3463,15 @@ export default function AgentSessionWindowApp() {
     const owner = getAuxiliaryDraftPersistenceOwner(session);
     if (!owner) return;
     const draftRevision = composerRegistry.capture(composerOwner).revision;
-    composerState.setSaveState("saving");
-    try {
-      await owner.enqueue(value);
-      if (composerRegistry.capture(composerOwner).revision === draftRevision) {
-        composerState.setSaveState("saved");
-      }
-    } catch (error) {
-      console.error(error);
-      if (composerRegistry.capture(composerOwner).revision === draftRevision) {
-        composerState.setSaveState("error", "Draft could not be saved.");
-      }
-    }
+    await observeAuxiliaryDraftSave(session.id, draftRevision, owner.enqueue(value));
+  };
+
+  const handleRetryAuxiliaryDraftSave = () => {
+    if (!activeAuxiliarySession || composerRegistry.isFrozen) return;
+    const owner = getAuxiliaryDraftPersistenceOwner(activeAuxiliarySession);
+    if (!owner) return;
+    const operation = owner.hasPending ? owner.flush() : owner.enqueue(getComposerDraft());
+    void observeAuxiliaryDraftSave(activeAuxiliarySession.id, composerRegistry.capture(composerOwner).revision, operation);
   };
 
   const sendAuxiliaryMessage = async (messageText: string) => {
@@ -3459,7 +3491,7 @@ export default function AgentSessionWindowApp() {
     }
     const durableDraft = draftOwner?.durableRecord;
     const latestCapture = composerRegistry.capture(composerOwner);
-    if (!durableDraft || latestCapture.revision !== sendCapture.revision || latestCapture.draft !== sendCapture.draft || durableDraft.text !== sendCapture.draft) {
+    if (!draftOwner || !durableDraft || latestCapture.revision !== sendCapture.revision || latestCapture.draft !== sendCapture.draft || durableDraft.text !== sendCapture.draft) {
       // A newer local revision is a normal send-capture invalidation, not a save failure.
       // Keep it editable and let the next explicit Send capture that revision.
       if (latestCapture.revision !== sendCapture.revision || latestCapture.draft !== sendCapture.draft) {
@@ -3489,7 +3521,10 @@ export default function AgentSessionWindowApp() {
       },
       onRunError: () => {
         if (clearedRevision !== null) {
-          composerRegistry.restoreIfRevision(composerOwner, clearedRevision, () => sendCapture.draft);
+          const restoredRevision = composerRegistry.restoreIfRevision(composerOwner, clearedRevision, () => sendCapture.draft);
+          if (restoredRevision !== null) {
+            void observeAuxiliaryDraftSave(activeAuxiliarySession.id, restoredRevision, draftOwner.enqueue(sendCapture.draft, durableDraft));
+          }
         }
       },
       applyRunningSession: createAuxiliarySessionRunningApplier({
@@ -3545,9 +3580,9 @@ export default function AgentSessionWindowApp() {
 
   const handleQuoteMessageText = createQuoteMessageTextHandler({
     isBlocked: () => (
-      activeAuxiliarySession
+      composerRegistry.isFrozen || (activeAuxiliarySession
         ? activeAuxiliarySession.runState === "running" || !!composerBlockedReason
-        : isComposerDisabled
+        : isComposerDisabled)
     ),
     notifyBlocked: triggerComposerBlockedFeedback,
     getComposerState: () => ({
@@ -3575,7 +3610,7 @@ export default function AgentSessionWindowApp() {
   });
 
   const insertReferencePaths = (selectedPaths: string[]) => {
-    if (isAuxiliaryTargetUnavailable) return;
+    if (composerRegistry.isFrozen || isAuxiliaryTargetUnavailable) return;
     const textarea = composerOwnerRef.current === activeRunSessionId ? composerTextareaRef.current : null;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = getComposerDraft();
@@ -3611,7 +3646,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const insertPastedAttachments = (references: ComposerReferenceInput[]) => {
-    if (isAuxiliaryTargetUnavailable) return;
+    if (composerRegistry.isFrozen || isAuxiliaryTargetUnavailable) return;
     const textarea = composerOwnerRef.current === activeRunSessionId ? composerTextareaRef.current : null;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = getComposerDraft();
@@ -3643,6 +3678,7 @@ export default function AgentSessionWindowApp() {
   const handleRemoveAttachmentReference = createPathReferenceRemovalHandler({
     getDraft: () => getComposerDraft(),
     applyRemoval: (nextState) => {
+      if (composerRegistry.isFrozen) return;
       const { draft: nextDraft, caret: nextCaret } = nextState;
       if (activeAuxiliarySession) {
         void handleAuxiliaryDraftChange(nextDraft, nextCaret);
@@ -3662,7 +3698,7 @@ export default function AgentSessionWindowApp() {
   });
 
   const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {
-    if (!withmateApi || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
+    if (composerRegistry.isFrozen || !withmateApi || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
       return;
     }
 
@@ -3672,6 +3708,7 @@ export default function AgentSessionWindowApp() {
       pickerBaseDirectory || selectedSession?.workspacePath || null,
       withmateApi,
     );
+    if (composerRegistry.isFrozen) return;
     applyPickedComposerReferencePathCommand({
       kind,
       selectedPath,
@@ -3681,18 +3718,18 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleAddToSessionFiles = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
+    if (composerRegistry.isFrozen || !withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
       return;
     }
 
     setIsSkillPickerOpen(false);
     const selectedPaths = await withmateApi.pickFiles(pickerBaseDirectory || selectedSession.workspacePath || null);
-    if (selectedPaths.length === 0) {
+    if (composerRegistry.isFrozen || selectedPaths.length === 0) {
       return;
     }
 
     const savedPaths = await withmateApi.copyFilesToSessionFiles(selectedSession.id, selectedPaths);
-    if (savedPaths.length === 0) {
+    if (composerRegistry.isFrozen || savedPaths.length === 0) {
       return;
     }
 
@@ -3705,13 +3742,13 @@ export default function AgentSessionWindowApp() {
   };
 
   const handlePickSessionFiles = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
+    if (composerRegistry.isFrozen || !withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
       return;
     }
 
     setIsSkillPickerOpen(false);
     const selectedPaths = await withmateApi.pickSessionFiles(selectedSession.id);
-    if (selectedPaths.length === 0) {
+    if (composerRegistry.isFrozen || selectedPaths.length === 0) {
       return;
     }
 
@@ -3724,13 +3761,13 @@ export default function AgentSessionWindowApp() {
   };
 
   const handlePickSessionFolder = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
+    if (composerRegistry.isFrozen || !withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
       return;
     }
 
     setIsSkillPickerOpen(false);
     const selectedPath = await withmateApi.pickSessionFolder(selectedSession.id);
-    if (!selectedPath) {
+    if (composerRegistry.isFrozen || !selectedPath) {
       return;
     }
 
@@ -3743,13 +3780,13 @@ export default function AgentSessionWindowApp() {
   };
 
   const handlePickSessionImage = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
+    if (composerRegistry.isFrozen || !withmateApi || !selectedSession || isSelectedSessionReadOnly || isAuxiliaryTargetUnavailable) {
       return;
     }
 
     setIsSkillPickerOpen(false);
     const selectedPath = await withmateApi.pickSessionImageFile(selectedSession.id);
-    if (!selectedPath) {
+    if (composerRegistry.isFrozen || !selectedPath) {
       return;
     }
 
@@ -3766,6 +3803,7 @@ export default function AgentSessionWindowApp() {
     canPaste: () => {
       const targetAuxiliarySession = activeAuxiliarySession;
       return !!withmateApi &&
+        !composerRegistry.isFrozen &&
         !!selectedSession &&
         !isAuxiliaryTargetUnavailable &&
         !isSelectedSessionReadOnly &&
@@ -3776,7 +3814,10 @@ export default function AgentSessionWindowApp() {
     currentTimestampLabel,
     fallbackErrorMessage: "貼り付けたファイルの保存に失敗したよ。",
     getSavePastedSessionFile: () => {
-      return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
+      return withmateApi ? (request) => {
+        if (composerRegistry.isFrozen) throw new Error("Attachments cannot be added while the window is closing.");
+        return withmateApi.savePastedSessionFile(request);
+      } : null;
     },
     getSessionId: () => selectedSession?.id,
     insertAttachments: insertPastedAttachments,
@@ -3785,13 +3826,14 @@ export default function AgentSessionWindowApp() {
   const handleAddAdditionalDirectory = async () => {
     await runPickedAdditionalDirectoryOperation({
       canPickDirectory: () => !!withmateApi &&
+        !composerRegistry.isFrozen &&
         !!selectedSession &&
         !isSelectedSessionReadOnly &&
         selectedSessionRunState !== "running",
       getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, selectedSession?.workspacePath),
       pickDirectory: (baseDirectory) => withmateApi?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
       applyPickedDirectory: async (selectedPath) => {
-        if (!selectedSession) {
+        if (composerRegistry.isFrozen || !selectedSession) {
           return;
         }
         const nextSession: Session = buildSessionWithAddedAdditionalDirectory(selectedSession, selectedPath);
@@ -3808,6 +3850,7 @@ export default function AgentSessionWindowApp() {
     await runAdditionalDirectoryRemovalOperation({
       directoryPath,
       canRemoveDirectory: () => !!selectedSession &&
+        !composerRegistry.isFrozen &&
         !isSelectedSessionReadOnly &&
         selectedSession.provider === "codex" &&
         selectedSessionRunState !== "running",
@@ -3826,8 +3869,14 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleAddAuxiliaryAdditionalDirectory = async () => {
+    if (composerRegistry.isFrozen || !withmateApi) return;
     await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
-      api: withmateApi,
+      api: {
+        pickDirectory: async (basePath) => {
+          const selectedPath = await withmateApi.pickDirectory(basePath);
+          return composerRegistry.isFrozen ? null : selectedPath;
+        },
+      },
       hasParentSession: !!selectedSession,
       activeAuxiliarySession,
       pickerBaseDirectory,
@@ -3839,6 +3888,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleRemoveAuxiliaryAdditionalDirectory = async (directoryPath: string) => {
+    if (composerRegistry.isFrozen) return;
     await runRemoveAuxiliaryAdditionalDirectoryOperation({
       directoryPath,
       updateActiveAuxiliarySession,
@@ -4023,6 +4073,7 @@ export default function AgentSessionWindowApp() {
   const renderedMessages = displayedMessages;
   const renderedDraft = draft;
   const handleOpenPromptTemplates = () => {
+    if (composerRegistry.isFrozen) return;
     clearHistoryDiffPreview();
     if (isPromptTemplateWorkspaceOpen) {
       requestCentralSurfaceClose();
@@ -4046,7 +4097,7 @@ export default function AgentSessionWindowApp() {
     setIsPromptTemplateWorkspaceOpen(true);
   };
   const handleInsertPromptTemplate = (prompt: string) => {
-    if (isAuxiliaryTargetUnavailable) return;
+    if (composerRegistry.isFrozen || isAuxiliaryTargetUnavailable) return;
     const insertion = insertComposerTextAtSelection(
       getComposerDraft(),
       prompt,
@@ -4172,9 +4223,9 @@ export default function AgentSessionWindowApp() {
   const filePreviewContent = isPromptTemplateWorkspaceOpen && withmateApi ? (
     <PromptTemplateWorkspace
       api={withmateApi}
-      canInsert={activeAuxiliarySession
+      canInsert={!isComposerFrozen && (activeAuxiliarySession
         ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason
-        : !isComposerDisabled}
+        : !isComposerDisabled)}
       onRegisterCloseGuard={registerPromptTemplateCloseGuard}
       onBack={closeCentralPreview}
       onInsert={handleInsertPromptTemplate}
@@ -4333,7 +4384,7 @@ export default function AgentSessionWindowApp() {
           initialDraft: composerDraft,
         },
         onRetryComposerSave: activeAuxiliarySession
-          ? () => void handleAuxiliaryDraftChange(getComposerDraft(), composerCaret)
+          ? handleRetryAuxiliaryDraftSave
           : undefined,
         additionalDirectoryItems,
         draft: renderedDraft,
@@ -4343,6 +4394,8 @@ export default function AgentSessionWindowApp() {
           : isComposerDisabled,
         isSendDisabled: renderedIsSendDisabled,
         composerSendability: renderedComposerSendability,
+        forceComposerBlockedFeedback,
+        isComposerFrozen,
         composerSendButtonTitle: renderedComposerButtonTitle,
         isComposerBlockedFeedbackActive:
           forceComposerBlockedFeedback && renderedComposerSendability.feedbackTone === "blocked",
@@ -4467,6 +4520,7 @@ export default function AgentSessionWindowApp() {
           void handleSelectCustomAgent(agent);
         },
         onSelectSkill: (skillId) => {
+          if (composerRegistry.isFrozen) return;
           const skill = availableSkills.find((entry) => entry.id === skillId);
           if (skill) {
             if (activeAuxiliarySession) {

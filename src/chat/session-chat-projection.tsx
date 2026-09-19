@@ -110,6 +110,8 @@ export type AgentSessionChatProjectionInput = {
   isComposerDisabled: boolean;
   isSendDisabled: boolean;
   composerSendability: SessionComposerExpandedProps["composerSendability"];
+  forceComposerBlockedFeedback?: SessionComposerExpandedProps["forceComposerBlockedFeedback"];
+  isComposerFrozen?: boolean;
   composerSendButtonTitle: string | undefined;
   isComposerBlockedFeedbackActive: boolean;
   approvalChoiceOptions: SessionComposerExpandedProps["approvalOptions"];
@@ -308,6 +310,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isComposerDisabled: input.isComposerDisabled,
       isSendDisabled: input.isSendDisabled,
       composerSendability: input.composerSendability,
+      forceComposerBlockedFeedback: input.forceComposerBlockedFeedback,
       sendButtonTitle: input.composerSendButtonTitle,
       isComposerBlockedFeedbackActive: input.isComposerBlockedFeedbackActive,
       approvalOptions: input.approvalChoiceOptions,
@@ -490,11 +493,15 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     additionalDirectoryListProps: {
       isOpen: input.isAdditionalDirectoryListOpen,
       items: input.additionalDirectoryItems,
-      isInteractionDisabled: input.isSelectedSessionRunning || input.composerBlocked,
+      isInteractionDisabled:
+        input.isSelectedSessionRunning
+        || input.composerBlocked
+        || input.isComposerFrozen === true,
       onRemove: input.onRemoveAdditionalDirectory,
     },
     skillPickerProps: {
       isOpen: !isCharacterAuthoringSession && input.isSkillPickerOpen,
+      isInteractionDisabled: input.isComposerFrozen === true,
       isLoading: input.isSkillListLoading,
       errorMessage: input.skillListError,
       items: input.skillItems,

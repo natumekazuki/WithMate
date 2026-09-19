@@ -80,6 +80,8 @@ Auxiliary の永続 draft は会話 payload と独立した保存単位を唯一
 
 送信は controller の最新値と編集 revision を捕捉し、当該 owner の保存を確定してから durable revision を指定する。送信時の明示 consume と通常 runtime 保存を区別し、古い save / terminal が入力を復活・消去させない。送信拒否・失敗時の復元は捕捉した編集 revision と照合し、後続の新しい入力を上書きしない。正常な Window close / app quit は未保存 owner の flush を待ち、失敗時は閉じずに入力と再試行導線を保持する。強制終了では最後の ack 後の未保存範囲を失い得る。
 
+送信失敗でlocal draftを復元した場合は、その場で保存ownerのpendingへ戻す。Main側の復元にも失敗した値を終了flushから漏らさず、保存障害ではRetryを表示する。永続値を再取得し、同じownerの復元済本文なら追加書込みせず受理する。空のconsume直後のrevisionにだけ復元を書き込み、後続の永続編集や別incarnationは上書きしない。Retryでもこの条件を維持する。
+
 draft の使用時刻は本文と別に扱う。最初の編集で必要な順位変更を反映し、後続の同順位入力では一覧全体を再生成しない。永続的な最終使用時刻は集約保存と同時に確定し、再起動時は最後に保存された順序を復元する。preview は確定応答等からの派生情報のまま、未送信 draft を用いない。非 terminal の live event は軽量な run status を反映し、表示状態のためだけに詳細を再取得しない。terminal と実際の詳細表示では最新の本文を取得する。
 
 既存タグの payload 内 draft は active / closed とも同じ ID の独立保存単位へ移す。空文字も有効であり、移行と旧正本の除去を atomic に確定する。中断時は再実行可能とし、会話・thread・Character・設定を保持する。親削除では独立 draft も除去し、旧 incarnation / storage generation の保存で会話を再作成しない。新規の二重正本、任意 SQL port、全体 mutex、分散編集基盤は追加しない。

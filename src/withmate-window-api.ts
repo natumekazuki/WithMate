@@ -33,7 +33,7 @@ import type {
 } from "./app-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
 import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
-import type { AuxiliaryDraftConsumeInput, AuxiliaryDraftConsumeResult, AuxiliaryDraftRecord, AuxiliaryDraftSaveInput, AuxiliaryDraftSaveResult, AuxiliarySessionStatus } from "./auxiliary-draft-contract.js";
+import type { AuxiliaryDraftRecord, AuxiliaryDraftSaveInput, AuxiliaryDraftSaveResult, AuxiliarySessionStatus } from "./auxiliary-draft-contract.js";
 import type {
   CreatePromptTemplateInput,
   PromptTemplate,
@@ -273,7 +273,6 @@ export type WithMateWindowAuxiliaryApi = {
   getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliaryDraft(auxiliarySessionId: string): Promise<AuxiliaryDraftRecord | null>;
   saveAuxiliaryDraft(input: AuxiliaryDraftSaveInput): Promise<AuxiliaryDraftSaveResult>;
-  consumeAuxiliaryDraft(input: AuxiliaryDraftConsumeInput): Promise<AuxiliaryDraftConsumeResult>;
   getAuxiliarySessionStatus(auxiliarySessionId: string): Promise<AuxiliarySessionStatus | null>;
   createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession>;
   getAuxiliaryCreationContext(parentSessionId: string): Promise<import("./auxiliary-session-state.js").AuxiliaryCreationContext>;

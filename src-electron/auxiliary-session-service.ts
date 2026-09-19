@@ -815,16 +815,6 @@ export class AuxiliarySessionService {
     return await storage.saveAuxiliaryDraft(input);
   }
 
-  async consumeAuxiliaryDraft(input: AuxiliaryDraftConsumeInput): Promise<AuxiliaryDraftConsumeResult> {
-    const storage = this.deps.getStorage();
-    const status = await storage.getAuxiliarySessionStatus(input.auxiliarySessionId);
-    if (!status || status.parentSessionId !== input.parentSessionId || status.incarnation !== input.incarnation) {
-      return { outcome: "not-found" };
-    }
-    if (status.runState === "running") return { outcome: "rejected" };
-    return await storage.consumeAuxiliaryDraft(input);
-  }
-
   async runAuxiliaryTurnWithDraft(input: {
     auxiliarySessionId: string;
     parentSessionId: string;

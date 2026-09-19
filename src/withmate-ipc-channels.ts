@@ -74,7 +74,6 @@ export const WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL = "withmate:run-auxilia
 export const WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL = "withmate:cancel-auxiliary-session-run";
 export const WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL = "withmate:get-auxiliary-draft";
 export const WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL = "withmate:save-auxiliary-draft";
-export const WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL = "withmate:consume-auxiliary-draft";
 export const WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL = "withmate:get-auxiliary-session-status";
 export const WITHMATE_CREATE_SESSION_CHANNEL = "withmate:create-session";
 export const WITHMATE_CREATE_COMPANION_SESSION_CHANNEL = "withmate:create-companion-session";

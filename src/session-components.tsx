@@ -52,7 +52,10 @@ import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
 import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
 import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "./chat/composer-controller.js";
 import { buildComposerAttachmentItems } from "./session-composer-paths.js";
-import { buildComposerSendabilityState, getComposerSendButtonTitle } from "./session-composer-feedback.js";
+import {
+  getComposerSendButtonTitle,
+  resolveComposerSendabilityState,
+} from "./session-composer-feedback.js";
 import { resolveSelectionActionOverlayPosition } from "./chat/selection-action-overlay.js";
 import { SessionSwitcher, type SessionSwitcherOption } from "./chat/session-switcher.js";
 import {
@@ -3711,6 +3714,7 @@ export function SessionMessageColumn({
 
 export type SessionActionDockCompactRowProps = {
   attachmentCount: number;
+  composerController?: SessionComposerExpandedProps["composerController"];
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
@@ -3728,6 +3732,7 @@ export type SessionActionDockCompactRowProps = {
 
 export function SessionActionDockCompactRow({
   attachmentCount,
+  composerController,
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
@@ -3742,6 +3747,16 @@ export function SessionActionDockCompactRow({
   onCancel,
   onMessageViewModeChange = () => {},
 }: SessionActionDockCompactRowProps) {
+  const controllerOwner = composerController?.owner ?? { kind: "main" as const, id: "__legacy__" };
+  const composerControllerState = useComposerController(
+    controllerOwner,
+    composerController?.initialDraft,
+    composerController?.registry,
+  );
+  const displayedAttachmentCount = composerController
+    ? composerControllerState.preview.attachments.length
+    : attachmentCount;
+
   return (
     <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}`}>
       {isRunning ? (
@@ -3766,8 +3781,8 @@ export function SessionActionDockCompactRow({
           title="ActionDock を展開"
         >
           {chatNotice ? <span className="session-action-dock-compact-badge attention">{chatNotice}</span> : null}
-          {attachmentCount > 0 ? (
-            <span className="session-action-dock-compact-badge">{`添付 ${attachmentCount}`}</span>
+          {displayedAttachmentCount > 0 ? (
+            <span className="session-action-dock-compact-badge">{`添付 ${displayedAttachmentCount}`}</span>
           ) : null}
         </button>
       )}
@@ -3904,6 +3919,7 @@ export type SessionComposerExpandedProps = {
   isComposerDisabled: boolean;
   isSendDisabled: boolean;
   composerSendability: SessionComposerSendabilityView;
+  forceComposerBlockedFeedback?: boolean;
   externalErrorDescriptionIds?: string;
   sendButtonTitle?: string;
   isComposerBlockedFeedbackActive: boolean;
@@ -3988,6 +4004,7 @@ export function SessionComposerExpanded({
   isComposerDisabled,
   isSendDisabled,
   composerSendability,
+  forceComposerBlockedFeedback = false,
   externalErrorDescriptionIds,
   sendButtonTitle,
   isComposerBlockedFeedbackActive,
@@ -4045,12 +4062,13 @@ export function SessionComposerExpanded({
   const composerFrozen = composerController?.registry.isFrozen === true;
   const composerSaveFailed = composerControllerState.saveState === "error";
   const projectedComposerSendability = composerController
-    ? buildComposerSendabilityState({
+    ? resolveComposerSendabilityState({
         runState: isRunning ? "running" : "idle",
         busyReason: composerSendability.busyReason,
         blockedReason: composerBlocked ? (composerSendability.primaryFeedback ?? "") : "",
         inputErrors: composerControllerState.preview.errors,
         draftText: displayedDraft,
+        forceBlockedFeedback: forceComposerBlockedFeedback,
       })
     : null;
   const displayedComposerSendability = projectedComposerSendability ?? composerSendability;
@@ -4077,10 +4095,10 @@ export function SessionComposerExpanded({
   const keyboardShortcuts = useShortcutSettings();
 
   useEffect(() => {
-    if (!showAttachmentControls || isRunning || composerBlocked) {
+    if (!showAttachmentControls || isRunning || composerBlocked || composerFrozen) {
       setIsAttachmentMenuOpen(false);
     }
-  }, [composerBlocked, isRunning, showAttachmentControls]);
+  }, [composerBlocked, composerFrozen, isRunning, showAttachmentControls]);
 
   useEffect(() => {
     if (!isAgentPickerOpen) {
@@ -4114,7 +4132,7 @@ export function SessionComposerExpanded({
           ) : null}
           {showAttachmentControls ? (
             <ComposerAttachmentMenu
-              disabled={isRunning || composerBlocked}
+              disabled={isRunning || composerBlocked || composerFrozen}
               isOpen={isAttachmentMenuOpen}
               onOpenChange={(isOpen) => {
                 if (isOpen) {
@@ -4157,7 +4175,7 @@ export function SessionComposerExpanded({
                 onOpenPromptTemplates();
               }}
               aria-pressed={isPromptTemplateWorkspaceOpen}
-              disabled={isRunning || composerBlocked}
+              disabled={isRunning || composerBlocked || composerFrozen}
             >
               Template
             </button>
@@ -4174,7 +4192,7 @@ export function SessionComposerExpanded({
                   }
                   onToggleAgentPicker();
                 }}
-                disabled={!canSelectCustomAgent || isRunning || composerBlocked}
+                disabled={!canSelectCustomAgent || isRunning || composerBlocked || composerFrozen}
                 aria-expanded={isAgentPickerOpen}
                 aria-haspopup="listbox"
                 aria-controls={isAgentPickerOpen ? "composer-agent-picker-list" : undefined}
@@ -4197,7 +4215,7 @@ export function SessionComposerExpanded({
                 }
                 onToggleSkillPicker();
               }}
-              disabled={isRunning || composerBlocked}
+              disabled={isRunning || composerBlocked || composerFrozen}
               aria-expanded={isSkillPickerOpen}
               aria-haspopup="listbox"
               aria-controls={isSkillPickerOpen ? "composer-skill-picker-list" : undefined}
@@ -4223,7 +4241,7 @@ export function SessionComposerExpanded({
                   }
                   onAddAdditionalDirectory();
                 }}
-                disabled={isRunning || composerBlocked}
+                disabled={isRunning || composerBlocked || composerFrozen}
               >
                 Add Directory
               </button>
@@ -4240,7 +4258,7 @@ export function SessionComposerExpanded({
                   }
                   onToggleAdditionalDirectoryList();
                 }}
-                disabled={additionalDirectoryCount === 0}
+                disabled={additionalDirectoryCount === 0 || composerFrozen}
                 aria-expanded={isAdditionalDirectoryListOpen}
               >
                 {`Dirs ${additionalDirectoryCount}`}
@@ -4332,6 +4350,7 @@ export function SessionComposerExpanded({
                 className={`composer-path-match${item.isSelected ? " active" : ""}`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => onSelectCustomAgent(item.value)}
+                disabled={composerFrozen}
                 title={item.title}
               >
                 <span className="composer-path-match-primary">{item.primaryLabel}</span>
@@ -4365,7 +4384,7 @@ export function SessionComposerExpanded({
               <button
                 type="button"
                 onClick={() => onRemoveAttachment(item.removeTargets)}
-                disabled={isRunning || composerBlocked}
+                disabled={isRunning || composerBlocked || composerFrozen}
               >
                 ×
               </button>
@@ -4394,7 +4413,7 @@ export function SessionComposerExpanded({
             aria-invalid={displayedComposerSendability.feedbackTone === "blocked" || composerSaveFailed ? true : undefined}
           />
           {composerControllerState.saveState === "error" ? (
-            <div id="composer-save-feedback" className="composer-save-feedback" role="alert" aria-live="assertive">
+            <div id="composer-save-feedback" className="composer-save-feedback">
               <span>{composerControllerState.saveError ?? "Draft could not be saved."}</span>
               {onRetryComposerSave ? (
                 <button
