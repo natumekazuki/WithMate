@@ -247,7 +247,7 @@ test("Auxiliary作成の保存前再検証失敗はfailedで終端する", async
 
 // @test-value v2
 // kind = "invariant"
-// claim = "保存済みAuxiliaryへの遅延cancelと並行queryはID付きcommittedへ収束し、古いlookup失敗で戻さず、同じ要求の再送も重複なく回復する"
+// claim = "保存済みAuxiliaryへの遅延cancelと並行queryは、別要求の取消回収による世代更新や古いlookup失敗をまたいでもID付きcommittedへ収束する"
 // oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
 // fault = "遅延cancelが保存済み作成を隠す、古いlookup失敗で確定を戻す、IDなしのcommittedを返す、または確定後の取消予約が同一要求の再送を拒否する"
 // observable = "並行queryと遅延cancelのID付きcommitted、lookup失敗後の通知state、回復後再送の同一ID、保存行数"
@@ -294,6 +294,10 @@ test("Auxiliary作成成功後の遅延cancelはcommittedへ解決する", async
       }) as typeof storage.listAuxiliarySessions;
       const cancelling = service.cancelAuxiliaryCreation(request);
       assert.equal((await service.cancelAuxiliaryCreation(request)).status, "unknown");
+      assert.equal((await service.cancelAuxiliaryCreation({
+        ...request,
+        clientRequestId: `retire-during-lookup-${lookupFails}`,
+      })).status, "cancelled");
       const duringLookup = service.getAuxiliaryCreation(request);
       await new Promise<void>((resolve) => setImmediate(resolve));
       const committed = { status: "committed", auxiliarySessionId: created.id };
@@ -305,6 +309,7 @@ test("Auxiliary作成成功後の遅延cancelはcommittedへ解決する", async
       assert.deepEqual(await cancelling, committed);
       assert.equal(stateChanges.includes("unknown"), false);
       assert.deepEqual(await service.getAuxiliaryCreation(request), committed);
+      request.creationContext = await service.getAuxiliaryCreationContext(currentParent.id);
     }
     assert.deepEqual(await service.cancelAuxiliaryCreation({
       parentSessionId: request.parentSessionId,
@@ -321,7 +326,12 @@ test("Auxiliary作成成功後の遅延cancelはcommittedへ解決する", async
       return originalList(parentId);
     }) as typeof storage.listAuxiliarySessions;
     assert.equal((await service.cancelAuxiliaryCreation(request)).status, "unknown");
+    assert.equal((await service.cancelAuxiliaryCreation({
+      ...request,
+      clientRequestId: "retire-before-recovery-query",
+    })).status, "cancelled");
     assert.deepEqual(await service.getAuxiliaryCreation(request), { status: "committed", auxiliarySessionId: created.id });
+    assert.deepEqual(await service.cancelAuxiliaryCreation(request), { status: "committed", auxiliarySessionId: created.id });
     assert.equal((await service.createAuxiliarySession(request)).id, created.id);
     assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 1);
   } finally {
@@ -407,7 +417,7 @@ test("Auxiliary作成はcancelの永続化lookup中に割り込んだcreateと�
       rejectLookup(new Error("lookup unavailable"));
       assert.equal((await cancelling).status, releaseOwner ? "expired" : "unknown");
       assert.equal((await service.getAuxiliaryCreation(recoveryRequest)).status, releaseOwner ? "expired" : "cancelled");
-      await assert.rejects(service.createAuxiliarySession(recoveryRequest), releaseOwner ? /creation context が期限切れ/ : /取り消し済み/);
+      await assert.rejects(service.createAuxiliarySession(recoveryRequest), /creation context が期限切れ/);
       assert.equal(originalList(currentParent.id).length, 0);
     }
   } finally {
@@ -419,15 +429,15 @@ test("Auxiliary作成はcancelの永続化lookup中に割り込んだcreateと�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Auxiliary作成のcancel先着はcommit前の同一要求をtombstoneで拒否する"
+// claim = "Auxiliary作成のcancel先着はcommitを止め、処理終了後はレコードを回収して旧世代の同一要求を拒否する"
 // oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
 // fault = "cancel受付前に作成を開始する、またはcancel後の同一要求を再実行する"
-// observable = "取消結果、作成拒否、保存行なし"
-// observation_boundary = "public-boundary"
+// observable = "取消結果、作成拒否、保存行なし、処理終了後のcreationRecords件数"
+// observation_boundary = "implementation"
 // scope = "auxiliary-creation-lifecycle"
 // lifecycle = "permanent"
-// impact = "late create responseによる二重作成を防ぐ"
-// distinction = "通常の作成成功testではcancel先着と未作成要求のtombstoneを観測できない"
+// impact = "取消要求の蓄積によるMainのメモリ増加と、late create responseによる不要な作成を防ぐ"
+// distinction = "型検査やstorage CRUDでは観測できないcancel後の非同期settlementとレコード解放を、短いbarrier付き実DB testで継続検証する"
 // @end-test-value
 test("Auxiliary作成のcancel先着は未作成要求をtombstoneで拒否する", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-cancel-first-"));
@@ -475,7 +485,8 @@ test("Auxiliary作成のcancel先着は未作成要求をtombstoneで拒否す�
     assert.equal(stateChanges.every((change) => change.generationId === context.generationId), true);
     releaseParent();
     await assert.rejects(creation, /取り消した/);
-    await assert.rejects(service.createAuxiliarySession(request), /取り消し済み/);
+    assert.equal((service as unknown as { creationRecords: Map<string, unknown> }).creationRecords.size, 0);
+    await assert.rejects(service.createAuxiliarySession(request), /creation context が期限切れ/);
     assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 0);
   } finally {
     storage.close();
@@ -538,8 +549,8 @@ test("Auxiliary作成はpersisted lookup中のcancelと並行createを安全に�
     });
     assert.equal(cancelled.status, "cancelled");
     releaseLookup();
-    await assert.rejects(first, /取り消し/);
-    await assert.rejects(second, /取り消し/);
+    await assert.rejects(first, /creation context が期限切れ/);
+    await assert.rejects(second, /creation context が期限切れ/);
     assert.equal((await originalList(currentParent.id)).length, 0);
   } finally {
     storage.close();
@@ -1001,6 +1012,98 @@ test("Auxiliary作成commitは最新親設定を保存し同一clientRequestId�
     assert.deepEqual(saved?.allowedAdditionalDirectories, ["C:/new-directory"]);
     assert.equal(saved?.clientRequestId, "same-request");
   } finally {
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "異なるIDの未作成取消を繰り返しても終端レコードは増えず、旧世代の遅延createを拒否し登録済みの別要求と新しい作成は継続できる"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Runtime Model（取消済み作成レコードの回収）" }
+// fault = "取消済みレコードを蓄積する、回収後に取消済み要求を保存する、または世代更新で登録済みの別要求を取り消す"
+// observable = "creationRecords件数、unknownからcancelledへの再照会、旧要求の作成拒否、別要求と新contextの保存結果"
+// observation_boundary = "implementation"
+// scope = "auxiliary-creation-cancellation-retention"
+// lifecycle = "permanent"
+// impact = "長時間稼働するMainのメモリ増加と、取消済み会話の復活・無関係な作成の中断を防ぐ"
+// distinction = "型・buildや単発の取消testでは蓄積と受付世代切替の影響を観測できない。時刻待ちなしの有限回ループと一つの実DBで資源回収契約を検証する"
+// @end-test-value
+test("Auxiliaryの取消レコードは回収し、遅延要求を拒否して登録済み要求を維持する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-cancel-retention-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  const currentParent = parent();
+  let blockNextParent = false;
+  let releaseParent!: () => void;
+  const parentBarrier = new Promise<void>((resolve) => { releaseParent = resolve; });
+  let parentEntered!: () => void;
+  const parentStarted = new Promise<void>((resolve) => { parentEntered = resolve; });
+  const originalList = storage.listAuxiliarySessions.bind(storage);
+  const service = createService({
+    getParent: async () => {
+      if (blockNextParent) {
+        blockNextParent = false;
+        parentEntered();
+        await parentBarrier;
+      }
+      return currentParent;
+    },
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => catalog(1),
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+  });
+  const records = (service as unknown as { creationRecords: Map<string, unknown> }).creationRecords;
+  let creation: ReturnType<AuxiliarySessionService["createAuxiliarySession"]> | undefined;
+  try {
+    const admittedRequest = {
+      parentSessionId: currentParent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session" as const,
+      clientRequestId: "already-admitted",
+      creationContext: await service.getAuxiliaryCreationContext(currentParent.id),
+    };
+    blockNextParent = true;
+    creation = service.createAuxiliarySession(admittedRequest);
+    void creation.catch(() => {});
+    await parentStarted;
+    for (let index = 0; index < 64; index += 1) {
+      const request = {
+        ...admittedRequest,
+        clientRequestId: `cancel-without-create-${index}`,
+        creationContext: await service.getAuxiliaryCreationContext(currentParent.id),
+      };
+      if (index % 2 === 1) {
+        storage.listAuxiliarySessions = () => { throw new Error("lookup unavailable"); };
+        assert.equal((await service.cancelAuxiliaryCreation(request)).status, "unknown");
+        assert.equal(records.size, 2);
+        storage.listAuxiliarySessions = originalList;
+        assert.equal((await service.getAuxiliaryCreation(request)).status, "cancelled");
+      } else {
+        assert.equal((await service.cancelAuxiliaryCreation(request)).status, "cancelled");
+      }
+      assert.equal(records.size, 1);
+      assert.equal((await service.getAuxiliaryCreation(request)).status, "expired");
+      await assert.rejects(service.createAuxiliarySession(request), /creation context が期限切れ/);
+      assert.equal((await service.getAuxiliaryCreation(admittedRequest)).status, "preparing");
+    }
+    releaseParent();
+    const created = await creation;
+    assert.equal(created.clientRequestId, admittedRequest.clientRequestId);
+    assert.equal(records.size, 0);
+    const next = await service.createAuxiliarySession({
+      ...admittedRequest,
+      clientRequestId: "fresh-request",
+      creationContext: await service.getAuxiliaryCreationContext(currentParent.id),
+    });
+    assert.notEqual(next.id, created.id);
+    assert.equal(records.size, 0);
+    assert.equal(originalList(currentParent.id).length, 2);
+  } finally {
+    releaseParent();
+    storage.listAuxiliarySessions = originalList;
+    await creation?.catch(() => {});
     storage.close();
     await rm(directory, { recursive: true, force: true });
   }

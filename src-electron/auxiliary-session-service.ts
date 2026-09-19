@@ -205,7 +205,7 @@ export class AuxiliarySessionService {
     const existing = (await storage.listAuxiliarySessions(request.parentSessionId))
       .find((summary) => summary.clientRequestId === request.clientRequestId);
     if (record?.cancelRequested && !record.promise && (this.deps.getStorage() !== storage
-      || this.getCreationOwnerGeneration(request.parentSessionId) !== request.creationContext.generationId)) {
+      || record.status === "expired")) {
       this.syncCreationStorage(this.deps.getStorage());
       this.creationRecords.delete(key);
       return { status: "expired" };
@@ -226,6 +226,7 @@ export class AuxiliarySessionService {
     }
     if (record?.status === "unknown" && record.cancelRequested && !record.promise) {
       record.status = "cancelled";
+      this.retireCancelledCreation(record);
       this.notifyCreationState(record, "cancelled");
       return { status: "cancelled" };
     }
@@ -244,7 +245,7 @@ export class AuxiliarySessionService {
     const record = this.creationRecords.get(key);
     if (!record) {
       if (request.creationContext.generationId !== this.getCreationOwnerGeneration(request.parentSessionId)) {
-        return { status: "expired" };
+        return this.getAuxiliaryCreation(request);
       }
       const tombstone: AuxiliaryCreationRecord = {
         request,
@@ -260,8 +261,7 @@ export class AuxiliarySessionService {
       } catch {
         lookupFailed = true;
       }
-      if (this.deps.getStorage() !== storage
-        || this.getCreationOwnerGeneration(request.parentSessionId) !== request.creationContext.generationId) {
+      if (this.deps.getStorage() !== storage || tombstone.status === "expired") {
         this.syncCreationStorage(this.deps.getStorage());
         this.creationRecords.delete(key);
         return { status: "expired" };
@@ -285,6 +285,7 @@ export class AuxiliarySessionService {
         return { status: "committed", auxiliarySessionId: existing.id };
       }
       tombstone.status = "cancelled";
+      this.retireCancelledCreation(tombstone);
       this.notifyCreationState(tombstone, "cancelled");
       return { status: "cancelled" };
     }
@@ -299,7 +300,8 @@ export class AuxiliarySessionService {
   releaseAuxiliaryCreationOwner(parentSessionId: string): void {
     for (const record of this.creationRecords.values()) {
       if (record.request.parentSessionId === parentSessionId
-        && (record.status === "preparing" || record.status === "queued")) {
+        && (record.status === "preparing" || record.status === "queued"
+          || (record.status === "unknown" && record.cancelRequested && !record.promise))) {
         record.cancelRequested = true;
         record.status = "expired";
         this.notifyCreationState(record, "expired");
@@ -411,6 +413,9 @@ export class AuxiliarySessionService {
       record.promise = Promise.resolve()
         .then(() => this.runAuxiliaryCreation(input, record, normalizedInput))
         .finally(() => {
+          if (record.status === "cancelled") {
+            this.retireCancelledCreation(record);
+          }
           if (
             (record.status === "committed" || record.status === "failed"
               || record.status === "expired")
@@ -517,6 +522,18 @@ export class AuxiliarySessionService {
 
   private creationKey(request: AuxiliaryCreationRequest): string {
     return `${request.creationContext.generationId}:${request.parentSessionId}:${request.creationContext.parentIncarnationId}:${request.clientRequestId}`;
+  }
+
+  private retireCancelledCreation(record: AuxiliaryCreationRecord): void {
+    const key = this.creationKey(record.request);
+    if (this.creationRecords.get(key) !== record) return;
+    const { parentSessionId, creationContext } = record.request;
+    if (this.getCreationOwnerGeneration(parentSessionId) === creationContext.generationId) {
+      // Fence delayed admissions before discarding their cancellation tombstone.
+      // Already admitted requests keep their records and may still finish.
+      this.creationOwnerGenerations.set(parentSessionId, randomUUID());
+    }
+    this.creationRecords.delete(key);
   }
 
   private getCreationOwnerGeneration(parentSessionId: string): string {
