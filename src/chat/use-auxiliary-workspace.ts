@@ -305,6 +305,8 @@ export function useAuxiliaryWorkspace(input: {
           || terminalRevision !== terminalRevisionRef.current.get(id)) return;
         if (state === null) {
           if (terminalStartEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
+          mutationRevisionRef.current += 1;
+          setLoading(false);
           const resolvedEpoch = terminalStartEpoch + 1;
           detailMutationEpochRef.current.set(id, resolvedEpoch);
           if (session) {
@@ -330,8 +332,6 @@ export function useAuxiliaryWorkspace(input: {
           if (selectedIdRef.current === id) {
             setDetailLoading(false);
             setDetailError(detailCause);
-          } else {
-            setError(detailCause);
           }
         }
       });

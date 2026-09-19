@@ -429,7 +429,7 @@ test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detai
 // kind = "invariant"
 // claim = "terminal詳細取得が失敗しても初期detail解決後に選択中のSessionを空のままにしない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "terminal再取得のrejectで初期detailをepoch不一致として捨て、完了Sessionを表示できないままerrorだけを残す"
+// fault = "terminal再取得のreject後に初期detailの解決を反映せず、完了Sessionを表示できないまま選択中のdetailErrorだけを残す"
 // observable = "hookのselectedSession、detailLoading、detailError"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-workspace-terminal-detail-fallback"
@@ -481,6 +481,58 @@ test("terminal詳細取得失敗時は初期detailへフォールバックする
 
 // @test-value v2
 // kind = "invariant"
+// claim = "非選択Auxiliaryの遅延terminal詳細取得失敗は選択中Auxiliaryの共通エラーへ波及しない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "AからBへ切り替えた後にAの遅延terminal取得失敗をB選択中の共通errorへ設定し、選択中Sessionの表示を共通エラー状態にする"
+// observable = "hookのselectedId、selectedSession、detailError、error"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-session-scoped-error"
+// lifecycle = "permanent"
+// distinction = "選択中Auxiliary自身の詳細失敗ではなく、選択切替後に到着する非選択Auxiliaryのterminal失敗が共通errorへ流入しないことを検証する"
+// @end-test-value
+test("非選択Auxiliaryの遅延terminalエラーは選択中Auxiliaryへ波及しない", async () => {
+  const a = session("a", "2026-01-01");
+  const b = session("b", "2026-01-02");
+  let rejectTerminal!: (cause: Error) => void;
+  const terminalFailure = new Promise<AuxiliarySession | null>((_resolve, reject) => { rejectTerminal = reject; });
+  const aDetails = [Promise.resolve<AuxiliarySession | null>(a), terminalFailure];
+  let terminal: ((id: string, state: null) => void) | null = null;
+  const api: AuxiliaryWorkspaceApi = {
+    listAuxiliarySessions: async () => [a, b],
+    getAuxiliarySession: (id) => id === a.id ? (aDetails.shift() ?? Promise.resolve(a)) : Promise.resolve(b),
+    subscribeLiveSessionRun: (listener) => {
+      terminal = listener as (id: string, state: null) => void;
+      return () => {};
+    },
+  };
+  const view = setup(api, "parent-1", a.id);
+
+  await view.render();
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(view.current.selectedId, a.id);
+  assert.ok(terminal);
+
+  await act(async () => {
+    terminal?.(a.id, null);
+    view.current.selectSession(b.id);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.equal(view.current.selectedId, b.id);
+  assert.equal(view.current.selectedSession?.id, b.id);
+
+  await act(async () => {
+    rejectTerminal(new Error("A terminal read failed"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.equal(view.current.selectedId, b.id);
+  assert.equal(view.current.selectedSession?.id, b.id);
+  assert.equal(view.current.detailError, null);
+  assert.equal(view.current.error, null);
+  await view.unmount();
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "terminal詳細がnullになったAuxiliaryは一覧と選択状態を再同期し、古いdetailを表示し続けない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
 // fault = "terminal再取得のnullを無視して一覧の古いsummaryと選択中のSessionを残す"
@@ -526,6 +578,77 @@ test("terminal詳細がnullなら一覧と選択状態を再同期する", async
   assert.equal(view.current.selectedId, null);
   assert.equal(view.current.selectedSession, null);
   assert.equal(view.current.detailError, null);
+  await view.unmount();
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "terminal完了反映後に到着した古い一覧応答は完了済みsummaryを巻き戻さない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Persistence" }
+// fault = "terminal完了反映と一覧refreshが競合したとき古いsummaryが完了済みpreviewを上書きする"
+// observable = "hookのsummaries.previewとsummaries.updatedAt"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-terminal-summary-generation"
+// lifecycle = "permanent"
+// distinction = "addSession後の一覧競合ではなく、terminal確定Sessionのsummary反映後に古い一覧応答が到着する競合を検証する"
+// @end-test-value
+test("terminal完了後の古い一覧応答はsummaryを巻き戻さない", async () => {
+  const initial = session("a", "2026-01-01", { preview: "old answer" });
+  const terminalSession = {
+    ...initial,
+    preview: "terminal answer",
+    updatedAt: "2026-01-03",
+    messages: [...initial.messages, { role: "assistant" as const, text: "terminal answer" }],
+  };
+  const staleList = deferred<ReturnType<AuxiliaryWorkspaceApi["listAuxiliarySessions"]> extends Promise<infer T> ? T : never>();
+  const listStarted = deferred<void>();
+  let listCall = 0;
+  let detailCall = 0;
+  let terminal: ((id: string, state: null) => void) | null = null;
+  const api: AuxiliaryWorkspaceApi = {
+    listAuxiliarySessions: async () => {
+      listCall += 1;
+      if (listCall === 1) return [initial];
+      listStarted.resolve();
+      return staleList.promise;
+    },
+    getAuxiliarySession: async () => {
+      detailCall += 1;
+      return detailCall === 1 ? initial : terminalSession;
+    },
+    subscribeLiveSessionRun: (listener) => {
+      terminal = listener as (id: string, state: null) => void;
+      return () => {};
+    },
+  };
+  const view = setup(api, "parent-1", initial.id);
+
+  await view.render();
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(view.current.summaries.find((summary) => summary.id === initial.id)?.preview, "old answer");
+  assert.ok(terminal);
+
+  let refreshPromise: Promise<void> | null = null;
+  await act(async () => {
+    refreshPromise = view.current.refreshSummaries();
+    await listStarted.promise;
+  });
+  assert.ok(refreshPromise);
+
+  await act(async () => {
+    terminal?.(initial.id, null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.equal(view.current.summaries.find((summary) => summary.id === initial.id)?.preview, "terminal answer");
+  assert.equal(view.current.loading, false);
+
+  await act(async () => {
+    staleList.resolve([initial]);
+    await refreshPromise;
+  });
+  assert.equal(view.current.summaries.find((summary) => summary.id === initial.id)?.preview, "terminal answer");
+  assert.equal(view.current.summaries.find((summary) => summary.id === initial.id)?.updatedAt, "2026-01-03");
+  assert.equal(view.current.loading, false);
   await view.unmount();
 });
 
