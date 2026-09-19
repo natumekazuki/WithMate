@@ -119,7 +119,7 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 
 - `Session Window` の `Cancel` は Main Process の `AbortController` を通して provider 実行を止める
 - キャンセル後の session は `runState = idle` に戻る
-- setup または provider が cancel grace 後も生存する場合、表示上の turn は収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
+- admission の開始予約後の Worker 読込み・最終排他取得、setup または provider が cancel grace 後も生存する場合、表示上の turn は収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
 - chat にはキャンセル結果を 1 件追加する
 - 監査ログは同じ turn record を先に最小 `phase = canceled` へ更新し、`errorMessage` にユーザーキャンセルを残す。詳細は bounded enrichment として後段で更新する
 - 実行中は approval を含む session 設定変更を受け付けない
@@ -149,6 +149,8 @@ provider 後処理は ownership 解放前に全対象の旧 runtime 参照を同
 pending は Session incarnation を保存し、回収時と評価適用時に current owner と照合する。既存 V6 行は `legacy:<id>` へ移行し、incarnation 列のない旧 pending も同じ owner と解釈する。新規行には UUID を発行するため、旧 pending は同じ ID の再作成行に適用されない。既存の要求 fingerprint は変更しない。
 
 unready pending の Session 読取待ちでも storage identity を再確認し、交換された旧 storage への ready / discard を行わない。close / recreate 時には drain cursor も破棄する。
+
+completed 保存後の detached readiness 更新も捕捉した persistent store owner を確認し、失効後は `absent` として retry を終える。owner が現行のまま発生した一時障害は既存の retry を維持する。
 
 外部 Provider による Affect 評価は ownership coordinator を保持せずに実行する。無関係な Session の作成・削除を、評価完了待ちへ結合しない。
 

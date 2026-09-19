@@ -5,6 +5,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { AuxiliaryCreationRequest, AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import { useAuxiliaryCreation } from "../../src/chat/use-auxiliary-creation.js";
+import { AuxiliaryLaunchProviderDialog } from "../../src/chat/AuxiliaryLaunchProviderDialog.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -20,7 +21,7 @@ type Api = NonNullable<Parameters<typeof useAuxiliaryCreation>[0]["api"]>;
 
 async function mount(t: TestContext, api: Api) {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost/" });
-  const properties = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
+  const properties = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true };
   const originals = Object.keys(properties).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   for (const [key, value] of Object.entries(properties)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -29,7 +30,9 @@ async function mount(t: TestContext, api: Api) {
   const applied: AuxiliarySession[] = [];
   function Harness({ parent }: { parent: string | null }) {
     state = useAuxiliaryCreation({ parentSessionId: parent, api, onCommitted: (session) => applied.push(session), onFeedback: () => undefined });
-    return null;
+    return <AuxiliaryLaunchProviderDialog open providers={[{ id: "codex", label: "Codex" }]}
+      selectedProviderId="codex" feedback="" starting={state.starting} creationInFlight={state.inFlight}
+      onClose={() => undefined} onSelectProvider={() => undefined} onStart={() => { void state.start("codex"); }} />;
   }
   const render = async (parent: string | null) => { await act(async () => root.render(<Harness parent={parent} />)); };
   t.after(async () => {
@@ -42,6 +45,7 @@ async function mount(t: TestContext, api: Api) {
     }
   });
   return { render, get state() { return state; }, applied, storage: dom.window.localStorage,
+    get startButton() { return dom.window.document.querySelector<HTMLButtonElement>(".start-session-button")!; },
     poll: async () => { await act(async () => { t.mock.timers.tick(500); }); } };
 }
 
@@ -95,10 +99,10 @@ test("Auxiliary creation rejects old parent responses across context and create 
 
 // @test-value v2
 // kind = "contract"
-// claim = "再表示したunknown要求は同じIDで照会し、committed読込中の再描画後も一度だけ適用してpollを止める"
+// claim = "再表示したunknown要求は同じIDで照会し、詳細適用まで開始を無効にして一度だけ回復しpollを止める"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#ui-flow" }
 // fault = "status更新effect cleanupが回復結果を捨てるか、確定後も定期照会でSessionを再適用する"
-// observable = "照会ID列、create呼出し数、適用Session数、localStorageのhint、確定後query数"
+// observable = "照会ID列、create呼出し数、実dialogの開始button.disabled、適用Session数、localStorageのhint、確定後query数"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-creation-renderer-recovery"
 // lifecycle = "permanent"
@@ -125,10 +129,15 @@ test("Auxiliary reopen recovers unknown commit once and stops polling", async (t
   assert.equal(creates, 0);
   await fixture.poll();
   assert.equal(fixture.state.status, "committed");
+  assert.equal(fixture.state.starting, false);
+  assert.equal(fixture.startButton.disabled, true);
+  await act(async () => { fixture.startButton.click(); });
+  assert.equal(creates, 0);
   assert.deepEqual(fixture.applied, []);
   await act(async () => { pendingSession.resolve(savedFor(request)); });
   assert.deepEqual(fixture.applied, [savedFor(request)]);
   assert.equal(fixture.storage.getItem("withmate:auxiliary-creation:parent-1"), null);
+  assert.equal(fixture.startButton.disabled, false);
   await fixture.poll();
   assert.deepEqual(queries, [request.clientRequestId, request.clientRequestId]);
   assert.equal(fixture.applied.length, 1);

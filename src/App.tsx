@@ -104,7 +104,6 @@ import {
   createAuxiliaryLaunchDialogOpenHandler,
   createAuxiliaryLaunchProviderSelectHandler,
   canCancelAuxiliaryLaunchCreation,
-  blocksAuxiliaryLaunchRetry,
   resolveAuxiliaryLaunchCreationFeedback,
   resolveAuxiliaryLaunchStartProvider,
 } from "./chat/auxiliary-launch-state.js";
@@ -4405,7 +4404,7 @@ export default function AgentSessionWindowApp() {
         selectedProviderId={auxiliaryLaunchProviderId}
         feedback={auxiliaryLaunchFeedback}
         starting={auxiliaryCreationStarting}
-        creationInFlight={blocksAuxiliaryLaunchRetry(auxiliaryCreationStatus)}
+        creationInFlight={auxiliaryCreation.inFlight}
         cancelling={auxiliaryCreationCancelling}
         canCancelCreation={canCancelAuxiliaryLaunchCreation(auxiliaryCreationStatus)}
         onClose={handleCloseAuxiliaryLaunchDialog}

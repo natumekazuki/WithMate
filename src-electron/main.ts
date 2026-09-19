@@ -2774,8 +2774,22 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         assertOwner("appraisal enqueue");
       },
       markCompletedTurnAppraisalReady: async (correlationId) => {
+        if (activePersistentStoreOwner !== owner) {
+          return "absent";
+        }
         assertOwner("appraisal ready");
-        const result = await requireCharacterAffectTurnSettlementStorage().markReady(correlationId);
+        let result: Awaited<ReturnType<CharacterAffectTurnSettlementStorage["markReady"]>>;
+        try {
+          result = await requireCharacterAffectTurnSettlementStorage().markReady(correlationId);
+        } catch (error) {
+          if (activePersistentStoreOwner !== owner) {
+            return "absent";
+          }
+          throw error;
+        }
+        if (activePersistentStoreOwner !== owner) {
+          return "absent";
+        }
         assertOwner("appraisal ready");
         if (!result.updated) {
           return "absent";

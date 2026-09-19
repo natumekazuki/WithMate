@@ -180,3 +180,16 @@ Companion の作成 service と依存配線は残るが、現行 create IPC hand
 - `review-test-value` で今回起点から 15 records / 15 transitions を抽出し、diagnostics / warnings / metadata 欠落は 0 件。通常の read-only `general_luna` が全件を審査し、最終差分で全件 PASS。親状態の実 DB 再読込み、rollback 後の新 revision、Auxiliary の親通知、Worker proxy の mutation 分類を観測するよう補強した。
 - 実装差分も別の read-only 審査を実施した。mutation 分類・通知対象・Auxiliary の credential guard の指摘を反映し、最終静的確認で追加の高確度不具合は見つからなかった。審査担当は tests / build / ファイル生成を実行していない。
 - 今回は実 Electron GUI / 実 Provider / 実ユーザー DB / インストーラを検証していない。SQLite fixture、制御した非同期依存先、runtime/coordinator test を実環境の競合再現と同一視しない。
+
+### 追加レビュー対応（0bbb6388 起点）
+
+- Session の開始予約後の admission 待機を既存の cancel grace へ接続する。要求への応答後も元処理終了までは terminating guard を維持し、provider 開始と同一 Session への再送を防ぐ。Affect readiness の detached retry は persistent store owner の失効時に `absent` で終了し、現 owner の一時障害だけ再試行する。
+- Auxiliary の保存前検証失敗は確定した失敗、保存 dispatch 後の不明結果は `unknown` として区別する。遅延取消では同じ要求の保存結果を優先し、cancel 先着時の保存抑止を維持する。
+- 取消側の永続化 lookup 前に要求を予約し、並行 create の割込みを抑止する。lookup 待機中に照会側で確定した状態を古い成功・失敗結果で上書きしない。確定結果は必要な Session ID を同期的に保持し、詳細 hydrate を結果確定の条件にしない。保存済みと確定した取消予約は除去し、同じ request ID の再送は既存行へ収束させる。取消だけの lookup 失敗は再照会で収束し、owner 失効後は `expired` とする。
+- renderer は `committed` の詳細回復中も開始操作を無効にし、適用後に解除する。`design-ui-information` に従い既存 Session の theme / launch dialog / native disabled を再利用し、画面構造と文言は変更しない。実 hook と dialog の操作 test、および分離した Electron fixture の 1024×768 描画で詳細待機中と適用後の disabled / enabled を確認した。実 Main IPC、実データ、実 Provider を使った操作の証拠ではない。
+- 通知設定の並行取得は両 Promise の拒否を取得開始時から処理する。通知可否の失敗は通知抑止、preview のみの失敗は既存の固定文へ戻し、process の未処理 rejection へ漏らさない。F5/F6 は修正前に失敗を確認し、修正後の関連 29 tests が成功した。
+- Q1 の Legacy Companion V3 CAS は通常起動のサポート経路から到達しない。bootstrap は V3 を V4→V6 へ移行して V6 path を Main に返し、V6 Worker は `CompanionStorage` を使う。preview tag 時点も同じ移行経路であるため、残存 V3 分岐を新たな runtime 維持契約へ広げず、今回の修正対象には含めない。V3 データからの既存移行・読取り契約は維持する。
+- 全体 `npm test` は 2,967 tests、2,966 pass / 0 fail / 1 skip。全体実行後の Auxiliary 確定競合の補強については関連 224 tests、`npm run typecheck`（SQLite owner check を含む）、`npm run build:electron` が成功した。`npm run build` も成功し、renderer の既存 chunk サイズ warning は残る。renderer は全体 build 後に変更していない。
+- `review-test-value` で今回起点から 7 records / 7 transitions を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が全件を確認し、metadata の観測境界と遅延取消 test の未使用 fixture を整理した。最終差分で追加の修正要求・context 不足はない。公開結果・再送抑止・通知失敗・操作可否の現在契約を確認する test であり、型や build では代替できず、小さい SQLite / 制御 Promise / jsdom の実行・保守負担に対して保持価値がある。fixture 整理後の対象 12 tests も成功した。
+- 実装差分も別の read-only 審査を実施した。取消と照会の並行確定、ID の同期保持、確定した取消予約の除去を補強し、最終確認で追加の高確度不具合は確認されなかった。最後の再送ケース補強後も関連 224 tests、型検査、Electron build が成功した。
+- 実 Main GUI / 実 Provider / 実ユーザー DB / Windows 通知の実表示 / インストーラは未確認。SQLite fixture、制御した非同期依存先、offscreen 描画を実運用の結合確認と同一視しない。push、タグ付与、リリース公開、Issue close は実施しない。

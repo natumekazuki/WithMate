@@ -36,6 +36,8 @@ Shared ActionDock ──┘
 
 作成要求は `preparing`、`queued`、`committing`、`committed`、`cancelled`、`failed`、`unknown`、`expired`、`not-found` の状態を持つ。準備中・待機中の取消は保存を開始せず、commit 開始後に取消が先に確定した場合も commit を成功扱いにしない。commit 応答が結果不明になった場合は自動再送せず、保存行の再照会で確定できたときだけ `committed` として扱う。親の削除・再作成、storage generation の交換、window owner の解放は保留中の要求を失効させる。
 
+保存 dispatch 前の最終検証失敗は `failed` として終端し、結果不明と混同しない。保存済みの要求への遅延取消は `committed` を返し、保存結果を取消済みで隠さない。保存結果の詳細取得・画面への適用が完了するまでは新しい開始操作を無効にする。
+
 既存の`closed`行は保存された会話として一覧・継続対象に含める。継続時は同じID、thread、messages、draft、Character identityを使い、勝手に新規turnを開始しない。親削除時は親配下の全Auxiliaryをruntime停止・保存削除の対象にする。
 
 ## Character identity

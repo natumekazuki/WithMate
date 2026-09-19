@@ -200,6 +200,225 @@ test("Auxiliary作成は準備中のprovider操作を塞がずcommit前のselect
 
 // @test-value v2
 // kind = "invariant"
+// claim = "Auxiliary作成の保存前再検証失敗は確定failedとして終端し、結果不明へ昇格しない"
+// oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
+// fault = "保存dispatch前のruntime変更をunknown扱いにして再照会を要求する"
+// observable = "failed通知、unknown通知なし、保存行なし"
+// observation_boundary = "implementation"
+// scope = "auxiliary-creation-commit-validation"
+// lifecycle = "permanent"
+// impact = "保存されていない要求を再試行不能なunknownへ固定しない"
+// distinction = "runtime変更を検出してもcommit状態を先に通知する実装では保存前失敗とdispatch後不明を区別できない"
+// @end-test-value
+test("Auxiliary作成の保存前再検証失敗はfailedで終端する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-precommit-failure-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  const currentParent = parent();
+  let selectionCalls = 0;
+  const stateChanges: string[] = [];
+  const service = createService({
+    getParent: () => currentParent,
+    getStorage: () => storage,
+    resolveSelection: async () => selection(++selectionCalls === 1 ? 1 : 2),
+    getCatalog: () => catalog(1),
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+    onCreationStateChanged: (result) => stateChanges.push(result.status),
+  });
+  try {
+    const context = await service.getAuxiliaryCreationContext(currentParent.id);
+    await assert.rejects(service.createAuxiliarySession({
+      parentSessionId: currentParent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      clientRequestId: "precommit-failure",
+      creationContext: context,
+    }), /runtime 選択が作成中に変わった/);
+    assert.equal(stateChanges.includes("failed"), true);
+    assert.equal(stateChanges.includes("unknown"), false);
+    assert.deepEqual(storage.listAuxiliarySessions(currentParent.id), []);
+    assert.equal((await service.getAuxiliaryCreation({ parentSessionId: currentParent.id,
+      clientRequestId: "precommit-failure", creationContext: context })).status, "not-found");
+  } finally {
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "保存済みAuxiliaryへの遅延cancelと並行queryはID付きcommittedへ収束し、古いlookup失敗で戻さず、同じ要求の再送も重複なく回復する"
+// oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
+// fault = "遅延cancelが保存済み作成を隠す、古いlookup失敗で確定を戻す、IDなしのcommittedを返す、または確定後の取消予約が同一要求の再送を拒否する"
+// observable = "並行queryと遅延cancelのID付きcommitted、lookup失敗後の通知state、回復後再送の同一ID、保存行数"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-creation-cancel-race"
+// lifecycle = "permanent"
+// impact = "commit先行時にrendererへ取消済みを誤通知しない"
+// distinction = "cancel先着testではcommit後にregistryから消えたrequestの保存結果確認を検証しない"
+// @end-test-value
+test("Auxiliary作成成功後の遅延cancelはcommittedへ解決する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-late-cancel-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  let releaseLookup = () => {};
+  const stateChanges: string[] = [];
+  const currentParent = parent();
+  const service = createService({
+    getParent: () => currentParent,
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => catalog(1),
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+    onCreationStateChanged: (result) => stateChanges.push(result.status),
+  });
+  try {
+    const context = await service.getAuxiliaryCreationContext(currentParent.id);
+    const request = {
+      parentSessionId: currentParent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session" as const,
+      clientRequestId: "late-cancel",
+      creationContext: context,
+    };
+    const created = await service.createAuxiliarySession(request);
+    const originalList = storage.listAuxiliarySessions.bind(storage);
+    for (const lookupFails of [false, true]) {
+      let rejectLookup!: (error: Error) => void;
+      const lookupBarrier = new Promise<void>((resolve, reject) => { releaseLookup = resolve; rejectLookup = reject; });
+      let firstLookup = true;
+      storage.listAuxiliarySessions = ((parentId: string) => {
+        if (!firstLookup) return originalList(parentId);
+        firstLookup = false;
+        return lookupBarrier.then(() => originalList(parentId));
+      }) as typeof storage.listAuxiliarySessions;
+      const cancelling = service.cancelAuxiliaryCreation(request);
+      assert.equal((await service.cancelAuxiliaryCreation(request)).status, "unknown");
+      const duringLookup = service.getAuxiliaryCreation(request);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const committed = { status: "committed", auxiliarySessionId: created.id };
+      assert.deepEqual(await service.getAuxiliaryCreation(request), committed);
+      assert.deepEqual(await duringLookup, committed);
+      stateChanges.length = 0;
+      if (lookupFails) rejectLookup(new Error("stale lookup failed"));
+      else releaseLookup();
+      assert.deepEqual(await cancelling, committed);
+      assert.equal(stateChanges.includes("unknown"), false);
+      assert.deepEqual(await service.getAuxiliaryCreation(request), committed);
+    }
+    assert.deepEqual(await service.cancelAuxiliaryCreation({
+      parentSessionId: request.parentSessionId,
+      clientRequestId: request.clientRequestId,
+      creationContext: context,
+    }), { status: "committed", auxiliarySessionId: created.id });
+    assert.deepEqual(await service.getAuxiliaryCreation(request), { status: "committed", auxiliarySessionId: created.id });
+    let failNextLookup = true;
+    storage.listAuxiliarySessions = ((parentId: string) => {
+      if (failNextLookup) {
+        failNextLookup = false;
+        return Promise.reject(new Error("cancel lookup unavailable"));
+      }
+      return originalList(parentId);
+    }) as typeof storage.listAuxiliarySessions;
+    assert.equal((await service.cancelAuxiliaryCreation(request)).status, "unknown");
+    assert.deepEqual(await service.getAuxiliaryCreation(request), { status: "committed", auxiliarySessionId: created.id });
+    assert.equal((await service.createAuxiliarySession(request)).id, created.id);
+    assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 1);
+  } finally {
+    releaseLookup();
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "取消lookup待機中のcreateを抑止し、lookup失敗は再照会で収束し、owner失効はexpiredとして扱う"
+// oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
+// fault = "空のlookup結果を待つ間にcreateがregistryへ登録され、cancelが古い結果でcancelled tombstoneを作る"
+// observable = "cancel結果、作成拒否、lookup失敗後の再照会とowner失効時の終端state、保存行なし"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-creation-cancel-lookup-race"
+// lifecycle = "permanent"
+// impact = "遅延lookupとrenderer再送の競合で作成要求を誤って隠さない"
+// distinction = "通常のcancel先着・遅延cancelではlookup await中の同一request登録を観測できない"
+// @end-test-value
+test("Auxiliary作成はcancelの永続化lookup中に割り込んだcreateと競合しても収束する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-cancel-lookup-race-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  const currentParent = parent();
+  let releaseLookup!: () => void;
+  const lookupBarrier = new Promise<void>((resolve) => { releaseLookup = resolve; });
+  let lookupStarted!: () => void;
+  const lookupStartedPromise = new Promise<void>((resolve) => { lookupStarted = resolve; });
+  const originalList = storage.listAuxiliarySessions.bind(storage);
+  let lookupCalls = 0;
+  storage.listAuxiliarySessions = ((parentSessionId: string) => {
+    lookupCalls += 1;
+    if (lookupCalls === 1) {
+      lookupStarted();
+      return lookupBarrier.then(() => []);
+    }
+    return originalList(parentSessionId);
+  }) as typeof storage.listAuxiliarySessions;
+  const stateChanges: string[] = [];
+  const service = createService({
+    getParent: () => currentParent,
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => catalog(1),
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+    onCreationStateChanged: (result) => {
+      stateChanges.push(result.status);
+    },
+  });
+  try {
+    const context = await service.getAuxiliaryCreationContext(currentParent.id);
+    const request = {
+      parentSessionId: currentParent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session" as const,
+      clientRequestId: "cancel-lookup-race",
+      creationContext: context,
+    };
+    const cancel = service.cancelAuxiliaryCreation(request);
+    await lookupStartedPromise;
+    const create = service.createAuxiliarySession(request);
+    const createError = create.catch((error) => error);
+    releaseLookup();
+    assert.deepEqual(await cancel, { status: "cancelled" });
+    assert.match(String(await createError), /取消結果を確認中|取り消し済み/);
+    assert.equal(stateChanges.includes("cancelled"), true);
+    assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 0);
+    for (const releaseOwner of [false, true]) {
+      const recoveryRequest = { ...request, clientRequestId: `lookup-failure-${releaseOwner}`,
+        creationContext: await service.getAuxiliaryCreationContext(currentParent.id) };
+      let rejectLookup!: (error: Error) => void;
+      const failingLookup = new Promise<never>((_resolve, reject) => { rejectLookup = reject; });
+      let firstLookup = true;
+      storage.listAuxiliarySessions = ((parentId: string) => {
+        if (!firstLookup) return originalList(parentId);
+        firstLookup = false;
+        return failingLookup;
+      }) as typeof storage.listAuxiliarySessions;
+      const cancelling = service.cancelAuxiliaryCreation(recoveryRequest);
+      if (releaseOwner) service.releaseAuxiliaryCreationOwner(currentParent.id);
+      rejectLookup(new Error("lookup unavailable"));
+      assert.equal((await cancelling).status, releaseOwner ? "expired" : "unknown");
+      assert.equal((await service.getAuxiliaryCreation(recoveryRequest)).status, releaseOwner ? "expired" : "cancelled");
+      await assert.rejects(service.createAuxiliarySession(recoveryRequest), releaseOwner ? /creation context が期限切れ/ : /取り消し済み/);
+      assert.equal(originalList(currentParent.id).length, 0);
+    }
+  } finally {
+    releaseLookup();
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "Auxiliary作成のcancel先着はcommit前の同一要求をtombstoneで拒否する"
 // oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
 // fault = "cancel受付前に作成を開始する、またはcancel後の同一要求を再実行する"
@@ -270,7 +489,7 @@ test("Auxiliary作成のcancel先着は未作成要求をtombstoneで拒否す�
 // oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
 // fault = "lookup完了後にcancel tombstoneを上書きする、または同一requestの並行createを二重commitする"
 // observable = "lookup barrier中のcancel結果、両createの拒否、保存行数0"
-// observation_boundary = "implementation"
+// observation_boundary = "public-boundary"
 // scope = "auxiliary-creation-lookup-race"
 // lifecycle = "permanent"
 // impact = "renderer再送とcancelの競合による孤児Auxiliaryを防ぐ"
@@ -288,7 +507,9 @@ test("Auxiliary作成はpersisted lookup中のcancelと並行createを安全に�
   const originalList = storage.listAuxiliarySessions.bind(storage);
   storage.listAuxiliarySessions = ((parentSessionId: string) => {
     lookupCalls += 1;
-    return lookupBarrier.then(() => originalList(parentSessionId));
+    return lookupCalls <= 2
+      ? lookupBarrier.then(() => originalList(parentSessionId))
+      : originalList(parentSessionId);
   }) as typeof storage.listAuxiliarySessions;
   const service = createService({
     getParent: () => currentParent,

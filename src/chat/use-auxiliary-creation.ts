@@ -203,5 +203,6 @@ export function useAuxiliaryCreation(input: {
     }
   };
 
-  return { status, starting, cancelling, start, cancel };
+  const inFlight = starting || request !== null || blocksAuxiliaryLaunchRetry(status);
+  return { status, starting, inFlight, cancelling, start, cancel };
 }

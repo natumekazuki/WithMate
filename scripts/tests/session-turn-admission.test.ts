@@ -45,6 +45,7 @@ function createRuntime(options: {
   abortObserved?: { resolve: () => void };
   providerCallCount?: { value: number };
   releaseProvider?: { promise: Promise<void> };
+  providerCancelGraceMs?: number;
 }): { service: SessionRuntimeService; session: Session; saveCount: () => number } {
   let session = options.session ?? createSession();
   let saveCount = 0;
@@ -144,6 +145,7 @@ function createRuntime(options: {
     broadcastLiveSessionRun: () => undefined,
     resolvePendingApprovalRequest: () => undefined,
     resolvePendingElicitationRequest: () => undefined,
+    providerCancelGraceMs: options.providerCancelGraceMs,
   };
   return { service: new SessionRuntimeService(deps), session, saveCount: () => saveCount };
 }
@@ -419,6 +421,63 @@ describe("SessionRuntimeService session admission", () => {
     hold = false;
     releaseAdmission.resolve();
     await assert.rejects(first, /canceled|cancel/i);
+    assert.equal(providerCallCount.value, 0);
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "開始予約後のadmission読込み待機をcancel grace内で応答し、元処理の終了までSessionをterminatingとして保持する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-run-cancel" }
+  // fault = "admissionの読込み待機が監視外でcancel後も要求が未決着になる、または要求だけ終了させ元処理と再送が競合する"
+  // observable = "grace後の要求拒否、terminating中の再送拒否、admission解放後のinFlight解除、provider未開始"
+  // observation_boundary = "public-boundary"
+  // scope = "session-turn-admission-cancel-grace"
+  // lifecycle = "permanent"
+  // impact = "cancel後の未終了admissionと後続turnの重複を防ぎ、providerを開始しない"
+  // distinction = "実admitSessionTurnの予約後readをcancel grace超過まで保留し、待機Promiseとterminating guardの寿命を観測する"
+  // @end-test-value
+  it("admission待機がcancel graceを超えても終了までterminating guardを保持する", { timeout: 5_000 }, async () => {
+    const provider = new ProviderRuntimeOperationCoordinator();
+    const ownership = new CharacterAffectTurnOwnershipCoordinator();
+    const readStarted = deferred();
+    const releaseRead = deferred();
+    const providerCallCount = { value: 0 };
+    const runtime = createRuntime({
+      providerCallCount,
+      providerCancelGraceMs: 5,
+      runSessionAdmissionExclusive: (_sessionId, reserve, signal) => admitSessionTurn({
+        runExclusive: (operation) => provider.runExclusive(() => ownership.runExclusive(operation)),
+        assertCurrent: () => signal.throwIfAborted(),
+        reserve,
+        readProvider: async () => {
+          readStarted.resolve();
+          await releaseRead.promise;
+          return "codex";
+        },
+        assertProviderAvailable: (providerId) => assert.equal(providerId, "codex"),
+      }),
+    });
+    const first = runRequest(runtime.service, runtime.session.id);
+    await readStarted.promise;
+    runtime.service.cancelRun(runtime.session.id);
+    try {
+      const outcome = await Promise.race([
+        first.then(() => "resolved", () => "rejected"),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("cancel grace test timed out")), 250)),
+      ]);
+      assert.equal(outcome, "rejected");
+      assert.equal(runtime.service.isRunInFlight(runtime.session.id), true);
+      await assert.rejects(
+        runRequest(runtime.service, runtime.session.id),
+        /まだ実行中/,
+      );
+    } finally {
+      releaseRead.resolve();
+    }
+    await first.catch(() => undefined);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(runtime.service.isRunInFlight(runtime.session.id), false);
     assert.equal(providerCallCount.value, 0);
   });
 

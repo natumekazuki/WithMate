@@ -203,6 +203,11 @@ export class SessionTurnNotificationService<TIcon> {
     previewEnabled: Promise<boolean>,
   ): Promise<boolean> {
     const notificationKey = this.getNotificationKey(target);
+    // Observe both requests immediately, including when eligibility fails first.
+    const safePreviewEnabled = previewEnabled.catch((error: unknown) => {
+      this.deps.logWarning("preview-setting-check-failed", notificationInput.session.id, error);
+      return false;
+    });
     let resolvedEnabled: boolean;
     try {
       resolvedEnabled = await enabled;
@@ -210,13 +215,7 @@ export class SessionTurnNotificationService<TIcon> {
       this.deps.logWarning("eligibility-check-failed", notificationKey, error);
       return false;
     }
-    let resolvedPreviewEnabled: boolean;
-    try {
-      resolvedPreviewEnabled = await previewEnabled;
-    } catch (error) {
-      this.deps.logWarning("preview-setting-check-failed", notificationInput.session.id, error);
-      resolvedPreviewEnabled = false;
-    }
+    const resolvedPreviewEnabled = await safePreviewEnabled;
     if (!await this.isEligible(this.getFocusSessionId(target), notificationKey, resolvedEnabled)) {
       return false;
     }

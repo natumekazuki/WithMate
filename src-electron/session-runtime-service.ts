@@ -879,26 +879,35 @@ export class SessionRuntimeService {
         runAbortController.abort();
       }
     };
-    try {
-      if (this.deps.runSessionAdmissionExclusive) {
-        await this.deps.runSessionAdmissionExclusive(sessionId, admit, runAbortController.signal);
-      } else {
-        admit();
-      }
-    } catch (error) {
-      this.waitingSessionRunAdmissions.delete(sessionId);
-      if (!admitted) {
-        this.pendingSessionRunCancels.delete(sessionId);
-      }
-      if (admitted) {
-        this.startingSessionRuns.delete(sessionId);
-        if (this.sessionRunControllers.get(sessionId) === runAbortController) {
-          this.sessionRunControllers.delete(sessionId);
+    const admissionPromise = (async () => {
+      try {
+        if (this.deps.runSessionAdmissionExclusive) {
+          await this.deps.runSessionAdmissionExclusive(sessionId, admit, runAbortController.signal);
+        } else {
+          admit();
         }
-        this.pendingSessionRunCancels.delete(sessionId);
+      } catch (error) {
+        this.waitingSessionRunAdmissions.delete(sessionId);
+        if (!admitted) {
+          this.pendingSessionRunCancels.delete(sessionId);
+        }
+        if (admitted) {
+          this.startingSessionRuns.delete(sessionId);
+          if (this.sessionRunControllers.get(sessionId) === runAbortController) {
+            this.sessionRunControllers.delete(sessionId);
+          }
+          this.pendingSessionRunCancels.delete(sessionId);
+        }
+        throw error;
       }
-      throw error;
-    }
+    })();
+    await waitForSetupWithCancelDeadline(
+      admissionPromise,
+      runAbortController.signal,
+      this.deps.providerCancelGraceMs ?? DEFAULT_PROVIDER_CANCEL_GRACE_MS,
+      () => this.waitingSessionRunAdmissions.has(sessionId) || this.startingSessionRuns.has(sessionId),
+      (promise) => this.trackTerminatingSessionRun(sessionId, promise),
+    );
     logSessionRunStuckInvestigation("runtime.requested", {
       sessionId,
       clientRequestId,

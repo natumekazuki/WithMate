@@ -57,7 +57,7 @@ type AuxiliaryCreationRecord = {
   status: AuxiliaryCreationResult["status"];
   cancelRequested: boolean;
   promise?: Promise<AuxiliarySession>;
-  result?: AuxiliarySession;
+  auxiliarySessionId?: string;
 };
 
 function normalizeCreationInput(input: CreateAuxiliarySessionInput): AuxiliaryCreationRequestSnapshot {
@@ -200,17 +200,34 @@ export class AuxiliarySessionService {
     const key = this.creationKey(request);
     const record = this.creationRecords.get(key);
     if (record && record.status !== "unknown") {
-      return { status: record.status, auxiliarySessionId: record.result?.id };
+      return { status: record.status, auxiliarySessionId: record.auxiliarySessionId };
     }
     const existing = (await storage.listAuxiliarySessions(request.parentSessionId))
       .find((summary) => summary.clientRequestId === request.clientRequestId);
+    if (record?.cancelRequested && !record.promise && (this.deps.getStorage() !== storage
+      || this.getCreationOwnerGeneration(request.parentSessionId) !== request.creationContext.generationId)) {
+      this.syncCreationStorage(this.deps.getStorage());
+      this.creationRecords.delete(key);
+      return { status: "expired" };
+    }
+    if (record && record.status !== "unknown") {
+      return { status: record.status, auxiliarySessionId: record.auxiliarySessionId };
+    }
     if (existing) {
       if (record) {
         record.status = "committed";
-        record.result = await storage.getAuxiliarySession(existing.id) ?? undefined;
+        record.auxiliarySessionId = existing.id;
+        if (record.cancelRequested && !record.promise && this.creationRecords.get(key) === record) {
+          this.creationRecords.delete(key);
+        }
         this.notifyCreationState(record, "committed", existing.id);
       }
       return { status: "committed", auxiliarySessionId: existing.id };
+    }
+    if (record?.status === "unknown" && record.cancelRequested && !record.promise) {
+      record.status = "cancelled";
+      this.notifyCreationState(record, "cancelled");
+      return { status: "cancelled" };
     }
     if (record?.status === "unknown") {
       return { status: "unknown" };
@@ -221,18 +238,53 @@ export class AuxiliarySessionService {
   }
 
   async cancelAuxiliaryCreation(request: AuxiliaryCreationRequest): Promise<AuxiliaryCreationResult> {
-    this.syncCreationStorage(this.deps.getStorage());
-    const record = this.creationRecords.get(this.creationKey(request));
+    const storage = this.deps.getStorage();
+    this.syncCreationStorage(storage);
+    const key = this.creationKey(request);
+    const record = this.creationRecords.get(key);
     if (!record) {
       if (request.creationContext.generationId !== this.getCreationOwnerGeneration(request.parentSessionId)) {
         return { status: "expired" };
       }
       const tombstone: AuxiliaryCreationRecord = {
         request,
-        status: "cancelled",
+        status: "unknown",
         cancelRequested: true,
       };
-      this.creationRecords.set(this.creationKey(request), tombstone);
+      this.creationRecords.set(key, tombstone);
+      let existing: AuxiliarySessionSummary | undefined;
+      let lookupFailed = false;
+      try {
+        existing = (await storage.listAuxiliarySessions(request.parentSessionId))
+          .find((summary) => summary.clientRequestId === request.clientRequestId);
+      } catch {
+        lookupFailed = true;
+      }
+      if (this.deps.getStorage() !== storage
+        || this.getCreationOwnerGeneration(request.parentSessionId) !== request.creationContext.generationId) {
+        this.syncCreationStorage(this.deps.getStorage());
+        this.creationRecords.delete(key);
+        return { status: "expired" };
+      }
+      if (tombstone.status !== "unknown") {
+        if (tombstone.status === "committed" && this.creationRecords.get(key) === tombstone) {
+          this.creationRecords.delete(key);
+        }
+        return { status: tombstone.status, auxiliarySessionId: tombstone.auxiliarySessionId };
+      }
+      if (this.creationRecords.get(key) !== tombstone) return { status: "expired" };
+      if (lookupFailed) {
+        this.notifyCreationState(tombstone, "unknown");
+        return { status: "unknown" };
+      }
+      if (existing) {
+        tombstone.status = "committed";
+        tombstone.auxiliarySessionId = existing.id;
+        this.creationRecords.delete(key);
+        this.notifyCreationState(tombstone, "committed", existing.id);
+        return { status: "committed", auxiliarySessionId: existing.id };
+      }
+      tombstone.status = "cancelled";
       this.notifyCreationState(tombstone, "cancelled");
       return { status: "cancelled" };
     }
@@ -241,7 +293,7 @@ export class AuxiliarySessionService {
       record.status = "cancelled";
       this.notifyCreationState(record, "cancelled");
     }
-    return { status: record.status, auxiliarySessionId: record.result?.id };
+    return { status: record.status, auxiliarySessionId: record.auxiliarySessionId };
   }
 
   releaseAuxiliaryCreationOwner(parentSessionId: string): void {
@@ -309,6 +361,9 @@ export class AuxiliarySessionService {
       if (existingRecord) {
         if (existingRecord.status === "cancelled" || existingRecord.status === "expired") {
           throw new Error("Auxiliary Session の作成要求は取り消し済みだよ。");
+        }
+        if (existingRecord.status === "unknown" && !existingRecord.promise) {
+          throw new Error("Auxiliary Session の作成要求の取消結果を確認中だよ。");
         }
         if (!existingRecord.input || !isDeepStrictEqual(existingRecord.input, normalizedInput)) {
           throw new Error("同じ Auxiliary creation request ID に異なる入力は使えないよ。");
@@ -425,7 +480,7 @@ export class AuxiliarySessionService {
           : this.commitAuxiliarySession(input, storage, prepared, record, normalizedInput),
       );
       record.status = "committed";
-      record.result = result;
+      record.auxiliarySessionId = result.id;
       this.notifyCreationState(record, "committed", result.id);
       return result;
     } catch (error) {
@@ -540,13 +595,6 @@ export class AuxiliarySessionService {
     if (this.deps.getStorage() !== storage) {
       throw new Error("Auxiliary Session の保存先が作成中に切り替わったため、作成を中止したよ。");
     }
-    if (record) {
-      if (record.cancelRequested) {
-        throw new Error("Auxiliary Session の作成を取り消したよ。");
-      }
-      record.status = "committing";
-      this.notifyCreationState(record, "committing");
-    }
     const parent = await this.deps.getParentSession(input.parentSessionId);
     if (!parent) {
       throw new Error("親セッションが見つからないよ。");
@@ -593,6 +641,13 @@ export class AuxiliarySessionService {
     )) {
       throw new Error("Auxiliary Session の Character が作成中に利用できなくなったため、作成を中止したよ。");
     }
+    if (record) {
+      if (record.cancelRequested) {
+        throw new Error("Auxiliary Session の作成を取り消したよ。");
+      }
+      record.status = "committing";
+      this.notifyCreationState(record, "committing");
+    }
     const now = currentTimestampLabel();
     return storage.upsertAuxiliarySession({
       id: `aux-${randomUUID()}`,
@@ -630,7 +685,7 @@ export class AuxiliarySessionService {
   private notifyCreationState(
     record: AuxiliaryCreationRecord,
     status: AuxiliaryCreationResult["status"],
-    auxiliarySessionId = record.result?.id,
+    auxiliarySessionId = record.auxiliarySessionId,
   ): void {
     try {
       this.deps.onCreationStateChanged?.({
