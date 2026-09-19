@@ -99,6 +99,20 @@ test("buildAuxiliaryPreview は確定応答の冒頭をMarkdown平文化して�
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "buildAuxiliaryPreviewは未送信を表す空のmessagesから空文字列を返す"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Preview contract" }
+// fault = "空のmessagesに対して日本語またはその他の既定タイトルをpreviewとして返す"
+// observable = "buildAuxiliaryPreview([])の返却文字列"
+// observation_boundary = "declaration"
+// scope = "auxiliary-initial-preview"
+// lifecycle = "permanent"
+// @end-test-value
+test("buildAuxiliaryPreview は未送信Auxiliaryのpreviewを空文字列にする", () => {
+  assert.equal(buildAuxiliaryPreview([]), "");
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "confirmed finalがないpreviewはassistant joinを採用せず最新user本文へ限定する"
 // oracle = { type = "contract", ref = "issue-710-preview-legacy-safe-fallback" }

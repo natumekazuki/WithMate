@@ -14,7 +14,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
-import type { ProviderCodingAdapter } from "../../src-electron/provider-runtime.js";
+import type { ProviderCodingAdapter, RunSessionTurnInput } from "../../src-electron/provider-runtime.js";
 import {
   SessionRuntimeService,
   type SessionRuntimeServiceDeps,
@@ -133,6 +133,139 @@ function createAdapter(runSessionTurn: ProviderCodingAdapter["runSessionTurn"]):
     runSessionTurn,
   };
 }
+
+// @test-value v2
+// kind = "invariant"
+// claim = "foreground prompt context が無効な turn では timing / affect resolver を呼ばず、provider prompt へ context を渡さない"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+// fault = "表示しない context のために foreground resolver を実行し、provider prompt へ古い context を渡す"
+// observable = "resolver call count と ProviderCodingAdapter.composePrompt の入力"
+// observation_boundary = "consumer"
+// scope = "session-runtime-prompt-context-resolution"
+// lifecycle = "permanent"
+// impact = "OFF設定でも不要な foreground context 取得・provider prompt への token 注入が発生する"
+// distinction = "provider prompt の section omission だけでなく、turn開始時の resolver 呼び出し境界を確認する"
+// @end-test-value
+it("foreground prompt context が無効な turn では不要な resolver を呼ばない", async () => {
+  const session = createSession();
+  let timingResolverCalls = 0;
+  let affectResolverCalls = 0;
+  let composedInput: RunSessionTurnInput | null = null;
+  const adapter: ProviderCodingAdapter = {
+    ...createAdapter(async () => {
+      throw new Error("provider stopped for resolver boundary test");
+    }),
+    composePrompt(input) {
+      composedInput = input;
+      return {
+        systemBodyText: "system",
+        inputBodyText: "input",
+        logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+        imagePaths: [],
+        additionalDirectories: [],
+      };
+    },
+  };
+  const service = new SessionRuntimeService(createRuntimeDeps(session, adapter, {
+    getAppSettings: () => ({
+      ...normalizeAppSettings({}),
+      characterAffectContextEnabled: false,
+      conversationTimingEnabled: false,
+    }),
+    resolveConversationTimingContext() {
+      timingResolverCalls += 1;
+      throw new Error("timing resolver must not run");
+    },
+    resolveCharacterContext() {
+      affectResolverCalls += 1;
+      throw new Error("affect resolver must not run");
+    },
+  }));
+
+  const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+
+  assert.equal(result.runState, "error");
+  assert.equal(timingResolverCalls, 0);
+  assert.equal(affectResolverCalls, 0);
+  assert.ok(composedInput);
+  assert.equal(composedInput.conversationTimingContext, undefined);
+  assert.equal(composedInput.characterContext, undefined);
+
+  const runWithSettings = async (appSettings: ReturnType<typeof normalizeAppSettings>) => {
+    let timingCalls = 0;
+    let affectCalls = 0;
+    let composedInput: RunSessionTurnInput | null = null;
+    const timingContext = {
+      observedAt: "2026-09-19T04:00:00.000+09:00",
+      observedDayOfWeek: "saturday",
+      currentSession: null,
+      sameCharacterOtherSession: null,
+      sameCharacterSharedWork: null,
+    } satisfies NonNullable<RunSessionTurnInput["conversationTimingContext"]>;
+    const characterContext = {
+      schemaVersion: "withmate-character-context-v1",
+      baseline: { definitionSha256: "sentinel-definition", snapshotAt: "2026-09-19T04:00:00.000Z" },
+      affect: {
+        mode: "active",
+        effective: [],
+        evaluatedAt: "2026-09-19T04:00:00.000Z",
+        version: "sentinel-affect",
+        updatedAt: null,
+      },
+      memory: { items: [], updatedAt: null },
+    } satisfies NonNullable<RunSessionTurnInput["characterContext"]>;
+    const partialAdapter: ProviderCodingAdapter = {
+      ...createAdapter(async () => {
+        throw new Error("provider stopped for resolver gate test");
+      }),
+      composePrompt(input) {
+        composedInput = input;
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+    };
+    const partialService = new SessionRuntimeService(createRuntimeDeps(session, partialAdapter, {
+      getAppSettings: () => appSettings,
+      resolveConversationTimingContext() {
+        timingCalls += 1;
+        return timingContext;
+      },
+      resolveCharacterContext() {
+        affectCalls += 1;
+        return characterContext;
+      },
+    }));
+
+    const partialResult = await partialService.runSessionTurn(session.id, { userMessage: "お願い" });
+    assert.equal(partialResult.runState, "error");
+    assert.ok(composedInput);
+    return { timingCalls, affectCalls, composedInput };
+  };
+  const timingOff = await runWithSettings({
+    ...normalizeAppSettings({}),
+    characterAffectContextEnabled: true,
+    conversationTimingEnabled: false,
+  });
+  const affectOff = await runWithSettings({
+    ...normalizeAppSettings({}),
+    characterAffectContextEnabled: false,
+    conversationTimingEnabled: true,
+  });
+
+  assert.equal(timingOff.timingCalls, 0);
+  assert.equal(timingOff.affectCalls, 1);
+  assert.equal(timingOff.composedInput.conversationTimingContext, undefined);
+  assert.equal(timingOff.composedInput.characterContext?.affect.version, "sentinel-affect");
+  assert.equal(affectOff.timingCalls, 1);
+  assert.equal(affectOff.affectCalls, 0);
+  assert.equal(affectOff.composedInput.conversationTimingContext?.observedAt, "2026-09-19T04:00:00.000+09:00");
+  assert.equal(affectOff.composedInput.characterContext, undefined);
+});
 
 // @test-value v1
 // kind = "invariant"

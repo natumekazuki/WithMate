@@ -539,10 +539,22 @@ test("createStaticTextConversationMessageColumnProps は text conversation を�
   assert.equal(messageColumnProps.onQuoteMessageText, onQuoteMessageText);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "live session message column projection が bookmark toggle callback を共通propsへ保持する"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: UI仕様" }
+// fault = "buildLiveSessionMessageColumnProps が入力された onToggleMessageBookmark を返却propsから落とす"
+// observable = "返却された message column props の onToggleMessageBookmark"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-adapter-message-bookmark"
+// lifecycle = "permanent"
+// distinction = "TypeScript の optional property 検査では検出できない adapter のcallback転送漏れを直接確認する"
+// @end-test-value
 test("buildLiveSessionMessageColumnProps は live message props を共通形式で組み立てる", () => {
   const messageListRef = React.createRef<HTMLDivElement>();
   const onCopyMessageText = () => {};
   const onQuoteMessageText = () => {};
+  const onToggleMessageBookmark = () => {};
   const messageColumnInput = {
     sessionId: "session-id",
     character: createCharacter(),
@@ -567,6 +579,7 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
     getChangedFilesEmptyText: () => "",
     onCopyMessageText,
     onQuoteMessageText,
+    onToggleMessageBookmark,
   };
   const composerMessageColumnProps = buildLiveSessionMessageColumnProps(messageColumnInput);
   const explicitEmptyMessageColumnProps = buildLiveSessionMessageColumnProps({
@@ -580,6 +593,7 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
   assert.equal(explicitEmptyMessageColumnProps.hasLiveRunAssistantText, false);
   assert.equal(composerMessageColumnProps.onCopyMessageText, onCopyMessageText);
   assert.equal(composerMessageColumnProps.onQuoteMessageText, onQuoteMessageText);
+  assert.equal(composerMessageColumnProps.onToggleMessageBookmark, onToggleMessageBookmark);
 });
 
 test("buildLiveSessionComposerProps は composer の表示デフォルトを反映する", () => {

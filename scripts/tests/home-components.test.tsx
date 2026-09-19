@@ -74,10 +74,14 @@ describe("HomeSettingsContent", () => {
     sessionCleanupCutoffDate: "",
     deletingOldSessions: false,
     onChangeAutoCollapseActionDockOnSend: noOp,
+    onChangeCharacterDefinitionEnabled: noOp,
+    onChangeCharacterAffectContextEnabled: noOp,
+    onChangeConversationTimingEnabled: noOp,
     onChangeScrollToLatestOnSend: noOp,
     onChangeLaunchAtLoginEnabled: noOp,
     onChangeSessionTurnNotificationEnabled: noOp,
     onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
+    onChangeToolCallPresenceEnabled: noOp,
     onChangeGlossaryProactiveCreateLimit: noOp,
     onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
@@ -108,6 +112,53 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Windows 通知に返答の冒頭を表示する"));
     assert.ok(html.includes("送信後に Action Dock を自動で閉じる"));
     assert.ok(html.includes("送信時にチャット末尾へ移動する"));
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Settings は Prompt Context の4つの注入section名を個別 checkbox として表示し、既定値を checked にする"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout and #current-scope" }
+  // fault = "注入section名の表示、checkbox、または既定状態が契約と一致しない"
+  // observable = "HomeSettingsContent の static markup にある各label と checkbox state"
+  // observation_boundary = "component-behavior"
+  // scope = "home-settings-prompt-context-ui"
+  // lifecycle = "permanent"
+  // impact = "ユーザーが4つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
+  // distinction = "個別 state/action の保存handlerは draft test に分け、static DOMではsection labelと既定stateだけを確認する"
+  // @end-test-value
+  it("Prompt Context に4項目の個別 toggle を既定有効で表示する", () => {
+    const html = renderSettings();
+    const document = new JSDOM(html).window.document;
+    const promptContextSection = Array.from(document.querySelectorAll("section.settings-section-card"))
+      .find((section) => section.querySelector("strong")?.textContent === "Prompt Context");
+
+    assert.ok(promptContextSection);
+    assert.equal(promptContextSection.querySelector("strong")?.textContent, "Prompt Context");
+
+    const promptContextLabels = [
+      "Character Definition Snapshot",
+      "Character Affect Context",
+      "Conversation Timing",
+      "Tool Call Presence",
+    ];
+    const promptContextRows = Array.from(promptContextSection.querySelectorAll(".settings-provider-toggle-row"));
+    assert.equal(promptContextRows.length, promptContextLabels.length);
+    assert.deepEqual(
+      promptContextRows.map((row) => row.querySelector<HTMLLabelElement>("label.settings-provider-name")?.textContent),
+      promptContextLabels,
+    );
+
+    for (const row of promptContextRows) {
+      const label = row.querySelector<HTMLLabelElement>("label.settings-provider-name");
+      const input = row.querySelector<HTMLInputElement>('input[type="checkbox"]');
+
+      assert.ok(label);
+      assert.ok(input);
+      assert.equal(input.checked, true);
+      assert.equal(label.htmlFor, input.id);
+    }
+    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, promptContextLabels.length);
+    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, promptContextLabels.length);
   });
 
   it("Repository Glossaryにproactive create上限を0から100のnumber inputで表示する", () => {
@@ -993,10 +1044,10 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorの親カードはavatarとtitleを1行目、Mainを独立した状態iconとして2行目へ表示し、Auxiliaryが存在する親だけ集約を追加する"
-  // oracle = { type = "contract", ref = "issue-722 monitor two-row aggregate rendering" }
-  // fault = "workspaceを常設する、Main/Auxiliaryの状態表示を混同する、Auxiliaryなしの親へ集約を出す、またはavatar/titleが欠落する"
-  // observable = "親cardごとの2行構造、Main/Auxiliary status cluster、状態icon、avatar、title、未展開時のAuxiliary detail rowの不在"
+  // claim = "Home Monitorの親カードはavatarとtitleを1行目、Mainを独立した状態iconとして2行目へ表示し、Auxiliaryが存在する親だけ状態集約と1件からの件数を追加する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
+  // fault = "workspaceを常設する、Main/Auxiliaryの状態表示を混同する、Auxiliaryなしの親へ集約を出す、状態別件数を1件だけ省略する、またはavatar/titleが欠落する"
+  // observable = "親cardごとの2行構造、Main/Auxiliary status cluster、状態iconと件数aria-label、avatar、title、未展開時のAuxiliary detail rowの不在"
   // observation_boundary = "component-behavior"
   // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
@@ -1095,10 +1146,148 @@ describe("HomeMonitorContent", () => {
     assert.equal(html.match(/aria-label="Main 実行中"/g)?.length, 2);
     assert.equal(html.match(/aria-label="Main 待機"/g)?.length, 1);
     assert.ok(html.includes('aria-label="Main 中断"'));
-    assert.ok(html.includes('aria-label="Auxiliary 終了"'));
+    assert.ok(html.includes('aria-label="Auxiliary エラー 1件"'));
+    assert.ok(html.includes('aria-label="Auxiliary 終了 1件"'));
     assert.ok(html.includes('aria-label="Companion Reviewを開く: Companion task"'));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 4);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 4);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Monitorは明示的に空または欠損のAuxiliary previewを空のまま表示する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Preview contract" }
+  // fault = "Home Monitorが空または欠損のAuxiliary previewを日本語の既定タイトルへ置き換える"
+  // observable = "展開したAuxiliary rowのpreview要素のtextContentとaria-label"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent empty auxiliary preview"
+  // lifecycle = "permanent"
+  // impact = "新規・旧形式Auxiliaryのpreviewを日本語fallbackなしでHome Monitorへ表示する"
+  // distinction = "Auxiliary previewの保存値ではなく、Home Monitorでの最終表示値を確認する"
+  // @end-test-value
+  it("Home Monitorは空または欠損のAuxiliary previewを日本語fallbackへ戻さない", async () => {
+    const previousGlobals = {
+      window: globalThis.window,
+      document: globalThis.document,
+      Node: globalThis.Node,
+      HTMLElement: globalThis.HTMLElement,
+      Event: globalThis.Event,
+      MouseEvent: globalThis.MouseEvent,
+      KeyboardEvent: globalThis.KeyboardEvent,
+      PointerEvent: globalThis.PointerEvent,
+    };
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+      pretendToBeVisual: true,
+    });
+    const container = dom.window.document.getElementById("root") as HTMLElement;
+    const root = createRoot(container);
+    const entry: HomeMonitorEntry = {
+      kind: "agent",
+      session: createMonitorSession("session-empty-preview", "Empty preview task"),
+      state: { kind: "neutral", label: "待機" },
+      mainState: { kind: "neutral", label: "待機" },
+      auxiliarySessions: [
+        createMonitorAuxiliary("aux-empty-preview", { preview: "" }),
+        createMonitorAuxiliary("aux-missing-preview", { preview: undefined }),
+      ],
+    };
+
+    Object.defineProperties(globalThis, {
+      window: { configurable: true, value: dom.window },
+      document: { configurable: true, value: dom.window.document },
+      Node: { configurable: true, value: dom.window.Node },
+      HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+      Event: { configurable: true, value: dom.window.Event },
+      MouseEvent: { configurable: true, value: dom.window.MouseEvent },
+      KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
+      PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+    });
+
+    try {
+      await act(async () => root.render(
+        <HomeMonitorContent
+          runningEntries={[]}
+          nonRunningEntries={[entry]}
+          onOpenSession={noOp}
+          onOpenCompanionReview={noOp}
+          onShowContextMenu={noOp}
+        />,
+      ));
+
+      const disclosure = container.querySelector<HTMLButtonElement>("button.home-monitor-disclosure");
+      assert.ok(disclosure);
+      await act(async () => disclosure.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+
+      const rows = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-auxiliary-row"));
+      assert.equal(rows.length, 2);
+      assert.equal(rows[0]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "");
+      assert.equal(rows[0]?.getAttribute("aria-label"), "Auxiliaryを開く: ");
+      assert.equal(rows[0]?.textContent?.includes("新しい会話"), false);
+      assert.equal(rows[1]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "");
+      assert.equal(rows[1]?.getAttribute("aria-label"), "Auxiliaryを開く: ");
+      assert.equal(container.textContent?.includes("新しい会話"), false);
+    } finally {
+      await act(async () => root.unmount());
+      dom.window.close();
+      Object.defineProperties(globalThis, {
+        window: { configurable: true, value: previousGlobals.window },
+        document: { configurable: true, value: previousGlobals.document },
+        Node: { configurable: true, value: previousGlobals.Node },
+        HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
+        Event: { configurable: true, value: previousGlobals.Event },
+        MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
+        KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
+        PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+      });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "閉じたHome MonitorカードはAuxiliaryの実行中と待機の件数を1件から表示し、両方を同時に読み取れる"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
+  // fault = "count=1のAuxiliary状態から件数表示とaccessible nameを省略し、3件と1件の組合せで非実行中の存在を判別できない"
+  // observable = "閉じた親cardのAuxiliary status iconに描画された可視件数、aria-label、Auxiliary一覧の不在"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent collapsed auxiliary status summary"
+  // lifecycle = "permanent"
+  // impact = "親カードを展開しなくても、Auxiliaryの実行中3件と待機1件を正しく把握できる"
+  // distinction = "projectionのAuxiliary全件保持ではなく、折りたたみ時のstatus iconの可視テキストとaccessible nameを直接確認する"
+  // @end-test-value
+  it("閉じたMonitorカードでもAuxiliaryの状態別件数を1件から表示する", () => {
+    const auxiliarySessions = [
+      createMonitorAuxiliary("aux-running-1", { runState: "running" }),
+      createMonitorAuxiliary("aux-running-2", { runState: "running" }),
+      createMonitorAuxiliary("aux-running-3", { runState: "running" }),
+      createMonitorAuxiliary("aux-idle", { runState: "idle" }),
+    ];
+    const entry: HomeMonitorEntry = {
+      kind: "agent",
+      session: createMonitorSession("session-count-summary", "Count summary task"),
+      state: { kind: "running", label: "実行中" },
+      mainState: { kind: "neutral", label: "待機" },
+      auxiliarySessions,
+    };
+    const html = renderToStaticMarkup(
+      <HomeMonitorContent
+        runningEntries={[entry]}
+        nonRunningEntries={[]}
+        onOpenSession={noOp}
+        onOpenCompanionReview={noOp}
+        onShowContextMenu={noOp}
+      />,
+    );
+    const document = new JSDOM(html).window.document;
+    const card = document.querySelector(".home-monitor-card");
+    const auxiliaryStatus = card?.querySelector(".home-monitor-auxiliary-status");
+    const runningIcon = auxiliaryStatus?.querySelector(".home-monitor-status-icon.running");
+    const idleIcon = auxiliaryStatus?.querySelector(".home-monitor-status-icon.neutral");
+
+    assert.equal(card?.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
+    assert.equal(runningIcon?.querySelector(".home-monitor-status-icon-count")?.textContent, ": 3");
+    assert.equal(idleIcon?.querySelector(".home-monitor-status-icon-count")?.textContent, ": 1");
+    assert.equal(runningIcon?.getAttribute("aria-label"), "Auxiliary 実行中 3件");
+    assert.equal(idleIcon?.getAttribute("aria-label"), "Auxiliary 待機 1件");
   });
 
   // @test-value v2

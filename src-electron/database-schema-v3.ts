@@ -153,6 +153,7 @@ export const CREATE_V3_SESSION_MESSAGES_TABLE_SQL = `
     text_original_bytes INTEGER NOT NULL DEFAULT 0,
     text_stored_bytes INTEGER NOT NULL DEFAULT 0,
     accent INTEGER NOT NULL DEFAULT 0,
+    is_bookmarked INTEGER NOT NULL DEFAULT 0,
     artifact_available INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,

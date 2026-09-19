@@ -50,6 +50,7 @@ export type LiveAssistantProjection = {
 
 export type MessageListProjectionOptions = {
   liveAssistant?: LiveAssistantProjection | null;
+  primaryMessageSourceKind?: "session" | "auxiliary";
 };
 
 export type LiveAssistantBridgeProjectionInput = {
@@ -105,13 +106,21 @@ export function buildMessageListProjection(
   const auxiliaryBuckets = new Map<number, MessageListAuxiliarySession[]>();
   const fallbackAuxiliarySessions: MessageListAuxiliarySession[] = [];
   const liveAssistant = normalizeLiveAssistantProjection(options.liveAssistant);
+  const primaryMessageSourceKind = options.primaryMessageSourceKind ?? "session";
   const liveAssistantKey = liveAssistant
     ? buildLiveAssistantProjectionKey(liveAssistant.sessionId, liveAssistant.threadId, liveAssistant.messageIndex)
     : null;
 
   const addSessionMessage = (message: Message, messageIndex: number) => {
     messages.push(message);
-    sources.push({ kind: "session", messageIndex });
+    sources.push(primaryMessageSourceKind === "auxiliary"
+      ? {
+          kind: "auxiliary",
+          sessionId,
+          messageIndex,
+          artifact: message.artifact,
+        }
+      : { kind: "session", messageIndex });
     keys.push(isMatchingPersistedLiveAssistantMessage({
       message,
       messageIndex,

@@ -441,17 +441,17 @@ describe("home-session-projection", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorは親MainのstateをAuxiliaryの集約stateから分離し、全AuxiliaryをcreatedAtとidで安定順に投影する"
-  // oracle = { type = "contract", ref = "issue-722 monitor aggregate projection" }
-  // fault = "Auxiliaryの実行状態でMainを実行中扱いにする、表示対象を一件に絞る、またはupdatedAtで表示順が揺れる"
+  // claim = "Home Monitorは親MainのstateをAuxiliaryの集約stateから分離し、全Auxiliaryを実行中優先・updatedAtの降順で投影する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Monitor Window" }
+  // fault = "Auxiliaryの実行状態でMainを実行中扱いにする、表示対象を一件に絞る、または実行中を後ろへ置く"
   // observable = "monitor entryのmainState、state、auxiliarySessionsのID一覧"
   // observation_boundary = "implementation"
   // scope = "buildHomeSessionProjection Main and Auxiliary projection"
   // lifecycle = "permanent"
   // impact = "2行の集約表示と展開一覧がMain/Auxiliaryの状態を混同せず再描画で順序を維持する"
-  // distinction = "親のsection分類とMain表示、Auxiliary個別表示の契約を分離して検証する"
+  // distinction = "親のsection分類とMain表示、Auxiliary個別表示の契約を分離し、実行中優先と最終使用時刻順を直接検証する"
   // @end-test-value
-  it("Main stateとAuxiliary一覧を分離し、Auxiliaryを作成順で投影する", () => {
+  it("Main stateとAuxiliary一覧を分離し、Auxiliaryを実行中優先の最終使用順で投影する", () => {
     const projection = buildHomeSessionProjection(
       [createSession({ id: "parent", taskTitle: "Parent", runState: "error" })],
       ["parent"],
@@ -484,11 +484,108 @@ describe("home-session-projection", () => {
     );
 
     const entry = projection.monitorEntries[0];
-    assert.deepEqual(entry?.auxiliarySessions.map(({ id }) => id), ["aux-a", "aux-z", "aux-b"]);
-    assert.equal(entry?.auxiliarySessions[1]?.status, "closed");
+    assert.deepEqual(entry?.auxiliarySessions.map(({ id }) => id), ["aux-b", "aux-a", "aux-z"]);
+    assert.equal(entry?.auxiliarySessions.find(({ id }) => id === "aux-z")?.status, "closed");
     assert.equal(entry?.mainState.kind, "error");
     assert.equal(entry?.state.kind, "running");
     assert.deepEqual(projection.runningMonitorEntries.map(({ session }) => session.id), ["parent"]);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Home Monitorは親ごとにAuxiliaryを全件保持し、実行中を先頭にupdatedAt DESC、id DESCで並べ、runState変化を再投影する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Monitor Window" }
+  // fault = "Auxiliaryを5件へ切り捨てる、親をまたいで混ぜる、実行中を優先しない、または同じupdatedAtの順序を入力順へ委ねる"
+  // observable = "各monitor entryの親session IDとauxiliarySessionsのID一覧"
+  // observation_boundary = "implementation"
+  // scope = "buildHomeSessionProjection Auxiliary ordering, retention, and state transition"
+  // lifecycle = "permanent"
+  // impact = "展開一覧から会話を失わず、実行中のAuxiliaryを同じ親の先頭から開ける"
+  // distinction = "projectionが親ごとの全件保持、状態変化による再配置、時刻同率のstable ID tie-breakerを直接観測する"
+  // @end-test-value
+  it("Auxiliaryを親ごとに全件保持し、実行中優先とstable ID順で再投影する", () => {
+    const parentAuxiliaries = [
+      createAuxiliarySession({
+        id: "aux-a",
+        parentSessionId: "parent-a",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      }),
+      createAuxiliarySession({
+        id: "aux-b",
+        parentSessionId: "parent-a",
+        updatedAt: "2026-04-02T00:00:00.000Z",
+      }),
+      createAuxiliarySession({
+        id: "aux-c",
+        parentSessionId: "parent-a",
+        runState: "running",
+        updatedAt: "2026-03-30T00:00:00.000Z",
+      }),
+      createAuxiliarySession({
+        id: "aux-g",
+        parentSessionId: "parent-a",
+        runState: "running",
+        updatedAt: "2026-03-30T00:00:00.000Z",
+      }),
+      createAuxiliarySession({
+        id: "aux-d",
+        parentSessionId: "parent-a",
+        updatedAt: "2026-04-02T00:00:00.000Z",
+      }),
+      createAuxiliarySession({
+        id: "aux-e",
+        parentSessionId: "parent-a",
+        status: "closed",
+        updatedAt: "2026-04-03T00:00:00.000Z",
+      }),
+      createAuxiliarySession({
+        id: "aux-f",
+        parentSessionId: "parent-a",
+        runState: "error",
+        updatedAt: "2026-04-04T00:00:00.000Z",
+      }),
+      createAuxiliarySession({
+        id: "aux-other",
+        parentSessionId: "parent-b",
+        updatedAt: "2026-04-05T00:00:00.000Z",
+      }),
+    ];
+    const sessions = [
+      createSession({ id: "parent-a", taskTitle: "Parent A" }),
+      createSession({ id: "parent-b", taskTitle: "Parent B" }),
+    ];
+    const buildProjection = (auxiliaries: AuxiliarySessionSummary[]) => buildHomeSessionProjection(
+      sessions,
+      ["parent-a", "parent-b"],
+      "",
+      [],
+      [],
+      auxiliaries,
+    );
+
+    const projection = buildProjection(parentAuxiliaries);
+    assert.deepEqual(
+      projection.monitorEntries.map(({ session, auxiliarySessions }) => [
+        session.id,
+        auxiliarySessions.map(({ id }) => id),
+      ]),
+      [
+        ["parent-a", ["aux-g", "aux-c", "aux-f", "aux-e", "aux-d", "aux-b", "aux-a"]],
+        ["parent-b", ["aux-other"]],
+      ],
+    );
+
+    const transitionedProjection = buildProjection(parentAuxiliaries.map((summary) => (
+      summary.id === "aux-a"
+        ? { ...summary, runState: "running" as const }
+        : summary.id === "aux-c"
+          ? { ...summary, runState: "idle" as const }
+          : summary
+    )));
+    assert.deepEqual(
+      transitionedProjection.monitorEntries[0]?.auxiliarySessions.map(({ id }) => id),
+      ["aux-a", "aux-g", "aux-f", "aux-e", "aux-d", "aux-b", "aux-c"],
+    );
   });
 
 });

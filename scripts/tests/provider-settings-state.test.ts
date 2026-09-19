@@ -192,6 +192,65 @@ describe("provider-settings-state", () => {
     );
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "foreground prompt context の個別設定は既定で有効になり、明示した boolean 値だけを保持する"
+  // oracle = { type = "contract", ref = "Prompt context settings" }
+  // fault = "既存利用者の prompt 注入が欠落するか、設定値の無効入力で意図しない注入状態になる"
+  // observable = "createDefaultAppSettings と normalizeAppSettings の prompt context fields"
+  // observation_boundary = "public-boundary"
+  // scope = "prompt-context-settings-normalization"
+  // lifecycle = "permanent"
+  // impact = "設定保存・IPC・provider prompt 合成へ渡る toggle の既定状態が変わる"
+  // distinction = "既存の boolean settings の normalize と異なる prompt context 4項目を一括で確認する"
+  // @end-test-value
+  it("foreground prompt context は既定有効で、false と無効値を正しく normalize する", () => {
+    const defaults = createDefaultAppSettings();
+
+    assert.equal(defaults.characterDefinitionEnabled, true);
+    assert.equal(defaults.characterAffectContextEnabled, true);
+    assert.equal(defaults.conversationTimingEnabled, true);
+    assert.equal(defaults.toolCallPresenceEnabled, true);
+    const normalizedOff = normalizeAppSettings({
+      characterDefinitionEnabled: false,
+      characterAffectContextEnabled: false,
+      conversationTimingEnabled: false,
+      toolCallPresenceEnabled: false,
+    });
+    assert.equal(normalizedOff.characterDefinitionEnabled, false);
+    assert.equal(normalizedOff.characterAffectContextEnabled, false);
+    assert.equal(normalizedOff.conversationTimingEnabled, false);
+    assert.equal(normalizedOff.toolCallPresenceEnabled, false);
+    const normalizedMixed = normalizeAppSettings({
+      characterDefinitionEnabled: true,
+      characterAffectContextEnabled: true,
+      conversationTimingEnabled: false,
+      toolCallPresenceEnabled: true,
+    });
+
+    assert.equal(normalizedMixed.characterDefinitionEnabled, true);
+    assert.equal(normalizedMixed.characterAffectContextEnabled, true);
+    assert.equal(normalizedMixed.conversationTimingEnabled, false);
+    assert.equal(normalizedMixed.toolCallPresenceEnabled, true);
+    const normalizedInvalid = normalizeAppSettings({
+      characterDefinitionEnabled: "false",
+      characterAffectContextEnabled: "false",
+      conversationTimingEnabled: null,
+      toolCallPresenceEnabled: 0,
+    });
+
+    assert.equal(normalizedInvalid.characterDefinitionEnabled, true);
+    assert.equal(normalizedInvalid.characterAffectContextEnabled, true);
+    assert.equal(normalizedInvalid.conversationTimingEnabled, true);
+    assert.equal(normalizedInvalid.toolCallPresenceEnabled, true);
+
+    const normalizedMissing = normalizeAppSettings({});
+    assert.equal(normalizedMissing.characterDefinitionEnabled, true);
+    assert.equal(normalizedMissing.characterAffectContextEnabled, true);
+    assert.equal(normalizedMissing.conversationTimingEnabled, true);
+    assert.equal(normalizedMissing.toolCallPresenceEnabled, true);
+  });
+
   it("memory file quota は normalize で min/max に clamp する", () => {
     assert.equal(normalizeAppSettings({ memoryFileQuotaBytes: 1 }).memoryFileQuotaBytes, MEMORY_FILE_QUOTA_MIN_BYTES);
     assert.equal(

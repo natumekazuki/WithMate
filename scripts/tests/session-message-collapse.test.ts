@@ -10,7 +10,7 @@ import {
   toggleAllMessageCollapseState,
   toggleMessageCollapseState,
 } from "../../src/session-message-collapse.js";
-import type { MessageListSource } from "../../src/auxiliary-session-message-projection.js";
+import { buildMessageListProjection, type MessageListSource } from "../../src/auxiliary-session-message-projection.js";
 import type { Message } from "../../src/session-state.js";
 
 function sessionSource(messageIndex: number): MessageListSource {
@@ -29,6 +29,20 @@ function message(role: Message["role"], text: string, accent = false): Message {
   return { role, text, ...(accent ? { accent: true } : {}) };
 }
 
+function buildBookmarkProjectionTargets() {
+  const projection = buildMessageListProjection(
+    [{ role: "user", text: "bookmarked", isBookmarked: true }],
+    [{
+      id: "aux-1",
+      messages: [message("assistant", "ordinary")],
+      displayAfterMessageIndex: 0,
+      createdAt: "2026-05-24T00:00:00.000Z",
+    }],
+    "session-1",
+  );
+  return buildMessageCollapseTargets(projection.messages, projection.sources, projection.keys);
+}
+
 test("plain-text projection は Markdown と空白を正規化し、160 code pointsへ収める", () => {
   assert.equal(projectMessagePlainText("# **hello**\n\n  world `code`"), "hello world code");
   assert.equal(projectMessagePlainText("***\n\n  \n"), "内容なし");
@@ -40,6 +54,16 @@ test("plain-text projection は Markdown と空白を正規化し、160 code poi
   assert.equal(projected.slice(0, -1), "あ".repeat(159));
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "persisted session/auxiliary の user/assistant は live bridge key を含め collapse target になり、synthetic live assistant は除外される"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "message sourceとdisplay keyの差だけで保存済みレスポンスがcollapse targetから除外される"
+// observable = "buildMessageCollapseTargetsのkey・sourceKind・role配列"
+// observation_boundary = "component-behavior"
+// scope = "session-message-collapse"
+// lifecycle = "permanent"
+// @end-test-value
 test("collapse target は persisted session/auxiliary の user/assistantだけを採用する", () => {
   const targets = buildMessageCollapseTargets(
     [
@@ -57,6 +81,34 @@ test("collapse target は persisted session/auxiliary の user/assistantだけ�
     ["session-session-1-0", "session", "user"],
     ["auxiliary-aux-1-0", "auxiliary", "assistant"],
     ["error-row", "session", "assistant"],
+    ["live-assistant-session-1-4-thread", "session", "assistant"],
+  ]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "message projection は persisted source の bookmark state を navigator entry へ引き継ぎ、source identityを保持する"
+// oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: projection と identity" }
+// fault = "projectionがbookmark stateを落とすか、Auxiliary messageをMain sourceとして扱う"
+// observable = "buildMessageCollapseTargetsとbuildMessageNavigatorEntriesのsource/isBookmarked"
+// observation_boundary = "implementation"
+// scope = "message-collapse-bookmark-projection"
+// lifecycle = "permanent"
+// impact = "filter対象や本文のtoggle対象を誤り、別messageのbookmarkを変更する"
+// distinction = "DOM操作ではなく、Messages filterと本文toggleが参照するprojection contractを直接確認する"
+// @end-test-value
+test("collapse target は bookmark state と persisted source identity を navigatorへ引き継ぐ", () => {
+  const targets = buildBookmarkProjectionTargets();
+
+  assert.equal(targets[0]?.isBookmarked, true);
+  assert.deepEqual(targets[0]?.source, sessionSource(0));
+  assert.equal(targets[1]?.isBookmarked, false);
+  assert.deepEqual(targets[1]?.source, auxiliarySource("aux-1", 0));
+
+  const entries = buildMessageNavigatorEntries(targets, new Map());
+  assert.deepEqual(entries.map((entry) => [entry.key, entry.isBookmarked]), [
+    ["session-session-1-0", true],
+    ["auxiliary-aux-1-0", false],
   ]);
 });
 

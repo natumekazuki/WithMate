@@ -47,6 +47,7 @@ export type Message = {
   role: "user" | "assistant";
   text: string;
   accent?: boolean;
+  isBookmarked?: boolean;
   artifact?: MessageArtifact;
 };
 
@@ -372,7 +373,22 @@ export function normalizeMessage(value: unknown): Message | null {
     text: typeof candidate.text === "string" ? candidate.text : "",
     accent: typeof candidate.accent === "boolean" ? candidate.accent : undefined,
     artifact: normalizeMessageArtifact(candidate.artifact),
+    ...(candidate.isBookmarked === true ? { isBookmarked: true } : {}),
   };
+}
+
+export function isMessageBookmarked(message: Pick<Message, "isBookmarked">): boolean {
+  return message.isBookmarked === true;
+}
+
+export function setMessageBookmarked(message: Message, isBookmarked: boolean): Message {
+  if (isBookmarked) {
+    return { ...message, isBookmarked: true };
+  }
+
+  const nextMessage = { ...message };
+  delete nextMessage.isBookmarked;
+  return nextMessage;
 }
 
 function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {

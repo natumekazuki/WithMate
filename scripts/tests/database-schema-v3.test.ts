@@ -142,6 +142,18 @@ describe("database-schema-v3", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V3 session message schema は bookmark stateをmessage rowで保持し、retired Companion message schemaには追加しない"
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
+  // fault = "V3 session message tableにbookmark列がなくstateを失うか、退役済みCompanion message tableへ列が残る"
+  // observable = "session_messagesとcompanion_messagesのschema column names"
+  // observation_boundary = "declaration"
+  // scope = "database-schema-v3 message columns"
+  // lifecycle = "permanent"
+  // impact = "V3 sessionのbookmark roundtripが成立しないか、退役済みCompanionへ保存契約が広がる"
+  // distinction = "blob payloadのroundtrip testとは別に、保存契約のschema形状を直接確認する"
+  // @end-test-value
   it("session/audit/companion payload は preview と blob ref に分離する", () => {
     const db = createV3Schema();
     try {
@@ -155,6 +167,7 @@ describe("database-schema-v3", () => {
         "text_original_bytes",
         "text_stored_bytes",
         "accent",
+        "is_bookmarked",
         "artifact_available",
         "created_at",
       ]);

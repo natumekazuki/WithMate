@@ -1005,12 +1005,16 @@ export class SessionRuntimeService {
     const sessionMemory = await this.deps.getSessionMemory(session);
     const projectMemoryEntries = await this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
     const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
-    const conversationTimingContext = await Promise.resolve(
-      this.deps.resolveConversationTimingContext?.(session, observedAt) ?? null,
-    );
-    const characterContext = await Promise.resolve(
-      this.deps.resolveCharacterContext?.(session, nextMessage) ?? null,
-    );
+    const conversationTimingContext = appSettings.conversationTimingEnabled
+      ? await Promise.resolve(
+        this.deps.resolveConversationTimingContext?.(session, observedAt) ?? null,
+      )
+      : null;
+    const characterContext = appSettings.characterAffectContextEnabled
+      ? await Promise.resolve(
+        this.deps.resolveCharacterContext?.(session, nextMessage) ?? null,
+      )
+      : null;
     throwIfRunCanceled(runAbortController.signal);
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
 

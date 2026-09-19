@@ -112,6 +112,7 @@ function insertMessage(db: DatabaseSync, input: {
   role: "user" | "assistant";
   text: string;
   accent?: number;
+  isBookmarked?: number;
   artifactAvailable?: number;
 }): number {
   const result = db.prepare(`
@@ -121,15 +122,17 @@ function insertMessage(db: DatabaseSync, input: {
       role,
       text,
       accent,
+      is_bookmarked,
       artifact_available,
       created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.sessionId,
     input.seq,
     input.role,
     input.text,
     input.accent ?? 0,
+    input.isBookmarked ?? 0,
     input.artifactAvailable ?? 0,
     "2026-04-27T00:00:00.000Z",
   );
@@ -321,6 +324,18 @@ describe("SessionStorageV2", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V2 session message はseq/artifactの復元とbookmark stateを同時に保持する"
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
+  // fault = "V2 rowのis_bookmarkedを読み落とし、再構成したMessageからbookmark stateが消える"
+  // observable = "SessionStorageV2.getSessionが返すmessageのisBookmarked"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v2 message bookmark read"
+  // lifecycle = "permanent"
+  // impact = "旧形式sessionを開いた時にbookmark filterの対象が欠落する"
+  // distinction = "schema列確認とは別に、artifact joinとseq orderを通した実read projectionを確認する"
+  // @end-test-value
   it("getSession は messages を seq 順で復元し artifact と stream: [] を返す", async () => {
     await withTempV2Database((dbPath) => {
       const db = new DatabaseSync(dbPath);
@@ -341,6 +356,7 @@ describe("SessionStorageV2", () => {
           role: "user",
           text: "first",
           accent: 1,
+          isBookmarked: 1,
           artifactAvailable: 1,
         });
         insertArtifact(db, userMessageId, {
@@ -361,6 +377,7 @@ describe("SessionStorageV2", () => {
         assert.deepEqual(session.messages.map((message) => message.text), ["first", "second"]);
         assert.equal(session.messages[0].role, "user");
         assert.equal(session.messages[0].accent, true);
+        assert.equal(session.messages[0].isBookmarked, true);
         assert.deepEqual(session.messages[0].artifact, {
           title: "Result artifact",
           activitySummary: ["done"],
@@ -428,6 +445,18 @@ describe("SessionStorageV2", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V2 session upsert はMessageのbookmark stateを保存し、getSessionで再読込できる"
+  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
+  // fault = "upsertSessionのmessage insertがbookmark stateを保存しない"
+  // observable = "upsertSession後のSessionStorageV2.getSessionが返すmessageのisBookmarked"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v2 message bookmark write"
+  // lifecycle = "permanent"
+  // impact = "本文からbookmarkを追加しても再表示時に解除される"
+  // distinction = "手作業のSQL readとは別に、通常のupsert write pathを通して保存契約を確認する"
+  // @end-test-value
   it("upsertSession は getSession で messages と artifact を復元できる", async () => {
     await withTempV2Database((dbPath) => {
       const storage = new SessionStorageV2(dbPath);
@@ -441,6 +470,7 @@ describe("SessionStorageV2", () => {
               role: "user",
               text: "まずはメッセージ",
               accent: true,
+              isBookmarked: true,
               artifact: {
                 title: "Upsert artifact",
                 activitySummary: ["done"],
@@ -472,6 +502,7 @@ describe("SessionStorageV2", () => {
         assert.deepEqual(loaded.messages.map((message) => message.text), ["まずはメッセージ", "了解、実行します。"]);
         assert.equal(loaded.messages[0].role, "user");
         assert.equal(loaded.messages[0].accent, true);
+        assert.equal(loaded.messages[0].isBookmarked, true);
         assert.deepEqual(loaded.messages[0].artifact, {
           title: "Upsert artifact",
           activitySummary: ["done"],

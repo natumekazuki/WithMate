@@ -52,8 +52,10 @@ import {
   type Message,
   applyCopilotCustomAgentSelection,
   isReadOnlySession,
+  setMessageBookmarked,
   type Session,
 } from "./session-state.js";
+import type { MessageCollapseTarget } from "./session-message-collapse.js";
 import {
   getProviderCatalog,
   getReasoningEffortOptionsForModel,
@@ -2950,6 +2952,57 @@ export default function AgentSessionWindowApp() {
     })(recipe);
   };
 
+  const handleToggleMessageBookmark = async (target: MessageCollapseTarget): Promise<void> => {
+    const nextIsBookmarked = !target.isBookmarked;
+    if (target.source.kind === "auxiliary") {
+      if (
+        isSelectedSessionReadOnly
+        || !activeAuxiliarySession
+        || activeAuxiliarySession.runState === "running"
+        || activeAuxiliarySession.id !== target.source.sessionId
+      ) {
+        return;
+      }
+
+      await updateActiveAuxiliarySession((current) => {
+        const message = current.messages[target.source.messageIndex];
+        if (!message) {
+          return current;
+        }
+
+        return {
+          ...current,
+          updatedAt: currentTimestampLabel(),
+          messages: current.messages.map((currentMessage, index) => (
+            index === target.source.messageIndex
+              ? setMessageBookmarked(currentMessage, nextIsBookmarked)
+              : currentMessage
+          )),
+        };
+      });
+      return;
+    }
+
+    if (!selectedSession || isSelectedSessionReadOnly || selectedSessionRunState === "running") {
+      return;
+    }
+
+    const message = selectedSession.messages[target.source.messageIndex];
+    if (!message) {
+      return;
+    }
+
+    await persistSession({
+      ...selectedSession,
+      updatedAt: currentTimestampLabel(),
+      messages: selectedSession.messages.map((currentMessage, index) => (
+        index === target.source.messageIndex
+          ? setMessageBookmarked(currentMessage, nextIsBookmarked)
+          : currentMessage
+      )),
+    });
+  };
+
   const handleChangeAuxiliaryApproval = async (approvalMode: Session["approvalMode"]) => {
     await runAuxiliaryApprovalModeChangeOperation({
       approvalMode,
@@ -4184,6 +4237,7 @@ export default function AgentSessionWindowApp() {
         onOpenSessionExplorer: () => void handleOpenSessionExplorer(),
         onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
         onMessageListScroll: handleMessageListScroll,
+        onToggleMessageBookmark: handleToggleMessageBookmark,
         onToggleArtifact: toggleArtifact,
         onLoadArtifactDetail: (messageIndex) =>
           Promise.resolve(withmateApi?.getSessionMessageArtifact(selectedSession.id, messageIndex) ?? null),
@@ -4368,6 +4422,11 @@ export default function AgentSessionWindowApp() {
             ...chatWindowProps.messageColumnProps,
             sessionId: selectedSession.id,
             messages: selectedSession.messages,
+            onToggleMessageBookmark: auxiliaryWorkspace.target === "main"
+              && !isSelectedSessionReadOnly
+              && !isSelectedSessionRunning
+              ? handleToggleMessageBookmark
+              : undefined,
             onLoadArtifactDetail: (index) => withmateApi?.getSessionMessageArtifact(selectedSession.id, index) ?? Promise.resolve(null),
             onOpenPath: (target) => handleOpenInlinePath(target, selectedSession.id),
           },
@@ -4375,14 +4434,19 @@ export default function AgentSessionWindowApp() {
             ...chatWindowProps.messageColumnProps,
             sessionId: auxiliaryWorkspace.selectedSession.id,
             messages: auxiliaryWorkspace.selectedSession.messages,
+            onToggleMessageBookmark: auxiliaryWorkspace.target === "auxiliary"
+              && !isSelectedSessionReadOnly
+              && auxiliaryWorkspace.selectedSession.runState !== "running"
+              ? handleToggleMessageBookmark
+              : undefined,
             onLoadArtifactDetail: (index) => Promise.resolve(auxiliaryWorkspace.selectedSession?.messages[index]?.artifact ?? null),
             onOpenPath: (target) => handleOpenInlinePath(target, auxiliaryWorkspace.selectedId),
           } : null,
           selectedAuxiliaryId: auxiliaryWorkspace.selectedId,
           auxiliaryItems: auxiliaryWorkspace.summaries.map((summary) => ({
             id: summary.id,
-            label: summary.preview ?? "新しい会話",
-            searchText: summary.preview ?? "新しい会話",
+            label: summary.preview?.trim() || "New conversation",
+            searchText: summary.preview?.trim() || "New conversation",
             icon: <CharacterAvatar key={summary.id} character={{ name: "", iconPath: summary.characterIconPath ?? "" }} size="tiny" />,
             isProcessing: summary.runState === "running",
           })),

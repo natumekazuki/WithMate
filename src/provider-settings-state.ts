@@ -27,6 +27,10 @@ export type AppSettings = {
   launchAtLoginEnabled: boolean;
   sessionTurnNotificationEnabled: boolean;
   sessionTurnNotificationResponsePreviewEnabled: boolean;
+  characterDefinitionEnabled: boolean;
+  characterAffectContextEnabled: boolean;
+  conversationTimingEnabled: boolean;
+  toolCallPresenceEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
   scrollToLatestOnSend: boolean;
   chatLayoutPreference: ChatLayoutPreference;
@@ -113,6 +117,10 @@ export function createDefaultAppSettings(): AppSettings {
     launchAtLoginEnabled: false,
     sessionTurnNotificationEnabled: true,
     sessionTurnNotificationResponsePreviewEnabled: false,
+    characterDefinitionEnabled: true,
+    characterAffectContextEnabled: true,
+    conversationTimingEnabled: true,
+    toolCallPresenceEnabled: true,
     autoCollapseActionDockOnSend: true,
     scrollToLatestOnSend: true,
     chatLayoutPreference: { ...DEFAULT_CHAT_LAYOUT_PREFERENCE },
@@ -350,6 +358,14 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       typeof candidate.sessionTurnNotificationResponsePreviewEnabled === "boolean"
         ? candidate.sessionTurnNotificationResponsePreviewEnabled
         : false,
+    characterDefinitionEnabled:
+      typeof candidate.characterDefinitionEnabled === "boolean" ? candidate.characterDefinitionEnabled : true,
+    characterAffectContextEnabled:
+      typeof candidate.characterAffectContextEnabled === "boolean" ? candidate.characterAffectContextEnabled : true,
+    conversationTimingEnabled:
+      typeof candidate.conversationTimingEnabled === "boolean" ? candidate.conversationTimingEnabled : true,
+    toolCallPresenceEnabled:
+      typeof candidate.toolCallPresenceEnabled === "boolean" ? candidate.toolCallPresenceEnabled : true,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
     scrollToLatestOnSend:

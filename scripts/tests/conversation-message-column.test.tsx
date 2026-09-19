@@ -238,10 +238,10 @@ test("conversation column controls はscroll状態と送信時追従操作を公
 
 // @test-value v2
 // kind = "invariant"
-// claim = "個別の折りたたみがnavigatorへ反映され、一覧選択が同じ会話のjump requestへ届く"
+// claim = "ユーザー送信と保存済みレスポンスの折りたたみがnavigatorへ反映され、一覧選択が同じ会話のjump requestへ届く"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "親側の空のnavigator契約によりcollapseまたはmessage jumpが表示へ届かない"
-// observable = "Column propsのcollapsedMessageKeys・messageNavigatorEntries・messageJumpRequest"
+// fault = "live bridgeの安定キーを持つ保存済みレスポンスがcollapse targetから除外され、collapseまたはmessage jumpが表示へ届かない"
+// observable = "Column propsのmessageCollapseTargetKeys・collapsedMessageKeys・messageNavigatorEntries・messageJumpRequest"
 // observation_boundary = "component-behavior"
 // scope = "conversation-message-column"
 // lifecycle = "permanent"
@@ -262,7 +262,19 @@ test("conversation column はcollapseとnavigator jumpを公開する", async ()
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
   let root: Root | null = null;
   let latest: ReturnType<typeof useConversationMessageColumn> = null;
-  let controls: { messageNavigatorEntries: readonly { key: string; isCollapsed: boolean }[]; onJumpToMessage: (key: string) => void } | null = null;
+  let controls: { messageCollapseTargetKeys: readonly string[]; messageNavigatorEntries: readonly { key: string; isCollapsed: boolean }[]; onJumpToMessage: (key: string) => void } | null = null;
+  const testApi: ConversationMessageColumnApi = {};
+  const liveRun: LiveSessionRunState = {
+    sessionId: "main",
+    threadId: "main-thread",
+    assistantText: "response",
+    steps: [],
+    backgroundTasks: [],
+    usage: null,
+    errorMessage: "",
+    approvalRequest: null,
+    elicitationRequest: null,
+  };
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
@@ -277,19 +289,33 @@ test("conversation column はcollapseとnavigator jumpを公開する", async ()
           },
           baseProps: createBaseProps("main"),
           enabled: true,
+          api: testApi,
+          liveRun,
           onColumnControls: (next) => { controls = next; },
         });
         return null;
       }));
     });
-    assert.equal(controls?.messageNavigatorEntries.length, 2);
+    assert.deepEqual(controls?.messageNavigatorEntries.map((entry) => entry.key), [
+      "session-main-0",
+      "live-assistant-main-1-main-thread",
+    ]);
+    assert.deepEqual(controls?.messageCollapseTargetKeys, [
+      "session-main-0",
+      "live-assistant-main-1-main-thread",
+    ]);
     const key = controls?.messageNavigatorEntries[0]?.key;
     assert.ok(key);
     await act(async () => latest?.onToggleMessageCollapse?.(key));
     assert.equal(latest?.collapsedMessageKeys?.has(key), true);
     assert.equal(controls?.messageNavigatorEntries[0]?.isCollapsed, true);
-    await act(async () => controls?.onJumpToMessage(key));
-    assert.equal(latest?.messageJumpRequest?.key, key);
+    const responseKey = controls?.messageNavigatorEntries[1]?.key;
+    assert.ok(responseKey);
+    await act(async () => latest?.onToggleMessageCollapse?.(responseKey));
+    assert.equal(latest?.collapsedMessageKeys?.has(responseKey), true);
+    assert.equal(controls?.messageNavigatorEntries[1]?.isCollapsed, true);
+    await act(async () => controls?.onJumpToMessage(responseKey));
+    assert.equal(latest?.messageJumpRequest?.key, responseKey);
     assert.equal(latest?.messageJumpRequest?.sessionId, "main");
   } finally {
     await act(async () => root?.unmount());

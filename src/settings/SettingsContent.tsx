@@ -13,6 +13,9 @@ import {
 } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
+  SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL,
+  SETTINGS_CHARACTER_DEFINITION_LABEL,
+  SETTINGS_CONVERSATION_TIMING_LABEL,
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
@@ -36,6 +39,7 @@ import {
   SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
+  SETTINGS_TOOL_CALL_PRESENCE_LABEL,
 } from "./settings-ui.js";
 import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
 
@@ -50,11 +54,15 @@ export type HomeSettingsContentProps = {
   sessionCleanupCutoffDate: string;
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
+  onChangeCharacterDefinitionEnabled: (enabled: boolean) => void;
+  onChangeCharacterAffectContextEnabled: (enabled: boolean) => void;
+  onChangeConversationTimingEnabled: (enabled: boolean) => void;
   onChangeScrollToLatestOnSend: (enabled: boolean) => void;
   onChangeKeyboardShortcuts: (settings: KeyboardShortcutSettings) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
+  onChangeToolCallPresenceEnabled: (enabled: boolean) => void;
   onChangeMemoryFileQuotaMegabytes: (value: string) => void;
   onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
@@ -101,6 +109,27 @@ const microcopyTextareaValue = (value: AppSettings["userMicrocopyCatalog"][Micro
   return (value ?? []).join("\n");
 };
 
+type PromptContextToggleProps = {
+  id: string;
+  label: string;
+  checked: boolean;
+  onChange: (enabled: boolean) => void;
+};
+
+function PromptContextToggle({ id, label, checked, onChange }: PromptContextToggleProps) {
+  return (
+    <div className="settings-provider-toggle-row settings-section-toggle">
+      <label className="settings-provider-name" htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </div>
+  );
+}
+
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
@@ -112,11 +141,15 @@ export function HomeSettingsContent({
   sessionCleanupCutoffDate,
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
+  onChangeCharacterDefinitionEnabled,
+  onChangeCharacterAffectContextEnabled,
+  onChangeConversationTimingEnabled,
   onChangeScrollToLatestOnSend,
   onChangeKeyboardShortcuts,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
+  onChangeToolCallPresenceEnabled,
   onChangeMemoryFileQuotaMegabytes,
   onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
@@ -193,6 +226,36 @@ export function HomeSettingsContent({
                   onChange={(event) => onChangeScrollToLatestOnSend(event.target.checked)}
                 />
               </label>
+            </div>
+          </section>
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Prompt Context</strong>
+              <PromptContextToggle
+                id="settings-prompt-context-character-definition"
+                label={SETTINGS_CHARACTER_DEFINITION_LABEL}
+                checked={settingsDraft.characterDefinitionEnabled}
+                onChange={onChangeCharacterDefinitionEnabled}
+              />
+              <PromptContextToggle
+                id="settings-prompt-context-character-affect"
+                label={SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL}
+                checked={settingsDraft.characterAffectContextEnabled}
+                onChange={onChangeCharacterAffectContextEnabled}
+              />
+              <PromptContextToggle
+                id="settings-prompt-context-conversation-timing"
+                label={SETTINGS_CONVERSATION_TIMING_LABEL}
+                checked={settingsDraft.conversationTimingEnabled}
+                onChange={onChangeConversationTimingEnabled}
+              />
+              <PromptContextToggle
+                id="settings-prompt-context-tool-call-presence"
+                label={SETTINGS_TOOL_CALL_PRESENCE_LABEL}
+                checked={settingsDraft.toolCallPresenceEnabled}
+                onChange={onChangeToolCallPresenceEnabled}
+              />
             </div>
           </section>
 

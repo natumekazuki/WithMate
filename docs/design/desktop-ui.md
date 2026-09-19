@@ -180,7 +180,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - 表示単位は親Sessionの集約カードとし、親カードを2行で固定する。1行目はdisclosure、avatar、親title、2行目は`Main`と`Aux`の状態アイコンを表示する
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
   - `running` はaccent色のspinner、待機と終了はsubduedな中空円、errorはwarning triangleで表し、カード点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
-  - Auxiliaryが存在する親だけdisclosureと`Aux`集約を表示し、Auxiliaryがない場合もMainだけの2行を維持する。展開時は親カード内へ作成順のAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する
+  - Auxiliaryが存在する親だけdisclosureと`Aux`集約を表示し、Auxiliaryがない場合もMainだけの2行を維持する。展開時は親カード内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
   - Auxiliaryの状態集約では`実行中`、`エラー`、`待機`、`終了`を別々に数え、closed Auxiliaryを待機へ変換しない。待機と終了は同じ円形だが、状態ラベルと集約を分ける。interruptedとerrorも別の形状で表示する
   - section countは親カード数とし、Auxiliaryをtop-level rowとして重複表示しない。親の状態はMainとAuxiliaryを分離して保持し、Auxiliaryのいずれかが実行中なら親カードを`実行中`へ分類する
   - 親titleは既存の親Windowを開き、Auxiliary rowは同じ親Windowを指定したstable Auxiliary IDで開いて選択する。対象が消えた、親が一致しない、Windowを開けない場合はfallbackせずMonitor内へ失敗を返す
