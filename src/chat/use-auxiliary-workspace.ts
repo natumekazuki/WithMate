@@ -240,12 +240,17 @@ export function useAuxiliaryWorkspace(input: {
         if (binding) binding.sessionRef.current = session;
       }
       if (detailEpoch === (detailMutationEpochRef.current.get(id) ?? 0)) {
-        if (session) setSelectedSession(session);
-        else setDetailError(new Error(`Auxiliary session ${id} was not found`));
+        if (session) {
+          setSelectedSession(session);
+          setDetailError(null);
+        } else {
+          setDetailError(new Error(`Auxiliary session ${id} was not found`));
+        }
       }
       setDetailLoading(false);
     }).catch((cause) => {
       if (!mountedRef.current || revision !== loadRevisionRef.current || selectedIdRef.current !== id) return;
+      if (detailEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
       const detailCause = cause instanceof Error ? cause : new Error(String(cause));
       setDetailError(detailCause);
       setDetailLoading(false);
@@ -273,7 +278,11 @@ export function useAuxiliaryWorkspace(input: {
         detailsRef.current.set(id, session);
         const binding = bindingsRef.current.get(id);
         if (binding) binding.sessionRef.current = session;
-        if (selectedIdRef.current === id) setSelectedSession(session);
+        if (selectedIdRef.current === id) {
+          setSelectedSession(session);
+          setDetailLoading(false);
+          setDetailError(null);
+        }
       } else {
         const currentDetail = detailsRef.current.get(id);
         if (currentDetail && currentDetail.runState !== session.runState) {
@@ -291,21 +300,44 @@ export function useAuxiliaryWorkspace(input: {
       if (!api) return;
       const terminalRevision = (terminalRevisionRef.current.get(id) ?? 0) + 1;
       terminalRevisionRef.current.set(id, terminalRevision);
-      if (state === null && !detailsRef.current.has(id)) {
-        void refreshSummaries();
-        return;
-      }
-      const terminalEpoch = detailMutationEpochRef.current.get(id) ?? 0;
+      const terminalStartEpoch = detailMutationEpochRef.current.get(id) ?? 0;
       void api.getAuxiliarySession(id).then((session) => {
-        if (session) applySession(id, session, terminalRevision, terminalEpoch, state === null);
+        if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
+          || terminalRevision !== terminalRevisionRef.current.get(id)) return;
+        if (state === null) {
+          if (terminalStartEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
+          mutationRevisionRef.current += 1;
+          setLoading(false);
+          const resolvedEpoch = terminalStartEpoch + 1;
+          detailMutationEpochRef.current.set(id, resolvedEpoch);
+          if (session) {
+            applySession(id, session, terminalRevision, resolvedEpoch, true);
+            return;
+          }
+          detailsRef.current.delete(id);
+          const binding = bindingsRef.current.get(id);
+          if (binding) binding.sessionRef.current = null;
+          if (selectedIdRef.current === id) {
+            setSelectedSession(null);
+            setDetailLoading(false);
+            setDetailError(new Error(`Auxiliary session ${id} was not found`));
+          }
+          void refreshSummaries();
+          return;
+        }
+        if (session) applySession(id, session, terminalRevision, terminalStartEpoch, false);
       }).catch((cause) => {
         if (mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
           && terminalRevision === terminalRevisionRef.current.get(id)) {
-          setError(cause instanceof Error ? cause : new Error(String(cause)));
+          const detailCause = cause instanceof Error ? cause : new Error(String(cause));
+          if (selectedIdRef.current === id) {
+            setDetailLoading(false);
+            setDetailError(detailCause);
+          }
         }
       });
     });
-  }, [api, parentSessionId]);
+  }, [api, parentSessionId, refreshSummaries]);
 
   const selectSession = useCallback((id: string | null) => {
     if (id !== null && !summaries.some((summary) => summary.id === id)) {
