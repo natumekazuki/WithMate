@@ -475,7 +475,7 @@ export function projectAuxiliarySessionSummary(session: AuxiliarySession): Auxil
   };
 }
 
-export const AUXILIARY_PREVIEW_DEFAULT = "新しい会話";
+export const AUXILIARY_PREVIEW_DEFAULT = "";
 export const AUXILIARY_PREVIEW_MAX_LENGTH = 240;
 
 function flattenAuxiliaryPreviewMarkdown(value: string): string {
