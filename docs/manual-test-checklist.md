@@ -1,6 +1,6 @@
 # 実機テスト項目表
 
-## Issue #710 Auxiliary Session
+## Auxiliary Session の独立性と切り替え
 
 複数Auxiliaryを追加して最終使用順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、実行中のAuxiliaryはicon内のprocessing indicatorで判別できること、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態ではAuxiliaryのタイトル枠・切り替えUI・追加`＋`を表示せず、Mainが残り幅を使うこと、中央のsplitterだけが残りクリックで既定幅へ戻せることを確認する。Auxiliaryを再度開いた後はタイトル枠、左右切り替え、追加`＋`が利用でき、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
 
@@ -212,7 +212,7 @@ npm run electron:start
 | MT-069 | Auxiliary processing indicator | Auxiliaryを3件以上用意して一覧を開き、表示中・非表示のAuxiliaryをそれぞれ実行する。実行中に一覧を開閉し、狭い幅と`prefers-reduced-motion`でも確認する | 実行中の行だけicon内に小さなprocessing indicatorが表示され、previewは既存の最大2行表示を維持し、indicator追加で行の高さとpreviewの幅は変わらない。待機中の行にindicatorは出ず、一覧を閉じても実行は継続する。reduced motionではindicatorが回転しない |
 
 
-## Issue #725 Composer input benchmark
+## Composer 入力性能の測定
 
 このbenchmarkはhidden Electron BrowserWindowで本番の `session.html` を読み込み、AgentSessionWindowAppと共通Composerのrenderer/IPC境界を確認する。合成API fixtureのため、実DB・Storage Workerの性能値とは分けて扱う。
 
@@ -224,7 +224,7 @@ npx electron scripts/run-composer-input-benchmark.cjs
 変更前rendererの比較は `--renderer-dir` で展開済みbaselineの `dist` を指定する。
 
 ```powershell
-npx electron scripts/run-composer-input-benchmark.cjs --renderer-dir C:\path\to\issue-725-baseline\source\dist
+npx electron scripts/run-composer-input-benchmark.cjs --renderer-dir C:\path\to\composer-input-baseline\source\dist
 ```
 
 Auxiliary件数1/10/100、short/long履歴、Main/Auxiliary owner、通常入力/delete、synthetic pasteを出力する。各条件は先頭5入力をwarmupとして除き、24入力のmedian/p95を計算する。測定区間はinput eventから2回目のrequestAnimationFrameまでで、実paint時間ではない。hidden Windowのbackground throttlingを無効にしたrenderer比較値として扱う。pasteはユーザーclipboardを読み書きせず、合成ClipboardEventとInputEventである。実clipboardと日本語IMEは別途Electron手動確認とし、実行環境・commit・build種別・fixture・入力方法を結果へ記録する。`GIT_COMMIT`へ比較対象のcommitを設定し、同じbuild種別・条件でbaselineと変更後を比較する。
