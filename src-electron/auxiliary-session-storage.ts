@@ -50,6 +50,11 @@ export type AuxiliarySessionRuntimeMetadataPatchInput = ProviderRuntimeMetadataP
   createdAt: string;
 };
 
+export type AuxiliarySessionUpdateIfMatchesInput = {
+  session: AuxiliarySession;
+  expectedSession: AuxiliarySession;
+};
+
 type TableInfoRow = {
   name: string;
 };
@@ -301,6 +306,55 @@ export class AuxiliarySessionStorage {
         }
         db.exec("COMMIT");
         return next;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  updateAuxiliarySessionIfMatches(input: AuxiliarySessionUpdateIfMatchesInput): AuxiliarySession | null {
+    return this.withDb((db) => {
+      db.exec("BEGIN IMMEDIATE TRANSACTION");
+      try {
+        const row = db.prepare(`
+          SELECT created_at, updated_at, payload_json
+          FROM auxiliary_sessions
+          WHERE id = ? AND parent_session_id = ? AND created_at = ? AND updated_at = ?
+        `).get(input.expectedSession.id, input.expectedSession.parentSessionId, input.expectedSession.createdAt, input.expectedSession.updatedAt) as AuxiliarySessionRow | undefined;
+        const current = row ? parseAuxiliarySessionRow(row) : null;
+        const parentTables = (db.prepare(`
+          SELECT name FROM sqlite_master
+          WHERE type = 'table' AND name IN ('sessions_v6', 'companion_sessions', 'sessions')
+        `).all() as Array<{ name: string }>);
+        const hasV6ParentTable = parentTables.some(({ name }) => name === "sessions_v6");
+        const parent = parentTables.filter(({ name }) => name !== (hasV6ParentTable ? "sessions" : "sessions_v6")).some(({ name }) => {
+          const row = name === "companion_sessions"
+            ? db.prepare(`SELECT 1 AS present FROM ${name} WHERE id = ? AND status IN ('active', 'recovery-required') LIMIT 1`).get(input.expectedSession.parentSessionId)
+            : db.prepare(`SELECT 1 AS present FROM ${name} WHERE id = ? LIMIT 1`).get(input.expectedSession.parentSessionId);
+          return Boolean(row);
+        });
+        const expected = normalizeAuxiliarySession(input.expectedSession);
+        if (!current || !expected || input.session.id !== expected.id || input.session.parentSessionId !== expected.parentSessionId
+          || input.session.createdAt !== expected.createdAt || JSON.stringify(current) !== JSON.stringify(expected) || !parent) {
+          db.exec("ROLLBACK");
+          return null;
+        }
+        const result = db.prepare(`
+          UPDATE auxiliary_sessions
+          SET parent_session_id = ?, status = ?, created_at = ?, updated_at = ?, payload_json = ?, summary_json = ?
+          WHERE id = ? AND parent_session_id = ? AND created_at = ? AND updated_at = ?
+        `).run(
+          input.session.parentSessionId, input.session.status, input.session.createdAt, input.session.updatedAt,
+          JSON.stringify(input.session), JSON.stringify(projectAuxiliarySessionSummary(input.session)),
+          input.session.id, input.expectedSession.parentSessionId, input.expectedSession.createdAt, input.expectedSession.updatedAt,
+        );
+        if (Number(result.changes) !== 1) {
+          db.exec("ROLLBACK");
+          return null;
+        }
+        db.exec("COMMIT");
+        return input.session;
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;

@@ -33,6 +33,7 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
 - 実行中 session の metadata 更新は制限し、少なくとも approval / model / depth / title / delete は UI と Main Process の両方でブロックする
 - Turn の admission は対象 session の開始登録と provider の利用中判定だけを短い ownership 境界で行う。provider 入力の準備、workspace / SessionFolder 操作、Character 読込、外部 provider 呼出し、長い SQLite command の完了待ちはその境界の外で行い、別 session の開始・削除を不要に待たせない。
+- admission は provider → ownership の順で開始予約を登録し、Worker の Session / 親読込みを排他外で待つ。その間は starting 判定が削除・設定変更・Auxiliary 終了から対象を保護する。読込み後は短い同順序の排他内で owner、maintenance、cancel、provider cleanup 状態を再確認する。予約より先に所有権を得た削除は読込み発行前に完了し、拒否時は予約を解放して provider を開始しない。
 - V6 の保存 command は current storage Worker generation に送る。close / reset / reopen 後の旧 generation からの応答は current DB へ書き換えず、commit 結果不明を自動 retry しない。
 
 ## Lifecycle Model
@@ -159,7 +160,7 @@ Memory runtime だけが交換され、元の settlement storage がまだ curre
 
 交換前に durable pending へ保存済みの評価は、この失効だけでは破棄しない。appraise 開始前の ownership 待ち・owner 読取待ちで交換した場合も、次回 drain は同じ candidate 列・expected version・評価世代・idempotency key を使い、現 owner と version を再検証する。appraise dispatch 後に交換した場合は適用の有無を失効した応答から確定せず、同じ保存済み評価を再照合する。runtime 交換だけを理由に新しい key で再評価すると、既に commit した event を二重化し得る。新しい評価世代へ進むのは、既存 ADR 020 の `effect: none` version conflict で未commitを確認できた場合等の明示された遷移だけとする。
 
-この分離は Issue #726 の一部である。作成準備の広域排他、Settings の全 snapshot 更新、storage Worker、Auxiliary 作成取消の残作業は `docs/plans/20260919-session-operation-boundaries/plan.md` で管理する。
+Issue #726 の段階ごとの変更と検証履歴は `docs/plans/20260919-session-operation-boundaries/plan.md` で管理する。現行の Worker、Settings の限定 field 更新、Auxiliary 作成取消の契約は各設計書を参照する。
 
 ### Home Window Close
 
@@ -189,10 +190,10 @@ current 実装では tray 常駐までは行わない。
 
 - `runState = running` は SQLite に保存される
 - アプリが強制 kill された場合、次回起動時に `running` のまま残る可能性がある
-- 次回起動時は `runState = error` へ補正し、アプリ終了による中断を示す assistant message を 1 件だけ追加する
-- `error` session は `Session Window` から直前 user message を同じ内容で明示再送できる
+- Main Session は次回起動時に `runState = interrupted` へ補正し、アプリ終了による中断を示す assistant message を 1 件だけ追加する。Auxiliary は別の回収経路で `runState = error` とする
+- `interrupted` Main Session は `Session Window` から直前 user message を同じ内容で明示再送できる
 
-現時点では graceful resume までは入れず、`error` からの明示再送を最小導線として扱う。
+現時点では graceful resume までは入れず、`interrupted` からの明示再送を最小導線として扱う。
 
 ## Relation To Existing Docs
 

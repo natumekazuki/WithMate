@@ -151,7 +151,7 @@ Companion の作成 service と依存配線は残るが、現行 create IPC hand
 - 検証: Settings の 17 tests（追加 test は失敗位置と rollback 成否の 6 組合せ）、`npm run typecheck`、`npm run build:electron` が成功。今回の変更で全体 test、renderer build、実 Electron / 実 DB の競合検証は実施していない。
 - `review-test-value` で今回起点から 1 record / 1 transition を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が最新版を審査し、追加修正要求なし。catalog の入力と復元値を区別する assertion を補強した。未試行 collection のデータ保護は継続する契約で、型検査では代替できず、約 1 ms の component test として保持する。
 
-### 最終実装・検証の現状（現 working tree）
+### 最終実装・検証の現状（cef633b8）
 
 - 最終 `npm test` は 2,952 tests、2,951 pass / 0 fail / 1 skip。Worker shutdown、domain error、Character ファイル検証、Auxiliary hook と審査後の assertion 補強を含む working tree の結果である。
 - 全体実行後は test metadata の参照修正と resource lane test の失敗時 cleanup のみ変更し、影響する Worker 13 tests を再実行して成功した。production code は変更していない。
@@ -167,3 +167,16 @@ Companion の作成 service と依存配線は残るが、現行 create IPC hand
 - 最終 diff を再開時の `6c7acfe351fd9b1766aa11f759cfa1d2f076a08c` から `review-test-value` で抽出した。135 records / 135 transitions、diagnostics 0、metadata 欠落 0。通常の read-only `general_luna` に 6 組へ分けて全件を審査し、fixture の観測漏れ、非同期経路、失敗時 cleanup、oracle と主張の精度を修正した。最終確認で追加の修正要求はない。
 - ローカル実装、型検査、全体 test、build、compiled Electron の代表データ継続性確認まで完了した。実ユーザー DB、full Main GUI と実 Provider の結合、インストーラによる配布物受入は未確認であり、fixture 成功で代替しない。
 - push、タグ付与、リリース公開、Issue #726 と関連 Issue の close は行わない。今回の実装 commit はリリースではない。
+
+### レビュー指摘対応（cef633b8 起点）
+
+- Settings の deferred rollback は storage owner と reset 境界を照合し、設定値が同値でも初期化後へ旧 credential を戻さない。同一 provider の cleanup 重複は未完了数で管理し、復元成功時は Settings / catalog と Session invalidation を再配信する。
+- Auxiliary の credential 変更は親と異なる provider の実行・admission 予約も拒否対象とする。更新・復元通知は子 ID ではなく親 Session ID に送り、重複を除去する。Auxiliary の条件付き保存は Worker transport でも mutation として扱い、切断時に書込み結果不明を伝播する。
+- Character Memory の episode 追加では非同期 Session scope 検証を待ち、不在・削除済み・別 Character の Session を保存前に拒否する。
+- Auxiliary の通常更新・runtime 保存・終了・復旧は、捕捉した storage と既存 payload の CAS を使う。親が削除された行の再挿入と、分精度の更新時刻が同じ並行 payload の上書きを防ぐ。V6 の親確認を残存 legacy Session 行で代替しない。
+- Turn admission は短い排他で starting を予約し、Worker 読込みを排他外で待ち、最終的に owner / maintenance / cancel / provider を再検証する。Auxiliary の終了も開始予約と直列化する。削除先行・読込み失敗・取消・reset・provider 拒否・待機中の別操作を実 service と coordinator の barrier で確認した。
+- ADR 007 / 010、Character authoring、Session persistence / lifecycle の現行説明を実装へ合わせた。過去段階の snapshot rollback や Main 起動時の error 復旧を現行仕様として扱わない。
+- 最終変更を含む全体 `npm test`: 2,962 tests、2,961 pass / 0 fail / 1 skip。Settings / Worker の関連 36 tests も成功。Auxiliary の親 Reviewer / Approval 保持は V6 storage の再読込みで確認した。`npm run typecheck` と SQLite owner check は成功。renderer build は成功、Electron build は初回の CAS null guard 型エラーを修正し、最終の guard / 通知修正後も再実行して成功。既存の renderer chunk サイズ warning は残る。
+- `review-test-value` で今回起点から 15 records / 15 transitions を抽出し、diagnostics / warnings / metadata 欠落は 0 件。通常の read-only `general_luna` が全件を審査し、最終差分で全件 PASS。親状態の実 DB 再読込み、rollback 後の新 revision、Auxiliary の親通知、Worker proxy の mutation 分類を観測するよう補強した。
+- 実装差分も別の read-only 審査を実施した。mutation 分類・通知対象・Auxiliary の credential guard の指摘を反映し、最終静的確認で追加の高確度不具合は見つからなかった。審査担当は tests / build / ファイル生成を実行していない。
+- 今回は実 Electron GUI / 実 Provider / 実ユーザー DB / インストーラを検証していない。SQLite fixture、制御した非同期依存先、runtime/coordinator test を実環境の競合再現と同一視しない。

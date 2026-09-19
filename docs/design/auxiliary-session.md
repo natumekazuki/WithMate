@@ -70,6 +70,8 @@ MainとAuxiliaryはmessages、composer draft、live run、pending approval／eli
 
 Auxiliary の作成準備は provider / ownership coordinator の外で行う。commit 時だけ親の incarnation、Character identity、provider runtime selection、current storage generation、request identity を再検証し、失敗時に親や既存会話を削除・snapshot 復元しない。Main Session の保存後に初期 Auxiliary の準備または commit が失敗した場合は、Main Session を削除せず、作成済み Main と Auxiliary 結果未確定または失敗を明示する。
 
+既存 Auxiliary の更新・runtime 保存・終了・中断復旧は、非同期読込み時に捕捉した storage へ update-only で送る。transaction 内で読込み済み payload と現行行、親の生存を照合し、削除後の再挿入や並行変更の上書きを行わない。時刻ラベルは分精度のため、更新時刻だけを変更検知の根拠にしない。通常の作成・明示的な collection 置換と、この既存行更新を区別する。
+
 `auxiliary_sessions`は少なくとも次をpayloadへ保存する。
 
 - `id`, `parentSessionId`, `status`, `createdAt`, `updatedAt`, `closedAt`

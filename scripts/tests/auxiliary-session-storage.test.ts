@@ -25,8 +25,10 @@ import {
   resolveLegacyAuxiliaryPreviewFromAuditEntries,
 } from "../../src-electron/auxiliary-session-storage.js";
 import { CompanionStorage } from "../../src-electron/companion-storage.js";
+import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import { appendSessionFilesDirectoryForSessionId, resolveSessionFilesDirectory } from "../../src-electron/session-files.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
+import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
 type AuxiliarySessionServiceDeps = ConstructorParameters<typeof AuxiliarySessionServiceImpl>[0];
 
@@ -1158,6 +1160,7 @@ test("Auxiliary Reviewerは親から継承した後に独立して保存する",
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-speed-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+  let sessionStorage: SessionStorageV6 | null = null;
 
   try {
     auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
@@ -1177,6 +1180,8 @@ test("Auxiliary Reviewerは親から継承した後に独立して保存する",
       }),
       provider: "codex",
     };
+    sessionStorage = new SessionStorageV6(dbPath);
+    sessionStorage.upsertSession(parent);
     const service = new AuxiliarySessionService({
       getParentSession: (parentSessionId) => parentSessionId === parent.id ? parent : null,
       getStorage: () => auxiliaryStorage!,
@@ -1202,8 +1207,11 @@ test("Auxiliary Reviewerは親から継承した後に独立して保存する",
     assert.equal(updated.codexReviewer, "user");
     assert.equal((await service.getAuxiliarySession(auxiliary.id))?.codexReviewer, "user");
     assert.equal(parent.codexReviewer, "auto-review");
+    assert.equal(sessionStorage.getSession(parent.id)?.codexReviewer, "auto-review");
+    assert.equal(sessionStorage.getSession(parent.id)?.codexSpeed, "fast");
   } finally {
     auxiliaryStorage?.close();
+    sessionStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);
   }
 });
@@ -1222,6 +1230,7 @@ test("Auxiliary更新は保存済みApprovalがneverの間Reviewerを保持す�
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-reviewer-never-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+  let sessionStorage: SessionStorageV6 | null = null;
 
   try {
     auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
@@ -1241,6 +1250,8 @@ test("Auxiliary更新は保存済みApprovalがneverの間Reviewerを保持す�
       }),
       provider: "codex",
     };
+    sessionStorage = new SessionStorageV6(dbPath);
+    sessionStorage.upsertSession(parent);
     const service = new AuxiliarySessionService({
       getParentSession: (parentSessionId) => parentSessionId === parent.id ? parent : null,
       getStorage: () => auxiliaryStorage!,
@@ -1261,8 +1272,11 @@ test("Auxiliary更新は保存済みApprovalがneverの間Reviewerを保持す�
     assert.equal(updated.title, "Renamed Auxiliary");
     assert.equal(updated.codexReviewer, "auto-review");
     assert.equal((await service.getAuxiliarySession(auxiliary.id))?.codexReviewer, "auto-review");
+    assert.equal(sessionStorage.getSession(parent.id)?.codexReviewer, "auto-review");
+    assert.equal(sessionStorage.getSession(parent.id)?.approvalMode, "never");
   } finally {
     auxiliaryStorage?.close();
+    sessionStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);
   }
 });
@@ -2040,5 +2054,181 @@ test("Auxiliary runtime metadata CAS は payload の本文と draft を保持し
   } finally {
     storage.close();
     await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliaryの非同期読取後更新は削除済み行を再作成せず、現存行の更新と終了だけを成功させる"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// fault = "親削除後に保持済みpayloadを汎用UPSERTし、削除済みAuxiliaryを孤立行として復活させる"
+// observable = "CAS更新結果、削除後のrow不在、現存rowの本文とclosed status"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-storage-existing-row-cas"
+// lifecycle = "permanent"
+// impact = "削除済み会話の本文・draftが永続化層へ再導入される"
+// distinction = "実SQLiteのdelete→update順序とexisting-row-only transactionを観測し、単なる型・mock確認と区別する"
+// @end-test-value
+test("Auxiliaryの削除後更新は行を復活させず現存行の更新と終了に成功する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-existing-row-cas-"));
+  const dbPath = path.join(directory, "withmate.db");
+  const storage = new AuxiliarySessionStorage(dbPath);
+  const parentStorage = new SessionStorage(dbPath);
+  try {
+    const session = buildAuxiliarySession({ id: "aux-existing-row-cas", parentSessionId: "parent-existing-row-cas" });
+    parentStorage.upsertSession(buildNewSession({
+      id: session.parentSessionId,
+      taskTitle: "parent",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "mate",
+      character: "Mate",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    }));
+    storage.upsertAuxiliarySession(session);
+    storage.deleteAuxiliarySessionsForParent(session.parentSessionId);
+    assert.equal(storage.updateAuxiliarySessionIfMatches({
+      session: { ...session, title: "must not return" },
+      expectedSession: session,
+    }), null);
+    assert.equal(storage.getAuxiliarySession(session.id), null);
+
+    storage.upsertAuxiliarySession(session);
+    const rawDb = new DatabaseSync(dbPath);
+    try {
+      rawDb.prepare("DELETE FROM sessions WHERE id = ?").run(session.parentSessionId);
+    } finally {
+      rawDb.close();
+    }
+    assert.equal(storage.updateAuxiliarySessionIfMatches({
+      session: { ...session, title: "parent was deleted" },
+      expectedSession: session,
+    }), null);
+    assert.equal(storage.getAuxiliarySession(session.id)?.title, session.title);
+    parentStorage.upsertSession(buildNewSession({
+      id: session.parentSessionId,
+      taskTitle: "parent",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "mate",
+      character: "Mate",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    }));
+    storage.upsertAuxiliarySession(session);
+    const updated = storage.updateAuxiliarySessionIfMatches({
+      session: { ...session, title: "updated", updatedAt: "2026-08-02T00:00:00.000Z" },
+      expectedSession: session,
+    });
+    assert.equal(updated?.title, "updated");
+    storage.upsertAuxiliarySession({ ...updated!, title: "same-minute-current" });
+    assert.equal(storage.updateAuxiliarySessionIfMatches({
+      session: { ...updated!, title: "stale payload" },
+      expectedSession: updated!,
+    }), null);
+    storage.upsertAuxiliarySession(updated!);
+    const closed = storage.updateAuxiliarySessionIfMatches({
+      session: { ...updated!, status: "closed", closedAt: "2026-08-02T00:01:00.000Z", updatedAt: "2026-08-02T00:01:00.000Z" },
+      expectedSession: updated!,
+    });
+    assert.equal(closed?.status, "closed");
+    const v6Db = new DatabaseSync(dbPath);
+    try {
+      ensureV6Schema(v6Db);
+      assert.ok(v6Db.prepare("SELECT id FROM sessions WHERE id = ?").get(session.parentSessionId));
+      assert.equal(v6Db.prepare("SELECT id FROM sessions_v6 WHERE id = ?").get(session.parentSessionId), undefined);
+      assert.equal(storage.updateAuxiliarySessionIfMatches({
+        session: { ...closed!, title: "legacy parent must not authorize V6 update" },
+        expectedSession: closed!,
+      }), null);
+      assert.equal(storage.getAuxiliarySession(session.id)?.title, closed?.title);
+    } finally {
+      v6Db.close();
+    }
+  } finally {
+    storage.close();
+    parentStorage.close();
+    await removeDirectoryWithRetry(directory);
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary serviceのread待機中に親・保存先が交換されても旧行を再作成しない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// fault = "await中に親とstorageが交換された後、保持済みrowを新しい保存先へ書き戻す"
+// observable = "更新拒否、旧storageのrow不在、新storageの同一row不変、保存先の再取得回数"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-service-read-write-owner-barrier"
+// lifecycle = "permanent"
+// impact = "削除済みAuxiliaryの本文がstorage交換後に復活する"
+// distinction = "serviceの実read barrierとSQLite CASを組み合わせ、storage直呼出しだけの検証と区別する"
+// @end-test-value
+test("Auxiliary serviceはread待機中の親削除と保存先交換後の更新を拒否する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-service-owner-barrier-"));
+  const dbPath = path.join(directory, "withmate.db");
+  const storage = new AuxiliarySessionStorage(dbPath);
+  const parentStorage = new SessionStorage(dbPath);
+  try {
+    const session = buildAuxiliarySession({ id: "aux-service-owner-barrier", parentSessionId: "parent-service-owner-barrier" });
+    parentStorage.upsertSession(buildNewSession({
+      id: session.parentSessionId,
+      taskTitle: "parent",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "mate",
+      character: "Mate",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    }));
+    storage.upsertAuxiliarySession(session);
+    let releaseRead!: () => void;
+    const readBarrier = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const capturedStorage = {
+      getAuxiliarySession: async () => {
+        const captured = storage.getAuxiliarySession(session.id);
+        await readBarrier;
+        return captured;
+      },
+      updateAuxiliarySessionIfMatches: storage.updateAuxiliarySessionIfMatches.bind(storage),
+    } as unknown as AuxiliarySessionStorage;
+    let activeStorage: AuxiliarySessionStorage = capturedStorage;
+    let storageRequests = 0;
+    const service = new AuxiliarySessionService({
+      getParentSession: () => parentStorage.getSession(session.parentSessionId),
+      getStorage: () => { storageRequests += 1; return activeStorage; },
+    });
+    const update = service.updateAuxiliarySession({ ...session, title: "must not return" });
+    activeStorage = new AuxiliarySessionStorage(path.join(directory, "replacement.db"));
+    const replacementParentStorage = new SessionStorage(path.join(directory, "replacement.db"));
+    replacementParentStorage.upsertSession(buildNewSession({
+      id: session.parentSessionId,
+      taskTitle: "replacement parent",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "mate",
+      character: "Mate",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    }));
+    activeStorage.upsertAuxiliarySession({ ...session, title: "replacement sentinel" });
+    storage.deleteAuxiliarySessionsForParent(session.parentSessionId);
+    parentStorage.deleteSession(session.parentSessionId);
+    releaseRead();
+    await assert.rejects(update, /削除または更新されたため/);
+    assert.equal(storage.getAuxiliarySession(session.id), null);
+    assert.equal(activeStorage.getAuxiliarySession(session.id)?.title, "replacement sentinel");
+    assert.equal(storageRequests, 1);
+    replacementParentStorage.close();
+    activeStorage.close();
+  } finally {
+    storage.close();
+    parentStorage.close();
+    await removeDirectoryWithRetry(directory);
   }
 });

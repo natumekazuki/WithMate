@@ -28,6 +28,9 @@ function createFixtureWorkerUrl(): URL {
         return;
       } else if (message.command === "exit") {
         process.exit(1);
+      } else if (message.command === "store.call" && message.payload.store === "auxiliary" && message.payload.method === "updateAuxiliarySessionIfMatches") {
+        parentPort.postMessage({ type: "started", requestId: message.context.requestId, generationId: workerData.generationId, queueWaitMs: 0 });
+        process.exit(1);
       } else if (message.command === "bad-frame") {
         parentPort.postMessage({ type: "result", generationId: workerData.generationId, value: "missing-request-id" });
       } else if (message.command === "typed-error") {
@@ -116,6 +119,34 @@ test("storage worker client rejects sent mutations after worker exit", async () 
     await assert.rejects(() => client.call("echo", null), StorageWorkerGenerationError);
   } finally {
     await client.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryの条件付き保存proxyはWorker切断時に書込み結果不明を返す"
+// oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+// fault = "条件付き保存がmutation登録から漏れ、commit結果不明をread失敗として扱う"
+// observable = "実際のbundle proxy経由のcallがStorageWorkerUnknownOutcomeErrorで拒否される"
+// observation_boundary = "public-boundary"
+// scope = "storage-worker-auxiliary-update-outcome"
+// lifecycle = "permanent"
+// impact = "書込み結果が不明な要求の不用意な再試行による重複更新を防ぐ"
+// distinction = "client単体のmutation指定テストでは検出できないbundle側method分類を確認し、SQLite更新内容は別testが担う"
+// @end-test-value
+test("auxiliary conditional save reports an unknown write outcome after worker exit", async () => {
+  const bundle = createV6StorageWorkerBundle({
+    dbPath: "unused.db", bundledModelCatalogPath: "unused.json", userDataPath: ".",
+    workerUrl: createFixtureWorkerUrl(), workerOptions: { type: "module" },
+  });
+  try {
+    // This transport fixture exits before interpreting storage arguments; it does not open a database.
+    await assert.rejects(
+      bundle.stores.auxiliary.updateAuxiliarySessionIfMatches({} as never),
+      (error: unknown) => error instanceof Error && error.name === "StorageWorkerUnknownOutcomeError",
+    );
+  } finally {
+    await bundle.client.close();
   }
 });
 

@@ -41,7 +41,7 @@ const STORE_METHODS = {
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
     "listActiveAuxiliarySessionSummaries", "listRunningActiveAuxiliarySessions", "getActiveAuxiliarySession",
     "getAuxiliarySession", "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches",
-    "upsertAuxiliarySession", "backfillAuxiliarySessionSummaries", "deleteAuxiliarySessionsForParent", "deleteAuxiliarySessionsExceptParents",
+    "updateAuxiliarySessionIfMatches", "upsertAuxiliarySession", "backfillAuxiliarySessionSummaries", "deleteAuxiliarySessionsForParent", "deleteAuxiliarySessionsExceptParents",
   ],
   character: [
     "getCharacterDirectory", "listCharacters", "getCharacterCatalogEntry", "getCharacter", "createCharacter",
@@ -73,7 +73,7 @@ const MUTATIONS = new Set([
   "setSessionPinned", "upsertSession", "updateSessionThreadIfMatches", "updateSessionRuntimeMetadataIfMatches", "updateSession",
   "upsertTerminalSession", "updateTerminalSession", "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "insertSession",
   "replaceSessions", "deleteSession", "deleteSessions", "clearSessions", "createAuditLog", "updateAuditLog", "clearAuditLogs",
-  "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent",
+  "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches", "updateAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent",
   "backfillAuxiliarySessionSummaries", "deleteAuxiliarySessionsExceptParents", "createCharacter", "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter",
   "deleteCharacterRootDirectory", "updateSettings", "updateChatLayoutPreference", "resetSettings", "importCatalogDocument", "resetToBundled",
   "ensureSeeded", "initializeSchema", "recoverMateProfileFilesFromActiveRevision",

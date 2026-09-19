@@ -236,70 +236,54 @@ function createCatalogSnapshot(revision = 1): ModelCatalogSnapshot {
 }
 
 describe("SettingsCatalogService", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "credential変更は対象providerのMain実行・Auxiliary実行・Auxiliary admission予約が完了するまで保存しない"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // fault = "親と異なるproviderのAuxiliaryまたはstarting予約を見落として使用中credentialを変更する"
+  // observable = "実行中エラーとsettings保存回数0"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-credential-running-guard"
+  // lifecycle = "permanent"
+  // impact = "実行中Turnの認証設定とthreadが途中で切り替わる"
+  // distinction = "Mainのproviderだけを見ても検出できないAuxiliaryの実行と予約を個別に確認する"
+  // @end-test-value
   it("API key 変更対象 provider に実行中 session があると settings 更新を拒否する", async () => {
-    const previousSettings = createDefaultAppSettings();
-    const service = new SettingsCatalogService({
-      hasInFlightSessionRuns() {
-        return false;
-      },
-      isSessionRunInFlight() {
-        return true;
-      },
-      isRunningSession() {
-        return true;
-      },
-      listSessions() {
-        return [createSession()];
-      },
-      listAuxiliarySessions() {
-        return [];
-      },
-      getAppSettings() {
-        return previousSettings;
-      },
-      updateAppSettings(settings) {
-        return settings;
-      },
-      getModelCatalog() {
-        return createCatalogSnapshot();
-      },
-      ensureModelCatalogSeeded() {
-        return createCatalogSnapshot();
-      },
-      importModelCatalogDocument() {
-        return createCatalogSnapshot();
-      },
-      exportModelCatalogDocument() {
-        return { providers: createCatalogSnapshot().providers };
-      },
-      replaceAllSessions() {
-        return [];
-      },
-      replaceAuxiliarySessions(nextSessions) {
-        return nextSessions;
-      },
-      clearProviderQuotaTelemetry() {},
-      clearSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
-      broadcastSessions() {},
-      broadcastAppSettings() {},
-      broadcastModelCatalog() {},
-    });
-
-    await assert.rejects(
-      () =>
-        service.updateAppSettings({
-          ...previousSettings,
-          codingProviderSettings: {
-            ...previousSettings.codingProviderSettings,
-            codex: {
-              ...previousSettings.codingProviderSettings.codex,
-              apiKey: "changed-key",
-            },
-          },
-        }),
-      /実行中の session/,
-    );
+    for (const running of ["main", "auxiliary", "auxiliary-starting"] as const) {
+      const previousSettings = createDefaultAppSettings();
+      const session = createSession({ provider: running === "main" ? "codex" : "copilot" });
+      const auxiliary = createAuxiliarySession({
+        parentSessionId: session.id,
+        runState: running === "auxiliary" ? "running" : "idle",
+      });
+      let writes = 0;
+      const service = new SettingsCatalogService({
+        hasInFlightSessionRuns: () => false,
+        isSessionRunInFlight: (id) => running === "main"
+          ? id === session.id
+          : running === "auxiliary-starting" && id === auxiliary.id,
+        isRunningSession: () => running === "main",
+        listSessions: () => [session], listAuxiliarySessions: () => [auxiliary],
+        getAppSettings: () => previousSettings,
+        updateAppSettings: (settings) => { writes += 1; return settings; },
+        getModelCatalog: () => createCatalogSnapshot(),
+        ensureModelCatalogSeeded: () => createCatalogSnapshot(),
+        importModelCatalogDocument: () => createCatalogSnapshot(),
+        exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+        replaceAllSessions: () => [], replaceAuxiliarySessions: (sessions) => sessions,
+        clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {},
+        invalidateProviderSessionThread: () => {}, broadcastSessions: () => {},
+        broadcastAppSettings: () => {}, broadcastModelCatalog: () => {},
+      });
+      await assert.rejects(service.updateAppSettings({
+        ...previousSettings,
+        codingProviderSettings: {
+          ...previousSettings.codingProviderSettings,
+          codex: { ...previousSettings.codingProviderSettings.codex, apiKey: "changed-key" },
+        },
+      }), /実行中の session/);
+      assert.equal(writes, 0, running);
+    }
   });
 
   // @test-value v2
@@ -1093,6 +1077,152 @@ describe("SettingsCatalogService", () => {
 
   // @test-value v2
   // kind = "invariant"
+  // claim = "storage交換またはappSettings-only reset後は設定が更新結果と同値でも旧credentialをrollbackしない"
+  // fault = "storage owner交換や同一ownerでのreset後に旧credentialをrollbackする"
+  // observable = "reset後の設定値、更新回数、rollback拒否原因"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-rollback-reset-epoch"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // lifecycle = "permanent"
+  // impact = "database reset後へ旧credentialを再導入する"
+  // distinction = "同値の設定を持つstorage交換と同一ownerのresetを分け、値のCASだけでは防げない旧rollbackを確認する"
+  // @end-test-value
+  it("appSettings-only reset後のsettings rollbackを拒否する", async () => {
+    for (const invalidation of ["owner", "settings-reset"] as const) {
+      const previous = { ...createDefaultAppSettings(), codingProviderSettings: { ...createDefaultAppSettings().codingProviderSettings, codex: { ...createDefaultAppSettings().codingProviderSettings.codex, apiKey: "old-key" } } };
+      const resetSettings = createDefaultAppSettings();
+      const session = createSession();
+      let current = previous;
+      let updateCount = 0;
+      let storageGeneration = 1;
+      const cleanupStarted = createDeferred();
+      const releaseCleanup = createDeferred();
+      const service = new SettingsCatalogService({
+        getAppSettings: () => current,
+        updateAppSettings: (settings) => { updateCount += 1; current = settings; return settings; },
+        hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
+        listSessions: () => [session], listAuxiliarySessions: () => [],
+        getModelCatalog: () => createCatalogSnapshot(), ensureModelCatalogSeeded: () => createCatalogSnapshot(),
+        importModelCatalogDocument: () => createCatalogSnapshot(), exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+        replaceAllSessions: () => [], replaceAuxiliarySessions: () => [],
+        clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {}, invalidateProviderSessionThread: async () => { cleanupStarted.resolve(); await releaseCleanup.promise; throw new Error("cleanup failed"); },
+        broadcastSessions: () => {}, broadcastAppSettings: () => {}, broadcastModelCatalog: () => {},
+        captureStorageIdentity: () => storageGeneration,
+        isStorageIdentityCurrent: (identity) => identity === storageGeneration,
+        resetAppSettings: () => { current = resetSettings; return current; },
+        clearAllProviderQuotaTelemetry: () => {}, clearAllSessionContextTelemetry: () => {},
+        clearAllSessionBackgroundActivities: () => {}, invalidateAllProviderSessionThreads: async () => {},
+        closeResetTargetWindows: () => {}, resetSessionRuntime: () => {}, clearAuditLogs: async () => {},
+        clearProjectMemories: () => {}, recreateDatabaseFile: async () => createCatalogSnapshot(),
+        resetModelCatalogToBundled: () => createCatalogSnapshot(),
+      } as any);
+      const updating = service.updateAppSettings(resetSettings);
+      await cleanupStarted.promise;
+      assert.deepEqual(current, resetSettings);
+      const rejection = assert.rejects(updating, (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.match(String(error.errors[1]), invalidation === "owner" ? /storage が交換/ : /reset が開始/);
+        return true;
+      });
+      if (invalidation === "owner") {
+        storageGeneration += 1;
+        current = structuredClone(resetSettings);
+      } else {
+        await service.resetAppDatabase({ targets: ["appSettings"] });
+      }
+      assert.deepEqual(current, resetSettings);
+      releaseCleanup.resolve();
+      await rejection;
+      assert.deepEqual(current, resetSettings);
+      assert.equal(updateCount, 1);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "cleanup失敗rollback後はsettingsを再broadcastし、Auxiliary単独更新も親Sessionへ通知する"
+  // fault = "成功側broadcast後のrollbackで永続値だけ戻しrenderer投影を更新しない"
+  // observable = "更新とrollbackのsettings、およびAuxiliaryの親Session IDへの通知"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-rollback-rebroadcast"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // lifecycle = "permanent"
+  // impact = "rendererが保存されていないcredentialを表示し続ける"
+  // distinction = "cleanup失敗を伝播しつつrollback後の正本broadcastを確認する"
+  // @end-test-value
+  it("settings rollback後に正本を再broadcastする", async () => {
+    const previous = createDefaultAppSettings();
+    const session = createSession({ provider: "copilot" });
+    let auxiliary = createAuxiliarySession({ parentSessionId: session.id });
+    let current = previous;
+    const broadcasted: AppSettings[] = [];
+    const sessionNotifications: string[][] = [];
+    const service = new SettingsCatalogService({
+      getAppSettings: () => current,
+      updateAppSettings: (settings) => { current = settings; return settings; },
+      hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
+      listSessions: () => [session], listAuxiliarySessions: () => [auxiliary],
+      getModelCatalog: () => createCatalogSnapshot(), ensureModelCatalogSeeded: () => createCatalogSnapshot(),
+      importModelCatalogDocument: () => createCatalogSnapshot(), exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+      replaceAllSessions: () => [], replaceAuxiliarySessions: (sessions) => { auxiliary = sessions[0]; return sessions; },
+      clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {}, invalidateProviderSessionThread: async () => { throw new Error("cleanup failed"); },
+      broadcastSessions: (ids) => { sessionNotifications.push([...ids]); }, broadcastAppSettings: (settings) => { broadcasted.push(settings ?? current); }, broadcastModelCatalog: () => {},
+    } as any);
+    await assert.rejects(service.updateAppSettings({ ...previous, codingProviderSettings: { ...previous.codingProviderSettings, codex: { ...previous.codingProviderSettings.codex, apiKey: "new-key" } } }), /cleanup failed/);
+    assert.equal(broadcasted.length, 2);
+    assert.equal(broadcasted[0].codingProviderSettings.codex.apiKey, "new-key");
+    assert.deepEqual(broadcasted.at(-1), previous);
+    assert.deepEqual(current, previous);
+    assert.deepEqual(sessionNotifications, [[session.id], [session.id]]);
+    assert.equal(auxiliary.threadId, "aux-thread-1");
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "同一providerの重複cleanupは最後のoperation完了までadmissionを保持する"
+  // fault = "先行cleanup中に後続cleanupが完了するとSet解放でTurnを許可する"
+  // observable = "重複cleanup完了順序とprovider admission"
+  // observation_boundary = "component-behavior"
+  // scope = "provider-cleanup-admission-overlap"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // lifecycle = "permanent"
+  // impact = "旧cleanupが後続Turnのthreadを無効化する"
+  // distinction = "同一providerのin-flight countをoperation単位で保持する"
+  // @end-test-value
+  it("重複cleanupの最後までprovider admissionを保持する", async () => {
+    const previous = createDefaultAppSettings();
+    const session = createSession();
+    let current = previous;
+    let cleanupCount = 0;
+    const firstCleanup = createDeferred();
+    const firstCleanupRelease = createDeferred();
+    const service = new SettingsCatalogService({
+      getAppSettings: () => current,
+      updateAppSettings: (settings) => { current = settings; return settings; },
+      hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
+      listSessions: () => [session], listAuxiliarySessions: () => [],
+      getModelCatalog: () => createCatalogSnapshot(), ensureModelCatalogSeeded: () => createCatalogSnapshot(),
+      importModelCatalogDocument: () => createCatalogSnapshot(), exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+      replaceAllSessions: () => [], replaceAuxiliarySessions: () => [],
+      clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {}, invalidateProviderSessionThread: async () => {
+        cleanupCount += 1;
+        if (cleanupCount === 1) { firstCleanup.resolve(); await firstCleanupRelease.promise; throw new Error("first cleanup failed"); }
+      },
+      broadcastSessions: () => {}, broadcastAppSettings: () => {}, broadcastModelCatalog: () => {},
+    } as any);
+    const first = service.updateAppSettings({ ...previous, codingProviderSettings: { ...previous.codingProviderSettings, codex: { ...previous.codingProviderSettings.codex, apiKey: "first" } } });
+    await firstCleanup.promise;
+    const second = service.updateAppSettings({ ...current, codingProviderSettings: { ...current.codingProviderSettings, codex: { ...current.codingProviderSettings.codex, apiKey: "second" } } });
+    await second;
+    assert.throws(() => service.assertProviderAvailableForTurn("codex"), /provider の設定反映中/);
+    assert.doesNotThrow(() => service.assertProviderAvailableForTurn("copilot"));
+    firstCleanupRelease.resolve();
+    await assert.rejects(first);
+    assert.doesNotThrow(() => service.assertProviderAvailableForTurn("codex"));
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "結果不明の credential thread patch を reverse せず元エラーとして伝播する"
   // fault = "write-then-throw を成功または推測 rollback として扱う"
   // observable = "元エラー、settings、thread、reverse 呼出し"
@@ -1263,6 +1393,46 @@ describe("SettingsCatalogService", () => {
     assert.equal(replacedSessions[0]?.model, "gpt-5.4");
     assert.deepEqual(replacedSessions[0]?.messages, previousSessions[0].messages);
     assert.equal(broadcasted, true);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "catalog cleanup rollback後は復元したcatalog snapshotを再broadcastする"
+  // fault = "成功側catalog broadcast後のcleanup失敗で永続値だけrollbackしrenderer投影を残す"
+  // observable = "catalog broadcast revision sequenceと重複しない親Session ID通知"
+  // observation_boundary = "component-behavior"
+  // scope = "catalog-rollback-rebroadcast"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // lifecycle = "permanent"
+  // impact = "rendererが保存されていないcatalog revisionを保持する"
+  // distinction = "cleanup失敗、rollback、復元snapshot通知の順序を確認する"
+  // @end-test-value
+  it("catalog cleanup失敗のrollback後に復元snapshotを再broadcastする", async () => {
+    const session = createSession();
+    const auxiliary = createAuxiliarySession({ parentSessionId: session.id });
+    let catalog = createCatalogSnapshot(1);
+    const broadcasts: number[] = [];
+    const sessionNotifications: string[][] = [];
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
+      listSessions: () => [session], listAuxiliarySessions: () => [auxiliary],
+      getAppSettings: () => createDefaultAppSettings(), updateAppSettings: (settings) => settings,
+      getModelCatalog: () => catalog, ensureModelCatalogSeeded: () => catalog,
+      exportModelCatalogDocument: () => ({ providers: catalog.providers }),
+      importModelCatalogDocument: (document, source) => {
+        catalog = { revision: source === "rollback" ? 3 : 2, providers: document.providers };
+        return catalog;
+      },
+      replaceAllSessions: () => [], replaceAuxiliarySessions: () => [],
+      clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {},
+      invalidateProviderSessionThread: async () => { throw new Error("catalog cleanup failed"); },
+      broadcastSessions: (ids) => { sessionNotifications.push([...ids]); }, broadcastAppSettings: () => {},
+      broadcastModelCatalog: (snapshot) => { if (snapshot) broadcasts.push(snapshot.revision); },
+    } as any);
+    await assert.rejects(service.importModelCatalogDocument({ providers: createCatalogSnapshot(2).providers }), /catalog cleanup failed/);
+    assert.deepEqual(broadcasts, [2, 3]);
+    assert.equal(catalog.revision, 3);
+    assert.deepEqual(sessionNotifications, [[session.id], [session.id]]);
   });
 
   // @test-value v2

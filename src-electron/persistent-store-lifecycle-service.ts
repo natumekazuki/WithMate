@@ -112,6 +112,7 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "getActiveAuxiliarySession"
   | "getAuxiliarySession"
   | "upsertAuxiliarySession"
+  | "updateAuxiliarySessionIfMatches"
   | "deleteAuxiliarySessionsForParent"
   | "deleteAuxiliarySessionsExceptParents"
 > & Pick<AuxiliarySessionStorage, "close"> & {
@@ -456,6 +457,10 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
 
   upsertAuxiliarySession(): AuxiliarySession {
     throw new Error("Auxiliary Session は legacy DB では利用できません。");
+  }
+
+  updateAuxiliarySessionIfMatches(): AuxiliarySession | null {
+    return null;
   }
 
   deleteAuxiliarySessionsForParent(): void {}

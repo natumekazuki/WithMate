@@ -28,7 +28,7 @@ format は `docs/design/character-definition-format.md`、storage / snapshot は
 
 provider は必須で、空白除去後の catalog ID を完全一致で解決し、同じ値を Skill root と Session 作成に使う。選択 provider が不明または無効な場合は、別 provider へ fallback せず workspace mutation 前に拒否する。
 
-Character と同梱 Skill の読取り、生成内容のメモリ上の準備は provider operation coordinator 外で行い、その間は既存 workspace を変更しない。反映前に coordinator を取得し、Session storage identity、provider の有効性、Character と directory が準備時から変わっていないことを確認する。managed files の書込みと Session 保存は coordinator 内で実行する。準備失敗では既存 files を保持するが、反映開始後の I/O 失敗に対する filesystem transaction や自動復元は提供しない。canonical files や Character directory 全体を後始末として削除しない。
+Character と同梱 Skill の読取り、生成内容のメモリ上の準備は provider operation coordinator 外で行い、その間は既存 workspace を変更しない。反映前に Character 単位の workspace coordinator を取得し、Session storage identity、provider の有効性、Character と directory が準備時から変わっていないことを確認する。managed files はその Character の境界内かつ provider operation coordinator 外で書込み、再検証後の Session 保存時に provider operation coordinator を取得する。maintenance は Character 操作を drain する。準備失敗では既存 files を保持するが、反映開始後の I/O 失敗に対する filesystem transaction や自動復元は提供しない。canonical files や Character directory 全体を後始末として削除しない。
 
 Session 準備処理は canonical Character files を書き直さない。optional な `character-notes.md` がない場合も起動時には作成せず、Skill が選んだ mode と記録要否に応じて同梱 template から作成する。catalog metadata は Session title、icon、theme の投影にだけ使う。これにより未保存 draft、line ending、末尾改行を起動副作用から分離する。
 

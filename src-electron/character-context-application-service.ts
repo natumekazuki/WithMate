@@ -590,7 +590,7 @@ export class CharacterContextApplicationService {
         });
       }
       try {
-        this.deps.affectService.getStateVersion({
+        await this.deps.affectService.getStateVersion({
           characterId: input.characterId,
           userId: LOCAL_USER_ID,
           sessionId: input.sessionId,

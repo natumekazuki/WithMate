@@ -110,6 +110,7 @@ function createFixture(options: {
     directory,
     dbPath,
     service,
+    memoryService,
     close() {
       affectStorage.close();
       memoryStorage.close();
@@ -574,6 +575,60 @@ describe("CharacterContextApplicationService", () => {
         db.close();
       }
     } finally {
+      fixture.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "episode追加は非同期Session owner検証を待ち、不在・削除済み・別CharacterのscopeではMemoryを書かずunknown_scopeを返す"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#decision; src-electron/character-affect-storage.ts#assertSessionOwner" }
+  // fault = "scope検証Promiseを待たずMemory appendへ進み、不正scopeの要求を保存成功として応答する"
+  // observable = "unknown_scope/effect none、Memory append呼出し件数、実DBのMemory行数、正当scopeの保存成功"
+  // observation_boundary = "component-behavior"
+  // scope = "character-memory-episode-session-owner"
+  // lifecycle = "permanent"
+  // impact = "無効なSessionを根拠とするMemory保存と未処理rejectionを防ぐ"
+  // distinction = "getContextやappraiseのscope拒否ではappendEpisode固有の非同期待機漏れを検出できない"
+  // @end-test-value
+  it("episode追加は非同期scope拒否時にMemory保存へ進まない", async () => {
+    const fixture = createFixture();
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      db.exec("INSERT INTO characters (id, name, created_at, updated_at) VALUES ('character-other', 'Other', '2026-09-20', '2026-09-20')");
+      db.exec("UPDATE sessions_v6 SET character_id = 'character-other' WHERE id = 'session-a'");
+      let appendCalls = 0;
+      const append = fixture.memoryService.append.bind(fixture.memoryService);
+      fixture.memoryService.append = (...args) => {
+        appendCalls += 1;
+        return append(...args);
+      };
+      const request = (sessionId: string) => ({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId,
+        authority: { kind: "conversation" },
+        idempotencyKey: `episode-scope-${sessionId}`,
+        episode: { title: "Scope check", body: "An observed episode.", preview: "Scope check", observedFact: "An event was observed." },
+      });
+      const assertRejected = async (sessionId: string) => {
+        const result = await fixture.service.appendEpisode(request(sessionId));
+        assert.ok(isCharacterContextError(result));
+        assert.equal(result.error.code, "unknown_scope");
+        assert.equal(result.error.effect, "none");
+        assert.equal(appendCalls, 0);
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get() as { count: number }).count, 0);
+      };
+      await assertRejected("missing-session");
+      await assertRejected("session-a");
+      db.exec("DELETE FROM sessions_v6 WHERE id = 'session-a'");
+      await assertRejected("session-a");
+      const saved = await fixture.service.appendEpisode(request("session-b"));
+      assert.equal(isCharacterContextError(saved), false);
+      assert.equal(appendCalls, 1);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get() as { count: number }).count, 1);
+    } finally {
+      db.close();
       fixture.close();
     }
   });

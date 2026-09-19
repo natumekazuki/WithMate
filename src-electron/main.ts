@@ -98,6 +98,7 @@ import type {
 } from "../src/prompt-template.js";
 import { resolveAuxiliaryParentSession } from "./auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "./auxiliary-session-service.js";
+import { admitSessionTurn } from "./session-turn-admission.js";
 import {
   AuxiliarySessionStorage,
   resolveLegacyAuxiliaryPreviewFromAuditEntries,
@@ -1342,17 +1343,22 @@ function hasInFlightSessionRuns(): boolean {
     || Boolean(auxiliarySessionRuntimeService?.hasInFlightRuns());
 }
 
-async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean, operation: () => T | Promise<T>): Promise<T> {
+async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean, operation: () => T | Promise<T>, signal: AbortSignal): Promise<T> {
   const owner = requireActivePersistentStoreOwnerForFactory("Turn admission");
-  if (databaseMaintenanceRequested) {
-    throw new Error("DB のメンテナンス中は新しい Turn を開始できません。");
-  }
-  return providerRuntimeOperationCoordinator.runExclusive(
-    () => characterAffectTurnOwnershipCoordinator.runExclusive(async () => {
+  return admitSessionTurn({
+    runExclusive: (callback) => providerRuntimeOperationCoordinator.runExclusive(
+      () => characterAffectTurnOwnershipCoordinator.runExclusive(callback, "session-turn-admission"),
+      "session-turn-admission",
+    ),
+    assertCurrent: () => {
       assertPersistentStoreOwnerIsActive(owner, "Turn admission");
+      if (signal.aborted) throw new Error("Session run canceled.");
       if (databaseMaintenanceRequested) {
         throw new Error("DB のメンテナンス中は新しい Turn を開始できません。");
       }
+    },
+    reserve: operation,
+    readProvider: async () => {
       const session = auxiliary
         ? await owner.auxiliarySessionStorage.getAuxiliarySession(sessionId)
         : await owner.sessionStorage.getSession(sessionId);
@@ -1364,11 +1370,10 @@ async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean,
         throw new Error("Auxiliary の親セッションが見つかりません。");
       }
       assertPersistentStoreOwnerIsActive(owner, "Turn admission");
-      requireSettingsCatalogService().assertProviderAvailableForTurn(session.provider);
-      return operation();
-    }, "session-turn-admission"),
-    "session-turn-admission",
-  );
+      return session.provider;
+    },
+    assertProviderAvailable: (provider) => requireSettingsCatalogService().assertProviderAvailableForTurn(provider),
+  });
 }
 
 const auxiliaryRunParents = new Map<string, string>();
@@ -1390,7 +1395,8 @@ function assertPersistentStoreOwnerIsActive(
 }
 
 function isSessionRunInFlight(sessionId: string): boolean {
-  if (sessionRuntimeService?.isRunInFlight(sessionId)) {
+  if (sessionRuntimeService?.isRunInFlight(sessionId) ||
+      auxiliarySessionRuntimeService?.isRunInFlight(sessionId) || auxiliaryRunParents.has(sessionId)) {
     return true;
   }
   return [...auxiliaryRunParents.values()].includes(sessionId);
@@ -1858,8 +1864,21 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   return updated;
                 },
                 closeAuxiliarySession: async (auxiliarySessionId) => {
-                  const current = await requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
-                  const closed = await requireAuxiliarySessionService().closeAuxiliarySession(auxiliarySessionId);
+                  const owner = requireActivePersistentStoreOwnerForFactory("Auxiliary close");
+                  const { current, closed } = await providerRuntimeOperationCoordinator.runExclusive(
+                    () => characterAffectTurnOwnershipCoordinator.runExclusive(async () => {
+                      assertPersistentStoreOwnerIsActive(owner, "Auxiliary close");
+                      if (auxiliaryRunParents.has(auxiliarySessionId)
+                        || auxiliarySessionRuntimeService?.isRunInFlight(auxiliarySessionId)) {
+                        throw new Error("実行中の Auxiliary Session は終了できないよ。");
+                      }
+                      const service = requireAuxiliarySessionService();
+                      const current = await service.getAuxiliarySession(auxiliarySessionId);
+                      const closed = await service.closeAuxiliarySession(auxiliarySessionId);
+                      return { current, closed };
+                    }, "auxiliary-session-close"),
+                    "auxiliary-session-close",
+                  );
                   agentRuntimeBindingRegistry.revokeSession(auxiliarySessionId);
                   await invalidateProviderSessionThread(current?.provider ?? closed.provider, auxiliarySessionId);
                   requireMainWindowFacade().closeFilePreviewWindowsForSession(auxiliarySessionId);
@@ -2640,8 +2659,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       return result;
     };
     sessionRuntimeService = new SessionRuntimeService({
-      runSessionAdmissionExclusive: (sessionId, operation) =>
-        runSessionTurnAdmission(sessionId, false, () => guarded("admission", operation)),
+      runSessionAdmissionExclusive: (sessionId, operation, signal) =>
+        runSessionTurnAdmission(sessionId, false, () => guarded("admission", operation), signal),
       getSession: (sessionId) => {
         assertOwner("session read");
         return getRuntimeSession(sessionId);
@@ -2906,8 +2925,8 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       return result;
     };
     auxiliarySessionRuntimeService = new SessionRuntimeService({
-      runSessionAdmissionExclusive: (sessionId, operation) =>
-        runSessionTurnAdmission(sessionId, true, () => guarded("admission", operation)),
+      runSessionAdmissionExclusive: (sessionId, operation, signal) =>
+        runSessionTurnAdmission(sessionId, true, () => guarded("admission", operation), signal),
       getSession: (sessionId) => guarded("session read", () =>
         requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId)),
       upsertSession: async (session, options) => {
@@ -3363,6 +3382,8 @@ function requireSessionWindowRestoreService(): SessionWindowRestoreService {
 function requireSettingsCatalogService(): SettingsCatalogService {
   if (!settingsCatalogService) {
     settingsCatalogService = new SettingsCatalogService({
+      captureStorageIdentity: () => requireActivePersistentStoreOwnerForFactory("Settings catalog"),
+      isStorageIdentityCurrent: (owner) => activePersistentStoreOwner === owner,
       runProviderRuntimeOperationExclusive: (operation) =>
         providerRuntimeOperationCoordinator.runExclusive(operation),
       hasInFlightSessionRuns,

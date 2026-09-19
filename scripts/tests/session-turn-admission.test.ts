@@ -9,6 +9,9 @@ import {
   SessionRuntimeService,
   type SessionRuntimeServiceDeps,
 } from "../../src-electron/session-runtime-service.js";
+import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character-affect-turn-ownership-coordinator.js";
+import { ProviderRuntimeOperationCoordinator } from "../../src-electron/provider-runtime-operation-coordinator.js";
+import { admitSessionTurn } from "../../src-electron/session-turn-admission.js";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -152,6 +155,106 @@ async function runRequest(service: SessionRuntimeService, sessionId: string): Pr
 describe("SessionRuntimeService session admission", () => {
   // @test-value v2
   // kind = "invariant"
+  // claim = "Session turn reservationだけをglobal coordinator内で確定し、Worker read待機中も無関係なcoordinator操作を進められる"
+  // oracle = { type = "contract", ref = "src-electron/session-turn-admission.ts#admitSessionTurn" }
+  // fault = "provider/ownership coordinatorをWorker read完了まで保持し、無関係なmaintenance操作を不必要に待たせる"
+  // observable = "readProvider barrier中のreservation、無関係なcoordinator操作の完了、最終provider validation後の開始"
+  // observation_boundary = "component-behavior"
+  // scope = "session-turn-admission-worker-read-barrier"
+  // lifecycle = "permanent"
+  // impact = "Worker準備の待機がSession削除・Settings変更など無関係なglobal操作を停止させず、同一Sessionのstarting guardだけを維持する"
+  // distinction = "実装済みadmitSessionTurnを実Coordinatorで接続し、readProviderを待機させたまま別操作を同じCoordinatorへ投入して観測する"
+  // @end-test-value
+  it("Worker read待機中もreservationを保持したまま無関係なcoordinator操作を進める", { timeout: 10_000 }, async () => {
+    const provider = new ProviderRuntimeOperationCoordinator();
+    const ownership = new CharacterAffectTurnOwnershipCoordinator();
+    const readStarted = deferred();
+    const releaseRead = deferred();
+    const providerCallCount = { value: 0 };
+    const runtime = createRuntime({
+      providerCallCount,
+      runSessionAdmissionExclusive: (_sessionId, reserve, signal) => admitSessionTurn({
+        runExclusive: (operation) => provider.runExclusive(() => ownership.runExclusive(operation)),
+        assertCurrent: () => signal.throwIfAborted(),
+        reserve,
+        readProvider: async () => {
+          readStarted.resolve();
+          await releaseRead.promise;
+          return "codex";
+        },
+        assertProviderAvailable: (providerId) => assert.equal(providerId, "codex"),
+      }),
+    });
+    const admission = runRequest(runtime.service, runtime.session.id);
+    await readStarted.promise;
+
+    await provider.runExclusive(() => ownership.runExclusive(() => {
+      assert.equal(runtime.service.isRunInFlight(runtime.session.id), true);
+      assert.equal(providerCallCount.value, 0);
+    }));
+    releaseRead.resolve();
+    await admission;
+    assert.equal(providerCallCount.value, 1);
+    assert.equal(runtime.service.isRunInFlight(runtime.session.id), false);
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "read/owner/provider validation失敗またはcancel/resetでprovider開始前にreservationを解放し、owner失効以外は同じruntimeで再試行できる"
+  // oracle = { type = "contract", ref = "src-electron/session-turn-admission.ts#admitSessionTurn; src-electron/session-runtime-service.ts#runSessionTurn" }
+  // fault = "Worker readまたは最終validationの失敗後もstarting reservationが残り、providerを開始できない孤児状態になる"
+  // observable = "失敗時のprovider開始回数0、reservation解放、同一Sessionの再試行成功"
+  // observation_boundary = "component-behavior"
+  // scope = "session-turn-admission-failure-cleanup"
+  // lifecycle = "permanent"
+  // impact = "DB reset・owner invalidation・cancel・provider catalog拒否で失敗したturnが後続送信を恒久的に塞がない"
+  // distinction = "実admitSessionTurnとSessionRuntimeServiceを実Coordinatorへ接続し、読取・最終検証・取消の各失敗後の公開inFlight判定とprovider呼出しを観測する"
+  // @end-test-value
+  it("validation失敗時はprovider開始前にreservationを解放して再試行できる", async () => {
+    for (const failure of ["read", "owner", "provider", "cancel", "reset"] as const) {
+      const provider = new ProviderRuntimeOperationCoordinator();
+      const ownership = new CharacterAffectTurnOwnershipCoordinator();
+      const providerCallCount = { value: 0 };
+      let failing = true;
+      let ownerChanged = false;
+      const runtime = createRuntime({
+        providerCallCount,
+        runSessionAdmissionExclusive: (_sessionId, reserve, signal) => admitSessionTurn({
+          runExclusive: (operation) => provider.runExclusive(() => ownership.runExclusive(operation)),
+          assertCurrent: () => {
+            if (ownerChanged) throw new Error("owner is no longer active");
+            if (signal.aborted) throw new Error("Session run canceled.");
+          },
+          reserve,
+          readProvider: async () => {
+            assert.equal(runtime.service.isRunInFlight(runtime.session.id), true);
+            if (failing) {
+              if (failure === "read") throw new Error("read failed");
+              if (failure === "owner") ownerChanged = true;
+              if (failure === "cancel") runtime.service.cancelRun(runtime.session.id);
+              if (failure === "reset") runtime.service.reset();
+            }
+            return "codex";
+          },
+          assertProviderAvailable: () => {
+            if (failing && failure === "provider") throw new Error("provider is unavailable");
+          },
+        }),
+      });
+      await assert.rejects(runRequest(runtime.service, runtime.session.id), /read failed|owner is no longer active|canceled|provider is unavailable/);
+      assert.equal(providerCallCount.value, 0, failure);
+      assert.equal(runtime.saveCount(), 0, failure);
+      assert.equal(runtime.service.isRunInFlight(runtime.session.id), false, failure);
+      if (failure !== "owner") {
+        failing = false;
+        await runRequest(runtime.service, runtime.session.id);
+        assert.equal(providerCallCount.value, 1, failure);
+      }
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "Session turn は削除 admission と直列化し、delete-first では削除後に開始しない"
   // oracle = { type = "contract", ref = "src-electron/session-runtime-service.ts#runSessionTurn" }
   // fault = "DB削除待機中にturnが先にstarting登録され、削除済みsessionを再作成する"
@@ -160,22 +263,29 @@ describe("SessionRuntimeService session admission", () => {
   // scope = "session-turn-admission-delete-first"
   // lifecycle = "permanent"
   // impact = "Session / Auxiliary parent削除とturn開始の競合で削除済みownerを再利用しない"
-  // distinction = "delete operationがadmissionを保持するbarrierで、turnのgetSessionが解放後にだけ進むことを確認する"
+  // distinction = "実coordinatorのdelete barrierと本番admission helperを接続し、turnの読込みが削除完了後にだけ発行されることを確認する"
   // @end-test-value
   it("delete-first では削除後の Session を開始しない", async () => {
     const deleteStarted = deferred();
     const releaseDelete = deferred();
     let deleted = false;
-    let tail = Promise.resolve();
-    const runAdmission = async <T>(_sessionId: string, operation: () => T | Promise<T>): Promise<T> => {
-      const previous = tail;
-      let release!: () => void;
-      tail = new Promise<void>((resolve) => { release = resolve; });
-      await previous;
-      try { return await operation(); } finally { release(); }
-    };
+    let reads = 0;
+    const provider = new ProviderRuntimeOperationCoordinator();
+    const ownership = new CharacterAffectTurnOwnershipCoordinator();
+    const runAdmission = <T>(_sessionId: string, operation: () => T | Promise<T>): Promise<T> =>
+      provider.runExclusive(() => ownership.runExclusive(operation));
     const runtime = createRuntime({
-      runSessionAdmissionExclusive: runAdmission,
+      runSessionAdmissionExclusive: (sessionId, reserve, signal) => admitSessionTurn({
+        runExclusive: (operation) => runAdmission(sessionId, operation),
+        assertCurrent: () => signal.throwIfAborted(),
+        reserve,
+        readProvider: async () => {
+          reads += 1;
+          if (deleted) throw new Error("対象セッションが見つからないよ。");
+          return "codex";
+        },
+        assertProviderAvailable: () => undefined,
+      }),
       getSession: async () => deleted ? null : createSession(),
     });
     const deletion = runAdmission("session-1", async () => {
@@ -185,9 +295,15 @@ describe("SessionRuntimeService session admission", () => {
     });
     await deleteStarted.promise;
     const turn = runRequest(runtime.service, "session-1");
+    const rejection = assert.rejects(turn, /対象セッションが見つからない/);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(reads, 0);
+    assert.equal(runtime.service.isRunInFlight("session-1"), false);
     releaseDelete.resolve();
     await deletion;
-    await assert.rejects(turn, /対象セッションが見つからない/);
+    await rejection;
+    assert.equal(reads, 1);
+    assert.equal(runtime.service.isRunInFlight("session-1"), false);
     assert.equal(runtime.saveCount(), 0);
   });
 

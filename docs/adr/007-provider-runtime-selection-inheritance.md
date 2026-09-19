@@ -28,8 +28,7 @@ Home が保持する Session summary は Character のランダム選択にも�
 - SessionFolder 作成成功後、永続化開始前の再検証で失敗した場合だけ、その試行の folder を coordinator 外で後始末する。mkdir 失敗時は既存 folder を削除しない。永続化を呼び出した後の例外は commit 結果不明の可能性があるため、folder を自動削除しない。
 - Auxiliary 作成は親の初回取得、実行設定と Character snapshot の準備を coordinator 外で行う。commit は provider coordinator → ownership coordinator の順に取得し、準備時と同じ storage、親の生存と incarnation、実行設定を再検証してから保存する。親削除・同一 ID の Main Session 再作成・storage 交換・設定変更をまたいだ準備結果は保存しない。同一 `clientRequestId` の既存結果は保存前にも再確認する。親由来の Codex Speed / Reviewer、追加 directory、表示位置は commit 時の親から取得する。
 - Auxiliary の準備後に親 Character が変わった場合、または選択済み Character が削除・archive された場合も保存を拒否する。定義本文は準備時の snapshot を保存し、commit 時に再抽選・再生成はしない。
-- directory workspace の New Session と New Companion は引き続き解決から保存までを coordinator 内で処理する。Companion worktree 等の外部準備の分離は未完了である。Auxiliary の Character ファイル読取は同期処理のままであり、coordinator 外へ移しただけで Main event-loop の非ブロック化が完了したとはしない。
-- New Companion は coordinator を取得した後に現行の Companion storage を解決し、その operation 内では同じ storage generation を使う。DB reset より後に待機していた作成を、閉じた旧 storage へ保存しない。
+- directory workspace の New Session は解決から保存までを coordinator 内で処理する。Auxiliary の Character ファイル読取は Worker 内の非同期 CharacterStorage を使い、Character resource lane は無関係な DB command の queue と分離する。Companion の新規作成・Provider 実行は IPC で退役済みとし、残存 service を再公開しない。既存会話の閲覧・merge・discard は維持する。
 - V6 の SQLite は Main Process が直接同期接続を作らず、限定された typed command だけを storage Worker の current generation へ送る。close / reset / reopen で generation が変わった後の旧 command は、新しい storage へ付け替えず失効させる。commit 結果を確定できない応答は成功・未実行へ推測変換せず、呼出し元へ結果不明として返す。
 - Character のランダム選択に使う履歴は実行権限の決定と分離し、ADR 004 の Home キャッシュ方針を維持する。
 

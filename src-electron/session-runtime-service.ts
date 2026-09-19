@@ -57,6 +57,7 @@ export type SessionRuntimeServiceDeps = {
   runSessionAdmissionExclusive?<T>(
     sessionId: string,
     operation: () => T | Promise<T>,
+    signal: AbortSignal,
   ): Promise<T>;
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(
@@ -880,7 +881,7 @@ export class SessionRuntimeService {
     };
     try {
       if (this.deps.runSessionAdmissionExclusive) {
-        await this.deps.runSessionAdmissionExclusive(sessionId, admit);
+        await this.deps.runSessionAdmissionExclusive(sessionId, admit, runAbortController.signal);
       } else {
         admit();
       }

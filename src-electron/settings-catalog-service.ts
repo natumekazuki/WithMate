@@ -33,6 +33,10 @@ import type { AuxiliarySessionRuntimeMetadataPatchInput } from "./auxiliary-sess
 import type { ProviderRuntimeMetadata, ProviderRuntimeMetadataPatch } from "./provider-runtime-metadata-patch.js";
 
 export type SettingsCatalogServiceDeps = {
+  /** Captures the storage owner/generation used by a deferred operation. */
+  captureStorageIdentity?: () => unknown;
+  /** Returns false when the storage owner/generation has been replaced. */
+  isStorageIdentityCurrent?: (identity: unknown) => boolean;
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
   hasInFlightSessionRuns(): boolean;
   isSessionRunInFlight(sessionId: string): boolean;
@@ -159,12 +163,42 @@ type DeferredProviderCleanup<T> = {
 };
 
 export class SettingsCatalogService {
-  private readonly affectedProviders = new Set<string>();
+  private readonly affectedProviders = new Map<string, number>();
+  private rollbackEpoch = 0;
 
   constructor(private readonly deps: SettingsCatalogServiceDeps) {}
 
+  private captureStorageIdentity(): unknown {
+    return this.deps.captureStorageIdentity?.();
+  }
+
+  private assertStorageIdentityCurrent(identity: unknown): void {
+    if (this.deps.isStorageIdentityCurrent && !this.deps.isStorageIdentityCurrent(identity)) {
+      throw new Error("storage が交換されたため deferred rollback を中止したよ。");
+    }
+  }
+
+  private assertRollbackEpochCurrent(epoch: number): void {
+    if (epoch !== this.rollbackEpoch) {
+      throw new Error("reset が開始されたため deferred rollback を中止したよ。");
+    }
+  }
+
+  private acquireProvider(providerId: string): void {
+    this.affectedProviders.set(providerId, (this.affectedProviders.get(providerId) ?? 0) + 1);
+  }
+
+  private releaseProvider(providerId: string): void {
+    const count = this.affectedProviders.get(providerId) ?? 0;
+    if (count <= 1) {
+      this.affectedProviders.delete(providerId);
+    } else {
+      this.affectedProviders.set(providerId, count - 1);
+    }
+  }
+
   assertProviderAvailableForTurn(providerId: string): void {
-    if (this.affectedProviders.has(providerId)) {
+    if ((this.affectedProviders.get(providerId) ?? 0) > 0) {
       throw new Error("provider の設定反映中は新しい session を開始できないよ。少し待ってね。");
     }
   }
@@ -197,7 +231,7 @@ export class SettingsCatalogService {
       throw error;
     } finally {
       for (const providerId of operation.affectedProviders) {
-        this.affectedProviders.delete(providerId);
+        this.releaseProvider(providerId);
       }
     }
   }
@@ -206,22 +240,28 @@ export class SettingsCatalogService {
     nextSettingsInput: AppSettings,
   ): Promise<DeferredProviderCleanup<AppSettings>> {
     const previousSettings = await this.deps.getAppSettings();
+    const storageIdentity = this.captureStorageIdentity();
+    const rollbackEpoch = this.rollbackEpoch;
     const nextSettings = normalizeAppSettings(nextSettingsInput);
     const providersWithApiKeyChange = getProvidersWithApiKeyChange(previousSettings, nextSettings);
+    const previousSessions = await this.deps.listSessions();
+    const previousAuxiliarySessions = await this.deps.listAuxiliarySessions();
 
     if (providersWithApiKeyChange.length > 0) {
-      const blockedSessions = (await this.deps.listSessions()).filter(
+      const hasBlockedSession = previousSessions.some(
         (session) =>
           providersWithApiKeyChange.includes(session.provider) &&
           (this.deps.isSessionRunInFlight(session.id) || this.deps.isRunningSession(session)),
       );
-      if (blockedSessions.length > 0) {
+      const hasBlockedAuxiliary = previousAuxiliarySessions.some((session) =>
+        providersWithApiKeyChange.includes(session.provider) &&
+        (this.deps.isSessionRunInFlight(session.id) || session.runState === "running"),
+      );
+      if (hasBlockedSession || hasBlockedAuxiliary) {
         throw new Error("Coding Agent credential を変更する provider に実行中の session があるため、完了まで待ってね。");
       }
     }
 
-    const previousSessions = await this.deps.listSessions();
-    const previousAuxiliarySessions = await this.deps.listAuxiliarySessions();
     const providersWithApiKeyChangeSet = new Set(providersWithApiKeyChange);
     const sessionThreadResetTargets = previousSessions.filter((session) =>
       providersWithApiKeyChangeSet.has(session.provider) && session.threadId
@@ -277,8 +317,11 @@ export class SettingsCatalogService {
           appliedAuxiliaryPatches.push({ previous, current });
         }
       }
-      if (appliedSessionPatches.length > 0) {
-        this.deps.broadcastSessions(appliedSessionPatches.map(({ current }) => current.id));
+      if (appliedSessionPatches.length > 0 || appliedAuxiliaryPatches.length > 0) {
+        this.deps.broadcastSessions(new Set([
+          ...appliedSessionPatches.map(({ current }) => current.id),
+          ...appliedAuxiliaryPatches.map(({ current }) => current.parentSessionId),
+        ]));
       }
       const currentSettings = await this.deps.getAppSettings();
       await this.deps.broadcastAppSettings(currentSettings);
@@ -288,7 +331,7 @@ export class SettingsCatalogService {
       ];
       const affectedProviders = Array.from(providersWithApiKeyChangeSet);
       for (const providerId of affectedProviders) {
-        this.affectedProviders.add(providerId);
+        this.acquireProvider(providerId);
       }
       return {
         value: currentSettings,
@@ -299,6 +342,8 @@ export class SettingsCatalogService {
           }
         },
         rollback: async () => {
+          this.assertRollbackEpochCurrent(rollbackEpoch);
+          this.assertStorageIdentityCurrent(storageIdentity);
           const current = await this.deps.getAppSettings();
           if (JSON.stringify(current) !== JSON.stringify(savedSettings)) {
             throw new Error("cleanup 後に app settings が並行変更されたため rollback を中止したよ。");
@@ -325,6 +370,11 @@ export class SettingsCatalogService {
               createdAt: previous.createdAt,
             });
           }
+          this.deps.broadcastSessions(new Set([
+            ...appliedSessionPatches.map(({ previous }) => previous.id),
+            ...appliedAuxiliaryPatches.map(({ previous }) => previous.parentSessionId),
+          ]));
+          await this.deps.broadcastAppSettings(previousSettings);
         },
       };
     } catch (error) {
@@ -333,6 +383,8 @@ export class SettingsCatalogService {
       }
 
       try {
+        this.assertRollbackEpochCurrent(rollbackEpoch);
+        this.assertStorageIdentityCurrent(storageIdentity);
         await this.deps.updateAppSettings(previousSettings);
         for (const { previous, current } of appliedSessionPatches) {
           await updateSessionThreadIfMatches({
@@ -382,7 +434,7 @@ export class SettingsCatalogService {
       throw error;
     } finally {
       for (const providerId of operation.affectedProviders) {
-        this.affectedProviders.delete(providerId);
+        this.releaseProvider(providerId);
       }
     }
   }
@@ -395,6 +447,8 @@ export class SettingsCatalogService {
     }
 
     const previousSnapshot = await this.deps.getModelCatalog(null) ?? await this.deps.ensureModelCatalogSeeded();
+    const storageIdentity = this.captureStorageIdentity();
+    const rollbackEpoch = this.rollbackEpoch;
     const previousCatalogDocument = await this.deps.exportModelCatalogDocument(previousSnapshot.revision);
     if (!previousCatalogDocument) {
       throw new Error("rollback 用の model catalog を取得できなかったよ。");
@@ -477,7 +531,11 @@ export class SettingsCatalogService {
           }
         }
       }
-      this.deps.broadcastSessions(appliedSessions.map(({ current }) => current.id));
+      this.deps.broadcastSessions(new Set([
+        ...appliedSessions.map(({ current }) => current.id),
+        ...appliedAuxiliarySessions.map(({ current }) => current.parentSessionId),
+        ...appliedCompanionSessions.map(({ current }) => current.id),
+      ]));
       await this.deps.broadcastModelCatalog(nextSnapshot);
       const cleanupTargets = [
         ...appliedSessions,
@@ -495,7 +553,7 @@ export class SettingsCatalogService {
         ...normalizedDocument.providers.map((provider) => provider.id),
       ]));
       for (const providerId of affectedProviders) {
-        this.affectedProviders.add(providerId);
+        this.acquireProvider(providerId);
       }
       return {
         value: nextSnapshot,
@@ -506,11 +564,13 @@ export class SettingsCatalogService {
           }
         },
         rollback: async () => {
+          this.assertRollbackEpochCurrent(rollbackEpoch);
+          this.assertStorageIdentityCurrent(storageIdentity);
           const currentSnapshot = await this.deps.getModelCatalog(null);
           if (!currentSnapshot || currentSnapshot.revision !== nextSnapshot.revision) {
             throw new Error("cleanup 後に model catalog が並行変更されたため rollback を中止したよ。");
           }
-          await this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
+          const restoredSnapshot = await this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
           for (const { previous, current } of appliedSessions) {
             await this.deps.updateSessionRuntimeMetadataIfMatches({
               sessionId: previous.id,
@@ -536,6 +596,12 @@ export class SettingsCatalogService {
               );
             }
           }
+          this.deps.broadcastSessions(new Set([
+            ...appliedSessions.map(({ previous }) => previous.id),
+            ...appliedAuxiliarySessions.map(({ previous }) => previous.parentSessionId),
+            ...appliedCompanionSessions.map(({ previous }) => previous.id),
+          ]));
+          await this.deps.broadcastModelCatalog(restoredSnapshot);
         },
       };
     } catch (error) {
@@ -544,6 +610,8 @@ export class SettingsCatalogService {
       }
 
       try {
+        this.assertRollbackEpochCurrent(rollbackEpoch);
+        this.assertStorageIdentityCurrent(storageIdentity);
         await this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
         for (const { previous, current } of appliedSessions) {
           await this.deps.updateSessionRuntimeMetadataIfMatches({
@@ -600,6 +668,9 @@ export class SettingsCatalogService {
     if (resetTargets.length === 0) {
       throw new Error("初期化対象が選ばれていないよ。");
     }
+    // Invalidate deferred rollbacks only after reset validation and immediately
+    // before the first reset mutation. This also covers app-settings-only ABA.
+    this.rollbackEpoch += 1;
     const previousAuxiliarySessionIds = resetTargets.includes("sessions")
       ? (await this.deps.listAuxiliarySessions()).map((session) => session.id)
       : [];

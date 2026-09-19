@@ -473,21 +473,23 @@ export class AuxiliarySessionService {
   }
 
   async updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): Promise<AuxiliarySession | null> {
-    const patch = this.deps.getStorage().updateAuxiliarySessionThreadIfMatches;
+    const storage = this.deps.getStorage();
+    const patch = storage.updateAuxiliarySessionThreadIfMatches;
     if (!patch) {
       throw new Error("Auxiliary thread の条件付き更新storageが利用できないよ。");
     }
-    return patch.call(this.deps.getStorage(), input);
+    return patch.call(storage, input);
   }
 
   async updateAuxiliarySessionRuntimeMetadataIfMatches(
     input: AuxiliarySessionRuntimeMetadataPatchInput,
   ): Promise<AuxiliarySession | null> {
-    const patch = this.deps.getStorage().updateAuxiliarySessionRuntimeMetadataIfMatches;
+    const storage = this.deps.getStorage();
+    const patch = storage.updateAuxiliarySessionRuntimeMetadataIfMatches;
     if (!patch) {
       throw new Error("Auxiliary runtime metadata の条件付き更新storageが利用できないよ。");
     }
-    return patch.call(this.deps.getStorage(), input);
+    return patch.call(storage, input);
   }
 
   private async prepareAuxiliarySession(
@@ -723,11 +725,13 @@ export class AuxiliarySessionService {
     runtimeSession: Session,
     options: { confirmedFinalAssistantText?: string | null } = {},
   ): Promise<AuxiliarySession> {
-    const current = await this.getAuxiliarySession(runtimeSession.id);
+    const storage = this.deps.getStorage();
+    const current = await storage.getAuxiliarySession(runtimeSession.id);
+    if (current) this.assertCharacterSnapshotValid(current);
     if (!current) {
       throw new Error("Auxiliary Session が見つからないよ。");
     }
-    return this.deps.getStorage().upsertAuxiliarySession({
+    const next: AuxiliarySession = {
       ...current,
       status: "active",
       closedAt: "",
@@ -751,11 +755,19 @@ export class AuxiliarySessionService {
       messages: runtimeSession.messages,
       preview: resolveAuxiliaryPreview(runtimeSession.messages, current.preview, options.confirmedFinalAssistantText),
       updatedAt: runtimeSession.updatedAt,
+    };
+    const updated = await storage.updateAuxiliarySessionIfMatches({
+      session: next,
+      expectedSession: current,
     });
+    if (!updated) throw new Error("Auxiliary Session の保存対象が削除または更新されたため、保存を中止したよ。");
+    return updated;
   }
 
   async updateAuxiliarySession(session: AuxiliarySession): Promise<AuxiliarySession> {
-    const current = await this.getAuxiliarySession(session.id);
+    const storage = this.deps.getStorage();
+    const current = await storage.getAuxiliarySession(session.id);
+    if (current) this.assertCharacterSnapshotValid(current);
     if (!current) {
       throw new Error("Auxiliary Session が見つからないよ。");
     }
@@ -803,7 +815,7 @@ export class AuxiliarySessionService {
       hasComposerDraftChange && hasDisplayAfterMessageIndexChange;
     const shouldResetRuntimeThread = hasRuntimeMetadataChange && !shouldPreserveRuntimeMetadata;
 
-    return this.deps.getStorage().upsertAuxiliarySession({
+    const next: AuxiliarySession = {
       ...current,
       status: "active",
       closedAt: "",
@@ -828,7 +840,13 @@ export class AuxiliarySessionService {
         : session.displayAfterMessageIndex,
       threadId: shouldResetRuntimeThread ? "" : current.threadId,
       updatedAt: currentTimestampLabel(),
+    };
+    const updated = await storage.updateAuxiliarySessionIfMatches({
+      session: next,
+      expectedSession: current,
     });
+    if (!updated) throw new Error("Auxiliary Session の保存対象が削除または更新されたため、保存を中止したよ。");
+    return updated;
   }
 
   async replaceAuxiliarySessions(sessions: AuxiliarySession[]): Promise<AuxiliarySession[]> {
@@ -837,7 +855,9 @@ export class AuxiliarySessionService {
   }
 
   async closeAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession> {
-    const current = await this.getAuxiliarySession(auxiliarySessionId);
+    const storage = this.deps.getStorage();
+    const current = await storage.getAuxiliarySession(auxiliarySessionId);
+    if (current) this.assertCharacterSnapshotValid(current);
     if (!current) {
       throw new Error("Auxiliary Session が見つからないよ。");
     }
@@ -846,34 +866,45 @@ export class AuxiliarySessionService {
     }
 
     const now = currentTimestampLabel();
-    return this.deps.getStorage().upsertAuxiliarySession({
+    const next: AuxiliarySession = {
       ...current,
       status: "closed",
       runState: "idle",
       composerDraft: "",
       updatedAt: now,
       closedAt: current.closedAt || now,
+    };
+    const updated = await storage.updateAuxiliarySessionIfMatches({
+      session: next,
+      expectedSession: current,
     });
+    if (!updated) throw new Error("Auxiliary Session の保存対象が削除または更新されたため、終了を中止したよ。");
+    return updated;
   }
 
   async recoverInterruptedSessions(): Promise<void> {
-    const runningSessions = await this.listRunningActiveAuxiliarySessions();
+    const storage = this.deps.getStorage();
+    const runningSessions = await storage.listRunningActiveAuxiliarySessions();
     if (runningSessions.length === 0) {
       return;
     }
 
     const now = currentTimestampLabel();
     for (const summary of runningSessions) {
-      const current = await this.getAuxiliarySession(summary.id);
+      const current = await storage.getAuxiliarySession(summary.id);
+      if (current) this.assertCharacterSnapshotValid(current);
       if (!current || current.status !== "active" || current.runState !== "running") {
         continue;
       }
 
-      await this.deps.getStorage().upsertAuxiliarySession({
-        ...current,
-        runState: "error",
-        updatedAt: now,
-        messages: buildInterruptedMessages(current.messages),
+      await storage.updateAuxiliarySessionIfMatches({
+        session: {
+          ...current,
+          runState: "error",
+          updatedAt: now,
+          messages: buildInterruptedMessages(current.messages),
+        },
+        expectedSession: current,
       });
     }
   }
