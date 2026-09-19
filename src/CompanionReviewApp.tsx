@@ -2792,8 +2792,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           selectedAuxiliaryId: auxiliaryWorkspace.selectedId,
           auxiliaryItems: auxiliaryWorkspace.summaries.map((summary) => ({
             id: summary.id,
-            label: summary.preview ?? "新しい会話",
-            searchText: summary.preview ?? "新しい会話",
+            label: summary.preview?.trim() || "New conversation",
+            searchText: summary.preview?.trim() || "New conversation",
             icon: <CharacterAvatar key={summary.id} character={{ name: "", iconPath: summary.characterIconPath ?? "" }} size="tiny" />,
           })),
           target: auxiliaryWorkspace.target,

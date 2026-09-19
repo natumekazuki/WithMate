@@ -80,7 +80,7 @@ Auxiliaryは最終使用順（`updatedAt DESC, id DESC`）で並べる。実行�
 
 previewはProvider呼び出しを行わず、確定した最終assistant応答ブロックの冒頭をMarkdown平文化し、空白を整理して長さを制限する。コード識別子、Unicode、表示本文を不必要に壊さない。streaming中、cancel、errorで新しい確定応答がない場合は前回値を保持する。
 
-初回確定応答前は送信済みuser発言の冒頭を使う。新規作成直後の未送信Auxiliaryは`title`と`preview`を空文字列で保持し、一覧・中央切替でも空のまま表示する。旧形式行など空のpreviewを持たない場合だけ、表示側の互換fallbackとして`新しい会話`を使う。draftはpreviewに使わない。一覧では最大2行、中央切替では同じ値を1行省略表示する。
+初回確定応答前は送信済みuser発言の冒頭を使う。新規作成直後の未送信Auxiliaryは`title`と`preview`を空文字列で保持する。Home Monitorの一覧表示では空のまま表示し、空のlabelがaccessible nameを持てない中央切替だけは英語の表示fallback `New conversation`を使う。旧形式行など`preview`を持たない場合も、preview自体は空文字列として扱う。draftはpreviewに使わない。一覧では最大2行、中央切替では同じ値を1行省略表示する。
 
 ## Validation boundary
 

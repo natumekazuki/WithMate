@@ -1154,6 +1154,95 @@ describe("HomeMonitorContent", () => {
   });
 
   // @test-value v2
+  // kind = "contract"
+  // claim = "Home Monitorは明示的に空または欠損のAuxiliary previewを空のまま表示する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Preview contract" }
+  // fault = "Home Monitorが空または欠損のAuxiliary previewを日本語の既定タイトルへ置き換える"
+  // observable = "展開したAuxiliary rowのpreview要素のtextContentとaria-label"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeMonitorContent empty auxiliary preview"
+  // lifecycle = "permanent"
+  // impact = "新規・旧形式Auxiliaryのpreviewを日本語fallbackなしでHome Monitorへ表示する"
+  // distinction = "Auxiliary previewの保存値ではなく、Home Monitorでの最終表示値を確認する"
+  // @end-test-value
+  it("Home Monitorは空または欠損のAuxiliary previewを日本語fallbackへ戻さない", async () => {
+    const previousGlobals = {
+      window: globalThis.window,
+      document: globalThis.document,
+      Node: globalThis.Node,
+      HTMLElement: globalThis.HTMLElement,
+      Event: globalThis.Event,
+      MouseEvent: globalThis.MouseEvent,
+      KeyboardEvent: globalThis.KeyboardEvent,
+      PointerEvent: globalThis.PointerEvent,
+    };
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+      pretendToBeVisual: true,
+    });
+    const container = dom.window.document.getElementById("root") as HTMLElement;
+    const root = createRoot(container);
+    const entry: HomeMonitorEntry = {
+      kind: "agent",
+      session: createMonitorSession("session-empty-preview", "Empty preview task"),
+      state: { kind: "neutral", label: "待機" },
+      mainState: { kind: "neutral", label: "待機" },
+      auxiliarySessions: [
+        createMonitorAuxiliary("aux-empty-preview", { preview: "" }),
+        createMonitorAuxiliary("aux-missing-preview", { preview: undefined }),
+      ],
+    };
+
+    Object.defineProperties(globalThis, {
+      window: { configurable: true, value: dom.window },
+      document: { configurable: true, value: dom.window.document },
+      Node: { configurable: true, value: dom.window.Node },
+      HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+      Event: { configurable: true, value: dom.window.Event },
+      MouseEvent: { configurable: true, value: dom.window.MouseEvent },
+      KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
+      PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+    });
+
+    try {
+      await act(async () => root.render(
+        <HomeMonitorContent
+          runningEntries={[]}
+          nonRunningEntries={[entry]}
+          onOpenSession={noOp}
+          onOpenCompanionReview={noOp}
+          onShowContextMenu={noOp}
+        />,
+      ));
+
+      const disclosure = container.querySelector<HTMLButtonElement>("button.home-monitor-disclosure");
+      assert.ok(disclosure);
+      await act(async () => disclosure.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+
+      const rows = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-auxiliary-row"));
+      assert.equal(rows.length, 2);
+      assert.equal(rows[0]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "");
+      assert.equal(rows[0]?.getAttribute("aria-label"), "Auxiliaryを開く: ");
+      assert.equal(rows[0]?.textContent?.includes("新しい会話"), false);
+      assert.equal(rows[1]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "");
+      assert.equal(rows[1]?.getAttribute("aria-label"), "Auxiliaryを開く: ");
+      assert.equal(container.textContent?.includes("新しい会話"), false);
+    } finally {
+      await act(async () => root.unmount());
+      dom.window.close();
+      Object.defineProperties(globalThis, {
+        window: { configurable: true, value: previousGlobals.window },
+        document: { configurable: true, value: previousGlobals.document },
+        Node: { configurable: true, value: previousGlobals.Node },
+        HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
+        Event: { configurable: true, value: previousGlobals.Event },
+        MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
+        KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
+        PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+      });
+    }
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "閉じたHome MonitorカードはAuxiliaryの実行中と待機の件数を1件から表示し、両方を同時に読み取れる"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
