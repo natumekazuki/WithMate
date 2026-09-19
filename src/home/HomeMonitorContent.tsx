@@ -213,7 +213,7 @@ export function HomeMonitorContent({
           <div className="home-monitor-auxiliary-list" aria-label={`${title} のAuxiliary一覧`}>
             {auxiliarySessions.map((summary) => {
               const status = getAuxiliaryStatus(summary);
-              const preview = summary.preview?.trim() || "新しい会話";
+              const preview = summary.preview?.trim() ?? "新しい会話";
               const openAuxiliary = () => {
                 if (entry.kind === "companion") {
                   onOpenCompanionReview(entry.session.id, summary.id);
