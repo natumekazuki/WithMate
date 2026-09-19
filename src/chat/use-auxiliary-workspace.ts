@@ -250,6 +250,7 @@ export function useAuxiliaryWorkspace(input: {
       setDetailLoading(false);
     }).catch((cause) => {
       if (!mountedRef.current || revision !== loadRevisionRef.current || selectedIdRef.current !== id) return;
+      if (detailEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
       const detailCause = cause instanceof Error ? cause : new Error(String(cause));
       setDetailError(detailCause);
       setDetailLoading(false);

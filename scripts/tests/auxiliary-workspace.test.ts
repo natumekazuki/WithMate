@@ -427,6 +427,66 @@ test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detai
 
 // @test-value v2
 // kind = "invariant"
+// claim = "terminal確定Sessionを表示中に遅い初期detailのrejectが到着してもdetailErrorを設定せずMessagesを隠さない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
+// fault = "terminal確定Sessionを表示した後、先行していた初期detailのrejectがdetailErrorを上書きし、Messagesを共通エラー状態にする"
+// observable = "hookのselectedSession、selectedSession.messages、detailLoading、detailError"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-terminal-detail-rejection-epoch"
+// lifecycle = "permanent"
+// distinction = "初期detailの遅いresolve競合では検出できない、terminal確定後に到着する初期detailのreject経路を検証する"
+// @end-test-value
+test("terminal確定後の遅い初期detailエラーはMessagesを隠さない", async () => {
+  const initial = session("a", "2026-01-01");
+  const terminalSession = {
+    ...initial,
+    preview: "terminal answer",
+    updatedAt: "2026-01-03",
+    messages: [...initial.messages, { role: "assistant" as const, text: "terminal answer" }],
+  };
+  let rejectInitialDetail!: (cause: Error) => void;
+  const initialDetail = new Promise<AuxiliarySession | null>((_resolve, reject) => { rejectInitialDetail = reject; });
+  let initialDetailPending = true;
+  let terminal: ((id: string, state: null) => void) | null = null;
+  const api: AuxiliaryWorkspaceApi = {
+    listAuxiliarySessions: async () => [initial],
+    getAuxiliarySession: async () => {
+      if (initialDetailPending) {
+        initialDetailPending = false;
+        return initialDetail;
+      }
+      return terminalSession;
+    },
+    subscribeLiveSessionRun: (listener) => {
+      terminal = listener as (id: string, state: null) => void;
+      return () => {};
+    },
+  };
+  const view = setup(api, "parent-1", initial.id);
+
+  await view.render();
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.ok(terminal);
+
+  await act(async () => {
+    terminal?.(initial.id, null);
+    await Promise.resolve();
+  });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "terminal answer");
+  assert.equal(view.current.detailLoading, false);
+  assert.equal(view.current.detailError, null);
+
+  rejectInitialDetail(new Error("initial detail read failed"));
+  await act(async () => { await initialDetail.catch(() => undefined); });
+  assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "terminal answer");
+  assert.equal(view.current.detailLoading, false);
+  assert.equal(view.current.detailError, null);
+  await view.unmount();
+});
+
+// @test-value v2
+// kind = "invariant"
 // claim = "terminal詳細取得が失敗しても初期detail解決後に選択中のSessionを空のままにしない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
 // fault = "terminal再取得のreject後に初期detailの解決を反映せず、完了Sessionを表示できないまま選択中のdetailErrorだけを残す"
