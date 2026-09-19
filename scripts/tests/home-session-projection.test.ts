@@ -442,7 +442,7 @@ describe("home-session-projection", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "Home Monitorは親MainのstateをAuxiliaryの集約stateから分離し、全Auxiliaryを実行中優先・updatedAtの降順で投影する"
-  // oracle = { type = "contract", ref = "issue-722 monitor aggregate projection" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Monitor Window" }
   // fault = "Auxiliaryの実行状態でMainを実行中扱いにする、表示対象を一件に絞る、または実行中を後ろへ置く"
   // observable = "monitor entryのmainState、state、auxiliarySessionsのID一覧"
   // observation_boundary = "implementation"
@@ -494,7 +494,7 @@ describe("home-session-projection", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "Home Monitorは親ごとにAuxiliaryを全件保持し、実行中を先頭にupdatedAt DESC、id DESCで並べ、runState変化を再投影する"
-  // oracle = { type = "contract", ref = "Home Session Monitor Auxiliary display ordering and retention" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Monitor Window" }
   // fault = "Auxiliaryを5件へ切り捨てる、親をまたいで混ぜる、実行中を優先しない、または同じupdatedAtの順序を入力順へ委ねる"
   // observable = "各monitor entryの親session IDとauxiliarySessionsのID一覧"
   // observation_boundary = "implementation"

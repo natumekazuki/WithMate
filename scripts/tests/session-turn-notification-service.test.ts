@@ -149,6 +149,54 @@ async function flushAsyncListeners(): Promise<void> {
 }
 
 describe("SessionTurnNotificationService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "並行する通知設定読込みの失敗は順序によらず通知service内で処理し、previewだけの失敗は固定文へ戻す"
+  // oracle = { type = "contract", ref = "docs/adr/006-windows-session-turn-notifications.md#decision" }
+  // fault = "先行するeligibility失敗の早期returnかpreview先行失敗で未処理rejectionを残す"
+  // observable = "設定失敗のwarning、通知の有無と本文、および未処理rejectionによるrunner failure"
+  // observation_boundary = "public-boundary"
+  // scope = "notification-async-settings-failure"
+  // lifecycle = "permanent"
+  // impact = "任意の通知の失敗をprocessのfatal診断へ漏らさず、preview取得失敗で本文を露出しない"
+  // distinction = "同期throwの既存testでは扱えないPromise拒否の先後をevent loop単位で確認する"
+  // @end-test-value
+  it("通知設定の並行失敗をどちらの順序でも処理する", async () => {
+    for (const order of ["enabled-first", "preview-first", "preview-only"] as const) {
+      let resolveEnabled!: (enabled: boolean) => void;
+      let rejectEnabled!: (error: Error) => void;
+      let rejectPreview!: (error: Error) => void;
+      const enabled = new Promise<boolean>((resolve, reject) => { resolveEnabled = resolve; rejectEnabled = reject; });
+      const preview = new Promise<boolean>((_resolve, reject) => { rejectPreview = reject; });
+      const enabledError = new Error("settings unavailable");
+      const previewError = new Error("preview settings unavailable");
+      const harness = createHarness({ isNotificationEnabled: () => enabled, isResponsePreviewEnabled: () => preview });
+      const pending = harness.service.notifyTurnCompleted(harness.session, "private preview");
+      if (order === "enabled-first") {
+        rejectEnabled(enabledError);
+        assert.equal(await pending, false);
+        rejectPreview(previewError);
+      } else {
+        rejectPreview(previewError);
+        await flushAsyncListeners();
+        if (order === "preview-only") resolveEnabled(true);
+        else rejectEnabled(enabledError);
+      }
+      assert.equal(await pending, order === "preview-only");
+      await flushAsyncListeners();
+      assert.deepEqual(harness.warnings.map(({ event }) => event).sort(), order === "preview-only"
+        ? ["preview-setting-check-failed"]
+        : ["eligibility-check-failed", "preview-setting-check-failed"]);
+      assert.equal(harness.warnings.find(({ event }) => event === "preview-setting-check-failed")?.error, previewError);
+      if (order === "preview-only") {
+        assert.equal(harness.options[0]?.body, "「通知テスト」のターンが完了しました");
+        assert.equal(harness.notifications[0]?.shown, true);
+      } else {
+        assert.equal(harness.notifications.length, 0);
+      }
+    }
+  });
+
   // @test-value v1
   // kind = "contract"
   // claim = "failed通知は保存済みSessionの識別情報だけから成功通知と区別できる固定文を作り、同一Sessionの通知置換とCharacter iconを共有する"

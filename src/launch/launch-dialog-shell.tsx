@@ -19,6 +19,12 @@ export type LaunchDialogFooterProps = {
   startButtonAriaDisabled?: boolean;
   onStart: () => void;
   startButtonRef?: RefObject<HTMLButtonElement | null>;
+  backButtonLabel?: string;
+  onBack?: () => void;
+  backButtonDisabled?: boolean;
+  cancelButtonLabel?: string;
+  onCancel?: () => void;
+  cancelButtonDisabled?: boolean;
 };
 
 export function LaunchDialogFooter({
@@ -28,10 +34,26 @@ export function LaunchDialogFooter({
   startButtonAriaDisabled,
   onStart,
   startButtonRef,
+  backButtonLabel,
+  onBack,
+  backButtonDisabled = false,
+  cancelButtonLabel,
+  onCancel,
+  cancelButtonDisabled = false,
 }: LaunchDialogFooterProps) {
   return (
     <>
       {feedback ? <p className="launch-feedback">{feedback}</p> : null}
+      {backButtonLabel && onBack ? (
+        <button className="drawer-toggle compact secondary" type="button" disabled={backButtonDisabled} onClick={onBack}>
+          {backButtonLabel}
+        </button>
+      ) : null}
+      {cancelButtonLabel && onCancel ? (
+        <button className="drawer-toggle compact secondary" type="button" disabled={cancelButtonDisabled} onClick={onCancel}>
+          {cancelButtonLabel}
+        </button>
+      ) : null}
       <button
         ref={startButtonRef}
         className="start-session-button"

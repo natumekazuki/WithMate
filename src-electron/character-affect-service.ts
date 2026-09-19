@@ -11,6 +11,14 @@ import {
   type StoredAffectEvent,
 } from "./character-affect-storage.js";
 
+type Awaitable<T> = T | Promise<T>;
+export type CharacterAffectStorageAccess = {
+  [K in keyof Pick<CharacterAffectStorage,
+    "recordEvent" | "correctEvent" | "reset" | "linkMemoryEpisode" | "recordEpisodeCandidate"
+    | "recordRejection" | "getEvent" | "getEffectiveState" | "getStateVersion" | "inspect" | "getMetrics"
+  >]: (...args: Parameters<CharacterAffectStorage[K]>) => Awaitable<ReturnType<CharacterAffectStorage[K]>>;
+};
+
 export type CharacterAffectEpisodeWriter = {
   validateEpisode(input: {
     characterId: string;
@@ -18,7 +26,7 @@ export type CharacterAffectEpisodeWriter = {
     sourceSessionId: string;
     candidate: AffectMemoryEpisodeCandidate;
     supersedesMemoryEntryId?: string;
-  }): void;
+  }): void | Promise<void>;
   writeEpisode(input: {
     characterId: string;
     userId: string;
@@ -46,7 +54,7 @@ export class CharacterAffectEpisodePersistenceError extends Error {
 
 export class CharacterAffectService {
   constructor(
-    private readonly storage: CharacterAffectStorage,
+    private readonly storage: CharacterAffectStorageAccess,
     private readonly evaluator: AffectEvaluator,
     private readonly episodeWriter: CharacterAffectEpisodeWriter,
     private readonly mode: CharacterAffectServiceMode = "shadow",
@@ -63,7 +71,7 @@ export class CharacterAffectService {
     baseline: readonly AffectBaselineComponent[];
     event: AffectConversationEvent;
   }): Promise<{ mode: CharacterAffectServiceMode; events: StoredAffectEvent[] }> {
-    const current = this.storage.getEffectiveState({
+    const current = await this.storage.getEffectiveState({
       characterId: input.characterId,
       userId: input.userId,
       sessionId: input.event.sessionId,
@@ -80,7 +88,7 @@ export class CharacterAffectService {
         event: input.event,
       });
     } catch (error) {
-      this.storage.recordRejection({
+      await this.storage.recordRejection({
         characterId: input.characterId,
         userId: input.userId,
         sessionId: input.event.sessionId,
@@ -96,7 +104,7 @@ export class CharacterAffectService {
         || candidate.userId !== input.userId
         || candidate.sessionId !== input.event.sessionId
       ) {
-        this.storage.recordRejection({
+        await this.storage.recordRejection({
           characterId: input.characterId,
           userId: input.userId,
           sessionId: input.event.sessionId,
@@ -105,7 +113,7 @@ export class CharacterAffectService {
         throw new Error("Affect evaluator returned a candidate outside the requested owner scope.");
       }
       if (candidate.memoryEpisode) {
-        this.episodeWriter.validateEpisode({
+        await this.episodeWriter.validateEpisode({
           characterId: candidate.characterId,
           userId: candidate.userId,
           sourceSessionId: candidate.sessionId,
@@ -114,9 +122,9 @@ export class CharacterAffectService {
       }
       let result;
       try {
-        result = this.storage.recordEvent(candidate);
+        result = await this.storage.recordEvent(candidate);
       } catch (error) {
-        this.storage.recordRejection({
+        await this.storage.recordRejection({
           characterId: input.characterId,
           userId: input.userId,
           sessionId: input.event.sessionId,
@@ -135,14 +143,14 @@ export class CharacterAffectService {
     options: { expectedVersion?: string } = {},
   ): Promise<{ event: StoredAffectEvent; created: boolean }> {
     if (candidate.memoryEpisode) {
-      this.episodeWriter.validateEpisode({
+      await this.episodeWriter.validateEpisode({
         characterId: candidate.characterId,
         userId: candidate.userId,
         sourceSessionId: candidate.sessionId,
         candidate: candidate.memoryEpisode,
       });
     }
-    const result = this.storage.recordEvent(candidate, options);
+    const result = await this.storage.recordEvent(candidate, options);
     try {
       return {
         ...result,
@@ -153,16 +161,16 @@ export class CharacterAffectService {
     }
   }
 
-  getEffectiveState(input: {
+  async getEffectiveState(input: {
     characterId: string;
     userId: string;
     sessionId: string;
     baseline?: readonly AffectBaselineComponent[];
-  }): EffectiveAffectState & { mode: CharacterAffectServiceMode } {
-    return { ...this.storage.getEffectiveState(input), mode: this.mode };
+  }): Promise<EffectiveAffectState & { mode: CharacterAffectServiceMode }> {
+    return { ...(await this.storage.getEffectiveState(input)), mode: this.mode };
   }
 
-  getStateVersion(input: Parameters<CharacterAffectStorage["getStateVersion"]>[0]) {
+  async getStateVersion(input: Parameters<CharacterAffectStorage["getStateVersion"]>[0]) {
     return this.storage.getStateVersion(input);
   }
 
@@ -170,13 +178,13 @@ export class CharacterAffectService {
     input: Parameters<CharacterAffectStorage["correctEvent"]>[0],
     options: Parameters<CharacterAffectStorage["correctEvent"]>[1] = {},
   ) {
-    const original = this.storage.getEvent({
+    const original = await this.storage.getEvent({
       eventId: input.eventId,
       characterId: input.replacement.characterId,
       userId: input.replacement.userId,
     });
     if (!original || original.state !== "active") {
-      const replay = this.storage.correctEvent(input, options);
+      const replay = await this.storage.correctEvent(input, options);
       try {
         return {
           ...replay,
@@ -194,7 +202,7 @@ export class CharacterAffectService {
       throw new Error("Affect correction must provide a replacement Memory episode.");
     }
     if (input.replacement.memoryEpisode) {
-      this.episodeWriter.validateEpisode({
+      await this.episodeWriter.validateEpisode({
         characterId: input.replacement.characterId,
         userId: input.replacement.userId,
         sourceSessionId: input.replacement.sessionId,
@@ -202,7 +210,7 @@ export class CharacterAffectService {
         ...(original.memoryEntryId ? { supersedesMemoryEntryId: original.memoryEntryId } : {}),
       });
     }
-    const result = this.storage.correctEvent(input, options);
+    const result = await this.storage.correctEvent(input, options);
     try {
       return {
         ...result,
@@ -217,15 +225,15 @@ export class CharacterAffectService {
     }
   }
 
-  reset(input: AffectResetInput, options: Parameters<CharacterAffectStorage["reset"]>[1] = {}) {
+  async reset(input: AffectResetInput, options: Parameters<CharacterAffectStorage["reset"]>[1] = {}) {
     return this.storage.reset(input, options);
   }
 
-  inspect(input: Parameters<CharacterAffectStorage["inspect"]>[0]) {
+  async inspect(input: Parameters<CharacterAffectStorage["inspect"]>[0]) {
     return this.storage.inspect(input);
   }
 
-  getMetrics() {
+  async getMetrics() {
     return this.storage.getMetrics();
   }
 
@@ -237,7 +245,7 @@ export class CharacterAffectService {
     if (!candidate) {
       return event;
     }
-    this.storage.recordEpisodeCandidate(event.id);
+    await this.storage.recordEpisodeCandidate(event.id);
     if (event.memoryEntryId) {
       return event;
     }
@@ -253,12 +261,12 @@ export class CharacterAffectService {
       candidate,
       ...(supersedesMemoryEntryId ? { supersedesMemoryEntryId } : {}),
     });
-    this.storage.linkMemoryEpisode(event.id, episode.memoryEntryId);
-    return this.storage.inspect({
+    await this.storage.linkMemoryEpisode(event.id, episode.memoryEntryId);
+    return (await this.storage.inspect({
       characterId: event.characterId,
       userId: event.userId,
       sessionId: event.sourceSessionId,
-    }).events.find((item) => item.id === event.id)!;
+    })).events.find((item) => item.id === event.id)!;
   }
 }
 

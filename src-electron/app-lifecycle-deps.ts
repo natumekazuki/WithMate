@@ -10,7 +10,7 @@ type CreateAppLifecycleDepsArgs = {
   confirmQuitWhileRunning(): boolean;
   prepareSessionWindowSnapshotForQuit?(): Promise<void>;
   stopMemoryRuntime?(): Promise<void>;
-  closePersistentStores(): void;
+  closePersistentStores(): void | Promise<void>;
   invalidateAllProviderSessionThreads?(): Promise<void>;
   revokeAllAgentRuntimeBindings?(): void;
 };

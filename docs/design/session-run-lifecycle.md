@@ -32,6 +32,9 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
 - 実行中 session の metadata 更新は制限し、少なくとも approval / model / depth / title / delete は UI と Main Process の両方でブロックする
+- Turn の admission は対象 session の開始登録と provider の利用中判定だけを短い ownership 境界で行う。provider 入力の準備、workspace / SessionFolder 操作、Character 読込、外部 provider 呼出し、長い SQLite command の完了待ちはその境界の外で行い、別 session の開始・削除を不要に待たせない。
+- admission は provider → ownership の順で開始予約を登録し、Worker の Session / 親読込みを排他外で待つ。その間は starting 判定が削除・設定変更・Auxiliary 終了から対象を保護する。読込み後は短い同順序の排他内で owner、maintenance、cancel、provider cleanup 状態を再確認する。予約より先に所有権を得た削除は読込み発行前に完了し、拒否時は予約を解放して provider を開始しない。
+- V6 の保存 command は current storage Worker generation に送る。close / reset / reopen 後の旧 generation からの応答は current DB へ書き換えず、commit 結果不明を自動 retry しない。
 
 ## Lifecycle Model
 
@@ -116,12 +119,13 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 
 - `Session Window` の `Cancel` は Main Process の `AbortController` を通して provider 実行を止める
 - キャンセル後の session は `runState = idle` に戻る
-- setup または provider が cancel grace 後も生存する場合、表示上の turn は収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
+- admission の開始予約後の Worker 読込み・最終排他取得、setup または provider が cancel grace 後も生存する場合、表示上の turn は収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
 - chat にはキャンセル結果を 1 件追加する
 - 監査ログは同じ turn record を先に最小 `phase = canceled` へ更新し、`errorMessage` にユーザーキャンセルを残す。詳細は bounded enrichment として後段で更新する
 - 実行中は approval を含む session 設定変更を受け付けない
 - stale thread / session 起因エラー、または meaningful partial を持たない Codex bootstrap failure を Main Process が検知した場合だけ、同一 turn の内部で `threadId clear + provider cache invalidate` を行って 1 回だけ再試行する
 - internal retry は same turn の処理として扱い、user message / assistant message / audit log record を二重化しない
+- Main Session の保存が確定した後に初期 Auxiliary の準備または commit が失敗した場合、Main Session や他の既存会話を削除・巻き戻ししない。呼出し元には Main 保存済み、Auxiliary の結果未確定または失敗という部分結果を返し、Auxiliary の commit 結果は request identity の再照会でのみ確定する。
 
 ### Session Delete
 
@@ -129,6 +133,36 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 - 対象 session が `running` の場合:
   - UI では削除ボタンを無効化する
   - Main Process 側でも削除を拒否する
+
+V6 の通常更新と terminal 保存は、作成とは別の既存行限定 API を使う。存在確認を要求受付時だけで済ませず、保存 transaction 内で再確認する。削除が先に確定した場合は `SessionNotFoundError` で更新を拒否し、古い Session 本文、terminal marker、cache、provider binding を再作成しない。単体削除と期間指定削除で同じ契約を適用する。
+
+単体・期間指定削除は、実行中判定、DB 削除、cache 除去、親子の agent binding 失効とローカル投影までを ownership 境界内で確定する。provider thread の外部後処理はその境界を解放してから待つ。後処理が遅れても無関係な Session の削除・Affect 適用を待たせない。後処理に失敗した場合も残りの削除対象の後処理を試み、削除済みデータを復元せず、失敗を集約して呼出元へ返す。
+
+Session の owner は ID だけでなく行の `incarnationId` で識別する。同じ ID を削除後に再作成しても新しい incarnation を発行し、古い通常更新・terminal・running 開始の保存を拒否する。既存行の更新では incarnation を保持する。
+
+provider 後処理は ownership 解放前に全対象の旧 runtime 参照を同期的に切り離してから、外部切断の完了だけを解放後に待つ。古い切断の完了が、同じ ID で作成された新 runtime を無効化してはならない。
+
+削除 commit 後に window close や broadcast 等の同期投影が失敗しても、残りの親子投影と全対象の provider 後処理を試みる。投影失敗は成功扱いせず、ownership 外で provider 後処理の完了を待ってから、その失敗と合わせて AggregateError で返す。削除済み DB 行を復元しない。
+
+### Character Affect の完了後評価
+
+pending は Session incarnation を保存し、回収時と評価適用時に current owner と照合する。既存 V6 行は `legacy:<id>` へ移行し、incarnation 列のない旧 pending も同じ owner と解釈する。新規行には UUID を発行するため、旧 pending は同じ ID の再作成行に適用されない。既存の要求 fingerprint は変更しない。
+
+unready pending の Session 読取待ちでも storage identity を再確認し、交換された旧 storage への ready / discard を行わない。close / recreate 時には drain cursor も破棄する。
+
+completed 保存後の detached readiness 更新も捕捉した persistent store owner を確認し、失効後は `absent` として retry を終える。owner が現行のまま発生した一時障害は既存の retry を維持する。
+
+外部 Provider による Affect 評価は ownership coordinator を保持せずに実行する。無関係な Session の作成・削除を、評価完了待ちへ結合しない。
+
+適用直前の Session 生存、Character owner、committed assistant turn の検証と、既存 `expectedVersion` による appraise、settlement 確定を同じ ownership 境界に置く。評価中に owner が削除された場合は結果を破棄し、Affect を適用しない。同じ Character の競合は既存の version conflict / idempotency / bounded retry 契約で扱い、確定済みの通常 Turn を巻き戻さない。
+
+非同期処理中に settlement storage または Memory runtime の instance が交換された場合、その評価試行は `invalidated` とする。await 後と適用前に instance identity を確認し、閉じた storage へ評価結果や failure を書かず、新 instance の同名要求にも結果を引き継がない。これは現行 Main の lifecycle 保護であり、Worker 全体の generation 契約の実装完了を意味しない。
+
+Memory runtime だけが交換され、元の settlement storage がまだ current の場合は、その correlation の attempt を既存の中断回収処理へ戻す。旧試行の未保存評価・遅延応答は採用せず、閉じた storage を操作せず、current DB に試行中のまま残ることを防ぐ。
+
+交換前に durable pending へ保存済みの評価は、この失効だけでは破棄しない。appraise 開始前の ownership 待ち・owner 読取待ちで交換した場合も、次回 drain は同じ candidate 列・expected version・評価世代・idempotency key を使い、現 owner と version を再検証する。appraise dispatch 後に交換した場合は適用の有無を失効した応答から確定せず、同じ保存済み評価を再照合する。runtime 交換だけを理由に新しい key で再評価すると、既に commit した event を二重化し得る。新しい評価世代へ進むのは、既存 ADR 020 の `effect: none` version conflict で未commitを確認できた場合等の明示された遷移だけとする。
+
+Issue #726 の段階ごとの変更と検証履歴は `docs/plans/20260919-session-operation-boundaries/plan.md` で管理する。現行の Worker、Settings の限定 field 更新、Auxiliary 作成取消の契約は各設計書を参照する。
 
 ### Home Window Close
 
@@ -158,8 +192,8 @@ current 実装では tray 常駐までは行わない。
 
 - `runState = running` は SQLite に保存される
 - アプリが強制 kill された場合、次回起動時に `running` のまま残る可能性がある
-- 次回起動時は `interrupted` へ補正し、assistant message を 1 件だけ追加する
-- `interrupted` session は `Session Window` から直前 user message を同じ内容で再送できる
+- Main Session は次回起動時に `runState = interrupted` へ補正し、アプリ終了による中断を示す assistant message を 1 件だけ追加する。Auxiliary は別の回収経路で `runState = error` とする
+- `interrupted` Main Session は `Session Window` から直前 user message を同じ内容で明示再送できる
 
 現時点では graceful resume までは入れず、`interrupted` からの明示再送を最小導線として扱う。
 

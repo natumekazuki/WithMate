@@ -37,6 +37,7 @@ import {
 } from "./database-schema-v3.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { type BlobRef, TextBlobStore } from "./text-blob-store.js";
+import type { ProviderRuntimeMetadataPatch } from "./provider-runtime-metadata-patch.js";
 
 type CompanionGroupRow = {
   id: string;
@@ -905,6 +906,48 @@ export class CompanionStorageV3 {
       ...session,
       codexReviewer: resolveCodexReviewerUpdate(currentSession, session.codexReviewer),
     }, true);
+  }
+
+  async updateRuntimeMetadataIfMatches(
+    sessionId: string,
+    input: ProviderRuntimeMetadataPatch,
+  ): Promise<CompanionSession | null> {
+    let updated = false;
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const result = this.db.prepare(`
+        UPDATE companion_sessions
+        SET provider = ?, catalog_revision = ?, model = ?, reasoning_effort = ?,
+            thread_id = ?, updated_at = ?
+        WHERE id = ? AND provider = ? AND catalog_revision = ? AND model = ?
+          AND reasoning_effort = ? AND thread_id = ?
+      `).run(
+        input.next.provider,
+        input.next.catalogRevision,
+        input.next.model,
+        input.next.reasoningEffort,
+        input.next.threadId,
+        input.next.updatedAt,
+        sessionId,
+        input.expected.provider,
+        input.expected.catalogRevision,
+        input.expected.model,
+        input.expected.reasoningEffort,
+        input.expected.threadId,
+      );
+      if (Number(result.changes) !== 1) {
+        this.db.exec("ROLLBACK");
+        return null;
+      }
+      this.db.exec("COMMIT");
+      updated = true;
+    } catch (error) {
+      if (!updated) {
+        this.db.exec("ROLLBACK");
+      }
+      throw error;
+    }
+    return await this.getSession(sessionId);
   }
 
   async updateSessionBaseSnapshot(session: CompanionSession): Promise<CompanionSession> {

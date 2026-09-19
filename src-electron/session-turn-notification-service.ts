@@ -143,8 +143,8 @@ export type SessionTurnNotificationHandle = {
 export type SessionTurnNotificationServiceDeps<TIcon> = {
   platform: NodeJS.Platform;
   isNotificationSupported(): boolean;
-  isNotificationEnabled(): boolean;
-  isResponsePreviewEnabled(): boolean;
+  isNotificationEnabled(): Awaitable<boolean>;
+  isResponsePreviewEnabled(): Awaitable<boolean>;
   isSessionWindowFocused(sessionId: string): boolean;
   loadCharacterIcon(iconPath: string): TIcon | null;
   createNotification(options: SessionTurnNotificationOptions<TIcon>): SessionTurnNotificationHandle;
@@ -164,14 +164,91 @@ export class SessionTurnNotificationService<TIcon> {
   notifyTurnTerminal(
     notificationInput: SessionTurnTerminalNotification,
     target: SessionTurnNotificationTarget = { kind: "session", sessionId: notificationInput.session.id },
-  ): boolean {
-    const { session } = notificationInput;
+  ): boolean | Promise<boolean> {
     const notificationKey = this.getNotificationKey(target);
-    if (!this.isEligible(this.getFocusSessionId(target), notificationKey)) {
+    let enabled: Awaitable<boolean>;
+    try {
+      enabled = this.deps.isNotificationEnabled();
+    } catch (error) {
+      this.deps.logWarning("eligibility-check-failed", notificationKey, error);
+      return false;
+    }
+    let previewEnabled: Awaitable<boolean>;
+    try {
+      previewEnabled = this.deps.isResponsePreviewEnabled();
+    } catch (error) {
+      this.deps.logWarning("preview-setting-check-failed", notificationInput.session.id, error);
+      previewEnabled = false;
+    }
+    if (this.isPromiseLike(enabled) || this.isPromiseLike(previewEnabled)) {
+      return this.notifyTurnTerminalAsync(
+        notificationInput,
+        target,
+        Promise.resolve(enabled),
+        Promise.resolve(previewEnabled),
+      );
+    }
+    return this.notifyTurnTerminalSync(
+      notificationInput,
+      target,
+      enabled,
+      previewEnabled,
+    );
+  }
+
+  private async notifyTurnTerminalAsync(
+    notificationInput: SessionTurnTerminalNotification,
+    target: SessionTurnNotificationTarget,
+    enabled: Promise<boolean>,
+    previewEnabled: Promise<boolean>,
+  ): Promise<boolean> {
+    const notificationKey = this.getNotificationKey(target);
+    // Observe both requests immediately, including when eligibility fails first.
+    const safePreviewEnabled = previewEnabled.catch((error: unknown) => {
+      this.deps.logWarning("preview-setting-check-failed", notificationInput.session.id, error);
+      return false;
+    });
+    let resolvedEnabled: boolean;
+    try {
+      resolvedEnabled = await enabled;
+    } catch (error) {
+      this.deps.logWarning("eligibility-check-failed", notificationKey, error);
+      return false;
+    }
+    const resolvedPreviewEnabled = await safePreviewEnabled;
+    if (!await this.isEligible(this.getFocusSessionId(target), notificationKey, resolvedEnabled)) {
       return false;
     }
 
-    const content = this.buildNotificationContent(notificationInput);
+    const content = this.buildNotificationContentSync(notificationInput, resolvedPreviewEnabled);
+    return this.showNotification(notificationInput, target, notificationKey, content);
+  }
+
+  private notifyTurnTerminalSync(
+    notificationInput: SessionTurnTerminalNotification,
+    target: SessionTurnNotificationTarget,
+    enabled: boolean,
+    previewEnabled: boolean,
+  ): boolean {
+    const notificationKey = this.getNotificationKey(target);
+    if (!this.isEligibleSync(this.getFocusSessionId(target), notificationKey, enabled)) {
+      return false;
+    }
+    return this.showNotification(
+      notificationInput,
+      target,
+      notificationKey,
+      this.buildNotificationContentSync(notificationInput, previewEnabled),
+    );
+  }
+
+  private showNotification(
+    notificationInput: SessionTurnTerminalNotification,
+    target: SessionTurnNotificationTarget,
+    notificationKey: string,
+    content: Pick<SessionTurnNotificationOptions<TIcon>, "title" | "body">,
+  ): boolean {
+    const { session } = notificationInput;
     const options: SessionTurnNotificationOptions<TIcon> = {
       id: this.buildNotificationId(notificationKey),
       groupId: SessionTurnNotificationService.notificationGroupId,
@@ -227,11 +304,11 @@ export class SessionTurnNotificationService<TIcon> {
     this.trackedNotifications.set(notificationKey, notification);
   }
 
-  private isEligible(focusSessionId: string, notificationKey: string): boolean {
+  private isEligibleSync(focusSessionId: string, notificationKey: string, enabled: boolean): boolean {
     try {
       return this.deps.platform === "win32"
         && this.deps.isNotificationSupported()
-        && this.deps.isNotificationEnabled()
+        && enabled
         && !this.deps.isSessionWindowFocused(focusSessionId);
     } catch (error) {
       this.deps.logWarning("eligibility-check-failed", notificationKey, error);
@@ -239,12 +316,17 @@ export class SessionTurnNotificationService<TIcon> {
     }
   }
 
+  private async isEligible(focusSessionId: string, notificationKey: string, enabled: boolean): Promise<boolean> {
+    return this.isEligibleSync(focusSessionId, notificationKey, enabled);
+  }
+
   dismissSessionNotification(sessionId: string): void {
     this.closeTrackedNotification(sessionId, "dismiss-close-failed");
   }
 
-  private buildNotificationContent(
+  private buildNotificationContentSync(
     notificationInput: SessionTurnTerminalNotification,
+    previewEnabled: boolean,
   ): Pick<SessionTurnNotificationOptions<TIcon>, "title" | "body"> {
     const { session } = notificationInput;
     if (notificationInput.outcome === "failed") {
@@ -259,7 +341,7 @@ export class SessionTurnNotificationService<TIcon> {
       body: `「${session.taskTitle.trim() || "Session"}」のターンが完了しました`,
     };
     try {
-      if (!this.deps.isResponsePreviewEnabled()) {
+      if (!previewEnabled) {
         return genericContent;
       }
     } catch (error) {
@@ -280,6 +362,10 @@ export class SessionTurnNotificationService<TIcon> {
       this.deps.logWarning("preview-build-failed", session.id, error);
       return genericContent;
     }
+  }
+
+  private isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+    return typeof value === "object" && value !== null && "then" in value;
   }
 
   private loadCharacterIcon(session: Session): TIcon | null {

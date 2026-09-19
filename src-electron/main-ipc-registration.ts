@@ -246,6 +246,9 @@ import {
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL,
+  WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_CREATION_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
@@ -420,18 +423,21 @@ export type MainIpcRegistrationDeps = {
   getActiveAuxiliarySession?(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
   createAuxiliarySession?(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
+  getAuxiliaryCreationContext?(parentSessionId: string): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationContext>;
+  cancelAuxiliaryCreation?(request: import("../src/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationResult>;
+  getAuxiliaryCreation?(request: import("../src/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationResult>;
   updateAuxiliarySession?(session: AuxiliarySession): Awaitable<AuxiliarySession>;
   closeAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn?(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
   cancelAuxiliarySessionRun?(auxiliarySessionId: string): Awaitable<void>;
-  getAppSettings(): AppSettings;
+  getAppSettings(): Awaitable<AppSettings>;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
   listPromptTemplates(): Awaitable<PromptTemplate[]>;
   createPromptTemplate(input: CreatePromptTemplateInput): Awaitable<PromptTemplate[]>;
   updatePromptTemplate(input: UpdatePromptTemplateInput): Awaitable<PromptTemplate[]>;
   deletePromptTemplate(id: string): Awaitable<PromptTemplate[]>;
-  getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
+  getAppDatabaseDiagnostics(): Awaitable<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -442,10 +448,10 @@ export type MainIpcRegistrationDeps = {
   getMemoryV6Entry(entryId: string): Awaitable<MemoryV6ReviewEntryDetail | null>;
   forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null): Awaitable<MemoryV6ReviewForgetResult>;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
-  getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
+  getModelCatalog(revision: number | null): Awaitable<ModelCatalogSnapshot | null>;
   importModelCatalogDocument(document: ModelCatalogDocument): Awaitable<ModelCatalogSnapshot>;
   importModelCatalogFromFile(targetWindow?: MaybeWindow): Promise<ModelCatalogSnapshot | null>;
-  exportModelCatalogDocument(revision: number | null): ModelCatalogDocument | null;
+  exportModelCatalogDocument(revision: number | null): Awaitable<ModelCatalogDocument | null>;
   exportModelCatalogToFile(revision: number | null, targetWindow?: MaybeWindow): Promise<string | null>;
   getSession(sessionId: string): Awaitable<Session | null>;
   getSessionGlossaryProjection(sessionId: string): Awaitable<SessionGlossaryProjection>;
@@ -666,6 +672,9 @@ type MainIpcAuxiliaryDeps = Pick<
   | "getActiveAuxiliarySession"
   | "getAuxiliarySession"
   | "createAuxiliarySession"
+  | "getAuxiliaryCreationContext"
+  | "cancelAuxiliaryCreation"
+  | "getAuxiliaryCreation"
   | "updateAuxiliarySession"
   | "closeAuxiliarySession"
   | "runAuxiliarySessionTurn"
@@ -1672,7 +1681,33 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
   ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (event, input: CreateAuxiliarySessionInput) => {
     const ownerWindowKind = resolveAuxiliaryOwnerWindowSender(event, input.parentSessionId, deps);
     assertAuxiliaryCreateModeForOwner(ownerWindowKind, input);
+    if (!input.clientRequestId?.trim() || !input.creationContext) {
+      throw new Error("Auxiliary Session の作成には clientRequestId と creationContext が必要だよ。");
+    }
     return getAuxiliaryDeps(deps).createAuxiliarySession(input);
+  });
+  ipcMain.handle(WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL, (event, parentSessionId: string) => {
+    if (resolveAuxiliaryOwnerWindowSender(event, parentSessionId, deps) !== "session") {
+      throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
+    }
+    if (!deps.getAuxiliaryCreationContext) {
+      throw new Error("Auxiliary creation context dependency is not configured.");
+    }
+    return deps.getAuxiliaryCreationContext(parentSessionId);
+  });
+  ipcMain.handle(WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL, (event, request: import("../src/auxiliary-session-state.js").AuxiliaryCreationRequest) => {
+    assertAuxiliaryOwnerWindowSender(event, request.parentSessionId, deps);
+    if (!deps.cancelAuxiliaryCreation) {
+      throw new Error("Auxiliary creation cancellation dependency is not configured.");
+    }
+    return deps.cancelAuxiliaryCreation(request);
+  });
+  ipcMain.handle(WITHMATE_GET_AUXILIARY_CREATION_CHANNEL, (event, request: import("../src/auxiliary-session-state.js").AuxiliaryCreationRequest) => {
+    assertAuxiliaryOwnerWindowSender(event, request.parentSessionId, deps);
+    if (!deps.getAuxiliaryCreation) {
+      throw new Error("Auxiliary creation query dependency is not configured.");
+    }
+    return deps.getAuxiliaryCreation(request);
   });
   ipcMain.handle(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, async (event, session: AuxiliarySession) => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);

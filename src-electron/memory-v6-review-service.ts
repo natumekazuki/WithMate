@@ -20,12 +20,13 @@ import {
 } from "../src/memory-v6/memory-response-contract.js";
 import { MEMORY_FILE_QUOTA_DEFAULT_BYTES, normalizeMemoryFileQuotaBytes } from "../src/provider-settings-state.js";
 import type { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
-import type { MemoryV6ProtectedObjectExporter } from "./memory-v6-service.js";
+import type { MemoryV6ProtectedObjectExporter, MemoryV6StorageAccess } from "./memory-v6-service.js";
 import { MemoryV6Storage } from "./memory-v6-storage.js";
 
 export type MemoryV6ReviewServiceDeps = {
   resolveDbPath(): string | null;
-  getMemoryFileQuotaBytes?(): number;
+  storage?: MemoryV6StorageAccess;
+  getMemoryFileQuotaBytes?(): number | Promise<number>;
   protectedObjectExporter?: MemoryV6ProtectedObjectExporter;
   protectedObjectStore?: Pick<MemoryProtectedObjectStore, "deleteObject" | "objectExists" | "listObjectFilesForGc" | "collectStagingGarbage">;
 };
@@ -101,11 +102,11 @@ function normalizeForgetReason(reason: MemoryForgetReason | null | undefined): M
 export class MemoryV6ReviewService {
   constructor(private readonly deps: MemoryV6ReviewServiceDeps) {}
 
-  getFileUsage(): MemoryFileUsageResponse {
-    return this.withStorage((storage) => createMemoryFileUsageResponse({
-      quotaBytes: normalizeMemoryFileQuotaBytes(this.deps.getMemoryFileQuotaBytes?.() ?? MEMORY_FILE_QUOTA_DEFAULT_BYTES),
-      ...storage.getFileUsage(),
-      largestEntries: storage.listLargestFileEntries({ limit: 10 }),
+  async getFileUsage(): Promise<MemoryFileUsageResponse> {
+    return this.withStorage(async (storage) => createMemoryFileUsageResponse({
+      quotaBytes: normalizeMemoryFileQuotaBytes(await this.deps.getMemoryFileQuotaBytes?.() ?? MEMORY_FILE_QUOTA_DEFAULT_BYTES),
+      ...(await storage.getFileUsage()),
+      largestEntries: await storage.listLargestFileEntries({ limit: 10 }),
     }));
   }
 
@@ -118,7 +119,7 @@ export class MemoryV6ReviewService {
     }
 
     return this.withStorage(async (storage) => {
-      const deletePendingCandidates = storage.listDeletePendingProtectedObjectsForGc({ limit: normalized.limit });
+      const deletePendingCandidates = await storage.listDeletePendingProtectedObjectsForGc({ limit: normalized.limit });
       const deletePending = {
         candidates: deletePendingCandidates.length,
         bytes: deletePendingCandidates.reduce((total, candidate) => total + candidate.storedBytes, 0),
@@ -137,7 +138,7 @@ export class MemoryV6ReviewService {
             } else {
               deletePending.missing += 1;
             }
-            storage.markProtectedObjectDeletedForGc({ objectId: candidate.objectId, deletedAt });
+            await storage.markProtectedObjectDeletedForGc({ objectId: candidate.objectId, deletedAt });
           } catch {
             deletePending.failed += 1;
             warnings.push("Some delete-pending protected objects could not be deleted.");
@@ -145,8 +146,8 @@ export class MemoryV6ReviewService {
         }
       }
 
-      const liveObjectIds = new Set(storage.listProtectedObjectIdsForGc({ states: ["active", "delete_pending"] }));
-      const activeObjectIds = storage.listProtectedObjectIdsForGc({ states: ["active"] });
+      const liveObjectIds = new Set(await storage.listProtectedObjectIdsForGc({ states: ["active", "delete_pending"] }));
+      const activeObjectIds = await storage.listProtectedObjectIdsForGc({ states: ["active"] });
       let missingActiveObjects = 0;
       for (const objectId of activeObjectIds) {
         if (!(await objectStore.objectExists(objectId))) {
@@ -191,9 +192,9 @@ export class MemoryV6ReviewService {
         stagingFiles,
         missingActiveObjects,
         fileUsage: createMemoryFileUsageResponse({
-          quotaBytes: normalizeMemoryFileQuotaBytes(this.deps.getMemoryFileQuotaBytes?.() ?? MEMORY_FILE_QUOTA_DEFAULT_BYTES),
-          ...storage.getFileUsage(),
-          largestEntries: storage.listLargestFileEntries({ limit: 10 }),
+          quotaBytes: normalizeMemoryFileQuotaBytes(await this.deps.getMemoryFileQuotaBytes?.() ?? MEMORY_FILE_QUOTA_DEFAULT_BYTES),
+          ...(await storage.getFileUsage()),
+          largestEntries: await storage.listLargestFileEntries({ limit: 10 }),
         }),
         warnings: [...new Set(warnings)],
       };
@@ -210,11 +211,11 @@ export class MemoryV6ReviewService {
     }
 
     return this.withStorage(async (storage) => {
-      const entry = storage.getEntry(normalizedEntryId);
+      const entry = await storage.getEntry(normalizedEntryId);
       if (!entry || entry.state !== "active") {
         throw new Error("Memory entry was not found.");
       }
-      const metadata = storage.listProtectedObjectsForEntryExport({
+      const metadata = await storage.listProtectedObjectsForEntryExport({
         target: { owner: entry.owner, scope: entry.scope },
         entryId: normalizedEntryId,
       });
@@ -233,9 +234,9 @@ export class MemoryV6ReviewService {
     });
   }
 
-  searchEntries(request: MemoryV6ReviewSearchRequest | null | undefined): MemoryV6ReviewSearchResult {
-    return this.withStorage((storage) => {
-      const result = storage.searchEntriesForReview(normalizeSearchRequest(request));
+  async searchEntries(request: MemoryV6ReviewSearchRequest | null | undefined): Promise<MemoryV6ReviewSearchResult> {
+    return this.withStorage(async (storage) => {
+      const result = await storage.searchEntriesForReview(normalizeSearchRequest(request));
       return {
         ...result,
         items: result.items.map((item) => {
@@ -249,39 +250,39 @@ export class MemoryV6ReviewService {
     });
   }
 
-  getEntry(entryId: string): MemoryV6ReviewEntryDetail | null {
+  async getEntry(entryId: string): Promise<MemoryV6ReviewEntryDetail | null> {
     const normalizedEntryId = entryId.trim();
     if (!normalizedEntryId) {
       return null;
     }
-    return this.withStorage((storage) => {
-      const entry = storage.getEntry(normalizedEntryId);
+    return this.withStorage(async (storage) => {
+      const entry = await storage.getEntry(normalizedEntryId);
       return entry?.state === "active" ? sanitizeReviewEntryDetail(entry) : null;
     });
   }
 
-  forgetEntry(entryId: string, reason?: MemoryForgetReason | null): MemoryV6ReviewForgetResult {
+  async forgetEntry(entryId: string, reason?: MemoryForgetReason | null): Promise<MemoryV6ReviewForgetResult> {
     const normalizedEntryId = entryId.trim();
     const normalizedReason = normalizeForgetReason(reason);
     if (!normalizedEntryId) {
       return { entryId: "", status: "not_found", reason: normalizedReason };
     }
-    return this.withStorage((storage) =>
+    return this.withStorage(async (storage) =>
       storage.forgetEntryForReview({ entryId: normalizedEntryId, reason: normalizedReason })
     );
   }
 
-  private withStorage<T>(runner: (storage: MemoryV6Storage) => T): T {
+  private async withStorage<T>(runner: (storage: MemoryV6StorageAccess) => T | Promise<T>): Promise<T> {
+    if (this.deps.storage) {
+      return runner(this.deps.storage);
+    }
     const dbPath = this.deps.resolveDbPath();
     if (!dbPath) {
       throw new Error("Memory V6 database is unavailable.");
     }
     const storage = new MemoryV6Storage(dbPath);
     try {
-      const result = runner(storage);
-      if (result && typeof result === "object" && "finally" in result && typeof result.finally === "function") {
-        return result.finally(() => storage.close()) as T;
-      }
+      const result = await runner(storage);
       storage.close();
       return result;
     } catch (error) {

@@ -229,18 +229,18 @@ export type MainIpcWindowDepsArgs = {
 };
 
 export type MainIpcCatalogDepsArgs = {
-  getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
+  getModelCatalog(revision: number | null): Awaitable<ModelCatalogSnapshot | null>;
   importModelCatalogDocument(document: ModelCatalogDocument): Awaitable<ModelCatalogSnapshot>;
   importModelCatalogFromFile(targetWindow?: MaybeWindow): Promise<ModelCatalogSnapshot | null>;
-  exportModelCatalogDocument(revision: number | null): ModelCatalogDocument | null;
+  exportModelCatalogDocument(revision: number | null): Awaitable<ModelCatalogDocument | null>;
   exportModelCatalogToFile(revision: number | null, targetWindow?: MaybeWindow): Promise<string | null>;
 };
 
 export type MainIpcSettingsDepsArgs = {
-  getAppSettings(): AppSettings;
+  getAppSettings(): Awaitable<AppSettings>;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
-  getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
+  getAppDatabaseDiagnostics(): Awaitable<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -373,6 +373,9 @@ export type MainIpcAuxiliaryDepsArgs = {
   getActiveAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
   createAuxiliarySession(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
+  getAuxiliaryCreationContext(parentSessionId: string): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationContext>;
+  cancelAuxiliaryCreation(request: import("../src/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationResult>;
+  getAuxiliaryCreation(request: import("../src/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationResult>;
   updateAuxiliarySession(session: AuxiliarySession): Awaitable<AuxiliarySession>;
   closeAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
@@ -446,6 +449,9 @@ function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
     getActiveAuxiliarySession: () => null,
     getAuxiliarySession: () => null,
     createAuxiliarySession: throwUnavailable,
+    getAuxiliaryCreationContext: throwUnavailable,
+    cancelAuxiliaryCreation: throwUnavailable,
+    getAuxiliaryCreation: throwUnavailable,
     updateAuxiliarySession: throwUnavailable,
     closeAuxiliarySession: throwUnavailable,
     runAuxiliarySessionTurn: throwUnavailable,
@@ -597,6 +603,9 @@ export function createMainIpcRegistrationDeps(
     getActiveAuxiliarySession: auxiliary.getActiveAuxiliarySession,
     getAuxiliarySession: auxiliary.getAuxiliarySession,
     createAuxiliarySession: auxiliary.createAuxiliarySession,
+    getAuxiliaryCreationContext: auxiliary.getAuxiliaryCreationContext,
+    cancelAuxiliaryCreation: auxiliary.cancelAuxiliaryCreation,
+    getAuxiliaryCreation: auxiliary.getAuxiliaryCreation,
     updateAuxiliarySession: auxiliary.updateAuxiliarySession,
     closeAuxiliarySession: auxiliary.closeAuxiliarySession,
     runAuxiliarySessionTurn: auxiliary.runAuxiliarySessionTurn,

@@ -1,5 +1,6 @@
 import { basename, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
+import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
@@ -306,7 +307,7 @@ export function readV6DatabaseUserVersion(dbPath: string): number | null {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    db = openAppDatabaseReadOnly(dbPath);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
     return typeof row?.user_version === "number" ? row.user_version : null;
   } catch {
@@ -323,7 +324,7 @@ export function isValidV6Database(dbPath: string): boolean {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    db = openAppDatabaseReadOnly(dbPath);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
     if (row?.user_version !== APP_DATABASE_V6_SCHEMA_VERSION) {
       return false;
@@ -367,7 +368,7 @@ export function isValidV6DatabaseShallow(dbPath: string): boolean {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    db = openAppDatabaseReadOnly(dbPath);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
     if (row?.user_version !== APP_DATABASE_V6_SCHEMA_VERSION) {
       return false;
@@ -691,6 +692,7 @@ export const CREATE_V6_PROJECT_SCOPES_TABLE_SQL = `
 export const CREATE_V6_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS sessions_v6 (
     id TEXT PRIMARY KEY,
+    incarnation_id TEXT NOT NULL DEFAULT '',
     title TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('active', 'completed', 'failed', 'archived')),
     session_kind TEXT NOT NULL DEFAULT 'default',
@@ -1441,6 +1443,11 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   if (!sessionColumns.has("is_pinned")) {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1));");
   }
+
+  if (!sessionColumns.has("incarnation_id")) {
+    db.exec("ALTER TABLE sessions_v6 ADD COLUMN incarnation_id TEXT NOT NULL DEFAULT '';");
+  }
+  db.exec("UPDATE sessions_v6 SET incarnation_id = 'legacy:' || id WHERE TRIM(COALESCE(incarnation_id, '')) = '';");
 
   if (!tableExists(db, "auxiliary_sessions")) {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);

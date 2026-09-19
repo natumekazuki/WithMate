@@ -12,7 +12,7 @@ type AppLifecycleServiceDeps = {
   confirmQuitWhileRunning(): boolean;
   prepareSessionWindowSnapshotForQuit?(): Promise<void>;
   stopMemoryRuntime?(): Promise<void>;
-  closePersistentStores(): void;
+  closePersistentStores(): void | Promise<void>;
   invalidateAllProviderSessionThreads?(): Promise<void>;
   revokeAllAgentRuntimeBindings?(): void;
 };
@@ -83,7 +83,7 @@ export class AppLifecycleService {
           // Persistent stores and application shutdown must still complete if runtime cleanup fails.
         }
         try {
-          this.deps.closePersistentStores();
+          await this.deps.closePersistentStores();
         } catch {
           // Electron quit must still settle if persistent store close fails.
         } finally {

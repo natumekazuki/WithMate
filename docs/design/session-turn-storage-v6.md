@@ -213,6 +213,10 @@ session_messages_v6                   -- 1. final Session timeline
 1 は Session timeline の一部なので、4 の単なる child ではない。
 4 は 1 を参照し、2 と 3 を所有する。
 
+## Persistence boundary
+
+通常 turn の terminal 保存は既存の Session 行と turn owner を transaction 内で再検証する。Main Session の保存後に初期 Auxiliary の準備または保存が失敗しても、確定済みの Main message / turn を巻き戻さず、呼出し元には部分結果として通知する。Auxiliary の commit 結果不明は保存行の request identity を再照会して確定し、旧 storage generation への自動再送で重複を作らない。
+
 ## Provider Adapter Mapping
 
 DB は Codex event type や Copilot SDK event type を直接中心にしない。

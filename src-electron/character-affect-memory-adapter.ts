@@ -3,29 +3,29 @@ import { MEMORY_V6_SCHEMA_VERSION } from "../src/memory-v6/memory-contract.js";
 import { validateMemoryAppendRequest } from "../src/memory-v6/memory-validation.js";
 import {
   CharacterAffectService,
+  type CharacterAffectStorageAccess,
   type CharacterAffectEpisodeWriter,
   type CharacterAffectServiceMode,
 } from "./character-affect-service.js";
-import type { CharacterAffectStorage } from "./character-affect-storage.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
-import type { MemoryV6Storage } from "./memory-v6-storage.js";
+import type { MemoryV6StorageAccess } from "./memory-v6-service.js";
 
 const LOCAL_USER_ID = "local-user";
 
 export class MemoryV6CharacterAffectEpisodeWriter implements CharacterAffectEpisodeWriter {
-  constructor(private readonly memoryStorage: MemoryV6Storage) {}
+  constructor(private readonly memoryStorage: MemoryV6StorageAccess) {}
 
-  validateEpisode(input: Parameters<CharacterAffectEpisodeWriter["validateEpisode"]>[0]): void {
-    this.validateRequest(input, "character-affect-memory-preflight", true);
+  async validateEpisode(input: Parameters<CharacterAffectEpisodeWriter["validateEpisode"]>[0]): Promise<void> {
+    await this.validateRequest(input, "character-affect-memory-preflight", true);
   }
 
   async writeEpisode(input: Parameters<CharacterAffectEpisodeWriter["writeEpisode"]>[0]): Promise<{ memoryEntryId: string }> {
-    const request = this.validateRequest(input, input.idempotencyKey, false);
+    const request = await this.validateRequest(input, input.idempotencyKey, false);
     const target: MemoryV6ResolvedTarget = {
       owner: { type: "character", id: input.characterId },
       scope: { type: "character", id: input.characterId },
     };
-    const result = this.memoryStorage.appendEntry({
+    const result = await this.memoryStorage.appendEntry({
       target,
       kind: request.kind,
       title: request.title,
@@ -46,7 +46,7 @@ export class MemoryV6CharacterAffectEpisodeWriter implements CharacterAffectEpis
     return { memoryEntryId: result.entry.id };
   }
 
-  private validateRequest(
+  private async validateRequest(
     input: Parameters<CharacterAffectEpisodeWriter["validateEpisode"]>[0],
     idempotencyKey: string,
     requireActiveSupersedes: boolean,
@@ -55,7 +55,7 @@ export class MemoryV6CharacterAffectEpisodeWriter implements CharacterAffectEpis
       throw new Error("Character Affect Memory episode owner must be local-user.");
     }
     if (input.supersedesMemoryEntryId && requireActiveSupersedes) {
-      const predecessor = this.memoryStorage.getEntry(input.supersedesMemoryEntryId);
+      const predecessor = await this.memoryStorage.getEntry(input.supersedesMemoryEntryId);
       if (
         !predecessor
         || predecessor.state !== "active"
@@ -93,8 +93,8 @@ export class MemoryV6CharacterAffectEpisodeWriter implements CharacterAffectEpis
 }
 
 export function createCharacterAffectServiceWithMemory(input: {
-  affectStorage: CharacterAffectStorage;
-  memoryStorage: MemoryV6Storage;
+  affectStorage: CharacterAffectStorageAccess;
+  memoryStorage: MemoryV6StorageAccess;
   evaluator: AffectEvaluator;
   mode?: CharacterAffectServiceMode;
 }): CharacterAffectService {

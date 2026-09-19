@@ -60,6 +60,9 @@ import {
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL,
+  WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_CREATION_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
@@ -528,6 +531,15 @@ function createAuxiliaryApi(ipcRenderer: IpcRendererLike): WithMateWindowAuxilia
     },
     createAuxiliarySession(input) {
       return ipcRenderer.invoke(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, input);
+    },
+    getAuxiliaryCreationContext(parentSessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL, parentSessionId);
+    },
+    cancelAuxiliaryCreation(request) {
+      return ipcRenderer.invoke(WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL, request);
+    },
+    getAuxiliaryCreation(request) {
+      return ipcRenderer.invoke(WITHMATE_GET_AUXILIARY_CREATION_CHANNEL, request);
     },
     updateAuxiliarySession(session) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, session);

@@ -91,7 +91,7 @@ test("collapse target は persisted session/auxiliary の user/assistantだけ�
 // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: projection と identity" }
 // fault = "projectionがbookmark stateを落とすか、Auxiliary messageをMain sourceとして扱う"
 // observable = "buildMessageCollapseTargetsとbuildMessageNavigatorEntriesのsource/isBookmarked"
-// observation_boundary = "public-boundary"
+// observation_boundary = "implementation"
 // scope = "message-collapse-bookmark-projection"
 // lifecycle = "permanent"
 // impact = "filter対象や本文のtoggle対象を誤り、別messageのbookmarkを変更する"

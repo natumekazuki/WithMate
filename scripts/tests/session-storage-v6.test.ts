@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
-import { buildNewSession, type MessageArtifact } from "../../src/session-state.js";
+import { buildNewSession, getSessionIncarnationId, type MessageArtifact } from "../../src/session-state.js";
 import { resolveCharacterAuthoringRuntimeSessionForTurn } from "../../src-electron/character-authoring-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
@@ -253,6 +253,18 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V6 Sessionのpin操作はupdatedAtと本文を変えず、古いSessionの保存や再読込後もpinを保持し、解除できる"
+  // oracle = { type = "contract", ref = "SessionStorageV6.setSessionPinned / upsertSession のpin独立更新契約" }
+  // fault = "pin操作で本文や更新日時を変える、古いSession保存でpinを巻き戻す、または再読込時にpinを失う"
+  // observable = "setSessionPinnedの返却summaryとgetSessionが返すisPinned・messages、存在しないIDの例外"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-pin"
+  // lifecycle = "permanent"
+  // impact = "Homeのpin選択が保存で失われるか、pin操作だけで会話の更新順や本文が変わる"
+  // distinction = "型検査やsummary pageのquery確認では検出できない、pin専用更新と通常保存・再接続の組合せを実DBで確認する"
+  // @end-test-value
   it("pin stateだけを更新し、updatedAtと本文を維持して再読込できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -442,6 +454,16 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character authoring Sessionのruntime snapshot修復は非同期resolverの解決済みSessionを返す"
+  // oracle = { type = "contract", ref = "src-electron/character-authoring-service.ts#resolveCharacterAuthoringRuntimeSessionForTurn" }
+  // fault = "非同期Character resolverを待たずPromise由来の未解決値をruntime Sessionへ設定する"
+  // observable = "resolver完了後に返されたSessionのcharacterId・snapshot・character"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-character-authoring"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("snapshot を作れない Character authoring Session も修復対象 ID を round-trip する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -475,12 +497,12 @@ describe("SessionStorageV6", () => {
       assert.equal(reloaded.characterRuntimeSnapshot, null);
 
       const resolvedCharacterIds: string[] = [];
-      const resolved = resolveCharacterAuthoringRuntimeSessionForTurn(reloaded, (characterId) => {
+      const resolved = await resolveCharacterAuthoringRuntimeSessionForTurn(reloaded, async (characterId) => {
         resolvedCharacterIds.push(characterId);
-        return {
+        return await Promise.resolve({
           ...createCharacterRuntimeSnapshot(characterId, "Muse repaired"),
           description: "修復済み",
-        };
+        });
       });
 
       assert.deepEqual(resolvedCharacterIds, ["muse"]);
@@ -710,6 +732,16 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "既存rowのruntime snapshot owner不一致時は非同期修復後もrelational ownerとthread無効化を維持する"
+  // oracle = { type = "contract", ref = "src-electron/character-authoring-service.ts#resolveCharacterAuthoringRuntimeSessionForTurn" }
+  // fault = "非同期Character resolverを待たずowner不一致のPromiseをsnapshotへ保存する"
+  // observable = "修復後characterRuntimeSnapshotのownerとthreadId"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6-runtime-snapshot-owner"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("既存 row の runtime snapshot owner が不一致なら relational owner を維持して snapshot と thread を無効化する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -764,9 +796,9 @@ describe("SessionStorageV6", () => {
 
       const authoringSession = reloaded.find((session) => session?.sessionKind === "character-authoring");
       assert.ok(authoringSession);
-      const resolvedAuthoringSession = resolveCharacterAuthoringRuntimeSessionForTurn(
+      const resolvedAuthoringSession = await resolveCharacterAuthoringRuntimeSessionForTurn(
         authoringSession,
-        () => createCharacterRuntimeSnapshot("muse", "Muse refreshed"),
+        async () => await Promise.resolve(createCharacterRuntimeSnapshot("muse", "Muse refreshed")),
       );
       assert.equal(resolvedAuthoringSession.characterRuntimeSnapshot?.characterId, "muse");
       assert.equal(resolvedAuthoringSession.threadId, "");
@@ -1246,6 +1278,18 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "summary が同じでも full artifact 更新は新しい artifact_body として保存する"
+  // fault = "summary 一致だけを理由に、更新された full artifact 本文を既存本文で上書きする"
+  // observable = "再読込した artifact_body の更新済み詳細と差分"
+  // observation_boundary = "component-behavior"
+  // scope = "session-artifact-summary-deduplication"
+  // oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md" }
+  // lifecycle = "permanent"
+  // impact = "大きな artifact 本文の破損または不要な再書込みが発生する"
+  // distinction = "metadata-only updateではなく、summaryが同じfull artifactの内容更新を実DBで確認する"
+  // @end-test-value
   it("summary が同じ full artifact 更新は既存 artifact_body で上書きしない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -1293,6 +1337,79 @@ describe("SessionStorageV6", () => {
       const replacedArtifact = storage.getSessionMessageArtifact(session.id, 0);
       assert.equal(replacedArtifact?.operationTimeline?.[0]?.details, "updated operation details");
       assert.equal(replacedArtifact?.changedFiles[0]?.diffRows[0]?.rightText, "const value = false;");
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "SessionStorageV6 runtime metadata CAS は対象metadataだけを更新し、本文とpinを保持してstale patchを拒否する"
+  // oracle = { type = "contract", ref = "src-electron/session-storage-v6.ts#updateSessionRuntimeMetadataIfMatches" }
+  // fault = "runtime metadata CAS がsession全体を書き戻し、本文・pin・並行metadataを上書きする"
+  // observable = "getSession の更新済みruntime metadata、messages、isPinned、CAS結果"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-runtime-metadata-cas"
+  // lifecycle = "permanent"
+  // impact = "会話本文やpinの消失、別revisionのruntime threadの誤無効化につながる"
+  // distinction = "SettingsCatalogServiceのmigration flowではなく、storage層の対象列・expected metadata一致を実DBで確認する"
+  // @end-test-value
+  it("runtime metadata CAS は本文と pin を保持し stale patch を拒否する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-runtime-metadata-cas-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: SessionStorageV6 | null = null;
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const session = storage.insertSession({
+        ...buildNewSession({
+          id: "runtime-cas-session",
+          taskTitle: "runtime CAS",
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          branch: "main",
+          characterId: "char-a",
+          character: "A",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        }),
+        isPinned: true,
+        messages: [{ role: "user", text: "keep this" }],
+      });
+      const expected = {
+        provider: session.provider,
+        catalogRevision: session.catalogRevision,
+        model: session.model,
+        reasoningEffort: session.reasoningEffort,
+        threadId: session.threadId,
+        updatedAt: session.updatedAt,
+      };
+      const next = {
+        ...expected,
+        catalogRevision: expected.catalogRevision + 1,
+        model: "gpt-5.4-mini",
+        reasoningEffort: "medium" as const,
+        threadId: "",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      };
+      const updated = storage.updateSessionRuntimeMetadataIfMatches({
+        sessionId: session.id,
+        incarnationId: getSessionIncarnationId(session),
+        expected,
+        next,
+      });
+      assert.equal(updated?.catalogRevision, next.catalogRevision);
+      assert.equal(updated?.model, next.model);
+      assert.equal(updated?.reasoningEffort, next.reasoningEffort);
+      assert.equal(updated?.threadId, next.threadId);
+      assert.equal(updated?.updatedAt, next.updatedAt);
+      assert.deepEqual(storage.getSession(session.id)?.messages, session.messages);
+      assert.equal(storage.getSession(session.id)?.isPinned, true);
+      assert.equal(storage.updateSessionRuntimeMetadataIfMatches({
+        sessionId: session.id,
+        incarnationId: getSessionIncarnationId(session),
+        expected,
+        next: { ...next, catalogRevision: next.catalogRevision + 1 },
+      }), null);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

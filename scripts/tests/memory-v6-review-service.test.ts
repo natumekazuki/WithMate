@@ -8,6 +8,7 @@ import type { NormalizedMemoryTag } from "../../src/memory-v6/memory-contract.js
 import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src/provider-settings-state.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { MemoryV6ReviewService, type MemoryV6ReviewServiceDeps } from "../../src-electron/memory-v6-review-service.js";
+import type { MemoryV6StorageAccess } from "../../src-electron/memory-v6-service.js";
 import type { MemoryV6ResolvedTarget } from "../../src-electron/memory-v6-schema.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 
@@ -32,8 +33,18 @@ async function withReviewService<T>(
   const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-review-service-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
   const storage = new MemoryV6Storage(dbPath);
+  const storageAccess = new Proxy(storage, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== "function") {
+        return value;
+      }
+      return (...args: unknown[]) => Promise.resolve(value.apply(target, args));
+    },
+  }) as unknown as MemoryV6StorageAccess;
   const service = new MemoryV6ReviewService({
-    resolveDbPath: () => dbPath,
+    resolveDbPath: () => { throw new Error("direct MemoryV6Storage fallback must not be used"); },
+    storage: storageAccess,
     getMemoryFileQuotaBytes: () => MEMORY_FILE_QUOTA_MIN_BYTES,
     ...overrides,
   });
@@ -46,8 +57,20 @@ async function withReviewService<T>(
 }
 
 describe("MemoryV6ReviewService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "review serviceはquota集計とlargest entriesを返す"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md" }
+  // fault = "review結果のquota情報が欠落する"
+  // observable = "file usage review result"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-review-service"
+  // lifecycle = "permanent"
+  // impact = "Memory reviewのquota判断"
+  // distinction = "MemoryV6StorageAccessのasync facadeを注入したreview service実動作を確認する（Worker実装自体は対象外）"
+  // @end-test-value
   it("file usage はquota集計とlargest entriesを返す", async () => {
-    await withReviewService(({ service, storage }) => {
+    await withReviewService(async ({ service, storage }) => {
       storage.appendEntry({
         target: projectTarget,
         kind: "context",
@@ -73,7 +96,7 @@ describe("MemoryV6ReviewService", () => {
         fileQuotaBytes: MEMORY_FILE_QUOTA_MIN_BYTES,
       });
 
-      const usage = service.getFileUsage();
+      const usage = await service.getFileUsage();
 
       assert.equal(usage.quotaBytes, MEMORY_FILE_QUOTA_MIN_BYTES);
       assert.equal(usage.usedBytes, 1536);
@@ -90,8 +113,20 @@ describe("MemoryV6ReviewService", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "review searchとget-entryは内部object idを公開しない"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md" }
+  // fault = "内部object idがreview responseへ漏れる"
+  // observable = "review response payload"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-review-service"
+  // lifecycle = "permanent"
+  // impact = "Memory internal identifier privacy"
+  // distinction = "MemoryV6StorageAccessのasync facadeを注入したreview responseを確認する（Worker実装自体は対象外）"
+  // @end-test-value
   it("review search / get-entry はfile summaryから内部object idを落とす", async () => {
-    await withReviewService(({ service, storage }) => {
+    await withReviewService(async ({ service, storage }) => {
       storage.appendEntry({
         target: projectTarget,
         kind: "context",
@@ -117,7 +152,7 @@ describe("MemoryV6ReviewService", () => {
         fileQuotaBytes: MEMORY_FILE_QUOTA_MIN_BYTES,
       });
 
-      const searchHit = service.searchEntries({ query: "sanitized" }).items[0];
+      const searchHit = (await service.searchEntries({ query: "sanitized" })).items[0];
       assert.ok(searchHit.files);
       assert.equal(searchHit.files[0].displayName, "dialog.png");
       assert.equal("objectId" in searchHit.files[0], false);
@@ -125,7 +160,7 @@ describe("MemoryV6ReviewService", () => {
       assert.equal("sha256" in searchHit.files[0], false);
       assert.equal("outputPath" in searchHit.files[0], false);
 
-      const detail = service.getEntry("mem-sanitized-review");
+      const detail = await service.getEntry("mem-sanitized-review");
       assert.ok(detail?.files);
       assert.equal(detail.files[0].summary, "review visible summary");
       assert.equal("objectId" in detail.files[0], false);

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { getSessionIncarnationId, type Session } from "../src/session-state.js";
 
 import {
   assertValidAffectEvent,
@@ -11,6 +12,7 @@ export type CharacterAffectTurnSettlementInput = {
   correlationId: string;
   characterId: string;
   sessionId: string;
+  sessionIncarnationId?: string;
   userMessage: string;
   assistantMessage: string;
   assistantMessageIndex: number;
@@ -27,6 +29,45 @@ export type PendingCharacterAffectTurnSettlement = CharacterAffectTurnSettlement
   attemptStartedAt: string | null;
   quarantinedAt: string | null;
   lastFailure: CharacterAffectTurnFailureDiagnostic | null;
+};
+
+type Awaitable<T> = T | Promise<T>;
+
+export type CharacterAffectTurnSettlementStorageAccess = {
+  listDueReadyPending(
+    observedAt: string,
+    limit?: number,
+    after?: Pick<PendingCharacterAffectTurnSettlement, "createdAt" | "correlationId">,
+  ): Awaitable<PendingCharacterAffectTurnSettlement[]>;
+  listUnreadyPendingBefore(createdBefore: string, limit?: number): Awaitable<PendingCharacterAffectTurnSettlement[]>;
+  hasRecoverablePending(): Awaitable<boolean>;
+  markReady(correlationId: string): Awaitable<{ updated: boolean }>;
+  getPending(correlationId: string): Awaitable<PendingCharacterAffectTurnSettlement | null>;
+  markDiscarded(correlationId: string): Awaitable<boolean>;
+  saveEvaluation(input: {
+    correlationId: string;
+    evaluationAttempt: number;
+    expectedVersion: string;
+    candidates: AffectEventInput[];
+  }): Awaitable<{ created: boolean }>;
+  recordAppraisalFailure(input: {
+    correlationId: string;
+    evaluationAttempt: number;
+    effect: CharacterAffectTurnAppraisalEffect;
+    savedCandidateIndices: readonly number[];
+    prepareReevaluation: boolean;
+  }): Awaitable<{ reevaluationPrepared: boolean }>;
+  recordAttempt(correlationId: string, observedAt?: string): Awaitable<number | null>;
+  recoverInterruptedAttempts(observedAt?: string, correlationId?: string): Awaitable<void>;
+  recordFailure(input: {
+    correlationId: string;
+    retryable: boolean;
+    diagnostic: CharacterAffectTurnFailureDiagnostic;
+    observedAt?: string;
+  }): Awaitable<CharacterAffectTurnFailureDisposition>;
+  releaseQuarantined(correlationId: string): Awaitable<boolean>;
+  markSettled(correlationId: string, settledAt?: string): Awaitable<boolean>;
+  close(): Awaitable<void>;
 };
 
 export const CHARACTER_AFFECT_TURN_MAX_ATTEMPTS = 8;
@@ -79,6 +120,7 @@ type SettlementRow = {
   correlation_id: string;
   character_id: string;
   session_id: string;
+  session_incarnation_id: string | null;
   user_message: string;
   assistant_message: string;
   assistant_message_index: number;
@@ -113,6 +155,15 @@ function requireText(value: string, field: string): string {
 
 function fingerprint(input: CharacterAffectTurnSettlementInput): string {
   return createHash("sha256").update(JSON.stringify(input), "utf8").digest("hex");
+}
+
+export function hasSettlementSessionOwner(
+  session: Pick<Session, "id" | "incarnationId" | "characterId">,
+  settlement: Pick<CharacterAffectTurnSettlementInput, "sessionId" | "sessionIncarnationId" | "characterId">,
+): boolean {
+  return session.id === settlement.sessionId
+    && session.characterId === settlement.characterId
+    && getSessionIncarnationId(session) === (settlement.sessionIncarnationId ?? `legacy:${settlement.sessionId}`);
 }
 
 function requireNonNegativeInteger(value: number, field: string): number {
@@ -215,6 +266,7 @@ function toPending(row: SettlementRow): PendingCharacterAffectTurnSettlement {
     correlationId: row.correlation_id,
     characterId: row.character_id,
     sessionId: row.session_id,
+    ...(row.session_incarnation_id !== null ? { sessionIncarnationId: row.session_incarnation_id } : {}),
     userMessage: row.user_message,
     assistantMessage: row.assistant_message,
     assistantMessageIndex: row.assistant_message_index,
@@ -250,6 +302,7 @@ export class CharacterAffectTurnSettlementStorage {
         correlation_id TEXT PRIMARY KEY,
         character_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
+        session_incarnation_id TEXT,
         user_message TEXT NOT NULL,
         assistant_message TEXT NOT NULL,
         assistant_message_index INTEGER NOT NULL,
@@ -281,6 +334,9 @@ export class CharacterAffectTurnSettlementStorage {
     const columns = this.db.prepare("PRAGMA table_info(character_affect_turn_settlements)").all() as Array<{
       name: string;
     }>;
+    if (!columns.some((column) => column.name === "session_incarnation_id")) {
+      this.db.exec("ALTER TABLE character_affect_turn_settlements ADD COLUMN session_incarnation_id TEXT");
+    }
     if (!columns.some((column) => column.name === "assistant_message_index")) {
       this.db.exec(`
         ALTER TABLE character_affect_turn_settlements
@@ -366,6 +422,9 @@ export class CharacterAffectTurnSettlementStorage {
       throw new Error("assistantMessageIndex must be a non-negative integer.");
     }
     const requestFingerprint = fingerprint(normalized);
+    const sessionIncarnationId = input.sessionIncarnationId === undefined
+      ? null
+      : requireText(input.sessionIncarnationId, "sessionIncarnationId");
     const existing = this.db.prepare(`
       SELECT * FROM character_affect_turn_settlements WHERE correlation_id = ?
     `).get(normalized.correlationId) as SettlementRow | undefined;
@@ -373,14 +432,19 @@ export class CharacterAffectTurnSettlementStorage {
       if (existing.request_fingerprint !== requestFingerprint) {
         throw new Error("Character affect turn correlation was reused with different content.");
       }
+      if ((existing.session_incarnation_id ?? `legacy:${existing.session_id}`)
+        !== (sessionIncarnationId ?? `legacy:${normalized.sessionId}`)) {
+        throw new Error("Character affect turn correlation belongs to a different Session incarnation.");
+      }
       return { created: false };
     }
 
     this.db.prepare(`
       INSERT INTO character_affect_turn_settlements (
         correlation_id, character_id, session_id, user_message, assistant_message,
-        assistant_message_index, occurred_at, request_fingerprint, status, attempt_count, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)
+        assistant_message_index, occurred_at, request_fingerprint, status, attempt_count, created_at,
+        session_incarnation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
     `).run(
       normalized.correlationId,
       normalized.characterId,
@@ -391,6 +455,7 @@ export class CharacterAffectTurnSettlementStorage {
       normalized.occurredAt,
       requestFingerprint,
       new Date().toISOString(),
+      sessionIncarnationId,
     );
     return { created: true };
   }

@@ -36,6 +36,7 @@ export type RendererLogInput = {
   level: Extract<AppLogLevel, "debug" | "info" | "warn" | "error" | "fatal">;
   kind: string;
   message: string;
+  correlationId?: string;
   url?: string;
   data?: unknown;
   error?: AppLogError;

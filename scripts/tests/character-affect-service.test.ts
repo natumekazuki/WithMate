@@ -143,6 +143,18 @@ class FailOnceCorrectionEpisodeWriter implements CharacterAffectEpisodeWriter {
 }
 
 describe("CharacterAffectService Memory episode lifecycle", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Memory episodeの別event、retry、訂正supersedeをidempotentに処理する"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // fault = "retryでMemoryを重複作成するかpredecessorを失う"
+  // observable = "episode state, links, and service metrics"
+  // observation_boundary = "public-boundary"
+  // scope = "character-affect-service-memory-episode"
+  // lifecycle = "permanent"
+  // impact = "AffectとMemoryのcross-store retry continuity"
+  // distinction = "実DBのservice lifecycleを検証する"
+  // @end-test-value
   it("実Memoryへ同motifの別episodeを保存し、retryと訂正をidempotentにsupersedeする", async () => {
     const fixture = createFixture();
     const affectStorage = new CharacterAffectStorage(fixture.dbPath);
@@ -223,8 +235,8 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
         states: ["active", "superseded", "forgotten"],
         limit: 50,
       }).items.length, 3);
-      assert.equal(service.getMetrics().linkedEpisodes, 3);
-      assert.equal(service.getMetrics().episodeCandidates, 3);
+      assert.equal((await service.getMetrics()).linkedEpisodes, 3);
+      assert.equal((await service.getMetrics()).episodeCandidates, 3);
     } finally {
       affectStorage.close();
       memoryStorage.close();
@@ -232,6 +244,18 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Memory成功後のAffect link失敗をretryで重複なく収束する"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // fault = "partial failureを再実行してMemoryやauditを重複する"
+  // observable = "retry result and inspection mutations"
+  // observation_boundary = "public-boundary"
+  // scope = "character-affect-service-memory-episode"
+  // lifecycle = "permanent"
+  // impact = "partial failure retry safety"
+  // distinction = "link fault injection付きservice実動作"
+  // @end-test-value
   it("Memory成功後・Affect link前の失敗を同一request retryで重複なく収束する", async () => {
     const fixture = createFixture();
     const affectStorage = new FailOnceLinkStorage(fixture.dbPath);
@@ -246,7 +270,7 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
         () => service.evaluateAndRecord(serviceInput()),
         /Injected failure after Memory append/,
       );
-      const afterFailure = service.inspect({ characterId: "character-a", userId: "local-user" });
+      const afterFailure = await service.inspect({ characterId: "character-a", userId: "local-user" });
       assert.equal(afterFailure.events.length, 1);
       assert.equal(afterFailure.events[0]?.memoryEntryId, null);
       assert.equal(memoryStorage.listEntries({ target: TARGET, states: ["active"], limit: 50 }).items.length, 1);
@@ -258,7 +282,7 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
         states: ["active", "superseded", "forgotten"],
         limit: 50,
       }).items.length, 1);
-      const inspection = service.inspect({ characterId: "character-a", userId: "local-user" });
+      const inspection = await service.inspect({ characterId: "character-a", userId: "local-user" });
       assert.equal(inspection.mutations.filter((item) => item.operation === "episode_candidate").length, 1);
       assert.equal(inspection.mutations.filter((item) => item.operation === "link_episode").length, 1);
     } finally {
@@ -268,6 +292,18 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Affect訂正後のMemory commit失敗でもpredecessorを保持してretry収束する"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // fault = "訂正途中でpredecessorまたはsupersedes関係を失う"
+  // observable = "partial inspection and replayed Memory state"
+  // observation_boundary = "public-boundary"
+  // scope = "character-affect-service-memory-episode"
+  // lifecycle = "permanent"
+  // impact = "correction retry continuity"
+  // distinction = "Memory commit fault injection付きservice実動作"
+  // @end-test-value
   it("Affect訂正成功後・Memory commit前の失敗でもpredecessorを保持してretry収束する", async () => {
     const fixture = createFixture();
     const affectStorage = new CharacterAffectStorage(fixture.dbPath);
@@ -301,7 +337,7 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
         () => service.correctEvent(correction),
         /Injected failure before correction Memory append/,
       );
-      const partial = service.inspect({ characterId: "character-a", userId: "local-user" });
+      const partial = await service.inspect({ characterId: "character-a", userId: "local-user" });
       const unlinkedReplacement = partial.events.find((item) => item.correctionOfEventId === original.id);
       assert.equal(unlinkedReplacement?.memoryEntryId, null);
       assert.equal(unlinkedReplacement?.supersedesMemoryEntryId, original.memoryEntryId);
@@ -376,6 +412,18 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "session resetとMemory forget後もrelationship affectのlinkと監査を保持する"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // fault = "session操作がrelationship stateやlink auditを削除する"
+  // observable = "effective state, forgotten Memory, and correction result"
+  // observation_boundary = "public-boundary"
+  // scope = "character-affect-service-memory-episode"
+  // lifecycle = "permanent"
+  // impact = "relationship continuity across session lifecycle"
+  // distinction = "reset/forget後の実DB read-back"
+  // @end-test-value
   it("session resetとMemory forget後もrelationship affectのlink、監査、現在状態を保持する", async () => {
     const fixture = createFixture();
     const affectStorage = new CharacterAffectStorage(fixture.dbPath);
@@ -397,7 +445,7 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
       const memoryEntryId = recorded.events[0]?.memoryEntryId;
       assert.ok(memoryEntryId);
 
-      service.reset({
+      await service.reset({
         characterId: "character-a",
         userId: "local-user",
         layer: "session",
@@ -407,11 +455,11 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
         idempotencyKey: "reset-session-a",
       });
       assert.equal(memoryStorage.getEntry(memoryEntryId)?.state, "active");
-      assert.ok(service.getEffectiveState({
+      assert.ok((await service.getEffectiveState({
         characterId: "character-a",
         userId: "local-user",
         sessionId: "session-a",
-      }).components.some((item) => item.label === "trust"));
+      })).components.some((item) => item.label === "trust"));
 
       const forget = memoryStorage.forgetEntries({
         target: TARGET,
@@ -438,7 +486,7 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
         }),
         /to supersede must be active/,
       );
-      const afterRejectedCorrection = service.inspect({ characterId: "character-a", userId: "local-user" });
+      const afterRejectedCorrection = await service.inspect({ characterId: "character-a", userId: "local-user" });
       assert.equal(afterRejectedCorrection.events.length, 1);
       assert.equal(afterRejectedCorrection.events[0]?.state, "active");
       assert.equal(memoryStorage.listEntries({
@@ -447,15 +495,15 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
         limit: 50,
       }).items.length, 1);
 
-      const inspection = service.inspect({ characterId: "character-a", userId: "local-user" });
+      const inspection = await service.inspect({ characterId: "character-a", userId: "local-user" });
       assert.equal(inspection.events[0]?.memoryEntryId, memoryEntryId);
       assert.ok(inspection.mutations.some((item) => item.operation === "link_episode"));
       assert.ok(inspection.mutations.some((item) => item.operation === "reset"));
-      assert.ok(service.getEffectiveState({
+      assert.ok((await service.getEffectiveState({
         characterId: "character-a",
         userId: "local-user",
         sessionId: "session-a",
-      }).components.some((item) => item.label === "trust"));
+      })).components.some((item) => item.label === "trust"));
     } finally {
       affectStorage.close();
       memoryStorage.close();
@@ -518,6 +566,18 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Memory episodeのwriter未設定、owner不一致、body長超過、episodeなし訂正を明示的に拒否する"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // fault = "writer、owner、body、episode validation違反を成功扱いしeventを破損する"
+  // observable = "writer/owner/body/episode rejection errors and unchanged inspection"
+  // observation_boundary = "public-boundary"
+  // scope = "character-affect-service-memory-episode"
+  // lifecycle = "permanent"
+  // impact = "domain validation and data integrity"
+  // distinction = "service境界のowner/body/episode validationを実動作で確認する"
+  // @end-test-value
   it("episode writer未設定とMemoryを持つeventのepisodeなし訂正を明示的に拒否する", async () => {
     const fixture = createFixture();
     const affectStorage = new CharacterAffectStorage(fixture.dbPath);
@@ -555,10 +615,10 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
         () => invalidService.evaluateAndRecord(serviceInput()),
         /Memory episode is invalid/,
       );
-      assert.equal(invalidService.inspect({
+      assert.equal((await invalidService.inspect({
         characterId: "character-a",
         userId: "local-user",
-      }).events.length, 0);
+      })).events.length, 0);
 
       const service = createCharacterAffectServiceWithMemory({ affectStorage, memoryStorage, evaluator });
       const noMemoryService = createCharacterAffectServiceWithMemory({
@@ -587,10 +647,10 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
         }),
         /must provide a replacement Memory episode/,
       );
-      assert.equal(service.inspect({
+      assert.equal((await service.inspect({
         characterId: "character-a",
         userId: "local-user",
-      }).events[0]?.state, "active");
+      })).events[0]?.state, "active");
     } finally {
       affectStorage.close();
       memoryStorage.close();

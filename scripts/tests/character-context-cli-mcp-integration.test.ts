@@ -27,13 +27,16 @@ function outputBuffer() {
 }
 
 describe("Character context CLI / MCP integration", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
-  // claim = "bound MCPはcaller identityなしでactor Sessionを解決し、CLI/MCPのaffect event列とpost-turn appraisalを同じstate、scope、versionへ収束させる"
-  // oracle = { type = "contract", ref = "Character affect settlement and ADR-023" }
-  // failure_mode = "MCPがcaller identityを要求する、またはruntime selector導入でCLIとMCPが別instanceへ分岐して同一Sessionのstateかversionが不一致になる"
-  // scope = "character-context-cli-mcp-runtime-binding"
+  // claim = "単一owner-bound runtimeでCLI・MCP・lifecycleのAffect保存と投影が同じclock・state・scope・versionへ収束し、未知familyを拒否する。Character Memoryのappend・correct・search・forgetがCLI/MCP間で反映され、storage障害を両adapterが失敗として返す"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
+  // fault = "Affect投影がadapter間で不一致になる、未知familyを受理する、Character Memoryの訂正が検索へ反映されないか忘却のreadBackが成立しない、またはstorage障害を成功として返す"
+  // observable = "CLI inspectのevent件数とfamily・target、各経路のaffect投影、未知familyのsaved空配列とinvalid_input、Memoryの追加・訂正結果と検索ID・scopeとforgetのreadBack、storage障害時のCLI終了codeとMCP isError・error code・effect"
+  // observation_boundary = "public-boundary"
+  // scope = "owner-bound Character context runtimeのAffect投影・入力拒否、Memory mutation/read-back、CLI/MCP storage error mapping"
   // lifecycle = "permanent"
+  // distinction = "個別adapterのschema検証と異なり、owner-bound runtimeへCLI・MCP・post-turn処理を接続する（InMemoryTransportによるMCP境界であり、実HTTP transportは対象外）"
   // @end-test-value
   it("owner-bound runtimeで通常Sessionの即時event列とpost-turn appraisalが同じstate、scope、versionへ収束する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-character-runtime-"));
@@ -280,6 +283,7 @@ describe("Character context CLI / MCP integration", () => {
           occurredAt: "2026-08-09T03:03:00.000Z",
         });
         const settlement = await settleCharacterAffectTurnWithRetry({
+          isCurrentGeneration: () => true,
           correlationId,
           getPending: () => settlementStorage.getPending(correlationId),
           getContext: () => runtime.characterContextService.getContext({
@@ -317,6 +321,7 @@ describe("Character context CLI / MCP integration", () => {
             candidates,
           }, "lifecycle"),
           recordAppraisalFailure: (input) => settlementStorage.recordAppraisalFailure({ correlationId, ...input }),
+          runAppraisalExclusive: async (operation) => operation(),
           markSettled: () => settlementStorage.markSettled(correlationId),
         });
         assert.equal(settlement.status, "settled", JSON.stringify(settlement));
@@ -375,8 +380,16 @@ describe("Character context CLI / MCP integration", () => {
         characterId: "character-a",
         sessionId: "session-a",
       }, "lifecycle") as Record<string, any>;
-      assert.deepEqual(cliContext.affect, mcpContext.affect);
-      assert.deepEqual(lifecycleContext.affect, mcpContext.affect);
+      const comparableAffect = (value: Record<string, any>) => {
+        const { evaluatedAt: _evaluatedAt, ...stable } = value;
+        return stable;
+      };
+      assert.deepEqual(comparableAffect(cliContext.affect), comparableAffect(mcpContext.affect));
+      assert.deepEqual(comparableAffect(lifecycleContext.affect), comparableAffect(mcpContext.affect));
+      assert.equal(cliContext.affect.version, mcpContext.affect.version);
+      assert.equal(lifecycleContext.affect.version, mcpContext.affect.version);
+      assert.equal(cliContext.affect.evaluatedAt, mcpContext.affect.evaluatedAt);
+      assert.equal(lifecycleContext.affect.evaluatedAt, mcpContext.affect.evaluatedAt);
       assert.equal(mcpContext.affect.evaluatedAt, "2026-08-09T09:00:00.000Z");
       assert.equal(mcpContext.affect.effective.some((component: Record<string, any>) => (
         component.family === "frustration" && component.targetId === "mcp-integration"

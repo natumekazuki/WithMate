@@ -351,6 +351,18 @@ describe("database-schema-v6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V6 project・Session・message・Auxiliary・turn・interim・provider outputの列と参照制約が保存契約を維持する"
+  // oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md" }
+  // fault = "必要な列・foreign key・cascade・JSONまたは列挙値制約を欠いたschemaを作成する"
+  // observable = "作成したSQLiteのtable_info・foreign_key_listとtable SQL"
+  // observation_boundary = "declaration"
+  // scope = "V6 schema生成のSessionと監査関連DDL"
+  // lifecycle = "permanent"
+  // impact = "保存・読取の不整合や削除時の孤立データを生む"
+  // distinction = "TypeScript型やbuildでは確認できない実SQLite DDLを一つの一時DBで確認する"
+  // @end-test-value
   it("V6 project scope と session/message/audit の最小 schema を固定する", () => {
     const db = createV6Schema();
     try {
@@ -369,6 +381,7 @@ describe("database-schema-v6", () => {
 
       assert.deepEqual(columnNames(db, "sessions_v6"), [
         "id",
+        "incarnation_id",
         "title",
         "state",
         "session_kind",

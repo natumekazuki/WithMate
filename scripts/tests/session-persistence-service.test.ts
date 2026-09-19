@@ -274,6 +274,16 @@ describe("SessionPersistenceService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "createSessionのprovider解決は非同期catalog/settingsを待ち、無効providerを拒否する"
+  // oracle = { type = "contract", ref = "src-electron/session-persistence-service.ts#resolveCharacterAuthoringProvider" }
+  // fault = "非同期provider解決を待たずPromiseをprovider値として扱う"
+  // observable = "provider解決結果と無効providerの拒否"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-provider-resolution"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("createSession は有効な provider と model を解決して保存する", async () => {
     const storedSessions: Session[] = [];
     const syncedSessionIds: string[] = [];
@@ -310,7 +320,7 @@ describe("SessionPersistenceService", () => {
         return [...storedSessions];
       },
       deleteStoredSession() {},
-      getAppSettings() {
+      async getAppSettings() {
         return normalizeAppSettings({
           providers: {
             codex: { enabled: true },
@@ -318,7 +328,7 @@ describe("SessionPersistenceService", () => {
           },
         });
       },
-      getModelCatalogSnapshot() {
+      async getModelCatalogSnapshot() {
         return snapshot;
       },
       createCharacterRuntimeSnapshot(characterId) {
@@ -339,12 +349,12 @@ describe("SessionPersistenceService", () => {
       },
     });
 
-    assert.equal(service.resolveCharacterAuthoringProvider("codex"), "codex");
-    assert.throws(
+    assert.equal(await service.resolveCharacterAuthoringProvider("codex"), "codex");
+    await assert.rejects(
       () => service.resolveCharacterAuthoringProvider("unknown-provider"),
       /provider.*model catalog/,
     );
-    assert.throws(
+    await assert.rejects(
       () => service.resolveCharacterAuthoringProvider("copilot"),
       /provider.*無効/,
     );

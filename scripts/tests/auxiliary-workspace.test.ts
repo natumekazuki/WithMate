@@ -294,7 +294,7 @@ test("対象切替は選択・幅を変更せず、Auxiliaryの幅0を保持す�
 // @test-value v2
 // kind = "invariant"
 // claim = "非表示会話のsaveとterminal更新は会話IDを保ったままsummaryとbindingへ反映される"
-// oracle = { type = "contract", ref = "issue-710-hidden-session-terminal" }
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Goal / Context boundary / Preview contract" }
 // fault = "非表示化した会話のdraftまたはterminal応答を捨て、別会話のrevisionを進める"
 // observable = "binding.sessionRef、summary.preview、binding.mutationRevision"
 // observation_boundary = "component-behavior"
@@ -593,14 +593,14 @@ test("非選択Auxiliaryの遅延terminalエラーは選択中Auxiliaryへ波及
 
 // @test-value v2
 // kind = "invariant"
-// claim = "terminal詳細がnullになったAuxiliaryは一覧と選択状態を再同期し、古いdetailを表示し続けない"
+// claim = "削除済みAuxiliaryのterminal詳細がnullなら一覧と選択状態を再同期し、古いdetailを表示し続けない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
 // fault = "terminal再取得のnullを無視して一覧の古いsummaryと選択中のSessionを残す"
 // observable = "hookのsummaries、selectedId、selectedSession、detailError"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-workspace-terminal-detail-missing"
 // lifecycle = "permanent"
-// distinction = "terminal詳細がnullになる削除・取得不能化時の一覧・選択状態再同期を検証する"
+// distinction = "terminal詳細がnullかつ一覧からも削除された会話について、一覧・選択状態の再同期を検証する"
 // @end-test-value
 test("terminal詳細がnullなら一覧と選択状態を再同期する", async () => {
   const initial = session("a", "2026-01-01");

@@ -3,6 +3,18 @@ import test from "node:test";
 
 import { MainProviderFacade } from "../../src-electron/main-provider-facade.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "MainProviderFacadeは非同期catalog解決とprovider adapter無効化を委譲する"
+// oracle = { type = "contract", ref = "src-electron/main-provider-facade.ts#resolveProviderCatalog; src-electron/main-provider-facade.ts#invalidateProviderSessionThread" }
+// fault = "catalog解決Promiseを待たずにproviderへアクセスする"
+// observable = "resolveProviderCatalogのproviderとadapter無効化の呼び出し順"
+// observation_boundary = "public-boundary"
+// scope = "main-provider-facade"
+// lifecycle = "permanent"
+// impact = "catalog解決やrevoke順序を誤ると無効化前にadapterが実行され、旧provider実行が残る"
+// distinction = "private実装順序ではなくpublic facadeのrevoke-before-adapter契約を実観測する"
+// @end-test-value
 test("MainProviderFacade は provider catalog を解決し adapter 無効化を委譲する", async () => {
   const calls: string[] = [];
   const codexAdapter = {
@@ -22,7 +34,7 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
     },
   };
   const facade = new MainProviderFacade({
-    getModelCatalog: () => ({
+    getModelCatalog: async () => ({
       revision: 1,
       providers: [
         {
@@ -54,23 +66,20 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
     },
   });
 
-  const resolved = facade.resolveProviderCatalog("copilot");
+  const resolved = await facade.resolveProviderCatalog("copilot");
   await facade.invalidateProviderSessionThread("copilot", "s-1");
   facade.resetProviderSessionThread("codex", "s-retry");
   await facade.invalidateProviderSessionThread("codex", "s-2");
   await facade.invalidateAllProviderSessionThreads();
 
   assert.equal(resolved.provider.id, "copilot");
-  assert.deepEqual(calls, [
-    "binding:copilot:s-1",
-    "copilot:s-1",
-    "codex:s-retry",
-    "binding:codex:s-2",
-    "codex:s-2",
-    "binding:all",
-    "codex:all",
-    "copilot:all",
-  ]);
+  assert.deepEqual(calls.slice(0, 2), ["binding:copilot:s-1", "copilot:s-1"]);
+  assert.deepEqual(calls.slice(2, 3), ["codex:s-retry"]);
+  assert.deepEqual(calls.slice(3, 5), ["binding:codex:s-2", "codex:s-2"]);
+  const revokeAllIndex = calls.indexOf("binding:all");
+  assert.ok(revokeAllIndex >= 0);
+  assert.ok(revokeAllIndex < calls.indexOf("codex:all"));
+  assert.ok(revokeAllIndex < calls.indexOf("copilot:all"));
 });
 
 test("MainProviderFacade は未対応 provider の runtime capability を codex として誤報告しない", () => {

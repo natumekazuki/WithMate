@@ -54,7 +54,7 @@ export type GlossaryRuntimeServiceDeps = {
   resolveActorSession: (
     sessionId: string,
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
-  getProactiveCreateLimit: () => number | null | undefined;
+  getProactiveCreateLimit: () => Promise<number | null | undefined> | number | null | undefined;
   providerAgentRuntimeTurns: ProviderAgentRuntimeTurnCoordinator;
 };
 
@@ -166,17 +166,17 @@ export class GlossaryRuntimeService {
     this.#proactiveTurns = new GlossaryProactiveTurnCoordinator(deps.providerAgentRuntimeTurns);
   }
 
-  beginProviderTurn(
+  async beginProviderTurn(
     actorSessionId: string,
     binding: ProviderAgentRuntimeBindingProjection,
-  ): {
+  ): Promise<{
     handle: GlossaryProactiveTurnHandle;
     binding: ProviderAgentRuntimeBindingProjection;
-  } {
+  }> {
     const handle = this.#proactiveTurns.begin({
       actorSessionId,
       providerId: binding.providerId,
-      proactiveCreateLimit: this.#getProactiveCreateLimit(),
+      proactiveCreateLimit: await this.#getProactiveCreateLimit(),
     });
     return {
       handle,

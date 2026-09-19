@@ -529,6 +529,18 @@ describe("CompanionStorageV3", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "DB transaction 失敗時に未確定の companion blob file を残さない"
+  // fault = "DB rollback 後も未永続 blob を残し、次回起動時の orphan を増やす"
+  // observable = "blob directory と DB row の状態"
+  // observation_boundary = "component-behavior"
+  // scope = "companion-v3-transaction-cleanup"
+  // oracle = { type = "contract", ref = "src-electron/companion-storage-v3.ts#createSession" }
+  // lifecycle = "permanent"
+  // impact = "失敗した companion 保存が orphan blob を蓄積する"
+  // distinction = "正常系保存ではなく transaction failure 後の cleanup を直接確認する"
+  // @end-test-value
   it("DB transaction が失敗した場合は永続化されなかった companion blob file を cleanup する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-v3-"));
     const dbPath = path.join(tempDirectory, "withmate-v3.db");
@@ -546,6 +558,55 @@ describe("CompanionStorageV3", () => {
       const report = await new TextBlobStore(blobPath).collectGarbage({ referencedBlobIds: [], dryRun: true });
       assert.deepEqual(report.orphanBlobIds, []);
       assert.equal(countBlobObjects(dbPath), 0);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Companion runtime metadata CAS は catalogRevision更新時も messages・character role blobを保持し stale patchを拒否する"
+  // oracle = { type = "contract", ref = "src-electron/companion-storage-v3.ts#updateRuntimeMetadataIfMatches" }
+  // fault = "catalog migration が Companion Session 全体を更新し、message/blobを失う"
+  // observable = "getSessionのcatalogRevision、messages、characterRoleMarkdown、およびstale CASのnull結果"
+  // observation_boundary = "public-boundary"
+  // scope = "companion-storage-v3-runtime-metadata-cas"
+  // lifecycle = "permanent"
+  // impact = "Companionのレビュー内容やCharacter定義が失われる"
+  // distinction = "metadata列だけのSQL更新とstale CASを実DB/blobで確認する"
+  // @end-test-value
+  it("runtime metadata CAS は messages と character role blob を保持し stale patch を拒否する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-runtime-metadata-cas-"));
+    const dbPath = path.join(tempDirectory, "withmate-v3.db");
+    const blobPath = path.join(tempDirectory, "blobs");
+    let storage: CompanionStorageV3 | null = null;
+    try {
+      createV3Database(dbPath);
+      storage = new CompanionStorageV3(dbPath, blobPath);
+      const group = await storage.ensureGroup(createGroup());
+      const session = await storage.createSession(createSession(group.id, {
+        characterRoleMarkdown: "role to keep",
+        messages: [{ role: "user", text: "message to keep" }],
+      }));
+      const expected = {
+        provider: session.provider,
+        catalogRevision: session.catalogRevision,
+        model: session.model,
+        reasoningEffort: session.reasoningEffort,
+        threadId: session.threadId,
+        updatedAt: session.updatedAt,
+      };
+      const next = { ...expected, catalogRevision: expected.catalogRevision + 1, threadId: "", updatedAt: "2026-08-01T00:00:00.000Z" };
+      const updated = await storage.updateRuntimeMetadataIfMatches(session.id, { expected, next });
+      assert.equal(updated?.catalogRevision, next.catalogRevision);
+      const stored = await storage.getSession(session.id);
+      assert.equal(stored?.characterRoleMarkdown, session.characterRoleMarkdown);
+      assert.deepEqual(stored?.messages.map(({ role, text }) => ({ role, text })), session.messages.map(({ role, text }) => ({ role, text })));
+      assert.equal(await storage.updateRuntimeMetadataIfMatches(session.id, {
+        expected,
+        next: { ...next, catalogRevision: next.catalogRevision + 1 },
+      }), null);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

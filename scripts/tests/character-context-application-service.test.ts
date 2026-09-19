@@ -110,6 +110,7 @@ function createFixture(options: {
     directory,
     dbPath,
     service,
+    memoryService,
     close() {
       affectStorage.close();
       memoryStorage.close();
@@ -413,6 +414,18 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "afterglow projectionは公開schemaを保ち内部source情報を除外する"
+  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // fault = "private source情報がcontextやmetricsへ漏れる"
+  // observable = "context, MCP, CLI output"
+  // observation_boundary = "public-boundary"
+  // scope = "character-context-application-service"
+  // lifecycle = "permanent"
+  // impact = "公開projectionのprivacy"
+  // distinction = "CharacterContextApplicationServiceのgetContext/getMetrics公開projectionを実呼出しで確認する"
+  // @end-test-value
   it("afterglowをpublic context・MCP・CLIへ同じschemaで投影し、source情報をmetricsへ出さない", async () => {
     const fixture = createFixture();
     try {
@@ -455,7 +468,7 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(internal.affect.effective.some((component) => component.label === "public-afterglow"), true);
       const publicJson = JSON.stringify(internal);
       assert.doesNotMatch(publicJson, /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|sourceSessionId|session-b/);
-      const metricsJson = JSON.stringify(fixture.service.getMetrics());
+      const metricsJson = JSON.stringify(await fixture.service.getMetrics());
       assert.doesNotMatch(metricsJson, /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|private-target|session-b|sourceSessionId/);
       assert.equal("eventIds" in internal.affect.effective[0]!, false);
       assert.equal("reasons" in internal.affect.effective[0]!, false);
@@ -464,6 +477,18 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "stale versionと不正scope targetを拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // fault = "古いversionの書込み、不正relationship target、未知scopeの読取りを受理するかversion拒否を集計しない"
+  // observable = "appraiseのversion_conflict/invalid_input、getContextのunknown_scope、versionRejections集計"
+  // observation_boundary = "public-boundary"
+  // scope = "character-context-application-service"
+  // lifecycle = "permanent"
+  // impact = "affect CAS and scope isolation"
+  // distinction = "service validationを確認する"
+  // @end-test-value
   it("stale version、relationship scopeの不正target、別scopeを拒否する", async () => {
     const fixture = createFixture();
     try {
@@ -508,7 +533,7 @@ describe("CharacterContextApplicationService", () => {
       if (isCharacterContextError(unknown)) {
         assert.equal(unknown.error.code, "unknown_scope");
       }
-      assert.equal(fixture.service.getMetrics().affect.versionRejections, 1);
+      assert.equal((await fixture.service.getMetrics()).affect.versionRejections, 1);
     } finally {
       fixture.close();
     }
@@ -550,6 +575,60 @@ describe("CharacterContextApplicationService", () => {
         db.close();
       }
     } finally {
+      fixture.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "regression"
+  // claim = "episode追加は非同期Session owner検証を待ち、不在・削除済み・別CharacterのscopeではMemoryを書かずunknown_scopeを返す"
+  // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md#decision; src-electron/character-affect-storage.ts#assertSessionOwner" }
+  // fault = "scope検証Promiseを待たずMemory appendへ進み、不正scopeの要求を保存成功として応答する"
+  // observable = "unknown_scope/effect none、Memory append呼出し件数、実DBのMemory行数、正当scopeの保存成功"
+  // observation_boundary = "component-behavior"
+  // scope = "character-memory-episode-session-owner"
+  // lifecycle = "permanent"
+  // impact = "無効なSessionを根拠とするMemory保存と未処理rejectionを防ぐ"
+  // distinction = "getContextやappraiseのscope拒否ではappendEpisode固有の非同期待機漏れを検出できない"
+  // @end-test-value
+  it("episode追加は非同期scope拒否時にMemory保存へ進まない", async () => {
+    const fixture = createFixture();
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      db.exec("INSERT INTO characters (id, name, created_at, updated_at) VALUES ('character-other', 'Other', '2026-09-20', '2026-09-20')");
+      db.exec("UPDATE sessions_v6 SET character_id = 'character-other' WHERE id = 'session-a'");
+      let appendCalls = 0;
+      const append = fixture.memoryService.append.bind(fixture.memoryService);
+      fixture.memoryService.append = (...args) => {
+        appendCalls += 1;
+        return append(...args);
+      };
+      const request = (sessionId: string) => ({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId,
+        authority: { kind: "conversation" },
+        idempotencyKey: `episode-scope-${sessionId}`,
+        episode: { title: "Scope check", body: "An observed episode.", preview: "Scope check", observedFact: "An event was observed." },
+      });
+      const assertRejected = async (sessionId: string) => {
+        const result = await fixture.service.appendEpisode(request(sessionId));
+        assert.ok(isCharacterContextError(result));
+        assert.equal(result.error.code, "unknown_scope");
+        assert.equal(result.error.effect, "none");
+        assert.equal(appendCalls, 0);
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get() as { count: number }).count, 0);
+      };
+      await assertRejected("missing-session");
+      await assertRejected("session-a");
+      db.exec("DELETE FROM sessions_v6 WHERE id = 'session-a'");
+      await assertRejected("session-a");
+      const saved = await fixture.service.appendEpisode(request("session-b"));
+      assert.equal(isCharacterContextError(saved), false);
+      assert.equal(appendCalls, 1);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get() as { count: number }).count, 1);
+    } finally {
+      db.close();
       fixture.close();
     }
   });
@@ -713,6 +792,18 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "CharacterContextApplicationServiceのoperation結果と拒否理由をpayloadなしでmetricsへ集計する"
+  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // fault = "private payloadをmetricsへ保存する"
+  // observable = "service.getMetrics() response"
+  // observation_boundary = "public-boundary"
+  // scope = "character-context-application-service"
+  // lifecycle = "permanent"
+  // impact = "diagnostic privacy"
+  // distinction = "MCP/CLI transport routeではなく、実サービスのrecordFallbackとoperation metrics境界を確認する"
+  // @end-test-value
   it("transport別結果、拒否理由、replay、fallbackを内容なしで集計する", async () => {
     const fixture = createFixture();
     try {
@@ -761,7 +852,7 @@ describe("CharacterContextApplicationService", () => {
       }, "mcp");
       fixture.service.recordFallback("mcp", "cli");
 
-      const metrics = fixture.service.getMetrics();
+      const metrics = await fixture.service.getMetrics();
       assert.equal(metrics.operations["mcp:character_affect.appraise"]?.calls, 4);
       assert.equal(metrics.operations["mcp:character_affect.appraise"]?.rejectionsByCode.invalid_input, 3);
       assert.equal(metrics.fallbacks["mcp->cli"], 1);
@@ -779,6 +870,18 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Affect保存後のepisode失敗をpartial failureとして返し、同一request replayでもprivate payloadをmetricsへ出さない"
+  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // fault = "partial failureを成功レスポンスへ偽装する"
+  // observable = "初回・同一request replayのappraise resultとservice.getMetrics()"
+  // observation_boundary = "public-boundary"
+  // scope = "character-context-application-service"
+  // lifecycle = "permanent"
+  // impact = "caller retry and truthfulness"
+  // distinction = "partial failureのeffect/retryability、idempotency replay、privacy-safe metricsを同じservice boundaryで確認する"
+  // @end-test-value
   it("Affect保存後のepisode失敗をpartial failureとして返し、成功に見せない", async () => {
     const fixture = createFixture({ failEpisodeWrite: true });
     try {
@@ -813,7 +916,7 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(isCharacterContextError(replay), true);
       if (!isCharacterContextError(replay)) return;
       assert.equal(replay.error.effect, "committed");
-      const metrics = fixture.service.getMetrics();
+      const metrics = await fixture.service.getMetrics();
       assert.equal(metrics.affect.savedByFamily.interest, 1);
       assert.equal(metrics.affect.storage.events, 1);
       assert.equal(metrics.affect.storage.idempotencyReplays, 1);

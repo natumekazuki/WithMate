@@ -34,6 +34,12 @@ Shared ActionDock ──┘
 
 「選択中」「継続利用可能」「実行中」は別状態である。新規追加、切り替え、turn完了で他会話をclosedにしない。Main送信中でもAuxiliaryを追加でき、非表示Auxiliaryのrunも継続する。
 
+作成要求は `preparing`、`queued`、`committing`、`committed`、`cancelled`、`failed`、`unknown`、`expired`、`not-found` の状態を持つ。準備中・待機中の取消は保存を開始せず、commit 開始後に取消が先に確定した場合も commit を成功扱いにしない。commit 応答が結果不明になった場合は自動再送せず、保存行の再照会で確定できたときだけ `committed` として扱う。親の削除・再作成、storage generation の交換、window owner の解放は保留中の要求を失効させる。
+
+保存 dispatch 前の最終検証失敗は `failed` として終端し、結果不明と混同しない。保存済みの要求への遅延取消は `committed` を返し、保存結果を取消済みで隠さない。保存結果の詳細取得・画面への適用が完了するまでは新しい開始操作を無効にする。
+
+取消済みの作成レコードは、作成処理が終了した時点（未作成要求は取消確定時点）で回収する。回収前に当該親の受付世代を更新し、同じ旧世代でまだ受け付けていない遅延要求を `expired` として拒否する。回収後の取消要求の再照会も `expired` となる。登録済みの別要求は継続し、`unknown` の保存結果照会は維持する。新しい作成操作は新しい context を取得する。
+
 既存の`closed`行は保存された会話として一覧・継続対象に含める。継続時は同じID、thread、messages、draft、Character identityを使い、勝手に新規turnを開始しない。親削除時は親配下の全Auxiliaryをruntime停止・保存削除の対象にする。
 
 ## Character identity
@@ -64,6 +70,12 @@ MainとAuxiliaryはmessages、composer draft、live run、pending approval／eli
 
 ## Persistence
 
+作成入力の runtime selection mode と runtime option は、既存 `clientRequestId` の結果を返す場合も先に検証する。不正な入力を既存行への再送として成功扱いにしない。準備と commit の排他・再検証境界は ADR 007 に従う。
+
+Auxiliary の作成準備は provider / ownership coordinator の外で行う。commit 時だけ親の incarnation、Character identity、provider runtime selection、current storage generation、request identity を再検証し、失敗時に親や既存会話を削除・snapshot 復元しない。Main Session の保存後に初期 Auxiliary の準備または commit が失敗した場合は、Main Session を削除せず、作成済み Main と Auxiliary 結果未確定または失敗を明示する。
+
+既存 Auxiliary の更新・runtime 保存・終了・中断復旧は、非同期読込み時に捕捉した storage へ update-only で送る。transaction 内で読込み済み payload と現行行、親の生存を照合し、削除後の再挿入や並行変更の上書きを行わない。時刻ラベルは分精度のため、更新時刻だけを変更検知の根拠にしない。通常の作成・明示的な collection 置換と、この既存行更新を区別する。
+
 `auxiliary_sessions`は少なくとも次をpayloadへ保存する。
 
 - `id`, `parentSessionId`, `status`, `createdAt`, `updatedAt`, `closedAt`
@@ -74,7 +86,13 @@ MainとAuxiliaryはmessages、composer draft、live run、pending approval／eli
 
 一覧用の`summary_json`はpayloadの派生projectionであり、messages、draft、Character定義本文を含めない。upsert時にpayloadと同時更新し、既存行は初回migrationで一度だけ補完する。Auxiliary一覧、active一覧、running一覧はsummary列だけを読み、全transcriptや定義本文を毎回走査しない。会話本文の取得とruntime復元だけがpayloadを読む。
 
+既存行の summary 補完は storage owner の明示的な bounded maintenance command で実行する。1 command は指定 batch 以下だけを処理し、進捗は `summary_json` と残件数で再開可能にする。payload の不正や projection 失敗を残件なしとして扱わず、エラーと残件を保持する。通常の一覧読み取りで全履歴を暗黙に backfill しない。
+
 Auxiliaryは最終使用順（`updatedAt DESC, id DESC`）で並べる。実行、draft、preview更新で順序を更新する。選択状態はindexではなくstable IDで保持する。
+
+## Recovery
+
+アプリ強制終了などで `runState = running` の Auxiliary が残った場合、次回起動時に active 行を `runState = error` へ補正し、中断を示す assistant message を重複なく追加する。自動 resume は行わず、Session Window から直前 user message を明示的に再送する。補正後も Auxiliary の status と保存済み Character / provider identity は変更しない。
 
 ## Preview contract
 

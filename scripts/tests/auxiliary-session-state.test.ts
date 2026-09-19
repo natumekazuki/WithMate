@@ -100,9 +100,9 @@ test("buildAuxiliaryPreview は確定応答の冒頭をMarkdown平文化して�
 
 // @test-value v2
 // kind = "contract"
-// claim = "新規作成直後で未送信のAuxiliary previewは空文字列として投影する"
+// claim = "buildAuxiliaryPreviewは未送信を表す空のmessagesから空文字列を返す"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Preview contract" }
-// fault = "未送信Auxiliaryへ日本語またはその他の既定タイトルをpreviewとして表示する"
+// fault = "空のmessagesに対して日本語またはその他の既定タイトルをpreviewとして返す"
 // observable = "buildAuxiliaryPreview([])の返却文字列"
 // observation_boundary = "declaration"
 // scope = "auxiliary-initial-preview"

@@ -1,6 +1,7 @@
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import { DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
@@ -18,20 +19,22 @@ import {
 } from "../src/character/character-authoring.js";
 import type { CreateSessionInput, Session } from "../src/session-state.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
+import type { RunCharacterWorkspaceOperationExclusive } from "./character-workspace-operation-coordinator.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export const CHARACTER_AUTHORING_SKILL_NAME = "withmate-character-authoring";
 const CODEX_WORKSPACE_SKILL_ROOT = ".agents/skills";
 const COPILOT_WORKSPACE_SKILL_ROOT = ".github/skills";
 
-export function resolveCharacterAuthoringRuntimeSessionForTurn(
+export async function resolveCharacterAuthoringRuntimeSessionForTurn(
   session: Session,
-  createRuntimeSnapshot: (characterId: string) => CharacterRuntimeSnapshot | null,
-): Session {
+  createRuntimeSnapshot: (characterId: string) => Awaitable<CharacterRuntimeSnapshot | null>,
+): Promise<Session> {
   if (session.sessionKind !== "character-authoring") {
     return session;
   }
 
-  const snapshot = createRuntimeSnapshot(session.characterId);
+  const snapshot = await createRuntimeSnapshot(session.characterId);
   if (!snapshot) {
     return session.characterRuntimeSnapshot
       ? { ...session, characterRuntimeSnapshot: null }
@@ -51,9 +54,17 @@ type CharacterAuthoringServiceDeps = {
   bundledSkillPath: string;
   createSession(input: Omit<CreateSessionInput, "id">): Promise<Session>;
   getCharacter(characterId: string): Promise<CharacterDetail | null> | CharacterDetail | null;
-  getCharacterDirectory(characterId: string): string | null;
-  resolveProvider(providerId: string): string;
+  getCharacterDirectory(characterId: string): Promise<string | null> | string | null;
+  getSessionStorageIdentity(): object;
+  readBundledSkillFiles?: typeof readBundledCharacterAuthoringSkillFiles;
+  resolveProvider(providerId: string): Promise<string> | string;
+  runCharacterWorkspaceOperationExclusive: RunCharacterWorkspaceOperationExclusive;
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
+  writePreparedWorkspace?: (
+    workspacePath: string,
+    provider: string,
+    files: PreparedWorkspaceFile[],
+  ) => Promise<void>;
 };
 
 type AuthoringSeed = {
@@ -61,18 +72,70 @@ type AuthoringSeed = {
   description: string;
 };
 
+export type PreparedWorkspaceFile = {
+  relativePath: string;
+  content: Buffer;
+};
+
+type PreparedAuthoringSession = {
+  input: StartCharacterAuthoringSessionInput & { provider: string; characterId: string };
+  character: CharacterDetail;
+  seed: AuthoringSeed;
+  runId: string;
+  workspacePath: string;
+  storageIdentity: object;
+  workspaceFiles: PreparedWorkspaceFile[];
+};
+
+export async function readBundledCharacterAuthoringSkillFiles(rootPath: string): Promise<PreparedWorkspaceFile[]> {
+  const rootStat = await lstat(rootPath);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error("Character authoring Skill bundle は通常のディレクトリである必要があります。");
+  }
+  const files: PreparedWorkspaceFile[] = [];
+  const visit = async (currentPath: string, relativeRoot: string): Promise<void> => {
+    const entries = await readdir(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const relativePath = relativeRoot ? path.join(relativeRoot, entry.name) : entry.name;
+      const entryPath = path.join(currentPath, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Character authoring Skill に symlink は配置できません: ${relativePath}`);
+      }
+      if (entry.isDirectory()) {
+        await visit(entryPath, relativePath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        throw new Error(`Character authoring Skill に通常ファイル以外の項目があります: ${relativePath}`);
+      }
+      files.push({ relativePath, content: await readFile(entryPath) });
+    }
+  };
+  await visit(rootPath, "");
+  return files;
+}
+
 export class CharacterAuthoringService {
   constructor(private readonly deps: CharacterAuthoringServiceDeps) {}
 
   async startSession(input: StartCharacterAuthoringSessionInput): Promise<CharacterAuthoringSessionStartResult> {
-    return this.deps.runProviderRuntimeOperationExclusive(
-      () => this.startSessionExclusive(input),
+    const prepared = await this.prepareSession(input);
+    return this.deps.runCharacterWorkspaceOperationExclusive(
+      prepared.input.characterId,
+      async () => {
+        await this.assertPreparedSessionCurrent(prepared);
+        await (this.deps.writePreparedWorkspace
+          ? this.deps.writePreparedWorkspace(prepared.workspacePath, prepared.input.provider, prepared.workspaceFiles)
+          : this.writePreparedWorkspace(prepared.workspacePath, prepared.input.provider, prepared.workspaceFiles));
+        await this.assertPreparedSessionCurrent(prepared);
+        return this.deps.runProviderRuntimeOperationExclusive(
+          () => this.createSessionExclusive(prepared),
+        );
+      },
     );
   }
 
-  private async startSessionExclusive(
-    input: StartCharacterAuthoringSessionInput,
-  ): Promise<CharacterAuthoringSessionStartResult> {
+  private async prepareSession(input: StartCharacterAuthoringSessionInput): Promise<PreparedAuthoringSession> {
     if (input.mode !== "create" && input.mode !== "improve") {
       throw new Error("Character authoring mode が正しくありません。");
     }
@@ -80,7 +143,7 @@ export class CharacterAuthoringService {
     if (!requestedProvider) {
       throw new Error("Authoring session を開始する provider を選択してください。");
     }
-    const provider = this.deps.resolveProvider(requestedProvider);
+    const provider = await this.deps.resolveProvider(requestedProvider);
     if (provider !== requestedProvider) {
       throw new Error("Character authoring provider を一意に解決できませんでした。");
     }
@@ -89,19 +152,39 @@ export class CharacterAuthoringService {
       throw new Error("Authoring session は保存済み Character でのみ開始できます。先に Character を保存してください。");
     }
     const normalizedInput = { ...input, provider, characterId };
+    const storageIdentity = this.deps.getSessionStorageIdentity();
 
     const character = await this.deps.getCharacter(characterId);
     if (!character) {
       throw new Error("Authoring session は保存済み Character でのみ開始できます。先に Character を保存してください。");
     }
+    if (this.deps.getSessionStorageIdentity() !== storageIdentity) {
+      throw new Error("Character authoring の準備中に Session storage が切り替わりました。もう一度お試しください。");
+    }
 
+    const capturedCharacter = this.cloneCharacter(character);
     const seed = this.resolveSeed(character);
     const runId = this.createRunId(seed.name);
-    const workspacePath = this.deps.getCharacterDirectory(characterId);
+    const workspacePath = await this.deps.getCharacterDirectory(characterId);
     if (!workspacePath) {
       throw new Error("Character authoring workspace を解決できませんでした。");
     }
-    await this.prepareWorkspace(workspacePath, runId, normalizedInput, seed);
+    const workspaceFiles = await this.prepareWorkspaceFiles(normalizedInput, seed, runId);
+    return {
+      input: normalizedInput,
+      character: capturedCharacter,
+      seed,
+      runId,
+      workspacePath,
+      storageIdentity,
+      workspaceFiles,
+    };
+  }
+
+  private async createSessionExclusive(
+    prepared: PreparedAuthoringSession,
+  ): Promise<CharacterAuthoringSessionStartResult> {
+    const { input, seed, runId, workspacePath } = prepared;
 
     const session = await this.deps.createSession({
       taskTitle: input.mode === "improve"
@@ -111,15 +194,15 @@ export class CharacterAuthoringService {
       workspacePath,
       branch: "main",
       sessionKind: "character-authoring",
-      characterId,
+      characterId: input.characterId,
       character: seed.name,
-      characterIconPath: character.iconFilePath,
-      characterThemeColors: { ...character.theme },
+      characterIconPath: prepared.character.iconFilePath,
+      characterThemeColors: { ...prepared.character.theme },
       approvalMode: input.approvalMode ?? DEFAULT_APPROVAL_MODE,
       codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
-      provider,
-      model: normalizedInput.model,
-      reasoningEffort: normalizedInput.reasoningEffort,
+      provider: input.provider,
+      model: input.model,
+      reasoningEffort: input.reasoningEffort,
       customAgentName: "",
       allowedAdditionalDirectories: [],
     });
@@ -140,31 +223,73 @@ export class CharacterAuthoringService {
     };
   }
 
-  private async prepareWorkspace(
-    workspacePath: string,
-    runId: string,
+  private async prepareWorkspaceFiles(
     input: StartCharacterAuthoringSessionInput,
     seed: AuthoringSeed,
-  ): Promise<void> {
-    await mkdir(workspacePath, { recursive: true });
+    runId: string,
+  ): Promise<PreparedWorkspaceFile[]> {
     const skillRootPath = this.resolveWorkspaceSkillRoot(input.provider);
-    const workspaceSkillPath = path.join(workspacePath, skillRootPath, CHARACTER_AUTHORING_SKILL_NAME);
-    await rm(workspaceSkillPath, { recursive: true, force: true });
-    await cp(this.deps.bundledSkillPath, workspaceSkillPath, {
-      recursive: true,
-    });
+    const readSkillFiles = this.deps.readBundledSkillFiles ?? readBundledCharacterAuthoringSkillFiles;
+    const bundledFiles = await readSkillFiles(this.deps.bundledSkillPath);
+    return [
+      ...bundledFiles.map((file) => ({
+        relativePath: path.join(skillRootPath, CHARACTER_AUTHORING_SKILL_NAME, file.relativePath),
+        content: file.content,
+      })),
+      { relativePath: "AGENTS.md", content: Buffer.from(this.buildAgentsInstructions(input), "utf8") },
+      { relativePath: "AUTHORING_PROMPT.md", content: Buffer.from(this.buildAuthoringPrompt(input, seed), "utf8") },
+      {
+        relativePath: "input.json",
+        content: Buffer.from(`${JSON.stringify({
+          runId,
+          mode: input.mode,
+          characterId: input.characterId ?? null,
+          name: seed.name,
+          description: seed.description,
+          skill: CHARACTER_AUTHORING_SKILL_NAME,
+          skillPath: `${skillRootPath}/${CHARACTER_AUTHORING_SKILL_NAME}`,
+        }, null, 2)}\n`, "utf8"),
+      },
+    ];
+  }
 
-    await writeFile(path.join(workspacePath, "AGENTS.md"), this.buildAgentsInstructions(input), "utf8");
-    await writeFile(path.join(workspacePath, "AUTHORING_PROMPT.md"), this.buildAuthoringPrompt(input, seed), "utf8");
-    await writeFile(path.join(workspacePath, "input.json"), `${JSON.stringify({
-      runId,
-      mode: input.mode,
-      characterId: input.characterId ?? null,
-      name: seed.name,
-      description: seed.description,
-      skill: CHARACTER_AUTHORING_SKILL_NAME,
-      skillPath: `${skillRootPath}/${CHARACTER_AUTHORING_SKILL_NAME}`,
-    }, null, 2)}\n`, "utf8");
+  private async writePreparedWorkspace(
+    workspacePath: string,
+    provider: string,
+    files: PreparedWorkspaceFile[],
+  ): Promise<void> {
+    const skillRootPath = this.resolveWorkspaceSkillRoot(provider);
+    await mkdir(workspacePath, { recursive: true });
+    await rm(path.join(workspacePath, skillRootPath, CHARACTER_AUTHORING_SKILL_NAME), { recursive: true, force: true });
+    for (const file of files) {
+      const destination = path.join(workspacePath, file.relativePath);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, file.content);
+    }
+  }
+
+  private async assertPreparedSessionCurrent(prepared: PreparedAuthoringSession): Promise<void> {
+    if (this.deps.getSessionStorageIdentity() !== prepared.storageIdentity) {
+      throw new Error("Character authoring の準備中に Session storage が切り替わりました。もう一度お試しください。");
+    }
+    const provider = await this.deps.resolveProvider(prepared.input.provider);
+    if (provider !== prepared.input.provider) {
+      throw new Error("Character authoring provider を一意に解決できませんでした。");
+    }
+    const currentCharacter = await this.deps.getCharacter(prepared.input.characterId);
+    if (this.deps.getSessionStorageIdentity() !== prepared.storageIdentity) {
+      throw new Error("Character authoring の準備中に Session storage が切り替わりました。もう一度お試しください。");
+    }
+    if (!currentCharacter || !isDeepStrictEqual(this.cloneCharacter(currentCharacter), prepared.character)) {
+      throw new Error("Character authoring の準備中に Character が変更されました。もう一度お試しください。");
+    }
+    if (await this.deps.getCharacterDirectory(prepared.input.characterId) !== prepared.workspacePath) {
+      throw new Error("Character authoring workspace が変更されました。もう一度お試しください。");
+    }
+  }
+
+  private cloneCharacter(character: CharacterDetail): CharacterDetail {
+    return { ...character, theme: { ...character.theme } };
   }
 
   private buildAgentsInstructions(input: StartCharacterAuthoringSessionInput): string {

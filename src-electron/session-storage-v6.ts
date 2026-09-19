@@ -1,10 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 
 import {
   cloneHomeSessionSummaries,
   cloneSessionSummaries,
   cloneSessions,
   CURRENT_SESSION_SCHEMA_VERSION,
+  getSessionIncarnationId,
   normalizeMessage,
   normalizeHomeSessionSummary,
   normalizeSession,
@@ -39,6 +41,7 @@ import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import {
   SessionIdCollisionError,
+  SessionNotFoundError,
   SessionRunningTurnStartConflictError,
 } from "./session-storage-errors.js";
 import {
@@ -59,9 +62,11 @@ import type {
   SessionRunningTurnStartInput,
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
+import type { ProviderRuntimeMetadataPatch } from "./provider-runtime-metadata-patch.js";
 
 type SessionV6Row = {
   id: string;
+  incarnation_id: string;
   title: string;
   state: string;
   session_kind: string;
@@ -116,6 +121,7 @@ type ExistingMessageArtifactRow = {
 
 type SessionIdRow = {
   id: string;
+  incarnation_id?: string;
 };
 
 type SessionMessageSequenceRow = {
@@ -124,6 +130,20 @@ type SessionMessageSequenceRow = {
 
 type SessionCharacterUsageRow = {
   character_id: string | null;
+};
+
+export type SessionThreadPatchInput = {
+  sessionId: string;
+  incarnationId: string;
+  provider: string;
+  expectedThreadId: string;
+  nextThreadId: string;
+  updatedAt: string;
+};
+
+export type SessionRuntimeMetadataPatchInput = ProviderRuntimeMetadataPatch & {
+  sessionId: string;
+  incarnationId: string;
 };
 
 type DecodedSessionV6RuntimeState = {
@@ -495,8 +515,83 @@ export class SessionStorageV6 {
     return this.storeSession(session, "upsert");
   }
 
+  updateSessionThreadIfMatches(input: SessionThreadPatchInput): Session | null {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const result = this.db.prepare(`
+        UPDATE sessions_v6
+        SET thread_id = ?, updated_at = ?, last_active_at = ?
+        WHERE id = ? AND incarnation_id = ? AND provider_id = ? AND thread_id = ?
+      `).run(input.nextThreadId, input.updatedAt, input.updatedAt, input.sessionId, input.incarnationId, input.provider, input.expectedThreadId);
+      if (Number(result.changes) !== 1) {
+        this.db.exec("ROLLBACK");
+        return null;
+      }
+      const stored = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(input.sessionId) as SessionV6Row | undefined;
+      if (!stored) {
+        throw new SessionNotFoundError(input.sessionId);
+      }
+      const resultSession = this.rowToSession(stored);
+      this.db.exec("COMMIT");
+      return resultSession;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Session | null {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const result = this.db.prepare(`
+        UPDATE sessions_v6
+        SET provider_id = ?, catalog_revision = ?, model_id = ?, reasoning_effort = ?,
+            thread_id = ?, updated_at = ?, last_active_at = ?
+        WHERE id = ? AND incarnation_id = ? AND provider_id = ? AND catalog_revision = ?
+          AND model_id = ? AND reasoning_effort = ? AND thread_id = ?
+      `).run(
+        input.next.provider,
+        input.next.catalogRevision,
+        input.next.model,
+        input.next.reasoningEffort,
+        input.next.threadId,
+        input.next.updatedAt,
+        input.next.updatedAt,
+        input.sessionId,
+        input.incarnationId,
+        input.expected.provider,
+        input.expected.catalogRevision,
+        input.expected.model,
+        input.expected.reasoningEffort,
+        input.expected.threadId,
+      );
+      if (Number(result.changes) !== 1) {
+        this.db.exec("ROLLBACK");
+        return null;
+      }
+      const stored = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(input.sessionId) as SessionV6Row | undefined;
+      if (!stored) {
+        throw new SessionNotFoundError(input.sessionId);
+      }
+      const resultSession = this.rowToSession(stored);
+      this.db.exec("COMMIT");
+      return resultSession;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  updateSession(session: Session): Session {
+    return this.storeSession(session, "update");
+  }
+
   upsertTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Session {
     return this.storeSession(session, "upsert", terminalCommit);
+  }
+
+  updateTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Session {
+    return this.storeSession(session, "update", terminalCommit);
   }
 
   clearCharacterAuthoringRuntimeState(
@@ -512,6 +607,12 @@ export class SessionStorageV6 {
       const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
       if (!currentRow) {
         throw new Error("対象セッションが見つからないよ。");
+      }
+      if (currentRow.incarnation_id.trim() !== getSessionIncarnationId({
+        id: sessionId,
+        incarnationId: input.incarnationId,
+      })) {
+        throw new SessionNotFoundError(sessionId);
       }
       if (currentRow.session_kind !== "character-authoring") {
         throw new Error("Character authoring runtime clearのownerが一致しないよ。");
@@ -564,6 +665,12 @@ export class SessionStorageV6 {
       const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
       if (!currentRow) {
         throw new Error("対象セッションが見つからないよ。");
+      }
+      if (currentRow.incarnation_id.trim() !== getSessionIncarnationId({
+        id: sessionId,
+        incarnationId: input.incarnationId,
+      })) {
+        throw new SessionNotFoundError(sessionId);
       }
 
       const updatesCharacterSnapshot = input.characterRuntimeSnapshot !== undefined;
@@ -675,7 +782,7 @@ export class SessionStorageV6 {
 
   private storeSession(
     session: Session,
-    operation: "create" | "upsert",
+    operation: "create" | "upsert" | "update",
     terminalCommit?: SessionTurnTerminalCommit,
   ): Session {
     const normalized = normalizeSessionForStorage(session);
@@ -686,7 +793,26 @@ export class SessionStorageV6 {
     const startedAt = Date.now();
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.writeSession(normalized, operation);
+      const existing = operation === "create"
+        ? undefined
+        : this.db.prepare("SELECT id, incarnation_id FROM sessions_v6 WHERE id = ?").get(normalized.id) as SessionIdRow | undefined;
+      const requestedIncarnationId = getSessionIncarnationId(normalized);
+      if (operation === "update") {
+        if (!existing) {
+          throw new SessionNotFoundError(normalized.id);
+        }
+        const currentIncarnationId = existing.incarnation_id?.trim() || `legacy:${normalized.id}`;
+        if (currentIncarnationId !== requestedIncarnationId) {
+          throw new SessionNotFoundError(normalized.id);
+        }
+      }
+      const incarnationId = operation === "create"
+        ? randomUUID()
+        : existing
+          ? existing.incarnation_id?.trim() || `legacy:${normalized.id}`
+          : randomUUID();
+      normalized.incarnationId = incarnationId;
+      this.writeSession(normalized, operation, incarnationId);
       if (terminalCommit) {
         writeSessionTurnTerminalCommit(this.db, terminalCommit);
       }
@@ -737,7 +863,14 @@ export class SessionStorageV6 {
       this.db.exec("DELETE FROM session_messages_v6;");
       this.deleteStoredSessionsByIds(removedSessionIds);
       for (const session of normalizedSessions) {
-        this.writeSession(session);
+        const existing = this.db.prepare(
+          "SELECT incarnation_id FROM sessions_v6 WHERE id = ?",
+        ).get(session.id) as { incarnation_id?: string } | undefined;
+        this.writeSession(
+          session,
+          "upsert",
+          existing ? existing.incarnation_id?.trim() || `legacy:${session.id}` : randomUUID(),
+        );
       }
       this.deleteAuxiliarySessionsByIdsIfTableExists(removedAuxiliarySessionIds);
       this.db.exec("COMMIT");
@@ -793,7 +926,11 @@ export class SessionStorageV6 {
     this.db.close();
   }
 
-  private writeSession(session: Session, operation: "create" | "upsert" = "upsert"): void {
+  private writeSession(
+    session: Session,
+    operation: "create" | "upsert" | "update" = "upsert",
+    incarnationId = getSessionIncarnationId(session),
+  ): void {
     const startedAt = Date.now();
     const snapshot = session.characterRuntimeSnapshot;
     const runtimePolicy = {
@@ -836,6 +973,7 @@ export class SessionStorageV6 {
     const result = this.db.prepare(`
       INSERT INTO sessions_v6 (
         id,
+        incarnation_id,
         title,
         state,
         session_kind,
@@ -857,10 +995,11 @@ export class SessionStorageV6 {
         updated_at,
         last_active_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ${conflictClause}
     `).run(
       session.id,
+      incarnationId,
       session.taskTitle,
       toV6State(session),
       session.sessionKind,
@@ -939,6 +1078,7 @@ export class SessionStorageV6 {
     const { runtimePolicy, snapshot } = decoded;
     const summary = normalizeSessionSummary({
       id: row.id,
+      incarnationId: row.incarnation_id?.trim() || `legacy:${row.id}`,
       taskTitle: row.title,
       status: typeof runtimePolicy.appStatus === "string" ? runtimePolicy.appStatus : row.state === "active" ? "running" : "idle",
       updatedAt: row.updated_at || row.last_active_at,

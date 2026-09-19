@@ -101,6 +101,18 @@ session 実行後の memory 補助処理を persistence 側へつなぐ。
 
 session 以外の app-wide persistence をまとめて扱う。
 
+Settings credential 更新時の thread reset は collection 全体の置換を使わず、対象行の thread と更新時刻だけを条件付き更新する。Main は ID・incarnation・provider・元 thread、Auxiliary は ID・親 ID・作成時刻・provider・元 thread を照合し、削除済み行や別 thread を上書きしない。Auxiliary の payload / summary は transaction 内で現行値から更新し、本文・draft・他会話を保持する。Main の cache も現行行の対象 field のみ更新し、保存結果から削除済み cache を復活させない。
+
+後続処理に失敗した場合は設定を rollback し、更新成功を確認できた thread だけを同じ identity と更新後 thread を条件に戻す。本文等の並行更新は戻さず、削除・再作成・別 thread への変更はスキップする。書込み結果が不明な例外を成功扱いせず、その対象へ無条件の逆書込みをしない。この場合は thread がリセットされたまま残る可能性がある。設定だけの失敗で collection snapshot を復元しない。
+
+model catalog の import/reset は catalog 本体を revision 単位で置換するが、既存 Session / Auxiliary / Companion の runtime metadata は対象 field の条件付き CAS で更新する。比較には各行の現行 identity と provider runtime metadata を使い、本文・draft・messages・無関係な削除を snapshot で戻さない。成功を確認できた対象だけを同じ identity と更新後 metadata に対して reverse CAS し、書込み結果不明の対象へ無条件の逆書込みはしない。未試行 collection の並行変更は保持する。
+
+外部 provider cleanup は coordinator の外で行い、影響 provider ごとの未完了 operation 数を保持する。同じ provider の cleanup が重なっても、最後の operation が終了するまで新しい Turn admission を拒否する。無関係な provider は拒否しない。
+
+deferred rollback は開始時の storage owner と reset 境界を照合する。全 DB 交換後だけでなく同じ owner での部分 reset 後も、旧 operation の rollback を拒否する。復元できた場合は Session invalidation と Settings / catalog の正本を再配信し、復元失敗は元の失敗と合わせて伝播する。Auxiliary の更新・復元通知は購読元の親 Session ID へ送る。
+
+credential 変更の実行中判定は Main と Auxiliary それぞれの provider に対して行う。Auxiliary が親と異なる provider を選んでいる場合も、実行中または admission 予約中は対象 provider の credential を変更しない。
+
 ### PersistentStoreLifecycleService
 
 - store 初期化

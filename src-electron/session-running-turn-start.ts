@@ -3,6 +3,7 @@ import type { Message, SessionSummary } from "../src/session-state.js";
 
 export type SessionRunningTurnStartInput = {
   sessionId: string;
+  incarnationId?: string;
   expectedMessageCount: number;
   userMessage: Message;
   updatedAt: string;
@@ -16,6 +17,7 @@ export type SessionRunningTurnStartResult = {
 
 export type SessionCharacterAuthoringRuntimeClearInput = {
   sessionId: string;
+  incarnationId?: string;
 };
 
 export type SessionCharacterAuthoringRuntimeClearResult = {

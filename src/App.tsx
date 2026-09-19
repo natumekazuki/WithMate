@@ -102,13 +102,15 @@ import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "./c
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import {
   buildAuxiliaryLaunchProviderItems,
-  buildCreateAuxiliarySessionInput,
   createAuxiliaryLaunchDialogCloseHandler,
   createAuxiliaryLaunchDialogOpenHandler,
   createAuxiliaryLaunchProviderSelectHandler,
+  canCancelAuxiliaryLaunchCreation,
+  resolveAuxiliaryLaunchCreationFeedback,
   resolveAuxiliaryLaunchStartProvider,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
+import { useAuxiliaryCreation } from "./chat/use-auxiliary-creation.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import { useAuxiliaryWorkspace } from "./chat/use-auxiliary-workspace.js";
 import { useConversationComposerState } from "./chat/use-conversation-composer-state.js";
@@ -665,7 +667,6 @@ export default function AgentSessionWindowApp() {
   const activeAuxiliarySession = auxiliaryWorkspace.target === "auxiliary" ? auxiliaryWorkspace.selectedSession : null;
   const auxiliaryBinding = auxiliaryWorkspace.getBinding(auxiliaryWorkspace.selectedId);
   const setActiveAuxiliarySession = auxiliaryBinding.setSession;
-  const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
   const {
     auxiliaryLaunchDialogOpen,
     auxiliaryLaunchProviderId,
@@ -676,6 +677,30 @@ export default function AgentSessionWindowApp() {
     resetAuxiliaryLaunchFeedback,
     setAuxiliaryLaunchStartError,
   } = useAuxiliaryLaunchDialogState();
+  const auxiliaryCreation = useAuxiliaryCreation({
+    parentSessionId: selectedId,
+    api: withmateApi,
+    onCommitted: (session) => {
+      auxiliaryWorkspace.addSession(session);
+      setIsActionDockPinnedExpanded(true);
+      setForceComposerBlockedFeedback(false);
+      closeAuxiliaryLaunchDialog();
+    },
+    onFeedback: (message) => {
+      if (message) setAuxiliaryLaunchStartError(new Error(message));
+      else resetAuxiliaryLaunchFeedback();
+    },
+    onDiagnostic: (request, stage) => {
+      withmateApi?.reportRendererLog({
+        level: stage === "stale-drop" ? "warn" : "info",
+        kind: "renderer.auxiliary-launch",
+        message: "Auxiliary creation projection",
+        correlationId: request.clientRequestId,
+        data: { stage },
+      });
+    },
+  });
+  const { starting: auxiliaryCreationStarting, cancelling: auxiliaryCreationCancelling, status: auxiliaryCreationStatus } = auxiliaryCreation;
   const activityMonitorRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activityMonitorSignatureRef = useRef("");
@@ -684,7 +709,6 @@ export default function AgentSessionWindowApp() {
   const auxiliarySessionMutationRevisionRef = auxiliaryBinding.mutationRevision;
   const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
   const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
-  const auxiliaryCreatePendingRef = useRef(false);
   const mainComposerCaretRef = useRef(0);
   const promptTemplateSelectionRef = useRef({ start: 0, end: 0 });
   const fileRootDiffRequestRevisionRef = useRef(0);
@@ -2654,7 +2678,7 @@ export default function AgentSessionWindowApp() {
           })
         : composerSendability;
       return activeAuxiliarySession
-        ? activeSendability.isSendDisabled || isAuxiliaryActionPending
+        ? activeSendability.isSendDisabled
         : isSendDisabled;
     },
     notifySubmitBlocked: triggerComposerBlockedFeedback,
@@ -3219,14 +3243,17 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
-    canOpen: () => !!selectedSession && !isAuxiliaryActionPending,
+    canOpen: () => !!selectedSession,
     providers: auxiliaryLaunchProviderItems,
     getSelectedProviderId: () => selectedSession?.provider,
-    openAuxiliaryLaunchDialog,
+    openAuxiliaryLaunchDialog: (params) => {
+      openAuxiliaryLaunchDialog(params);
+      const feedback = resolveAuxiliaryLaunchCreationFeedback({ status: auxiliaryCreationStatus ?? "not-found" });
+      if (feedback) setAuxiliaryLaunchStartError(new Error(feedback));
+    },
   });
 
   const handleCloseAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogCloseHandler({
-    canClose: () => !isAuxiliaryActionPending,
     closeAuxiliaryLaunchDialog,
   });
 
@@ -3235,42 +3262,16 @@ export default function AgentSessionWindowApp() {
   });
 
   const handleStartAuxiliarySession = async () => {
-    if (!withmateApi || !selectedSession || auxiliaryCreatePendingRef.current || isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable) {
-      return;
-    }
-    const startProvider = resolveAuxiliaryLaunchStartProvider({
-      providerId: auxiliaryLaunchProviderId,
-    });
+    if (!selectedSession || isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable) return;
+    const startProvider = resolveAuxiliaryLaunchStartProvider({ providerId: auxiliaryLaunchProviderId });
     if (startProvider.status === "blocked") {
       setAuxiliaryLaunchStartError(startProvider.error);
       return;
     }
-    const launchProviderId = startProvider.providerId;
-
-    auxiliaryCreatePendingRef.current = true;
-    resetAuxiliaryLaunchFeedback();
-    setIsAuxiliaryActionPending(true);
-    const parentSessionId = selectedSession.id;
-    try {
-      const saved = await withmateApi.createAuxiliarySession({
-        ...buildCreateAuxiliarySessionInput({
-          parentSessionId,
-          provider: launchProviderId,
-          runtimeSelection: "latest-session",
-        }),
-        clientRequestId: crypto.randomUUID(),
-      });
-      auxiliaryWorkspace.addSession(saved);
-      setIsActionDockPinnedExpanded(true);
-      setForceComposerBlockedFeedback(false);
-      closeAuxiliaryLaunchDialog();
-    } catch (error) {
-      setAuxiliaryLaunchStartError(error);
-    } finally {
-      auxiliaryCreatePendingRef.current = false;
-      setIsAuxiliaryActionPending(false);
-    }
+    await auxiliaryCreation.start(startProvider.providerId);
   };
+
+  const handleCancelAuxiliaryCreation = () => auxiliaryCreation.cancel();
 
   const handleChangeConversationTarget = (target: "main" | "auxiliary") => {
     auxiliaryWorkspace.setTarget(target);
@@ -3373,7 +3374,7 @@ export default function AgentSessionWindowApp() {
   const handleQuoteMessageText = createQuoteMessageTextHandler({
     isBlocked: () => (
       activeAuxiliarySession
-        ? activeAuxiliarySession.runState === "running" || isAuxiliaryActionPending || !!composerBlockedReason
+        ? activeAuxiliarySession.runState === "running" || !!composerBlockedReason
         : isComposerDisabled
     ),
     notifyBlocked: triggerComposerBlockedFeedback,
@@ -3903,7 +3904,7 @@ export default function AgentSessionWindowApp() {
   };
   const renderedComposerSendability = activeAuxiliarySession ? auxiliaryComposerSendability : composerSendability;
   const renderedIsSendDisabled = activeAuxiliarySession
-    ? auxiliaryComposerSendability.isSendDisabled || isAuxiliaryActionPending
+    ? auxiliaryComposerSendability.isSendDisabled
     : isSendDisabled;
   const renderedComposerButtonTitle = activeAuxiliarySession
     ? getComposerSendButtonTitle(auxiliaryComposerSendability)
@@ -3923,7 +3924,7 @@ export default function AgentSessionWindowApp() {
       activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories,
   });
   const canInsertFileTreePathReference = activeAuxiliarySession
-    ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
+    ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason
     : !isComposerDisabled;
   const fileExplorerPane = (
     <SessionFileExplorerPane
@@ -4000,7 +4001,7 @@ export default function AgentSessionWindowApp() {
     <PromptTemplateWorkspace
       api={withmateApi}
       canInsert={activeAuxiliarySession
-        ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
+        ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason
         : !isComposerDisabled}
       onRegisterCloseGuard={registerPromptTemplateCloseGuard}
       onBack={closeCentralPreview}
@@ -4158,7 +4159,7 @@ export default function AgentSessionWindowApp() {
         draft: renderedDraft,
         composerTextareaRef,
         isComposerDisabled: activeAuxiliarySession
-          ? activeAuxiliarySession.runState === "running" || !!composerBlockedReason || isAuxiliaryActionPending
+          ? activeAuxiliarySession.runState === "running" || !!composerBlockedReason
           : isComposerDisabled,
         isSendDisabled: renderedIsSendDisabled,
         composerSendability: renderedComposerSendability,
@@ -4450,7 +4451,7 @@ export default function AgentSessionWindowApp() {
             isProcessing: summary.runState === "running",
           })),
           onAddAuxiliary: handleOpenAuxiliaryLaunchDialog,
-          isAddAuxiliaryDisabled: isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable || isAuxiliaryActionPending,
+          isAddAuxiliaryDisabled: isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable,
           target: auxiliaryWorkspace.target,
           widthRatio: auxiliaryWorkspace.widthRatio,
           scrollToLatestOnSend: appSettings.scrollToLatestOnSend,
@@ -4466,8 +4467,12 @@ export default function AgentSessionWindowApp() {
         providers={auxiliaryLaunchProviderItems}
         selectedProviderId={auxiliaryLaunchProviderId}
         feedback={auxiliaryLaunchFeedback}
-        starting={isAuxiliaryActionPending}
+        starting={auxiliaryCreationStarting}
+        creationInFlight={auxiliaryCreation.inFlight}
+        cancelling={auxiliaryCreationCancelling}
+        canCancelCreation={canCancelAuxiliaryLaunchCreation(auxiliaryCreationStatus)}
         onClose={handleCloseAuxiliaryLaunchDialog}
+        onCancelCreation={() => void handleCancelAuxiliaryCreation()}
         onSelectProvider={handleSelectAuxiliaryLaunchProvider}
         onStart={() => void handleStartAuxiliarySession()}
       />

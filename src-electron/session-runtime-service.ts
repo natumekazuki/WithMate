@@ -54,6 +54,11 @@ function logSessionRunStuckInvestigation(
 }
 
 export type SessionRuntimeServiceDeps = {
+  runSessionAdmissionExclusive?<T>(
+    sessionId: string,
+    operation: () => T | Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T>;
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(
     session: Session,
@@ -68,21 +73,21 @@ export type SessionRuntimeServiceDeps = {
   ): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
-  resolveProviderSession?: (session: Session) => Session;
-  resolveSessionFolderPath?: (sessionId: string) => string;
+  resolveProviderSession?: (session: Session) => Awaitable<Session>;
+  resolveSessionFolderPath?: (sessionId: string) => Awaitable<string>;
   resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
-  getAppSettings: () => AppSettings;
-  resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
+  getAppSettings: () => Awaitable<AppSettings>;
+  resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): Awaitable<{
     snapshot: ModelCatalogSnapshot;
     provider: ModelCatalogProvider;
-  };
+  }>;
   getProviderCodingAdapter(providerId: string | null | undefined): ProviderCodingAdapter;
-  getSessionMemory(session: Session): SessionMemory;
+  getSessionMemory(session: Session): Awaitable<SessionMemory>;
   resolveProjectMemoryEntriesForPrompt(
     session: Session,
     userMessage: string,
     sessionMemory: SessionMemory,
-  ): ProjectMemoryEntry[];
+  ): Awaitable<ProjectMemoryEntry[]>;
   resolveConversationTimingContext?: (
     session: Session,
     observedAt: Date,
@@ -130,7 +135,7 @@ export type SessionRuntimeServiceDeps = {
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   resetProviderSessionThread?(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   /** Persisted Auxiliary threads must not be replaced silently after resume failure. */
-  isAuxiliarySession?(sessionId: string): boolean;
+  isAuxiliarySession?(sessionId: string): Awaitable<boolean>;
   getProviderAgentRuntimeBinding?(input: {
     session: Session;
     provider: ModelCatalogProvider;
@@ -777,6 +782,7 @@ export class SessionRuntimeService {
   private readonly inFlightSessionRuns = new Set<string>();
   private readonly startingSessionRuns = new Set<string>();
   private readonly terminatingSessionRuns = new Map<string, Set<Promise<unknown>>>();
+  private readonly waitingSessionRunAdmissions = new Set<string>();
   private readonly pendingSessionRunCancels = new Set<string>();
   private readonly sessionRunControllers = new Map<string, AbortController>();
 
@@ -832,6 +838,10 @@ export class SessionRuntimeService {
     }
     this.startingSessionRuns.clear();
     this.inFlightSessionRuns.clear();
+    for (const sessionId of this.waitingSessionRunAdmissions) {
+      this.pendingSessionRunCancels.add(sessionId);
+    }
+    this.waitingSessionRunAdmissions.clear();
     this.sessionRunControllers.clear();
   }
 
@@ -840,7 +850,7 @@ export class SessionRuntimeService {
     this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
     const controller = this.sessionRunControllers.get(sessionId);
     if (!controller) {
-      if (this.startingSessionRuns.has(sessionId)) {
+      if (this.waitingSessionRunAdmissions.has(sessionId)) {
         this.pendingSessionRunCancels.add(sessionId);
       }
       return;
@@ -851,27 +861,59 @@ export class SessionRuntimeService {
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
     const { clientRequestId, submitSource } = normalizeSessionTurnCorrelation(request);
-    const alreadyInFlight = this.isRunInFlight(sessionId);
+    const runAbortController = new AbortController();
+    if (this.isRunInFlight(sessionId) || this.waitingSessionRunAdmissions.has(sessionId)) {
+      throw new Error("このセッションはまだ実行中だよ。");
+    }
+    let admitted = false;
+    this.waitingSessionRunAdmissions.add(sessionId);
+    const admit = () => {
+      this.waitingSessionRunAdmissions.delete(sessionId);
+      if (this.isRunInFlight(sessionId)) {
+        throw new Error("このセッションはまだ実行中だよ。");
+      }
+      this.startingSessionRuns.add(sessionId);
+      this.sessionRunControllers.set(sessionId, runAbortController);
+      admitted = true;
+      if (this.pendingSessionRunCancels.delete(sessionId)) {
+        runAbortController.abort();
+      }
+    };
+    const admissionPromise = (async () => {
+      try {
+        if (this.deps.runSessionAdmissionExclusive) {
+          await this.deps.runSessionAdmissionExclusive(sessionId, admit, runAbortController.signal);
+        } else {
+          admit();
+        }
+      } catch (error) {
+        this.waitingSessionRunAdmissions.delete(sessionId);
+        if (!admitted) {
+          this.pendingSessionRunCancels.delete(sessionId);
+        }
+        if (admitted) {
+          this.startingSessionRuns.delete(sessionId);
+          if (this.sessionRunControllers.get(sessionId) === runAbortController) {
+            this.sessionRunControllers.delete(sessionId);
+          }
+          this.pendingSessionRunCancels.delete(sessionId);
+        }
+        throw error;
+      }
+    })();
+    await waitForSetupWithCancelDeadline(
+      admissionPromise,
+      runAbortController.signal,
+      this.deps.providerCancelGraceMs ?? DEFAULT_PROVIDER_CANCEL_GRACE_MS,
+      () => this.waitingSessionRunAdmissions.has(sessionId) || this.startingSessionRuns.has(sessionId),
+      (promise) => this.trackTerminatingSessionRun(sessionId, promise),
+    );
     logSessionRunStuckInvestigation("runtime.requested", {
       sessionId,
       clientRequestId,
       submitSource,
-      isRunInFlight: alreadyInFlight,
+      isRunInFlight: false,
     });
-    if (alreadyInFlight) {
-      logSessionRunStuckInvestigation("runtime.rejected", {
-        sessionId,
-        clientRequestId,
-        reason: "session-run-in-flight",
-      });
-      throw new Error("このセッションはまだ実行中だよ。");
-    }
-    this.startingSessionRuns.add(sessionId);
-    const runAbortController = new AbortController();
-    this.sessionRunControllers.set(sessionId, runAbortController);
-    if (this.pendingSessionRunCancels.delete(sessionId)) {
-      runAbortController.abort();
-    }
     const setupPromise = this.runSessionTurnInternal(sessionId, request, runAbortController);
     try {
       return await waitForSetupWithCancelDeadline(
@@ -943,25 +985,25 @@ export class SessionRuntimeService {
       throw new Error("送信するメッセージが空だよ。");
     }
 
-    const providerSession = this.deps.resolveProviderSession?.(session) ?? session;
+    const providerSession = await (this.deps.resolveProviderSession?.(session) ?? session);
     const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
     throwIfRunCanceled(runAbortController.signal);
     if (composerPreview.errors.length > 0) {
       throw new Error(composerPreview.errors[0] ?? "Failed to resolve attachment.");
     }
 
-    const appSettings = this.deps.getAppSettings();
+    const appSettings = await this.deps.getAppSettings();
     if (!getProviderAppSettings(appSettings, session.provider).enabled) {
       throw new Error("この provider は Settings で無効になっているよ。");
     }
 
-    const { provider } = this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
+    const { provider } = await this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     let agentRuntimeBinding = await Promise.resolve(
       this.deps.getProviderAgentRuntimeBinding?.({ session, provider }) ?? null,
     );
-    const sessionMemory = this.deps.getSessionMemory(session);
-    const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
+    const sessionMemory = await this.deps.getSessionMemory(session);
+    const projectMemoryEntries = await this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
     const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
     const conversationTimingContext = appSettings.conversationTimingEnabled
       ? await Promise.resolve(
@@ -986,7 +1028,7 @@ export class SessionRuntimeService {
     try {
       promptForAudit = providerAdapter.composePrompt({
         session: providerSession,
-        sessionFolderPath: this.deps.resolveSessionFolderPath?.(providerSession.id),
+        sessionFolderPath: await this.deps.resolveSessionFolderPath?.(providerSession.id),
         sessionMemory,
         projectMemoryEntries,
         character: sessionCharacter ?? undefined,
@@ -1161,12 +1203,12 @@ export class SessionRuntimeService {
       await enqueueAuditWrite(nextRunningAuditEntry, nextSignature);
     };
     await syncRunningAuditFromLiveState(initialLiveState);
-    const runProviderTurn = (turnSession: Session) => {
+    const runProviderTurn = async (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
-      const effectiveTurnSession = this.deps.resolveProviderSession?.(turnSession) ?? turnSession;
+      const effectiveTurnSession = await (this.deps.resolveProviderSession?.(turnSession) ?? turnSession);
       const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
-        sessionFolderPath: this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
+        sessionFolderPath: await this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
         sessionMemory,
         projectMemoryEntries,
         providerCatalog: provider,
@@ -1265,7 +1307,7 @@ export class SessionRuntimeService {
           const shouldRetry =
             !didInternalRetry &&
             !isCanceledRunError(error) &&
-            !this.deps.isAuxiliarySession?.(sessionId) &&
+            !(await this.deps.isAuxiliarySession?.(sessionId)) &&
             shouldRetryUnusableThreadRun(error, providerTurnError?.partialResult);
 
           if (!shouldRetry) {

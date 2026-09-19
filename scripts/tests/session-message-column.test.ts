@@ -815,6 +815,28 @@ test("SessionMessageColumn はbookmark controlをnative buttonで操作する", 
     assert.equal(toggledKey, "session-s-0");
     assert.equal(toggledState, true);
     assert.deepEqual(toggledSource, { kind: "session", messageIndex: 0 });
+
+    const unbookmarkedMessages: Message[] = [{ role: "assistant", text: "bookmark target" }];
+    await mounted.rerender({
+      messages: unbookmarkedMessages,
+      messageCollapseTargets: buildMessageCollapseTargets(
+        unbookmarkedMessages,
+        [{ kind: "session", messageIndex: 0 }],
+        messageKeys,
+      ),
+    });
+    const addButton = mounted.container.querySelector<HTMLButtonElement>("button.message-bookmark-toggle");
+    assert.ok(addButton);
+    assert.equal(addButton.getAttribute("aria-label"), "Add bookmark");
+    assert.equal(addButton.getAttribute("aria-pressed"), "false");
+    toggledKey = null;
+    toggledSource = null;
+    await act(async () => {
+      addButton.click();
+    });
+    assert.equal(toggledKey, "session-s-0");
+    assert.equal(toggledState, false);
+    assert.deepEqual(toggledSource, { kind: "session", messageIndex: 0 });
   } finally {
     await mounted.cleanup();
   }

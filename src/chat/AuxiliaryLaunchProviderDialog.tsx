@@ -10,7 +10,11 @@ type AuxiliaryLaunchProviderDialogProps = {
   selectedProviderId: string | null;
   feedback: string;
   starting: boolean;
+  creationInFlight?: boolean;
+  cancelling?: boolean;
+  canCancelCreation?: boolean;
   onClose: () => void;
+  onCancelCreation?: () => void;
   onSelectProvider: (providerId: string) => void;
   onStart: () => void;
 };
@@ -21,7 +25,11 @@ export function AuxiliaryLaunchProviderDialog({
   selectedProviderId,
   feedback,
   starting,
+  creationInFlight = false,
+  cancelling = false,
+  canCancelCreation = false,
   onClose,
+  onCancelCreation,
   onSelectProvider,
   onStart,
 }: AuxiliaryLaunchProviderDialogProps) {
@@ -47,9 +55,14 @@ export function AuxiliaryLaunchProviderDialog({
         <LaunchDialogFooter
           feedback={feedback}
           startButtonLabel={starting ? "Starting..." : "Start Auxiliary"}
-          startButtonDisabled={!selectedProviderId || starting}
+          startButtonDisabled={!selectedProviderId || starting || creationInFlight}
           onStart={onStart}
           startButtonRef={startButtonRef}
+          backButtonLabel="Back"
+          onBack={onClose}
+          cancelButtonLabel={canCancelCreation ? "Cancel creation" : undefined}
+          onCancel={canCancelCreation ? onCancelCreation : undefined}
+          cancelButtonDisabled={cancelling}
         />
       }
     >

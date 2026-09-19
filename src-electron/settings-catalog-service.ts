@@ -6,13 +6,12 @@ import {
   normalizeAppSettings,
   type AppSettings,
 } from "../src/provider-settings-state.js";
-import { type Session } from "../src/session-state.js";
+import { getSessionIncarnationId, type Session } from "../src/session-state.js";
 import {
   coerceModelSelection,
   getProviderCatalog,
   parseModelCatalogDocument,
   type ModelCatalogDocument,
-  type ModelReasoningEffort,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import {
@@ -28,8 +27,16 @@ import type { AuxiliarySession } from "../src/auxiliary-session-state.js";
 import type { CompanionSession } from "../src/companion-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
+import type { SessionThreadPatchInput } from "./session-storage-v6.js";
+import type { AuxiliarySessionThreadPatchInput } from "./auxiliary-session-storage.js";
+import type { AuxiliarySessionRuntimeMetadataPatchInput } from "./auxiliary-session-storage.js";
+import type { ProviderRuntimeMetadata, ProviderRuntimeMetadataPatch } from "./provider-runtime-metadata-patch.js";
 
 export type SettingsCatalogServiceDeps = {
+  /** Captures the storage owner/generation used by a deferred operation. */
+  captureStorageIdentity?: () => unknown;
+  /** Returns false when the storage owner/generation has been replaced. */
+  isStorageIdentityCurrent?: (identity: unknown) => boolean;
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
   hasInFlightSessionRuns(): boolean;
   isSessionRunInFlight(sessionId: string): boolean;
@@ -37,15 +44,15 @@ export type SettingsCatalogServiceDeps = {
   listSessions(): Awaitable<Session[]>;
   listAuxiliarySessions(): Awaitable<AuxiliarySession[]>;
   listCompanionSessions?: () => Awaitable<CompanionSession[]>;
-  getAppSettings(): AppSettings;
+  getAppSettings(): Awaitable<AppSettings>;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
-  getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null;
-  ensureModelCatalogSeeded(): ModelCatalogSnapshot;
+  getModelCatalog(revision?: number | null): Awaitable<ModelCatalogSnapshot | null>;
+  ensureModelCatalogSeeded(): Awaitable<ModelCatalogSnapshot>;
   importModelCatalogDocument(
     document: ModelCatalogDocument,
     source: "bundled" | "imported" | "rollback",
-  ): ModelCatalogSnapshot;
-  exportModelCatalogDocument(revision?: number | null): ModelCatalogDocument | null;
+  ): Awaitable<ModelCatalogSnapshot>;
+  exportModelCatalogDocument(revision?: number | null): Awaitable<ModelCatalogDocument | null>;
   replaceAllSessions(
     nextSessions: Session[],
     options?: {
@@ -54,13 +61,26 @@ export type SettingsCatalogServiceDeps = {
     },
   ): Awaitable<Session[]>;
   replaceAuxiliarySessions(nextSessions: AuxiliarySession[]): Awaitable<AuxiliarySession[]>;
+  updateSessionRuntimeMetadataIfMatches(input: {
+    sessionId: string;
+    incarnationId: string;
+    expected: ProviderRuntimeMetadata;
+    next: ProviderRuntimeMetadata;
+  }): Awaitable<Session | null>;
+  updateAuxiliarySessionRuntimeMetadataIfMatches(input: AuxiliarySessionRuntimeMetadataPatchInput): Awaitable<AuxiliarySession | null>;
+  updateSessionThreadIfMatches(input: SessionThreadPatchInput): Awaitable<Session | null>;
+  updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): Awaitable<AuxiliarySession | null>;
   replaceCompanionSessions?: (nextSessions: CompanionSession[]) => Awaitable<CompanionSession[]>;
+  updateCompanionRuntimeMetadataIfMatches?: (
+    sessionId: string,
+    input: ProviderRuntimeMetadataPatch,
+  ) => Awaitable<CompanionSession | null>;
   clearProviderQuotaTelemetry(providerId: string): void;
   clearSessionContextTelemetry(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   clearAuditLogs(): Awaitable<void>;
   resetAppSettings(): Awaitable<AppSettings>;
-  resetModelCatalogToBundled(): ModelCatalogSnapshot;
+  resetModelCatalogToBundled(): Awaitable<ModelCatalogSnapshot>;
   clearProjectMemories(): void;
   resetSessionRuntime(): void;
   clearAllProviderQuotaTelemetry(): void;
@@ -72,8 +92,8 @@ export type SettingsCatalogServiceDeps = {
   recreateDatabaseFile(): Promise<ModelCatalogSnapshot>;
   applyAppSettingsSideEffects?: (settings: AppSettings) => void;
   broadcastSessions(sessionIds?: Iterable<string>): void;
-  broadcastAppSettings(settings?: AppSettings): void;
-  broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): void;
+  broadcastAppSettings(settings?: AppSettings): Awaitable<void>;
+  broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): Awaitable<void>;
 };
 
 function getProvidersWithApiKeyChange(previousSettings: AppSettings, nextSettings: AppSettings): string[] {
@@ -88,15 +108,6 @@ function getProvidersWithApiKeyChange(previousSettings: AppSettings, nextSetting
       getProviderAppSettings(nextSettings, providerId).apiKey.trim(),
   );
 }
-
-type ProviderRuntimeMetadata = {
-  provider: string;
-  catalogRevision: number | null;
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  threadId: string;
-  updatedAt: string;
-};
 
 function migrateProviderRuntimeMetadata<T extends ProviderRuntimeMetadata>(session: T, snapshot: ModelCatalogSnapshot): T {
   const provider = getProviderCatalog(snapshot.providers, session.provider);
@@ -121,6 +132,17 @@ function migrateProviderRuntimeMetadata<T extends ProviderRuntimeMetadata>(sessi
   };
 }
 
+function getProviderRuntimeMetadata(session: ProviderRuntimeMetadata): ProviderRuntimeMetadata {
+  return {
+    provider: session.provider,
+    catalogRevision: session.catalogRevision,
+    model: session.model,
+    reasoningEffort: session.reasoningEffort,
+    threadId: session.threadId,
+    updatedAt: session.updatedAt,
+  };
+}
+
 function migrateSessionToCatalog(session: Session, snapshot: ModelCatalogSnapshot): Session {
   return migrateProviderRuntimeMetadata(session, snapshot);
 }
@@ -133,112 +155,124 @@ function migrateCompanionSessionToCatalog(session: CompanionSession, snapshot: M
   return migrateProviderRuntimeMetadata(session, snapshot);
 }
 
-function collectRuntimeThreadResets<T extends ProviderRuntimeMetadata & { id: string }>(
-  previous: T[],
-  next: T[],
-): { threadResetIds: string[]; invalidatedIds: string[] } {
-  const threadResetIds: string[] = [];
-  const invalidatedIds: string[] = [];
-
-  for (let index = 0; index < next.length; index += 1) {
-    const previousSession = previous[index];
-    const nextSession = next[index];
-    if (!previousSession || !nextSession) {
-      continue;
-    }
-    if (previousSession.threadId !== nextSession.threadId) {
-      threadResetIds.push(nextSession.id);
-    }
-    if (
-      previousSession.provider !== nextSession.provider ||
-      previousSession.model !== nextSession.model ||
-      previousSession.reasoningEffort !== nextSession.reasoningEffort ||
-      previousSession.catalogRevision !== nextSession.catalogRevision ||
-      previousSession.threadId !== nextSession.threadId
-    ) {
-      invalidatedIds.push(nextSession.id);
-    }
-  }
-
-  return { threadResetIds, invalidatedIds };
-}
+type DeferredProviderCleanup<T> = {
+  value: T;
+  cleanup(): Promise<void>;
+  rollback(): Promise<void>;
+  affectedProviders: readonly string[];
+};
 
 export class SettingsCatalogService {
+  private readonly affectedProviders = new Map<string, number>();
+  private rollbackEpoch = 0;
+
   constructor(private readonly deps: SettingsCatalogServiceDeps) {}
 
-  getAppSettings(): AppSettings {
-    return this.deps.getAppSettings();
+  private captureStorageIdentity(): unknown {
+    return this.deps.captureStorageIdentity?.();
   }
 
-  getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null {
-    return this.deps.getModelCatalog(revision);
+  private assertStorageIdentityCurrent(identity: unknown): void {
+    if (this.deps.isStorageIdentityCurrent && !this.deps.isStorageIdentityCurrent(identity)) {
+      throw new Error("storage が交換されたため deferred rollback を中止したよ。");
+    }
   }
 
-  exportModelCatalogDocument(revision?: number | null): ModelCatalogDocument | null {
-    return this.deps.exportModelCatalogDocument(revision);
+  private assertRollbackEpochCurrent(epoch: number): void {
+    if (epoch !== this.rollbackEpoch) {
+      throw new Error("reset が開始されたため deferred rollback を中止したよ。");
+    }
+  }
+
+  private acquireProvider(providerId: string): void {
+    this.affectedProviders.set(providerId, (this.affectedProviders.get(providerId) ?? 0) + 1);
+  }
+
+  private releaseProvider(providerId: string): void {
+    const count = this.affectedProviders.get(providerId) ?? 0;
+    if (count <= 1) {
+      this.affectedProviders.delete(providerId);
+    } else {
+      this.affectedProviders.set(providerId, count - 1);
+    }
+  }
+
+  assertProviderAvailableForTurn(providerId: string): void {
+    if ((this.affectedProviders.get(providerId) ?? 0) > 0) {
+      throw new Error("provider の設定反映中は新しい session を開始できないよ。少し待ってね。");
+    }
+  }
+
+  async getAppSettings(): Promise<AppSettings> {
+    return await this.deps.getAppSettings();
+  }
+
+  async getModelCatalog(revision?: number | null): Promise<ModelCatalogSnapshot | null> {
+    return await this.deps.getModelCatalog(revision);
+  }
+
+  async exportModelCatalogDocument(revision?: number | null): Promise<ModelCatalogDocument | null> {
+    return await this.deps.exportModelCatalogDocument(revision);
   }
 
   async updateAppSettings(nextSettingsInput: AppSettings): Promise<AppSettings> {
-    return this.deps.runProviderRuntimeOperationExclusive(
+    const operation = await this.deps.runProviderRuntimeOperationExclusive(
       () => this.updateAppSettingsExclusive(nextSettingsInput),
     );
+    try {
+      await operation.cleanup();
+      return operation.value;
+    } catch (error) {
+      try {
+        await this.deps.runProviderRuntimeOperationExclusive(() => operation.rollback());
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], "app settings の cleanup 後 rollback に失敗したよ。");
+      }
+      throw error;
+    } finally {
+      for (const providerId of operation.affectedProviders) {
+        this.releaseProvider(providerId);
+      }
+    }
   }
 
-  private async updateAppSettingsExclusive(nextSettingsInput: AppSettings): Promise<AppSettings> {
-    const previousSettings = this.deps.getAppSettings();
+  private async updateAppSettingsExclusive(
+    nextSettingsInput: AppSettings,
+  ): Promise<DeferredProviderCleanup<AppSettings>> {
+    const previousSettings = await this.deps.getAppSettings();
+    const storageIdentity = this.captureStorageIdentity();
+    const rollbackEpoch = this.rollbackEpoch;
     const nextSettings = normalizeAppSettings(nextSettingsInput);
     const providersWithApiKeyChange = getProvidersWithApiKeyChange(previousSettings, nextSettings);
+    const previousSessions = await this.deps.listSessions();
+    const previousAuxiliarySessions = await this.deps.listAuxiliarySessions();
 
     if (providersWithApiKeyChange.length > 0) {
-      const blockedSessions = (await this.deps.listSessions()).filter(
+      const hasBlockedSession = previousSessions.some(
         (session) =>
           providersWithApiKeyChange.includes(session.provider) &&
           (this.deps.isSessionRunInFlight(session.id) || this.deps.isRunningSession(session)),
       );
-      if (blockedSessions.length > 0) {
+      const hasBlockedAuxiliary = previousAuxiliarySessions.some((session) =>
+        providersWithApiKeyChange.includes(session.provider) &&
+        (this.deps.isSessionRunInFlight(session.id) || session.runState === "running"),
+      );
+      if (hasBlockedSession || hasBlockedAuxiliary) {
         throw new Error("Coding Agent credential を変更する provider に実行中の session があるため、完了まで待ってね。");
       }
     }
 
-    const previousSessions = await this.deps.listSessions();
-    const previousAuxiliarySessions = await this.deps.listAuxiliarySessions();
     const providersWithApiKeyChangeSet = new Set(providersWithApiKeyChange);
-    const nextSessions = previousSessions.map((session) => {
-      if (!providersWithApiKeyChangeSet.has(session.provider) || !session.threadId) {
-        return session;
-      }
-
-      return {
-        ...session,
-        threadId: "",
-        updatedAt: currentTimestampLabel(),
-      };
-    });
-    const nextAuxiliarySessions = previousAuxiliarySessions.map((session) => {
-      if (!providersWithApiKeyChangeSet.has(session.provider) || !session.threadId) {
-        return session;
-      }
-
-      return {
-        ...session,
-        threadId: "",
-        updatedAt: currentTimestampLabel(),
-      };
-    });
-    const providerInvalidatedSessionIds = previousSessions
-      .filter((session) => providersWithApiKeyChangeSet.has(session.provider))
-      .map((session) => session.id);
-    const providerInvalidatedAuxiliarySessionIds = previousAuxiliarySessions
-      .filter((session) => providersWithApiKeyChangeSet.has(session.provider))
-      .map((session) => session.id);
-    const threadResetSessionIds = nextSessions
-      .filter((session, index) => session.threadId !== previousSessions[index]?.threadId)
-      .map((session) => session.id);
-    const threadResetAuxiliarySessionIds = nextAuxiliarySessions
-      .filter((session, index) => session.threadId !== previousAuxiliarySessions[index]?.threadId)
-      .map((session) => session.id);
-    const hasSessionThreadReset = threadResetSessionIds.length > 0;
-    const hasAuxiliarySessionThreadReset = threadResetAuxiliarySessionIds.length > 0;
+    const sessionThreadResetTargets = previousSessions.filter((session) =>
+      providersWithApiKeyChangeSet.has(session.provider) && session.threadId
+    );
+    const auxiliaryThreadResetTargets = previousAuxiliarySessions.filter((session) =>
+      providersWithApiKeyChangeSet.has(session.provider) && session.threadId
+    );
+    const appliedSessionPatches: Array<{ previous: Session; current: Session }> = [];
+    const appliedAuxiliaryPatches: Array<{ previous: AuxiliarySession; current: AuxiliarySession }> = [];
+    const updateSessionThreadIfMatches = this.deps.updateSessionThreadIfMatches;
+    const updateAuxiliarySessionThreadIfMatches = this.deps.updateAuxiliarySessionThreadIfMatches;
 
     let savedSettings: AppSettings | null = null;
     try {
@@ -256,37 +290,123 @@ export class SettingsCatalogService {
           this.deps.clearSessionContextTelemetry(session.id);
         }
       }
-      if (hasSessionThreadReset) {
-        await this.deps.replaceAllSessions(nextSessions, {
-          broadcast: false,
-          invalidateSessionIds: providerInvalidatedSessionIds,
+      for (const previous of sessionThreadResetTargets) {
+        const current = await updateSessionThreadIfMatches({
+          sessionId: previous.id,
+          incarnationId: getSessionIncarnationId(previous),
+          provider: previous.provider,
+          expectedThreadId: previous.threadId,
+          nextThreadId: "",
+          updatedAt: currentTimestampLabel(),
         });
-        this.deps.broadcastSessions(threadResetSessionIds);
-      } else {
-        for (const sessionId of providerInvalidatedSessionIds) {
-          const sessionProvider = previousSessions.find((session) => session.id === sessionId)?.provider ?? null;
-          await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+        if (current) {
+          appliedSessionPatches.push({ previous, current });
         }
       }
-      if (hasAuxiliarySessionThreadReset) {
-        await this.deps.replaceAuxiliarySessions(nextAuxiliarySessions);
+      for (const previous of auxiliaryThreadResetTargets) {
+        const current = await updateAuxiliarySessionThreadIfMatches({
+          auxiliarySessionId: previous.id,
+          parentSessionId: previous.parentSessionId,
+          provider: previous.provider,
+          expectedThreadId: previous.threadId,
+          nextThreadId: "",
+          updatedAt: currentTimestampLabel(),
+          createdAt: previous.createdAt,
+        });
+        if (current) {
+          appliedAuxiliaryPatches.push({ previous, current });
+        }
       }
-      for (const sessionId of providerInvalidatedAuxiliarySessionIds) {
-        const sessionProvider = previousAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
-        await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+      if (appliedSessionPatches.length > 0 || appliedAuxiliaryPatches.length > 0) {
+        this.deps.broadcastSessions(new Set([
+          ...appliedSessionPatches.map(({ current }) => current.id),
+          ...appliedAuxiliaryPatches.map(({ current }) => current.parentSessionId),
+        ]));
       }
-      const currentSettings = this.deps.getAppSettings();
-      this.deps.broadcastAppSettings(currentSettings);
-      return currentSettings;
+      const currentSettings = await this.deps.getAppSettings();
+      await this.deps.broadcastAppSettings(currentSettings);
+      const cleanupTargets = [
+        ...previousSessions.filter((session) => providersWithApiKeyChangeSet.has(session.provider)),
+        ...previousAuxiliarySessions.filter((session) => providersWithApiKeyChangeSet.has(session.provider)),
+      ];
+      const affectedProviders = Array.from(providersWithApiKeyChangeSet);
+      for (const providerId of affectedProviders) {
+        this.acquireProvider(providerId);
+      }
+      return {
+        value: currentSettings,
+        affectedProviders,
+        cleanup: async () => {
+          for (const session of cleanupTargets) {
+            await this.deps.invalidateProviderSessionThread(session.provider, session.id);
+          }
+        },
+        rollback: async () => {
+          this.assertRollbackEpochCurrent(rollbackEpoch);
+          this.assertStorageIdentityCurrent(storageIdentity);
+          const current = await this.deps.getAppSettings();
+          if (JSON.stringify(current) !== JSON.stringify(savedSettings)) {
+            throw new Error("cleanup 後に app settings が並行変更されたため rollback を中止したよ。");
+          }
+          await this.deps.updateAppSettings(previousSettings);
+          for (const { previous, current: applied } of appliedSessionPatches) {
+            await updateSessionThreadIfMatches({
+              sessionId: previous.id,
+              incarnationId: getSessionIncarnationId(previous),
+              provider: previous.provider,
+              expectedThreadId: applied.threadId,
+              nextThreadId: previous.threadId,
+              updatedAt: currentTimestampLabel(),
+            });
+          }
+          for (const { previous, current: applied } of appliedAuxiliaryPatches) {
+            await updateAuxiliarySessionThreadIfMatches({
+              auxiliarySessionId: previous.id,
+              parentSessionId: previous.parentSessionId,
+              provider: previous.provider,
+              expectedThreadId: applied.threadId,
+              nextThreadId: previous.threadId,
+              updatedAt: currentTimestampLabel(),
+              createdAt: previous.createdAt,
+            });
+          }
+          this.deps.broadcastSessions(new Set([
+            ...appliedSessionPatches.map(({ previous }) => previous.id),
+            ...appliedAuxiliaryPatches.map(({ previous }) => previous.parentSessionId),
+          ]));
+          await this.deps.broadcastAppSettings(previousSettings);
+        },
+      };
     } catch (error) {
       if (!savedSettings) {
         throw error;
       }
 
       try {
+        this.assertRollbackEpochCurrent(rollbackEpoch);
+        this.assertStorageIdentityCurrent(storageIdentity);
         await this.deps.updateAppSettings(previousSettings);
-        await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
-        await this.deps.replaceAuxiliarySessions(previousAuxiliarySessions);
+        for (const { previous, current } of appliedSessionPatches) {
+          await updateSessionThreadIfMatches({
+            sessionId: previous.id,
+            incarnationId: getSessionIncarnationId(previous),
+            provider: previous.provider,
+            expectedThreadId: current.threadId,
+            nextThreadId: previous.threadId,
+            updatedAt: currentTimestampLabel(),
+          });
+        }
+        for (const { previous, current } of appliedAuxiliaryPatches) {
+          await updateAuxiliarySessionThreadIfMatches({
+            auxiliarySessionId: previous.id,
+            parentSessionId: previous.parentSessionId,
+            provider: previous.provider,
+            expectedThreadId: current.threadId,
+            nextThreadId: previous.threadId,
+            updatedAt: currentTimestampLabel(),
+            createdAt: previous.createdAt,
+          });
+        }
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
@@ -299,18 +419,37 @@ export class SettingsCatalogService {
   }
 
   async importModelCatalogDocument(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot> {
-    return this.deps.runProviderRuntimeOperationExclusive(
+    const operation = await this.deps.runProviderRuntimeOperationExclusive(
       () => this.importModelCatalogDocumentExclusive(document),
     );
+    try {
+      await operation.cleanup();
+      return operation.value;
+    } catch (error) {
+      try {
+        await this.deps.runProviderRuntimeOperationExclusive(() => operation.rollback());
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], "model catalog の cleanup 後 rollback に失敗したよ。");
+      }
+      throw error;
+    } finally {
+      for (const providerId of operation.affectedProviders) {
+        this.releaseProvider(providerId);
+      }
+    }
   }
 
-  private async importModelCatalogDocumentExclusive(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot> {
+  private async importModelCatalogDocumentExclusive(
+    document: ModelCatalogDocument,
+  ): Promise<DeferredProviderCleanup<ModelCatalogSnapshot>> {
     if (this.deps.hasInFlightSessionRuns()) {
       throw new Error("session 実行中は model catalog を読み込めないよ。");
     }
 
-    const previousSnapshot = this.deps.getModelCatalog(null) ?? this.deps.ensureModelCatalogSeeded();
-    const previousCatalogDocument = this.deps.exportModelCatalogDocument(previousSnapshot.revision);
+    const previousSnapshot = await this.deps.getModelCatalog(null) ?? await this.deps.ensureModelCatalogSeeded();
+    const storageIdentity = this.captureStorageIdentity();
+    const rollbackEpoch = this.rollbackEpoch;
+    const previousCatalogDocument = await this.deps.exportModelCatalogDocument(previousSnapshot.revision);
     if (!previousCatalogDocument) {
       throw new Error("rollback 用の model catalog を取得できなかったよ。");
     }
@@ -330,8 +469,11 @@ export class SettingsCatalogService {
     }
 
     let importedSnapshot: ModelCatalogSnapshot | null = null;
+    const appliedSessions: Array<{ previous: Session; current: Session }> = [];
+    const appliedAuxiliarySessions: Array<{ previous: AuxiliarySession; current: AuxiliarySession }> = [];
+    const appliedCompanionSessions: Array<{ previous: CompanionSession; current: CompanionSession }> = [];
     try {
-      importedSnapshot = this.deps.importModelCatalogDocument(normalizedDocument, "imported");
+      importedSnapshot = await this.deps.importModelCatalogDocument(normalizedDocument, "imported");
       const nextSnapshot = importedSnapshot;
       const migratedSessions = previousSessions.map((session) => migrateSessionToCatalog(session, nextSnapshot));
       const migratedAuxiliarySessions = previousAuxiliarySessions.map((session) =>
@@ -340,42 +482,162 @@ export class SettingsCatalogService {
       const migratedCompanionSessions = previousCompanionSessions.map((session) =>
         migrateCompanionSessionToCatalog(session, nextSnapshot),
       );
-      const { invalidatedIds: invalidatedSessionIds } = collectRuntimeThreadResets(previousSessions, migratedSessions);
-      const { invalidatedIds: invalidatedAuxiliarySessionIds } = collectRuntimeThreadResets(
-        previousAuxiliarySessions,
-        migratedAuxiliarySessions,
-      );
-      const { invalidatedIds: invalidatedCompanionSessionIds } = collectRuntimeThreadResets(
-        previousCompanionSessions,
-        migratedCompanionSessions,
-      );
-      await this.deps.replaceAllSessions(migratedSessions, {
-        broadcast: false,
-        invalidateSessionIds: invalidatedSessionIds,
-      });
-      await this.deps.replaceAuxiliarySessions(migratedAuxiliarySessions);
-      await this.deps.replaceCompanionSessions?.(migratedCompanionSessions);
-      for (const sessionId of invalidatedAuxiliarySessionIds) {
-        const sessionProvider = previousAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
-        await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+      for (let index = 0; index < previousSessions.length; index += 1) {
+        const previous = previousSessions[index];
+        const next = migratedSessions[index];
+        if (!previous || !next) {
+          continue;
+        }
+        const current = await this.deps.updateSessionRuntimeMetadataIfMatches({
+          sessionId: previous.id,
+          incarnationId: getSessionIncarnationId(previous),
+          expected: getProviderRuntimeMetadata(previous),
+          next: getProviderRuntimeMetadata(next),
+        });
+        if (current) {
+          appliedSessions.push({ previous, current });
+        }
       }
-      for (const sessionId of invalidatedCompanionSessionIds) {
-        const sessionProvider = previousCompanionSessions.find((session) => session.id === sessionId)?.provider ?? null;
-        await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+      for (let index = 0; index < previousAuxiliarySessions.length; index += 1) {
+        const previous = previousAuxiliarySessions[index];
+        const next = migratedAuxiliarySessions[index];
+        if (!previous || !next) {
+          continue;
+        }
+        const current = await this.deps.updateAuxiliarySessionRuntimeMetadataIfMatches({
+          auxiliarySessionId: previous.id,
+          parentSessionId: previous.parentSessionId,
+          createdAt: previous.createdAt,
+          expected: getProviderRuntimeMetadata(previous),
+          next: getProviderRuntimeMetadata(next),
+        });
+        if (current) {
+          appliedAuxiliarySessions.push({ previous, current });
+        }
       }
-      this.deps.broadcastSessions(migratedSessions.map((session) => session.id));
-      this.deps.broadcastModelCatalog(nextSnapshot);
-      return nextSnapshot;
+      if (this.deps.updateCompanionRuntimeMetadataIfMatches) {
+        for (let index = 0; index < previousCompanionSessions.length; index += 1) {
+          const previous = previousCompanionSessions[index];
+          const next = migratedCompanionSessions[index];
+          if (!previous || !next) {
+            continue;
+          }
+          const current = await this.deps.updateCompanionRuntimeMetadataIfMatches(
+            previous.id,
+            { expected: getProviderRuntimeMetadata(previous), next: getProviderRuntimeMetadata(next) },
+          );
+          if (current) {
+            appliedCompanionSessions.push({ previous, current });
+          }
+        }
+      }
+      this.deps.broadcastSessions(new Set([
+        ...appliedSessions.map(({ current }) => current.id),
+        ...appliedAuxiliarySessions.map(({ current }) => current.parentSessionId),
+        ...appliedCompanionSessions.map(({ current }) => current.id),
+      ]));
+      await this.deps.broadcastModelCatalog(nextSnapshot);
+      const cleanupTargets = [
+        ...appliedSessions,
+        ...appliedAuxiliarySessions,
+        ...appliedCompanionSessions,
+      ].filter(({ previous, current }) =>
+        previous.provider !== current.provider || previous.model !== current.model ||
+        previous.reasoningEffort !== current.reasoningEffort || previous.catalogRevision !== current.catalogRevision ||
+        previous.threadId !== current.threadId,
+      );
+      const affectedProviders = Array.from(new Set([
+        ...previousSessions.map((session) => session.provider),
+        ...previousAuxiliarySessions.map((session) => session.provider),
+        ...previousCompanionSessions.map((session) => session.provider),
+        ...normalizedDocument.providers.map((provider) => provider.id),
+      ]));
+      for (const providerId of affectedProviders) {
+        this.acquireProvider(providerId);
+      }
+      return {
+        value: nextSnapshot,
+        affectedProviders,
+        cleanup: async () => {
+          for (const { previous } of cleanupTargets) {
+            await this.deps.invalidateProviderSessionThread(previous.provider, previous.id);
+          }
+        },
+        rollback: async () => {
+          this.assertRollbackEpochCurrent(rollbackEpoch);
+          this.assertStorageIdentityCurrent(storageIdentity);
+          const currentSnapshot = await this.deps.getModelCatalog(null);
+          if (!currentSnapshot || currentSnapshot.revision !== nextSnapshot.revision) {
+            throw new Error("cleanup 後に model catalog が並行変更されたため rollback を中止したよ。");
+          }
+          const restoredSnapshot = await this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
+          for (const { previous, current } of appliedSessions) {
+            await this.deps.updateSessionRuntimeMetadataIfMatches({
+              sessionId: previous.id,
+              incarnationId: getSessionIncarnationId(previous),
+              expected: getProviderRuntimeMetadata(current),
+              next: getProviderRuntimeMetadata(previous),
+            });
+          }
+          for (const { previous, current } of appliedAuxiliarySessions) {
+            await this.deps.updateAuxiliarySessionRuntimeMetadataIfMatches({
+              auxiliarySessionId: previous.id,
+              parentSessionId: previous.parentSessionId,
+              createdAt: previous.createdAt,
+              expected: getProviderRuntimeMetadata(current),
+              next: getProviderRuntimeMetadata(previous),
+            });
+          }
+          if (this.deps.updateCompanionRuntimeMetadataIfMatches) {
+            for (const { previous, current } of appliedCompanionSessions) {
+              await this.deps.updateCompanionRuntimeMetadataIfMatches(
+                previous.id,
+                { expected: getProviderRuntimeMetadata(current), next: getProviderRuntimeMetadata(previous) },
+              );
+            }
+          }
+          this.deps.broadcastSessions(new Set([
+            ...appliedSessions.map(({ previous }) => previous.id),
+            ...appliedAuxiliarySessions.map(({ previous }) => previous.parentSessionId),
+            ...appliedCompanionSessions.map(({ previous }) => previous.id),
+          ]));
+          await this.deps.broadcastModelCatalog(restoredSnapshot);
+        },
+      };
     } catch (error) {
       if (!importedSnapshot) {
         throw error;
       }
 
       try {
-        this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
-        await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
-        await this.deps.replaceAuxiliarySessions(previousAuxiliarySessions);
-        await this.deps.replaceCompanionSessions?.(previousCompanionSessions);
+        this.assertRollbackEpochCurrent(rollbackEpoch);
+        this.assertStorageIdentityCurrent(storageIdentity);
+        await this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
+        for (const { previous, current } of appliedSessions) {
+          await this.deps.updateSessionRuntimeMetadataIfMatches({
+            sessionId: previous.id,
+            incarnationId: getSessionIncarnationId(previous),
+            expected: getProviderRuntimeMetadata(current),
+            next: getProviderRuntimeMetadata(previous),
+          });
+        }
+        for (const { previous, current } of appliedAuxiliarySessions) {
+          await this.deps.updateAuxiliarySessionRuntimeMetadataIfMatches({
+            auxiliarySessionId: previous.id,
+            parentSessionId: previous.parentSessionId,
+            createdAt: previous.createdAt,
+            expected: getProviderRuntimeMetadata(current),
+            next: getProviderRuntimeMetadata(previous),
+          });
+        }
+        if (this.deps.updateCompanionRuntimeMetadataIfMatches) {
+          for (const { previous, current } of appliedCompanionSessions) {
+            await this.deps.updateCompanionRuntimeMetadataIfMatches(
+              previous.id,
+              { expected: getProviderRuntimeMetadata(current), next: getProviderRuntimeMetadata(previous) },
+            );
+          }
+        }
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
@@ -406,6 +668,9 @@ export class SettingsCatalogService {
     if (resetTargets.length === 0) {
       throw new Error("初期化対象が選ばれていないよ。");
     }
+    // Invalidate deferred rollbacks only after reset validation and immediately
+    // before the first reset mutation. This also covers app-settings-only ABA.
+    this.rollbackEpoch += 1;
     const previousAuxiliarySessionIds = resetTargets.includes("sessions")
       ? (await this.deps.listAuxiliarySessions()).map((session) => session.id)
       : [];
@@ -429,7 +694,7 @@ export class SettingsCatalogService {
       await this.deps.invalidateAllProviderSessionThreads();
       this.deps.clearAllProviderQuotaTelemetry();
       this.deps.clearAllSessionContextTelemetry();
-      appSettings = this.deps.getAppSettings();
+      appSettings = await this.deps.getAppSettings();
     } else {
       const appliedTargets = new Set<ResetAppDatabaseTarget>(resetTargets);
 
@@ -448,7 +713,7 @@ export class SettingsCatalogService {
         this.deps.clearAllProviderQuotaTelemetry();
       }
       if (appliedTargets.has("modelCatalog")) {
-        const resetSnapshot = this.deps.resetModelCatalogToBundled();
+        const resetSnapshot = await this.deps.resetModelCatalogToBundled();
         if (!appliedTargets.has("sessions")) {
           const previousCatalogSessions = await this.deps.listSessions();
           const previousCatalogAuxiliarySessions = await this.deps.listAuxiliarySessions();
@@ -460,47 +725,76 @@ export class SettingsCatalogService {
           const migratedCompanionSessions = previousCatalogCompanionSessions.map((session) =>
             migrateCompanionSessionToCatalog(session, resetSnapshot),
           );
-          const { invalidatedIds: invalidatedSessionIds } = collectRuntimeThreadResets(
-            previousCatalogSessions,
-            migratedSessions,
-          );
-          const { invalidatedIds: invalidatedAuxiliarySessionIds } = collectRuntimeThreadResets(
-            previousCatalogAuxiliarySessions,
-            migratedAuxiliarySessions,
-          );
-          const { invalidatedIds: invalidatedCompanionSessionIds } = collectRuntimeThreadResets(
-            previousCatalogCompanionSessions,
-            migratedCompanionSessions,
-          );
-          await this.deps.replaceAllSessions(migratedSessions, {
-            broadcast: false,
-            invalidateSessionIds: invalidatedSessionIds,
-          });
-          await this.deps.replaceAuxiliarySessions(migratedAuxiliarySessions);
-          await this.deps.replaceCompanionSessions?.(migratedCompanionSessions);
-          for (const sessionId of invalidatedAuxiliarySessionIds) {
-            const sessionProvider =
-              previousCatalogAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
-            await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+          for (let index = 0; index < previousCatalogSessions.length; index += 1) {
+            const previous = previousCatalogSessions[index];
+            const next = migratedSessions[index];
+            if (!previous || !next) {
+              continue;
+            }
+            const current = await this.deps.updateSessionRuntimeMetadataIfMatches({
+              sessionId: previous.id,
+              incarnationId: getSessionIncarnationId(previous),
+              expected: getProviderRuntimeMetadata(previous),
+              next: getProviderRuntimeMetadata(next),
+            });
+            if (current) {
+              if (previous.provider !== current.provider || previous.model !== current.model ||
+                  previous.reasoningEffort !== current.reasoningEffort || previous.catalogRevision !== current.catalogRevision ||
+                  previous.threadId !== current.threadId) {
+                await this.deps.invalidateProviderSessionThread(previous.provider, previous.id);
+              }
+            }
           }
-          for (const sessionId of invalidatedCompanionSessionIds) {
-            const sessionProvider =
-              previousCatalogCompanionSessions.find((session) => session.id === sessionId)?.provider ?? null;
-            await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+          for (let index = 0; index < previousCatalogAuxiliarySessions.length; index += 1) {
+            const previous = previousCatalogAuxiliarySessions[index];
+            const next = migratedAuxiliarySessions[index];
+            if (!previous || !next) {
+              continue;
+            }
+            const current = await this.deps.updateAuxiliarySessionRuntimeMetadataIfMatches({
+              auxiliarySessionId: previous.id,
+              parentSessionId: previous.parentSessionId,
+              createdAt: previous.createdAt,
+              expected: getProviderRuntimeMetadata(previous),
+              next: getProviderRuntimeMetadata(next),
+            });
+            if (current && (previous.provider !== current.provider || previous.model !== current.model ||
+                previous.reasoningEffort !== current.reasoningEffort || previous.catalogRevision !== current.catalogRevision ||
+                previous.threadId !== current.threadId)) {
+              await this.deps.invalidateProviderSessionThread(previous.provider, previous.id);
+            }
+          }
+          if (this.deps.updateCompanionRuntimeMetadataIfMatches) {
+            for (let index = 0; index < previousCatalogCompanionSessions.length; index += 1) {
+              const previous = previousCatalogCompanionSessions[index];
+              const next = migratedCompanionSessions[index];
+              if (!previous || !next) {
+                continue;
+              }
+              const current = await this.deps.updateCompanionRuntimeMetadataIfMatches(
+                previous.id,
+                { expected: getProviderRuntimeMetadata(previous), next: getProviderRuntimeMetadata(next) },
+              );
+              if (current && (previous.provider !== current.provider || previous.model !== current.model ||
+                  previous.reasoningEffort !== current.reasoningEffort || previous.catalogRevision !== current.catalogRevision ||
+                  previous.threadId !== current.threadId)) {
+                await this.deps.invalidateProviderSessionThread(previous.provider, previous.id);
+              }
+            }
           }
         }
       }
       if (appliedTargets.has("projectMemory")) {
         this.deps.clearProjectMemories();
       }
-      modelCatalog = this.deps.getModelCatalog(null) ?? this.deps.ensureModelCatalogSeeded();
-      appSettings = this.deps.getAppSettings();
+      modelCatalog = await this.deps.getModelCatalog(null) ?? await this.deps.ensureModelCatalogSeeded();
+      appSettings = await this.deps.getAppSettings();
     }
 
     this.deps.applyAppSettingsSideEffects?.(appSettings);
     this.deps.broadcastSessions(previousSessionIds);
-    this.deps.broadcastAppSettings(appSettings);
-    this.deps.broadcastModelCatalog(modelCatalog);
+    await this.deps.broadcastAppSettings(appSettings);
+    await this.deps.broadcastModelCatalog(modelCatalog);
 
     return {
       resetTargets,

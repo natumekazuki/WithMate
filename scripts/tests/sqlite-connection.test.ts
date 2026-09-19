@@ -7,6 +7,8 @@ import { describe, it } from "node:test";
 
 import {
   openAppDatabase,
+  markMainThreadAsNonStorageOwner,
+  openAppDatabaseReadOnly,
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
   SQLITE_JOURNAL_SIZE_LIMIT_BYTES,
   SQLITE_WAL_AUTOCHECKPOINT_PAGES,
@@ -103,6 +105,16 @@ describe("sqlite-connection", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "WALの上限超過時にtruncate checkpointを実行する"
+  // oracle = { type = "contract", ref = "src-electron/sqlite-connection.ts#truncateAppDatabaseWalIfLargerThan" }
+  // fault = "WAL maintenanceが上限判定を無視してtruncate checkpointを実行しない"
+  // observable = "truncate結果とWAL file size"
+  // observation_boundary = "public-boundary"
+  // scope = "sqlite-wal-maintenance"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("WAL が上限を超える場合は truncate checkpoint を実行する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-sqlite-connection-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -130,6 +142,31 @@ describe("sqlite-connection", () => {
       } finally {
         db.close();
       }
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Main threadをstorage ownerとして明示的に無効化した後は同期SQLite接続を開始できない"
+  // oracle = { type = "contract", ref = "src-electron/sqlite-connection.ts#markMainThreadAsNonStorageOwner" }
+  // fault = "Main processが同期SQLite接続を開き、storage workerと競合する"
+  // observable = "openAppDatabase/openAppDatabaseReadOnly/truncateAppDatabaseWalのthrow結果"
+  // observation_boundary = "public-boundary"
+  // scope = "sqlite-storage-owner-boundary"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Main threadをstorage owner外としてマークすると同期接続を拒否する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-sqlite-connection-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      markMainThreadAsNonStorageOwner();
+      assert.throws(() => openAppDatabase(dbPath), /storage worker/);
+      assert.throws(() => openAppDatabaseReadOnly(dbPath), /storage worker/);
+      assert.throws(() => truncateAppDatabaseWal(dbPath), /storage worker/);
+      assert.throws(() => truncateAppDatabaseWalIfLargerThan(dbPath), /storage worker/);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }

@@ -3,6 +3,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { buildNewSession, type Session } from "../../src/app-state.js";
+import { normalizeAppSettings } from "../../src/provider-settings-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { AuxiliarySessionService } from "../../src-electron/auxiliary-session-service.js";
+import { AuxiliarySessionStorage } from "../../src-electron/auxiliary-session-storage.js";
+import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character-affect-turn-ownership-coordinator.js";
+import { ProviderRuntimeOperationCoordinator } from "../../src-electron/provider-runtime-operation-coordinator.js";
+import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
+import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
 import type { AffectEventInput } from "../../src/character-affect/affect-contract.js";
 import {
@@ -11,7 +20,8 @@ import {
   type CharacterContextErrorResponse,
   type CharacterContextResponse,
 } from "../../src/character-context/character-context-contract.js";
-import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
+import { CharacterAffectTurnSettlementStorage, hasCommittedAssistantMessage } from "../../src-electron/character-affect-turn-settlement-storage.js";
+import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
   CharacterAffectTurnRetryScheduler,
   settleCharacterAffectTurnOrScheduleRetry,
@@ -96,17 +106,23 @@ function settle(
       candidates: AffectEventInput[],
     ): Promise<CharacterAffectAppraiseResponse | CharacterContextErrorResponse>;
     afterRecordAppraisalFailure?(result: { reevaluationPrepared: boolean }): void;
+    validateOwner?(): Promise<boolean>;
+    runAppraisalExclusive<T>(operation: () => T | Promise<T>): Promise<T>;
   },
 ) {
+  const unitOwnership = async <T>(operation: () => T | Promise<T>): Promise<T> => operation();
   return settleCharacterAffectTurnWithRetry({
     correlationId,
     getPending: () => storage.getPending(correlationId),
+    isCurrentGeneration: () => true,
     getContext: deps.getContext,
     evaluate: deps.evaluate,
     persistEvaluation: (input) => {
       storage.saveEvaluation({ correlationId, ...input });
     },
     appraise: deps.appraise,
+    validateOwner: deps.validateOwner,
+    runAppraisalExclusive: deps.runAppraisalExclusive ?? unitOwnership,
     recordAppraisalFailure: (input) => {
       const result = storage.recordAppraisalFailure({ correlationId, ...input });
       deps.afterRecordAppraisalFailure?.(result);
@@ -212,20 +228,234 @@ describe("settleCharacterAffectTurnWithRetry", () => {
     scheduler.dispose();
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Affect評価待ち中はSession作成・削除が進み、owner検証後の適用中は削除が完了まで待つ"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#character-affect-の完了後評価" }
+  // fault = "評価待ちに広域排他を保持するか、owner検証後のappraiseに削除が割り込む"
+  // observable = "評価barrier解放前の作成・削除、discard選択、適用barrier中のSession生存と解放後の削除"
+  // observation_boundary = "public-boundary"
+  // scope = "character-affect-settlement"
+  // lifecycle = "permanent"
+  // impact = "無関係なAuxiliary作成やSession操作がCharacter Affect評価の遅延で停止しない"
+  // distinction = "型検査では検出できないawait中の共有ownership保持を、settlerの実行境界で確認する"
+  // @end-test-value
+  it("実サービスのAuxiliary作成・Session削除・Provider操作は評価待ち中も完了し、削除済みownerはdiscardする", { timeout: 10_000 }, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settler-ownership-"));
+    const dbPath = path.join(directory, "runtime.db");
+    const settlement = new CharacterAffectTurnSettlementStorage(dbPath);
+    const sessions = new SessionStorageV6(dbPath);
+    const auxiliaries = new AuxiliarySessionStorage(dbPath);
+    const affectOwnership = new CharacterAffectTurnOwnershipCoordinator();
+    const providerOwnership = new ProviderRuntimeOperationCoordinator();
+    const makeSession = (id: string): Session => ({
+      ...buildNewSession({
+        taskTitle: id,
+        workspaceLabel: id,
+        workspacePath: `C:/${id}`,
+        branch: "main",
+        characterId: "character-a",
+        character: "Character A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      }),
+      id,
+      provider: "codex",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      messages: [{ role: "user", text: "user" }, { role: "assistant", text: "assistant" }],
+    });
+    const sessionA = makeSession("session-a");
+    const sessionB = makeSession("session-b");
+    sessions.insertSession(sessionA);
+    sessions.insertSession(sessionB);
+    let cachedSessions = [sessionA, sessionB];
+    const catalog: ModelCatalogSnapshot = {
+      revision: 1,
+      providers: [{
+        id: "codex", label: "Codex", defaultModelId: "gpt-5.4", defaultReasoningEffort: "high",
+        models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
+      }],
+    };
+    const persistence = new SessionPersistenceService({
+      getSessions: () => cachedSessions,
+      setSessions: (next) => { cachedSessions = next; },
+      getSession: (id) => cachedSessions.find((entry) => entry.id === id) ?? null,
+      getStoredSession: (id) => sessions.getSession(id),
+      isSessionRunInFlight: () => false,
+      upsertStoredSession: (next, operation) => operation === "create" ? sessions.insertSession(next) : sessions.updateSession(next),
+      replaceStoredSessions: (next) => { sessions.replaceSessions(next); },
+      listStoredSessions: () => sessions.listSessions(),
+      deleteStoredSession: (id) => sessions.deleteSession(id),
+      deleteStoredSessions: (ids) => sessions.deleteSessions(ids),
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: () => catalog,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: () => undefined,
+      runCharacterAffectTurnOwnershipExclusive: (operation) => affectOwnership.runExclusive(operation),
+    });
+    const auxiliaryService = new AuxiliarySessionService({
+      runProviderRuntimeOperationExclusive: (operation) => providerOwnership.runExclusive(operation),
+      runCharacterAffectTurnOwnershipExclusive: (operation) => affectOwnership.runExclusive(operation),
+      resolveSessionLaunchSelection: async () => ({
+        provider: "codex", catalogRevision: 1, model: "gpt-5.4", reasoningEffort: "high",
+        approvalMode: DEFAULT_APPROVAL_MODE, codexSandboxMode: "workspace-write-network", codexSpeed: "standard",
+        codexReviewer: "user", customAgentName: "",
+      }),
+      getParentSession: (id) => sessions.getSession(id),
+      getStorage: () => auxiliaries,
+      getModelCatalogSnapshot: () => catalog,
+      listActiveCharacters: () => [{
+        id: "character-b", name: "Character B", description: "", iconFilePath: "",
+        theme: { main: "#6f8cff", sub: "#6fb8c7" }, state: "active",
+        createdAt: "2026-08-09T00:00:00.000Z", updatedAt: "2026-08-09T00:00:00.000Z", archivedAt: null,
+      }],
+      createCharacterRuntimeSnapshot: (id) => ({
+        characterId: id, name: "Character B", description: "", iconFilePath: "",
+        theme: { main: "#6f8cff", sub: "#6fb8c7" }, definitionMarkdown: "# Character B",
+        definitionSha256: "fixture", definitionByteSize: 13, snapshotAt: "2026-08-09T00:00:00.000Z",
+      }),
+    });
+    const correlationId = "turn:session-a:audit:ownership-boundary";
+    let releaseEvaluation!: () => void;
+    let evaluationReached!: () => void;
+    const evaluationWaiting = new Promise<void>((resolve) => { releaseEvaluation = resolve; });
+    const evaluationStarted = new Promise<void>((resolve) => { evaluationReached = resolve; });
+    let appraisals = 0;
+    let discards = 0;
+    let releaseAppraisal: () => void = () => undefined;
+    try {
+      enqueue(settlement, correlationId);
+      const settling = settleCharacterAffectTurnWithRetry({
+        correlationId,
+        getPending: () => settlement.getPending(correlationId),
+        isCurrentGeneration: () => true,
+        getContext: async () => context("v-ownership-boundary"),
+        evaluate: async (_current, idempotencyPrefix) => {
+          evaluationReached();
+          await evaluationWaiting;
+          return [candidate(`${idempotencyPrefix}:0`)];
+        },
+        persistEvaluation: (input) => settlement.saveEvaluation({ correlationId, ...input }),
+        appraise: async () => { appraisals += 1; return success(); },
+        recordAppraisalFailure: (input) => settlement.recordAppraisalFailure({ correlationId, ...input }),
+        validateOwner: async () => {
+          const owner = sessions.getSession(sessionA.id);
+          return Boolean(owner && owner.characterId === sessionA.characterId
+            && hasCommittedAssistantMessage(owner.messages, { assistantMessage: "assistant", assistantMessageIndex: 1 }));
+        },
+        runAppraisalExclusive: (operation) => affectOwnership.runExclusive(operation),
+        markDiscarded: () => { discards += 1; settlement.markDiscarded(correlationId); },
+        markSettled: () => settlement.markSettled(correlationId),
+      });
+      await evaluationStarted;
+      const created = await auxiliaryService.createAuxiliarySession({ parentSessionId: sessionB.id, provider: "codex" });
+      const deleted = await persistence.deleteSession(sessionA.id);
+      let providerOperationCompleted = false;
+      await providerOwnership.runExclusive(async () => { providerOperationCompleted = true; });
+      assert.equal(created.parentSessionId, sessionB.id);
+      assert.deepEqual(deleted.deletedSessionIds, [sessionA.id]);
+      assert.equal(providerOperationCompleted, true);
+      releaseEvaluation();
+      const result = await settling;
+      assert.deepEqual(result, { status: "settled", appraisal: null });
+      assert.equal(appraisals, 0);
+      assert.equal(discards, 1);
+      assert.equal(settlement.getPending(correlationId), null);
+
+      const liveCorrelationId = "turn:session-b:audit:ownership-boundary";
+      settlement.enqueue({
+        correlationId: liveCorrelationId,
+        characterId: sessionB.characterId,
+        sessionId: sessionB.id,
+        userMessage: "user",
+        assistantMessage: "assistant",
+        assistantMessageIndex: 1,
+        occurredAt: "2026-08-09T04:00:00.000Z",
+      });
+      let appraisalReached!: () => void;
+      const appraisalWaiting = new Promise<void>((resolve) => { releaseAppraisal = resolve; });
+      const appraisalStarted = new Promise<void>((resolve) => { appraisalReached = resolve; });
+      const liveSettlement = settleCharacterAffectTurnWithRetry({
+        correlationId: liveCorrelationId,
+        isCurrentGeneration: () => true,
+        getPending: () => settlement.getPending(liveCorrelationId),
+        getContext: async () => ({ ...context("v-live"), sessionId: sessionB.id }),
+        evaluate: async (_current, prefix) => [{ ...candidate(`${prefix}:0`), sessionId: sessionB.id }],
+        persistEvaluation: (input) => settlement.saveEvaluation({ correlationId: liveCorrelationId, ...input }),
+        validateOwner: async () => {
+          const owner = sessions.getSession(sessionB.id);
+          return Boolean(owner && owner.characterId === sessionB.characterId
+            && hasCommittedAssistantMessage(owner.messages, { assistantMessage: "assistant", assistantMessageIndex: 1 }));
+        },
+        runAppraisalExclusive: (operation) => affectOwnership.runExclusive(operation),
+        appraise: async () => {
+          appraisalReached();
+          await appraisalWaiting;
+          return { ...success(), sessionId: sessionB.id };
+        },
+        recordAppraisalFailure: (input) => settlement.recordAppraisalFailure({ correlationId: liveCorrelationId, ...input }),
+        markDiscarded: () => { throw new Error("live owner must not be discarded"); },
+        markSettled: () => settlement.markSettled(liveCorrelationId),
+      });
+      await appraisalStarted;
+      let deletionCompleted = false;
+      const deleteLiveOwner = persistence.deleteSession(sessionB.id).then((value) => {
+        deletionCompleted = true;
+        return value;
+      });
+      // このfixtureの削除は同期DBとmicrotaskだけで進む。経過時間でなく次のevent-loop境界を観測する。
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(deletionCompleted, false);
+      assert.ok(sessions.getSession(sessionB.id));
+      releaseAppraisal();
+      assert.equal((await liveSettlement).status, "settled");
+      assert.deepEqual((await deleteLiveOwner).deletedSessionIds, [sessionB.id]);
+      assert.equal(sessions.getSession(sessionB.id), null);
+    } finally {
+      releaseEvaluation();
+      releaseAppraisal();
+      settlement.close();
+      auxiliaries.close();
+      sessions.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "適用直前のowner検証がfalseならappraiseせずdiscard callbackを選ぶ"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#character-affect-の完了後評価" }
+  // fault = "owner検証がfalseなのにappraiseするか正常settledとして処理する"
+  // observable = "appraiseとdiscardの呼び出し回数とsettlement pending行の有無"
+  // observation_boundary = "component-behavior"
+  // scope = "character-affect-settlement-owner-lifecycle"
+  // lifecycle = "permanent"
+  // distinction = "owner検証失敗の分岐を、DB削除処理に依存せず直接確認する"
+  // @end-test-value
   it("provider評価中にSession ownerが消えた場合はappraiseせずpendingを破棄する", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-owner-recheck-"));
     const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "settlement.db"));
     const correlationId = "turn:session-a:audit:owner-recheck";
     let appraisalCount = 0;
+    let discardedCount = 0;
+    let ownerAvailable = true;
     try {
       enqueue(storage, correlationId);
       const result = await settleCharacterAffectTurnWithRetry({
         correlationId,
         getPending: () => storage.getPending(correlationId),
+        isCurrentGeneration: () => true,
         async getContext() {
           return context("v-owner-recheck");
         },
         async evaluate(_current, idempotencyPrefix) {
+          ownerAvailable = false;
           return [candidate(`${idempotencyPrefix}:0`)];
         },
         persistEvaluation(input) {
@@ -239,9 +469,11 @@ describe("settleCharacterAffectTurnWithRetry", () => {
           return storage.recordAppraisalFailure({ correlationId, ...input });
         },
         async validateOwner() {
-          return false;
+          return ownerAvailable;
         },
+        runAppraisalExclusive: async (operation) => operation(),
         markDiscarded() {
+          discardedCount += 1;
           storage.markDiscarded(correlationId);
         },
         markSettled() {
@@ -251,6 +483,7 @@ describe("settleCharacterAffectTurnWithRetry", () => {
 
       assert.deepEqual(result, { status: "settled", appraisal: null });
       assert.equal(appraisalCount, 0);
+      assert.equal(discardedCount, 1);
       assert.equal(storage.getPending(correlationId), null);
     } finally {
       storage.close();

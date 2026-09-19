@@ -10,6 +10,9 @@ import {
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
   WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL,
+  WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_CREATION_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
@@ -1947,6 +1950,16 @@ test("DB reset IPC は Settings window 以外からの呼び出しを拒否す�
   assert.equal(calls.includes("resetAppDatabase"), false);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary owner windowの作成・更新・close・runを許可し、Companion Reviewの新規runは拒否するがcancelは許可する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#context-boundary" }
+// fault = "別windowがAuxiliaryを更新・実行する、またはCompanion Reviewが新規runを開始して状態を混線させる"
+// observable = "owner window操作とCompanion Reviewのcancelの実行回数、新規runの拒否と非実行"
+// observation_boundary = "public-boundary"
+// scope = "main-ipc-auxiliary-owner-boundary"
+// lifecycle = "permanent"
+// @end-test-value
 test("Auxiliary mutationはowner windowへ限定し、Companion Reviewからの新規runを拒否する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
@@ -1989,6 +2002,8 @@ test("Auxiliary mutationはowner windowへ限定し、Companion Reviewからの�
     parentSessionId: "session-1",
     provider: "codex",
     runtimeSelection: "latest-session",
+    clientRequestId: "ipc-create-1",
+    creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
   });
   await handlers.get(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL)?.({}, auxiliarySession);
   await handlers.get(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1");
@@ -2000,28 +2015,28 @@ test("Auxiliary mutationはowner windowへ限定し、Companion Reviewからの�
   );
   await handlers.get(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL)?.({}, "aux-1");
 
-  assert.deepEqual(calls, [
+  for (const operation of [
     "createAuxiliarySession",
-    "getAuxiliarySession:aux-1",
     "updateAuxiliarySession",
-    "getAuxiliarySession:aux-1",
     "closeAuxiliarySession",
-    "getAuxiliarySession:aux-1",
     "runAuxiliarySessionTurn",
-    "getAuxiliarySession:aux-1",
-    "log:withmate:run-auxiliary-session-turn",
-    "getAuxiliarySession:aux-1",
     "cancelAuxiliarySessionRun",
-  ]);
+  ]) {
+    assert.equal(calls.filter((call) => call === operation).length, 1, operation);
+  }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "Session windowのAuxiliary作成はReviewerを含むruntime optionの直接指定を拒否する"
-// oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-2" }
-// failure_mode = "rendererがReviewerを直接指定してMain Processの親継承を迂回する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#context-boundary" }
+// fault = "rendererがReviewerを直接指定してMain Processの親継承を迂回する、またはstale creation contextなしで作成する"
+// observable = "runtime selection拒否とcreation context/request ID必須の公開IPCエラー"
+// observation_boundary = "public-boundary"
 // scope = "auxiliary-create-ipc"
 // lifecycle = "permanent"
+// impact = "window単位の作成要求をMain側で認証し、stale requestの到達を防ぐ"
+// distinction = "通常のruntime option testではcreation context/request IDの必須境界を検証しない"
 // @end-test-value
 test("Auxiliary create IPC は送信元 window と runtime selection mode を結び付ける", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
@@ -2068,6 +2083,24 @@ test("Auxiliary create IPC は送信元 window と runtime selection mode を結
       parentSessionId: "session-1",
       provider: "codex",
       runtimeSelection: "latest-session",
+      creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+    }) as Promise<unknown>,
+    /clientRequestId.*creationContext/,
+  );
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      clientRequestId: "ipc-create-missing-context",
+    }) as Promise<unknown>,
+    /clientRequestId.*creationContext/,
+  );
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
       codexReviewer: undefined,
     }) as Promise<unknown>,
     /cannot specify runtime options directly/,
@@ -2076,6 +2109,8 @@ test("Auxiliary create IPC は送信元 window と runtime selection mode を結
     parentSessionId: "session-1",
     provider: "codex",
     runtimeSelection: "latest-session",
+    clientRequestId: "ipc-create-2",
+    creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
   });
 
   eventWindow = companionReviewWindow;
@@ -2103,8 +2138,75 @@ test("Auxiliary create IPC は送信元 window と runtime selection mode を結
       parentSessionId: "session-1",
       provider: "codex",
       runtimeSelection: "latest-session",
+      clientRequestId: "ipc-create-2",
+      creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
     },
   ]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary creationのcontext取得・cancel・query IPCはSession owner windowへ限定される"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#context-boundary" }
+// fault = "別windowが作成取消または結果照会を実行し、親scopeを越えてMain dependencyへ到達する"
+// observable = "ownerからの委譲と非ownerからの拒否"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-creation-ipc-ownership"
+// lifecycle = "permanent"
+// impact = "遅延した作成要求の取消・結果照会を親Sessionの権限内に限定する"
+// distinction = "既存Auxiliary mutation IPC testはcreation専用context/cancel/query channelを確認しない"
+// @end-test-value
+test("Auxiliary creation IPC はSession ownerだけがcontext/cancel/queryを実行できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const unauthorizedWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  let eventWindow: unknown = sessionWindow;
+  const calls: string[] = [];
+  const request = {
+    parentSessionId: "session-1",
+    clientRequestId: "creation-1",
+    creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+  };
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    getAuxiliaryCreationContext: async (parentSessionId: string) => {
+      calls.push(`context:${parentSessionId}`);
+      return request.creationContext;
+    },
+    cancelAuxiliaryCreation: async () => {
+      calls.push("cancel");
+      return { status: "cancelled" as const };
+    },
+    getAuxiliaryCreation: async () => {
+      calls.push("query");
+      return { status: "committed" as const, auxiliarySessionId: "aux-1" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL)?.({}, "session-1"),
+    request.creationContext,
+  );
+  assert.deepEqual(await handlers.get(WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL)?.({}, request), { status: "cancelled" });
+  assert.deepEqual(await handlers.get(WITHMATE_GET_AUXILIARY_CREATION_CHANNEL)?.({}, request), {
+    status: "committed",
+    auxiliarySessionId: "aux-1",
+  });
+  eventWindow = unauthorizedWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL)?.({}, "session-1") as Promise<unknown>,
+    /Auxiliary session IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL)?.({}, request) as Promise<unknown>,
+    /Auxiliary session IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_AUXILIARY_CREATION_CHANNEL)?.({}, request) as Promise<unknown>,
+    /Auxiliary session IPC is only available/,
+  );
+  assert.deepEqual(calls, ["context:session-1", "cancel", "query"]);
 });
 
 test("Auxiliary full read IPC は対象 Session / Companion Review window から呼び出せる", async () => {
