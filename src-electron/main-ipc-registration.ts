@@ -245,6 +245,10 @@ import {
   WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,
+  WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
+  WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL,
+  WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL,
@@ -306,6 +310,7 @@ import {
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
+  WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
@@ -347,6 +352,7 @@ type IpcHandleRegistrar = {
 };
 
 export type MainIpcRegistrationDeps = {
+  acknowledgeSessionDraftFlush?(event: IpcSenderEvent, payload: { requestId: string; success: boolean }): void;
   resolveEventWindow(event: IpcSenderEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
   resolveSessionWindow(sessionId: string): MaybeWindow;
@@ -422,6 +428,10 @@ export type MainIpcRegistrationDeps = {
   listOpenAuxiliarySessionSummaries?(): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession?(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
+  getAuxiliaryDraft?(auxiliarySessionId: string): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftRecord | null>;
+  saveAuxiliaryDraft?(input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveInput): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveResult>;
+  consumeAuxiliaryDraft?(input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeInput): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeResult>;
+  getAuxiliarySessionStatus?(auxiliarySessionId: string): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliarySessionStatus | null>;
   createAuxiliarySession?(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
   getAuxiliaryCreationContext?(parentSessionId: string): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationContext>;
   cancelAuxiliaryCreation?(request: import("../src/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationResult>;
@@ -590,11 +600,16 @@ export type MainIpcRegistrationDeps = {
 
 type MainIpcWindowDeps = Pick<
   MainIpcRegistrationDeps,
+  "acknowledgeSessionDraftFlush"
   | "resolveEventWindow"
   | "resolveHomeWindow"
   | "resolveSessionWindow"
   | "openSessionWindow"
   | "getAuxiliarySession"
+  | "getAuxiliaryDraft"
+  | "saveAuxiliaryDraft"
+  | "consumeAuxiliaryDraft"
+  | "getAuxiliarySessionStatus"
   | "showSessionMonitorContextMenu"
   | "getSessionWindowRestoreSet"
   | "restoreSessionWindows"
@@ -671,6 +686,10 @@ type MainIpcAuxiliaryDeps = Pick<
   | "listOpenAuxiliarySessionSummaries"
   | "getActiveAuxiliarySession"
   | "getAuxiliarySession"
+  | "getAuxiliaryDraft"
+  | "saveAuxiliaryDraft"
+  | "consumeAuxiliaryDraft"
+  | "getAuxiliarySessionStatus"
   | "createAuxiliarySession"
   | "getAuxiliaryCreationContext"
   | "cancelAuxiliaryCreation"
@@ -687,6 +706,10 @@ type MainIpcAuxiliaryDepsRequired = {
   listOpenAuxiliarySessionSummaries: () => Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession: (parentSessionId: string) => Awaitable<AuxiliarySession | null>;
   getAuxiliarySession: (auxiliarySessionId: string) => Awaitable<AuxiliarySession | null>;
+  getAuxiliaryDraft: (auxiliarySessionId: string) => Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftRecord | null>;
+  saveAuxiliaryDraft: (input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveInput) => Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveResult>;
+  consumeAuxiliaryDraft: (input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeInput) => Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeResult>;
+  getAuxiliarySessionStatus: (auxiliarySessionId: string) => Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliarySessionStatus | null>;
   createAuxiliarySession: (input: CreateAuxiliarySessionInput) => Awaitable<AuxiliarySession>;
   updateAuxiliarySession: (session: AuxiliarySession) => Awaitable<AuxiliarySession>;
   closeAuxiliarySession: (auxiliarySessionId: string) => Awaitable<AuxiliarySession>;
@@ -1624,7 +1647,11 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
       !deps.updateAuxiliarySession ||
       !deps.closeAuxiliarySession ||
       !deps.runAuxiliarySessionTurn ||
-      !deps.cancelAuxiliarySessionRun
+      !deps.cancelAuxiliarySessionRun ||
+      !deps.getAuxiliaryDraft ||
+      !deps.saveAuxiliaryDraft ||
+      !deps.consumeAuxiliaryDraft ||
+      !deps.getAuxiliarySessionStatus
     ) {
       throw new Error(
         "Auxiliary session IPC is not wired. listAuxiliarySessions, listOpenActiveAuxiliarySessionSummaries, "
@@ -1645,6 +1672,10 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
       closeAuxiliarySession: deps.closeAuxiliarySession,
       runAuxiliarySessionTurn: deps.runAuxiliarySessionTurn,
       cancelAuxiliarySessionRun: deps.cancelAuxiliarySessionRun,
+      getAuxiliaryDraft: deps.getAuxiliaryDraft,
+      saveAuxiliaryDraft: deps.saveAuxiliaryDraft,
+      consumeAuxiliaryDraft: deps.consumeAuxiliaryDraft,
+      getAuxiliarySessionStatus: deps.getAuxiliarySessionStatus,
     };
   };
 
@@ -1677,6 +1708,38 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
     assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
     return session;
+  });
+  ipcMain.handle(WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL, async (event, auxiliarySessionId: string) => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    const status = await auxiliaryDeps.getAuxiliarySessionStatus(auxiliarySessionId);
+    if (!status) return null;
+    assertAuxiliaryOwnerWindowSender(event, status.parentSessionId, deps);
+    return auxiliaryDeps.getAuxiliaryDraft(auxiliarySessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL, async (event, auxiliarySessionId: string) => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    const status = await auxiliaryDeps.getAuxiliarySessionStatus(auxiliarySessionId);
+    if (!status) return null;
+    assertAuxiliaryOwnerWindowSender(event, status.parentSessionId, deps);
+    return status;
+  });
+  ipcMain.handle(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL, async (event, input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveInput) => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    const status = await auxiliaryDeps.getAuxiliarySessionStatus(input.auxiliarySessionId);
+    if (!status || status.parentSessionId !== input.parentSessionId) return { outcome: "not-found" };
+    if (resolveAuxiliaryOwnerWindowSender(event, status.parentSessionId, deps) !== "session") {
+      throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
+    }
+    return auxiliaryDeps.saveAuxiliaryDraft(input);
+  });
+  ipcMain.handle(WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL, async (event, input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeInput) => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    const status = await auxiliaryDeps.getAuxiliarySessionStatus(input.auxiliarySessionId);
+    if (!status || status.parentSessionId !== input.parentSessionId) return { outcome: "not-found" };
+    if (resolveAuxiliaryOwnerWindowSender(event, status.parentSessionId, deps) !== "session") {
+      throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
+    }
+    return auxiliaryDeps.consumeAuxiliaryDraft(input);
   });
   ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (event, input: CreateAuxiliarySessionInput) => {
     const ownerWindowKind = resolveAuxiliaryOwnerWindowSender(event, input.parentSessionId, deps);
@@ -2374,6 +2437,9 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   ipcMain.on(WITHMATE_RENDERER_LOG_CHANNEL, (event, input: RendererLogInput) => {
     const windowId = deps.resolveEventWindow(event)?.id;
     deps.reportRendererLog?.(input, windowId);
+  });
+  ipcMain.on(WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL, (event, payload: { requestId: string; success: boolean }) => {
+    deps.acknowledgeSessionDraftFlush?.(event, payload);
   });
 }
 

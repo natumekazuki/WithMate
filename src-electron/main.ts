@@ -269,6 +269,8 @@ import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
   WITHMATE_OPEN_AUXILIARY_SESSION_EVENT,
+  WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT,
+  WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT,
   WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
 } from "../src/withmate-ipc-channels.js";
@@ -1600,6 +1602,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             },
             prepareSessionWindowSnapshotForQuit: () =>
               requireSessionWindowBridge().prepareSnapshotForQuit(),
+            flushSessionWindowDrafts: () => requireSessionWindowBridge().flushSessionWindowDrafts(),
             stopMemoryRuntime: stopMemoryV6RuntimeApiBestEffort,
             closePersistentStores,
             invalidateAllProviderSessionThreads,
@@ -1623,6 +1626,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             onBootStatus: publishAppBootStatus,
             ipcRegistration: {
               window: {
+                acknowledgeSessionDraftFlush: (event, payload) => {
+                  requireSessionWindowBridge().acknowledgeDraftFlush(payload.requestId, event.sender, payload.success);
+                },
                 resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender) ?? null,
                 resolveHomeWindow: () => requireAuxWindowService().getHomeWindow(),
                 resolveSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
@@ -1832,6 +1838,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId),
                 getAuxiliarySession: (auxiliarySessionId) =>
                   requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId),
+                getAuxiliaryDraft: (auxiliarySessionId) =>
+                  requireAuxiliarySessionService().getAuxiliaryDraft(auxiliarySessionId),
+                saveAuxiliaryDraft: (input) =>
+                  requireAuxiliarySessionService().saveAuxiliaryDraft(input),
+                consumeAuxiliaryDraft: (input) =>
+                  requireAuxiliarySessionService().consumeAuxiliaryDraft(input),
+                getAuxiliarySessionStatus: (auxiliarySessionId) =>
+                  requireAuxiliarySessionService().getAuxiliarySessionStatus(auxiliarySessionId),
                 createAuxiliarySession: async (input) => {
                   if (databaseMaintenanceRequested) {
                     throw new Error("DB のメンテナンス中は Auxiliary を作成できません。");
@@ -1895,7 +1909,21 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   }
                   auxiliaryRunParents.set(auxiliarySessionId, initial.parentSessionId);
                   try {
-                    await requireAuxiliarySessionRuntimeService().runSessionTurn(auxiliarySessionId, request);
+                    if (request.submitSource === "composer") {
+                      if (!request.auxiliaryDraftIncarnation || request.auxiliaryDraftDurableRevision === undefined) {
+                        throw new Error("Auxiliary の送信対象draft revisionがありません。");
+                      }
+                      await requireAuxiliarySessionService().runAuxiliaryTurnWithDraft({
+                        auxiliarySessionId,
+                        parentSessionId: initial.parentSessionId,
+                        incarnation: request.auxiliaryDraftIncarnation,
+                        expectedDurableRevision: request.auxiliaryDraftDurableRevision,
+                        userMessage: request.userMessage,
+                        run: () => requireAuxiliarySessionRuntimeService().runSessionTurn(auxiliarySessionId, request).then(() => undefined),
+                      });
+                    } else {
+                      await requireAuxiliarySessionRuntimeService().runSessionTurn(auxiliarySessionId, request);
+                    }
                     const session = await requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
                     if (!session) {
                       throw new Error("Auxiliary Session が見つからないよ。");
@@ -3312,6 +3340,11 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         requireSessionWindowBridge().closeSessionWindow(sessionId);
         requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
       },
+      discardSessionWindow: (sessionId) => {
+        assertOwner("session window discard");
+        requireSessionWindowBridge().discardSessionWindow(sessionId);
+        requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
+      },
       upsertStoredTerminalSession: sessionStorageCommands.upsertStoredTerminalSession,
       broadcastSessions: (sessionIds) => {
         assertOwner("broadcast");
@@ -3342,6 +3375,13 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
       sendAuxiliarySessionNavigation: (window, payload) => {
         window.webContents.send(WITHMATE_OPEN_AUXILIARY_SESSION_EVENT, payload);
       },
+      sendDraftFlushRequest: (window, request) => {
+        window.webContents.send(WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT, request);
+      },
+      sendDraftFlushRelease: (window, payload) => {
+        window.webContents.send(WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT, payload);
+      },
+      getWindowSender: (window) => window.webContents,
       getSession,
       isRunInFlight: isSessionRunInFlight,
       onSessionWindowClosed: (sessionId) => auxiliarySessionService?.releaseAuxiliaryCreationOwner(sessionId),

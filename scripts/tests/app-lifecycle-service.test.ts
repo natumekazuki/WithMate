@@ -124,11 +124,13 @@ test("AppLifecycleService は before-quit で実行中 session があり confirm
   assert.deepEqual(calls, []);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "終了時はprovider binding失効後にMemory runtimeを停止し、その後persistent storeを閉じる"
-// oracle = { type = "adr", ref = "ADR-023 multi-instance-runtime-discovery" }
-// failure_mode = "Memory runtimeのunpublishより先にstoreまたはprocessが終了し、別processからstale entryがactiveに見える"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence; ADR-021 binding authority; ADR-023 runtime discovery" }
+// fault = "Memory runtimeのunpublishより先にstoreまたはprocessが終了し、別processからstale entryがactiveに見える"
+// observable = "provider binding、Memory runtime、persistent storeのcleanup呼出し順"
+// observation_boundary = "public-boundary"
 // scope = "application-shutdown-runtime-discovery"
 // lifecycle = "permanent"
 // @end-test-value
@@ -182,11 +184,13 @@ test("AppLifecycleService は before-quit で runtime cleanup後にpersistent st
   ]);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "provider cleanupとMemory runtime cleanupの完了を待ってからpersistent storeを閉じる"
 // oracle = { type = "adr", ref = "ADR-021 and ADR-023 shutdown ordering" }
-// failure_mode = "非同期cleanupの途中でstoreを閉じ、runtime operationまたはowner cleanupが部分状態になる"
+// fault = "非同期cleanupの途中でstoreを閉じ、runtime operationまたはowner cleanupが部分状態になる"
+// observable = "provider／Memory cleanup完了通知とpersistent store closeの呼出し順"
+// observation_boundary = "public-boundary"
 // scope = "application-shutdown-runtime-discovery"
 // lifecycle = "permanent"
 // distinction = "cleanup順序だけでなく非同期provider cleanupの完了待機を観測する"
@@ -195,6 +199,7 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
   let prevented = false;
   const calls: string[] = [];
   let resolveProviderCleanup: (() => void) | null = null;
+  let resolveMemoryCleanup: (() => void) | null = null;
   const service = new AppLifecycleService({
     hasInFlightSessionRuns: () => false,
     getAllowQuitWithInFlightRuns: () => false,
@@ -221,7 +226,9 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
       calls.push("revokeAllAgentRuntimeBindings");
     },
     async stopMemoryRuntime() {
-      calls.push("stopMemoryRuntime");
+      calls.push("stopMemoryRuntime:start");
+      await new Promise<void>((resolve) => { resolveMemoryCleanup = resolve; });
+      calls.push("stopMemoryRuntime:end");
     },
   });
 
@@ -235,13 +242,18 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
   assert.deepEqual(calls, ["invalidateAllProviderSessionThreads:start"]);
 
   resolveProviderCleanup?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["invalidateAllProviderSessionThreads:start", "invalidateAllProviderSessionThreads:end", "revokeAllAgentRuntimeBindings", "stopMemoryRuntime:start"]);
+  assert.equal(calls.includes("closePersistentStores"), false);
+  resolveMemoryCleanup?.();
   await cleanup;
 
   assert.deepEqual(calls, [
     "invalidateAllProviderSessionThreads:start",
     "invalidateAllProviderSessionThreads:end",
     "revokeAllAgentRuntimeBindings",
-    "stopMemoryRuntime",
+    "stopMemoryRuntime:start",
+    "stopMemoryRuntime:end",
     "closePersistentStores",
     "quitApp",
   ]);
@@ -291,11 +303,13 @@ test("AppLifecycleService は非同期persistent store closeの完了後にquit�
   assert.deepEqual(calls, ["closePersistentStores:start", "closePersistentStores:end", "quitApp"]);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "binding revoke、runtime stop、store closeが個別に失敗しても終了処理は一度だけsettleする"
 // oracle = { type = "adr", ref = "ADR-021 and ADR-023 shutdown failure timing" }
-// failure_mode = "cleanup失敗でquit barrierが永久に未完了となるか、後続cleanupが実行されない"
+// fault = "cleanup失敗でquit barrierが永久に未完了となるか、後続cleanupが実行されない"
+// observable = "cleanup呼出し順とquitApp呼出し回数"
+// observation_boundary = "public-boundary"
 // scope = "application-shutdown-runtime-discovery"
 // lifecycle = "permanent"
 // @end-test-value
@@ -341,5 +355,47 @@ test("AppLifecycleService はbinding revoke、runtime stop、store closeが失�
     "stopMemoryRuntime",
     "closePersistentStores",
     "quitApp",
+  ]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "全Windowのdraft flushが失敗したquit試行ではcleanupせず、再試行でのみ終了する"
+// oracle = { type = "contract", ref = "AppLifecycleService#handleBeforeQuit" }
+// fault = "一部Windowのflush失敗を成功扱いし、未保存入力を失ったままcleanupとquitを実行する"
+// observable = "flush回数、cleanup呼出し、quit呼出し"
+// observation_boundary = "public-boundary"
+// scope = "application-shutdown-draft-flush"
+// lifecycle = "permanent"
+// @end-test-value
+test("AppLifecycleService は複数Window flush失敗時にcleanupを保留し再quitで完了する", async () => {
+  let flushAttempt = 0;
+  const calls: string[] = [];
+  let allowQuit = false;
+  const service = new AppLifecycleService({
+    hasInFlightSessionRuns: () => false,
+    getAllowQuitWithInFlightRuns: () => allowQuit,
+    setAllowQuitWithInFlightRuns: (value) => { allowQuit = value; },
+    async createHomeWindow() {},
+    quitApp: () => calls.push("quit"),
+    shouldQuitWhenAllWindowsClosed: () => true,
+    confirmQuitWhileRunning: () => true,
+    flushSessionWindowDrafts: async () => {
+      flushAttempt += 1;
+      calls.push(`flush-${flushAttempt}-window-a`);
+      calls.push(`flush-${flushAttempt}-window-b`);
+      return flushAttempt > 1;
+    },
+    closePersistentStores: () => calls.push("close"),
+    invalidateAllProviderSessionThreads: async () => calls.push("provider"),
+    stopMemoryRuntime: async () => calls.push("memory"),
+  });
+
+  await service.handleBeforeQuit({ preventDefault() {} });
+  assert.deepEqual(calls, ["flush-1-window-a", "flush-1-window-b"]);
+  await service.handleBeforeQuit({ preventDefault() {} });
+  assert.deepEqual(calls, [
+    "flush-1-window-a", "flush-1-window-b",
+    "flush-2-window-a", "flush-2-window-b", "provider", "memory", "close", "quit",
   ]);
 });

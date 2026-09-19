@@ -154,6 +154,7 @@ import type { SessionWindowRestoreResult } from "../src/session-window-restore.j
 type MaybeWindow = BrowserWindow | null | undefined;
 
 export type MainIpcWindowDepsArgs = {
+  acknowledgeSessionDraftFlush?(event: Pick<IpcMainInvokeEvent, "sender">, payload: { requestId: string; success: boolean }): void;
   resolveEventWindow(event: IpcMainInvokeEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
   resolveSessionWindow(sessionId: string): MaybeWindow;
@@ -372,6 +373,10 @@ export type MainIpcAuxiliaryDepsArgs = {
   listOpenAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
+  getAuxiliaryDraft(auxiliarySessionId: string): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftRecord | null>;
+  saveAuxiliaryDraft(input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveInput): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveResult>;
+  consumeAuxiliaryDraft(input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeInput): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftConsumeResult>;
+  getAuxiliarySessionStatus(auxiliarySessionId: string): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliarySessionStatus | null>;
   createAuxiliarySession(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
   getAuxiliaryCreationContext(parentSessionId: string): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationContext>;
   cancelAuxiliaryCreation(request: import("../src/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationResult>;
@@ -448,6 +453,10 @@ function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
     listOpenAuxiliarySessionSummaries: () => [],
     getActiveAuxiliarySession: () => null,
     getAuxiliarySession: () => null,
+    getAuxiliaryDraft: () => null,
+    saveAuxiliaryDraft: throwUnavailable,
+    consumeAuxiliaryDraft: throwUnavailable,
+    getAuxiliarySessionStatus: () => null,
     createAuxiliarySession: throwUnavailable,
     getAuxiliaryCreationContext: throwUnavailable,
     cancelAuxiliaryCreation: throwUnavailable,
@@ -602,6 +611,10 @@ export function createMainIpcRegistrationDeps(
     listOpenAuxiliarySessionSummaries: auxiliary.listOpenAuxiliarySessionSummaries,
     getActiveAuxiliarySession: auxiliary.getActiveAuxiliarySession,
     getAuxiliarySession: auxiliary.getAuxiliarySession,
+    getAuxiliaryDraft: auxiliary.getAuxiliaryDraft,
+    saveAuxiliaryDraft: auxiliary.saveAuxiliaryDraft,
+    consumeAuxiliaryDraft: auxiliary.consumeAuxiliaryDraft,
+    getAuxiliarySessionStatus: auxiliary.getAuxiliarySessionStatus,
     createAuxiliarySession: auxiliary.createAuxiliarySession,
     getAuxiliaryCreationContext: auxiliary.getAuxiliaryCreationContext,
     cancelAuxiliaryCreation: auxiliary.cancelAuxiliaryCreation,

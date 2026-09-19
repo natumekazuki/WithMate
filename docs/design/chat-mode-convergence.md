@@ -4,6 +4,8 @@
 
 Auxiliaryは単一の排他的modeではなく、Mainと同じchat shell内で複数会話を保持・切り替えるmodeである。Main＋選択中Auxiliaryを表示し、非表示Auxiliaryのrun、draft、thread、Character snapshotも会話ID単位で保持する。shell、message list、composer、right paneは共通実装を使い、会話ごとの差はmode/capability/adapterで解決する。Auxiliary一覧は最終使用時刻順（`updatedAt DESC, id DESC`）と非AI previewを使い、一覧展開でtranscriptやCharacter定義を全件読み直さない。
 
+共通 Composer の draft / selection / IME / preview / 保存状態は owner 単位の controller が所有し、ActionDock 内だけで購読する。shell は選択・layout と runtime の操作契約を持つが、打鍵を draft 文字列の root state 更新へ戻さない。全入力導線・送信・保存・終了の契約は [Auxiliary Session](auxiliary-session.md#composer-の更新保存境界) に従う。
+
 - 作成日: 2026-05-25
 - 対象: Agent Session、Companion、MateTalk、Auxiliary Session の chat UI / action 境界
 

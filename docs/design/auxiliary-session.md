@@ -70,6 +70,20 @@ MainとAuxiliaryはmessages、composer draft、live run、pending approval／eli
 
 ## Persistence
 
+### Composer の更新・保存境界
+
+Main / Auxiliary の入力は会話種別と stable ID をキーとする共通 Composer controller が所有する。draft、編集 revision、selection、IME、preview、保存状態は対象 Composer だけが購読し、Session shell / transcript / Auxiliary 一覧へ文字入力を通知しない。Paste、Quote、Skill、Template、添付、retry、送信後 clear も同じ操作へ接続する。Main draft は従来どおり Window 内のローカル状態であり、新しい永続化対象にしない。
+
+Auxiliary の永続 draft は会話 payload と独立した保存単位を唯一の正本とする。専用の小さい読込み・保存 command を既存 storage Worker で実行し、owner / incarnation / durable revision を照合する。保存では transcript や Character snapshot を取得・直列化せず、小さい ack だけを返す。renderer の編集 revision と DB の durable revision は別である。full Session の読込みでは draft を合成するが、通常更新・runtime / terminal 保存・Settings 変更から合成 draft を書き戻さない。
+
+保存は owner ごとに進行中 1 件と未送信の最新値 1 件へ集約する。表示値と IME は即時更新し、永続化・preview のみ遅延可能とする。保存失敗・結果不明は local draft を保持し、Composer 内に英語の簡潔な失敗表示と明示的な再試行を用意する。異なる owner の ack や、古い load / preview は現在の編集を変更しない。
+
+送信は controller の最新値と編集 revision を捕捉し、当該 owner の保存を確定してから durable revision を指定する。送信時の明示 consume と通常 runtime 保存を区別し、古い save / terminal が入力を復活・消去させない。送信拒否・失敗時の復元は捕捉した編集 revision と照合し、後続の新しい入力を上書きしない。正常な Window close / app quit は未保存 owner の flush を待ち、失敗時は閉じずに入力と再試行導線を保持する。強制終了では最後の ack 後の未保存範囲を失い得る。
+
+draft の使用時刻は本文と別に扱う。最初の編集で必要な順位変更を反映し、後続の同順位入力では一覧全体を再生成しない。永続的な最終使用時刻は集約保存と同時に確定し、再起動時は最後に保存された順序を復元する。preview は確定応答等からの派生情報のまま、未送信 draft を用いない。非 terminal の live event は軽量な run status を反映し、表示状態のためだけに詳細を再取得しない。terminal と実際の詳細表示では最新の本文を取得する。
+
+既存タグの payload 内 draft は active / closed とも同じ ID の独立保存単位へ移す。空文字も有効であり、移行と旧正本の除去を atomic に確定する。中断時は再実行可能とし、会話・thread・Character・設定を保持する。親削除では独立 draft も除去し、旧 incarnation / storage generation の保存で会話を再作成しない。新規の二重正本、任意 SQL port、全体 mutex、分散編集基盤は追加しない。
+
 作成入力の runtime selection mode と runtime option は、既存 `clientRequestId` の結果を返す場合も先に検証する。不正な入力を既存行への再送として成功扱いにしない。準備と commit の排他・再検証境界は ADR 007 に従う。
 
 Auxiliary の作成準備は provider / ownership coordinator の外で行う。commit 時だけ親の incarnation、Character identity、provider runtime selection、current storage generation、request identity を再検証し、失敗時に親や既存会話を削除・snapshot 復元しない。Main Session の保存後に初期 Auxiliary の準備または commit が失敗した場合は、Main Session を削除せず、作成済み Main と Auxiliary 結果未確定または失敗を明示する。
@@ -80,9 +94,11 @@ Auxiliary の作成準備は provider / ownership coordinator の外で行う。
 
 - `id`, `parentSessionId`, `status`, `createdAt`, `updatedAt`, `closedAt`
 - provider / model / runtime option / allowed additional directories
-- `threadId`, `messages`, `composerDraft`, `displayAfterMessageIndex`
+- `threadId`, `messages`, `displayAfterMessageIndex`
 - `characterId`, `characterRuntimeSnapshot`, `characterIconPath`
 - `preview`, `clientRequestId`
+
+`composerDraft` は `auxiliary_session_drafts` の単一正本から読込み時に合成する。payload 内の旧 draft を通常更新の入力として受け入れない。
 
 一覧用の`summary_json`はpayloadの派生projectionであり、messages、draft、Character定義本文を含めない。upsert時にpayloadと同時更新し、既存行は初回migrationで一度だけ補完する。Auxiliary一覧、active一覧、running一覧はsummary列だけを読み、全transcriptや定義本文を毎回走査しない。会話本文の取得とruntime復元だけがpayloadを読む。
 

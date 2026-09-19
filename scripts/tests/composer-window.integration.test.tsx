@@ -1,0 +1,282 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { runInNewContext } from "node:vm";
+import React, { act } from "react";
+import { JSDOM } from "jsdom";
+import type { WithMateWindowApi } from "../../src/withmate-window-api.js";
+import type { AuxiliaryDraftRecord } from "../../src/auxiliary-draft-contract.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "実Session Windowの入力はComposerだけへ即時反映され、保存済draftとowner切替を保ち、送信中ABA編集を誤消費せず、終了flush中の入力を凍結する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+// fault = "root入力購読が一覧全件を再読込みする、古いowner/revisionを送信する、保存済draftを失う、またはflush後close前に追加入力を受け付ける"
+// observable = "実textareaのvalue/disabled、Send buttonのdisabled/title、summary表示propertyのread回数・full Session保存要求・送信revision/対象/本文・flush ack"
+// observation_boundary = "component-behavior"
+// scope = "composer-window-input-wiring"
+// lifecycle = "permanent"
+// impact = "多数会話での入力遅延、切替による下書き消失、古い入力や別会話への誤送信を防ぐ"
+// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証する。壁時計の性能値をCI合否にしない"
+// @end-test-value
+test("Session Windowの入力境界と切替後の最新値送信を実配線で守る", { timeout: 5000 }, async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", {
+    url: "http://withmate.test/session.html?sessionId=benchmark-main", pretendToBeVisual: true,
+  });
+  const globals = {
+    window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement, HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
+    localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true,
+    requestAnimationFrame: (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0),
+    cancelAnimationFrame: (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
+    ResizeObserver: class { observe() {} disconnect() {} unobserve() {} },
+    IntersectionObserver: class { observe() {} disconnect() {} unobserve() {} },
+  };
+  const originals = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  Object.defineProperty(dom.window, "matchMedia", { value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { value() {} });
+  const alerts: string[] = [];
+  dom.window.alert = (message) => { alerts.push(String(message)); };
+  let api!: WithMateWindowApi;
+  runInNewContext(readFileSync(new URL("../benchmark-composer-input-preload.cjs", import.meta.url), "utf8"), {
+    require: (name: string) => {
+      assert.equal(name, "electron");
+      return { contextBridge: { exposeInMainWorld: (_key: string, value: WithMateWindowApi) => { api = value; } } };
+    },
+    process: { argv: ["--benchmark-auxiliary-count=100", "--benchmark-history=long"] },
+    Buffer,
+  });
+  let summaryReads = 0;
+  let fullSaves = 0;
+  const getAuxiliary = api.getAuxiliarySession;
+  api.getAuxiliarySession = async (id) => {
+    const session = await getAuxiliary(id);
+    return session ? { ...session, composerDraft: "restored auxiliary draft" } : null;
+  };
+  const list = api.listAuxiliarySessions;
+  api.listAuxiliarySessions = async (id) => (await list(id)).map((summary) => ({
+    ...summary,
+    get characterIconPath() { summaryReads += 1; return ""; },
+  }));
+  api.updateAuxiliarySession = async () => { fullSaves += 1; throw new Error("Typing must use draft storage."); };
+  const drafts = new Map<string, AuxiliaryDraftRecord>();
+  const getStatus = api.getAuxiliarySessionStatus;
+  api.getAuxiliarySessionStatus = async (id) => {
+    const status = await getStatus(id);
+    return status ? { ...status, incarnation: `fixture-incarnation-${id}` } : null;
+  };
+  let heldSave: Promise<void> | null = null;
+  let notifySaveStarted: (() => void) | undefined;
+  let notifySaved: ((text: string) => void) | undefined;
+  api.getAuxiliaryDraft = async (id) => {
+    if (!drafts.has(id)) {
+      const session = await api.getAuxiliarySession(id);
+      if (!session) return null;
+      drafts.set(id, { auxiliarySessionId: id, parentSessionId: session.parentSessionId, incarnation: `fixture-incarnation-${id}`, durableRevision: 0, text: session.composerDraft, updatedAt: session.updatedAt });
+    }
+    return drafts.get(id)!;
+  };
+  api.saveAuxiliaryDraft = async (input) => {
+    if (heldSave) {
+      const wait = heldSave;
+      heldSave = null;
+      notifySaveStarted?.();
+      await wait;
+    }
+    const current = await api.getAuxiliaryDraft(input.auxiliarySessionId);
+    if (!current || current.durableRevision !== input.expectedDurableRevision) return { outcome: "stale" };
+    const next = { ...current, text: input.text, durableRevision: current.durableRevision + 1, updatedAt: input.updatedAt };
+    drafts.set(next.auxiliarySessionId, next);
+    notifySaved?.(next.text);
+    return { outcome: "saved", ack: { auxiliarySessionId: next.auxiliarySessionId, incarnation: next.incarnation, durableRevision: next.durableRevision, updatedAt: next.updatedAt } };
+  };
+  let flushRequest: Parameters<WithMateWindowApi["subscribeSessionDraftFlushRequest"]>[0] | undefined;
+  let flushRelease: Parameters<WithMateWindowApi["subscribeSessionDraftFlushRelease"]>[0] | undefined;
+  let navigateAuxiliary: Parameters<WithMateWindowApi["subscribeAuxiliarySessionNavigation"]>[0] | undefined;
+  const flushAcks: Array<{ id: string; success: boolean }> = [];
+  let notifyFlushAck: (() => void) | undefined;
+  api.subscribeSessionDraftFlushRequest = (listener) => { flushRequest = listener; return () => { flushRequest = undefined; }; };
+  api.subscribeSessionDraftFlushRelease = (listener) => { flushRelease = listener; return () => { flushRelease = undefined; }; };
+  api.subscribeAuxiliarySessionNavigation = (listener) => { navigateAuxiliary = listener; return () => { navigateAuxiliary = undefined; }; };
+  api.acknowledgeSessionDraftFlush = (id, success) => { flushAcks.push({ id, success }); notifyFlushAck?.(); };
+  const sent: Array<{ id: string; text: string }> = [];
+  let heldRun: Promise<void> | null = null;
+  let notifyRunStarted: (() => void) | undefined;
+  let rejectRun = false;
+  api.runAuxiliarySessionTurn = async (id, request) => {
+    const current = await api.getAuxiliaryDraft(id);
+    assert.ok(current);
+    assert.equal(request.auxiliaryDraftIncarnation, current.incarnation);
+    assert.equal(request.auxiliaryDraftDurableRevision, current.durableRevision);
+    assert.equal(request.userMessage, current.text);
+    drafts.set(id, { ...current, text: "", durableRevision: current.durableRevision + 1 });
+    sent.push({ id, text: request.userMessage });
+    if (heldRun) {
+      const wait = heldRun;
+      heldRun = null;
+      notifyRunStarted?.();
+      await wait;
+    }
+    if (rejectRun) {
+      rejectRun = false;
+      drafts.set(id, { ...current, durableRevision: current.durableRevision + 2 });
+      throw new Error("Auxiliary admission failed");
+    }
+    const session = await api.getAuxiliarySession(id);
+    assert.ok(session);
+    return { ...session, composerDraft: "", messages: [...session.messages, { role: "assistant", text: "Auxiliary response" }] };
+  };
+  api.previewComposerInput = async (_id, text) => ({ text, attachments: [], errors: text === "invalid reference" ? ["Invalid attachment"] : [] } as Awaited<ReturnType<WithMateWindowApi["previewComposerInput"]>>);
+  api.runSessionTurn = async (id, request) => {
+    sent.push({ id, text: request.userMessage });
+    const session = await api.getSession(id);
+    assert.ok(session);
+    return { ...session, messages: [...session.messages, { role: "user", text: request.userMessage }, { role: "assistant", text: "Fresh response" }] };
+  };
+  Object.defineProperty(dom.window, "withmate", { value: api });
+  const { createRoot } = await import("react-dom/client");
+  const { default: App } = await import("../../src/App.js");
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const textarea = () => {
+    const value = dom.window.document.querySelector<HTMLTextAreaElement>('textarea[data-shortcut-scope="composer"]');
+    assert.ok(value);
+    return value;
+  };
+  const input = async (text: string) => {
+    await act(async () => {
+      const element = textarea();
+      Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(element, text);
+      element.setSelectionRange(text.length, text.length);
+      element.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    assert.equal(textarea().value, text, "controlled textarea must reflect the latest input immediately");
+  };
+  const target = async (label: string) => {
+    const button = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(".concurrent-chat-target-dock button")).find((item) => item.textContent === label);
+    assert.ok(button);
+    await act(async () => { button.click(); });
+  };
+  try {
+    await act(async () => { root.render(<App />); });
+    assert.equal(textarea().disabled, false);
+    const beforeMain = summaryReads;
+    for (const text of ["h", "he", "hello", "hello latest"]) await input(text);
+    assert.equal(summaryReads, beforeMain, "Main typing must not reproject the Auxiliary list");
+    assert.equal(fullSaves, 0);
+    const send = dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button");
+    assert.ok(send);
+    assert.equal(send.disabled, false, "Send must use the current draft, not the shell's previous render");
+    assert.equal(send.title.includes("Message is empty"), false);
+
+    await target("Auxiliary");
+    assert.equal(textarea().value, "restored auxiliary draft", "an existing persisted draft must hydrate before any editing");
+    await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
+    assert.equal(sent.length, 1, "a restored draft must be sendable without editing first");
+    assert.equal(sent[0].text, "restored auxiliary draft");
+    assert.equal(textarea().value, "");
+    const beforeAuxiliary = summaryReads;
+    const auxiliarySaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "auxiliary draft") resolve(); }; });
+    for (const text of ["a", "au", "auxiliary draft"]) await input(text);
+    assert.equal(summaryReads, beforeAuxiliary, "typing in the already first Auxiliary must not reproject all summaries");
+    await act(async () => { await auxiliarySaved; });
+    assert.equal(fullSaves, 0);
+    assert.ok(Array.from(drafts.values()).some((record) => record.text === "auxiliary draft"));
+    await target("Main");
+    assert.equal(textarea().value, "hello latest");
+    await target("Auxiliary");
+    assert.equal(textarea().value, "auxiliary draft");
+    await target("Main");
+    await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
+    assert.deepEqual(sent.at(-1), { id: "benchmark-main", text: "hello latest" });
+    assert.equal(textarea().value, "");
+    await target("Auxiliary");
+    await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
+    assert.equal(sent.length, 3, "a second Auxiliary send must use the revision after the previous consume");
+    assert.equal(sent.at(-1)?.text, "auxiliary draft");
+    assert.equal(textarea().value, "");
+
+    let releaseSave!: () => void;
+    heldSave = new Promise<void>((resolve) => { releaseSave = resolve; });
+    const saveStarted = new Promise<void>((resolve) => { notifySaveStarted = resolve; });
+    await input("ABA draft");
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
+      await saveStarted;
+    });
+    await input("intermediate draft");
+    await input("ABA draft");
+    const abaSaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "ABA draft") resolve(); }; });
+    await act(async () => { releaseSave(); await abaSaved; });
+    assert.equal(sent.length, 3, "an edit during flush must invalidate the send capture even if the text returns to A");
+    assert.equal(textarea().value, "ABA draft");
+    await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
+    assert.equal(sent.length, 4);
+    assert.equal(sent.at(-1)?.text, "ABA draft");
+
+    let releaseRun!: () => void;
+    heldRun = new Promise<void>((resolve) => { releaseRun = resolve; });
+    const runStarted = new Promise<void>((resolve) => { notifyRunStarted = resolve; });
+    await input("switch during send");
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
+      await runStarted;
+    });
+    assert.equal(textarea().value, "", "the captured draft clears when its run starts");
+    await target("Main");
+    await input("Main while Auxiliary sends");
+    await act(async () => { releaseRun(); });
+    assert.equal(textarea().value, "Main while Auxiliary sends", "another owner's completion must preserve Main input");
+    await target("Auxiliary");
+    assert.equal(textarea().value, "", "a consumed draft must not reappear after switching back");
+
+    const previousAuxiliaryId = sent.at(-1)!.id;
+    heldRun = new Promise<void>((resolve) => { releaseRun = resolve; });
+    const failedRunStarted = new Promise<void>((resolve) => { notifyRunStarted = resolve; });
+    rejectRun = true;
+    await input("restore failed send");
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
+      await failedRunStarted;
+    });
+    await act(async () => { navigateAuxiliary?.({ parentSessionId: "benchmark-main", auxiliarySessionId: "benchmark-aux-1" }); });
+    await input("another Auxiliary draft");
+    await act(async () => { releaseRun(); });
+    assert.equal(textarea().value, "another Auxiliary draft", "a failed old send must not restore into the selected owner");
+    await act(async () => { navigateAuxiliary?.({ parentSessionId: "benchmark-main", auxiliarySessionId: previousAuxiliaryId }); });
+    assert.equal(textarea().value, "restore failed send", "the failed send restores only its captured owner");
+    assert.deepEqual(alerts, ["Auxiliary admission failed"]);
+    alerts.length = 0;
+
+    await input("draft before close");
+    const flushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
+    await act(async () => { flushRequest?.({ requestId: "close-1", sessionId: "benchmark-main" }); });
+    assert.equal(textarea().disabled, true, "close freezes editing before awaiting persistence");
+    assert.deepEqual(flushAcks, []);
+    await act(async () => { await flushAck; });
+    assert.deepEqual(flushAcks, [{ id: "close-1", success: true }]);
+    assert.equal(textarea().disabled, true, "successful flush must remain frozen until destruction");
+    await act(async () => { flushRelease?.({ success: false }); });
+    assert.equal(textarea().disabled, false, "another window's failed quit releases this window");
+    assert.equal(textarea().value, "draft before close");
+    await target("Main");
+    await input("invalid reference");
+    await act(async () => { dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click(); });
+    assert.ok(dom.window.document.body.textContent?.includes("Invalid attachment"));
+    await input("fixed draft");
+    assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.disabled, false, "editing must remove the previous revision's preview error");
+    await act(async () => {
+      textarea().focus();
+      textarea().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", code: "Enter", ctrlKey: true, bubbles: true }));
+    });
+    assert.deepEqual(sent.at(-1), { id: "benchmark-main", text: "fixed draft" }, "keyboard submission must read the same latest draft as Send");
+    assert.deepEqual(alerts, []);
+  } finally {
+    await act(async () => { root.unmount(); });
+    dom.window.close();
+    for (const [key, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});

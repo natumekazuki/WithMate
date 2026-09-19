@@ -856,6 +856,16 @@ describe("SessionWindowBridge", () => {
     assert.equal(errors.length, 2);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "quit準備後のWindow closeでもsettled open snapshotを破棄しない"
+  // oracle = { type = "contract", ref = "SessionWindowBridge#prepareSnapshotForQuit" }
+  // fault = "quit準備中の遅延closeでrestore snapshotを空にして再起動時のWindowを失う"
+  // observable = "保存されたopen Session Window ID"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-restore"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("quit前に現在集合を保存し、その後のWindow closeではsnapshotを空にしない", async () => {
     const session = createSession();
     const savedSnapshots: string[][] = [];
@@ -879,5 +889,91 @@ describe("SessionWindowBridge", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.deepEqual(savedSnapshots, [[session.id]]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "通常closeのdraft flush失敗ではWindowを閉じず、再試行でのみ閉じる"
+  // oracle = { type = "contract", ref = "SessionWindowBridge#requestCloseSessionWindow" }
+  // fault = "flush失敗を成功扱いして入力を失ったままWindowを閉じる"
+  // observable = "close結果とWindowの破棄状態"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-draft-flush"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("draft flush失敗後のclose retryを成功時だけ完了する", async () => {
+    const session = createSession({ id: "draft-close" });
+    let bridge!: SessionWindowBridge<StubWindow>;
+    let attempt = 0;
+    const window = new StubWindow();
+    bridge = new SessionWindowBridge({
+      createWindow: () => window,
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      getWindowSender: () => "sender",
+      sendDraftFlushRequest: (_window, request) => {
+        queueMicrotask(() => bridge.acknowledgeDraftFlush(request.requestId, "sender", attempt++ > 0));
+      },
+    });
+    await bridge.openSessionWindow(session.id);
+    assert.equal(await bridge.requestCloseSessionWindow(session.id), false);
+    assert.equal(window.destroyed, false);
+    assert.equal(await bridge.requestCloseSessionWindow(session.id), true);
+    assert.equal(window.destroyed, true);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "app quitの全Window flushは全ackを待ち、1件失敗なら全Windowへreleaseする"
+  // oracle = { type = "contract", ref = "SessionWindowBridge#flushSessionWindowDrafts" }
+  // fault = "先に失敗したWindowだけで終了し、別Windowの未完了flushやfreeze解除を取りこぼす"
+  // observable = "flush結果、release対象、完了までの待機"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-draft-flush"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("全Window flushの完了を待って失敗releaseを全Windowへ送る", async () => {
+    const sessions = [createSession({ id: "flush-a" }), createSession({ id: "flush-b" })];
+    const windows = new Map<string, StubWindow>();
+    const releases: string[] = [];
+    let bridge!: SessionWindowBridge<StubWindow>;
+    const bridgeWindows = new Map<StubWindow, string>();
+    const requests = new Map<string, { requestId: string; sessionId: string }>();
+    bridge = new SessionWindowBridge({
+      createWindow: (id) => {
+        const window = new StubWindow();
+        windows.set(id, window);
+        bridgeWindows.set(window, id);
+        return window;
+      },
+      async loadChatEntry() {},
+      getSession: (id) => sessions.find((session) => session.id === id) ?? null,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      getWindowSender: () => "sender",
+      sendDraftFlushRequest: (_window, request) => {
+        requests.set(request.sessionId, request);
+      },
+      sendDraftFlushRelease: (window, payload) => {
+        if (!payload.success) releases.push(bridgeWindows.get(window)!);
+      },
+    });
+    await bridge.openSessionWindow("flush-a");
+    await bridge.openSessionWindow("flush-b");
+    const flushing = bridge.flushSessionWindowDrafts();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    assert.deepEqual(releases, []);
+    bridge.acknowledgeDraftFlush(requests.get("flush-a")!.requestId, "sender", false);
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    assert.deepEqual(releases, []);
+    bridge.acknowledgeDraftFlush(requests.get("flush-b")!.requestId, "sender", true);
+    assert.equal(await flushing, false);
+    assert.deepEqual(releases.sort(), ["flush-a", "flush-b"]);
   });
 });

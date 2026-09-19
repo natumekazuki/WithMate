@@ -2,7 +2,9 @@
 
 ## Auxiliary Session Projection (Issue #710)
 
-`auxiliary_sessions`は親Session配下の複数会話を保存する。payloadには会話、draft、provider thread、Character snapshotを保持し、`summary_json`には一覧用のicon、preview、stable identity、status等だけを派生保存する。Auxiliary一覧・active一覧・running一覧はsummary projectionを読み、全payloadやCharacter定義を毎回走査しない。親ごとのAuxiliary一覧は`updated_at DESC, id DESC`を最終使用順として使い、`created_at`は作成時刻の保持と旧行のbackfillに使うが、作成順indexは持たない。
+`auxiliary_sessions`は親Session配下の複数会話を保存する。payloadには会話、provider thread、Character snapshotを保持し、`summary_json`には一覧用のicon、preview、stable identity、status等だけを派生保存する。Auxiliary一覧・active一覧・running一覧はsummary projectionを読み、全payloadやCharacter定義を毎回走査しない。親ごとのAuxiliary一覧は`updated_at DESC, id DESC`を最終使用順として使い、`created_at`は作成時刻の保持と旧行のbackfillに使うが、作成順indexは持たない。
+
+Auxiliary draft は `auxiliary_session_drafts` に独立して保存し、既存 storage Worker の限定 read / save / consume command だけが操作する。owner、incarnation、durable revision、本文、使用時刻を保持し、通常の保存要求と ack に会話履歴を含めない。旧 payload 内 draft の移行、通常の full Session 更新からの保全、送信時 consume、正常終了時 flush の契約は [Auxiliary Session](auxiliary-session.md#composer-の更新保存境界) を参照する。
 
 - 作成日: 2026-03-27
 - 更新日: 2026-06-24

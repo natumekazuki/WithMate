@@ -37,6 +37,14 @@ import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-op
 import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
 import type { AuxiliarySessionThreadPatchInput } from "./auxiliary-session-storage.js";
 import type { AuxiliarySessionRuntimeMetadataPatchInput } from "./auxiliary-session-storage.js";
+import type {
+  AuxiliaryDraftConsumeInput,
+  AuxiliaryDraftConsumeResult,
+  AuxiliaryDraftRecord,
+  AuxiliaryDraftSaveInput,
+  AuxiliaryDraftSaveResult,
+  AuxiliarySessionStatus,
+} from "../src/auxiliary-draft-contract.js";
 
 type AuxiliarySessionServiceDeps = {
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
@@ -97,10 +105,6 @@ function buildInterruptedMessages(messages: AuxiliarySession["messages"]): Auxil
       accent: true,
     },
   ];
-}
-
-function areStringArraysEqual(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 async function isRuntimeMetadataInCatalog(
@@ -793,6 +797,86 @@ export class AuxiliarySessionService {
     return await this.toRuntimeSession(auxiliary);
   }
 
+  async getAuxiliaryDraft(auxiliarySessionId: string): Promise<AuxiliaryDraftRecord | null> {
+    return await this.deps.getStorage().getAuxiliaryDraft(auxiliarySessionId);
+  }
+
+  async getAuxiliarySessionStatus(auxiliarySessionId: string): Promise<AuxiliarySessionStatus | null> {
+    return await this.deps.getStorage().getAuxiliarySessionStatus(auxiliarySessionId);
+  }
+
+  async saveAuxiliaryDraft(input: AuxiliaryDraftSaveInput): Promise<AuxiliaryDraftSaveResult> {
+    const storage = this.deps.getStorage();
+    const status = await storage.getAuxiliarySessionStatus(input.auxiliarySessionId);
+    if (!status || status.parentSessionId !== input.parentSessionId || status.incarnation !== input.incarnation) {
+      return { outcome: "not-found" };
+    }
+    if (status.runState === "running") return { outcome: "rejected" };
+    return await storage.saveAuxiliaryDraft(input);
+  }
+
+  async consumeAuxiliaryDraft(input: AuxiliaryDraftConsumeInput): Promise<AuxiliaryDraftConsumeResult> {
+    const storage = this.deps.getStorage();
+    const status = await storage.getAuxiliarySessionStatus(input.auxiliarySessionId);
+    if (!status || status.parentSessionId !== input.parentSessionId || status.incarnation !== input.incarnation) {
+      return { outcome: "not-found" };
+    }
+    if (status.runState === "running") return { outcome: "rejected" };
+    return await storage.consumeAuxiliaryDraft(input);
+  }
+
+  async runAuxiliaryTurnWithDraft(input: {
+    auxiliarySessionId: string;
+    parentSessionId: string;
+    incarnation: string;
+    expectedDurableRevision: number;
+    userMessage: string;
+    run: () => Promise<void>;
+  }): Promise<void> {
+    const storage = this.deps.getStorage();
+    const captured = await storage.getAuxiliaryDraft(input.auxiliarySessionId);
+    if (!captured
+      || captured.parentSessionId !== input.parentSessionId
+      || captured.incarnation !== input.incarnation
+      || captured.durableRevision !== input.expectedDurableRevision) {
+      throw new Error("Auxiliary の送信対象draftが更新されたため、送信を中止したよ。");
+    }
+    const consumed = await this.consumeAuxiliaryDraftWithStorage(storage, input);
+    if (consumed.outcome !== "consumed" || !consumed.ack) {
+      throw new Error("Auxiliary の送信対象draftが更新されたため、送信を中止したよ。");
+    }
+    try {
+      await input.run();
+    } catch (error) {
+      try {
+        const restored = await storage.saveAuxiliaryDraft({
+          auxiliarySessionId: input.auxiliarySessionId,
+          parentSessionId: input.parentSessionId,
+          incarnation: consumed.ack.incarnation,
+          expectedDurableRevision: consumed.ack.durableRevision,
+          text: captured.text,
+          updatedAt: currentTimestampLabel(),
+        });
+        if (restored.outcome !== "saved") throw new Error(`Auxiliary draft restore ${restored.outcome}.`);
+      } catch (restoreError) {
+        throw new AggregateError([error, restoreError], "Auxiliary turn failed and draft restore failed.");
+      }
+      throw error;
+    }
+  }
+
+  private async consumeAuxiliaryDraftWithStorage(
+    storage: AuxiliarySessionStorageAccess,
+    input: AuxiliaryDraftConsumeInput,
+  ): Promise<AuxiliaryDraftConsumeResult> {
+    const status = await storage.getAuxiliarySessionStatus(input.auxiliarySessionId);
+    if (!status || status.parentSessionId !== input.parentSessionId || status.incarnation !== input.incarnation) {
+      return { outcome: "not-found" };
+    }
+    if (status.runState === "running") return { outcome: "rejected" };
+    return await storage.consumeAuxiliaryDraft(input);
+  }
+
   async upsertAuxiliaryRuntimeSession(
     runtimeSession: Session,
     options: { confirmedFinalAssistantText?: string | null } = {},
@@ -860,56 +944,31 @@ export class AuxiliarySessionService {
       session.catalogRevision !== current.catalogRevision ||
       session.model !== current.model ||
       session.reasoningEffort !== current.reasoningEffort;
-    const hasComposerDraftChange = session.composerDraft !== current.composerDraft;
-    const hasDisplayAfterMessageIndexChange = session.displayAfterMessageIndex !== current.displayAfterMessageIndex;
-    const hasEditableSettingsChange =
-      session.title !== current.title ||
-      session.approvalMode !== current.approvalMode ||
-      session.codexSandboxMode !== current.codexSandboxMode ||
-      session.codexSpeed !== current.codexSpeed ||
-      session.codexReviewer !== current.codexReviewer ||
-      session.customAgentName !== current.customAgentName ||
-      !areStringArraysEqual(session.allowedAdditionalDirectories, current.allowedAdditionalDirectories);
     const isExplicitRuntimeMetadataUpdate =
       hasRuntimeMetadataChange &&
       await isRuntimeMetadataInCatalog(session, await this.deps.getModelCatalogSnapshot?.());
     const shouldPreserveRuntimeMetadata =
       hasRuntimeMetadataChange &&
-      (hasComposerDraftChange || !isExplicitRuntimeMetadataUpdate);
-    const shouldPreserveEditableSettings = hasComposerDraftChange && hasEditableSettingsChange;
-    const shouldPreserveComposerDraft =
-      hasComposerDraftChange &&
-      (
-        hasEditableSettingsChange ||
-        (hasRuntimeMetadataChange && (isExplicitRuntimeMetadataUpdate || session.catalogRevision === current.catalogRevision))
-      );
-    const shouldPreserveDisplayAfterMessageIndex =
-      hasComposerDraftChange && hasDisplayAfterMessageIndexChange;
+      !isExplicitRuntimeMetadataUpdate;
     const shouldResetRuntimeThread = hasRuntimeMetadataChange && !shouldPreserveRuntimeMetadata;
 
     const next: AuxiliarySession = {
       ...current,
       status: "active",
       closedAt: "",
-      title: shouldPreserveEditableSettings ? current.title : session.title,
+      title: session.title,
       provider: shouldPreserveRuntimeMetadata ? current.provider : session.provider,
       catalogRevision: shouldPreserveRuntimeMetadata ? current.catalogRevision : session.catalogRevision,
       model: shouldPreserveRuntimeMetadata ? current.model : session.model,
       reasoningEffort: shouldPreserveRuntimeMetadata ? current.reasoningEffort : session.reasoningEffort,
-      approvalMode: shouldPreserveEditableSettings ? current.approvalMode : session.approvalMode,
-      codexSandboxMode: shouldPreserveEditableSettings ? current.codexSandboxMode : session.codexSandboxMode,
-      codexSpeed: shouldPreserveEditableSettings ? current.codexSpeed : session.codexSpeed,
-      codexReviewer: shouldPreserveEditableSettings
-        ? current.codexReviewer
-        : resolveCodexReviewerUpdate(current, session.codexReviewer),
-      customAgentName: shouldPreserveEditableSettings ? current.customAgentName : session.customAgentName,
-      allowedAdditionalDirectories: shouldPreserveEditableSettings
-        ? [...current.allowedAdditionalDirectories]
-        : [...session.allowedAdditionalDirectories],
-      composerDraft: shouldPreserveComposerDraft ? current.composerDraft : session.composerDraft,
-      displayAfterMessageIndex: shouldPreserveDisplayAfterMessageIndex
-        ? current.displayAfterMessageIndex
-        : session.displayAfterMessageIndex,
+      approvalMode: session.approvalMode,
+      codexSandboxMode: session.codexSandboxMode,
+      codexSpeed: session.codexSpeed,
+      codexReviewer: resolveCodexReviewerUpdate(current, session.codexReviewer),
+      customAgentName: session.customAgentName,
+      allowedAdditionalDirectories: [...session.allowedAdditionalDirectories],
+      composerDraft: current.composerDraft,
+      displayAfterMessageIndex: session.displayAfterMessageIndex,
       threadId: shouldResetRuntimeThread ? "" : current.threadId,
       updatedAt: currentTimestampLabel(),
     };

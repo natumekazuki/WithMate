@@ -50,6 +50,9 @@ import { useShortcutSettings } from "./shortcut-settings-context.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
 import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
+import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "./chat/composer-controller.js";
+import { buildComposerAttachmentItems } from "./session-composer-paths.js";
+import { buildComposerSendabilityState, getComposerSendButtonTitle } from "./session-composer-feedback.js";
 import { resolveSelectionActionOverlayPosition } from "./chat/selection-action-overlay.js";
 import { SessionSwitcher, type SessionSwitcherOption } from "./chat/session-switcher.js";
 import {
@@ -3866,6 +3869,8 @@ type SessionComposerSendabilityView = {
 };
 
 export type SessionComposerExpandedProps = {
+  composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
+  onRetryComposerSave?: () => void;
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
@@ -3948,6 +3953,8 @@ export type SessionComposerExpandedProps = {
 };
 
 export function SessionComposerExpanded({
+  composerController,
+  onRetryComposerSave,
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
@@ -4028,6 +4035,43 @@ export function SessionComposerExpanded({
   onChangeReasoningEffort,
   onMessageViewModeChange = () => {},
 }: SessionComposerExpandedProps) {
+  const controllerOwner = composerController?.owner ?? { kind: "main" as const, id: "__legacy__" };
+  const composerControllerState = useComposerController(
+    controllerOwner,
+    composerController?.initialDraft ?? draft,
+    composerController?.registry,
+  );
+  const displayedDraft = composerController ? composerControllerState.draft : draft;
+  const composerFrozen = composerController?.registry.isFrozen === true;
+  const composerSaveFailed = composerControllerState.saveState === "error";
+  const projectedComposerSendability = composerController
+    ? buildComposerSendabilityState({
+        runState: isRunning ? "running" : "idle",
+        busyReason: composerSendability.busyReason,
+        blockedReason: composerBlocked ? (composerSendability.primaryFeedback ?? "") : "",
+        inputErrors: composerControllerState.preview.errors,
+        draftText: displayedDraft,
+      })
+    : null;
+  const displayedComposerSendability = projectedComposerSendability ?? composerSendability;
+  const displayedAttachmentItems = composerController
+    ? buildComposerAttachmentItems(composerControllerState.preview.attachments, { trimRemoveTargets: true })
+    : attachmentItems;
+  const displayedIsSendDisabled = composerController
+    ? isComposerDisabled || projectedComposerSendability!.isSendDisabled || composerSaveFailed
+    : isSendDisabled;
+  const displayedSendButtonTitle = composerSaveFailed
+    ? "Draft could not be saved. Retry before sending."
+    : projectedComposerSendability
+      ? getComposerSendButtonTitle(projectedComposerSendability)
+      : sendButtonTitle;
+  const composerDescriptionIds = [
+    externalErrorDescriptionIds,
+    composerSaveFailed ? "composer-save-feedback" : undefined,
+    displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds
+      ? "composer-sendability-feedback"
+      : undefined,
+  ].filter(Boolean).join(" ") || undefined;
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
   const keyboardShortcuts = useShortcutSettings();
@@ -4302,9 +4346,9 @@ export function SessionComposerExpanded({
         </div>
       ) : null}
 
-      {attachmentItems.length > 0 ? (
+      {displayedAttachmentItems.length > 0 ? (
         <div className="composer-attachment-list">
-          {attachmentItems.map((item) => (
+          {displayedAttachmentItems.map((item) => (
             <div
               key={item.key}
               className={`composer-attachment-chip ${item.kind}`}
@@ -4335,7 +4379,7 @@ export function SessionComposerExpanded({
           <textarea
             ref={composerTextareaRef}
             data-shortcut-scope="composer"
-            value={draft}
+            value={displayedDraft}
             placeholder={placeholder}
             onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
             onFocus={onDraftFocus}
@@ -4344,27 +4388,40 @@ export function SessionComposerExpanded({
             onSelect={(event) => onDraftSelect(event.currentTarget.selectionStart ?? 0)}
             onCompositionStart={onDraftCompositionStart}
             onCompositionEnd={onDraftCompositionEnd}
-            disabled={isComposerDisabled}
-            aria-busy={composerSendability.isBusy || undefined}
-            aria-describedby={externalErrorDescriptionIds || (
-              composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined
-            )}
-            aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
+            disabled={isComposerDisabled || composerFrozen}
+            aria-busy={displayedComposerSendability.isBusy || undefined}
+            aria-describedby={composerDescriptionIds}
+            aria-invalid={displayedComposerSendability.feedbackTone === "blocked" || composerSaveFailed ? true : undefined}
           />
-          {composerSendability.isBusy && composerSendability.busyReason ? (
+          {composerControllerState.saveState === "error" ? (
+            <div id="composer-save-feedback" className="composer-save-feedback" role="alert" aria-live="assertive">
+              <span>{composerControllerState.saveError ?? "Draft could not be saved."}</span>
+              {onRetryComposerSave ? (
+                <button
+                  className="composer-save-retry"
+                  type="button"
+                  onClick={onRetryComposerSave}
+                  disabled={composerFrozen}
+                >
+                  Retry
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {displayedComposerSendability.isBusy && displayedComposerSendability.busyReason ? (
             <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
-              {composerSendability.busyReason}
+              {displayedComposerSendability.busyReason}
             </span>
           ) : null}
-          {composerSendability.shouldShowFeedback && !externalErrorDescriptionIds ? (
+          {displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds ? (
             <div
               id="composer-sendability-feedback"
-              className={`composer-sendability-feedback ${composerSendability.feedbackTone ?? "helper"}`}
+              className={`composer-sendability-feedback ${displayedComposerSendability.feedbackTone ?? "helper"}`}
             >
-              {composerSendability.primaryFeedback ? <p>{composerSendability.primaryFeedback}</p> : null}
-              {composerSendability.secondaryFeedback.length > 0 ? (
+              {displayedComposerSendability.primaryFeedback ? <p>{displayedComposerSendability.primaryFeedback}</p> : null}
+              {displayedComposerSendability.secondaryFeedback.length > 0 ? (
                 <ul>
-                  {composerSendability.secondaryFeedback.map((feedback) => (
+                  {displayedComposerSendability.secondaryFeedback.map((feedback) => (
                     <li key={feedback}>{feedback}</li>
                   ))}
                 </ul>
@@ -4495,12 +4552,12 @@ export function SessionComposerExpanded({
           className="session-send-button"
           type="button"
           onClick={onSendOrCancel}
-          disabled={isRunning || isSendDisabled}
+          disabled={isRunning || displayedIsSendDisabled || composerFrozen}
           title={
             isRunning
               ? "実行中は送信できません"
               : appendShortcutLabel(
-                  sendButtonTitle,
+                  displayedSendButtonTitle,
                   SHORTCUT_COMMAND_IDS.composerSubmit,
                   undefined,
                   keyboardShortcuts,

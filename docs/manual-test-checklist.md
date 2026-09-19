@@ -210,3 +210,21 @@ npm run electron:start
 | MT-068 | Windows notification Session activation | Windows で通常の完了通知、返答 preview 通知、非 cancel の error 終端通知をそれぞれ発生させる。WithMate 以外を前面にした状態で、対象 Session Window が通常表示、最小化、非表示、未作成の各状態から live toast または Action Center の通知をクリックする | 成功通知は従来の完了文または preview、error 通知は成功と区別できる短い固定文を表示し、保存済み failure notice や raw provider error は表示しない。既存 Window は同じ位置のまま可視化され、最小化時は復元されて前面へ focus する。未作成なら対象 Session の Window が1つだけ新規表示される。別 Session WindowやHomeが開かず、同じ通知を再度activateしても追加のWindowは開かない |
 | MT-068A | Windows notification stale / fallback | 同じ Session で成功通知と error 通知を連続して発生させ、置き換え前の通知が操作可能なら古い通知と最新通知を順にクリックする。対象 Session Window が focus 中の error 終端と利用者 cancel も確認する。続けて通知後に対象 Session を削除する場合と、開く処理を失敗させる開発用条件を確認する | outcome が変わっても古い通知や同じ通知の多重activationはSessionを再openせず、最新通知の最初のactivationだけが対象を開く。対象 Session Window が focus 中の終端と利用者 cancel では通知しない。削除済みまたはopen失敗ではHomeが表示・focusされ、失敗が記録される |
 | MT-069 | Auxiliary processing indicator | Auxiliaryを3件以上用意して一覧を開き、表示中・非表示のAuxiliaryをそれぞれ実行する。実行中に一覧を開閉し、狭い幅と`prefers-reduced-motion`でも確認する | 実行中の行だけicon内に小さなprocessing indicatorが表示され、previewは既存の最大2行表示を維持し、indicator追加で行の高さとpreviewの幅は変わらない。待機中の行にindicatorは出ず、一覧を閉じても実行は継続する。reduced motionではindicatorが回転しない |
+
+
+## Issue #725 Composer input benchmark
+
+このbenchmarkはhidden Electron BrowserWindowで本番の `session.html` を読み込み、AgentSessionWindowAppと共通Composerのrenderer/IPC境界を確認する。合成API fixtureのため、実DB・Storage Workerの性能値とは分けて扱う。
+
+```powershell
+npm run build:renderer
+npx electron scripts/run-composer-input-benchmark.cjs
+```
+
+変更前rendererの比較は `--renderer-dir` で展開済みbaselineの `dist` を指定する。
+
+```powershell
+npx electron scripts/run-composer-input-benchmark.cjs --renderer-dir C:\path\to\issue-725-baseline\source\dist
+```
+
+Auxiliary件数1/10/100、short/long履歴、Main/Auxiliary owner、通常入力/delete、synthetic pasteを出力する。各条件は先頭5入力をwarmupとして除き、24入力のmedian/p95を計算する。測定区間はinput eventから2回目のrequestAnimationFrameまでで、実paint時間ではない。hidden Windowのbackground throttlingを無効にしたrenderer比較値として扱う。pasteはユーザーclipboardを読み書きせず、合成ClipboardEventとInputEventである。実clipboardと日本語IMEは別途Electron手動確認とし、実行環境・commit・build種別・fixture・入力方法を結果へ記録する。`GIT_COMMIT`へ比較対象のcommitを設定し、同じbuild種別・条件でbaselineと変更後を比較する。

@@ -113,7 +113,13 @@ import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDia
 import { useAuxiliaryCreation } from "./chat/use-auxiliary-creation.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import { useAuxiliaryWorkspace } from "./chat/use-auxiliary-workspace.js";
-import { useConversationComposerState } from "./chat/use-conversation-composer-state.js";
+import {
+  ComposerControllerRegistry,
+  type ComposerOwner,
+  type ComposerSaveState,
+  type ComposerSelection,
+} from "./chat/composer-controller.js";
+import { AuxiliaryDraftPersistenceOwner } from "./chat/auxiliary-draft-persistence-owner.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
@@ -268,10 +274,6 @@ import {
   type RetryBannerState,
 } from "./chat/retry-state.js";
 import { resolvePendingAuxiliaryMessageGroupId } from "./auxiliary-session-message-projection.js";
-import {
-  runAuxiliaryDraftChangeAndSaveOperation,
-  runAuxiliaryDraftPatchOperation,
-} from "./auxiliary-draft-save-context.js";
 import {
   createGuardedActiveAuxiliarySessionUpdater,
   enqueueAuxiliarySessionSaveWithQueue,
@@ -521,9 +523,10 @@ export default function AgentSessionWindowApp() {
   }, []);
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
-  const [draft, setDraft] = useState("");
-  const mainDraftRef = useRef(draft);
-  mainDraftRef.current = draft;
+  const composerRegistryRef = useRef<ComposerControllerRegistry | null>(null);
+  if (!composerRegistryRef.current) {
+    composerRegistryRef.current = new ComposerControllerRegistry();
+  }
   const [pendingSubmitSessionId, setPendingSubmitSessionId] = useState<string | null>(null);
   const [workspaceAvailability, setWorkspaceAvailability] = useState(
     INITIAL_SESSION_WORKSPACE_AVAILABILITY,
@@ -623,7 +626,6 @@ export default function AgentSessionWindowApp() {
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [isSkillListLoading, setIsSkillListLoading] = useState(false);
   const [skillListError, setSkillListError] = useState<string | null>(null);
-  const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
   const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
@@ -709,6 +711,7 @@ export default function AgentSessionWindowApp() {
   const auxiliarySessionMutationRevisionRef = auxiliaryBinding.mutationRevision;
   const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
   const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
+  const auxiliaryDraftPersistenceOwnersRef = useRef(new Map<string, AuxiliaryDraftPersistenceOwner>());
   const mainComposerCaretRef = useRef(0);
   const promptTemplateSelectionRef = useRef({ start: 0, end: 0 });
   const fileRootDiffRequestRevisionRef = useRef(0);
@@ -907,10 +910,64 @@ export default function AgentSessionWindowApp() {
   const activeRunSessionId = auxiliaryWorkspace.target === "auxiliary"
     ? auxiliaryWorkspace.selectedId
     : selectedSessionId;
+  const composerOwner = useMemo<ComposerOwner>(
+    () => ({
+      kind: auxiliaryWorkspace.target === "auxiliary" ? "auxiliary" : "main",
+      id: activeRunSessionId ?? "__none__",
+    }),
+    [activeRunSessionId, auxiliaryWorkspace.target],
+  );
   composerOwnerRef.current = activeRunSessionId;
-  const composerDraft = auxiliaryWorkspace.target === "auxiliary" ? activeAuxiliarySession?.composerDraft ?? "" : draft;
+  const composerDraft = auxiliaryWorkspace.target === "auxiliary" ? activeAuxiliarySession?.composerDraft ?? "" : "";
   const isAuxiliaryTargetUnavailable = auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession;
-  const composerState = useConversationComposerState(activeRunSessionId, composerDraft);
+  const composerRegistry = composerRegistryRef.current!;
+  const composerSnapshot = composerRegistry.get(composerOwner, composerDraft);
+  useLayoutEffect(() => {
+    composerRegistry.hydrateIfUnedited(composerOwner, composerDraft);
+  }, [composerRegistry, composerOwner, composerDraft]);
+  const getComposerDraft = () => composerRegistry.get(composerOwner).draft;
+  const composerState = {
+    ...composerSnapshot,
+    setDraft: (value: string, selection?: ComposerSelection) => composerRegistry.setDraft(composerOwner, value, selection),
+    setSelection: (value: SetStateAction<ComposerSelection>) => composerRegistry.setSelection(composerOwner, value),
+    setPreview: composerRegistry.setPreview.bind(composerRegistry, composerOwner),
+    setImeComposing: (value: boolean) => composerRegistry.setImeComposing(composerOwner, value),
+    setSaveState: (value: ComposerSaveState, error?: string | null) => composerRegistry.setSaveState(composerOwner, value, error),
+    capture: () => composerRegistry.capture(composerOwner),
+  };
+  useEffect(() => {
+    if (!withmateApi) return;
+    const unsubscribeRequest = withmateApi.subscribeSessionDraftFlushRequest((request) => {
+      composerRegistry.freeze();
+      void Promise.all(Array.from(auxiliaryDraftPersistenceOwnersRef.current.values(), (owner) => owner.flush()))
+        .then(() => withmateApi.acknowledgeSessionDraftFlush(request.requestId, true))
+        .catch(() => withmateApi.acknowledgeSessionDraftFlush(request.requestId, false));
+    });
+    const unsubscribeRelease = withmateApi.subscribeSessionDraftFlushRelease(({ success }) => {
+      if (!success) {
+        composerRegistry.unfreeze();
+        auxiliaryDraftPersistenceOwnersRef.current.forEach((owner, sessionId) => {
+          if (owner.hasPending) {
+            composerRegistry.setSaveState(
+              { kind: "auxiliary", id: sessionId },
+              "error",
+              "Draft could not be saved. Retry.",
+            );
+          }
+        });
+      }
+    });
+    return () => {
+      unsubscribeRequest();
+      unsubscribeRelease();
+    };
+  }, [withmateApi, composerRegistry]);
+  const draft = composerState.draft;
+  const setDraft = useCallback((update: SetStateAction<string>) => {
+    const current = composerRegistryRef.current?.get(composerOwner).draft ?? "";
+    const next = typeof update === "function" ? update(current) : update;
+    composerState.setDraft(next);
+  }, [composerOwner, composerState.setDraft]);
   const { preview: composerPreview, setPreview: setComposerPreview } = composerState;
   const composerCaret = composerState.selection.start;
   const setComposerCaret = (caret: number) => {
@@ -923,7 +980,7 @@ export default function AgentSessionWindowApp() {
     setIsSkillPickerOpen(false);
     setIsAdditionalDirectoryListOpen(false);
     setForceComposerBlockedFeedback(false);
-    setIsComposerImeComposing(false);
+    composerState.setImeComposing(false);
   }, [activeRunSessionId]);
   const liveRunState = liveRunStates[activeRunSessionId ?? ""] ?? { ownerSessionId: activeRunSessionId, state: null };
   const setLiveRunState = (update: SetStateAction<OwnedLiveSessionRunState>) => setLiveRunForSession(activeRunSessionId, update);
@@ -1827,7 +1884,7 @@ export default function AgentSessionWindowApp() {
     });
     setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
-    setIsComposerImeComposing(false);
+    composerState.setImeComposing(false);
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
     setLiveRunState({ ownerSessionId: selectedSessionId, state: null });
@@ -2171,7 +2228,10 @@ export default function AgentSessionWindowApp() {
     isSelectedSessionReadOnly,
     activeAuxiliarySession,
   ]);
-  const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft });
+  const shouldProtectDraftOnRetryEdit = () => shouldProtectRetryEditDraft({
+    retryBanner,
+    draft: getComposerDraft(),
+  });
   const isComposerDisabled = selectedSessionRunState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
   const composerSendability = useMemo(
     () =>
@@ -2180,7 +2240,7 @@ export default function AgentSessionWindowApp() {
         busyReason: composerBusyReason,
         blockedReason: sessionExecutionBlockedReason,
         inputErrors: composerPreview.errors,
-        draftText: draft,
+        draftText: getComposerDraft(),
         forceBlockedFeedback: forceComposerBlockedFeedback,
       }),
     [
@@ -2367,6 +2427,11 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
+    const sendCapture = composerRegistry.capture(composerOwner);
+    if (options?.submitSource === "composer") {
+      messageText = sendCapture.draft;
+    }
+
     const sessionId = selectedSession.id;
     const submitLease = sessionSubmitCoordinatorRef.current.tryAcquire(sessionId);
     if (!submitLease) {
@@ -2421,6 +2486,10 @@ export default function AgentSessionWindowApp() {
         attachmentCount: preview.attachments.length,
         errorCount: preview.errors.length,
       });
+      const previewCapture = composerRegistry.capture(composerOwner);
+      if (previewCapture.revision !== sendCapture.revision || previewCapture.draft !== sendCapture.draft) {
+        return;
+      }
       setComposerPreview(displayPreview);
       const { blockedMessage } = resolveComposerSendPreflight({
         runState: selectedSessionRunState,
@@ -2437,9 +2506,9 @@ export default function AgentSessionWindowApp() {
         setIsActionDockPinnedExpanded(false);
       }
       const shouldClearDraft = options?.clearDraft ?? true;
-      if (shouldClearDraft) {
-        setDraft((current) => current === messageText ? "" : current);
-      }
+      const clearRevision = shouldClearDraft
+        ? composerRegistry.clearIfRevision(composerOwner, sendCapture.revision)
+        : null;
       const updatedSession = applyOptimisticSessionRunUpdate({
         session: selectedSession,
         userMessage: nextMessage,
@@ -2501,8 +2570,12 @@ export default function AgentSessionWindowApp() {
           errorMessage: error instanceof Error ? error.message : String(error),
         });
         console.error(error);
-        if (shouldClearDraft) {
-          setDraft((current) => mergeRejectedSessionDraft(messageText, current));
+        if (clearRevision !== null) {
+          composerRegistry.restoreIfRevision(
+            composerOwner,
+            clearRevision,
+            (current) => mergeRejectedSessionDraft(messageText, current),
+          );
         }
 
         const [refreshedSessionResult, refreshedLiveRunResult] = await Promise.allSettled([
@@ -2560,12 +2633,17 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSend = async () => {
+    if (composerRegistry.isFrozen) return;
     if (auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession) {
       triggerComposerBlockedFeedback();
       return;
     }
     if (activeAuxiliarySession) {
-      const auxiliaryDraft = activeAuxiliarySession.composerDraft;
+      const auxiliaryDraft = composerState.capture().draft;
+      if (composerRegistry.get(composerOwner).saveState === "error") {
+        triggerComposerBlockedFeedback();
+        return;
+      }
       if (!auxiliaryDraft.trim() || activeAuxiliarySession.runState === "running") {
         triggerComposerBlockedFeedback();
         return;
@@ -2580,7 +2658,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    if (isSendDisabled) {
+    if (isComposerDisabled || !getComposerDraft().trim()) {
       triggerComposerBlockedFeedback();
       return;
     }
@@ -2662,24 +2740,34 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleComposerSubmitShortcut = () => applyComposerSubmitCommand({
-    isSubmitDisabled: () => (
-      activeAuxiliarySession
-        ? activeAuxiliarySession.runState === "running"
-        : composerSendability.isRunning
-    ),
+    isSubmitDisabled: () => {
+      const current = composerRegistry.get(composerOwner);
+      return composerRegistry.isFrozen
+        || current.isImeComposing
+        || current.saveState === "error"
+        || (activeAuxiliarySession
+          ? activeAuxiliarySession.runState === "running"
+          : current.preview.errors.length > 0 || selectedSessionRunState === "running");
+    },
     isSubmitBlocked: () => {
+      const current = composerRegistry.get(composerOwner);
       const activeSendability = activeAuxiliarySession
         ? buildComposerSendabilityState({
             runState: activeAuxiliarySession.runState,
             busyReason: composerBusyReason,
             blockedReason: sessionExecutionBlockedReason,
-            inputErrors: composerPreview.errors,
-            draftText: activeAuxiliarySession.composerDraft,
+            inputErrors: current.preview.errors,
+            draftText: current.draft,
           })
-        : composerSendability;
-      return activeAuxiliarySession
-        ? activeSendability.isSendDisabled
-        : isSendDisabled;
+        : resolveComposerSendabilityState({
+            runState: selectedSessionRunState,
+            busyReason: composerBusyReason,
+            blockedReason: sessionExecutionBlockedReason,
+            inputErrors: current.preview.errors,
+            draftText: current.draft,
+            forceBlockedFeedback: forceComposerBlockedFeedback,
+          });
+      return current.saveState === "error" || activeSendability.isSendDisabled;
     },
     notifySubmitBlocked: triggerComposerBlockedFeedback,
     submit: () => void handleSend(),
@@ -2691,7 +2779,7 @@ export default function AgentSessionWindowApp() {
 
   const handleSelectSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
     getProvider: () => selectedSession?.provider,
-    getDraft: () => draft,
+    getDraft: () => getComposerDraft(),
     getTextarea: () => composerTextareaRef.current,
     setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
     setCaret: setComposerCaret,
@@ -3085,7 +3173,9 @@ export default function AgentSessionWindowApp() {
   const handleSelectAuxiliarySkill = async (skill: DiscoveredSkill) => {
     const textarea = composerTextareaRef.current;
     await runAuxiliarySkillPromptInsertionOperation({
-      activeSession: activeAuxiliarySession,
+      activeSession: activeAuxiliarySession
+        ? { ...activeAuxiliarySession, composerDraft: getComposerDraft() }
+        : null,
       skillName: skill.name,
       applyUiState: (nextState) => {
         applySkillPromptInsertionUiState({
@@ -3096,11 +3186,7 @@ export default function AgentSessionWindowApp() {
         });
       },
       updateDraft: async (draft) => {
-        await runAuxiliaryDraftPatchOperation({
-          draft,
-          updateActiveAuxiliarySession,
-          createTimestampLabel: currentTimestampLabel,
-        });
+        await handleAuxiliaryDraftChange(draft, draft.length);
       },
       afterDraftUpdated: (nextState) => {
         if (composerOwnerRef.current === activeRunSessionId) {
@@ -3277,30 +3363,83 @@ export default function AgentSessionWindowApp() {
     auxiliaryWorkspace.setTarget(target);
   };
 
+  const getAuxiliaryDraftPersistenceOwner = (session: AuxiliarySession) => {
+    if (!withmateApi) return null;
+    let owner = auxiliaryDraftPersistenceOwnersRef.current.get(session.id);
+    if (!owner) {
+      let fixedIncarnation: string | null = null;
+      owner = new AuxiliaryDraftPersistenceOwner({
+        load: async () => {
+          const status = await withmateApi.getAuxiliarySessionStatus(session.id);
+          const record = await withmateApi.getAuxiliaryDraft(session.id);
+          if (!status
+            || !record
+            || record.auxiliarySessionId !== session.id
+            || status.id !== session.id
+            || status.parentSessionId !== session.parentSessionId
+            || !status.incarnation
+            || record.parentSessionId !== status.parentSessionId
+            || record.incarnation !== status.incarnation) {
+            return null;
+          }
+          if (fixedIncarnation && fixedIncarnation !== record.incarnation) return null;
+          fixedIncarnation = record.incarnation;
+          return record;
+        },
+        now: currentTimestampLabel,
+        save: async (input) => {
+          if (fixedIncarnation && input.incarnation !== fixedIncarnation) {
+            return { outcome: "stale" as const };
+          }
+          const result = await withmateApi.saveAuxiliaryDraft({
+            auxiliarySessionId: input.auxiliarySessionId,
+            parentSessionId: input.parentSessionId,
+            incarnation: input.incarnation,
+            expectedDurableRevision: input.durableRevision,
+            text: input.text,
+            updatedAt: input.updatedAt,
+          });
+          if (result.outcome !== "saved" || !result.ack) {
+            return result.outcome === "saved" ? { outcome: "rejected" as const } : { outcome: result.outcome };
+          }
+          return {
+            outcome: "saved" as const,
+            record: { ...input, durableRevision: result.ack.durableRevision, updatedAt: result.ack.updatedAt },
+          };
+        },
+      });
+      auxiliaryDraftPersistenceOwnersRef.current.set(session.id, owner);
+    }
+    return owner;
+  };
+
   const handleAuxiliaryDraftChange = async (value: string, selectionStart: number) => {
-    await runAuxiliaryDraftChangeAndSaveOperation({
-      draft: value,
-      selectionStart,
-      clearBlockedFeedback: () => setForceComposerBlockedFeedback(false),
-      setComposerCaret,
-      currentSession: activeAuxiliarySession,
-      createTimestampLabel: currentTimestampLabel,
-      draftSaveQueue: auxiliaryDraftSaveQueueRef.current,
-      getCurrentSession: () => activeAuxiliarySessionRef.current,
-      saveAuxiliarySession: withmateApi
-        ? (request) => enqueueAuxiliarySessionSaveWithQueue(
-            auxiliarySessionSaveQueueRef,
-            () => withmateApi.updateAuxiliarySession(request),
-          )
-        : null,
-      mutationRevision: auxiliarySessionMutationRevisionRef,
-      activeSessionRef: activeAuxiliarySessionRef,
-      draftSaveQueueRef: auxiliaryDraftSaveQueueRef,
-      setActiveSession: setActiveAuxiliarySession,
-      onError: (error) => {
-        console.error(error);
-      },
-    });
+    const session = activeAuxiliarySession;
+    if (!session || composerRegistry.isFrozen) return;
+    const previousDraft = getComposerDraft();
+    composerState.setDraft(value, { start: selectionStart, end: selectionStart });
+    setForceComposerBlockedFeedback(false);
+    setComposerCaret(selectionStart);
+    if (previousDraft !== value) {
+      auxiliaryWorkspace.touchRecency(session.id, currentTimestampLabel());
+    }
+    if (!withmateApi) return;
+
+    const owner = getAuxiliaryDraftPersistenceOwner(session);
+    if (!owner) return;
+    const draftRevision = composerRegistry.capture(composerOwner).revision;
+    composerState.setSaveState("saving");
+    try {
+      await owner.enqueue(value);
+      if (composerRegistry.capture(composerOwner).revision === draftRevision) {
+        composerState.setSaveState("saved");
+      }
+    } catch (error) {
+      console.error(error);
+      if (composerRegistry.capture(composerOwner).revision === draftRevision) {
+        composerState.setSaveState("error", "Draft could not be saved.");
+      }
+    }
   };
 
   const sendAuxiliaryMessage = async (messageText: string) => {
@@ -3308,10 +3447,36 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
+    const sendCapture = composerRegistry.capture(composerOwner);
+    messageText = sendCapture.draft;
+    const draftOwner = getAuxiliaryDraftPersistenceOwner(activeAuxiliarySession);
+    try {
+      await draftOwner?.flush();
+      await draftOwner?.ensureLoaded();
+    } catch {
+      composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
+      return;
+    }
+    const durableDraft = draftOwner?.durableRecord;
+    const latestCapture = composerRegistry.capture(composerOwner);
+    if (!durableDraft || latestCapture.revision !== sendCapture.revision || latestCapture.draft !== sendCapture.draft || durableDraft.text !== sendCapture.draft) {
+      // A newer local revision is a normal send-capture invalidation, not a save failure.
+      // Keep it editable and let the next explicit Send capture that revision.
+      if (latestCapture.revision !== sendCapture.revision || latestCapture.draft !== sendCapture.draft) {
+        composerRegistry.setSaveState(composerOwner, "saved");
+      } else {
+        composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
+      }
+      return;
+    }
+
+    let clearedRevision: number | null = null;
     const result = await runAuxiliarySessionSendOperationWithApi({
       activeSession: activeAuxiliarySession,
       composerBlockedReason,
       messageText,
+      auxiliaryDraftIncarnation: durableDraft.incarnation,
+      auxiliaryDraftDurableRevision: durableDraft.durableRevision,
       parentMessageCount: selectedSession?.messages.length ?? null,
       updatedAt: currentTimestampLabel(),
       draftSaveQueue: auxiliaryDraftSaveQueueRef,
@@ -3319,7 +3484,13 @@ export default function AgentSessionWindowApp() {
       mutationRevision: auxiliarySessionMutationRevisionRef,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
       beforeRunningSessionApplied: () => {
+        clearedRevision = composerRegistry.clearIfRevision(composerOwner, sendCapture.revision);
         setIsActionDockPinnedExpanded(false);
+      },
+      onRunError: () => {
+        if (clearedRevision !== null) {
+          composerRegistry.restoreIfRevision(composerOwner, clearedRevision, () => sendCapture.draft);
+        }
       },
       applyRunningSession: createAuxiliarySessionRunningApplier({
         activeSessionRef: activeAuxiliarySessionRef,
@@ -3348,6 +3519,7 @@ export default function AgentSessionWindowApp() {
       }),
       api: withmateApi,
     });
+    await draftOwner?.reload().catch(() => undefined);
     handleAuxiliarySessionSendOperationResult({
       result,
       onBlocked: (preflight) => {
@@ -3379,8 +3551,8 @@ export default function AgentSessionWindowApp() {
     ),
     notifyBlocked: triggerComposerBlockedFeedback,
     getComposerState: () => ({
-      draft: activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft,
-      fallbackCaret: activeAuxiliarySession ? composerCaret : mainComposerCaretRef.current,
+      draft: getComposerDraft(),
+      fallbackCaret: composerRegistry.get(composerOwner).selection.start,
       textarea: composerTextareaRef.current,
     }),
     applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
@@ -3406,7 +3578,7 @@ export default function AgentSessionWindowApp() {
     if (isAuxiliaryTargetUnavailable) return;
     const textarea = composerOwnerRef.current === activeRunSessionId ? composerTextareaRef.current : null;
     const targetAuxiliarySession = activeAuxiliarySession;
-    const currentDraft = targetAuxiliarySession ? auxiliaryBinding.getSession()?.composerDraft ?? targetAuxiliarySession.composerDraft : mainDraftRef.current;
+    const currentDraft = getComposerDraft();
     applySelectedPathReferenceInsertionCommand({
       draft: currentDraft,
       fallbackCaret: targetAuxiliarySession ? composerCaret : mainComposerCaretRef.current,
@@ -3442,7 +3614,7 @@ export default function AgentSessionWindowApp() {
     if (isAuxiliaryTargetUnavailable) return;
     const textarea = composerOwnerRef.current === activeRunSessionId ? composerTextareaRef.current : null;
     const targetAuxiliarySession = activeAuxiliarySession;
-    const currentDraft = targetAuxiliarySession ? auxiliaryBinding.getSession()?.composerDraft ?? targetAuxiliarySession.composerDraft : mainDraftRef.current;
+    const currentDraft = getComposerDraft();
     applyComposerReferenceInsertionCommand({
       draft: currentDraft,
       fallbackCaret: composerCaret,
@@ -3469,7 +3641,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleRemoveAttachmentReference = createPathReferenceRemovalHandler({
-    getDraft: () => activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft,
+    getDraft: () => getComposerDraft(),
     applyRemoval: (nextState) => {
       const { draft: nextDraft, caret: nextCaret } = nextState;
       if (activeAuxiliarySession) {
@@ -3837,10 +4009,10 @@ export default function AgentSessionWindowApp() {
       busyReason: composerBusyReason,
       blockedReason: sessionExecutionBlockedReason,
       inputErrors: composerPreview.errors,
-      draftText: activeAuxiliarySession?.composerDraft ?? "",
+      draftText: getComposerDraft(),
     }),
     [
-      activeAuxiliarySession?.composerDraft,
+      draft,
       activeAuxiliarySession?.runState,
       composerBusyReason,
       composerPreview.errors,
@@ -3849,7 +4021,7 @@ export default function AgentSessionWindowApp() {
   );
   const renderedSession = displayedSession;
   const renderedMessages = displayedMessages;
-  const renderedDraft = composerDraft;
+  const renderedDraft = draft;
   const handleOpenPromptTemplates = () => {
     clearHistoryDiffPreview();
     if (isPromptTemplateWorkspaceOpen) {
@@ -3876,7 +4048,7 @@ export default function AgentSessionWindowApp() {
   const handleInsertPromptTemplate = (prompt: string) => {
     if (isAuxiliaryTargetUnavailable) return;
     const insertion = insertComposerTextAtSelection(
-      renderedDraft,
+      getComposerDraft(),
       prompt,
       promptTemplateSelectionRef.current.start,
       promptTemplateSelectionRef.current.end,
@@ -4155,6 +4327,14 @@ export default function AgentSessionWindowApp() {
         customAgentItems,
         skillItems,
         composerAttachmentItems,
+        composerController: {
+          owner: composerOwner,
+          registry: composerRegistryRef.current!,
+          initialDraft: composerDraft,
+        },
+        onRetryComposerSave: activeAuxiliarySession
+          ? () => void handleAuxiliaryDraftChange(getComposerDraft(), composerCaret)
+          : undefined,
         additionalDirectoryItems,
         draft: renderedDraft,
         composerTextareaRef,
@@ -4325,9 +4505,7 @@ export default function AgentSessionWindowApp() {
         },
         ...buildOnDraftCompositionHandlers({
           setComposerCaret,
-          setIsComposerImeComposing: (value) => {
-            if (composerOwnerRef.current === activeRunSessionId) setIsComposerImeComposing(value);
-          },
+          setIsComposerImeComposing: (value) => composerState.setImeComposing(value),
           getSelectionStart: () => composerOwnerRef.current === activeRunSessionId
             ? composerTextareaRef.current?.selectionStart : composerCaret,
           getFallbackSelectionStart: () => renderedDraft.length,

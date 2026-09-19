@@ -10,6 +10,9 @@ import { MemoryV6FileQuotaExceededError } from "../../src-electron/memory-v6-sto
 import { createV6StorageWorkerBundle } from "../../src-electron/storage-worker-bundle.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { createPersistentStoreLifecycleService } from "../../src-electron/persistent-store-lifecycle-service.js";
+import { buildNewSession } from "../../src/app-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 
 function createFixtureWorkerUrl(): URL {
   const source = `
@@ -480,6 +483,114 @@ test("V6 storage worker bundle initializes against a temporary database", async 
     } finally {
       await reopened.client.close();
     }
+  } finally {
+    if (bundle) await bundle.client.close();
+    await rm(userDataPath, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "実V6 Storage Worker経由のAuxiliary draftは独立read/save/consumeとfull read合成を維持する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// fault = "V6実DBでdraft tableが初期化されない、旧revisionが上書きする、consume後のfull readが独立draftを反映しない"
+// observable = "Worker bundleのdraft結果、revision、full Auxiliary readのcomposerDraft"
+// observation_boundary = "public-boundary"
+// scope = "v6-worker-auxiliary-draft"
+// lifecycle = "permanent"
+// @end-test-value
+test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・consumeする", async () => {
+  const userDataPath = await mkdtemp(join(process.env.TEMP ?? process.cwd(), "withmate-storage-worker-draft-"));
+  let bundle: ReturnType<typeof createV6StorageWorkerBundle> | null = null;
+  try {
+    await mkdir(join(userDataPath, "characters"), { recursive: true });
+    const bootstrap = await createOrVerifyV6FreshDatabase(userDataPath);
+    bundle = createV6StorageWorkerBundle({
+      dbPath: bootstrap.dbPath,
+      bundledModelCatalogPath: join(process.cwd(), "public", "model-catalog.json"),
+      userDataPath,
+      workerUrl: new URL("../../src-electron/storage-worker-entry.ts", import.meta.url),
+      handlerModule: new URL("../../src-electron/storage-worker-bundle.ts", import.meta.url),
+      workerOptions: { execArgv: ["--import", "tsx"] },
+    });
+    await bundle.initialize();
+    const parent = buildNewSession({
+      id: "worker-parent",
+      taskTitle: "worker parent",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "mate",
+      character: "Mate",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    });
+    await bundle.stores.session.upsertSession(parent);
+    const auxiliary: AuxiliarySession = {
+      id: "worker-auxiliary",
+      parentSessionId: parent.id,
+      status: "active",
+      runState: "idle",
+      title: "Auxiliary",
+      provider: "codex",
+      catalogRevision: parent.catalogRevision,
+      model: parent.model,
+      reasoningEffort: parent.reasoningEffort,
+      approvalMode: parent.approvalMode,
+      codexSandboxMode: parent.codexSandboxMode,
+      codexSpeed: parent.codexSpeed,
+      codexReviewer: parent.codexReviewer,
+      customAgentName: "",
+      allowedAdditionalDirectories: [],
+      threadId: "",
+      composerDraft: "initial draft",
+      messages: [],
+      displayAfterMessageIndex: null,
+      createdAt: "2026-09-20T00:00:00.000Z",
+      updatedAt: "2026-09-20T00:00:00.000Z",
+      closedAt: "",
+      characterId: parent.characterId,
+      characterRuntimeSnapshot: parent.characterRuntimeSnapshot,
+      characterIconPath: parent.characterIconPath,
+    };
+    await bundle.stores.auxiliary.upsertAuxiliarySession(auxiliary);
+    const initial = await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id);
+    assert.equal(initial?.text, "initial draft");
+    const fullInitial = await bundle.stores.auxiliary.getAuxiliarySession(auxiliary.id);
+    assert.equal(fullInitial?.composerDraft, "initial draft");
+    const saved = await bundle.stores.auxiliary.saveAuxiliaryDraft({
+      auxiliarySessionId: auxiliary.id,
+      parentSessionId: parent.id,
+      incarnation: initial!.incarnation,
+      expectedDurableRevision: initial!.durableRevision,
+      text: "worker draft",
+      updatedAt: "2026-09-20T00:01:00.000Z",
+    });
+    assert.equal(saved.outcome, "saved");
+    assert.equal(saved.ack?.incarnation, initial!.incarnation);
+    assert.equal(saved.ack?.durableRevision, initial!.durableRevision + 1);
+    const stale = await bundle.stores.auxiliary.saveAuxiliaryDraft({
+      auxiliarySessionId: auxiliary.id,
+      parentSessionId: parent.id,
+      incarnation: initial!.incarnation,
+      expectedDurableRevision: initial!.durableRevision,
+      text: "stale draft",
+      updatedAt: "2026-09-20T00:02:00.000Z",
+    });
+    assert.equal(stale.outcome, "stale");
+    assert.equal((await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))?.text, "worker draft");
+    const savedRecord = await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id);
+    const consumed = await bundle.stores.auxiliary.consumeAuxiliaryDraft({
+      auxiliarySessionId: auxiliary.id,
+      parentSessionId: parent.id,
+      incarnation: savedRecord!.incarnation,
+      expectedDurableRevision: savedRecord!.durableRevision,
+    });
+    assert.equal(consumed.outcome, "consumed");
+    assert.equal(consumed.ack?.incarnation, savedRecord!.incarnation);
+    assert.equal(consumed.ack?.durableRevision, savedRecord!.durableRevision + 1);
+    assert.equal((await bundle.stores.auxiliary.getAuxiliarySession(auxiliary.id))?.composerDraft, "");
   } finally {
     if (bundle) await bundle.client.close();
     await rm(userDataPath, { recursive: true, force: true });

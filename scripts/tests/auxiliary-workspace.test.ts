@@ -5,9 +5,11 @@ import React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { useAuxiliaryWorkspace, type AuxiliaryWorkspaceApi, type AuxiliaryWorkspace } from "../../src/chat/use-auxiliary-workspace.js";
+import { useAuxiliaryWorkspace, type AuxiliaryWorkspaceApi as WorkspaceApi, type AuxiliaryWorkspace } from "../../src/chat/use-auxiliary-workspace.js";
 import { runAuxiliaryDraftChangeAndSaveOperation } from "../../src/auxiliary-draft-save-context.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+
+type AuxiliaryWorkspaceApi = Omit<WorkspaceApi, "getAuxiliarySessionStatus"> & Partial<Pick<WorkspaceApi, "getAuxiliarySessionStatus">>;
 
 function session(id: string, createdAt: string, overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
   return {
@@ -46,10 +48,17 @@ function setup(
   const previousWindow = globalThis.window;
   Object.assign(globalThis, { window: dom.window, IS_REACT_ACT_ENVIRONMENT: true });
   let current: AuxiliaryWorkspace | null = null;
+  const workspaceApi: WorkspaceApi = {
+    ...api,
+    getAuxiliarySessionStatus: api.getAuxiliarySessionStatus ?? (async (id) => {
+      const detail = await api.getAuxiliarySession(id);
+      return detail ? { id: detail.id, parentSessionId: detail.parentSessionId, createdAt: detail.createdAt, runState: detail.runState } : null;
+    }),
+  };
   function Probe(props: { parentSessionId: string | null }) {
     current = useAuxiliaryWorkspace({
       parentSessionId: props.parentSessionId,
-      api,
+      api: workspaceApi,
       initialSelectedId,
     });
     return null;
@@ -766,9 +775,9 @@ test("hidden A/Bの同時terminalは会話ごとに独立して反映される",
 // @test-value v2
 // kind = "invariant"
 // claim = "完了後も保持されるlive stateは永続化runStateをrunningへ誤変換しない"
-// oracle = { type = "contract", ref = "issue-710-live-state-persistence" }
-// fault = "background taskまたはreasoning保持用のlive stateだけで送信をブロックし続ける"
-// observable = "hookのsummaries.runState"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+// fault = "background taskまたはreasoning保持用のlive stateだけでsummaryをrunningにし続けるか、status反映でbindingの未保存draftを上書きする"
+// observable = "hookのsummaries.runStateとbinding.sessionRef.composerDraft"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-workspace-run-state"
 // lifecycle = "permanent"
@@ -781,6 +790,10 @@ test("保持されたlive stateは永続化runStateを正本として扱う", as
   const api: AuxiliaryWorkspaceApi = {
     listAuxiliarySessions: async () => [idle, running],
     getAuxiliarySession: async (id) => latest.get(id) ?? null,
+    getAuxiliarySessionStatus: async (id) => {
+      const current = latest.get(id);
+      return current ? { id: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt, runState: current.runState } : null;
+    },
     subscribeLiveSessionRun: (nextListener) => {
       listener = nextListener as (id: string, state: object | null) => void;
       return () => { listener = null; };
@@ -814,4 +827,144 @@ test("保持されたlive stateは永続化runStateを正本として扱う", as
   assert.equal(view.current.summaries.find((summary) => summary.id === running.id)?.runState, "idle");
   assert.equal(runningBinding.sessionRef.current?.composerDraft, "未保存draft");
   await view.unmount();
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "非選択Auxiliaryの連続live通知は有限に集約した軽量statusだけで反映し、terminalでは本文を取得して再選択時に表示する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+// fault = "live通知ごとに履歴を取得するか、status集約によってterminalの最新本文も取得しなくなる"
+// observable = "APIの詳細取得回数・status取得回数、summaries参照とrunState、selectedId、再選択したselectedSession.messages"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-live-boundary"
+// lifecycle = "permanent"
+// impact = "多数会話の非表示実行が入力を重くすることと、完了した応答を閲覧できなくなることを防ぐ"
+// distinction = "型検査やcontroller単体では観測できない実hookの購読・取得・表示の接続を少数のdeferred操作で検証する"
+// @end-test-value
+test("非選択live statusは有限に集約し、terminal本文は再選択時に表示する", async () => {
+  const sessions = Array.from({ length: 100 }, (_, index) => session(`aux-${index}`, "2026-01-01"));
+  const hidden = sessions[0];
+  const running = { id: hidden.id, parentSessionId: hidden.parentSessionId, createdAt: hidden.createdAt, runState: "running" as const };
+  const firstStatus = deferred<typeof running>();
+  let statusReads = 0;
+  let detailReads = 0;
+  let latest = hidden;
+  let listener: ((id: string, state: object | null) => void) | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => sessions,
+    getAuxiliarySession: async (id) => { detailReads += 1; return id === hidden.id ? latest : sessions.find((item) => item.id === id) ?? null; },
+    getAuxiliarySessionStatus: async () => { statusReads += 1; return statusReads === 1 ? firstStatus.promise : running; },
+    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+  });
+  try {
+    await view.render();
+    assert.notEqual(view.current.selectedId, hidden.id);
+    const loadedDetails = detailReads;
+    await act(async () => {
+      for (let index = 0; index < 100; index += 1) listener?.(hidden.id, { assistantText: `chunk ${index}` });
+    });
+    assert.equal(statusReads, 1);
+    assert.equal(detailReads, loadedDetails);
+    await act(async () => { firstStatus.resolve(running); });
+    assert.equal(statusReads, 2);
+    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "running");
+    const summaries = view.current.summaries;
+    await act(async () => { listener?.(hidden.id, { assistantText: "same run" }); });
+    assert.strictEqual(view.current.summaries, summaries);
+    assert.equal(detailReads, loadedDetails);
+
+    latest = { ...hidden, preview: "completed response", messages: [{ role: "assistant", text: "completed response" }] };
+    await act(async () => { listener?.(hidden.id, null); });
+    assert.equal(detailReads, loadedDetails + 1);
+    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "idle");
+    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.preview, "completed response");
+    await act(async () => { view.current.selectSession(hidden.id); });
+    assert.equal(detailReads, loadedDetails + 1);
+    assert.equal(view.current.selectedSession?.messages[0]?.text, "completed response");
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "workspace hookに渡された使用時刻は実際の順位変更だけを一覧へ通知し、同順位の更新・no-opは参照を保ち、本文preview変更は反映する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+// fault = "同順位の入力や省略保存で一覧を作り直す、または必要な順位・preview更新まで止める"
+// observable = "hookのsummaries参照、ID順、previewとselectedSession.messages"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-workspace-recency-boundary"
+// lifecycle = "permanent"
+// impact = "最終使用順の継続利用と入力時の一覧負荷分離を同時に保つ"
+// distinction = "既存の初期並び順テストでは確認できない入力recencyの通知省略と真の本文更新を一つのhook操作で検証する"
+// @end-test-value
+test("同順位のrecencyとno-opは一覧を通知せず、本当の順位とpreview更新は反映する", async () => {
+  const a = session("a", "2026-01-01", { preview: "A" });
+  const b = session("b", "2026-01-02", { preview: "B" });
+  const view = setup({ listAuxiliarySessions: async () => [a, b], getAuxiliarySession: async (id) => id === a.id ? a : b });
+  try {
+    await view.render();
+    await act(async () => { view.current.touchRecency(a.id, "2026-01-03"); });
+    assert.deepEqual(view.current.summaries.map((item) => item.id), [a.id, b.id]);
+    const summaries = view.current.summaries;
+    await act(async () => {
+      for (let index = 0; index < 100; index += 1) view.current.touchRecency(a.id, `2026-01-04T00:00:${String(index).padStart(3, "0")}`);
+      view.current.getBinding(b.id).setSession((current) => current);
+    });
+    assert.strictEqual(view.current.summaries, summaries);
+    await act(async () => {
+      view.current.getBinding(b.id).setSession((current) => current ? { ...current, preview: "new B", messages: [{ role: "assistant", text: "new B" }] } : current);
+    });
+    assert.equal(view.current.summaries.find((item) => item.id === b.id)?.preview, "new B");
+    assert.equal(view.current.selectedSession?.messages[0]?.text, "new B");
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "terminal詳細取得中の保持live通知は最終本文を捨てず、新しい実行が確認された場合だけ古いterminalを適用しない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+// fault = "非null liveだけでterminal読取りを無効化し最終応答を失う、または新runを古いterminalでidleへ戻す"
+// observable = "実hookのselectedSession.messagesとrunState、詳細API呼出数"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-terminal-retained-live-race"
+// lifecycle = "permanent"
+// impact = "background taskを保持する会話の完了本文と、再実行中の送信制限を保つ"
+// distinction = "同期したterminal/statusテストでは生じない応答順逆転をdeferredで検証する"
+// @end-test-value
+test("terminal取得中の保持liveは本文を保持し、新runだけ古いterminalを無効化する", async () => {
+  const initial = session("a", "2026-01-01", { runState: "running" });
+  let status: "running" | "idle" = "idle";
+  let terminal = deferred<AuxiliarySession>();
+  let reads = 0;
+  let listener: ((id: string, state: object | null) => void) | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => [initial],
+    getAuxiliarySession: async () => { reads += 1; return reads === 1 ? initial : terminal.promise; },
+    getAuxiliarySessionStatus: async () => ({ id: initial.id, parentSessionId: initial.parentSessionId, createdAt: initial.createdAt, runState: status }),
+    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+  });
+  try {
+    await view.render();
+    await act(async () => { listener?.(initial.id, null); });
+    await act(async () => { listener?.(initial.id, { backgroundTasks: [{ id: "retained" }] }); });
+    const completed = { ...initial, runState: "idle" as const, messages: [{ role: "assistant" as const, text: "final response" }] };
+    await act(async () => { terminal.resolve(completed); });
+    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "final response");
+    assert.equal(view.current.selectedSession?.runState, "idle");
+    assert.equal(reads, 2);
+
+    terminal = deferred<AuxiliarySession>();
+    await act(async () => { listener?.(initial.id, null); });
+    status = "running";
+    await act(async () => { listener?.(initial.id, { assistantText: "new run" }); });
+    await act(async () => { terminal.resolve({ ...completed, messages: [{ role: "assistant", text: "obsolete terminal response" }] }); });
+    assert.equal(view.current.selectedSession?.runState, "running");
+    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "final response");
+    assert.equal(reads, 3);
+  } finally {
+    await view.unmount();
+  }
 });

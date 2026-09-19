@@ -1,6 +1,7 @@
 import type { Session } from "../src/app-state.js";
 import type { AuxiliarySessionNavigationPayload } from "../src/withmate-window-types.js";
 import type { ChatEntryMode } from "./window-entry-loader.js";
+import { DraftFlushCoordinator, type DraftFlushRequest } from "./draft-flush-coordinator.js";
 
 export type SessionWindowCloseEvent = {
   preventDefault(): void;
@@ -34,6 +35,9 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   persistOpenSessionWindowIds?(openSessionIds: readonly string[]): Promise<void>;
   onSnapshotPersistenceError?(error: unknown): void;
   onSessionWindowClosed?(sessionId: string): void;
+  sendDraftFlushRequest?(window: TWindow, request: DraftFlushRequest): void;
+  sendDraftFlushRelease?(window: TWindow, payload: { success: boolean }): void;
+  getWindowSender?(window: TWindow): unknown;
 };
 
 export type SessionWindowRestoreState =
@@ -49,6 +53,11 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     promise: Promise<boolean>;
     resolve: (closed: boolean) => void;
   }>();
+  private readonly pendingDraftFlushWindows = new Set<TWindow>();
+  private draftFlushGateActive = false;
+  private readonly draftFlushCoordinator = new DraftFlushCoordinator<TWindow>((window, request) => {
+    this.deps.sendDraftFlushRequest?.(window, request);
+  });
   private snapshotUpdatesSuspended = false;
 
   constructor(private readonly deps: SessionWindowBridgeDeps<TWindow>) {}
@@ -117,6 +126,9 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     sessionId: string,
     options: SessionWindowOpenOptions = {},
   ): Promise<TWindow> {
+    if (this.draftFlushGateActive) {
+      throw new Error("Session Window open is suspended while drafts are flushing.");
+    }
     const auxiliarySessionId = options.auxiliarySessionId?.trim() || null;
     const openingWindow = this.openingSessionWindows.get(sessionId);
     if (openingWindow) {
@@ -184,8 +196,38 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       return;
     }
 
+    window.close();
+  }
+
+  discardSessionWindow(sessionId: string): void {
+    const window = this.sessionWindows.get(sessionId);
+    if (!window || window.isDestroyed()) return;
     this.allowCloseSessionWindows.add(window);
     window.close();
+  }
+
+  async flushSessionWindowDrafts(): Promise<boolean> {
+    const windows = this.listWindows();
+    this.draftFlushGateActive = true;
+    const results = await Promise.all(windows.map(async (window) => {
+      const sessionId = this.sessionIdForWindow(window);
+      return sessionId ? this.flushDrafts(window, sessionId) : false;
+    }));
+    if (results.every(Boolean)) {
+      for (const window of windows) {
+        this.allowCloseSessionWindows.add(window);
+      }
+      return true;
+    }
+    this.draftFlushGateActive = false;
+    for (const candidate of windows) {
+      this.releaseDraftFlush(candidate, false);
+    }
+    return false;
+  }
+
+  acknowledgeDraftFlush(requestId: string, sender: unknown, success: boolean): boolean {
+    return this.draftFlushCoordinator.acknowledge(requestId, sender, success);
   }
 
   requestCloseSessionWindow(sessionId: string): Promise<boolean> {
@@ -260,33 +302,52 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   }
 
   private handleWindowClose(sessionId: string, window: TWindow, event: SessionWindowCloseEvent): void {
-    if (this.deps.getAllowQuitWithInFlightRuns()) {
-      return;
-    }
-
     if (this.allowCloseSessionWindows.has(window)) {
       this.allowCloseSessionWindows.delete(window);
       return;
     }
 
-    if (!this.deps.isRunInFlight(sessionId)) {
+    if (this.deps.isRunInFlight(sessionId)) {
+      event.preventDefault();
+      if (!this.deps.confirmCloseWhileRunning(window, sessionId)) {
+        this.resolveCloseRequest(window, false);
+        return;
+      }
+    }
+
+    if (!this.deps.sendDraftFlushRequest || !this.deps.getWindowSender) {
+      if (this.deps.isRunInFlight(sessionId)) {
+        this.allowCloseSessionWindows.add(window);
+        window.close();
+      }
+      return;
+    }
+    if (this.pendingDraftFlushWindows.has(window)) {
+      event.preventDefault();
       return;
     }
 
     event.preventDefault();
-
-    if (!this.deps.confirmCloseWhileRunning(window, sessionId)) {
-      this.resolveCloseRequest(window, false);
-      return;
-    }
-
-    this.allowCloseSessionWindows.add(window);
-    window.close();
+    this.pendingDraftFlushWindows.add(window);
+    void this.flushDrafts(window, sessionId).then((flushed) => {
+      this.pendingDraftFlushWindows.delete(window);
+      if (!flushed || window.isDestroyed()) {
+        this.releaseDraftFlush(window, false);
+        this.resolveCloseRequest(window, false);
+        return;
+      }
+      this.allowCloseSessionWindows.add(window);
+      window.close();
+    });
   }
 
   private releaseWindowClaim(sessionId: string, window: TWindow): void {
+    if (this.deps.getWindowSender) {
+      this.draftFlushCoordinator.forgetWindow(this.deps.getWindowSender(window));
+    }
     this.resolveCloseRequest(window, true);
     this.allowCloseSessionWindows.delete(window);
+    this.pendingDraftFlushWindows.delete(window);
     if (this.sessionWindows.get(sessionId) !== window) {
       return;
     }
@@ -297,6 +358,30 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     this.broadcast();
     if (wasSnapshotEligible) {
       void this.persistSnapshotBestEffort();
+    }
+  }
+
+  private sessionIdForWindow(window: TWindow): string | null {
+    for (const [sessionId, candidate] of this.sessionWindows) {
+      if (candidate === window) {
+        return sessionId;
+      }
+    }
+    return null;
+  }
+
+  private async flushDrafts(window: TWindow, sessionId: string): Promise<boolean> {
+    if (!this.deps.sendDraftFlushRequest || !this.deps.getWindowSender) {
+      return true;
+    }
+    return this.draftFlushCoordinator.request(window, sessionId, this.deps.getWindowSender(window));
+  }
+
+  private releaseDraftFlush(window: TWindow, success: boolean): void {
+    try {
+      this.deps.sendDraftFlushRelease?.(window, { success });
+    } catch {
+      // A destroyed renderer has already lost its freeze channel.
     }
   }
 

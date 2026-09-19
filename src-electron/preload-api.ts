@@ -32,6 +32,9 @@ import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT,
   WITHMATE_APP_BOOT_STATUS_EVENT,
+  WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT,
+  WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL,
+  WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
@@ -59,6 +62,10 @@ import {
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,
+  WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
+  WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL,
+  WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL,
@@ -529,6 +536,18 @@ function createAuxiliaryApi(ipcRenderer: IpcRendererLike): WithMateWindowAuxilia
     getAuxiliarySession(auxiliarySessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL, auxiliarySessionId);
     },
+    getAuxiliaryDraft(auxiliarySessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL, auxiliarySessionId);
+    },
+    saveAuxiliaryDraft(input) {
+      return ipcRenderer.invoke(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL, input);
+    },
+    consumeAuxiliaryDraft(input) {
+      return ipcRenderer.invoke(WITHMATE_CONSUME_AUXILIARY_DRAFT_CHANNEL, input);
+    },
+    getAuxiliarySessionStatus(auxiliarySessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL, auxiliarySessionId);
+    },
     createAuxiliarySession(input) {
       return ipcRenderer.invoke(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, input);
     },
@@ -832,6 +851,15 @@ function createPickerApi(ipcRenderer: IpcRendererLike): WithMateWindowPickerApi 
 
 function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubscriptionApi {
   return {
+    subscribeSessionDraftFlushRequest(listener) {
+      return subscribe(ipcRenderer, WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT, listener);
+    },
+    subscribeSessionDraftFlushRelease(listener) {
+      return subscribe(ipcRenderer, WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT, listener);
+    },
+    acknowledgeSessionDraftFlush(requestId, success) {
+      ipcRenderer.send(WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL, { requestId, success });
+    },
     getAppBootStatus() {
       return ipcRenderer.invoke(WITHMATE_GET_APP_BOOT_STATUS_CHANNEL);
     },

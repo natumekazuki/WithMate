@@ -107,6 +107,8 @@ export type AuxiliarySessionSendOperationInput = {
   activeSession: AuxiliarySession;
   composerBlockedReason?: string | null;
   messageText: string;
+  auxiliaryDraftIncarnation?: string;
+  auxiliaryDraftDurableRevision?: number;
   parentMessageCount: number | null;
   updatedAt: string;
   draftSaveQueue: { current: Promise<void> };
@@ -114,18 +116,19 @@ export type AuxiliarySessionSendOperationInput = {
   mutationRevision: { current: number };
   getCurrentSession: () => AuxiliarySession | null;
   beforeRunningSessionApplied?: () => void;
+  onRunError?: () => void;
   applyRunningSession: (session: AuxiliarySession) => void;
   afterRunningSessionApplied?: (session: AuxiliarySession) => void;
   applySavedSession: (session: AuxiliarySession) => void;
   restoreSessionAfterError: (session: AuxiliarySession) => void;
   clearPendingLiveRun: (sessionId: string) => void;
   updateAuxiliarySession: (session: AuxiliarySession) => Promise<AuxiliarySession>;
-  runAuxiliarySessionTurn: (sessionId: string, request: { userMessage: string }) => Promise<AuxiliarySession>;
+  runAuxiliarySessionTurn: (sessionId: string, request: { userMessage: string; submitSource?: "composer" | "retry"; auxiliaryDraftIncarnation?: string; auxiliaryDraftDurableRevision?: number }) => Promise<AuxiliarySession>;
 };
 
 export type AuxiliarySessionSendOperationApi = {
   updateAuxiliarySession: (session: AuxiliarySession) => Promise<AuxiliarySession>;
-  runAuxiliarySessionTurn: (sessionId: string, request: { userMessage: string }) => Promise<AuxiliarySession>;
+  runAuxiliarySessionTurn: (sessionId: string, request: { userMessage: string; submitSource?: "composer" | "retry"; auxiliaryDraftIncarnation?: string; auxiliaryDraftDurableRevision?: number }) => Promise<AuxiliarySession>;
 };
 
 export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSendOperationInput): Promise<AuxiliarySessionSendOperationResult> {
@@ -181,6 +184,9 @@ export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSe
     }
     const saved = await input.runAuxiliarySessionTurn(currentAuxiliarySession.id, {
       userMessage: preflight.userMessage,
+      submitSource: "composer",
+      auxiliaryDraftIncarnation: input.auxiliaryDraftIncarnation,
+      auxiliaryDraftDurableRevision: input.auxiliaryDraftDurableRevision,
     });
     if (
       input.mutationRevision.current !== runOperationRevision
@@ -194,6 +200,7 @@ export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSe
       saved,
     };
   } catch (error) {
+    input.onRunError?.();
     if (
       input.mutationRevision.current !== runOperationRevision
       || input.getCurrentSession()?.id !== currentAuxiliarySession.id

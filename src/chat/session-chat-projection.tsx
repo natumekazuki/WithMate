@@ -36,6 +36,8 @@ import {
 } from "./live-session-projection.js";
 
 export type AgentSessionChatProjectionInput = {
+  composerController?: SessionComposerExpandedProps["composerController"];
+  onRetryComposerSave?: SessionComposerExpandedProps["onRetryComposerSave"];
   mainContent?: ReactNode;
   leftPane?: ReactNode;
   isFilesPaneVisible: boolean;
@@ -300,6 +302,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       customAgentItems: input.customAgentItems,
       attachmentItems: input.composerAttachmentItems,
       draft: input.draft,
+      composerController: input.composerController,
+      onRetryComposerSave: input.onRetryComposerSave,
       composerTextareaRef: input.composerTextareaRef,
       isComposerDisabled: input.isComposerDisabled,
       isSendDisabled: input.isSendDisabled,
