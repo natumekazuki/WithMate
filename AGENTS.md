@@ -40,6 +40,7 @@ WithMate は Electron + React + TypeScript のデスクトップアプリであ�
 
 ## UI Design
 
+- アプリ内UIのユーザー向け表示文字列は英語を標準とする。UIを新設・変更する場合は英語を使用し、空文字列が既存契約に適する場合はそれを優先する。Character定義、ユーザー入力・生成コンテンツ、provider向け指示、ログ、テストデータ、開発者向け文書はこの規約の対象外とする。
 - 文字色と背景色が近すぎて読めない組み合わせを作らない。
 - theme token や既存 CSS variable を優先し、場当たり的な色指定を増やさない。
 - 新しい背景色、surface 色、badge 色、button 色を追加する場合は、その上に乗る text / icon / border の contrast も同時に確認する。
