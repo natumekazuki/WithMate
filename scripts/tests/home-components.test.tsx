@@ -1155,17 +1155,17 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Home Monitorは明示的に空のAuxiliary previewを空のまま表示し、欠損previewだけを互換fallbackへ送る"
+  // claim = "Home Monitorは明示的に空または欠損のAuxiliary previewを空のまま表示する"
   // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Preview contract" }
-  // fault = "Home Monitorが空文字列のAuxiliary previewを日本語の既定タイトルへ置き換えるか、旧形式の欠損previewを互換fallbackできない"
-  // observable = "展開したAuxiliary rowのpreview要素のtextContentとaria-labelにおける空値と欠損値の差"
+  // fault = "Home Monitorが空または欠損のAuxiliary previewを日本語の既定タイトルへ置き換える"
+  // observable = "展開したAuxiliary rowのpreview要素のtextContentとaria-label"
   // observation_boundary = "component-behavior"
   // scope = "HomeMonitorContent empty auxiliary preview"
   // lifecycle = "permanent"
-  // impact = "未送信Auxiliaryの空表示契約と旧形式行の表示互換性をHome Monitorで同時に維持する"
-  // distinction = "Auxiliary previewの保存値ではなく、Home Monitorでの最終表示値と欠損時fallbackを確認する"
+  // impact = "新規・旧形式Auxiliaryのpreviewを日本語fallbackなしでHome Monitorへ表示する"
+  // distinction = "Auxiliary previewの保存値ではなく、Home Monitorでの最終表示値を確認する"
   // @end-test-value
-  it("Home Monitorは空のAuxiliary previewだけを既定タイトルへ戻さない", async () => {
+  it("Home Monitorは空または欠損のAuxiliary previewを日本語fallbackへ戻さない", async () => {
     const previousGlobals = {
       window: globalThis.window,
       document: globalThis.document,
@@ -1223,8 +1223,9 @@ describe("HomeMonitorContent", () => {
       assert.equal(rows[0]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "");
       assert.equal(rows[0]?.getAttribute("aria-label"), "Auxiliaryを開く: ");
       assert.equal(rows[0]?.textContent?.includes("新しい会話"), false);
-      assert.equal(rows[1]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "新しい会話");
-      assert.equal(rows[1]?.getAttribute("aria-label"), "Auxiliaryを開く: 新しい会話");
+      assert.equal(rows[1]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "");
+      assert.equal(rows[1]?.getAttribute("aria-label"), "Auxiliaryを開く: ");
+      assert.equal(container.textContent?.includes("新しい会話"), false);
     } finally {
       await act(async () => root.unmount());
       dom.window.close();
