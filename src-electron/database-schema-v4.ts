@@ -1,9 +1,10 @@
 import { basename } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import { APP_DATABASE_V1_FILENAME } from "./database-schema-v1.js";
 import { APP_DATABASE_V2_FILENAME } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME } from "./database-schema-v3.js";
+import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
 export const APP_DATABASE_V4_FILENAME = "withmate-v4.db";
 export const APP_DATABASE_V4_SCHEMA_VERSION = 4;
@@ -45,7 +46,7 @@ export function readV4DatabaseUserVersion(dbPath: string): number | null {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    db = openAppDatabaseReadOnly(dbPath);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
     return typeof row?.user_version === "number" ? row.user_version : null;
   } catch {
@@ -62,7 +63,7 @@ export function isValidV4Database(dbPath: string): boolean {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    db = openAppDatabaseReadOnly(dbPath);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
     if (row?.user_version !== APP_DATABASE_V4_SCHEMA_VERSION) {
       return false;

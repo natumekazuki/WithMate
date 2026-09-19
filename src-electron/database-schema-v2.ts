@@ -1,8 +1,9 @@
 import { basename } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
 export const APP_DATABASE_V2_FILENAME = "withmate-v2.db";
 export const APP_DATABASE_V2_SCHEMA_VERSION = 2;
@@ -25,7 +26,7 @@ export function isValidV2Database(dbPath: string): boolean {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    db = openAppDatabaseReadOnly(dbPath);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
     if (row?.user_version === APP_DATABASE_V2_SCHEMA_VERSION) {
       return true;

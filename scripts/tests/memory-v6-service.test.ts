@@ -108,6 +108,18 @@ function createSessionBindingPrincipal(
 }
 
 describe("MemoryV6Service", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "明示target付きMemory操作の成功応答を返す"
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "明示target操作の成功応答が欠落または誤る"
+  // observable = "append/search/get/list/forgetの戻り値"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "Memoryのtarget契約を維持する"
+  // distinction = "service実動作を確認する"
+  // @end-test-value
   it("local_user は明示project targetでappend / search / get-entry / list-tags / forgetを扱う", async () => {
     await withService(async ({ service }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -119,7 +131,7 @@ describe("MemoryV6Service", () => {
       assert.equal(append.entry.owner.id, "project-a");
       assert.equal(append.entry.state, "active");
 
-      const search = service.search(principal, {
+      const search = await service.search(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [{ owner: "project", scope: "project", project: { type: "path", path: "C:/workspace/project-a" } }],
         query: "agent payload",
@@ -127,7 +139,7 @@ describe("MemoryV6Service", () => {
       assert.equal("error" in search, false);
       assert.deepEqual(search.items.map((item) => item.id), [append.entry.id]);
 
-      const detail = service.getEntry(principal, {
+      const detail = await service.getEntry(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: append.entry.id,
         target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
@@ -136,14 +148,14 @@ describe("MemoryV6Service", () => {
       assert.equal(detail.entry.source.sessionId, null);
       assert.equal(detail.entry.source.providerId, "local-user");
 
-      const tags = service.listTags(principal, {
+      const tags = await service.listTags(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
       });
       assert.equal("error" in tags, false);
       assert.deepEqual(tags.tags, [{ type: "topic", value: "memory" }]);
 
-      const characters = service.listCharacters(principal);
+      const characters = await service.listCharacters(principal);
       assert.equal("error" in characters, false);
       assert.deepEqual(characters.characters, [{
         id: "character-a",
@@ -158,7 +170,7 @@ describe("MemoryV6Service", () => {
       assert.equal("iconFilePath" in characters.characters[0], false);
       assert.equal("theme" in characters.characters[0], false);
 
-      const forget = service.forget(principal, {
+      const forget = await service.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
         entryIds: [append.entry.id],
@@ -169,6 +181,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "session bindingのscope境界を維持する"
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "別CharacterのCRUDを許可する"
+  // observable = "scope別CRUD結果"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "Memory isolation"
+  // distinction = "service境界を実動作で確認する"
+  // @end-test-value
   it("session bindingはuser-global、Project、自Characterを扱い、別CharacterのCRUDを拒否する", async () => {
     await withService(async ({ service }) => {
       const principal = createSessionBindingPrincipal();
@@ -184,7 +208,7 @@ describe("MemoryV6Service", () => {
         },
       ];
       for (const target of allowedTargets) {
-        const result = service.search(principal, {
+        const result = await service.search(principal, {
           schemaVersion: MEMORY_V6_SCHEMA_VERSION,
           targets: [target],
           query: "Memory",
@@ -204,7 +228,7 @@ describe("MemoryV6Service", () => {
       assert.equal("error" in append, true);
       assert.equal(append.error.code, "MEMORY_FORBIDDEN");
 
-      const search = service.search(principal, {
+      const search = await service.search(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [otherTarget],
         query: "Memory",
@@ -212,7 +236,7 @@ describe("MemoryV6Service", () => {
       assert.equal("error" in search, true);
       assert.equal(search.error.code, "MEMORY_FORBIDDEN");
 
-      const missingOtherCharacter = service.search(principal, {
+      const missingOtherCharacter = await service.search(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [{
           owner: "character",
@@ -224,7 +248,7 @@ describe("MemoryV6Service", () => {
       assert.equal("error" in missingOtherCharacter, true);
       assert.equal(missingOtherCharacter.error.code, "MEMORY_FORBIDDEN");
 
-      const forget = service.forget(principal, {
+      const forget = await service.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: otherTarget,
         entryIds: ["unknown"],
@@ -234,7 +258,7 @@ describe("MemoryV6Service", () => {
       assert.equal("error" in forget, true);
       assert.equal(forget.error.code, "MEMORY_FORBIDDEN");
 
-      const move = service.moveEntry(principal, {
+      const move = await service.moveEntry(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: "unknown",
         from: allowedTargets[2],
@@ -247,8 +271,20 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "target inventoryは許可外Characterをpagination前に除外する"
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "許可外entryがpage境界を消費する"
+  // observable = "inventory page"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "paginationとscope isolation"
+  // distinction = "実DB検索結果を確認する"
+  // @end-test-value
   it("session bindingのtarget inventoryは別Characterをpagination前に除外する", async () => {
-    await withService(({ service, storage }) => {
+    await withService(async ({ service, storage }) => {
       for (const characterId of ["character-a", "character-b"]) {
         storage.appendEntry({
           id: `mem-${characterId}`,
@@ -265,28 +301,32 @@ describe("MemoryV6Service", () => {
         });
       }
 
-      const result = service.listTargets(createSessionBindingPrincipal(), {
+      const result = await service.listTargets(createSessionBindingPrincipal("character-b"), {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         owner: "character",
         limit: 1,
       });
 
       assert.equal("error" in result, false);
-      assert.deepEqual(result.items.map((item) => item.target.character?.id), ["character-a"]);
+      assert.deepEqual(result.items.map((item) => item.target.character?.id), ["character-b"]);
       assert.equal(result.nextCursor, undefined);
     });
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
   // claim = "session bindingのtarget inventoryは未許可Projectをpaginationとcursor生成より前に除外する"
-  // oracle = { type = "adr", ref = "ADR-024 actor-relative Memory target authority" }
-  // failure_mode = "未許可Projectがpageを消費する、または未許可target IDを含むcursorが返る"
-  // scope = "memory-service-list-targets-project-authority"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-PROJECT-ADMISSION" }
+  // fault = "未許可Projectがpageを消費するかcursorへ混入する"
+  // observable = "許可済みProjectだけのinventory pageとcursor"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
   // lifecycle = "permanent"
+  // impact = "project isolation"
+  // distinction = "session bindingのservice実DB検索結果を確認する"
   // @end-test-value
   it("session bindingのtarget inventoryは未許可Projectをpagination前に除外する", async () => {
-    await withService(({ service, storage }) => {
+    await withService(async ({ service, storage }) => {
       for (const projectId of ["project-a", "project-b"]) {
         storage.appendEntry({
           id: `mem-${projectId}`,
@@ -303,20 +343,32 @@ describe("MemoryV6Service", () => {
         });
       }
 
-      const result = service.listTargets(createSessionBindingPrincipal("character-a", ["project-a"]), {
+      const result = await service.listTargets(createSessionBindingPrincipal("character-a", ["project-b"]), {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         owner: "project",
         limit: 1,
       });
 
       assert.equal("error" in result, false);
-      assert.deepEqual(result.items.map((item) => item.target.project?.id), ["project-a"]);
+      assert.deepEqual(result.items.map((item) => item.target.project?.id), ["project-b"]);
       assert.equal(result.nextCursor, undefined);
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "get-entryは明示targetを要求しtarget外entryを返さない"
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "target外entryを返す"
+  // observable = "get-entry result"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "Memory disclosure prevention"
+  // distinction = "service APIを実動作で確認する"
+  // @end-test-value
   it("get-entry は必ず明示targetを要求し、target外entryを返さない", async () => {
-    await withService(({ service, storage }) => {
+    await withService(async ({ service, storage }) => {
       const principal = createLocalUserMemoryPrincipal();
       storage.appendEntry({
         id: "mem-project-a",
@@ -334,7 +386,7 @@ describe("MemoryV6Service", () => {
         },
       });
 
-      const missingTarget = service.getEntry(principal, {
+      const missingTarget = await service.getEntry(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: "mem-project-a",
       });
@@ -342,7 +394,7 @@ describe("MemoryV6Service", () => {
       assert.equal(missingTarget.error.code, "MEMORY_INVALID_FIELD");
       assert.equal(missingTarget.error.field, "target");
 
-      const mismatchTarget = service.getEntry(principal, {
+      const mismatchTarget = await service.getEntry(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: "mem-project-a",
         target: { owner: "project", scope: "project", project: { type: "id", id: "project-b" } },
@@ -352,10 +404,22 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "file usageはquotaと空のprotected object集計を返す"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md" }
+  // fault = "quotaまたは空のobject集計が欠落する"
+  // observable = "file usage response"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "quota enforcement"
+  // distinction = "service実動作を確認する"
+  // @end-test-value
   it("file usage は quota と protected object 集計を返す", async () => {
-    await withService(({ service }) => {
+    await withService(async ({ service }) => {
       const principal = createLocalUserMemoryPrincipal();
-      const usage = service.fileUsage(principal);
+      const usage = await service.fileUsage(principal);
 
       assert.equal("error" in usage, false);
       assert.deepEqual(usage, {
@@ -372,8 +436,20 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "largest entriesは要求時だけ返す"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md" }
+  // fault = "不要な内部object情報を常時公開する"
+  // observable = "file usage response"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "public payload minimization"
+  // distinction = "service responseを確認する"
+  // @end-test-value
   it("file usage は要求時だけlargest entriesを返す", async () => {
-    await withService(({ service, storage }) => {
+    await withService(async ({ service, storage }) => {
       const principal = createLocalUserMemoryPrincipal();
       storage.appendEntry({
         target: projectTarget,
@@ -400,11 +476,11 @@ describe("MemoryV6Service", () => {
         fileQuotaBytes: 8192,
       });
 
-      const defaultUsage = service.fileUsage(principal);
+      const defaultUsage = await service.fileUsage(principal);
       assert.equal("error" in defaultUsage, false);
       assert.equal("largestEntries" in defaultUsage, false);
 
-      const usage = service.fileUsage(principal, { includeLargestEntries: true, largestLimit: 1 });
+      const usage = await service.fileUsage(principal, { includeLargestEntries: true, largestLimit: 1 });
       assert.equal("error" in usage, false);
       assert.deepEqual(usage.largestEntries, [{
         entryId: "mem-large-files",
@@ -417,6 +493,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "bound SessionのlargestEntriesに他Characterを含めない"
+  // oracle = { type = "adr", ref = "docs/adr/021-agent-runtime-binding-authority-boundary.md" }
+  // fault = "他Characterのlargest entryをlargestEntriesへ返す"
+  // observable = "file usage response"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "scope isolation"
+  // distinction = "bound session実動作を確認する"
+  // @end-test-value
   it("bound Sessionのfile usageは他Characterのlargest entry候補を返さない", async () => {
     await withService(async ({ service, dbPath }) => {
       const appendEntry = async (title: string, target: Record<string, unknown>, idempotencyKey: string) => {
@@ -466,7 +554,7 @@ describe("MemoryV6Service", () => {
         db.close();
       }
 
-      const usage = service.fileUsage(createSessionBindingPrincipal("character-a"), {
+      const usage = await service.fileUsage(createSessionBindingPrincipal("character-a"), {
         includeLargestEntries: true,
         largestLimit: 10,
       });
@@ -1357,6 +1445,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "explicit character targetを扱いcurrent指定を拒否する"
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "暗黙current targetを許可する"
+  // observable = "target validation result"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "target明示契約"
+  // distinction = "validationとserviceを確認する"
+  // @end-test-value
   it("explicit character ID targetを扱い、character.currentはvalidationで拒否する", async () => {
     await withService(async ({ service }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -1372,7 +1472,7 @@ describe("MemoryV6Service", () => {
       assert.equal(append.entry.owner.type, "character");
       assert.equal(append.entry.owner.id, "character-a");
 
-      const currentCharacter = service.search(principal, {
+      const currentCharacter = await service.search(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [{ owner: "character", scope: "character", character: { type: "current" } }],
         query: "memory",
@@ -1383,6 +1483,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "path read/search、dry-run、失敗append/move/forgetはProject scopeを作らず、成功append/moveだけがscopeを作る"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-PROJECT-ADMISSION" }
+  // fault = "effectなしのproject操作がscopeを永続化するか成功mutationがscopeを作らない"
+  // observable = "path operation responses and project scope count"
+  // observation_boundary = "component-behavior"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "project data continuity"
+  // distinction = "runtime resolverを実動作で確認する"
+  // @end-test-value
   it("runtime project resolver はproject.pathからV6 project scopeを作成して解決する", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-project-resolver-"));
     const workspacePath = join(tempDirectory, "repo");
@@ -1397,7 +1509,7 @@ describe("MemoryV6Service", () => {
     });
     try {
       const principal = createLocalUserMemoryPrincipal();
-      const searchBeforeAppend = service.search(principal, {
+      const searchBeforeAppend = await service.search(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [{ owner: "project", scope: "project", project: { type: "path", path: workspacePath } }],
         query: "agent payload",
@@ -1405,7 +1517,7 @@ describe("MemoryV6Service", () => {
       assert.equal("error" in searchBeforeAppend, false);
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
 
-      const forgetDryRun = service.forget(principal, {
+      const forgetDryRun = await service.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: { owner: "project", scope: "project", project: { type: "path", path: workspacePath } },
         entryIds: ["missing-entry"],
@@ -1429,7 +1541,7 @@ describe("MemoryV6Service", () => {
       assert.equal(failedAppend.error.effect, "none");
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
 
-      const failedMove = service.moveEntry(principal, {
+      const failedMove = await service.moveEntry(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: "missing-entry",
         from: { owner: "user", scope: "global" },
@@ -1442,7 +1554,7 @@ describe("MemoryV6Service", () => {
       assert.equal(failedMove.error.effect, "none");
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
 
-      const forgetMissing = service.forget(principal, {
+      const forgetMissing = await service.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: { owner: "project", scope: "project", project: { type: "path", path: destinationWorkspacePath } },
         entryIds: ["missing-entry"],
@@ -1463,7 +1575,7 @@ describe("MemoryV6Service", () => {
       assert.equal("error" in append, false);
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 1);
 
-      const moved = service.moveEntry(principal, {
+      const moved = await service.moveEntry(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: append.entry.id,
         from: { owner: "project", scope: "project", project: { type: "path", path: workspacePath } },
@@ -1474,7 +1586,7 @@ describe("MemoryV6Service", () => {
       assert.equal("error" in moved, false);
       assert.equal(listMemoryV6ProjectScopes(dbPath).length, 2);
 
-      const search = service.search(principal, {
+      const search = await service.search(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [{ owner: "project", scope: "project", project: { type: "path", path: destinationWorkspacePath } }],
         query: "agent payload",
@@ -1487,6 +1599,18 @@ describe("MemoryV6Service", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "maintenance read APIはbody-redacted projectionを返す"
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "内部payloadやaudit bodyを返す"
+  // observable = "maintenance read response"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "privacy-preserving maintenance projection"
+  // distinction = "service responseを確認する"
+  // @end-test-value
   it("maintenance read APIはinventory、query-free listing、tag stats、auditをbody非公開で返す", async () => {
     await withService(async ({ service, storage }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -1502,18 +1626,18 @@ describe("MemoryV6Service", () => {
         now: "2026-01-01T00:00:00.000Z",
       });
 
-      const targets = service.listTargets(principal, { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+      const targets = await service.listTargets(principal, { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
       assert.equal("error" in targets, false);
       assert.equal(targets.items[0].entryCount, 1);
 
-      const listed = service.listEntries(principal, {
+      const listed = await service.listEntries(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
         limit: 100,
       });
       assert.equal("error" in listed, false);
       assert.equal("body" in listed.items[0], false);
-      const listedWithBody = service.listEntries(principal, {
+      const listedWithBody = await service.listEntries(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
         includeBody: true,
@@ -1521,7 +1645,7 @@ describe("MemoryV6Service", () => {
       assert.equal("error" in listedWithBody, false);
       assert.equal(listedWithBody.items[0].body, "full body must stay hidden by default");
 
-      const tags = service.listTags(principal, {
+      const tags = await service.listTags(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
         withCounts: true,
@@ -1531,7 +1655,7 @@ describe("MemoryV6Service", () => {
       assert.equal(tags.tags[0].entryCount, 1);
       assert.deepEqual(tags.tags[0].samples?.map((sample) => sample.id), ["mem-maintenance"]);
 
-      const audit = service.audit(principal, {
+      const audit = await service.audit(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         allTargets: true,
         staleBefore: "2026-06-01T00:00:00.000Z",
@@ -1542,6 +1666,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "list-tagsはlimitとcursorでbounded response pageを返す"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-TAG-PAGE" }
+  // fault = "response page上限またはcursor継続を壊す"
+  // observable = "tag page and cursor"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "bounded response pagination"
+  // distinction = "service pageを確認する"
+  // @end-test-value
   it("list-tagsはlimitとcursorでbounded pageを返す", async () => {
     await withService(async ({ service, storage }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -1559,11 +1695,11 @@ describe("MemoryV6Service", () => {
         });
       }
       const target = [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }];
-      const first = service.listTags(principal, { schemaVersion: MEMORY_V6_SCHEMA_VERSION, targets: target, limit: 2 });
+      const first = await service.listTags(principal, { schemaVersion: MEMORY_V6_SCHEMA_VERSION, targets: target, limit: 2 });
       assert.equal("error" in first, false);
       assert.equal(first.tags.length, 2);
       assert.ok(first.nextCursor);
-      const second = service.listTags(principal, {
+      const second = await service.listTags(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: target,
         limit: 2,
@@ -1573,7 +1709,7 @@ describe("MemoryV6Service", () => {
       assert.equal(second.tags.length, 1);
       assert.equal(second.nextCursor, undefined);
       assert.equal(new Set([...first.tags, ...second.tags].map((item) => item.value)).size, 3);
-      const invalidCursor = service.listTags(principal, {
+      const invalidCursor = await service.listTags(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: target,
         cursor: "cursor-a",
@@ -1584,6 +1720,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "forgetはsourceMessageIdをidempotencyとauditへ保持する"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FORGET-SOURCE" }
+  // fault = "retry識別子またはmutation auditが欠落する"
+  // observable = "forget result and audit"
+  // observation_boundary = "component-behavior"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "forget retry continuity"
+  // distinction = "service mutationとDB audit rowをcomponent境界で確認する"
+  // @end-test-value
   it("forgetはsourceMessageIdをidempotency tupleとmutation auditへ保持する", async () => {
     await withService(async ({ service, storage, dbPath }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -1605,12 +1753,12 @@ describe("MemoryV6Service", () => {
         sourceMessageId: "message-a",
         idempotencyKey: "forget-source-key",
       };
-      const first = service.forget(principal, request);
+      const first = await service.forget(principal, request);
       assert.equal("error" in first, false);
-      const replay = service.forget(principal, request);
+      const replay = await service.forget(principal, request);
       assert.equal("error" in replay, false);
       assert.equal(replay.results[0].replayed, true);
-      const conflict = service.forget(principal, { ...request, sourceMessageId: "message-b" });
+      const conflict = await service.forget(principal, { ...request, sourceMessageId: "message-b" });
       assert.equal("error" in conflict, true);
       assert.equal(conflict.error.code, "MEMORY_IDEMPOTENCY_CONFLICT");
       const db = new (await import("node:sqlite")).DatabaseSync(dbPath, { readOnly: true });
@@ -1623,6 +1771,18 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "forget dry-runはMemory entryとresponseを変更しない"
+  // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FORGET-SOURCE" }
+  // fault = "dry-runでMemory entryまたはresponseを変更する"
+  // observable = "dry-run response and Memory entry state"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-v6-service"
+  // lifecycle = "permanent"
+  // impact = "safe maintenance mutations"
+  // distinction = "service mutationを実動作で確認する"
+  // @end-test-value
   it("forget dry-runはpreviewだけを返し、move-entryは明示target間でretargetしてretry収束する", async () => {
     await withService(async ({ service, storage }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -1636,7 +1796,7 @@ describe("MemoryV6Service", () => {
         source: { type: "agent", sessionId: null, messageId: null, providerId: "codex" },
         id: "mem-move",
       });
-      const dryRun = service.forget(principal, {
+      const dryRun = await service.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
         entryIds: ["mem-move", "missing"],
@@ -1648,7 +1808,7 @@ describe("MemoryV6Service", () => {
       assert.equal(dryRun.results[0].entry?.title, "CLI-wide note");
       assert.equal(storage.getEntry("mem-move")?.state, "active");
 
-      const replaySeed = service.forget(principal, {
+      const replaySeed = await service.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: { owner: "user", scope: "global" },
         entryIds: ["mem-move"],
@@ -1665,10 +1825,10 @@ describe("MemoryV6Service", () => {
         reason: "move CLI note to user scope",
         idempotencyKey: "move-cli-note",
       };
-      const moved = service.moveEntry(principal, request);
+      const moved = await service.moveEntry(principal, request);
       assert.equal("error" in moved, false);
       assert.equal(moved.entry.owner.type, "user");
-      const replayPreview = service.forget(principal, {
+      const replayPreview = await service.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: request.to,
         entryIds: ["mem-move"],
@@ -1679,17 +1839,18 @@ describe("MemoryV6Service", () => {
       assert.equal(replayPreview.results[0].status, "not_found");
       assert.equal(replayPreview.results[0].entry, undefined);
       assert.equal(storage.getEntry("mem-move")?.state, "active");
-      const replay = service.moveEntry(principal, request);
+      const replay = await service.moveEntry(principal, request);
       assert.equal("error" in replay, false);
       assert.equal(replay.entry.id, "mem-move");
+      assert.equal(replay.replayed, true);
 
-      const oldTarget = service.listEntries(principal, {
+      const oldTarget = await service.listEntries(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: request.from,
       });
       assert.equal("error" in oldTarget, false);
       assert.deepEqual(oldTarget.items, []);
-      const newTarget = service.listEntries(principal, {
+      const newTarget = await service.listEntries(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: request.to,
       });

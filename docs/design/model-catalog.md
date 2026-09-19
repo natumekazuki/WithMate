@@ -140,7 +140,7 @@ adapter 実行時は session が持つ `catalogRevision` と `provider` を使�
 - import は JSON を validate して新 revision として保存する
 - import 成功時は既存 session の `catalogRevision` と必要な provider / model / depth 解決も自動 migrate する
 - partial merge はしない
-- import 前に session migration の前提を先に確認し、import 後の session 反映に失敗した場合は active catalog / sessions を直前の整合状態へ rollback する
+- import 前に session migration の前提を先に確認し、import 後の session 反映に失敗した場合は active catalog と、実際に更新を試みて成功した runtime metadata だけを条件付き reverse CAS で直前値へ戻す。Session / Auxiliary / Companion の本文、draft、messages、無関係な削除や未試行 collection は rollback 対象にしない。書込み結果が不明な対象には無条件の逆書込みを行わず、元の失敗と rollback 失敗は `AggregateError` で保持する。
 - provider / model の追加・削除も revision 単位で扱う
 
 ## Non Goals

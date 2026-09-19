@@ -1,4 +1,5 @@
 import type { AuxiliarySession } from "../src/auxiliary-session-state.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type AuxiliaryRuntimeIdentity = Pick<
   AuxiliarySession,
@@ -18,16 +19,16 @@ function hasProviderRuntimeIdentityChanged(
 export async function updateAuxiliarySessionWithProviderRuntimeLifecycle(input: {
   session: AuxiliarySession;
   isRunInFlight: (sessionId: string) => boolean;
-  getAuxiliarySession: (sessionId: string) => AuxiliarySession | null;
-  updateAuxiliarySession: (session: AuxiliarySession) => AuxiliarySession;
+  getAuxiliarySession: (sessionId: string) => Awaitable<AuxiliarySession | null>;
+  updateAuxiliarySession: (session: AuxiliarySession) => Awaitable<AuxiliarySession>;
   revokeSessionAgentRuntimeBindings: (sessionId: string) => void;
   invalidateProviderSessionThread: (providerId: string, sessionId: string) => Promise<void>;
 }): Promise<AuxiliarySession> {
   if (input.isRunInFlight(input.session.id)) {
     throw new Error("実行中の Auxiliary Session は更新できないよ。");
   }
-  const current = input.getAuxiliarySession(input.session.id);
-  const updated = input.updateAuxiliarySession(input.session);
+  const current = await input.getAuxiliarySession(input.session.id);
+  const updated = await input.updateAuxiliarySession(input.session);
   if (!current || !hasProviderRuntimeIdentityChanged(current, updated)) {
     return updated;
   }

@@ -25,6 +25,42 @@ import { gfm } from "micromark-extension-gfm";
 export type AuxiliarySessionStatus = "active" | "closed";
 export type AuxiliaryRuntimeSelectionMode = "explicit" | "latest-session";
 
+export type AuxiliaryCreationContext = {
+  generationId: string;
+  parentIncarnationId: string;
+};
+
+export type AuxiliaryCreationRequestSnapshot = {
+  parentSessionId: string;
+  provider: string;
+  runtimeSelection?: AuxiliaryRuntimeSelectionMode;
+  model?: string;
+  reasoningEffort?: ModelReasoningEffort;
+  approvalMode?: ApprovalMode;
+  codexSandboxMode?: CodexSandboxMode;
+  codexSpeed?: CodexSpeed;
+  customAgentName?: string;
+  clientRequestId: string;
+};
+
+export type AuxiliaryCreationRequest = {
+  parentSessionId: string;
+  clientRequestId: string;
+  creationContext: AuxiliaryCreationContext;
+};
+
+export type AuxiliaryCreationResult = {
+  status: "preparing" | "queued" | "committing" | "committed" | "cancelled" | "failed" | "unknown" | "expired" | "not-found";
+  auxiliarySessionId?: string;
+};
+
+/** Minimal lifecycle metadata used by the main-process operation diagnostics. */
+export type AuxiliaryCreationStateChange = AuxiliaryCreationResult & {
+  clientRequestId: string;
+  parentSessionId: string;
+  generationId: string;
+};
+
 export type CreateAuxiliarySessionInput = {
   parentSessionId: string;
   provider: string;
@@ -37,6 +73,7 @@ export type CreateAuxiliarySessionInput = {
   customAgentName?: string;
   /** Stable key used to make a retried create operation return the same row. */
   clientRequestId?: string;
+  creationContext?: AuxiliaryCreationContext;
 };
 
 export type AuxiliarySession = {
@@ -71,11 +108,14 @@ export type AuxiliarySession = {
   /** Deterministic, non-AI projection used by the lightweight list. */
   preview?: string;
   clientRequestId?: string;
+  creationContext?: AuxiliaryCreationContext;
+  creationRequest?: AuxiliaryCreationRequestSnapshot;
 };
 
 export type AuxiliarySessionSummary = Omit<
   AuxiliarySession,
   "messages" | "composerDraft" | "characterRuntimeSnapshot" | "characterRuntimeSnapshotInvalid"
+  | "creationContext" | "creationRequest"
 >;
 
 export function applyAuxiliarySessionPatch(
@@ -457,7 +497,26 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
       : typeof (candidate as { requestId?: unknown }).requestId === "string"
         ? (candidate as { requestId: string }).requestId.trim()
         : undefined,
+    creationContext: isAuxiliaryCreationContext(candidate.creationContext)
+      ? candidate.creationContext
+      : undefined,
+    creationRequest: isAuxiliaryCreationRequestSnapshot(candidate.creationRequest)
+      ? candidate.creationRequest
+      : undefined,
   };
+}
+
+function isAuxiliaryCreationContext(value: unknown): value is AuxiliaryCreationContext {
+  return typeof value === "object" && value !== null
+    && typeof (value as AuxiliaryCreationContext).generationId === "string"
+    && typeof (value as AuxiliaryCreationContext).parentIncarnationId === "string";
+}
+
+function isAuxiliaryCreationRequestSnapshot(value: unknown): value is AuxiliaryCreationRequestSnapshot {
+  return typeof value === "object" && value !== null
+    && typeof (value as AuxiliaryCreationRequestSnapshot).parentSessionId === "string"
+    && typeof (value as AuxiliaryCreationRequestSnapshot).provider === "string"
+    && typeof (value as AuxiliaryCreationRequestSnapshot).clientRequestId === "string";
 }
 
 export function projectAuxiliarySessionSummary(session: AuxiliarySession): AuxiliarySessionSummary {
@@ -466,6 +525,8 @@ export function projectAuxiliarySessionSummary(session: AuxiliarySession): Auxil
     composerDraft: _composerDraft,
     characterRuntimeSnapshot: _characterRuntimeSnapshot,
     characterRuntimeSnapshotInvalid: _characterRuntimeSnapshotInvalid,
+    creationContext: _creationContext,
+    creationRequest: _creationRequest,
     ...summary
   } = session;
   return {

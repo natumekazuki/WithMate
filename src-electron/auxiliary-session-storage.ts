@@ -8,6 +8,7 @@ import {
   type AuxiliarySessionSummary,
 } from "../src/auxiliary-session-state.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import type { ProviderRuntimeMetadataPatch } from "./provider-runtime-metadata-patch.js";
 
 type LegacyAuxiliaryPreviewResolver = (auxiliarySessionId: string) => string | null;
 
@@ -26,6 +27,7 @@ type AuxiliarySessionSummaryRow = {
   created_at: string;
   updated_at: string;
   summary_json: string;
+  payload_json?: string;
 };
 
 type ScopedAuxiliarySessionRow = AuxiliarySessionRow & {
@@ -39,6 +41,12 @@ export type AuxiliarySessionThreadPatchInput = {
   expectedThreadId: string;
   nextThreadId: string;
   updatedAt: string;
+  createdAt: string;
+};
+
+export type AuxiliarySessionRuntimeMetadataPatchInput = ProviderRuntimeMetadataPatch & {
+  auxiliarySessionId: string;
+  parentSessionId: string;
   createdAt: string;
 };
 
@@ -65,7 +73,6 @@ const CREATE_AUXILIARY_SESSION_PARENT_UPDATED_INDEX_SQL = `
 
 export class AuxiliarySessionStorage {
   private db: DatabaseSync | null;
-  private legacySummaryBackfillDone = false;
 
   constructor(
     dbPath: string,
@@ -81,7 +88,6 @@ export class AuxiliarySessionStorage {
   }
 
   listAllAuxiliarySessions(): AuxiliarySession[] {
-    this.ensureLegacySummaryBackfill();
     return this.withDb((db) => {
       const rows = db.prepare(`
         SELECT created_at, updated_at, payload_json
@@ -95,10 +101,10 @@ export class AuxiliarySessionStorage {
   }
 
   listAuxiliarySessions(parentSessionId: string): AuxiliarySessionSummary[] {
-    this.ensureLegacySummaryBackfill();
     return this.withDb((db) => {
       const rows = db.prepare(`
-        SELECT created_at, updated_at, summary_json
+        SELECT created_at, updated_at, summary_json,
+          CASE WHEN summary_json = '' THEN payload_json ELSE '' END AS payload_json
         FROM auxiliary_sessions
         WHERE parent_session_id = ?
         ORDER BY updated_at DESC, id DESC
@@ -110,7 +116,6 @@ export class AuxiliarySessionStorage {
   }
 
   listAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[] {
-    this.ensureLegacySummaryBackfill();
     const normalizedParentSessionIds = Array.from(new Set(
       parentSessionIds
         .map((parentSessionId) => parentSessionId.trim())
@@ -123,7 +128,8 @@ export class AuxiliarySessionStorage {
     return this.withDb((db) => {
       const placeholders = normalizedParentSessionIds.map(() => "?").join(", ");
       const rows = db.prepare(`
-        SELECT parent_session_id, created_at, updated_at, summary_json
+        SELECT parent_session_id, created_at, updated_at, summary_json,
+          CASE WHEN summary_json = '' THEN payload_json ELSE '' END AS payload_json
         FROM auxiliary_sessions
         WHERE parent_session_id IN (${placeholders})
         ORDER BY parent_session_id ASC, created_at ASC, id ASC
@@ -139,7 +145,6 @@ export class AuxiliarySessionStorage {
   }
 
   listActiveAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[] {
-    this.ensureLegacySummaryBackfill();
     const normalizedParentSessionIds = Array.from(new Set(
       parentSessionIds
         .map((parentSessionId) => parentSessionId.trim())
@@ -152,7 +157,8 @@ export class AuxiliarySessionStorage {
     return this.withDb((db) => {
       const placeholders = normalizedParentSessionIds.map(() => "?").join(", ");
       const rows = db.prepare(`
-        SELECT parent_session_id, created_at, updated_at, summary_json
+        SELECT parent_session_id, created_at, updated_at, summary_json,
+          CASE WHEN summary_json = '' THEN payload_json ELSE '' END AS payload_json
         FROM auxiliary_sessions
         WHERE status = 'active'
           AND parent_session_id IN (${placeholders})
@@ -173,10 +179,10 @@ export class AuxiliarySessionStorage {
   }
 
   listRunningActiveAuxiliarySessions(): AuxiliarySessionSummary[] {
-    this.ensureLegacySummaryBackfill();
     return this.withDb((db) => {
       const rows = db.prepare(`
-        SELECT created_at, updated_at, summary_json
+        SELECT created_at, updated_at, summary_json,
+          CASE WHEN summary_json = '' THEN payload_json ELSE '' END AS payload_json
         FROM auxiliary_sessions
         WHERE status = 'active'
         ORDER BY updated_at DESC, id DESC
@@ -188,7 +194,6 @@ export class AuxiliarySessionStorage {
   }
 
   getActiveAuxiliarySession(parentSessionId: string): AuxiliarySession | null {
-    this.ensureLegacySummaryBackfill();
     return this.withDb((db) => {
       const row = db.prepare(`
         SELECT created_at, updated_at, payload_json
@@ -203,7 +208,6 @@ export class AuxiliarySessionStorage {
   }
 
   getAuxiliarySession(auxiliarySessionId: string): AuxiliarySession | null {
-    this.ensureLegacySummaryBackfill();
     return this.withDb((db) => {
       const row = db.prepare(`
         SELECT created_at, updated_at, payload_json
@@ -215,7 +219,6 @@ export class AuxiliarySessionStorage {
   }
 
   updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): AuxiliarySession | null {
-    this.ensureLegacySummaryBackfill();
     return this.withDb((db) => {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
@@ -234,6 +237,64 @@ export class AuxiliarySessionStorage {
           UPDATE auxiliary_sessions SET updated_at = ?, payload_json = ?, summary_json = ?
           WHERE id = ? AND parent_session_id = ? AND updated_at = ?
         `).run(input.updatedAt, JSON.stringify(next), JSON.stringify(projectAuxiliarySessionSummary(next)), input.auxiliarySessionId, input.parentSessionId, current.updatedAt);
+        if (Number(result.changes) !== 1) {
+          db.exec("ROLLBACK");
+          return null;
+        }
+        db.exec("COMMIT");
+        return next;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  updateAuxiliarySessionRuntimeMetadataIfMatches(
+    input: AuxiliarySessionRuntimeMetadataPatchInput,
+  ): AuxiliarySession | null {
+    return this.withDb((db) => {
+      db.exec("BEGIN IMMEDIATE TRANSACTION");
+      try {
+        const row = db.prepare(`
+          SELECT created_at, updated_at, payload_json
+          FROM auxiliary_sessions
+          WHERE id = ? AND parent_session_id = ?
+        `).get(input.auxiliarySessionId, input.parentSessionId) as AuxiliarySessionRow | undefined;
+        const current = row ? parseAuxiliarySessionRow(row) : null;
+        if (
+          !current ||
+          current.createdAt !== input.createdAt ||
+          current.provider !== input.expected.provider ||
+          current.catalogRevision !== input.expected.catalogRevision ||
+          current.model !== input.expected.model ||
+          current.reasoningEffort !== input.expected.reasoningEffort ||
+          current.threadId !== input.expected.threadId
+        ) {
+          db.exec("ROLLBACK");
+          return null;
+        }
+        const next = {
+          ...current,
+          provider: input.next.provider,
+          catalogRevision: input.next.catalogRevision,
+          model: input.next.model,
+          reasoningEffort: input.next.reasoningEffort,
+          threadId: input.next.threadId,
+          updatedAt: input.next.updatedAt,
+        };
+        const result = db.prepare(`
+          UPDATE auxiliary_sessions SET updated_at = ?, payload_json = ?, summary_json = ?
+          WHERE id = ? AND parent_session_id = ? AND created_at = ? AND updated_at = ?
+        `).run(
+          next.updatedAt,
+          JSON.stringify(next),
+          JSON.stringify(projectAuxiliarySessionSummary(next)),
+          input.auxiliarySessionId,
+          input.parentSessionId,
+          input.createdAt,
+          current.updatedAt,
+        );
         if (Number(result.changes) !== 1) {
           db.exec("ROLLBACK");
           return null;
@@ -303,36 +364,60 @@ export class AuxiliarySessionStorage {
     });
   }
 
-  private ensureLegacySummaryBackfill(): void {
-    if (this.legacySummaryBackfillDone) {
-      return;
-    }
-
+  /**
+   * Projects at most one bounded batch. Callers may invoke this repeatedly
+   * until `remaining` reaches zero. Keeping the progress in the database
+   * (summary_json) makes interruption and restart resumable without passing
+   * callbacks or functions through the storage-worker boundary.
+   */
+  backfillAuxiliarySessionSummaries(options: { batchSize?: number } = {}): {
+    processed: number;
+    updated: number;
+    remaining: number;
+    error?: { id: string; message: string };
+  } {
+    const batchSize = Math.max(1, Math.floor(options.batchSize ?? 100));
+    const batch = this.withDb((db) => db.prepare(`
+      SELECT id, payload_json
+      FROM auxiliary_sessions
+      WHERE summary_json = ''
+      ORDER BY updated_at ASC, id ASC
+      LIMIT ?
+    `).all(batchSize) as Array<{ id: string; payload_json: string }>);
+    let updated = 0;
+    let error: { id: string; message: string } | undefined;
     this.withDb((db) => {
-      const rows = db.prepare(`
-        SELECT id, payload_json
-        FROM auxiliary_sessions
-        WHERE summary_json = ''
-      `).all() as Array<{ id: string; payload_json: string }>;
-      const update = db.prepare("UPDATE auxiliary_sessions SET payload_json = ?, summary_json = ? WHERE id = ?");
-      for (const row of rows) {
-        const session = parseAuxiliarySessionPayload(row.payload_json);
-        if (!session) {
-          continue;
+      db.exec("BEGIN IMMEDIATE TRANSACTION");
+      try {
+        const update = db.prepare("UPDATE auxiliary_sessions SET payload_json = ?, summary_json = ? WHERE id = ? AND summary_json = ''");
+        for (const row of batch) {
+          const session = parseAuxiliarySessionPayload(row.payload_json);
+          if (!session) {
+            error = { id: row.id, message: "Auxiliary session backfill payload is invalid." };
+            break;
+          }
+          const confirmedFinalAssistantText = this.resolveLegacyPreview?.(row.id) ?? null;
+          const preview = confirmedFinalAssistantText
+            ? buildAuxiliaryPreview(session.messages, confirmedFinalAssistantText)
+            : buildAuxiliaryPreview(session.messages);
+          const migratedSession = { ...session, preview };
+          const result = update.run(
+            JSON.stringify(migratedSession),
+            JSON.stringify(projectAuxiliarySessionSummary(migratedSession)),
+            row.id,
+          );
+          updated += Number(result.changes);
         }
-        const confirmedFinalAssistantText = this.resolveLegacyPreview?.(row.id) ?? null;
-        const preview = confirmedFinalAssistantText
-          ? buildAuxiliaryPreview(session.messages, confirmedFinalAssistantText)
-          : buildAuxiliaryPreview(session.messages);
-        const migratedSession = {
-          ...session,
-          preview,
-        };
-        const summary = projectAuxiliarySessionSummary(migratedSession);
-        update.run(JSON.stringify(migratedSession), JSON.stringify(summary), row.id);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
       }
     });
-    this.legacySummaryBackfillDone = true;
+    const remaining = this.withDb((db) => (
+      db.prepare("SELECT COUNT(*) AS count FROM auxiliary_sessions WHERE summary_json = ''").get() as { count: number }
+    ).count);
+    return { processed: batch.length, updated, remaining, ...(error ? { error } : {}) };
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
@@ -434,7 +519,11 @@ function parseAuxiliarySessionSummaryRow(
   row: AuxiliarySessionSummaryRow,
 ): AuxiliarySessionSummary | null {
   try {
-    const value = JSON.parse(row.summary_json) as unknown;
+    const value = row.summary_json
+      ? JSON.parse(row.summary_json) as unknown
+      : row.payload_json
+        ? JSON.parse(row.payload_json) as unknown
+        : null;
     const normalized = normalizeAuxiliarySession(value);
     return normalized ? projectAuxiliarySessionSummary(normalized) : null;
   } catch {

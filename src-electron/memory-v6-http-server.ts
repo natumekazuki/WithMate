@@ -71,9 +71,9 @@ export type MemoryV6HttpServerOptions = {
   maxConcurrentRequests?: number;
   agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
   providerAgentRuntimeTurns?: Pick<ProviderAgentRuntimeTurnCoordinator, "admit">;
-  resolveProjectById?: (id: string) => MemoryV6ProjectContext | null;
-  resolveProjectByPath?: (projectPath: string) => MemoryV6ProjectContext | null;
-  resolveKnownProjectByPath?: (projectPath: string) => MemoryV6ProjectContext | null;
+  resolveProjectById?: (id: string) => Promise<MemoryV6ProjectContext | null> | MemoryV6ProjectContext | null;
+  resolveProjectByPath?: (projectPath: string) => Promise<MemoryV6ProjectContext | null> | MemoryV6ProjectContext | null;
+  resolveKnownProjectByPath?: (projectPath: string) => Promise<MemoryV6ProjectContext | null> | MemoryV6ProjectContext | null;
   resolveActorSession?: (
     sessionId: string,
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
@@ -477,7 +477,7 @@ async function routeCharacterContextRequest(
   }
   return {
     schemaVersion: "withmate-character-context-v1",
-    metrics: service.getMetrics(),
+    metrics: await service.getMetrics(),
   };
 }
 
@@ -750,34 +750,34 @@ function parseProjectTargetRef(ref: unknown): ProjectTargetRef | null {
   return null;
 }
 
-function resolveAllowedProject(
+async function resolveAllowedProject(
   options: MemoryV6HttpServerOptions,
   ref: unknown,
   authority: ProviderAgentRuntimeAuthoritySnapshot,
-): ResolvedAllowedProject | null {
+): Promise<ResolvedAllowedProject | null> {
   const value = parseProjectTargetRef(ref);
   if (!value) return null;
   const project = value.type === "id"
-    ? options.resolveProjectById?.(value.id.trim()) ?? (
+    ? await options.resolveProjectById?.(value.id.trim()) ?? (
         authority.allowedProjectIds.includes(value.id.trim())
           ? { id: value.id.trim(), displayName: value.id.trim() }
           : null
       )
     : value.type === "path"
-      ? options.resolveProjectByPath?.(value.path) ?? options.resolveKnownProjectByPath?.(value.path) ?? null
+      ? await options.resolveProjectByPath?.(value.path) ?? await options.resolveKnownProjectByPath?.(value.path) ?? null
       : null;
   if (!project || !authority.allowedProjectIds.includes(project.id)) return null;
-  const canonicalRef: ProjectTargetRef = value.type === "path" && !options.resolveProjectById?.(project.id)
+  const canonicalRef: ProjectTargetRef = value.type === "path" && !await options.resolveProjectById?.(project.id)
     ? value
     : { type: "id", id: project.id };
   return { project, ref: canonicalRef };
 }
 
-function resolveActorRelativeTarget(
+async function resolveActorRelativeTarget(
   options: MemoryV6HttpServerOptions,
   value: unknown,
   authority: ProviderAgentRuntimeAuthoritySnapshot,
-): MemoryTargetSelector | null {
+): Promise<MemoryTargetSelector | null> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const target = value as Record<string, unknown>;
   if (target.kind === "user-global" && Object.keys(target).length === 1) {
@@ -787,7 +787,7 @@ function resolveActorRelativeTarget(
     return { owner: "character", scope: "character", character: { type: "id", id: authority.characterId } };
   }
   if ((target.kind === "project" || target.kind === "character+project") && Object.keys(target).length === 2) {
-    const resolvedProject = resolveAllowedProject(options, target.project, authority);
+    const resolvedProject = await resolveAllowedProject(options, target.project, authority);
     if (!resolvedProject) return null;
     return target.kind === "project"
       ? { owner: "project", scope: "project", project: resolvedProject.ref }
@@ -802,13 +802,13 @@ function resolveActorRelativeTarget(
 
 type AgentBodyResult = { ok: true; value: unknown } | { ok: false; error: unknown };
 
-function resolveAgentBoundRequestBody(
+async function resolveAgentBoundRequestBody(
   options: MemoryV6HttpServerOptions,
   route: MemoryV6Route,
   body: unknown,
   actorSession: AgentRuntimeActorSession,
   authority: ProviderAgentRuntimeAuthoritySnapshot,
-): AgentBodyResult {
+): Promise<AgentBodyResult> {
   if (route.startsWith("character_")) {
     if (route === "character_memory_search") {
       if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -824,7 +824,7 @@ function resolveAgentBoundRequestBody(
         return { ok: true, value: applyActorSessionToBody(route, body, actorSession, authority) };
       }
       if (actorScope.scope === "project" && Object.keys(actorScope).length === 2) {
-        const resolvedProject = resolveAllowedProject(options, actorScope.project, authority);
+        const resolvedProject = await resolveAllowedProject(options, actorScope.project, authority);
         if (resolvedProject) {
           return {
             ok: true,
@@ -865,7 +865,7 @@ function resolveAgentBoundRequestBody(
           character: { type: "id", id: authority.characterId },
         });
       } else {
-        const resolved = resolveActorRelativeTarget(options, filter, authority);
+        const resolved = await resolveActorRelativeTarget(options, filter, authority);
         if (!resolved) return { ok: false, error: agentInputError(route, "filter", "Memory target filter is invalid or not authorized.") };
         Object.assign(request, resolved);
       }
@@ -873,7 +873,7 @@ function resolveAgentBoundRequestBody(
     return { ok: true, value: request };
   }
   if (Array.isArray(request.targets)) {
-    const targets = request.targets.map((target) => resolveActorRelativeTarget(options, target, authority));
+    const targets = await Promise.all(request.targets.map((target) => resolveActorRelativeTarget(options, target, authority)));
     if (targets.some((target) => target === null)) {
       return { ok: false, error: agentInputError(route, "targets", "A Memory target is invalid or not authorized.") };
     }
@@ -881,8 +881,8 @@ function resolveAgentBoundRequestBody(
     return { ok: true, value: request };
   }
   if (route === "move_entry") {
-    const from = resolveActorRelativeTarget(options, request.from, authority);
-    const to = resolveActorRelativeTarget(options, request.to, authority);
+    const from = await resolveActorRelativeTarget(options, request.from, authority);
+    const to = await resolveActorRelativeTarget(options, request.to, authority);
     if (!from || !to) {
       return { ok: false, error: agentInputError(route, !from ? "from" : "to", "A Memory target is invalid or not authorized.") };
     }
@@ -890,7 +890,7 @@ function resolveAgentBoundRequestBody(
     request.to = to;
     return { ok: true, value: request };
   }
-  const target = resolveActorRelativeTarget(options, request.target, authority);
+  const target = await resolveActorRelativeTarget(options, request.target, authority);
   if (!target) return { ok: false, error: agentInputError(route, "target", "Memory target is invalid or not authorized.") };
   request.target = target;
   return { ok: true, value: request };
@@ -1218,7 +1218,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
       return { ok: false, error: turnAdmissionFailure(input.route) };
     }
   }
-  const body = resolveAgentBoundRequestBody(input.options, input.route, input.body, actorSession, authority);
+  const body = await resolveAgentBoundRequestBody(input.options, input.route, input.body, actorSession, authority);
   if (!body.ok) {
     return { ok: false, error: body.error };
   }

@@ -33,6 +33,7 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   broadcastOpenSessionWindowIds(openSessionIds: string[]): void;
   persistOpenSessionWindowIds?(openSessionIds: readonly string[]): Promise<void>;
   onSnapshotPersistenceError?(error: unknown): void;
+  onSessionWindowClosed?(sessionId: string): void;
 };
 
 export type SessionWindowRestoreState =
@@ -291,6 +292,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     this.sessionWindows.delete(sessionId);
+    this.deps.onSessionWindowClosed?.(sessionId);
     const wasSnapshotEligible = this.snapshotEligibleWindows.delete(window);
     this.broadcast();
     if (wasSnapshotEligible) {

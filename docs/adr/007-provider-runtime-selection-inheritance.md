@@ -23,13 +23,14 @@ Home が保持する Session summary は Character のランダム選択にも�
 - Session Window から Auxiliary Session を作成する場合、renderer は選択 provider と `latest-session` という選択意図だけを送る。Main Process は認証済みの送信元 window 種別と selection mode を結び付け、Session Window からの explicit selection と runtime option の直接指定を拒否する。Companion Review Window では explicit selection だけを許可する。
 - Main Process は共通 service を使って provider 別の最新一件を直接取得し、取得または検証に失敗した場合は Auxiliary ID 発行と永続化より前に作成を中止する。renderer が保持する一覧へは fallback しない。
 - Auxiliary Session の approval mode と sandbox mode は、未指定の場合だけ安全側の既定値を使う。値が存在する場合は現行 enum との完全一致を要求し、空白付き、旧値、型違い、enum 外の値を拒否する。親 Session の値へは fallback しない。
-- App Settings の更新、model catalog の import、model catalog を含む DB reset と、作成時の実行設定の最終解決・永続化は同じ Main Process の排他 coordinator を使う。
+- App Settings の更新、model catalog の import、model catalog を含む DB reset と、作成時の実行設定の最終解決・永続化は、同じ Main Process の provider runtime coordinator と storage ownership 境界を使う。ただし、provider の設定解決、Character・SessionFolder・外部ファイル準備、LLM/provider 呼出しは広域排他の内側で待たせない。Turn 開始時は対象 provider の利用中判定と starting 登録だけを短い admission 境界で行い、Settings / catalog の cleanup は影響する provider の新規 admission だけを止める。
 - Issue #726 の段階的な分離として、New Session の SessionFolder 作成は coordinator 外で準備する。最初の実行設定の解決に失敗した場合は従来どおり ID 発行・folder 作成前に失敗させる。folder 準備後に coordinator を取得し、元の Session storage instance が現行であること、および再解決した provider・catalog revision・七設定が事前解決と一致することを確認してから保存する。相違または再読失敗は作成を拒否し、別 provider や既定権限へ置換しない。DB reset をまたいだ試行も新 DB へ引き継がない。
 - SessionFolder 作成成功後、永続化開始前の再検証で失敗した場合だけ、その試行の folder を coordinator 外で後始末する。mkdir 失敗時は既存 folder を削除しない。永続化を呼び出した後の例外は commit 結果不明の可能性があるため、folder を自動削除しない。
 - Auxiliary 作成は親の初回取得、実行設定と Character snapshot の準備を coordinator 外で行う。commit は provider coordinator → ownership coordinator の順に取得し、準備時と同じ storage、親の生存と incarnation、実行設定を再検証してから保存する。親削除・同一 ID の Main Session 再作成・storage 交換・設定変更をまたいだ準備結果は保存しない。同一 `clientRequestId` の既存結果は保存前にも再確認する。親由来の Codex Speed / Reviewer、追加 directory、表示位置は commit 時の親から取得する。
 - Auxiliary の準備後に親 Character が変わった場合、または選択済み Character が削除・archive された場合も保存を拒否する。定義本文は準備時の snapshot を保存し、commit 時に再抽選・再生成はしない。
 - directory workspace の New Session と New Companion は引き続き解決から保存までを coordinator 内で処理する。Companion worktree 等の外部準備の分離は未完了である。Auxiliary の Character ファイル読取は同期処理のままであり、coordinator 外へ移しただけで Main event-loop の非ブロック化が完了したとはしない。
 - New Companion は coordinator を取得した後に現行の Companion storage を解決し、その operation 内では同じ storage generation を使う。DB reset より後に待機していた作成を、閉じた旧 storage へ保存しない。
+- V6 の SQLite は Main Process が直接同期接続を作らず、限定された typed command だけを storage Worker の current generation へ送る。close / reset / reopen で generation が変わった後の旧 command は、新しい storage へ付け替えず失効させる。commit 結果を確定できない応答は成功・未実行へ推測変換せず、呼出し元へ結果不明として返す。
 - Character のランダム選択に使う履歴は実行権限の決定と分離し、ADR 004 の Home キャッシュ方針を維持する。
 
 実装の正本は `src-electron/session-launch-selection-service.ts`、各 Session storage の provider 別最新一件 query、`src-electron/provider-runtime-operation-coordinator.ts`、`src-electron/main-session-command-facade.ts`、`src-electron/companion-session-service.ts`、`src-electron/auxiliary-session-service.ts` とする。観測可能な契約は対応する `scripts/tests/` の test に置く。
@@ -78,5 +79,5 @@ Main Process 内の追加待機は不要だが、選択後に App Settings ま�
 - New Session / New Companion の設定解決で最新一件の storage read が必要になる。SessionFolder を準備する New Session は commit 前にも再読し、変更された場合は利用者による作成の再試行が必要になる。
 - storage read または現行 catalog に対する設定検証が失敗すると、作成は継続できない。
 - Character ランダム選択用の履歴取得と provider 実行設定の取得は、目的が異なるため別経路になる。
-- SessionFolder と Auxiliary の準備以外の作成処理は、Settings 更新、model catalog import、DB reset、および別の対象作成と直列化される。特に Companion worktree 作成中は、後続操作の待機時間が長くなる場合がある。Auxiliary も commit 時の再読と保存は直列化され、準備中に対象や設定が変わった場合は再試行が必要になる。
+- SessionFolder と Auxiliary の準備は Settings 更新、model catalog import、DB reset と直列化しない。commit 時の対象再読と保存だけを短い境界で直列化するため、準備中に対象や設定が変わった場合は作成を成功扱いにせず再試行が必要になる。DB reset は全 provider admission と storage generation の交換を伴う maintenance 境界として扱う。
 - DB reset より後に開始される Companion 作成は、再作成後の storage を使う。

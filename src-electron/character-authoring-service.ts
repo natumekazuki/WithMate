@@ -19,20 +19,22 @@ import {
 } from "../src/character/character-authoring.js";
 import type { CreateSessionInput, Session } from "../src/session-state.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
+import type { RunCharacterWorkspaceOperationExclusive } from "./character-workspace-operation-coordinator.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export const CHARACTER_AUTHORING_SKILL_NAME = "withmate-character-authoring";
 const CODEX_WORKSPACE_SKILL_ROOT = ".agents/skills";
 const COPILOT_WORKSPACE_SKILL_ROOT = ".github/skills";
 
-export function resolveCharacterAuthoringRuntimeSessionForTurn(
+export async function resolveCharacterAuthoringRuntimeSessionForTurn(
   session: Session,
-  createRuntimeSnapshot: (characterId: string) => CharacterRuntimeSnapshot | null,
-): Session {
+  createRuntimeSnapshot: (characterId: string) => Awaitable<CharacterRuntimeSnapshot | null>,
+): Promise<Session> {
   if (session.sessionKind !== "character-authoring") {
     return session;
   }
 
-  const snapshot = createRuntimeSnapshot(session.characterId);
+  const snapshot = await createRuntimeSnapshot(session.characterId);
   if (!snapshot) {
     return session.characterRuntimeSnapshot
       ? { ...session, characterRuntimeSnapshot: null }
@@ -52,11 +54,17 @@ type CharacterAuthoringServiceDeps = {
   bundledSkillPath: string;
   createSession(input: Omit<CreateSessionInput, "id">): Promise<Session>;
   getCharacter(characterId: string): Promise<CharacterDetail | null> | CharacterDetail | null;
-  getCharacterDirectory(characterId: string): string | null;
+  getCharacterDirectory(characterId: string): Promise<string | null> | string | null;
   getSessionStorageIdentity(): object;
   readBundledSkillFiles?: typeof readBundledCharacterAuthoringSkillFiles;
-  resolveProvider(providerId: string): string;
+  resolveProvider(providerId: string): Promise<string> | string;
+  runCharacterWorkspaceOperationExclusive: RunCharacterWorkspaceOperationExclusive;
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
+  writePreparedWorkspace?: (
+    workspacePath: string,
+    provider: string,
+    files: PreparedWorkspaceFile[],
+  ) => Promise<void>;
 };
 
 type AuthoringSeed = {
@@ -112,8 +120,18 @@ export class CharacterAuthoringService {
 
   async startSession(input: StartCharacterAuthoringSessionInput): Promise<CharacterAuthoringSessionStartResult> {
     const prepared = await this.prepareSession(input);
-    return this.deps.runProviderRuntimeOperationExclusive(
-      () => this.startSessionExclusive(prepared),
+    return this.deps.runCharacterWorkspaceOperationExclusive(
+      prepared.input.characterId,
+      async () => {
+        await this.assertPreparedSessionCurrent(prepared);
+        await (this.deps.writePreparedWorkspace
+          ? this.deps.writePreparedWorkspace(prepared.workspacePath, prepared.input.provider, prepared.workspaceFiles)
+          : this.writePreparedWorkspace(prepared.workspacePath, prepared.input.provider, prepared.workspaceFiles));
+        await this.assertPreparedSessionCurrent(prepared);
+        return this.deps.runProviderRuntimeOperationExclusive(
+          () => this.createSessionExclusive(prepared),
+        );
+      },
     );
   }
 
@@ -125,7 +143,7 @@ export class CharacterAuthoringService {
     if (!requestedProvider) {
       throw new Error("Authoring session を開始する provider を選択してください。");
     }
-    const provider = this.deps.resolveProvider(requestedProvider);
+    const provider = await this.deps.resolveProvider(requestedProvider);
     if (provider !== requestedProvider) {
       throw new Error("Character authoring provider を一意に解決できませんでした。");
     }
@@ -147,7 +165,7 @@ export class CharacterAuthoringService {
     const capturedCharacter = this.cloneCharacter(character);
     const seed = this.resolveSeed(character);
     const runId = this.createRunId(seed.name);
-    const workspacePath = this.deps.getCharacterDirectory(characterId);
+    const workspacePath = await this.deps.getCharacterDirectory(characterId);
     if (!workspacePath) {
       throw new Error("Character authoring workspace を解決できませんでした。");
     }
@@ -163,13 +181,10 @@ export class CharacterAuthoringService {
     };
   }
 
-  private async startSessionExclusive(
+  private async createSessionExclusive(
     prepared: PreparedAuthoringSession,
   ): Promise<CharacterAuthoringSessionStartResult> {
     const { input, seed, runId, workspacePath } = prepared;
-    await this.assertPreparedSessionCurrent(prepared);
-    await this.writePreparedWorkspace(workspacePath, input.provider, prepared.workspaceFiles);
-    await this.assertPreparedSessionCurrent(prepared);
 
     const session = await this.deps.createSession({
       taskTitle: input.mode === "improve"
@@ -257,7 +272,7 @@ export class CharacterAuthoringService {
     if (this.deps.getSessionStorageIdentity() !== prepared.storageIdentity) {
       throw new Error("Character authoring の準備中に Session storage が切り替わりました。もう一度お試しください。");
     }
-    const provider = this.deps.resolveProvider(prepared.input.provider);
+    const provider = await this.deps.resolveProvider(prepared.input.provider);
     if (provider !== prepared.input.provider) {
       throw new Error("Character authoring provider を一意に解決できませんでした。");
     }
@@ -268,7 +283,7 @@ export class CharacterAuthoringService {
     if (!currentCharacter || !isDeepStrictEqual(this.cloneCharacter(currentCharacter), prepared.character)) {
       throw new Error("Character authoring の準備中に Character が変更されました。もう一度お試しください。");
     }
-    if (this.deps.getCharacterDirectory(prepared.input.characterId) !== prepared.workspacePath) {
+    if (await this.deps.getCharacterDirectory(prepared.input.characterId) !== prepared.workspacePath) {
       throw new Error("Character authoring workspace が変更されました。もう一度お試しください。");
     }
   }

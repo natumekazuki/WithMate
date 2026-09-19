@@ -30,7 +30,7 @@ export type CompanionSessionServiceDeps = {
     ensureGroup(group: CompanionGroup): Awaitable<CompanionGroup>;
     createSession(session: CompanionSession): Awaitable<CompanionSession>;
   };
-  createCharacterRuntimeSnapshot?(characterId: string): CharacterRuntimeSnapshot | null;
+  createCharacterRuntimeSnapshot?(characterId: string): Awaitable<CharacterRuntimeSnapshot | null>;
 };
 
 function safeId(id: string): string {
@@ -131,7 +131,7 @@ export class CompanionSessionService {
       characterIconPath: input.characterIconPath,
       characterThemeColors: input.characterThemeColors,
       characterRuntimeSnapshot:
-        input.characterRuntimeSnapshot ?? this.deps.createCharacterRuntimeSnapshot?.(input.characterId) ?? null,
+        input.characterRuntimeSnapshot ?? await this.deps.createCharacterRuntimeSnapshot?.(input.characterId) ?? null,
       createdAt: now,
       updatedAt: now,
       messages: [],

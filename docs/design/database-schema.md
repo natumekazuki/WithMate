@@ -94,6 +94,7 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - `src-electron/app-database-v6-bootstrap.ts` は `<userData>/withmate-v6.db` の fresh 作成と既存 V6 DB の検証だけを行う。fresh作成は一時directory内でtransaction実行し、deep validation後にfinal pathへ既存file非上書きでpublishする。既存 invalid V6 DB は上書きしない
   - `src-electron/app-database-path.ts` は起動時に V4/V3/V2/V1 から最終的に `withmate-v6.db` を作成または選択する。V3以下は既存 migration でV4へ到達した後、V4→V6 release migrationを実行する
   - `src-electron/memory-v6-runtime.ts` は app ready 時に V6 DB bootstrap を best-effort で実行し、Memory V6 localhost API と runtime discovery file を publish する
+  - V6 SQLite の起動・schema/bootstrap・WAL maintenance・診断・通常 storage は storage Worker が owner となる。Main Process からの同期 SQLite 接続と任意 SQL command は許可しない。close / reset / reopen 後は旧 storage generation の遅延応答を新 DB の書込みへ引き継がない
   - `withmate:get-app-database-diagnostics` は `withmate-v6.db` を runtime file として表示し、schema-validなら `runtimeEligible: true` として扱う
   - active runtime DB path selection は `withmate-v6.db` を current runtime DB として扱う
 - V2 migration policy:
@@ -703,6 +704,7 @@ Settings の `DB を初期化` で対象にできるのは次の 6 系統。
 - `sessions` を選ぶと `audit logs` も同伴する
 - `characters` は DB 外保存なので reset 対象外
 - `session_memories` は `sessions` に従属して一緒に消える前提で扱う
+- reset 中は新規 turn admission と依存する作成 commit を止め、current storage generation を交換する。旧 generation の commit 結果不明な応答は自動再送せず、reset が既存ユーザーデータの暗黙削除や復元を許可するものではない。
 
 ## Current / Legacy / Future Boundary
 

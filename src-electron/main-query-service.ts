@@ -44,7 +44,7 @@ type MainQueryServiceDeps = {
     auditLogId: number,
     operationIndex: number,
   ): Awaitable<AuditLogOperationDetailFragment | null>;
-  getAppSettings(): AppSettings;
+  getAppSettings(): Awaitable<AppSettings>;
   discoverSessionSkills(workspacePath: string, skillRootPath: string | null): Promise<DiscoveredSkill[]>;
   discoverSessionCustomAgents(workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   resolveComposerPreview(session: SessionSummary, userMessage: string): Promise<ComposerPreview>;
@@ -129,7 +129,7 @@ export class MainQueryService {
   }
 
   async listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]> {
-    const appSettings = this.deps.getAppSettings();
+    const appSettings = await this.deps.getAppSettings();
     const providerSettings = getProviderAppSettings(appSettings, providerId);
     return this.deps.discoverSessionSkills(workspacePath, resolveProviderSkillRootPath(providerSettings));
   }

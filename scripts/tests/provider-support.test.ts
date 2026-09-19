@@ -13,10 +13,23 @@ import {
   resolveProviderCodingAdapter,
 } from "../../src-electron/provider-support.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "指定されたproviderのcatalogを非同期storage経由で解決する"
+// oracle = { type = "contract", ref = "src-electron/provider-support.ts#resolveProviderCatalogOrThrow" }
+// fault = "非同期catalog取得を待たずにprovider解決してPromiseを誤って扱う"
+// observable = "resolveProviderCatalogOrThrowの解決結果"
+// observation_boundary = "public-boundary"
+// scope = "provider-support"
+// lifecycle = "permanent"
+// impact = "非同期catalogを待たずに解決するとprovider選択が誤り、後続adapter dispatchが不正になる"
+// distinction = "型だけでなく非同期getterを実際に待った解決結果を確認する"
+// @end-test-value
 test("resolveProviderCatalogOrThrow は指定 provider の catalog を返す", () => {
-  const result = resolveProviderCatalogOrThrow({
+  return (async () => {
+    const result = await resolveProviderCatalogOrThrow({
     providerId: "copilot",
-    getModelCatalog: () => ({
+    getModelCatalog: async () => ({
       revision: 2,
       providers: [
         {
@@ -38,10 +51,11 @@ test("resolveProviderCatalogOrThrow は指定 provider の catalog を返す", (
     ensureSeeded() {
       throw new Error("not used");
     },
-  });
+    });
 
-  assert.equal(result.snapshot.revision, 2);
-  assert.equal(result.provider.id, "copilot");
+    assert.equal(result.snapshot.revision, 2);
+    assert.equal(result.provider.id, "copilot");
+  })();
 });
 
 test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は providerId に応じて adapter を返す", () => {

@@ -7,7 +7,7 @@
 - 対象: `fix/issue-726`、V6 runtime。既存ユーザーデータを維持する。
 - Issue は横断変更であり、以下を独立して安全な単位に分ける。部分変更だけで Issue 完了とはしない。
 
-## 現行経路の棚卸し
+## 変更前の経路の棚卸し
 
 | 操作 | 現行 owner / 長時間処理 | 変更すべき境界 |
 | --- | --- | --- |
@@ -58,10 +58,12 @@ Companion の作成 service と依存配線は残るが、現行 create IPC hand
 
 ## 進捗
 
-- 棚卸し: 上表の経路を確認。Companion の新規作成は IPC で退役済み。全 caller の移行対象確定は未完了。
-- 実装単位 1: 実装済み。Affect の評価は ownership 外、owner 再検証・appraise・settlement 確定は同じ境界に配置。V6 runtime の通常保存と terminal 保存を既存行限定 API へ配線した。全体の排他方式はまだ置換していない。
-- 実装単位 2: 単体・期間削除の provider thread 後処理を ownership の外へ分離。Settings credential 更新の thread reset / rollback を条件付き field 更新へ移行。Main SessionFolder と Auxiliary の作成準備を provider coordinator 外へ分離。Character authoring も Character / Skill 読込みと生成内容の準備を分離したが、managed files 書込みは coordinator 内。他の作成準備、catalog の限定 field 更新、親子 Turn admission は未完了。
-- 実装単位 3〜5: 未完了。
+- 棚卸し: V6/Main/Auxiliary/Memory/Affect の caller を非同期 storage boundary へ移行した。Main の同期 SQLite 接続を runtime guard と静的 check で禁止する。Companion の新規作成は退役済みのまま維持する。
+- 実装単位 1: 完了。Affect の評価は ownership 外、owner 再検証・appraise・settlement 確定は同じ境界に配置。通常保存と terminal 保存は incarnation を照合する既存行限定 API を使用する。
+- 実装単位 2: 完了。削除の外部後処理、作成の準備、Character authoring のファイル反映を広域排他から分離した。Character 単位の反映と maintenance drain、親子 Turn admission、Settings の provider admission と限定 field / CAS rollback を組み合わせる。
+- 実装単位 3: 完了。Session / Settings / Catalog / Auxiliary / Character / Mate / Affect settlement と bootstrap / maintenance の Worker 経路、および Memory / Affect の Worker 経路を接続した。typed command whitelist、fault、shutdown drain、generation、結果不明、domain error の transport を検証した。summary backfill は明示的・bounded・再開可能な command とする。
+- 実装単位 4: 完了。authenticated IPC と request identity により、準備・待機・取消・commit・結果照合を管理する。cancel-first、dedupe、親・storage 再検証、再open、遅い応答、unknown の再照会を検証した。待機中の復帰と既存 launch shell の focus / Escape を維持する。
+- 実装単位 5: 完了。診断・ADR / design 更新、分離 Electron / UI fixture、変更 test の審査と全体検証を実施した。検証範囲と未確認事項は末尾に記録する。
 
 ### 第一段階レビューへの対応と削除後処理
 
@@ -149,11 +151,19 @@ Companion の作成 service と依存配線は残るが、現行 create IPC hand
 - 検証: Settings の 17 tests（追加 test は失敗位置と rollback 成否の 6 組合せ）、`npm run typecheck`、`npm run build:electron` が成功。今回の変更で全体 test、renderer build、実 Electron / 実 DB の競合検証は実施していない。
 - `review-test-value` で今回起点から 1 record / 1 transition を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が最新版を審査し、追加修正要求なし。catalog の入力と復元値を区別する assertion を補強した。未試行 collection のデータ保護は継続する契約で、型検査では代替できず、約 1 ms の component test として保持する。
 
-### 未確認・残作業（継続）
+### 最終実装・検証の現状（現 working tree）
 
-- 上記は Main が使用する production adapter / lifecycle と一時 DB を接続した component 検証であり、Electron Main 全体を起動した E2E ではない。Main の依存注入と IPC 登録は diff で確認し、bootstrap / IPC 配線の取り違えを検出する E2E は未実施。
-- generation test は実 SQLite 接続の交換と settler の await 境界を検証する。追加の Main lifecycle test は runtime identity 交換と、評価成功 / 例外後の invalidation・中断回収・drain を直接試験する。外部 LLM と Character context API は制御した依存であり、実 Memory HTTP runtime の停止・再起動を伴う E2E は未実施。
-- 同一 Character の複数 Session の並行評価、Settings rollback、親削除と Auxiliary Turn admission、Main cache と非同期 Worker 応答の先後は最終受入試験が必要。
-- storage Worker、全 caller 非同期化、backfill maintenance、Worker fault / generation / 結果不明、request 取消・重複抑止・再接続、UI、queue / DB / event-loop 診断は未実装。
-- Electron の分離環境、GUI、配布物、既存ユーザーデータコピーによる migration 確認は未実施。分離起動する場合は `scripts/start-withmate-visual-check.ps1` を使い、検証用 process の差替えを事前に明示する。
-- Issue #726 と関連 Issue を close しない。第一段階の commit を Issue 全体の完了と解釈しない。
+- 最終 `npm test` は 2,952 tests、2,951 pass / 0 fail / 1 skip。Worker shutdown、domain error、Character ファイル検証、Auxiliary hook と審査後の assertion 補強を含む working tree の結果である。
+- 全体実行後は test metadata の参照修正と resource lane test の失敗時 cleanup のみ変更し、影響する Worker 13 tests を再実行して成功した。production code は変更していない。
+- `npm run typecheck`、`scripts/check-sqlite-owner-boundary.ts`、`npm run build` は成功。renderer build には既存の 500 KB 超 chunk warning が残る。
+- コンパイル済み Electron の分離 fixture で `app.whenReady`、storage Worker の起動・終了・再open を確認し、exit code 0 だった。seeded representative V6 DB のコピーでは、Main / Auxiliary の非空 messages、Character definition / snapshot、Settings、Memory、Affect が reopen 後も保持された。V6.3.29-preview.1 の schema から `incarnation_id` を seed せず、初期化時に `legacy:worker-session` へ移行されることを実際に確認した。
+- SQL busy の write wait 中も Main の 1 ms timer が 357 回進行した（合計 451 回）。write は想定どおり失敗したが、Main event loop が storage wait で停止しないことを確認した。
+- Character の非同期準備は SQL 待機前に実行し、Character / Mate の file I/O は DB queue 外の per-store lane で実行する。shutdown 時は各 lane を drain する。
+- UI は offscreen Electron の PNG で待機中・結果不明時の dialog の実描画を確認し、production hook を通した jsdom / dialog flow（Escape から focus 復帰、再open、cancel、commit wins、unknown の再照会 recovery）を確認した。full Main GUI、実 Provider、インストーラは未確認である。
+- 代表 V6 DB は検証用コピーのみを使用した。実ユーザー DB の読み取り、外部 Provider、インストール済みアプリ、配布物の受入は実施していない。
+
+### 最終審査と未確認事項
+
+- 最終 diff を再開時の `6c7acfe351fd9b1766aa11f759cfa1d2f076a08c` から `review-test-value` で抽出した。135 records / 135 transitions、diagnostics 0、metadata 欠落 0。通常の read-only `general_luna` に 6 組へ分けて全件を審査し、fixture の観測漏れ、非同期経路、失敗時 cleanup、oracle と主張の精度を修正した。最終確認で追加の修正要求はない。
+- ローカル実装、型検査、全体 test、build、compiled Electron の代表データ継続性確認まで完了した。実ユーザー DB、full Main GUI と実 Provider の結合、インストーラによる配布物受入は未確認であり、fixture 成功で代替しない。
+- push、タグ付与、リリース公開、Issue #726 と関連 Issue の close は行わない。今回の実装 commit はリリースではない。

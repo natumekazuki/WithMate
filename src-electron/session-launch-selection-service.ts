@@ -30,8 +30,8 @@ export type SessionLaunchSelection = {
 };
 
 type SessionLaunchSelectionServiceDeps = {
-  getAppSettings(): AppSettings;
-  getModelCatalogSnapshot(): ModelCatalogSnapshot;
+  getAppSettings(): Awaitable<AppSettings>;
+  getModelCatalogSnapshot(): Awaitable<ModelCatalogSnapshot>;
   getLatestSessionSummaryForProvider(providerId: string): Awaitable<SessionSummary | null>;
 };
 
@@ -64,10 +64,10 @@ export class SessionLaunchSelectionService {
   constructor(private readonly deps: SessionLaunchSelectionServiceDeps) {}
 
   async resolve(requestedProviderId?: string | null): Promise<SessionLaunchSelection> {
-    const snapshot = this.deps.getModelCatalogSnapshot();
+    const snapshot = await this.deps.getModelCatalogSnapshot();
     const provider = resolveEnabledProviderCatalog(
       snapshot,
-      this.deps.getAppSettings(),
+      await this.deps.getAppSettings(),
       requestedProviderId,
     );
     const latestSession = await this.deps.getLatestSessionSummaryForProvider(provider.id);

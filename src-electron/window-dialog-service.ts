@@ -2,6 +2,7 @@ import type { BrowserWindow, OpenDialogOptions, OpenDialogReturnValue, SaveDialo
 
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { ImageFilePickerPurpose } from "../src/withmate-window-types.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 const MODEL_CATALOG_JSON_FILTER = [{ name: "JSON", extensions: ["json"] }];
 const IMAGE_FILE_FILTER = [
@@ -23,7 +24,7 @@ export type WindowDialogServiceDeps = {
   readTextFile(filePath: string): Promise<string>;
   writeTextFile(filePath: string, content: string): Promise<void>;
   importModelCatalogDocument(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot>;
-  exportModelCatalogDocument(revision?: number | null): ModelCatalogDocument | null;
+  exportModelCatalogDocument(revision?: number | null): Awaitable<ModelCatalogDocument | null>;
 };
 
 function buildDefaultPathOption(defaultPath: string | null | undefined): { defaultPath?: string } {
@@ -105,7 +106,7 @@ export class WindowDialogService {
     revision: number | null | undefined,
     targetWindow?: BrowserWindow | null,
   ): Promise<string | null> {
-    const document = this.deps.exportModelCatalogDocument(revision);
+    const document = await this.deps.exportModelCatalogDocument(revision);
     if (!document) {
       return null;
     }

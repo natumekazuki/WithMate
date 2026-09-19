@@ -17,12 +17,14 @@ import {
   resolveCharacterAuthoringRuntimeSessionForTurn,
 } from "../../src-electron/character-authoring-service.js";
 import { ProviderRuntimeOperationCoordinator } from "../../src-electron/provider-runtime-operation-coordinator.js";
+import { CharacterWorkspaceOperationCoordinator } from "../../src-electron/character-workspace-operation-coordinator.js";
 
 const resolveSelectedProvider = (providerId: string): string => providerId;
 const bundledSkillPath = path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME);
 const defaultDefinition = "# Existing character\n";
 const defaultNotes = "# Existing notes\n";
 const defaultStorageIdentity = {};
+const testWorkspaceOperationCoordinator = new CharacterWorkspaceOperationCoordinator();
 
 function deferred<T = void>(): { promise: Promise<T>; resolve(value: T extends void ? void : T): void } {
   let resolve!: (value: T extends void ? void : T) => void;
@@ -62,6 +64,8 @@ function createService(
     bundledSkillPath,
     getSessionStorageIdentity: () => defaultStorageIdentity,
     resolveProvider: resolveSelectedProvider,
+    runCharacterWorkspaceOperationExclusive: (characterId, operation) =>
+      testWorkspaceOperationCoordinator.runExclusive(characterId, operation),
     runProviderRuntimeOperationExclusive: runProviderOperationExclusive,
     getCharacter: () => buildCharacter(),
     getCharacterDirectory: () => "C:/characters/char-muse",
@@ -128,6 +132,18 @@ function assertSectionContains(
 }
 
 describe("CharacterAuthoringService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character authoring turn は Character runtime snapshot が消えた場合に旧 snapshot を破棄する"
+  // oracle = { type = "contract", ref = "src-electron/character-authoring-service.ts#resolveCharacterAuthoringRuntimeSessionForTurn" }
+  // fault = "最新 Character runtime snapshot が解決できないのに旧 snapshot を残し、削除済み定義をturnへ使う"
+  // observable = "最新snapshot null 時の characterRuntimeSnapshot と public session projection"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-runtime-snapshot"
+  // lifecycle = "permanent"
+  // impact = "削除・archive後のauthoring turnが旧Character snapshotを継続利用しない"
+  // distinction = "snapshot resolverのnull応答を直接与え、旧snapshotだけをnull化する動作を確認する"
+  // @end-test-value
   it("最新定義から snapshot を作れない turn は古い runtime snapshot を破棄する", () => {
     const session = buildNewSession({
       taskTitle: "Muse authoring",
@@ -153,10 +169,10 @@ describe("CharacterAuthoringService", () => {
       approvalMode: DEFAULT_APPROVAL_MODE,
     });
 
-    const resolved = resolveCharacterAuthoringRuntimeSessionForTurn(session, () => null);
-
-    assert.equal(resolved.characterId, "muse");
-    assert.equal(resolved.characterRuntimeSnapshot, null);
+    return resolveCharacterAuthoringRuntimeSessionForTurn(session, async () => null).then((resolved) => {
+      assert.equal(resolved.characterId, "muse");
+      assert.equal(resolved.characterRuntimeSnapshot, null);
+    });
   });
 
   // @test-value v2
@@ -1115,6 +1131,18 @@ description: "作業を一緒に進める相手"
     assert.equal(sessionCreationCount, 0);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character authoring の補助ファイルとSkill directoryは起動時に最新内容へ再生成される"
+  // oracle = { type = "contract", ref = "src-electron/character-authoring-service.ts#startSession" }
+  // fault = "前回セッションの補助ファイルやSkill残骸が次回authoring sessionへ残る"
+  // observable = "再起動後のAGENTS.md、AUTHORING_PROMPT.md、input.json、Skill directory内容"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-managed-files"
+  // lifecycle = "permanent"
+  // impact = "古いauthoring instructionsやSkill残骸がprovider実行へ混入しない"
+  // distinction = "既存補助ファイルとSkill残骸を先に配置し、次回startSession後に再生成内容を確認する"
+  // @end-test-value
   it("authoring 補助ファイルと Skill directory は次回起動時に作り直す", async () => {
     const { tempDirectory, workspacePath } = await createWorkspace();
     const service = createService({
@@ -1152,6 +1180,65 @@ description: "作業を一緒に進める相手"
       assert.match(await readFile(path.join(workspacePath, "input.json"), "utf8"), /"skill": "withmate-character-authoring"/);
       await assert.rejects(() => readFile(staleSkillFilePath, "utf8"));
     } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Character authoring の managed write は provider 共通排他を塞がず、同一 Character mutation は完了まで待機する"
+  // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
+  // fault = "workspace write を provider lock 内で行い、無関係な provider operation を待たせるか、同一 Character の更新を先行させる"
+  // observable = "write barrier 中の provider operation 完了、write 解放後の Session 保存、同一 Character operation の後続実行"
+  // observation_boundary = "public-boundary"
+  // scope = "character-authoring-write-admission"
+  // lifecycle = "permanent"
+  // impact = "workspace I/O が Settings 等の provider operation を不要に塞がず、同一 Character の catalog と files の競合を防ぐ"
+  // distinction = "実 CharacterAuthoringService の write seam と共有 Character coordinator を使い、provider と同一 key の順序を別々に観測する"
+  // @end-test-value
+  it("managed write 中は provider operation を塞がず、同一 Character mutation は待機する", { timeout: 10_000 }, async () => {
+    const { tempDirectory, workspacePath } = await createWorkspace();
+    const providerCoordinator = new ProviderRuntimeOperationCoordinator();
+    const workspaceCoordinator = new CharacterWorkspaceOperationCoordinator();
+    const writeEntered = deferred();
+    const releaseWrite = deferred();
+    const events: string[] = [];
+    const service = createService({
+      runCharacterWorkspaceOperationExclusive: (characterId, operation) =>
+        workspaceCoordinator.runExclusive(characterId, operation),
+      runProviderRuntimeOperationExclusive: (operation) => providerCoordinator.runExclusive(operation),
+      writePreparedWorkspace: async (targetPath, _provider, files) => {
+        writeEntered.resolve();
+        await releaseWrite.promise;
+        for (const file of files) {
+          const destination = path.join(targetPath, file.relativePath);
+          await mkdir(path.dirname(destination), { recursive: true });
+          await writeFile(destination, file.content);
+        }
+      },
+      async createSession(input) {
+        events.push("session");
+        return buildNewSession(input);
+      },
+    });
+
+    try {
+      const authoring = service.startSession({ mode: "improve", characterId: "char-muse", provider: "codex" });
+      await writeEntered.promise;
+      const providerOperation = providerCoordinator.runExclusive(async () => {
+        events.push("provider");
+      });
+      const characterMutation = workspaceCoordinator.runExclusive("char-muse", async () => {
+        events.push("mutation");
+      });
+      await providerOperation;
+      assert.deepEqual(events, ["provider"]);
+      releaseWrite.resolve();
+      await authoring;
+      await characterMutation;
+      assert.deepEqual(events, ["provider", "session", "mutation"]);
+    } finally {
+      releaseWrite.resolve();
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });

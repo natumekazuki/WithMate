@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { mkdir, copyFile, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -137,13 +136,13 @@ function materializeCharacterIconFilePath(userDataPath: string, filePath: string
   return path.join(userDataPath, trimmed);
 }
 
-function safeIconExtension(sourcePath: string): string {
+async function safeIconExtension(sourcePath: string): Promise<string> {
   const extension = path.extname(sourcePath).toLowerCase();
   if (!path.isAbsolute(sourcePath)) {
     return extension;
   }
 
-  const stats = statSync(sourcePath);
+  const stats = await stat(sourcePath);
   if (!stats.isFile()) {
     throw new Error("Character icon は通常のファイルを指定してね。");
   }
@@ -199,7 +198,6 @@ export class CharacterStorage {
 
   private ensureSchema(): void {
     this.db.exec(CREATE_CHARACTER_TABLE_SQL);
-    mkdirSync(this.characterRootPath, { recursive: true });
   }
 
   private characterDirectory(characterId: string): string {
@@ -268,7 +266,7 @@ export class CharacterStorage {
     return resolvedIconPath;
   }
 
-  private cleanupReplacedManagedIcon(characterId: string, previousIconFilePath: string, nextIconFilePath: string): void {
+  private async cleanupReplacedManagedIcon(characterId: string, previousIconFilePath: string, nextIconFilePath: string): Promise<void> {
     if (areCharacterIconPathReferencesEquivalent(
       previousIconFilePath,
       nextIconFilePath,
@@ -294,7 +292,7 @@ export class CharacterStorage {
     }
 
     try {
-      rmSync(previousIconAbsolutePath, { force: true });
+      await rm(previousIconAbsolutePath, { force: true });
     } catch (error) {
       console.warn("Character icon cleanup failed", {
         characterId,
@@ -336,11 +334,11 @@ export class CharacterStorage {
       );
   }
 
-  private copyIconFromSourcePath(
+  private async copyIconFromSourcePath(
     characterId: string,
     sourceIconFilePath: string,
     currentIconFilePath = "",
-  ): string {
+  ): Promise<string> {
     if (!sourceIconFilePath) {
       return "";
     }
@@ -354,7 +352,7 @@ export class CharacterStorage {
       throw new Error(registrationPathError);
     }
 
-    const extension = safeIconExtension(sourceIconFilePath);
+    const extension = await safeIconExtension(sourceIconFilePath);
     if (!path.isAbsolute(sourceIconFilePath)) {
       return sourceIconFilePath;
     }
@@ -364,8 +362,8 @@ export class CharacterStorage {
 
     const relativeIconPath = this.characterIconRelativePath(characterId, extension);
     const destinationPath = path.join(this.userDataPath, relativeIconPath);
-    mkdirSync(path.dirname(destinationPath), { recursive: true });
-    copyFileSync(sourceIconFilePath, destinationPath);
+    await mkdir(path.dirname(destinationPath), { recursive: true });
+    await copyFile(sourceIconFilePath, destinationPath);
     return relativeIconPath;
   }
 
@@ -395,19 +393,19 @@ export class CharacterStorage {
     `).get(characterId) as CharacterRow | undefined ?? null;
   }
 
-  private readDefinitionMarkdown(characterId: string): string {
-    return readFileSync(this.characterFilePath(characterId, CHARACTER_DEFINITION_FILE), "utf8");
+  private async readDefinitionMarkdown(characterId: string): Promise<string> {
+    return await readFile(this.characterFilePath(characterId, CHARACTER_DEFINITION_FILE), "utf8");
   }
 
-  private readNotesMarkdown(characterId: string): string {
+  private async readNotesMarkdown(characterId: string): Promise<string> {
     try {
-      return readFileSync(this.characterFilePath(characterId, CHARACTER_NOTES_FILE), "utf8");
+      return await readFile(this.characterFilePath(characterId, CHARACTER_NOTES_FILE), "utf8");
     } catch {
       return "";
     }
   }
 
-  private writeDefinitionFiles(characterId: string, definitionMarkdown: string, notesMarkdown?: string): void {
+  private async writeDefinitionFiles(characterId: string, definitionMarkdown: string, notesMarkdown?: string): Promise<void> {
     const definitionResult = parseCharacterDefinitionMarkdown(definitionMarkdown);
     if (!definitionResult.ok) {
       throw new Error(`character.md validation failed: ${definitionResult.issues.map((issue) => issue.code).join(", ")}`);
@@ -420,10 +418,10 @@ export class CharacterStorage {
       }
     }
 
-    mkdirSync(this.characterDirectory(characterId), { recursive: true });
-    writeFileSync(this.characterFilePath(characterId, CHARACTER_DEFINITION_FILE), definitionMarkdown, "utf8");
+    await mkdir(this.characterDirectory(characterId), { recursive: true });
+    await writeFile(this.characterFilePath(characterId, CHARACTER_DEFINITION_FILE), definitionMarkdown, "utf8");
     if (notesMarkdown !== undefined) {
-      writeFileSync(this.characterFilePath(characterId, CHARACTER_NOTES_FILE), notesMarkdown, "utf8");
+      await writeFile(this.characterFilePath(characterId, CHARACTER_NOTES_FILE), notesMarkdown, "utf8");
     }
   }
 
@@ -467,7 +465,7 @@ export class CharacterStorage {
     return row ? this.toEntry(row) : null;
   }
 
-  getCharacter(characterId: string): CharacterDetail | null {
+  async getCharacter(characterId: string): Promise<CharacterDetail | null> {
     const row = this.readCharacterRow(characterId);
     if (!row) {
       return null;
@@ -475,12 +473,12 @@ export class CharacterStorage {
 
     return {
       ...this.toEntry(row),
-      definitionMarkdown: this.readDefinitionMarkdown(characterId),
-      notesMarkdown: this.readNotesMarkdown(characterId),
+      definitionMarkdown: await this.readDefinitionMarkdown(characterId),
+      notesMarkdown: await this.readNotesMarkdown(characterId),
     };
   }
 
-  createCharacter(input: CreateCharacterInput): CharacterDetail {
+  async createCharacter(input: CreateCharacterInput): Promise<CharacterDetail> {
     const name = normalizeName(input.name);
     const description = normalizeDescription(input.description);
     const theme = normalizeTheme(input.theme);
@@ -489,9 +487,22 @@ export class CharacterStorage {
     const createdAt = nowIso();
     const definitionMarkdown = input.definitionMarkdown ?? buildDefaultCharacterDefinition(name, description);
     const notesMarkdown = input.notesMarkdown ?? buildDefaultCharacterNotes();
-    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    let transactionStarted = false;
+    let characterDirectoryCreated = false;
     try {
-      const iconFilePath = this.copyIconFromSourcePath(characterId, sourceIconFilePath);
+      try {
+        await stat(this.characterDirectory(characterId));
+      } catch (error) {
+        if ((error as { code?: unknown } | null)?.code !== "ENOENT") {
+          throw error;
+        }
+        await mkdir(this.characterDirectory(characterId), { recursive: true });
+        characterDirectoryCreated = true;
+      }
+      const iconFilePath = await this.copyIconFromSourcePath(characterId, sourceIconFilePath);
+      await this.writeDefinitionFiles(characterId, definitionMarkdown, notesMarkdown);
+      this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+      transactionStarted = true;
       this.db.prepare(`
         INSERT INTO characters (
           id, name, description, icon_file_path, theme_main, theme_sub,
@@ -507,23 +518,26 @@ export class CharacterStorage {
         createdAt,
         createdAt,
       );
-      this.writeDefinitionFiles(characterId, definitionMarkdown, notesMarkdown);
       this.db.exec("COMMIT");
     } catch (error) {
-      this.db.exec("ROLLBACK");
-      rmSync(this.characterDirectory(characterId), { recursive: true, force: true });
+      if (transactionStarted) {
+        this.db.exec("ROLLBACK");
+      }
+      if (characterDirectoryCreated) {
+        await rm(this.characterDirectory(characterId), { recursive: true, force: true });
+      }
       throw error;
     }
 
-    const created = this.getCharacter(characterId);
+    const created = await this.getCharacter(characterId);
     if (!created) {
       throw new Error("作成した Character を読み込めませんでした。");
     }
     return created;
   }
 
-  updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail {
-    const current = this.getCharacter(input.characterId);
+  async updateCharacterMetadata(input: UpdateCharacterMetadataInput): Promise<CharacterDetail> {
+    const current = await this.getCharacter(input.characterId);
     if (!current) {
       throw new Error("Character が見つかりません。");
     }
@@ -538,7 +552,7 @@ export class CharacterStorage {
       : normalizeDescription(input.description);
     const iconFilePath = input.iconFilePath === undefined
       ? currentRow.icon_file_path
-      : this.copyIconFromSourcePath(
+      : await this.copyIconFromSourcePath(
           input.characterId,
           normalizeCharacterIconPathInput(input.iconFilePath),
           currentRow.icon_file_path,
@@ -551,33 +565,33 @@ export class CharacterStorage {
       SET name = ?, description = ?, icon_file_path = ?, theme_main = ?, theme_sub = ?, updated_at = ?
       WHERE id = ?
     `).run(name, description, iconFilePath, theme.main, theme.sub, updatedAt, input.characterId);
-    this.cleanupReplacedManagedIcon(input.characterId, currentRow.icon_file_path, iconFilePath);
+    await this.cleanupReplacedManagedIcon(input.characterId, currentRow.icon_file_path, iconFilePath);
 
-    const updated = this.getCharacter(input.characterId);
+    const updated = await this.getCharacter(input.characterId);
     if (!updated) {
       throw new Error("更新した Character を読み込めませんでした。");
     }
     return updated;
   }
 
-  updateCharacterDefinition(input: UpdateCharacterDefinitionInput): CharacterDetail {
-    const current = this.getCharacter(input.characterId);
+  async updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Promise<CharacterDetail> {
+    const current = await this.getCharacter(input.characterId);
     if (!current) {
       throw new Error("Character が見つかりません。");
     }
 
-    this.writeDefinitionFiles(input.characterId, input.definitionMarkdown, input.notesMarkdown);
+    await this.writeDefinitionFiles(input.characterId, input.definitionMarkdown, input.notesMarkdown);
     this.db.prepare("UPDATE characters SET updated_at = ? WHERE id = ?").run(nowIso(), input.characterId);
 
-    const updated = this.getCharacter(input.characterId);
+    const updated = await this.getCharacter(input.characterId);
     if (!updated) {
       throw new Error("更新した Character を読み込めませんでした。");
     }
     return updated;
   }
 
-  archiveCharacter(characterId: string): CharacterCatalogEntry {
-    const current = this.getCharacter(characterId);
+  async archiveCharacter(characterId: string): Promise<CharacterCatalogEntry> {
+    const current = await this.getCharacter(characterId);
     if (!current) {
       throw new Error("Character が見つかりません。");
     }
@@ -596,22 +610,22 @@ export class CharacterStorage {
     return this.toEntry(archived);
   }
 
-  resolveLaunchCharacter(input: ResolveLaunchCharacterInput = {}): CharacterDetail | null {
+  async resolveLaunchCharacter(input: ResolveLaunchCharacterInput = {}): Promise<CharacterDetail | null> {
     if (!input.characterId) {
       return null;
     }
 
-    const preferred = this.getCharacter(input.characterId);
+    const preferred = await this.getCharacter(input.characterId);
     return preferred?.state === "active" ? preferred : null;
   }
 
-  createRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null {
+  async createRuntimeSnapshot(characterId: string): Promise<CharacterRuntimeSnapshot | null> {
     if (isUnknownCharacterOwnerId(characterId)) {
       return null;
     }
     let detail: CharacterDetail | null;
     try {
-      detail = this.getCharacter(characterId);
+      detail = await this.getCharacter(characterId);
     } catch (error) {
       if ((error as { code?: unknown } | null)?.code === "ENOENT") {
         return null;
@@ -640,7 +654,7 @@ export class CharacterStorage {
 
   async deleteCharacterRootDirectory(): Promise<void> {
     await rm(this.characterRootPath, { recursive: true, force: true });
-    mkdirSync(this.characterRootPath, { recursive: true });
+    await mkdir(this.characterRootPath, { recursive: true });
   }
 
   close(): void {

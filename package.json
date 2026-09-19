@@ -22,7 +22,8 @@
     "benchmark:data-loading": "tsx scripts/benchmark-data-loading.ts",
     "test": "tsx --test scripts/tests/*.test.ts scripts/tests/*.test.tsx",
     "test:shard": "node --import tsx scripts/run-test-shard.ts",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit && npm run check:sqlite-owner-boundary",
+    "check:sqlite-owner-boundary": "tsx scripts/check-sqlite-owner-boundary.ts",
     "affect:settlement-recovery": "tsx scripts/character-affect-turn-settlement-recovery.ts",
     "validate:snapshot-ignore": "tsx scripts/validate-snapshot-ignore.ts"
   },

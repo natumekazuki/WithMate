@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import {
   AFFECT_SCHEMA_VERSION,
@@ -135,7 +135,7 @@ type ProjectionInput = {
 
 export class CharacterAffectStorage {
   private readonly db: DatabaseSync;
-  private readonly now: () => Date;
+  private now: () => Date;
   private readonly sessionHalfLifeMs: number;
   private readonly minimumDecayWeight: number;
   private readonly projectionMetrics = {
@@ -171,6 +171,11 @@ export class CharacterAffectStorage {
 
   close(): void {
     this.db.close();
+  }
+
+  /** Updates the clock observed by the current worker command. */
+  setNow(now: () => Date): void {
+    this.now = now;
   }
 
   recordEvent(

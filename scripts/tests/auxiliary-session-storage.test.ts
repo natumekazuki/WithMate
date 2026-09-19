@@ -526,15 +526,15 @@ test("legacy preview backfillはcompleted raw itemの最終blockだけを復元�
 
 // @test-value v2
 // kind = "contract"
-// claim = "既存summary未生成行だけが初回一覧時に監査由来previewで一度補完される"
-// oracle = { type = "contract", ref = "issue-710-preview-legacy-migration" }
-// fault = "通常の一覧取得でpayloadを再投影するか、旧assistant joinをpreviewへ保存する"
-// observable = "再起動後listAuxiliarySessionsのpreviewとresolver呼出回数"
+// claim = "既存summary未生成行はread時に副作用を起こさず、明示maintenanceで監査由来previewを補完できる"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#preview-contract; docs/design/auxiliary-session.md#persistence" }
+// fault = "通常の一覧取得でpayloadを再投影するか、明示maintenance成功後も監査由来previewを返せない"
+// observable = "read後のresolver未呼出し、maintenance後のpreviewとresolver呼出回数"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-session-storage-migration"
 // lifecycle = "permanent"
 // @end-test-value
-test("旧summary未生成行は監査由来previewで初回だけ補完する", async () => {
+test("旧summary未生成行はreadを汚さず明示maintenanceで監査由来previewを補完する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-preview-migration-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   let storage: AuxiliarySessionStorage | null = null;
@@ -564,7 +564,23 @@ test("旧summary未生成行は監査由来previewで初回だけ補完する", 
       resolverCalls += 1;
       return id === "aux-legacy-preview" ? "監査で確定した最終block" : null;
     });
-    assert.equal(storage.listAuxiliarySessions("parent-legacy-preview")[0]?.preview, "監査で確定した最終block");
+    const beforeReadDb = new DatabaseSync(dbPath);
+    const summaryBeforeRead = (beforeReadDb.prepare("SELECT summary_json FROM auxiliary_sessions WHERE id = ?")
+      .get("aux-legacy-preview") as { summary_json: string }).summary_json;
+    beforeReadDb.close();
+    assert.equal(storage.listAuxiliarySessions("parent-legacy-preview")[0]?.preview, "ユーザーの依頼");
+    assert.equal(resolverCalls, 0);
+    const afterReadDb = new DatabaseSync(dbPath);
+    const summaryAfterRead = (afterReadDb.prepare("SELECT summary_json FROM auxiliary_sessions WHERE id = ?")
+      .get("aux-legacy-preview") as { summary_json: string }).summary_json;
+    afterReadDb.close();
+    assert.equal(summaryBeforeRead, "");
+    assert.equal(summaryAfterRead, summaryBeforeRead);
+    assert.deepEqual(storage.backfillAuxiliarySessionSummaries({ batchSize: 1 }), {
+      processed: 1,
+      updated: 1,
+      remaining: 0,
+    });
     const migrated = storage.getAuxiliarySession("aux-legacy-preview");
     assert.equal(migrated?.preview, "監査で確定した最終block");
     assert.ok(migrated);
@@ -581,7 +597,7 @@ test("旧summary未生成行は監査由来previewで初回だけ補完する", 
 // @test-value v2
 // kind = "contract"
 // claim = "Auxiliaryの新規作成はtitleとpreviewを空にし、不正optionの再送を拒否する。作成・更新・再読込・終了は各会話のruntime option、draft、thread、preview、親境界を保つ"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: per-session persistence and lifecycle" }
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
 // fault = "既存clientRequestIdの再送で入力検証を迂回する、複数Auxiliaryやstale保存で別会話の状態を上書きする、初期titleやpreviewを誤表示する、または親境界を越えて残す"
 // observable = "既存clientRequestId付き不正optionのreject、作成時のtitleとpreview、再読込・runtime upsert・stale update・close・parent filteringの公開結果"
 // observation_boundary = "public-boundary"
@@ -661,29 +677,29 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       clientRequestId: "create-2",
     });
     assert.notEqual(sameActive.id, auxiliary.id);
-    assert.equal(service.listAuxiliarySessions(parent.id).length, 2);
-    const untouchedSibling = service.getAuxiliarySession(sameActive.id);
+    assert.equal((await service.listAuxiliarySessions(parent.id)).length, 2);
+    const untouchedSibling = await service.getAuxiliarySession(sameActive.id);
     assert.ok(untouchedSibling);
 
-    const updated = service.updateAuxiliarySession({
+    const updated = await service.updateAuxiliarySession({
       ...auxiliary,
       composerDraft: "review this diff",
       messages: [{ role: "assistant", text: "finding" }],
     });
-    assert.equal(service.getAuxiliarySession(auxiliary.id)?.composerDraft, "review this diff");
-    assert.equal(service.listAuxiliarySessions(parent.id).some((entry) => entry.id === updated.id), true);
-    const siblingAfterUpdate = service.getAuxiliarySession(sameActive.id);
+    assert.equal((await service.getAuxiliarySession(auxiliary.id))?.composerDraft, "review this diff");
+    assert.equal((await service.listAuxiliarySessions(parent.id)).some((entry) => entry.id === updated.id), true);
+    const siblingAfterUpdate = await service.getAuxiliarySession(sameActive.id);
     assert.equal(siblingAfterUpdate?.provider, untouchedSibling.provider);
     assert.equal(siblingAfterUpdate?.threadId, untouchedSibling.threadId);
     assert.equal(siblingAfterUpdate?.composerDraft, untouchedSibling.composerDraft);
     assert.deepEqual(siblingAfterUpdate?.messages, untouchedSibling.messages);
 
-    const movedDisplayAnchor = service.updateAuxiliarySession({
+    const movedDisplayAnchor = await service.updateAuxiliarySession({
       ...updated,
       displayAfterMessageIndex: 3,
     });
     assert.equal(movedDisplayAnchor.displayAfterMessageIndex, 3);
-    const staleDraftWithOldDisplayAnchor = service.updateAuxiliarySession({
+    const staleDraftWithOldDisplayAnchor = await service.updateAuxiliarySession({
       ...updated,
       composerDraft: "stale draft with old anchor",
     });
@@ -691,7 +707,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
 
     const runtimeSession = await service.getAuxiliaryRuntimeSession(movedDisplayAnchor.id);
     assert.ok(runtimeSession);
-    const persistedRuntime = service.upsertAuxiliaryRuntimeSession({
+    const persistedRuntime = await service.upsertAuxiliaryRuntimeSession({
       ...runtimeSession,
       messages: [...runtimeSession.messages, { role: "assistant", text: "done" }],
       updatedAt: "2026-05-24T00:00:00.000Z",
@@ -700,7 +716,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     assert.equal(persistedRuntime.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE);
     assert.equal(persistedRuntime.preview, "done");
     for (const runState of ["running", "error", "idle"] as const) {
-      const preserved = service.upsertAuxiliaryRuntimeSession({
+      const preserved = await service.upsertAuxiliaryRuntimeSession({
         ...runtimeSession,
         runState,
         preview: "途中で上書きしない",
@@ -709,12 +725,12 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       });
       assert.equal(preserved.preview, "done");
     }
-    const staleDraftUpdate = service.updateAuxiliarySession({
+    const staleDraftUpdate = await service.updateAuxiliarySession({
       ...updated,
       composerDraft: "review this diff",
     });
     assert.equal(staleDraftUpdate.composerDraft, "");
-    assert.equal(staleDraftUpdate.messages.length, service.getAuxiliarySession(movedDisplayAnchor.id)?.messages.length);
+    assert.equal(staleDraftUpdate.messages.length, (await service.getAuxiliarySession(movedDisplayAnchor.id))?.messages.length);
 
     const migratedAuxiliary = auxiliaryStorage.upsertAuxiliarySession({
       ...staleDraftUpdate,
@@ -724,7 +740,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       threadId: "",
     });
     activeModelCatalog = buildTestModelCatalogSnapshot(migratedAuxiliary.catalogRevision);
-    const staleRendererSave = service.updateAuxiliarySession({
+    const staleRendererSave = await service.updateAuxiliarySession({
       ...staleDraftUpdate,
       catalogRevision: auxiliary.catalogRevision,
       model: auxiliary.model,
@@ -746,7 +762,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       ...sessionBeforeCredentialReset,
       threadId: "",
     });
-    const staleThreadRendererSave = service.updateAuxiliarySession({
+    const staleThreadRendererSave = await service.updateAuxiliarySession({
       ...sessionBeforeCredentialReset,
       composerDraft: "draft after credential reset",
     });
@@ -763,11 +779,11 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       threadId: "thread-before-model-change",
     });
     activeModelCatalog = buildTestModelCatalogSnapshot(3);
-    const draftBeforeModelChange = service.updateAuxiliarySession({
+    const draftBeforeModelChange = await service.updateAuxiliarySession({
       ...olderCatalogAuxiliary,
       composerDraft: "draft saved before model change",
     });
-    const explicitModelChange = service.updateAuxiliarySession({
+    const explicitModelChange = await service.updateAuxiliarySession({
       ...draftBeforeModelChange,
       catalogRevision: 3,
       model: "gpt-5.4-mini",
@@ -783,7 +799,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       ...explicitModelChange,
       composerDraft: "current draft with skill snippet",
     });
-    const staleDraftAfterModelChange = service.updateAuxiliarySession({
+    const staleDraftAfterModelChange = await service.updateAuxiliarySession({
       ...draftBeforeModelChange,
       catalogRevision: userChangedModelWithDraft.catalogRevision,
       composerDraft: "stale draft before model change",
@@ -801,7 +817,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       threadId: "",
     });
     activeModelCatalog = buildTestModelCatalogSnapshot(resetMigratedAuxiliary.catalogRevision);
-    const staleSaveAfterCatalogReset = service.updateAuxiliarySession({
+    const staleSaveAfterCatalogReset = await service.updateAuxiliarySession({
       ...explicitModelChange,
       catalogRevision: 5,
       model: "removed-model",
@@ -822,7 +838,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       allowedAdditionalDirectories: ["C:/shared", "C:/review-context"],
       composerDraft: "current visible draft",
     });
-    const staleDraftAfterSettingsChange = service.updateAuxiliarySession({
+    const staleDraftAfterSettingsChange = await service.updateAuxiliarySession({
       ...staleSaveAfterCatalogReset,
       composerDraft: "draft saved after settings change",
     });
@@ -833,22 +849,22 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     assert.equal(staleDraftAfterSettingsChange.composerDraft, userConfiguredAuxiliary.composerDraft);
 
     auxiliaryStorage.upsertAuxiliarySession({ ...staleDraftAfterSettingsChange, runState: "running" });
-    assert.throws(
-      () => service.closeAuxiliarySession(auxiliary.id),
+    await assert.rejects(
+      service.closeAuxiliarySession(auxiliary.id),
       /実行中の Auxiliary Session は終了できない/,
     );
     auxiliaryStorage.upsertAuxiliarySession(staleDraftAfterSettingsChange);
 
-    const closed = service.closeAuxiliarySession(auxiliary.id);
+    const closed = await service.closeAuxiliarySession(auxiliary.id);
     assert.equal(closed.status, "closed");
     assert.equal(closed.composerDraft, "");
-    const closedSecond = service.closeAuxiliarySession(sameActive.id);
+    const closedSecond = await service.closeAuxiliarySession(sameActive.id);
     assert.equal(closedSecond.status, "closed");
-    assert.equal(service.getActiveAuxiliarySession(parent.id), null);
-    assert.equal(service.listAuxiliarySessions(parent.id).length, 2);
+    assert.equal(await service.getActiveAuxiliarySession(parent.id), null);
+    assert.equal((await service.listAuxiliarySessions(parent.id)).length, 2);
 
     sessionStorage.replaceSessions([{ ...parent, taskTitle: "renamed main task" }]);
-    assert.equal(service.listAuxiliarySessions(parent.id).length, 2);
+    assert.equal((await service.listAuxiliarySessions(parent.id)).length, 2);
 
     const orphanedParent = { ...parent, id: "session-orphaned", taskTitle: "orphaned main task" };
     sessionStorage.upsertSession(orphanedParent);
@@ -856,7 +872,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       parentSessionId: orphanedParent.id,
       provider: orphanedParent.provider,
     });
-    assert.equal(service.listAuxiliarySessions(orphanedParent.id)[0]?.id, orphanedAuxiliary.id);
+    assert.equal((await service.listAuxiliarySessions(orphanedParent.id))[0]?.id, orphanedAuxiliary.id);
     const activeCompanion = buildCompanionSession({
       id: "companion-active-parent",
       groupId: "companion-group",
@@ -930,16 +946,16 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     });
 
     sessionStorage.replaceSessions([{ ...parent, taskTitle: "retained main task" }]);
-    assert.equal(service.listAuxiliarySessions(parent.id).length, 2);
-    assert.deepEqual(service.listAuxiliarySessions(orphanedParent.id), []);
-    assert.equal(service.listAuxiliarySessions(activeCompanion.id)[0]?.id, "aux-companion-parent");
-    assert.equal(service.listAuxiliarySessions(recoveryRequiredCompanion.id)[0]?.id, "aux-recovery-companion-parent");
-    assert.deepEqual(service.listAuxiliarySessions(mergedCompanion.id), []);
-    assert.deepEqual(service.listAuxiliarySessions(discardedCompanion.id), []);
-    assert.equal(service.listAuxiliarySessions(unknownStatusCompanion.id)[0]?.id, "aux-unknown-status-companion-parent");
+    assert.equal((await service.listAuxiliarySessions(parent.id)).length, 2);
+    assert.deepEqual(await service.listAuxiliarySessions(orphanedParent.id), []);
+    assert.equal((await service.listAuxiliarySessions(activeCompanion.id))[0]?.id, "aux-companion-parent");
+    assert.equal((await service.listAuxiliarySessions(recoveryRequiredCompanion.id))[0]?.id, "aux-recovery-companion-parent");
+    assert.deepEqual(await service.listAuxiliarySessions(mergedCompanion.id), []);
+    assert.deepEqual(await service.listAuxiliarySessions(discardedCompanion.id), []);
+    assert.equal((await service.listAuxiliarySessions(unknownStatusCompanion.id))[0]?.id, "aux-unknown-status-companion-parent");
 
     sessionStorage.deleteSession(parent.id);
-    assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
+    assert.deepEqual(await service.listAuxiliarySessions(parent.id), []);
   } finally {
     companionStorage?.close();
     auxiliaryStorage?.close();
@@ -951,7 +967,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
 // @test-value v2
 // kind = "invariant"
 // claim = "Auxiliary Character選択はMainを除外し、snapshot生成失敗時に既存draft/threadを壊さない"
-// oracle = { type = "contract", ref = "issue-710 Character selection and persistence" }
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#character-identity" }
 // fault = "Main Characterを再利用する、または新規作成失敗で既存Auxiliaryの会話状態を失う"
 // observable = "作成結果のcharacterIdと既存Auxiliaryのdraft/thread/messages"
 // observation_boundary = "public-boundary"
@@ -1015,7 +1031,7 @@ test("AuxiliarySessionService はMain除外とsnapshot失敗時の既存状態�
       service.createAuxiliarySession({ parentSessionId: parent.id, provider: parent.provider, clientRequestId: "selection-2" }),
       /Character snapshot を作成できない/,
     );
-    const afterFailure = service.getAuxiliarySession(preserved.id);
+    const afterFailure = await service.getAuxiliarySession(preserved.id);
     assert.equal(afterFailure?.composerDraft, "keep me");
     assert.equal(afterFailure?.threadId, "thread-existing");
     assert.deepEqual(
@@ -1128,11 +1144,13 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "Auxiliary Sessionは作成時に親のReviewerを引き継ぎ、その後の変更を自身だけへ永続化する"
-// oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-2" }
-// failure_mode = "Auxiliaryが親のAuto-reviewを継承しない、再読込で消える、またはAuxiliary変更が親へ漏れる"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#context-boundary" }
+// fault = "Auxiliaryが親のAuto-reviewを継承しない、再読込で消える、またはAuxiliary変更が親へ漏れる"
+// observable = "作成直後と再読込後のReviewer、Auxiliary更新後も変化しない親Reviewer"
+// observation_boundary = "public-boundary"
 // scope = "auxiliary-session-service-storage"
 // lifecycle = "permanent"
 // @end-test-value
@@ -1173,16 +1191,16 @@ test("Auxiliary Reviewerは親から継承した後に独立して保存する",
     assert.equal(auxiliary.codexSpeed, "fast");
     assert.equal(auxiliary.codexReviewer, "auto-review");
 
-    const updated = service.updateAuxiliarySession({
+    const updated = await service.updateAuxiliarySession({
       ...auxiliary,
       codexSpeed: "standard",
       codexReviewer: "user",
     });
     assert.equal(updated.codexSpeed, "standard");
-    assert.equal(service.getAuxiliarySession(auxiliary.id)?.codexSpeed, "standard");
+    assert.equal((await service.getAuxiliarySession(auxiliary.id))?.codexSpeed, "standard");
     assert.equal(parent.codexSpeed, "fast");
     assert.equal(updated.codexReviewer, "user");
-    assert.equal(service.getAuxiliarySession(auxiliary.id)?.codexReviewer, "user");
+    assert.equal((await service.getAuxiliarySession(auxiliary.id))?.codexReviewer, "user");
     assert.equal(parent.codexReviewer, "auto-review");
   } finally {
     auxiliaryStorage?.close();
@@ -1190,11 +1208,13 @@ test("Auxiliary Reviewerは親から継承した後に独立して保存する",
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "Auxiliary Session更新は保存済みApprovalがneverの間、他項目を更新しても現在のReviewerを保持する"
-// oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-3" }
-// failure_mode = "直接IPCまたはstale payloadがnever中のAuxiliary Reviewerを変更し、後のinteractive復帰で意図しない値が有効になる"
+// oracle = { type = "contract", ref = "docs/manual-test-checklist.md:90" }
+// fault = "直接IPCまたはstale payloadがnever中のAuxiliary Reviewerを変更し、後のinteractive復帰で意図しない値が有効になる"
+// observable = "never設定で他項目を更新した後のAuxiliaryと親のReviewer"
+// observation_boundary = "public-boundary"
 // scope = "auxiliary-session-service"
 // lifecycle = "permanent"
 // @end-test-value
@@ -1232,7 +1252,7 @@ test("Auxiliary更新は保存済みApprovalがneverの間Reviewerを保持す�
       approvalMode: "never",
     });
 
-    const updated = service.updateAuxiliarySession({
+    const updated = await service.updateAuxiliarySession({
       ...auxiliary,
       title: "Renamed Auxiliary",
       codexReviewer: "user",
@@ -1240,7 +1260,7 @@ test("Auxiliary更新は保存済みApprovalがneverの間Reviewerを保持す�
 
     assert.equal(updated.title, "Renamed Auxiliary");
     assert.equal(updated.codexReviewer, "auto-review");
-    assert.equal(service.getAuxiliarySession(auxiliary.id)?.codexReviewer, "auto-review");
+    assert.equal((await service.getAuxiliarySession(auxiliary.id))?.codexReviewer, "auto-review");
   } finally {
     auxiliaryStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);
@@ -1477,6 +1497,16 @@ test("AuxiliarySessionService は latest-session 選択を Main の resolver か
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "latest-sessionの解決失敗または直接runtime optionの混在はAuxiliaryを保存せず拒否する"
+// oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md#decision" }
+// fault = "解決失敗を既定値で隠す、またはlatest-sessionへ直接optionを混ぜて不整合なruntimeを保存する"
+// observable = "reject内容と親に紐づくAuxiliary保存件数"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-runtime-selection"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxiliarySessionService は latest-session の取得失敗と runtime option 混在を保存前に拒否する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-latest-failure-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
@@ -1519,7 +1549,7 @@ test("AuxiliarySessionService は latest-session の取得失敗と runtime opti
       }),
       /latest selection conversion failed/,
     );
-    assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
+    assert.deepEqual(await service.listAuxiliarySessions(parent.id), []);
 
     await assert.rejects(
       service.createAuxiliarySession({
@@ -1530,7 +1560,7 @@ test("AuxiliarySessionService は latest-session の取得失敗と runtime opti
       }),
       /runtime option を直接指定できない/,
     );
-    assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
+    assert.deepEqual(await service.listAuxiliarySessions(parent.id), []);
   } finally {
     auxiliaryStorage?.close();
     sessionStorage?.close();
@@ -1538,6 +1568,16 @@ test("AuxiliarySessionService は latest-session の取得失敗と runtime opti
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary作成は定義済みenum外のruntime optionを保存前に拒否する"
+// oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md#decision" }
+// fault = "未知のruntime optionを既定値へ変換して保存し、後続turnの実行条件を変える"
+// observable = "不正optionごとのrejectと保存件数0"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-runtime-validation"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxiliarySessionService は現行 enum 外の runtime option を拒否して保存しない", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-runtime-option-fallback-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
@@ -1618,7 +1658,7 @@ test("AuxiliarySessionService は現行 enum 外の runtime option を拒否し�
         }),
         malformedInput.expectedError,
       );
-      assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
+      assert.deepEqual(await service.listAuxiliarySessions(parent.id), []);
     }
   } finally {
     auxiliaryStorage?.close();
@@ -1627,6 +1667,16 @@ test("AuxiliarySessionService は現行 enum 外の runtime option を拒否し�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary作成でruntime optionを省略した場合、指定Providerのcatalog既定値を一組で保存する"
+// oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md#decision" }
+// fault = "Providerの既定model/reasoningを欠落させる、または別Providerの既定値を混在させる"
+// observable = "作成Auxiliaryのprovider、catalogRevision、model、reasoningEffortと保存件数"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-provider-defaults"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxiliarySessionService は選択値なしなら指定 Provider と同じ既定 runtime context で active session を作成する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-provider-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
@@ -1677,6 +1727,7 @@ test("AuxiliarySessionService は選択値なしなら指定 Provider と同じ�
     assert.equal(auxiliary.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE);
     assert.equal(auxiliary.customAgentName, "");
     assert.equal(auxiliary.displayAfterMessageIndex, parent.messages.length - 1);
+    assert.equal((await service.listAuxiliarySessions(parent.id)).length, 1);
   } finally {
     auxiliaryStorage?.close();
     sessionStorage?.close();
@@ -1684,6 +1735,16 @@ test("AuxiliarySessionService は選択値なしなら指定 Provider と同じ�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "保存済みAuxiliaryのparent ID・runtime境界と、Companion parentから解決したworkspace contextを維持する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md" }
+// fault = "既存AuxiliaryのCompanion parent contextを欠落させる、または親外のdirectoryを許可する"
+// observable = "保存済みAuxiliaryのparent ID、approval/sandbox、許可directory、解決済みworkspace・branch・thread"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-companion-parent"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxiliarySessionService は Companion 由来の parent runtime session から実行 context を継承する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-companion-parent-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
@@ -1702,12 +1763,21 @@ test("AuxiliarySessionService は Companion 由来の parent runtime session か
       getModelCatalogSnapshot: () => activeModelCatalog,
     });
 
-    const auxiliary = await service.createAuxiliarySession({
+    const auxiliary = auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-companion-restored",
       parentSessionId: companion.id,
       provider: companion.provider,
+      catalogRevision: companion.catalogRevision,
+      model: companion.model,
+      reasoningEffort: companion.reasoningEffort,
       approvalMode: companion.approvalMode,
       codexSandboxMode: companion.codexSandboxMode,
-    });
+      codexSpeed: companion.codexSpeed,
+      codexReviewer: companion.codexReviewer,
+      customAgentName: companion.customAgentName,
+      allowedAdditionalDirectories: [...companion.allowedAdditionalDirectories],
+      displayAfterMessageIndex: companion.messages.length - 1,
+    }));
 
     assert.equal(auxiliary.parentSessionId, companion.id);
     assert.equal(auxiliary.approvalMode, companion.approvalMode);
@@ -1734,6 +1804,16 @@ test("AuxiliarySessionService は Companion 由来の parent runtime session か
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "起動時に実行中のAuxiliaryは再開可能なerror状態へ遷移し、履歴を保持する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#recovery" }
+// fault = "前回実行中のAuxiliaryをrunningのまま放置し、次回実行で二重実行または履歴欠落を起こす"
+// observable = "recoverInterruptedSessions後のrunState、status、末尾メッセージ"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-recovery"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxiliarySessionService は起動時に running active session を復旧可能な error 状態へ戻す", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-recover-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
@@ -1771,12 +1851,20 @@ test("AuxiliarySessionService は起動時に running active session を復旧�
       messages: [{ role: "user", text: "review" }],
     });
 
-    service.recoverInterruptedSessions();
+    await service.recoverInterruptedSessions();
 
-    const recovered = service.getAuxiliarySession(auxiliary.id);
+    const recovered = await service.getAuxiliarySession(auxiliary.id);
     assert.equal(recovered?.runState, "error");
     assert.equal(recovered?.status, "active");
-    assert.equal(recovered?.messages.at(-1)?.role, "assistant");
+    const interruptionMessage = "前回の Auxiliary 実行はアプリ終了で中断された可能性があります。必要ならもう一度送信してください。";
+    assert.equal(recovered?.messages.length, 2);
+    assert.equal(recovered?.messages[0]?.role, "user");
+    assert.equal(recovered?.messages[0]?.text, "review");
+    assert.equal(recovered?.messages[1]?.role, "assistant");
+    assert.equal(recovered?.messages[1]?.text, interruptionMessage);
+    assert.equal(recovered?.messages.filter((message) => message.text === interruptionMessage).length, 1);
+    await service.recoverInterruptedSessions();
+    assert.deepEqual((await service.getAuxiliarySession(auxiliary.id))?.messages, recovered?.messages);
   } finally {
     auxiliaryStorage?.close();
     sessionStorage?.close();
@@ -1784,6 +1872,16 @@ test("AuxiliarySessionService は起動時に running active session を復旧�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary runtime session は親Session files directoryを追加許可し、既存の許可directoryを保持する"
+// oracle = { type = "contract", ref = "docs/design/session-local-files.md#access-contract" }
+// fault = "親のSession filesへアクセスできない、または既存の許可directoryを上書きする"
+// observable = "追加後のallowedAdditionalDirectoriesの順序と内容"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-files-boundary"
+// lifecycle = "permanent"
+// @end-test-value
 test("Auxiliary runtime session は parent の session files directory を追加許可できる", () => {
   const session = {
     id: "aux-1",
@@ -1796,4 +1894,151 @@ test("Auxiliary runtime session は parent の session files directory を追加
     "C:/shared",
     resolveSessionFilesDirectory("C:/user-data", "session-main"),
   ]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary summary maintenance command は一回の呼び出しを要求batch以内に制限し、壊れたpayloadを完了扱いにせず残件として返す"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// fault = "一回のmaintenance commandが全件を処理する、または壊れた行を暗黙に消化済みとして再開位置を失う"
+// observable = "各commandのprocessed上限、updated、remainingの推移"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-session-storage-bounded-maintenance"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary summary maintenance はbatch単位で再開でき、壊れたpayloadを残件として返す", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-bounded-maintenance-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let storage: AuxiliarySessionStorage | null = null;
+  try {
+    storage = new AuxiliarySessionStorage(dbPath);
+    for (const id of ["aux-a-valid", "aux-b-valid"]) {
+      storage.upsertAuxiliarySession(buildAuxiliarySession({
+        id,
+        parentSessionId: "parent-bounded-maintenance",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }));
+    }
+    storage.close();
+    storage = null;
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.prepare("UPDATE auxiliary_sessions SET summary_json = '' WHERE id IN (?, ?)")
+        .run("aux-a-valid", "aux-b-valid");
+      db.prepare(`
+        INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at, payload_json, summary_json)
+        VALUES (?, ?, 'active', ?, ?, ?, '')
+      `).run(
+        "aux-z-malformed",
+        "parent-bounded-maintenance",
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+        "not-json",
+      );
+    } finally {
+      db.close();
+    }
+
+    storage = new AuxiliarySessionStorage(dbPath);
+    assert.deepEqual(storage.backfillAuxiliarySessionSummaries({ batchSize: 1 }), {
+      processed: 1,
+      updated: 1,
+      remaining: 2,
+    });
+    assert.deepEqual(storage.backfillAuxiliarySessionSummaries({ batchSize: 1 }), {
+      processed: 1,
+      updated: 1,
+      remaining: 1,
+    });
+    assert.deepEqual(storage.backfillAuxiliarySessionSummaries({ batchSize: 1 }), {
+      processed: 1,
+      updated: 0,
+      remaining: 1,
+      error: { id: "aux-z-malformed", message: "Auxiliary session backfill payload is invalid." },
+    });
+  } finally {
+    storage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary runtime metadata CAS は payload の本文と draft を保持し stale patch を拒否する"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+// fault = "catalog migration が auxiliary payload 全体を書き戻し、本文またはdraftを失う"
+// observable = "listAllAuxiliarySessions の metadata、messages、composerDraft、CAS結果"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-storage-runtime-metadata-cas"
+// lifecycle = "permanent"
+// impact = "Auxiliaryの会話内容と入力中draftが失われる"
+// distinction = "同一transactionのpayload再読込とmetadata CASを実DBで確認する"
+// @end-test-value
+test("Auxiliary runtime metadata CAS は payload の本文と draft を保持し stale patch を拒否する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-runtime-metadata-cas-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  const storage = new AuxiliarySessionStorage(dbPath);
+  try {
+    const session: AuxiliarySession = {
+      id: "aux-runtime-cas",
+      parentSessionId: "parent-runtime-cas",
+      status: "active",
+      runState: "idle",
+      title: "Auxiliary",
+      provider: "codex",
+      catalogRevision: 1,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+      codexSpeed: "standard",
+      codexReviewer: "user",
+      customAgentName: "",
+      allowedAdditionalDirectories: [],
+      threadId: "aux-thread",
+      composerDraft: "draft to keep",
+      messages: [{ role: "user", text: "message to keep" }],
+      displayAfterMessageIndex: 0,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      closedAt: "",
+      characterId: "char-1",
+      characterRuntimeSnapshot: null,
+      characterIconPath: "",
+      preview: "",
+    };
+    storage.upsertAuxiliarySession(session);
+    const expected = {
+      provider: session.provider,
+      catalogRevision: session.catalogRevision,
+      model: session.model,
+      reasoningEffort: session.reasoningEffort,
+      threadId: session.threadId,
+      updatedAt: session.updatedAt,
+    };
+    const next = { ...expected, catalogRevision: 2, threadId: "" , updatedAt: "2026-08-01T00:00:00.000Z" };
+    const updated = storage.updateAuxiliarySessionRuntimeMetadataIfMatches({
+      auxiliarySessionId: session.id,
+      parentSessionId: session.parentSessionId,
+      createdAt: session.createdAt,
+      expected,
+      next,
+    });
+    assert.equal(updated?.catalogRevision, 2);
+    const stored = storage.listAllAuxiliarySessions()[0];
+    assert.equal(stored?.composerDraft, session.composerDraft);
+    assert.deepEqual(stored?.messages.map(({ role, text }) => ({ role, text })), session.messages);
+    assert.equal(storage.updateAuxiliarySessionRuntimeMetadataIfMatches({
+      auxiliarySessionId: session.id,
+      parentSessionId: session.parentSessionId,
+      createdAt: session.createdAt,
+      expected,
+      next: { ...next, catalogRevision: 3 },
+    }), null);
+  } finally {
+    storage.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
 });

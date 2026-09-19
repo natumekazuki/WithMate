@@ -4,6 +4,10 @@ import { describe, it } from "node:test";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   applyAuxiliaryLaunchDialogState,
+  canCancelAuxiliaryLaunchCreation,
+  blocksAuxiliaryLaunchRetry,
+  isAuxiliaryLaunchCreationActive,
+  matchesAuxiliaryLaunchCreationRequest,
   AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   AUXILIARY_LAUNCH_START_FAILED_FEEDBACK,
@@ -47,6 +51,69 @@ function makeProvider(
 }
 
 describe("auxiliary-launch-state", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "作成中のAuxiliaryだけを取消可能として表示する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#ui-flow" }
+  // fault = "commit済みまたは結果不明の作成へ取消操作を表示し、別状態の会話へ誤操作する"
+  // observable = "canCancelAuxiliaryLaunchCreationの各状態判定"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-launch-dialog"
+  // lifecycle = "permanent"
+  // distinction = "UIの取消可能状態を公開state helperの契約として確認する"
+  // @end-test-value
+  it("作成中の状態だけを取消可能と判定する", () => {
+    assert.equal(canCancelAuxiliaryLaunchCreation("preparing"), true);
+    assert.equal(canCancelAuxiliaryLaunchCreation("queued"), true);
+    assert.equal(canCancelAuxiliaryLaunchCreation("committing"), false);
+    assert.equal(canCancelAuxiliaryLaunchCreation("committed"), false);
+    assert.equal(canCancelAuxiliaryLaunchCreation("cancelled"), false);
+    assert.equal(canCancelAuxiliaryLaunchCreation("expired"), false);
+    assert.equal(canCancelAuxiliaryLaunchCreation("failed"), false);
+    assert.equal(canCancelAuxiliaryLaunchCreation("unknown"), false);
+    assert.equal(canCancelAuxiliaryLaunchCreation(null), false);
+    assert.equal(canCancelAuxiliaryLaunchCreation(undefined), false);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "作成結果を同一parent内でもrequestIdとcreation contextで照合する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+  // fault = "遅延した旧requestの作成結果を新しいAuxiliary作成へ混入する"
+  // observable = "matchesAuxiliaryLaunchCreationRequestの照合結果"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-launch-result-application"
+  // lifecycle = "permanent"
+  // distinction = "provider作成処理ではなくrendererのstale result drop境界を確認する"
+  // @end-test-value
+  it("作成結果はrequestIdとcreation contextが一致した場合だけ照合成功とする", () => {
+    const request = {
+      parentSessionId: "session-1",
+      clientRequestId: "request-1",
+      creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+    };
+    const session = {
+      parentSessionId: "session-1",
+      clientRequestId: "request-1",
+      creationContext: request.creationContext,
+    };
+    assert.equal(matchesAuxiliaryLaunchCreationRequest(session, request), true);
+    assert.equal(matchesAuxiliaryLaunchCreationRequest({ ...session, clientRequestId: "request-2" }, request), false);
+    assert.equal(matchesAuxiliaryLaunchCreationRequest({ ...session, parentSessionId: "session-2" }, request), false);
+    assert.equal(matchesAuxiliaryLaunchCreationRequest({
+      ...session,
+      creationContext: { ...request.creationContext, generationId: "generation-2" },
+    }, request), false);
+    assert.equal(matchesAuxiliaryLaunchCreationRequest({
+      ...session,
+      creationContext: { ...request.creationContext, parentIncarnationId: "incarnation-2" },
+    }, request), false);
+    assert.equal(isAuxiliaryLaunchCreationActive("committing"), true);
+    assert.equal(isAuxiliaryLaunchCreationActive("committed"), false);
+    assert.equal(blocksAuxiliaryLaunchRetry("unknown"), true);
+    assert.equal(blocksAuxiliaryLaunchRetry("failed"), false);
+  });
+
   it("provider filter と item 化を provider 条件で行う", () => {
     const providers: ModelCatalogProvider[] = [
       makeProvider("a", "A", { hasModel: false }),

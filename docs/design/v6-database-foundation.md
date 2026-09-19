@@ -26,6 +26,8 @@ V5以前のsession / legacy Memory / Growth互換を引き継がず、Character-
 
 V6 内の Session owner identity は `sessions_v6.incarnation_id` で保持する。同じ ID の削除・再作成では別 incarnation とし、既存行限定保存と Affect owner 検証に用いる。既存 V6 行と旧 pending の追加列 migration は `database-schema.md`、保存時の契約は `session-run-lifecycle.md` を参照する。
 
+V6 SQLite の実行 owner は storage Worker とする。Main Process は許可された typed command を非同期で送るだけで、同期 SQLite 接続、任意 SQL、callback、storage object を Worker 境界へ渡さない。起動・schema/bootstrap・WAL maintenance・診断・通常 storage・Memory / Affect settlement は同じ current generation の lifecycle で管理し、close / reset / reopen で旧 generation の遅延応答を新 DB の書込みへ再利用しない。
+
 V6はV5以前DBをin-place更新しない。
 V6 runtimeに必要な継続データだけを新規V6 DBへ自動移行し、V5以前のsession履歴、legacy Memory、Growth、provider instruction projectionは保持要件にしない。
 旧DBは移行元またはbackup sourceとして残してよいが、V6 runtimeの正本にはしない。
@@ -78,6 +80,8 @@ V6 first releaseでは次を提供しない。
 - legacy Project Memoryの復元
 
 release前に必要なら、destructive resetのwarningまたはmanual backup導線だけを追加する。
+
+DB reset は storage Worker の close、DB file の再作成、current generation の再初期化を伴う maintenance 操作であり、実行中の通常 turn と旧 generation の保存を成功扱いにして引き継がない。reset 中は新規 turn admission と依存する作成 commit を止めるが、既存のユーザーデータを暗黙に削除・復元する契約ではない。
 
 ## Database Shape
 

@@ -395,6 +395,18 @@ describe("CompanionStorage", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "汎用 companion update は owner と runtime snapshot を変更しない"
+  // fault = "汎用更新経路から Character owner または runtime snapshot を差し替える"
+  // observable = "保存後 session の owner、runtime snapshot、本文"
+  // observation_boundary = "component-behavior"
+  // scope = "companion-update-immutable-fields"
+  // oracle = { type = "contract", ref = "src-electron/companion-storage.ts#updateSession" }
+  // lifecycle = "permanent"
+  // impact = "companion の所有境界と実行時状態が意図せず破壊される"
+  // distinction = "runtime metadata CAS ではなく汎用 update の禁止境界を確認する"
+  // @end-test-value
   it("汎用 updateSession は Character owner / runtime snapshot の差し替えを拒否する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -404,8 +416,10 @@ describe("CompanionStorage", () => {
       storage = new CompanionStorage(dbPath);
       const group = storage.ensureGroup(createGroup());
       const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
-      const session = storage.createSession(createSession(group.id, { characterRuntimeSnapshot }));
+      const session = storage.createSession(createSession(group.id, { characterRuntimeSnapshot, messages: [{ role: "user", text: "Keep owner-bound history" }] }));
+      const persistedBefore = storage.getSession(session.id);
       const invalidUpdates = [
+        { ...session, characterId: "char-2" },
         {
           ...session,
           characterId: "char-2",
@@ -427,6 +441,51 @@ describe("CompanionStorage", () => {
       const persisted = storage.getSession(session.id);
       assert.equal(persisted?.characterId, session.characterId);
       assert.deepEqual(persisted?.characterRuntimeSnapshot, characterRuntimeSnapshot);
+      assert.deepEqual(persisted?.messages, persistedBefore?.messages);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Legacy Companion runtime metadata CAS は本文を保持し stale patch を拒否する"
+  // oracle = { type = "contract", ref = "src-electron/companion-storage.ts#updateRuntimeMetadataIfMatches" }
+  // fault = "legacy Companion のcatalog migrationが全体payloadを書き戻す"
+  // observable = "getSession のmetadata、messages、CAS結果"
+  // observation_boundary = "public-boundary"
+  // scope = "companion-storage-legacy-runtime-metadata-cas"
+  // lifecycle = "permanent"
+  // impact = "旧形式Companionのレビュー内容が失われる"
+  // distinction = "V3と異なるlegacy schemaでもmetadata列だけをCAS更新する"
+  // @end-test-value
+  it("Legacy Companion runtime metadata CAS は本文を保持し stale patch を拒否する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-runtime-metadata-cas-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CompanionStorage | null = null;
+    try {
+      storage = new CompanionStorage(dbPath);
+      const group = storage.ensureGroup(createGroup());
+      const session = storage.createSession(createSession(group.id, {
+        messages: [{ role: "user", text: "message to keep" }],
+      }));
+      const expected = {
+        provider: session.provider,
+        catalogRevision: session.catalogRevision,
+        model: session.model,
+        reasoningEffort: session.reasoningEffort,
+        threadId: session.threadId,
+        updatedAt: session.updatedAt,
+      };
+      const next = { ...expected, catalogRevision: expected.catalogRevision + 1, threadId: "", updatedAt: "2026-08-01T00:00:00.000Z" };
+      const updated = storage.updateRuntimeMetadataIfMatches(session.id, { expected, next });
+      assert.equal(updated?.catalogRevision, next.catalogRevision);
+      assert.deepEqual(storage.getSession(session.id)?.messages.map(({ role, text }) => ({ role, text })), session.messages.map(({ role, text }) => ({ role, text })));
+      assert.equal(storage.updateRuntimeMetadataIfMatches(session.id, {
+        expected,
+        next: { ...next, catalogRevision: next.catalogRevision + 1 },
+      }), null);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

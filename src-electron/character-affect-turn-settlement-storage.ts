@@ -31,6 +31,45 @@ export type PendingCharacterAffectTurnSettlement = CharacterAffectTurnSettlement
   lastFailure: CharacterAffectTurnFailureDiagnostic | null;
 };
 
+type Awaitable<T> = T | Promise<T>;
+
+export type CharacterAffectTurnSettlementStorageAccess = {
+  listDueReadyPending(
+    observedAt: string,
+    limit?: number,
+    after?: Pick<PendingCharacterAffectTurnSettlement, "createdAt" | "correlationId">,
+  ): Awaitable<PendingCharacterAffectTurnSettlement[]>;
+  listUnreadyPendingBefore(createdBefore: string, limit?: number): Awaitable<PendingCharacterAffectTurnSettlement[]>;
+  hasRecoverablePending(): Awaitable<boolean>;
+  markReady(correlationId: string): Awaitable<{ updated: boolean }>;
+  getPending(correlationId: string): Awaitable<PendingCharacterAffectTurnSettlement | null>;
+  markDiscarded(correlationId: string): Awaitable<boolean>;
+  saveEvaluation(input: {
+    correlationId: string;
+    evaluationAttempt: number;
+    expectedVersion: string;
+    candidates: AffectEventInput[];
+  }): Awaitable<{ created: boolean }>;
+  recordAppraisalFailure(input: {
+    correlationId: string;
+    evaluationAttempt: number;
+    effect: CharacterAffectTurnAppraisalEffect;
+    savedCandidateIndices: readonly number[];
+    prepareReevaluation: boolean;
+  }): Awaitable<{ reevaluationPrepared: boolean }>;
+  recordAttempt(correlationId: string, observedAt?: string): Awaitable<number | null>;
+  recoverInterruptedAttempts(observedAt?: string, correlationId?: string): Awaitable<void>;
+  recordFailure(input: {
+    correlationId: string;
+    retryable: boolean;
+    diagnostic: CharacterAffectTurnFailureDiagnostic;
+    observedAt?: string;
+  }): Awaitable<CharacterAffectTurnFailureDisposition>;
+  releaseQuarantined(correlationId: string): Awaitable<boolean>;
+  markSettled(correlationId: string, settledAt?: string): Awaitable<boolean>;
+  close(): Awaitable<void>;
+};
+
 export const CHARACTER_AFFECT_TURN_MAX_ATTEMPTS = 8;
 export const CHARACTER_AFFECT_TURN_INITIAL_RETRY_DELAY_MS = 60_000;
 export const CHARACTER_AFFECT_TURN_MAXIMUM_RETRY_DELAY_MS = 6 * 60 * 60 * 1_000;

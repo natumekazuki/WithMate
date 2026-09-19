@@ -32,6 +32,8 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
 - 実行中 session の metadata 更新は制限し、少なくとも approval / model / depth / title / delete は UI と Main Process の両方でブロックする
+- Turn の admission は対象 session の開始登録と provider の利用中判定だけを短い ownership 境界で行う。provider 入力の準備、workspace / SessionFolder 操作、Character 読込、外部 provider 呼出し、長い SQLite command の完了待ちはその境界の外で行い、別 session の開始・削除を不要に待たせない。
+- V6 の保存 command は current storage Worker generation に送る。close / reset / reopen 後の旧 generation からの応答は current DB へ書き換えず、commit 結果不明を自動 retry しない。
 
 ## Lifecycle Model
 
@@ -122,6 +124,7 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 - 実行中は approval を含む session 設定変更を受け付けない
 - stale thread / session 起因エラー、または meaningful partial を持たない Codex bootstrap failure を Main Process が検知した場合だけ、同一 turn の内部で `threadId clear + provider cache invalidate` を行って 1 回だけ再試行する
 - internal retry は same turn の処理として扱い、user message / assistant message / audit log record を二重化しない
+- Main Session の保存が確定した後に初期 Auxiliary の準備または commit が失敗した場合、Main Session や他の既存会話を削除・巻き戻ししない。呼出し元には Main 保存済み、Auxiliary の結果未確定または失敗という部分結果を返し、Auxiliary の commit 結果は request identity の再照会でのみ確定する。
 
 ### Session Delete
 
@@ -186,10 +189,10 @@ current 実装では tray 常駐までは行わない。
 
 - `runState = running` は SQLite に保存される
 - アプリが強制 kill された場合、次回起動時に `running` のまま残る可能性がある
-- 次回起動時は `interrupted` へ補正し、assistant message を 1 件だけ追加する
-- `interrupted` session は `Session Window` から直前 user message を同じ内容で再送できる
+- 次回起動時は `runState = error` へ補正し、アプリ終了による中断を示す assistant message を 1 件だけ追加する
+- `error` session は `Session Window` から直前 user message を同じ内容で明示再送できる
 
-現時点では graceful resume までは入れず、`interrupted` からの明示再送を最小導線として扱う。
+現時点では graceful resume までは入れず、`error` からの明示再送を最小導線として扱う。
 
 ## Relation To Existing Docs
 

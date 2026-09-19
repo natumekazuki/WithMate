@@ -1,19 +1,21 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import type { MateProfile } from "../src/mate/mate-state.js";
-import type { MateProfileItem, MateProfileItemStorage } from "./mate-profile-item-storage.js";
+import type { ListProfileItemsRequest, MateProfileItem, MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { renderMateProfileFiles } from "./mate-profile-file-renderer.js";
 import type { ApplyMateProfileFilesInput } from "./mate-storage.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type MateProfileProjectionStorage = {
-  getMateProfile(): MateProfile | null;
+  getMateProfile(): Awaitable<MateProfile | null>;
   getUserDataPath(): string;
   applyProfileFiles(input: ApplyMateProfileFilesInput): Promise<MateProfile>;
 };
 
 export type MateProfileProjectionRefreshServiceDeps = {
   mateStorage: MateProfileProjectionStorage;
-  profileItemStorage: Pick<MateProfileItemStorage, "assertProfileItemMutationAllowed" | "listProfileItems"> & {
+  profileItemStorage: Pick<MateProfileItemStorage, "assertProfileItemMutationAllowed"> & {
+    listProfileItems(request?: ListProfileItemsRequest): Awaitable<MateProfileItem[]>;
     createForgottenTombstoneForProfileItemInTransaction(
       db: DatabaseSync,
       item: MateProfileItem,
@@ -38,14 +40,14 @@ export class MateProfileProjectionRefreshService {
       return;
     }
 
-    const profile = this.deps.mateStorage.getMateProfile();
+    const profile = await this.deps.mateStorage.getMateProfile();
     if (!profile) {
       throw new Error("Mate が作成されていないよ。");
     }
 
     this.deps.profileItemStorage.assertProfileItemMutationAllowed();
 
-    const activeProfileItems = this.deps.profileItemStorage.listProfileItems({ state: "active" });
+    const activeProfileItems = await this.deps.profileItemStorage.listProfileItems({ state: "active" });
     const targetItem = activeProfileItems.find((item) => item.id === targetId);
     if (!targetItem) {
       return;

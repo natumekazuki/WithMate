@@ -35,7 +35,7 @@ import type {
   SessionRunningTurnStartInput,
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
-import type { SessionThreadPatchInput } from "./session-storage-v6.js";
+import type { SessionRuntimeMetadataPatchInput, SessionThreadPatchInput } from "./session-storage-v6.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -58,6 +58,7 @@ export type SessionPersistenceServiceDeps = {
   ): Awaitable<readonly { id: string; parentSessionId: string; provider: string }[]>;
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
   updateStoredSessionThreadIfMatches?(input: SessionThreadPatchInput): Awaitable<Session | null>;
+  updateStoredSessionRuntimeMetadataIfMatches?(input: SessionRuntimeMetadataPatchInput): Awaitable<Session | null>;
   upsertStoredTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendStoredRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
   clearStoredCharacterAuthoringRuntimeState?(
@@ -69,9 +70,9 @@ export type SessionPersistenceServiceDeps = {
   listStoredSessionIdsLastActiveBefore?(cutoff: DeleteSessionsLastActiveBeforeCutoff): Awaitable<string[]>;
   deleteStoredSession?(sessionId: string): Awaitable<void>;
   deleteStoredSessions?(sessionIds: readonly string[]): Awaitable<void>;
-  getAppSettings: () => AppSettings;
-  getModelCatalogSnapshot(): ModelCatalogSnapshot;
-  createCharacterRuntimeSnapshot?(characterId: string): CharacterRuntimeSnapshot | null;
+  getAppSettings: () => Awaitable<AppSettings>;
+  getModelCatalogSnapshot(): Awaitable<ModelCatalogSnapshot>;
+  createCharacterRuntimeSnapshot?(characterId: string): Awaitable<CharacterRuntimeSnapshot | null>;
   syncSessionDependencies(session: Session): void;
   clearSessionContextTelemetry(sessionId: string): void;
   clearSessionBackgroundActivities(sessionId: string): void;
@@ -121,13 +122,13 @@ export class SessionPersistenceService {
     return pending;
   }
 
-  resolveCharacterAuthoringProvider(providerId: string): string {
-    return this.resolveEnabledProviderCatalog(
-      this.deps.getModelCatalogSnapshot(),
-      this.deps.getAppSettings(),
+  async resolveCharacterAuthoringProvider(providerId: string): Promise<string> {
+    return (await this.resolveEnabledProviderCatalog(
+      await this.deps.getModelCatalogSnapshot(),
+      await this.deps.getAppSettings(),
       providerId,
       true,
-    ).id;
+    )).id;
   }
 
   async createSession(input: CreateSessionInput): Promise<Session> {
@@ -142,8 +143,8 @@ export class SessionPersistenceService {
       throw new SessionIdCollisionError(requestedSessionId);
     }
 
-    const appSettings = this.deps.getAppSettings();
-    const snapshot = this.deps.getModelCatalogSnapshot();
+    const appSettings = await this.deps.getAppSettings();
+    const snapshot = await this.deps.getModelCatalogSnapshot();
     const provider = this.resolveEnabledProviderCatalog(
       snapshot,
       appSettings,
@@ -168,7 +169,7 @@ export class SessionPersistenceService {
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
       characterRuntimeSnapshot:
-        input.characterRuntimeSnapshot ?? this.deps.createCharacterRuntimeSnapshot?.(input.characterId) ?? null,
+        input.characterRuntimeSnapshot ?? await this.deps.createCharacterRuntimeSnapshot?.(input.characterId) ?? null,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
         input.workspacePath,
         input.allowedAdditionalDirectories ?? [],
@@ -274,6 +275,41 @@ export class SessionPersistenceService {
       ) {
         this.deps.setSessions(this.deps.getSessions().map((session) => session.id === input.sessionId
           ? { ...session, threadId: input.nextThreadId, updatedAt: stored.updatedAt }
+          : session));
+      }
+      return stored;
+    });
+  }
+
+  async updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Promise<Session | null> {
+    return this.enqueueSessionMutation(async () => {
+      if (!this.deps.updateStoredSessionRuntimeMetadataIfMatches) {
+        throw new Error("Session runtime metadata の条件付き更新storageが利用できないよ。");
+      }
+      const stored = await this.deps.updateStoredSessionRuntimeMetadataIfMatches(input);
+      if (!stored) {
+        return null;
+      }
+      const current = this.deps.getSession(input.sessionId);
+      if (
+        current &&
+        getSessionIncarnationId(current) === input.incarnationId &&
+        current.provider === input.expected.provider &&
+        current.catalogRevision === input.expected.catalogRevision &&
+        current.model === input.expected.model &&
+        current.reasoningEffort === input.expected.reasoningEffort &&
+        current.threadId === input.expected.threadId
+      ) {
+        this.deps.setSessions(this.deps.getSessions().map((session) => session.id === input.sessionId
+          ? {
+              ...session,
+              provider: input.next.provider,
+              catalogRevision: input.next.catalogRevision,
+              model: input.next.model,
+              reasoningEffort: input.next.reasoningEffort,
+              threadId: input.next.threadId,
+              updatedAt: stored.updatedAt,
+            }
           : session));
       }
       return stored;
@@ -685,7 +721,7 @@ export class SessionPersistenceService {
 
   private resolveEnabledProviderCatalog(
     snapshot: ModelCatalogSnapshot,
-    appSettings = this.deps.getAppSettings(),
+    appSettings: AppSettings,
     requestedProviderId?: string | null,
     requireRequestedProvider = false,
   ): ModelCatalogProvider {

@@ -17,11 +17,13 @@ export type MemoryV6ProjectContext = {
   admission?: MemoryV6ProjectScopeAdmission;
 };
 
+type Awaitable<T> = T | Promise<T>;
+
 export type MemoryV6TargetResolverDeps = {
-  resolveProjectById?(id: string): MemoryV6ProjectContext | null;
-  resolveProjectByPath?(projectPath: string): MemoryV6ProjectContext | null;
-  resolveKnownProjectByPath?(projectPath: string): MemoryV6ProjectContext | null;
-  resolveCharacterById?(id: string): { id: string; name: string } | null;
+  resolveProjectById?(id: string): Awaitable<MemoryV6ProjectContext | null>;
+  resolveProjectByPath?(projectPath: string): Awaitable<MemoryV6ProjectContext | null>;
+  resolveKnownProjectByPath?(projectPath: string): Awaitable<MemoryV6ProjectContext | null>;
+  resolveCharacterById?(id: string): Awaitable<{ id: string; name: string } | null>;
 };
 
 export type MemoryV6TargetResolutionResult =
@@ -36,25 +38,25 @@ function targetNotFoundError(field: string): MemoryError {
   };
 }
 
-function resolveProject(ref: ProjectTargetRef, deps: MemoryV6TargetResolverDeps, field: string): MemoryV6ProjectContext | MemoryError {
+async function resolveProject(ref: ProjectTargetRef, deps: MemoryV6TargetResolverDeps, field: string): Promise<MemoryV6ProjectContext | MemoryError> {
   if (ref.type === "id") {
     if (deps.resolveProjectById) {
-      return deps.resolveProjectById(ref.id) ?? targetNotFoundError(field);
+      return (await deps.resolveProjectById(ref.id)) ?? targetNotFoundError(field);
     }
     return { id: ref.id, displayName: ref.id };
   }
-  return deps.resolveProjectByPath?.(ref.path) ?? targetNotFoundError(field);
+  return (await deps.resolveProjectByPath?.(ref.path)) ?? targetNotFoundError(field);
 }
 
 export type MemoryV6ProjectPathResolution = "create" | "known";
 
-function resolveCharacter(
+async function resolveCharacter(
   ref: CharacterTargetRef,
   deps: MemoryV6TargetResolverDeps,
   field: string,
-): { id: string; name: string } | MemoryError {
+): Promise<{ id: string; name: string } | MemoryError> {
   if (deps.resolveCharacterById) {
-    return deps.resolveCharacterById(ref.id) ?? targetNotFoundError(field);
+    return (await deps.resolveCharacterById(ref.id)) ?? targetNotFoundError(field);
   }
   return { id: ref.id, name: ref.id };
 }
@@ -70,12 +72,12 @@ function withAccessCheck(
   return { ok: true, target, projectScopeAdmissions };
 }
 
-export function resolveMemoryV6Target(
+export async function resolveMemoryV6Target(
   selector: MemoryTargetSelector,
   principal: MemoryV6Principal,
   deps: MemoryV6TargetResolverDeps = {},
   options: { projectPathResolution?: MemoryV6ProjectPathResolution } = {},
-): MemoryV6TargetResolutionResult {
+): Promise<MemoryV6TargetResolutionResult> {
   const resolutionDeps = options.projectPathResolution === "known"
     ? { ...deps, resolveProjectByPath: deps.resolveKnownProjectByPath }
     : deps;
@@ -94,7 +96,7 @@ export function resolveMemoryV6Target(
   }
 
   if (selector.owner === "project" && selector.scope === "project") {
-    const project = resolveProject(selector.project, resolutionDeps, "target.project");
+    const project = await resolveProject(selector.project, resolutionDeps, "target.project");
     if ("code" in project) {
       return { ok: false, error: project };
     }
@@ -105,7 +107,7 @@ export function resolveMemoryV6Target(
   }
 
   if (selector.owner === "character" && selector.scope === "character") {
-    const character = resolveCharacter(selector.character, deps, "target.character");
+    const character = await resolveCharacter(selector.character, deps, "target.character");
     if ("code" in character) {
       return { ok: false, error: character };
     }
@@ -119,11 +121,11 @@ export function resolveMemoryV6Target(
     return { ok: false, error: memoryForbiddenError() };
   }
 
-  const character = resolveCharacter(selector.character, deps, "target.character");
+  const character = await resolveCharacter(selector.character, deps, "target.character");
   if ("code" in character) {
     return { ok: false, error: character };
   }
-  const project = resolveProject(selector.project, resolutionDeps, "target.project");
+  const project = await resolveProject(selector.project, resolutionDeps, "target.project");
   if ("code" in project) {
     return { ok: false, error: project };
   }

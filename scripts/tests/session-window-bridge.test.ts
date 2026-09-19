@@ -795,6 +795,39 @@ describe("SessionWindowBridge", () => {
     assert.deepEqual(broadcasts.at(-1), []);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Session windowが閉じたときAuxiliary creation owner release hookを一度だけ通知する"
+  // oracle = { type = "contract", ref = "src-electron/session-window-bridge.ts" }
+  // fault = "window close後も作成ownerが保持され、遅延commitが旧scopeへ保存される"
+  // observable = "close後のsession ID通知"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-creation-owner-release"
+  // lifecycle = "permanent"
+  // impact = "window closeで未完了Auxiliary作成を失効させる"
+  // distinction = "registry更新だけを確認する既存close testではowner release通知を観測しない"
+  // @end-test-value
+  it("idle の window close ではAuxiliary creation ownerを解放する", async () => {
+    const session = createSession();
+    const closedSessionIds: string[] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      onSessionWindowClosed: (sessionId) => closedSessionIds.push(sessionId),
+    });
+
+    const window = await bridge.openSessionWindow(session.id);
+    window.close();
+    window.close();
+
+    assert.deepEqual(closedSessionIds, [session.id]);
+  });
+
   it("snapshot保存失敗でもopenとcloseを維持する", async () => {
     const session = createSession();
     const errors: unknown[] = [];

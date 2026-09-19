@@ -37,14 +37,14 @@ function createIpcRendererStub() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "preloadのinvoke APIはdomainごとのrequestを対応する専用IPC channelへ変換し、親とAuxiliaryの選択を保持して渡す"
-// oracle = { type = "contract", ref = "WithMateWindowApi invoke methods and withmate-ipc-channels" }
-// fault = "renderer requestが別channelへ送られるか、引数の欠落または変換を受けてMainへ到達する"
+// claim = "preloadの代表的なinvoke APIはrequestを対応するIPC channelへ変換し、親とAuxiliaryの選択を保持して渡す"
+// oracle = { type = "contract", ref = "src-electron/preload-api.ts#createWithMateWindowApi" }
+// fault = "代表的なrenderer requestが別channelへ送られるか、親・Auxiliary識別子を欠落してMainへ到達する"
 // observable = "ipcRenderer.invokeへ渡されたchannelと引数"
 // observation_boundary = "public-boundary"
 // scope = "preload invoke API"
 // lifecycle = "permanent"
-// distinction = "file tree context menuとSession Monitor context menuを含む公開invoke method群のchannelと引数を一括検証する"
+// distinction = "公開API全体のkey inventoryではなく、session open・review open・context menuの代表的なchannelと引数を実際に観測する"
 // @end-test-value
 test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる", async () => {
   const { ipcRenderer } = createIpcRendererStub();
@@ -424,9 +424,27 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-file-root-git-history-diff",
     args: [historyDiffRequest],
   });
-  assert.deepEqual(await api.createAuxiliarySession({ parentSessionId: "session-1", provider: "copilot" }), {
+  const creationRequest = {
+    parentSessionId: "session-1",
+    provider: "copilot",
+    clientRequestId: "preload-create-1",
+    creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+  } as const;
+  assert.deepEqual(await api.createAuxiliarySession(creationRequest), {
     channel: "withmate:create-auxiliary-session",
-    args: [{ parentSessionId: "session-1", provider: "copilot" }],
+    args: [creationRequest],
+  });
+  assert.deepEqual(await api.getAuxiliaryCreationContext("session-1"), {
+    channel: "withmate:get-auxiliary-creation-context",
+    args: ["session-1"],
+  });
+  assert.deepEqual(await api.cancelAuxiliaryCreation(creationRequest), {
+    channel: "withmate:cancel-auxiliary-creation",
+    args: [creationRequest],
+  });
+  assert.deepEqual(await api.getAuxiliaryCreation(creationRequest), {
+    channel: "withmate:get-auxiliary-creation",
+    args: [creationRequest],
   });
   assert.deepEqual(await api.runAuxiliarySessionTurn("aux-1", { userMessage: "review" }), {
     channel: "withmate:run-auxiliary-session-turn",
@@ -500,7 +518,7 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
 // @test-value v2
 // kind = "contract"
 // claim = "preloadの公開API surfaceは列挙した現行WithMateWindowApi keyを過不足なくexposeし、列挙したremoved keyを公開しない"
-// oracle = { type = "contract", ref = "WithMateWindowApi public surface" }
+// oracle = { type = "contract", ref = "src/withmate-window-api.ts" }
 // fault = "列挙した現行IPC methodがrendererへexposeされないか、列挙した廃止済みmethodが公開surfaceへ残る"
 // observable = "Object.keys(api)の公開key集合とremoved keyの不在"
 // observation_boundary = "public-boundary"
@@ -524,6 +542,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "archiveCharacter",
     "createMate",
     "createAuxiliarySession",
+    "cancelAuxiliaryCreation",
     "createCharacter",
     "createCompanionSession",
     "createPromptTemplate",
@@ -540,6 +559,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getAppBootStatus",
     "getAppSettings",
     "getAuxiliarySession",
+    "getAuxiliaryCreation",
+    "getAuxiliaryCreationContext",
     "getCharacter",
     "getCompanionAuditLogDetail",
     "getCompanionAuditLogDetailSection",

@@ -107,7 +107,9 @@ Settings credential 更新時の thread reset は collection 全体の置換を�
 
 model catalog import の rollback は、置換を試みた Main / Auxiliary / Companion collection に限定する。先行 collection の保存失敗で、未試行 collection の並行更新・削除を古い snapshot へ戻さない。書込み後に例外となる既存経路もあるため、試行済み collection は保存成功の応答がなくても復元を試みる。元の失敗は伝播し、rollback も失敗した場合は両方を AggregateError に保持する。
 
-model catalog import/reset の全 snapshot 更新、試行済み collection の並行変更や書込み結果不明への対応、provider thread の外部後処理の待機分離、Turn admission と Worker 化は Issue #726 の残作業である。
+model catalog の import/reset は catalog 本体を revision 単位で置換するが、既存 Session / Auxiliary / Companion の runtime metadata は対象 field の条件付き CAS で更新する。比較には各行の現行 identity と provider runtime metadata を使い、本文・draft・messages・無関係な削除を snapshot で戻さない。成功を確認できた対象だけを同じ identity と更新後 metadata に対して reverse CAS し、書込み結果不明の対象へ無条件の逆書込みはしない。未試行 collection の並行変更は保持する。
+
+Issue #726 の残作業は、cleanup 中の影響 provider に対する Turn admission の完全な統合、provider thread 外部後処理と Worker generation の最終検証である。
 
 ### PersistentStoreLifecycleService
 

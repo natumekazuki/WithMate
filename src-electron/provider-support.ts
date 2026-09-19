@@ -12,12 +12,13 @@ import type {
   ProviderTurnAdapter,
 } from "./provider-runtime.js";
 import { getProviderAgentRuntimeBindingCapability } from "./provider-agent-runtime-binding.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type ResolveProviderCatalogArgs = {
   providerId: string | null | undefined;
   revision?: number | null;
-  getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null;
-  ensureSeeded(): ModelCatalogSnapshot;
+  getModelCatalog(revision?: number | null): Awaitable<ModelCatalogSnapshot | null>;
+  ensureSeeded(): Awaitable<ModelCatalogSnapshot>;
 };
 
 type ResolveProviderAdapterArgs = {
@@ -28,7 +29,7 @@ type ResolveProviderAdapterArgs = {
 
 type FetchProviderQuotaTelemetryArgs = {
   providerId: string;
-  getAppSettings(): AppSettings;
+  getAppSettings(): Awaitable<AppSettings>;
   getProviderCodingAdapter(providerId: string): ProviderCodingAdapter;
 };
 
@@ -43,10 +44,10 @@ export type ProviderRuntimeCapabilities = {
 
 const MATE_SUPPORTED_PROVIDER_IDS = new Set(["codex", "copilot"]);
 
-export function resolveProviderCatalogOrThrow(
+export async function resolveProviderCatalogOrThrow(
   args: ResolveProviderCatalogArgs,
-): { snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider } {
-  const snapshot = args.getModelCatalog(args.revision) ?? args.ensureSeeded();
+): Promise<{ snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider }> {
+  const snapshot = (await args.getModelCatalog(args.revision)) ?? (await args.ensureSeeded());
   const provider = getProviderCatalog(snapshot.providers, args.providerId ?? DEFAULT_PROVIDER_ID);
   if (!provider) {
     throw new Error("利用できる model catalog provider が見つからないよ。");
@@ -72,7 +73,7 @@ export async function fetchProviderQuotaTelemetry(
 ): Promise<ProviderQuotaTelemetry | null> {
   return args.getProviderCodingAdapter(args.providerId).getProviderQuotaTelemetry({
     providerId: args.providerId,
-    appSettings: args.getAppSettings(),
+    appSettings: await args.getAppSettings(),
   });
 }
 

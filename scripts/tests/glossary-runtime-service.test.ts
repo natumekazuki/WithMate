@@ -57,7 +57,7 @@ async function createRuntime(root: string, options: { proactiveLimit?: number | 
     applicationService,
     bindingRegistry: registry,
     resolveActorSession: (sessionId) => sessionId === actor.id ? actor : null,
-    getProactiveCreateLimit: () => options.proactiveLimit,
+    getProactiveCreateLimit: async () => options.proactiveLimit,
     providerAgentRuntimeTurns: new ProviderAgentRuntimeTurnCoordinator(),
   });
   const call = (
@@ -178,10 +178,22 @@ describe("Glossary runtime mutation policy", () => {
     assert.equal((rejected?.value as { code: string }).code, "GLOSSARY_INVALID_REQUEST");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "proactive createは非同期Settings値が欠落・不正ならfallbackせず拒否する"
+  // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md; docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "非同期Settings値を待たずにfallbackまたはmutationを許可する"
+  // observable = "proactive createの拒否結果とglossary fileの不在"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-runtime-mutation-policy"
+  // lifecycle = "permanent"
+  // impact = "不正なSettings値でGlossary mutationを許可するとprovider turnのquota契約を迂回する"
+  // distinction = "型検査ではなく実runtimeの拒否statusと永続化不在を確認する"
+  // @end-test-value
   it("proactive createはSettings値が欠落・不正ならfallbackせず拒否する", async () => {
     const root = await createRepository();
     const { actor, binding, call, runtime } = await createRuntime(root, { proactiveLimit: null });
-    const turn = runtime.beginProviderTurn(actor.id, binding);
+    const turn = await runtime.beginProviderTurn(actor.id, binding);
     const response = await call("create", {
       schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
       selector: { kind: "primary" },
@@ -194,10 +206,22 @@ describe("Glossary runtime mutation policy", () => {
     runtime.endProviderTurn(turn.handle);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "同じturnでは完全同一retryだけを許し、複数proactive callでSettings上限を迂回させない"
+  // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md; docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "同一turnの異なるproactive requestを重複適用してSettings上限を迂回する"
+  // observable = "各proactive responseのoutcome/statusと保存済みglossary entries"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-runtime-mutation-policy"
+  // lifecycle = "permanent"
+  // impact = "retry判定を誤ると同一turnのquota上限を超えて副作用を重複適用する"
+  // distinction = "単一mutationの成功ではなくretry収束と複数callのquota境界を確認する"
+  // @end-test-value
   it("同じturnでは完全同一retryだけを許し、複数proactive callでSettings上限を迂回させない", async () => {
     const root = await createRepository();
     const { actor, binding, call, runtime } = await createRuntime(root, { proactiveLimit: 2 });
-    const turn = runtime.beginProviderTurn(actor.id, binding);
+    const turn = await runtime.beginProviderTurn(actor.id, binding);
     const firstBody = {
       schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
       selector: { kind: "primary" as const },
@@ -221,7 +245,7 @@ describe("Glossary runtime mutation policy", () => {
     assert.doesNotMatch(stored, /Projection/);
 
     runtime.endProviderTurn(turn.handle);
-    const nextTurn = runtime.beginProviderTurn(actor.id, binding);
+    const nextTurn = await runtime.beginProviderTurn(actor.id, binding);
     const next = await call("create", {
       ...firstBody,
       entry: { term: "Projection", definition: "next turn" },
@@ -229,7 +253,7 @@ describe("Glossary runtime mutation policy", () => {
     assert.equal((next?.value as { outcome: string }).outcome, "applied");
     runtime.endProviderTurn(nextTurn.handle);
 
-    const rejectedTurn = runtime.beginProviderTurn(actor.id, binding);
+    const rejectedTurn = await runtime.beginProviderTurn(actor.id, binding);
     const oversizedFirst = await call("create_batch", {
       schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
       selector: { kind: "primary" },
@@ -249,12 +273,24 @@ describe("Glossary runtime mutation policy", () => {
     runtime.endProviderTurn(rejectedTurn.handle);
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "前turnの遅延proactive requestを次turnのquotaへ誤帰属させない"
+  // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md; docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "失効したturn capabilityを次turnの非同期quotaへ誤帰属してmutationを許可する"
+  // observable = "遅延requestの拒否とcurrent turn requestの適用結果"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-runtime-mutation-policy"
+  // lifecycle = "permanent"
+  // impact = "失効turnのrequestを次turnへ帰属すると権限外のGlossary mutationが実行される"
+  // distinction = "同一turn内quotaではなくturn capabilityの世代境界を確認する"
+  // @end-test-value
   it("前turnの遅延proactive requestを次turnのquotaへ誤帰属させない", async () => {
     const root = await createRepository();
     const { actor, binding, call, runtime } = await createRuntime(root, { proactiveLimit: 1 });
-    const firstTurn = runtime.beginProviderTurn(actor.id, binding);
+    const firstTurn = await runtime.beginProviderTurn(actor.id, binding);
     runtime.endProviderTurn(firstTurn.handle);
-    const nextTurn = runtime.beginProviderTurn(actor.id, binding);
+    const nextTurn = await runtime.beginProviderTurn(actor.id, binding);
     const body = {
       schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
       selector: { kind: "primary" as const },
@@ -279,13 +315,17 @@ describe("Glossary runtime mutation policy", () => {
 });
 
 describe("Glossary authenticated runtime exchange", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
-  // claim = "Glossaryのauthenticated exchangeはMemory runtime generation challengeを通過した接続だけをdispatchする"
-  // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-  // failure_mode = "generationが未検証の接続へGlossary operationをdispatchする"
+  // claim = "Glossaryのauthenticated exchangeはMCP/CLI adapterへ同じapplication routeをdispatchし、direct HTTPを公開しない"
+  // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md; docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "MCP/CLI routeのauthorityを迂回してdirect HTTPへGlossary operationを公開する"
+  // observable = "MCP・CLI・generic exchange・direct HTTP・extension exchangeのstatusと保存結果"
+  // observation_boundary = "public-boundary"
   // scope = "glossary-authenticated-runtime-exchange"
   // lifecycle = "permanent"
+  // impact = "公開境界を誤るとbinding/turn capabilityを経由しないGlossary mutationが実行される"
+  // distinction = "単なるschema検証ではなくtransportごとのdispatch可否とpayload上限を実観測する"
   // @end-test-value
   it("MCPとCLI adapterを同じschema・authority・application serviceへdispatchし、direct HTTPは公開しない", async () => {
     const root = await createRepository();
@@ -347,7 +387,7 @@ describe("Glossary authenticated runtime exchange", () => {
       );
       assert.equal(genericSmallExchange.status, 404);
 
-      const providerTurn = runtime.beginProviderTurn(actor.id, binding);
+      const providerTurn = await runtime.beginProviderTurn(actor.id, binding);
       const proactive = await callWithMateMemoryRuntime(
         { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
         {

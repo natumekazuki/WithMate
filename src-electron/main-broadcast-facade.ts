@@ -4,6 +4,7 @@ import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { PromptTemplate } from "../src/prompt-template.js";
 import type { WindowBroadcastService } from "./window-broadcast-service.js";
 import { SESSION_SUMMARY_ID_MAX_LENGTH, SESSION_SUMMARY_INVALIDATION_ID_MAX } from "./session-summary-query.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type BroadcastWindowLike = {
   isDestroyed(): boolean;
@@ -14,9 +15,9 @@ type BroadcastWindowLike = {
 
 type MainBroadcastFacadeDeps<TWindow extends BroadcastWindowLike> = {
   getWindowBroadcastService(): WindowBroadcastService<TWindow>;
-  getModelCatalog(): ModelCatalogSnapshot | null;
-  getAppSettings(): AppSettings;
-  listPromptTemplates(): PromptTemplate[];
+  getModelCatalog(): Awaitable<ModelCatalogSnapshot | null>;
+  getAppSettings(): Awaitable<AppSettings>;
+  listPromptTemplates(): Awaitable<PromptTemplate[]>;
   listOpenSessionWindowIds(): string[];
   listOpenCompanionReviewWindowIds(): string[];
 };
@@ -38,8 +39,8 @@ export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
     windowBroadcastService.broadcastSessionInvalidation(invalidation);
   }
 
-  broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): void {
-    const payload = snapshot ?? this.deps.getModelCatalog();
+  async broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): Promise<void> {
+    const payload = snapshot ?? await this.deps.getModelCatalog();
     if (!payload) {
       return;
     }
@@ -47,13 +48,13 @@ export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
     this.deps.getWindowBroadcastService().broadcastModelCatalog(payload);
   }
 
-  broadcastAppSettings(settings?: AppSettings): void {
-    const payload = settings ?? this.deps.getAppSettings();
+  async broadcastAppSettings(settings?: AppSettings): Promise<void> {
+    const payload = settings ?? await this.deps.getAppSettings();
     this.deps.getWindowBroadcastService().broadcastAppSettings(payload);
   }
 
-  broadcastPromptTemplates(templates?: PromptTemplate[]): void {
-    const payload = templates ?? this.deps.listPromptTemplates();
+  async broadcastPromptTemplates(templates?: PromptTemplate[]): Promise<void> {
+    const payload = templates ?? await this.deps.listPromptTemplates();
     this.deps.getWindowBroadcastService().broadcastPromptTemplates(payload);
   }
 

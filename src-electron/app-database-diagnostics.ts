@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import type {
   AppDatabaseCompatibilityMode,
@@ -13,6 +13,7 @@ import { APP_DATABASE_V2_FILENAME, APP_DATABASE_V2_SCHEMA_VERSION, isValidV2Data
 import { APP_DATABASE_V3_FILENAME, APP_DATABASE_V3_SCHEMA_VERSION, isValidV3Database } from "./database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME, APP_DATABASE_V4_SCHEMA_VERSION, isValidV4Database } from "./database-schema-v4.js";
 import { APP_DATABASE_V6_FILENAME, APP_DATABASE_V6_SCHEMA_VERSION, isValidV6DatabaseShallow } from "./database-schema-v6.js";
+import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
 type KnownDatabaseDefinition = {
   fileName: string;
@@ -61,7 +62,7 @@ function readUserVersion(dbPath: string): number | null {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    db = openAppDatabaseReadOnly(dbPath);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: unknown } | undefined;
     return typeof row?.user_version === "number" ? row.user_version : null;
   } catch {

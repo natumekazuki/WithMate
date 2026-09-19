@@ -248,12 +248,14 @@ export type MemoryV6ProtectedObjectGcCandidate = {
 export class MemoryV6IdempotencyConflictError extends Error {
   constructor() {
     super("Memory V6 idempotency key was reused with a different request.");
+    this.name = "MemoryV6IdempotencyConflictError";
   }
 }
 
 export class MemoryV6EntryNotFoundError extends Error {
   constructor(entryId: string) {
     super(`Memory V6 entry was not found: ${entryId}`);
+    this.name = "MemoryV6EntryNotFoundError";
   }
 }
 
@@ -264,6 +266,7 @@ export class MemoryV6FileQuotaExceededError extends Error {
     readonly incomingBytes: number,
   ) {
     super("Memory V6 file quota would be exceeded.");
+    this.name = "MemoryV6FileQuotaExceededError";
   }
 
   get availableBytes(): number {

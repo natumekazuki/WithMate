@@ -271,6 +271,9 @@ export type WithMateWindowAuxiliaryApi = {
   getActiveAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
   createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession>;
+  getAuxiliaryCreationContext(parentSessionId: string): Promise<import("./auxiliary-session-state.js").AuxiliaryCreationContext>;
+  cancelAuxiliaryCreation(request: import("./auxiliary-session-state.js").AuxiliaryCreationRequest): Promise<import("./auxiliary-session-state.js").AuxiliaryCreationResult>;
+  getAuxiliaryCreation(request: import("./auxiliary-session-state.js").AuxiliaryCreationRequest): Promise<import("./auxiliary-session-state.js").AuxiliaryCreationResult>;
   updateAuxiliarySession(session: AuxiliarySession): Promise<AuxiliarySession>;
   closeAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Promise<AuxiliarySession>;

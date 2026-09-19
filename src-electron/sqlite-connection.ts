@@ -11,11 +11,30 @@ type AppDatabaseConnectionOptions = {
   busyTimeoutMs?: number;
 };
 
+let mainThreadMarkedAsNonStorageOwner = false;
+
+/** Mark the current thread as forbidden from opening the synchronous app database. */
+export function markMainThreadAsNonStorageOwner(): void {
+  mainThreadMarkedAsNonStorageOwner = true;
+}
+
+function assertStorageOwner(): void {
+  if (mainThreadMarkedAsNonStorageOwner) {
+    throw new Error("Synchronous SQLite app-database access is restricted to the storage worker.");
+  }
+}
+
 export function openAppDatabase(dbPath: string): DatabaseSync {
+  assertStorageOwner();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
   configureAppDatabaseConnection(db);
   return db;
+}
+
+export function openAppDatabaseReadOnly(dbPath: string): DatabaseSync {
+  assertStorageOwner();
+  return new DatabaseSync(dbPath, { readOnly: true });
 }
 
 export function configureAppDatabaseConnection(db: DatabaseSync, options: AppDatabaseConnectionOptions = {}): void {
@@ -28,6 +47,7 @@ export function configureAppDatabaseConnection(db: DatabaseSync, options: AppDat
 }
 
 export function truncateAppDatabaseWal(dbPath: string, options: AppDatabaseConnectionOptions = {}): void {
+  assertStorageOwner();
   if (!fs.existsSync(dbPath)) {
     return;
   }
@@ -46,6 +66,7 @@ export function truncateAppDatabaseWalIfLargerThan(
   maxWalBytes = SQLITE_JOURNAL_SIZE_LIMIT_BYTES,
   options: AppDatabaseConnectionOptions = {},
 ): boolean {
+  assertStorageOwner();
   const walPath = `${dbPath}-wal`;
   if (!fs.existsSync(walPath)) {
     return false;

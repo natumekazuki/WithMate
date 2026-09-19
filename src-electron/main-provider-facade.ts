@@ -7,10 +7,11 @@ import {
   resolveProviderCodingAdapter,
   type ProviderRuntimeCapabilities,
 } from "./provider-support.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type MainProviderFacadeDeps = {
-  getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null;
-  ensureModelCatalogSeeded(): ModelCatalogSnapshot;
+  getModelCatalog(revision?: number | null): Awaitable<ModelCatalogSnapshot | null>;
+  ensureModelCatalogSeeded(): Awaitable<ModelCatalogSnapshot>;
   codexAdapter: ProviderTurnAdapter;
   copilotAdapter: ProviderTurnAdapter;
   revokeProviderExecution?(sessionId: string, providerId: string): void;
@@ -20,18 +21,18 @@ type MainProviderFacadeDeps = {
 export class MainProviderFacade {
   constructor(private readonly deps: MainProviderFacadeDeps) {}
 
-  getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null {
+  async getModelCatalog(revision?: number | null): Promise<ModelCatalogSnapshot | null> {
     return this.deps.getModelCatalog(revision);
   }
 
   resolveProviderCatalog(
     providerId: string | null | undefined,
     revision?: number | null,
-  ): { snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider } {
+  ): Promise<{ snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider }> {
     return resolveProviderCatalogOrThrow({
       providerId,
       revision,
-      getModelCatalog: (nextRevision) => this.getModelCatalog(nextRevision),
+      getModelCatalog: (nextRevision) => this.deps.getModelCatalog(nextRevision),
       ensureSeeded: () => this.deps.ensureModelCatalogSeeded(),
     });
   }

@@ -413,6 +413,18 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "afterglow projectionは公開schemaを保ち内部source情報を除外する"
+  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // fault = "private source情報がcontextやmetricsへ漏れる"
+  // observable = "context, MCP, CLI output"
+  // observation_boundary = "public-boundary"
+  // scope = "character-context-application-service"
+  // lifecycle = "permanent"
+  // impact = "公開projectionのprivacy"
+  // distinction = "CharacterContextApplicationServiceのgetContext/getMetrics公開projectionを実呼出しで確認する"
+  // @end-test-value
   it("afterglowをpublic context・MCP・CLIへ同じschemaで投影し、source情報をmetricsへ出さない", async () => {
     const fixture = createFixture();
     try {
@@ -455,7 +467,7 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(internal.affect.effective.some((component) => component.label === "public-afterglow"), true);
       const publicJson = JSON.stringify(internal);
       assert.doesNotMatch(publicJson, /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|sourceSessionId|session-b/);
-      const metricsJson = JSON.stringify(fixture.service.getMetrics());
+      const metricsJson = JSON.stringify(await fixture.service.getMetrics());
       assert.doesNotMatch(metricsJson, /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|private-target|session-b|sourceSessionId/);
       assert.equal("eventIds" in internal.affect.effective[0]!, false);
       assert.equal("reasons" in internal.affect.effective[0]!, false);
@@ -464,6 +476,18 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "stale versionと不正scope targetを拒否する"
+  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // fault = "古いversionの書込み、不正relationship target、未知scopeの読取りを受理するかversion拒否を集計しない"
+  // observable = "appraiseのversion_conflict/invalid_input、getContextのunknown_scope、versionRejections集計"
+  // observation_boundary = "public-boundary"
+  // scope = "character-context-application-service"
+  // lifecycle = "permanent"
+  // impact = "affect CAS and scope isolation"
+  // distinction = "service validationを確認する"
+  // @end-test-value
   it("stale version、relationship scopeの不正target、別scopeを拒否する", async () => {
     const fixture = createFixture();
     try {
@@ -508,7 +532,7 @@ describe("CharacterContextApplicationService", () => {
       if (isCharacterContextError(unknown)) {
         assert.equal(unknown.error.code, "unknown_scope");
       }
-      assert.equal(fixture.service.getMetrics().affect.versionRejections, 1);
+      assert.equal((await fixture.service.getMetrics()).affect.versionRejections, 1);
     } finally {
       fixture.close();
     }
@@ -713,6 +737,18 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "CharacterContextApplicationServiceのoperation結果と拒否理由をpayloadなしでmetricsへ集計する"
+  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // fault = "private payloadをmetricsへ保存する"
+  // observable = "service.getMetrics() response"
+  // observation_boundary = "public-boundary"
+  // scope = "character-context-application-service"
+  // lifecycle = "permanent"
+  // impact = "diagnostic privacy"
+  // distinction = "MCP/CLI transport routeではなく、実サービスのrecordFallbackとoperation metrics境界を確認する"
+  // @end-test-value
   it("transport別結果、拒否理由、replay、fallbackを内容なしで集計する", async () => {
     const fixture = createFixture();
     try {
@@ -761,7 +797,7 @@ describe("CharacterContextApplicationService", () => {
       }, "mcp");
       fixture.service.recordFallback("mcp", "cli");
 
-      const metrics = fixture.service.getMetrics();
+      const metrics = await fixture.service.getMetrics();
       assert.equal(metrics.operations["mcp:character_affect.appraise"]?.calls, 4);
       assert.equal(metrics.operations["mcp:character_affect.appraise"]?.rejectionsByCode.invalid_input, 3);
       assert.equal(metrics.fallbacks["mcp->cli"], 1);
@@ -779,6 +815,18 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Affect保存後のepisode失敗をpartial failureとして返し、同一request replayでもprivate payloadをmetricsへ出さない"
+  // oracle = { type = "contract", ref = "docs/plans/20260919-session-operation-boundaries/plan.md#実装単位と完了条件" }
+  // fault = "partial failureを成功レスポンスへ偽装する"
+  // observable = "初回・同一request replayのappraise resultとservice.getMetrics()"
+  // observation_boundary = "public-boundary"
+  // scope = "character-context-application-service"
+  // lifecycle = "permanent"
+  // impact = "caller retry and truthfulness"
+  // distinction = "partial failureのeffect/retryability、idempotency replay、privacy-safe metricsを同じservice boundaryで確認する"
+  // @end-test-value
   it("Affect保存後のepisode失敗をpartial failureとして返し、成功に見せない", async () => {
     const fixture = createFixture({ failEpisodeWrite: true });
     try {
@@ -813,7 +861,7 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(isCharacterContextError(replay), true);
       if (!isCharacterContextError(replay)) return;
       assert.equal(replay.error.effect, "committed");
-      const metrics = fixture.service.getMetrics();
+      const metrics = await fixture.service.getMetrics();
       assert.equal(metrics.affect.savedByFamily.interest, 1);
       assert.equal(metrics.affect.storage.events, 1);
       assert.equal(metrics.affect.storage.idempotencyReplays, 1);

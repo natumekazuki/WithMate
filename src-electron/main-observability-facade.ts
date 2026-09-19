@@ -9,10 +9,11 @@ import type { AppSettings } from "../src/provider-settings-state.js";
 import type { ProviderCodingAdapter } from "./provider-runtime.js";
 import { fetchProviderQuotaTelemetry } from "./provider-support.js";
 import { SessionObservabilityService } from "./session-observability-service.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type MainObservabilityFacadeDeps = {
   getSessionObservabilityService(): SessionObservabilityService;
-  getAppSettings(): AppSettings;
+  getAppSettings(): Awaitable<AppSettings>;
   getProviderCodingAdapter(providerId: string): ProviderCodingAdapter;
   providerQuotaStaleTtlMs: number;
 };

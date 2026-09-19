@@ -22,7 +22,7 @@ import type {
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME } from "./database-schema-v4.js";
-import { APP_DATABASE_V6_FILENAME, ensureV6Schema, isValidV6Database } from "./database-schema-v6.js";
+import { APP_DATABASE_V6_FILENAME, ensureV6Schema } from "./database-schema-v6.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
@@ -44,6 +44,7 @@ import { SessionStorageV3 } from "./session-storage-v3.js";
 import { SessionStorageV6 } from "./session-storage-v6.js";
 import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
+import { createV6StorageWorkerBundle, type V6StorageWorkerBundle } from "./storage-worker-bundle.js";
 import type { ConversationTimingStorageSnapshot } from "./conversation-timing.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import type {
@@ -83,6 +84,7 @@ export type SessionStorageWrite = AwaitableStorageMethods<
 > & SessionStorageRead & {
   updateSession?(session: Session): Awaitable<Session>;
   updateSessionThreadIfMatches?(input: import("./session-storage-v6.js").SessionThreadPatchInput): Awaitable<Session | null>;
+  updateSessionRuntimeMetadataIfMatches?(input: import("./session-storage-v6.js").SessionRuntimeMetadataPatchInput): Awaitable<Session | null>;
   updateTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
@@ -93,6 +95,47 @@ export type SessionStorageWrite = AwaitableStorageMethods<
 export type SessionPinStorage = {
   setSessionPinned(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
 };
+
+/**
+ * Public storage boundaries intentionally describe awaitable methods rather than
+ * the current synchronous SQLite implementations. This lets the lifecycle
+ * bundle be backed by a Worker without making callers depend on a concrete
+ * database class.
+ */
+export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
+  AuxiliarySessionStorage,
+  | "listAllAuxiliarySessions"
+  | "listAuxiliarySessions"
+  | "listAuxiliarySessionSummaries"
+  | "listActiveAuxiliarySessionSummaries"
+  | "listRunningActiveAuxiliarySessions"
+  | "getActiveAuxiliarySession"
+  | "getAuxiliarySession"
+  | "upsertAuxiliarySession"
+  | "deleteAuxiliarySessionsForParent"
+  | "deleteAuxiliarySessionsExceptParents"
+> & Pick<AuxiliarySessionStorage, "close"> & {
+  updateAuxiliarySessionThreadIfMatches?(input: import("./auxiliary-session-storage.js").AuxiliarySessionThreadPatchInput): Awaitable<AuxiliarySession | null>;
+  updateAuxiliarySessionRuntimeMetadataIfMatches?(
+    input: import("./auxiliary-session-storage.js").AuxiliarySessionRuntimeMetadataPatchInput,
+  ): Awaitable<AuxiliarySession | null>;
+};
+export type CharacterStorageAsyncAccess = AwaitableStorageMethods<
+  CharacterStorage,
+  Exclude<keyof CharacterStorage, "close">
+> & Pick<CharacterStorage, "close">;
+export type AppSettingsStorageAsyncAccess = AwaitableStorageMethods<
+  AppSettingsStorage,
+  Exclude<keyof AppSettingsStorage, "close">
+> & Pick<AppSettingsStorage, "close">;
+export type ModelCatalogStorageAsyncAccess = AwaitableStorageMethods<
+  ModelCatalogStorage,
+  Exclude<keyof ModelCatalogStorage, "close">
+> & Pick<ModelCatalogStorage, "close">;
+export type MateStorageAsyncAccess = AwaitableStorageMethods<
+  MateStorage,
+  Exclude<keyof MateStorage, "close">
+> & Pick<MateStorage, "close">;
 
 export type AuditLogStorageRead = AwaitableStorageMethods<
   AuditLogStorage,
@@ -111,47 +154,22 @@ export type AuditLogStorageWrite = AwaitableStorageMethods<
 > & AuditLogStorageRead;
 export type SessionMemoryStorageAccess = SessionMemoryStorage | SessionMemoryStorageV2Read;
 export type ProjectMemoryStorageAccess = ProjectMemoryStorage | ProjectMemoryStorageV2Read;
-export type AuxiliarySessionStorageAccess = {
-  listAllAuxiliarySessions(): AuxiliarySession[];
-  listAuxiliarySessions(parentSessionId: string): AuxiliarySessionSummary[];
-  listAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[];
-  listActiveAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[];
-  listRunningActiveAuxiliarySessions(): AuxiliarySessionSummary[];
-  getActiveAuxiliarySession(parentSessionId: string): AuxiliarySession | null;
-  getAuxiliarySession(auxiliarySessionId: string): AuxiliarySession | null;
-  upsertAuxiliarySession(session: AuxiliarySession): AuxiliarySession;
-  updateAuxiliarySessionThreadIfMatches?(input: import("./auxiliary-session-storage.js").AuxiliarySessionThreadPatchInput): AuxiliarySession | null;
-  deleteAuxiliarySessionsForParent(parentSessionId: string): void;
-  deleteAuxiliarySessionsExceptParents(parentSessionIds: Iterable<string>): void;
-  close(): void;
-};
-export type CharacterStorageAccess = {
-  listCharacters(options?: { includeArchived?: boolean }): CharacterCatalogEntry[];
-  getCharacterCatalogEntry(characterId: string): CharacterCatalogEntry | null;
-  getCharacter(characterId: string): CharacterDetail | null;
-  createCharacter(input: CreateCharacterInput): CharacterDetail;
-  updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail;
-  updateCharacterDefinition(input: UpdateCharacterDefinitionInput): CharacterDetail;
-  archiveCharacter(characterId: string): CharacterCatalogEntry;
-  resolveLaunchCharacter(input?: ResolveLaunchCharacterInput): CharacterDetail | null;
-  createRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null;
-  getCharacterDirectory(characterId: string): string;
-  deleteCharacterRootDirectory(): Promise<void>;
-  close(): void;
-};
+export type AuxiliarySessionStorageAccess = AuxiliarySessionStorageAsyncAccess;
+export type CharacterStorageAccess = CharacterStorageAsyncAccess;
 
 export type PersistentStoreBundle = {
-  modelCatalogStorage: ModelCatalogStorage;
+  modelCatalogStorage: ModelCatalogStorageAsyncAccess;
   characterStorage: CharacterStorageAccess;
   sessionStorage: SessionStorageRead;
   sessionMemoryStorage: SessionMemoryStorageAccess;
   projectMemoryStorage: ProjectMemoryStorageAccess;
   auditLogStorage: AuditLogStorageRead;
   auxiliarySessionStorage: AuxiliarySessionStorageAccess;
-  appSettingsStorage: AppSettingsStorage;
-  mateStorage: MateStorage;
+  appSettingsStorage: AppSettingsStorageAsyncAccess;
+  mateStorage: MateStorageAsyncAccess;
   activeModelCatalog: ModelCatalogSnapshot;
   sessions: Session[];
+  storageWorker?: V6StorageWorkerBundle;
 };
 
 export type PersistentStoreBundleLike = {
@@ -178,28 +196,56 @@ type PersistentStoreLifecycleDeps = {
   truncateWal(dbPath: string): void;
   removeFile(filePath: string): Promise<void>;
   removeDirectory?(directoryPath: string): Promise<void>;
+  createV6StorageWorker?(input: {
+    dbPath: string;
+    bundledModelCatalogPath: string;
+    userDataPath: string;
+  }): V6StorageWorkerBundle;
 };
 
 export class PersistentStoreLifecycleService {
   constructor(private readonly deps: PersistentStoreLifecycleDeps) {}
 
   async initialize(dbPath: string, bundledModelCatalogPath: string, userDataPath?: string): Promise<PersistentStoreBundle> {
-    const isV3Database = isValidV3Database(dbPath);
-    const isV2Database = isValidV2Database(dbPath);
-    const isV6Database = isValidV6Database(dbPath);
+    // V6 ownership is selected by the established filename. Schema validation
+    // and initialization happen inside the storage Worker, so Main does not
+    // open a synchronous V6 connection merely to choose its owner.
+    const isV6Database = basename(dbPath) === APP_DATABASE_V6_FILENAME;
+    const isV3Database = !isV6Database && isValidV3Database(dbPath);
+    const isV2Database = !isV6Database && isValidV2Database(dbPath);
     const resolvedUserDataPath = userDataPath ?? dirname(dbPath);
-    if (isV6Database) {
-      this.deps.ensureV6Schema?.(dbPath);
-    } else if (isV3Database) {
+    if (isV3Database) {
       this.deps.ensureV3Schema?.(dbPath);
     } else if (isV2Database) {
       this.deps.ensureV2Schema?.(dbPath);
     }
 
-    const modelCatalogStorage = this.deps.createModelCatalogStorage(dbPath, bundledModelCatalogPath);
-    const activeModelCatalog = modelCatalogStorage.ensureSeeded();
-    const sessionStorage = isV6Database
-      ? new SessionStorageV6(dbPath)
+    const storageWorker = isV6Database
+      ? (this.deps.createV6StorageWorker?.({
+        dbPath,
+        bundledModelCatalogPath,
+        userDataPath: resolvedUserDataPath,
+      }) ?? createV6StorageWorkerBundle({ dbPath, bundledModelCatalogPath, userDataPath: resolvedUserDataPath }))
+      : undefined;
+    let workerInitial: { activeModelCatalog: ModelCatalogSnapshot; sessions: Session[] } | null = null;
+    if (storageWorker) {
+      try {
+        workerInitial = await storageWorker.initialize() as { activeModelCatalog: ModelCatalogSnapshot; sessions: Session[] };
+        const maintenance = await storageWorker.runAuxiliarySummaryMaintenance();
+        if (maintenance.stopped || maintenance.remaining > 0) {
+          console.warn("Auxiliary summary maintenance stopped with remaining rows", maintenance);
+        }
+      } catch (error) {
+        await storageWorker.client.close().catch(() => undefined);
+        throw error;
+      }
+    }
+    const modelCatalogStorage = storageWorker
+      ? storageWorker.stores.catalog
+      : this.deps.createModelCatalogStorage(dbPath, bundledModelCatalogPath);
+    const activeModelCatalog = workerInitial?.activeModelCatalog ?? await modelCatalogStorage.ensureSeeded();
+    const sessionStorage = storageWorker
+      ? storageWorker.stores.session
       : isV3Database
       ? new SessionStorageV3(dbPath, this.v3BlobRootPath(dbPath))
       : isV2Database
@@ -211,28 +257,30 @@ export class PersistentStoreLifecycleService {
     const projectMemoryStorage = isV6Database || isV3Database || isV2Database
       ? new ProjectMemoryStorageV2Read()
       : this.deps.createProjectMemoryStorage(dbPath);
-    const auditLogStorage = isV6Database
-      ? new AuditLogStorageV6(dbPath)
+    const auditLogStorage = storageWorker
+      ? storageWorker.stores.audit
       : isV3Database
       ? new AuditLogStorageV3(dbPath, this.v3BlobRootPath(dbPath))
       : isV2Database
       ? new AuditLogStorageV2(dbPath)
       : this.deps.createAuditLogStorage(dbPath);
-    const auxiliarySessionStorage = isV6Database
-      ? this.deps.createAuxiliarySessionStorage?.(dbPath) ?? new AuxiliarySessionStorage(dbPath)
+    const auxiliarySessionStorage = storageWorker
+      ? storageWorker.stores.auxiliary
       : new LegacyAuxiliarySessionStorage();
-    const characterStorage = isV3Database || isV2Database || (
+    const characterStorage = storageWorker
+      ? storageWorker.stores.character
+      : isV3Database || isV2Database || (
         basename(dbPath) !== APP_DATABASE_V4_FILENAME
         && basename(dbPath) !== APP_DATABASE_V6_FILENAME
       )
       ? new LegacyCharacterStorage()
       : this.deps.createCharacterStorage?.(dbPath, resolvedUserDataPath)
         ?? new CharacterStorage(dbPath, resolvedUserDataPath);
-    const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
-    const mateStorage = this.deps.createMateStorage(dbPath, resolvedUserDataPath);
+    const appSettingsStorage = storageWorker ? storageWorker.stores.settings : this.deps.createAppSettingsStorage(dbPath);
+    const mateStorage = storageWorker ? storageWorker.stores.mate : this.deps.createMateStorage(dbPath, resolvedUserDataPath);
     await this.recoverActiveMateProfileProjection(mateStorage);
-    const loadedSessionSummaries = await sessionStorage.listSessionSummaries();
-    const sessions = loadedSessionSummaries.length === 0 ? [] : sessionSummariesToSessions(loadedSessionSummaries);
+    const sessions = workerInitial?.sessions
+      ?? sessionSummariesToSessions(await sessionStorage.listSessionSummaries());
 
     return {
       modelCatalogStorage,
@@ -246,10 +294,11 @@ export class PersistentStoreLifecycleService {
       mateStorage,
       activeModelCatalog,
       sessions,
+      ...(storageWorker ? { storageWorker } : {}),
     };
   }
 
-  close(bundle: PersistentStoreBundleLike, dbPath?: string | null): void {
+  async close(bundle: PersistentStoreBundleLike, dbPath?: string | null): Promise<void> {
     this.deps.onBeforeClose();
 
     const stores: Array<ClosableStore | null | undefined> = [
@@ -264,11 +313,20 @@ export class PersistentStoreLifecycleService {
       bundle.mateStorage,
     ];
 
-    for (const store of stores) {
-      store?.close();
+    if (!bundle.storageWorker) {
+      for (const store of stores) {
+        store?.close();
+      }
     }
 
-    if (dbPath) {
+    if (bundle.storageWorker) {
+      try {
+        await bundle.storageWorker.truncateWal();
+      } catch (error) {
+        console.warn("SQLite WAL truncate failed", error);
+      }
+      await bundle.storageWorker.client.close();
+    } else if (dbPath) {
       try {
         this.deps.truncateWal(dbPath);
       } catch (error) {
@@ -283,7 +341,7 @@ export class PersistentStoreLifecycleService {
     bundle: PersistentStoreBundleLike,
     userDataPath?: string,
   ): Promise<PersistentStoreBundle> {
-    this.close(bundle, dbPath);
+    await this.close(bundle, dbPath);
 
     await Promise.all([
       this.deps.removeFile(`${dbPath}-wal`),
@@ -297,9 +355,7 @@ export class PersistentStoreLifecycleService {
         : Promise.resolve(),
     ]);
 
-    if (this.isV6DatabasePath(dbPath)) {
-      this.deps.ensureV6Schema?.(dbPath);
-    } else if (this.isV3DatabasePath(dbPath)) {
+    if (this.isV3DatabasePath(dbPath)) {
       this.deps.ensureV3Schema?.(dbPath);
     } else if (this.isV2DatabasePath(dbPath)) {
       this.deps.ensureV2Schema?.(dbPath);
@@ -314,10 +370,6 @@ export class PersistentStoreLifecycleService {
 
   private isV3DatabasePath(dbPath: string): boolean {
     return basename(dbPath) === APP_DATABASE_V3_FILENAME;
-  }
-
-  private isV6DatabasePath(dbPath: string): boolean {
-    return basename(dbPath) === APP_DATABASE_V6_FILENAME;
   }
 
   private isBlobBackedDatabasePath(dbPath: string): boolean {
@@ -350,7 +402,7 @@ export class PersistentStoreLifecycleService {
     return join(dirname(dbPath), "blobs", "v3");
   }
 
-  private async recoverActiveMateProfileProjection(mateStorage: MateStorage): Promise<void> {
+  private async recoverActiveMateProfileProjection(mateStorage: MateStorageAsyncAccess): Promise<void> {
     const recoverFunc = (mateStorage as {
       recoverMateProfileFilesFromActiveRevision?: () => Promise<MateProfileFileMismatch[]>;
     }).recoverMateProfileFilesFromActiveRevision;

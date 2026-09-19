@@ -61,7 +61,7 @@ type OperationMetric = {
 export type CharacterContextApplicationServiceDeps = {
   memoryService: MemoryV6Service;
   affectService: CharacterAffectService;
-  resolveCharacterRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null;
+  resolveCharacterRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null | Promise<CharacterRuntimeSnapshot | null>;
   onUnexpectedError?(diagnostic: CharacterContextUnexpectedErrorDiagnostic): void;
 };
 
@@ -219,7 +219,7 @@ export class CharacterContextApplicationService {
   ): Promise<CharacterContextServiceResult<CharacterContextResponse>> {
     return this.measure("character_context.get", transport, "none", async () => {
       const input = validateCharacterContextGetRequest(request);
-      const snapshot = this.deps.resolveCharacterRuntimeSnapshot(input.characterId);
+      const snapshot = await this.deps.resolveCharacterRuntimeSnapshot(input.characterId);
       if (!snapshot) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
           field: "characterId",
@@ -236,13 +236,13 @@ export class CharacterContextApplicationService {
           transport,
           queryLength,
           searchTermCount,
-          () => ({
-            state: this.deps.affectService.getEffectiveState({
+          async () => ({
+            state: await this.deps.affectService.getEffectiveState({
               characterId: input.characterId,
               userId: LOCAL_USER_ID,
               sessionId: input.sessionId,
             }),
-            version: this.deps.affectService.getStateVersion({
+            version: await this.deps.affectService.getStateVersion({
               characterId: input.characterId,
               userId: LOCAL_USER_ID,
               sessionId: input.sessionId,
@@ -324,7 +324,7 @@ export class CharacterContextApplicationService {
   ): Promise<CharacterContextServiceResult<CharacterAffectAppraiseResponse>> {
     return this.measure("character_affect.appraise", transport, "unknown", async () => {
       const input = validateCharacterAffectAppraiseRequest(request);
-      if (!this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
+      if (!await this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
           field: "characterId",
           retryable: false,
@@ -370,11 +370,11 @@ export class CharacterContextApplicationService {
           if (result.created) {
             this.affectMetrics.savedByFamily[candidate.family] += 1;
           }
-          expectedVersion = this.deps.affectService.getStateVersion({
+          expectedVersion = (await this.deps.affectService.getStateVersion({
             characterId: input.characterId,
             userId: LOCAL_USER_ID,
             sessionId: input.sessionId,
-          }).version;
+          })).version;
         } catch (error) {
           if (error instanceof CharacterAffectEpisodePersistenceError) {
             if (error.eventCreated) {
@@ -407,7 +407,7 @@ export class CharacterContextApplicationService {
           return this.mapThrownError(error, "affect write", "unknown");
         }
       }
-      const version = this.deps.affectService.getStateVersion({
+      const version = await this.deps.affectService.getStateVersion({
         characterId: input.characterId,
         userId: LOCAL_USER_ID,
         sessionId: input.sessionId,
@@ -428,12 +428,12 @@ export class CharacterContextApplicationService {
     return this.measure("character_affect.inspect", transport, "none", async () => {
       const input = validateCharacterAffectInspectRequest(request);
       try {
-        const inspection = this.deps.affectService.inspect({
+        const inspection = await this.deps.affectService.inspect({
           characterId: input.characterId,
           userId: LOCAL_USER_ID,
           sessionId: input.sessionId,
         });
-        const version = this.deps.affectService.getStateVersion({
+        const version = await this.deps.affectService.getStateVersion({
           characterId: input.characterId,
           userId: LOCAL_USER_ID,
           sessionId: input.sessionId,
@@ -465,7 +465,7 @@ export class CharacterContextApplicationService {
           replacement: input.replacement,
           reason: input.reason,
         }, { expectedVersion: input.expectedVersion });
-        const version = this.deps.affectService.getStateVersion({
+        const version = await this.deps.affectService.getStateVersion({
           characterId: input.characterId,
           userId: LOCAL_USER_ID,
           sessionId: input.sessionId,
@@ -492,7 +492,7 @@ export class CharacterContextApplicationService {
         return authorityError;
       }
       try {
-        const result = this.deps.affectService.reset({
+        const result = await this.deps.affectService.reset({
           characterId: input.characterId,
           userId: LOCAL_USER_ID,
           layer: input.layer,
@@ -504,7 +504,7 @@ export class CharacterContextApplicationService {
           expectedVersion: input.expectedVersion,
           versionSessionId: input.sessionId,
         });
-        const version = this.deps.affectService.getStateVersion({
+        const version = await this.deps.affectService.getStateVersion({
           characterId: input.characterId,
           userId: LOCAL_USER_ID,
           sessionId: input.sessionId,
@@ -534,7 +534,7 @@ export class CharacterContextApplicationService {
       if (principalError) {
         return principalError;
       }
-      if (!this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
+      if (!await this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
           field: "characterId",
           retryable: false,
@@ -581,7 +581,7 @@ export class CharacterContextApplicationService {
       if (principalError) {
         return principalError;
       }
-      if (!this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
+      if (!await this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
           field: "characterId",
           retryable: false,
@@ -650,7 +650,7 @@ export class CharacterContextApplicationService {
       if (authorityError) {
         return authorityError;
       }
-      const result = this.deps.memoryService.forget(principal, {
+      const result = await this.deps.memoryService.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: characterTarget(input.characterId),
         entryIds: [input.entryId],
@@ -678,7 +678,7 @@ export class CharacterContextApplicationService {
     this.fallbackMetrics.set(key, (this.fallbackMetrics.get(key) ?? 0) + 1);
   }
 
-  getMetrics(): {
+  async getMetrics(): Promise<{
     operations: Record<string, OperationMetric>;
     fallbacks: Record<string, number>;
     affect: {
@@ -689,9 +689,9 @@ export class CharacterContextApplicationService {
       invalidFamilyRejections: number;
       schemaVersionRejections: number;
       versionRejections: number;
-      storage: ReturnType<CharacterAffectService["getMetrics"]>;
+      storage: Awaited<ReturnType<CharacterAffectService["getMetrics"]>>;
     };
-  } {
+  }> {
     const candidateCount = Object.values(this.affectMetrics.candidatesByFamily)
       .reduce((sum, count) => sum + count, 0);
     const versionRejections = [...this.metrics.values()]
@@ -710,7 +710,7 @@ export class CharacterContextApplicationService {
         invalidFamilyRejections: this.affectMetrics.invalidFamilyRejections,
         schemaVersionRejections: this.affectMetrics.schemaVersionRejections,
         versionRejections,
-        storage: this.deps.affectService.getMetrics(),
+      storage: await this.deps.affectService.getMetrics(),
       },
     };
   }

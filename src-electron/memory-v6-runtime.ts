@@ -45,7 +45,7 @@ import {
   type RuntimePathTargetKind,
 } from "../src/runtime-discovery/runtime-discovery-registry.js";
 import type { AppLogInput } from "../src/app-log-types.js";
-import { createOrVerifyV6FreshDatabase } from "./app-database-v6-bootstrap.js";
+import { createAppDatabaseBootstrapWorker } from "./app-database-bootstrap-worker.js";
 import {
   createMemoryV6HttpServer,
   type MemoryV6HttpServer,
@@ -55,7 +55,6 @@ import {
 } from "./memory-v6-http-server.js";
 import type { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "./provider-agent-runtime-turn-coordinator.js";
-import { createMemoryV6ProjectResolver } from "./memory-v6-project-resolver.js";
 import {
   inspectMemoryProtectedObjectInputFile,
   prepareMemoryProtectedObjectFile,
@@ -67,8 +66,12 @@ import { MemoryV6Service } from "./memory-v6-service.js";
 import { MemoryV6Storage } from "./memory-v6-storage.js";
 import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 import { CharacterAffectStorage } from "./character-affect-storage.js";
+import type { StorageOperationDiagnosticSink } from "./storage-operation-diagnostics.js";
 import { createCharacterAffectServiceWithMemory } from "./character-affect-memory-adapter.js";
 import { CharacterContextApplicationService } from "./character-context-application-service.js";
+import { MemoryV6WorkerClient } from "./memory-v6-worker-client.js";
+import type { MemoryV6StorageAccess } from "./memory-v6-service.js";
+import type { CharacterAffectStorageAccess } from "./character-affect-service.js";
 import { secureWindowsRuntimePath } from "./runtime-path-security.js";
 
 export type MemoryV6RuntimeApiHandle = {
@@ -83,6 +86,8 @@ export type MemoryV6RuntimeApiHandle = {
   /** @deprecated Compatibility path for the legacy current-pointer projection. */
   mcpDiscoveryFilePath: string;
   characterContextService: CharacterContextApplicationService;
+  memoryStorage: MemoryV6StorageAccess;
+  affectStorage: CharacterAffectStorageAccess;
   stop(): Promise<void>;
 };
 
@@ -93,13 +98,14 @@ export type StartMemoryV6RuntimeApiOptions = {
   processStartedAt?: string;
   registryDirectoryPath?: string;
   runtimeDirectoryPath?: string;
-  listCharacters?: () => readonly CharacterCatalogEntry[];
-  resolveCharacterById?: (id: string) => { id: string; name: string } | null;
-  resolveCharacterRuntimeSnapshot?: (characterId: string) => CharacterRuntimeSnapshot | null;
-  getMemoryFileQuotaBytes?: () => number;
+  listCharacters?: () => readonly CharacterCatalogEntry[] | Promise<readonly CharacterCatalogEntry[]>;
+  resolveCharacterById?: (id: string) => { id: string; name: string } | null | Promise<{ id: string; name: string } | null>;
+  resolveCharacterRuntimeSnapshot?: (characterId: string) => CharacterRuntimeSnapshot | null | Promise<CharacterRuntimeSnapshot | null>;
+  getMemoryFileQuotaBytes?: () => number | Promise<number>;
   protectedObjectKeyProtector?: MemoryProtectedObjectKeyProtector;
   now?: () => Date;
   log?: (input: AppLogInput) => void;
+  storageOperationDiagnosticSink?: StorageOperationDiagnosticSink;
   agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
   providerAgentRuntimeTurns?: Pick<ProviderAgentRuntimeTurnCoordinator, "admit">;
   resolveActorSession?: (
@@ -1333,8 +1339,10 @@ async function commitLegacyPointerReplacement(input: {
 export async function startMemoryV6RuntimeApi(
   options: StartMemoryV6RuntimeApiOptions,
 ): Promise<MemoryV6RuntimeApiHandle> {
-  let storage: MemoryV6Storage | null = null;
-  let affectStorage: CharacterAffectStorage | null = null;
+  let storage: MemoryV6StorageAccess | null = null;
+  let affectStorage: CharacterAffectStorageAccess | null = null;
+  let workerClient: MemoryV6WorkerClient | null = null;
+  let bootstrapWorker: ReturnType<typeof createAppDatabaseBootstrapWorker> | null = null;
   let server: MemoryV6HttpServer | null = null;
   let registryPublication: RuntimeDiscoveryRegistryPublication | null = null;
   let legacyDiscoveryFile: PublishedMemoryV6DiscoveryFile | null = null;
@@ -1350,20 +1358,39 @@ export async function startMemoryV6RuntimeApi(
   }
 
   try {
-    const bootstrap = await createOrVerifyV6FreshDatabase(options.userDataPath);
-    storage = new MemoryV6Storage(bootstrap.dbPath);
-    const projectResolver = createMemoryV6ProjectResolver(bootstrap.dbPath);
+    bootstrapWorker = createAppDatabaseBootstrapWorker();
+    const bootstrapResult = await bootstrapWorker.resolveOrMigrate({
+      userDataPath: options.userDataPath,
+      userDataPathOverrideApplied: false,
+    });
+    const bootstrap = { dbPath: bootstrapResult.dbPath, created: false };
+    await bootstrapWorker.close();
+    bootstrapWorker = null;
+    const workerEntry = new URL(
+      import.meta.url.endsWith(".ts") ? "./storage-worker-entry.ts" : "./storage-worker-entry.js",
+      import.meta.url,
+    );
+    workerClient = new MemoryV6WorkerClient({
+      workerUrl: workerEntry,
+      dbPath: bootstrap.dbPath,
+      ...(options.storageOperationDiagnosticSink ? { diagnosticSink: options.storageOperationDiagnosticSink } : {}),
+      ...(options.now ? { now: options.now } : {}),
+    });
+    storage = workerClient.storage;
+    const projectResolver = workerClient;
     const protectedObjectStore = MemoryProtectedObjectStore.fromUserDataPath(options.userDataPath);
     const protectedObjectKeyStore = options.protectedObjectKeyProtector
       ? MemoryProtectedObjectKeyStore.fromUserDataPath(options.userDataPath, options.protectedObjectKeyProtector)
       : null;
     const service = new MemoryV6Service({
       storage,
-      ...projectResolver,
+      resolveProjectById: projectResolver.resolveProjectById,
+      resolveProjectByPath: projectResolver.resolveProjectByPath,
+      resolveKnownProjectByPath: projectResolver.resolveKnownProjectByPath,
       ...(options.listCharacters ? { listCharacters: options.listCharacters } : {}),
       ...(options.resolveCharacterById ? { resolveCharacterById: options.resolveCharacterById } : options.listCharacters ? {
-        resolveCharacterById: (id) => {
-          const character = options.listCharacters?.().find((candidate) => candidate.id === id);
+        resolveCharacterById: async (id) => {
+          const character = (await options.listCharacters?.() ?? []).find((candidate) => candidate.id === id);
           return character ? { id: character.id, name: character.name } : null;
         },
       } : {}),
@@ -1391,9 +1418,7 @@ export async function startMemoryV6RuntimeApi(
         },
       } : {}),
     });
-    affectStorage = new CharacterAffectStorage(bootstrap.dbPath, {
-      ...(options.now ? { now: options.now } : {}),
-    });
+    affectStorage = workerClient.affectStorage;
     const affectService = createCharacterAffectServiceWithMemory({
       affectStorage,
       memoryStorage: storage,
@@ -1402,8 +1427,8 @@ export async function startMemoryV6RuntimeApi(
     const characterContextService = new CharacterContextApplicationService({
       memoryService: service,
       affectService,
-      resolveCharacterRuntimeSnapshot: (characterId) =>
-        options.resolveCharacterRuntimeSnapshot?.(characterId) ?? null,
+      resolveCharacterRuntimeSnapshot: async (characterId) =>
+        await options.resolveCharacterRuntimeSnapshot?.(characterId) ?? null,
       onUnexpectedError: (diagnostic) => {
         options.log?.({
           level: "warn",
@@ -1663,6 +1688,8 @@ export async function startMemoryV6RuntimeApi(
       discoveryFilePath: legacyPaths.discoveryFilePath,
       mcpDiscoveryFilePath: legacyPaths.mcpDiscoveryFilePath,
       characterContextService,
+      memoryStorage: storage,
+      affectStorage,
       async stop(): Promise<void> {
         const cleanupErrors: unknown[] = [];
         let legacyReplacement: ResolvedLegacyPointerReplacement | null = null;
@@ -1726,8 +1753,7 @@ export async function startMemoryV6RuntimeApi(
         } catch (error) {
           cleanupErrors.push(error);
         }
-        storage?.close();
-        affectStorage?.close();
+        await workerClient?.close();
 
         if (cleanupErrors.length > 0) {
           throw new AggregateError(cleanupErrors, "Memory V6 runtime API cleanup failed.");
@@ -1743,8 +1769,8 @@ export async function startMemoryV6RuntimeApi(
       runtimeGenerationId,
       security,
     }).catch(() => undefined);
-    storage?.close();
-    affectStorage?.close();
+    await workerClient?.close().catch(() => undefined);
+    await bootstrapWorker?.close().catch(() => undefined);
     throw error;
   }
 }

@@ -47,15 +47,15 @@ function savedCandidateIndices(error: CharacterContextErrorResponse): number[] {
 
 export async function settleCharacterAffectTurnWithRetry(deps: {
   correlationId: string;
-  isCurrentGeneration(): boolean;
-  getPending(): PendingCharacterAffectTurnSettlement | null;
+  isCurrentGeneration(): Promise<boolean> | boolean;
+  getPending(): Promise<PendingCharacterAffectTurnSettlement | null> | PendingCharacterAffectTurnSettlement | null;
   getContext(): Promise<CharacterContextResponse | CharacterContextErrorResponse>;
   evaluate(context: CharacterContextResponse, idempotencyPrefix: string): Promise<AffectEventInput[]>;
   persistEvaluation(input: {
     evaluationAttempt: number;
     expectedVersion: string;
     candidates: AffectEventInput[];
-  }): void;
+  }): Promise<void> | void;
   appraise(
     expectedVersion: string,
     candidates: AffectEventInput[],
@@ -65,23 +65,23 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
     effect: CharacterAffectTurnAppraisalEffect;
     savedCandidateIndices: number[];
     prepareReevaluation: boolean;
-  }): { reevaluationPrepared: boolean };
+  }): Promise<{ reevaluationPrepared: boolean }> | { reevaluationPrepared: boolean };
   validateOwner?(): Promise<boolean>;
   runAppraisalExclusive<T>(operation: () => T | Promise<T>): Promise<T>;
-  markDiscarded?(): void;
-  markSettled(): void;
+  markDiscarded?(): Promise<void> | void;
+  markSettled(): Promise<void> | void;
 }): Promise<CharacterAffectTurnSettlementResult> {
-  if (!deps.isCurrentGeneration()) {
+  if (!await deps.isCurrentGeneration()) {
     return { status: "invalidated" };
   }
-  let pending = deps.getPending();
+  let pending = await deps.getPending();
   if (!pending) {
     return { status: "settled", appraisal: null };
   }
 
   if (!pending.evaluation) {
     const context = await deps.getContext();
-    if (!deps.isCurrentGeneration()) {
+    if (!await deps.isCurrentGeneration()) {
       return { status: "invalidated" };
     }
     if (isCharacterContextError(context)) {
@@ -91,15 +91,15 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
       context,
       characterAffectTurnIdempotencyPrefix(deps.correlationId, pending.evaluationAttempt),
     );
-    if (!deps.isCurrentGeneration()) {
+    if (!await deps.isCurrentGeneration()) {
       return { status: "invalidated" };
     }
-    deps.persistEvaluation({
+    await deps.persistEvaluation({
       evaluationAttempt: pending.evaluationAttempt,
       expectedVersion: context.affect.version,
       candidates,
     });
-    pending = deps.getPending();
+    pending = await deps.getPending();
     if (!pending?.evaluation) {
       throw new Error("Character affect turn evaluation was not readable after persistence.");
     }
@@ -107,34 +107,34 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
 
   const evaluation = pending.evaluation;
   return deps.runAppraisalExclusive(async () => {
-    if (!deps.isCurrentGeneration()) {
+    if (!await deps.isCurrentGeneration()) {
       return { status: "invalidated" };
     }
     const ownerIsValid = !deps.validateOwner || await deps.validateOwner();
-    if (!deps.isCurrentGeneration()) {
+    if (!await deps.isCurrentGeneration()) {
       return { status: "invalidated" };
     }
     if (!ownerIsValid) {
-      (deps.markDiscarded ?? deps.markSettled)();
+      await (deps.markDiscarded ?? deps.markSettled)();
       return { status: "settled", appraisal: null };
     }
 
     if (evaluation.candidates.length === 0) {
-      deps.markSettled();
+      await deps.markSettled();
       return { status: "settled", appraisal: null };
     }
 
     const appraisal = await deps.appraise(evaluation.expectedVersion, evaluation.candidates);
-    if (!deps.isCurrentGeneration()) {
+    if (!await deps.isCurrentGeneration()) {
       return { status: "invalidated" };
     }
     if (!isCharacterContextError(appraisal)) {
-      deps.markSettled();
+      await deps.markSettled();
       return { status: "settled", appraisal };
     }
 
     const effect = appraisalEffect(appraisal);
-    deps.recordAppraisalFailure({
+    await deps.recordAppraisalFailure({
       evaluationAttempt: evaluation.evaluationAttempt,
       effect,
       savedCandidateIndices: savedCandidateIndices(appraisal),

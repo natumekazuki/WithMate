@@ -1105,6 +1105,18 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
   });
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "V6 lifecycle は限定された storage Worker だけを初期化し、legacy session/audit/memory/Mate table を作成しない"
+// oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
+// fault = "V6起動時にMain側またはlegacy storageが同期接続し、既存V6 DBへlegacy schemaを追加する"
+// observable = "一時V6 DBのWorker経由storage操作と終了後のsqlite_master table一覧"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-worker-lifecycle"
+// lifecycle = "permanent"
+// impact = "V6 DBの所有者をWorkerに限定し、既存データ形式とlegacy table不在を維持する"
+// distinction = "型検査では実Workerの初期化、awaitされたproxy呼出し、SQLite schema副作用を確認できない"
+// @end-test-value
 test("PersistentStoreLifecycleService は V6 DB に legacy session/audit/memory/Mate table を作成しない", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "withmate-v6-lifecycle-"));
   try {
@@ -1135,11 +1147,14 @@ test("PersistentStoreLifecycleService は V6 DB に legacy session/audit/memory/
 
     const service = createPersistentStoreLifecycleService();
     const bundle = await service.initialize(dbPath, bundledModelCatalogPath, userDataPath);
-    const auxiliary = bundle.auxiliarySessionStorage.upsertAuxiliarySession(createAuxiliarySessionFixture());
-    assert.equal(auxiliary.id, "aux-v6");
-    assert.equal(bundle.auxiliarySessionStorage.listAuxiliarySessions("session-v6")[0]?.id, "aux-v6");
+    try {
+      const auxiliary = await bundle.auxiliarySessionStorage.upsertAuxiliarySession(createAuxiliarySessionFixture());
+      assert.equal(auxiliary.id, "aux-v6");
+      assert.equal((await bundle.auxiliarySessionStorage.listAuxiliarySessions("session-v6"))[0]?.id, "aux-v6");
+    } finally {
+      await service.close(bundle, dbPath);
+    }
     const tables = readTableNames(dbPath);
-    service.close(bundle, dbPath);
     assert.equal(tables.includes("sessions_v6"), true);
     assert.equal(tables.includes("audit_events_v6"), false);
     assert.equal(tables.includes("session_turns_v6"), true);

@@ -65,15 +65,11 @@ export class MainSessionCommandFacade {
       await this.deps.initializeCreatedSession(session);
       return session;
     } catch (cause) {
-      try {
-        await this.deleteSession(session.id);
-        if (this.deps.isSessionFilesWorkspace(session)) {
-          await this.deps.cleanupSessionFilesDirectory?.(session.id);
-        }
-      } catch (cleanupError) {
-        throw new AggregateError([cause, cleanupError], "Session初期化と作成済みデータの後始末に失敗しました。", { cause });
-      }
-      throw cause;
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(
+        `Main Session の保存後初期化に失敗しました。保存済みの Session ID: ${session.id}。${reason}`,
+        { cause },
+      );
     }
   }
 

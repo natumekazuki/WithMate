@@ -6,9 +6,20 @@ import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { AppSettings } from "../../src/provider-settings-state.js";
 import { MainBroadcastFacade } from "../../src-electron/main-broadcast-facade.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "MainBroadcastFacadeは非同期のcatalog/settings/prompt取得を待って各broadcastへ委譲する"
+// oracle = { type = "contract", ref = "src-electron/main-broadcast-facade.ts#broadcastModelCatalog" }
+// fault = "非同期storageのPromiseをpayloadとして送信するかprompt broadcastを取りこぼす"
+// observable = "各WindowBroadcastService呼び出しのpayloadと順序"
+// observation_boundary = "public-boundary"
+// scope = "main-broadcast-facade"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService へ委譲する", () => {
-  const calls: string[] = [];
-  const facade = new MainBroadcastFacade({
+  return (async () => {
+    const calls: string[] = [];
+    const facade = new MainBroadcastFacade({
     getWindowBroadcastService: () =>
       ({
         broadcastSessionInvalidation(payload: SessionSummaryInvalidation) {
@@ -30,27 +41,28 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
           calls.push(`reviews:${payload.length}`);
         },
       }) as never,
-    getModelCatalog: () => ({ revision: 3, providers: [] }),
-    getAppSettings: () =>
+    getModelCatalog: async () => ({ revision: 3, providers: [] }),
+    getAppSettings: async () =>
       ({
         providers: {},
         codingProviderSettings: {},
         memoryExtractionProviderSettings: {},
         characterReflectionProviderSettings: {},
       }) as never,
-    listPromptTemplates: () => [{ id: "template-1" }] as never,
+    listPromptTemplates: async () => [{ id: "template-1" }] as never,
     listOpenSessionWindowIds: () => ["s-1", "s-2"],
     listOpenCompanionReviewWindowIds: () => ["review-1"],
-  });
+    });
 
-  facade.broadcastSessions(["s-1"]);
-  facade.broadcastModelCatalog();
-  facade.broadcastAppSettings();
-  facade.broadcastPromptTemplates();
-  facade.broadcastOpenSessionWindowIds();
-  facade.broadcastOpenCompanionReviewWindowIds();
+    facade.broadcastSessions(["s-1"]);
+    await facade.broadcastModelCatalog();
+    await facade.broadcastAppSettings();
+    await facade.broadcastPromptTemplates();
+    facade.broadcastOpenSessionWindowIds();
+    facade.broadcastOpenCompanionReviewWindowIds();
 
-  assert.deepEqual(calls, ["invalidated:ids:s-1", "catalog:3", "settings", "templates:1", "windows:2", "reviews:1"]);
+    assert.deepEqual(calls, ["invalidated:ids:s-1", "catalog:3", "settings", "templates:1", "windows:2", "reviews:1"]);
+  })();
 });
 
 test("MainBroadcastFacade は invalidation ID の上限超過を all に収束させる", () => {

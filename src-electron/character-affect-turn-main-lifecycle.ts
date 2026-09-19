@@ -20,9 +20,10 @@ import { drainCharacterAffectTurnSettlementBatch, type CharacterAffectTurnDrainC
 import {
   hasCommittedAssistantMessage,
   type CharacterAffectTurnFailureStage,
-  type CharacterAffectTurnSettlementStorage,
+  type CharacterAffectTurnSettlementStorageAccess,
 } from "./character-affect-turn-settlement-storage.js";
 import type { MemoryV6RuntimeApiHandle } from "./memory-v6-runtime.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type CharacterAffectTurnSettlementRequest = {
   session: Session;
@@ -38,10 +39,10 @@ export type CharacterAffectTurnLifecycleRuntime = {
 };
 
 export function createCharacterAffectTurnMainLifecycle(deps: {
-  getSettlementStorage(): CharacterAffectTurnSettlementStorage | null;
+  getSettlementStorage(): Awaitable<CharacterAffectTurnSettlementStorageAccess | null>;
   getRuntimeApi(): CharacterAffectTurnLifecycleRuntime | null;
-  getCharacterSnapshot(characterId: string): CharacterRuntimeSnapshot | null;
-  getAppSettings(): AppSettings;
+  getCharacterSnapshot(characterId: string): Awaitable<CharacterRuntimeSnapshot | null>;
+  getAppSettings(): Awaitable<AppSettings>;
   getProviderBackgroundAdapter(providerId: string | null | undefined): Pick<ProviderBackgroundAdapter, "runBackgroundStructuredPrompt">;
   getSession(sessionId: string): Promise<Session | null>;
   startupRecoveryCutoff: string;
@@ -50,8 +51,8 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
   getDrainCursor(): CharacterAffectTurnDrainCursor | undefined;
   setDrainCursor(cursor: CharacterAffectTurnDrainCursor | undefined): void;
 }) {
-  const requireStorage = () => {
-    const storage = deps.getSettlementStorage();
+  const requireStorage = async () => {
+    const storage = await deps.getSettlementStorage();
     if (!storage) {
       throw new Error("Character affect turn settlement storage is not initialized.");
     }
@@ -62,21 +63,21 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
     if (request.session.sessionKind !== "default" || !request.session.characterId) {
       return true;
     }
-    const settlementStorage = requireStorage();
+    const settlementStorage = await requireStorage();
     if (!hasCommittedAssistantMessage(request.session.messages, request)) {
-      settlementStorage.markDiscarded(request.correlationId);
+      await settlementStorage.markDiscarded(request.correlationId);
       return true;
     }
-    const attemptCount = settlementStorage.recordAttempt(request.correlationId);
+    const attemptCount = await settlementStorage.recordAttempt(request.correlationId);
     if (attemptCount === null) {
       return true;
     }
     const runtimeApi = deps.getRuntimeApi();
-    const isCurrentGeneration = () => settlementStorage === deps.getSettlementStorage()
+    const isCurrentGeneration = async () => settlementStorage === await deps.getSettlementStorage()
       && runtimeApi === deps.getRuntimeApi();
-    const reportInvalidatedSettlement = (): boolean => {
-      if (settlementStorage === deps.getSettlementStorage()) {
-        settlementStorage.recoverInterruptedAttempts(new Date().toISOString(), request.correlationId);
+    const reportInvalidatedSettlement = async (): Promise<boolean> => {
+      if (settlementStorage === await deps.getSettlementStorage()) {
+        await settlementStorage.recoverInterruptedAttempts(new Date().toISOString(), request.correlationId);
       }
       deps.writeAppLog({
         level: "info",
@@ -90,13 +91,13 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
     let activeStage: CharacterAffectTurnFailureStage = "runtime";
     let stageStartedAt = Date.now();
     let dispositionFailure: unknown;
-    const recordFailure = (input: {
+    const recordFailure = async (input: {
       code: string;
       retryable: boolean;
       effect?: string;
       error?: unknown;
-    }): boolean => {
-      if (!isCurrentGeneration()) {
+    }): Promise<boolean> => {
+      if (!await isCurrentGeneration()) {
         return reportInvalidatedSettlement();
       }
       const diagnostic = createCharacterAffectTurnFailureDiagnostic({
@@ -105,16 +106,16 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
         error: input.error,
         durationMs: Date.now() - stageStartedAt,
       });
-      let disposition: ReturnType<CharacterAffectTurnSettlementStorage["recordFailure"]>;
+      let disposition: Awaited<ReturnType<CharacterAffectTurnSettlementStorageAccess["recordFailure"]>>;
       try {
-        disposition = settlementStorage.recordFailure({
+        disposition = await settlementStorage.recordFailure({
           correlationId: request.correlationId,
           retryable: input.retryable,
           diagnostic,
         });
       } catch (error) {
         dispositionFailure = error;
-        settlementStorage.recoverInterruptedAttempts(new Date().toISOString(), request.correlationId);
+        await settlementStorage.recoverInterruptedAttempts(new Date().toISOString(), request.correlationId);
         throw error;
       }
       deps.writeAppLog({
@@ -150,7 +151,7 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
       return recordFailure({ code: "runtime_unavailable", retryable: true });
     }
     const character = request.session.characterRuntimeSnapshot
-      ?? deps.getCharacterSnapshot(request.session.characterId);
+      ?? await deps.getCharacterSnapshot(request.session.characterId);
     if (!character) {
       return recordFailure({ code: "unknown_character", retryable: false });
     }
@@ -188,7 +189,7 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
           const evaluationResult = await backgroundAdapter.runBackgroundStructuredPrompt({
             providerId: request.session.provider,
             workspacePath: request.session.workspacePath,
-            appSettings: deps.getAppSettings(),
+            appSettings: await deps.getAppSettings(),
             model: request.session.model,
             reasoningEffort: request.session.reasoningEffort,
             timeoutMs: 15_000,
@@ -211,8 +212,8 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
             idempotencyPrefix,
           });
         },
-        persistEvaluation: (input) => {
-          settlementStorage.saveEvaluation({ correlationId: request.correlationId, ...input });
+        persistEvaluation: async (input) => {
+          await settlementStorage.saveEvaluation({ correlationId: request.correlationId, ...input });
         },
         appraise: (expectedVersion, candidates) => {
           activeStage = "appraisal";
@@ -226,8 +227,8 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
             candidates,
           }, "lifecycle");
         },
-        recordAppraisalFailure: (input) => {
-          return settlementStorage.recordAppraisalFailure({ correlationId: request.correlationId, ...input });
+        recordAppraisalFailure: async (input) => {
+          return await settlementStorage.recordAppraisalFailure({ correlationId: request.correlationId, ...input });
         },
         runAppraisalExclusive: deps.runAppraisalExclusive,
         validateOwner: async () => {
@@ -239,11 +240,11 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
             && hasCommittedAssistantMessage(currentSession.messages, request),
           );
         },
-        markDiscarded: () => {
-          settlementStorage.markDiscarded(request.correlationId);
+        markDiscarded: async () => {
+          await settlementStorage.markDiscarded(request.correlationId);
         },
-        markSettled: () => {
-          settlementStorage.markSettled(request.correlationId);
+        markSettled: async () => {
+          await settlementStorage.markSettled(request.correlationId);
         },
       });
       if (settlement.status === "invalidated") {
@@ -288,15 +289,15 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
   }
 
   async function drainPendingCharacterAffectTurns(): Promise<boolean> {
-    const settlementStorage = requireStorage();
+    const settlementStorage = await requireStorage();
     const result = await drainCharacterAffectTurnSettlementBatch({
       storage: settlementStorage,
-      isCurrentGeneration: () => settlementStorage === deps.getSettlementStorage(),
+      isCurrentGeneration: async () => settlementStorage === await deps.getSettlementStorage(),
       startupRecoveryCutoff: deps.startupRecoveryCutoff,
       readyCursor: deps.getDrainCursor(),
       getSession: deps.getSession,
-      settle: (item, session) => settlementStorage !== deps.getSettlementStorage()
-        ? Promise.resolve(true)
+      settle: async (item, session) => settlementStorage !== await deps.getSettlementStorage()
+        ? true
         : settleCharacterAffectTurn({
           session,
           correlationId: item.correlationId,
@@ -327,14 +328,14 @@ export function createCharacterAffectTurnMainLifecycle(deps: {
           },
         });
       },
-    }).catch((error: unknown) => {
-      if (settlementStorage !== deps.getSettlementStorage()) {
-        return { retryRequired: deps.getSettlementStorage() !== null, nextReadyCursor: undefined };
+    }).catch(async (error: unknown) => {
+      if (settlementStorage !== await deps.getSettlementStorage()) {
+        return { retryRequired: await deps.getSettlementStorage() !== null, nextReadyCursor: undefined };
       }
       throw error;
     });
-    if (settlementStorage !== deps.getSettlementStorage()) {
-      return deps.getSettlementStorage() !== null;
+    if (settlementStorage !== await deps.getSettlementStorage()) {
+      return await deps.getSettlementStorage() !== null;
     }
     deps.setDrainCursor(result.nextReadyCursor);
     return result.retryRequired;

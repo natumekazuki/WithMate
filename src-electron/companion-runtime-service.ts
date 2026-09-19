@@ -34,12 +34,12 @@ export type CompanionRuntimeServiceDeps = {
   updateCompanionSession(session: CompanionSession): Awaitable<CompanionSession>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
-  resolveSessionFolderPath?: (sessionId: string) => string;
-  getAppSettings: () => AppSettings;
-  resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
+  resolveSessionFolderPath?: (sessionId: string) => Awaitable<string>;
+  getAppSettings: () => Awaitable<AppSettings>;
+  resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): Awaitable<{
     snapshot: ModelCatalogSnapshot;
     provider: ModelCatalogProvider;
-  };
+  }>;
   getProviderCodingAdapter(providerId: string | null | undefined): ProviderCodingAdapter;
   createAuditLog?: (input: CreateAuditLogInput) => Awaitable<AuditLogEntry>;
   updateAuditLog?: (id: number, entry: CreateAuditLogInput) => Awaitable<void | AuditLogEntry>;
@@ -366,9 +366,10 @@ export class CompanionRuntimeService {
     }
 
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
-    const appSettings = this.deps.getAppSettings();
-    const { provider } = this.deps.resolveProviderCatalog(requestedSession.provider, requestedSession.catalogRevision);
+    const appSettings = await this.deps.getAppSettings();
+    const { provider } = await this.deps.resolveProviderCatalog(requestedSession.provider, requestedSession.catalogRevision);
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
+    const sessionFolderPath = await this.deps.resolveSessionFolderPath?.(providerSession.id);
     const character = buildCompanionCharacter(requestedSession);
     const sessionMemory = buildSessionMemory(requestedSession);
     const runningSessionCandidate: CompanionSession = {
@@ -384,7 +385,7 @@ export class CompanionRuntimeService {
       return {
         session: turnProviderSession,
         executionWorkspacePath: turnSession.worktreePath,
-        sessionFolderPath: this.deps.resolveSessionFolderPath?.(turnProviderSession.id),
+        sessionFolderPath,
         sessionMemory,
         projectMemoryEntries: [],
         character,

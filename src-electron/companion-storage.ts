@@ -36,6 +36,7 @@ import {
 } from "../src/codex-reviewer.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import type { ProviderRuntimeMetadataPatch } from "./provider-runtime-metadata-patch.js";
 
 type CompanionGroupRow = {
   id: string;
@@ -784,6 +785,42 @@ export class CompanionStorage {
     );
     this.replaceMessages(session.id, sessionToStoredMessages(session), session.updatedAt);
     return this.getSession(session.id) ?? cloneCompanionSessions([session])[0] as CompanionSession;
+  }
+
+  updateRuntimeMetadataIfMatches(sessionId: string, input: ProviderRuntimeMetadataPatch): CompanionSession | null {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const result = this.db.prepare(`
+        UPDATE companion_sessions
+        SET provider = ?, catalog_revision = ?, model = ?, reasoning_effort = ?,
+            thread_id = ?, updated_at = ?
+        WHERE id = ? AND provider = ? AND catalog_revision = ? AND model = ?
+          AND reasoning_effort = ? AND thread_id = ?
+      `).run(
+        input.next.provider,
+        input.next.catalogRevision,
+        input.next.model,
+        input.next.reasoningEffort,
+        input.next.threadId,
+        input.next.updatedAt,
+        sessionId,
+        input.expected.provider,
+        input.expected.catalogRevision,
+        input.expected.model,
+        input.expected.reasoningEffort,
+        input.expected.threadId,
+      );
+      if (Number(result.changes) !== 1) {
+        this.db.exec("ROLLBACK");
+        return null;
+      }
+      const stored = this.getSession(sessionId);
+      this.db.exec("COMMIT");
+      return stored;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   deleteSession(sessionId: string): void {

@@ -67,11 +67,24 @@ import {
 } from "./memory-protected-object-importer.js";
 
 export type MemoryV6ServiceDeps = MemoryV6TargetResolverDeps & {
-  storage: MemoryV6Storage;
-  listCharacters?(): readonly CharacterCatalogEntry[];
-  getMemoryFileQuotaBytes?(): number;
+  storage: MemoryV6StorageAccess;
+  listCharacters?(): Awaitable<readonly CharacterCatalogEntry[]>;
+  getMemoryFileQuotaBytes?(): Awaitable<number>;
   protectedObjectImporter?: MemoryV6ProtectedObjectImporter;
   protectedObjectExporter?: MemoryV6ProtectedObjectExporter;
+};
+
+type Awaitable<T> = T | Promise<T>;
+export type MemoryV6StorageAccess = {
+  [K in keyof Pick<MemoryV6Storage,
+    | "appendEntry" | "resolveAppendIdempotencyReplay" | "settleAppendCleanupObligation"
+    | "getEntry" | "listTargets" | "listEntries" | "searchEntries" | "searchEntriesForReview"
+    | "getFileUsage" | "listLargestFileEntries" | "getProtectedObjectForExport"
+    | "listProtectedObjectsForEntryExport" | "listDeletePendingProtectedObjectsForGc"
+    | "listProtectedObjectIdsForGc" | "markProtectedObjectDeletedForGc" | "listTags"
+    | "listTagsPage" | "listTagStatistics" | "listTagStatisticsPage" | "forgetEntries"
+    | "previewForgetEntries" | "moveEntry" | "forgetEntryForReview"
+  >]: (...args: Parameters<MemoryV6Storage[K]>) => Awaitable<ReturnType<MemoryV6Storage[K]>>;
 };
 
 export type MemoryV6ProtectedObjectImporter = {
@@ -332,34 +345,34 @@ function toFileImportError(error: unknown, index: number): MemoryV6FileImportErr
 export class MemoryV6Service {
   constructor(private readonly deps: MemoryV6ServiceDeps) {}
 
-  listCharacters(principal: MemoryV6Principal | null): MemoryV6ServiceResult<MemoryListCharactersResponse> {
+  async listCharacters(principal: MemoryV6Principal | null): Promise<MemoryV6ServiceResult<MemoryListCharactersResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.list_characters");
     if (permissionError) {
       return permissionError;
     }
-    return createMemoryListCharactersResponse(this.deps.listCharacters?.() ?? []);
+    return createMemoryListCharactersResponse(await this.deps.listCharacters?.() ?? []);
   }
 
-  fileUsage(principal: MemoryV6Principal | null, options: MemoryV6FileUsageOptions = {}): MemoryV6ServiceResult<MemoryFileUsageResponse> {
+  async fileUsage(principal: MemoryV6Principal | null, options: MemoryV6FileUsageOptions = {}): Promise<MemoryV6ServiceResult<MemoryFileUsageResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.file_usage");
     if (permissionError) {
       return permissionError;
     }
-    const quotaBytes = normalizeMemoryFileQuotaBytes(this.deps.getMemoryFileQuotaBytes?.() ?? MEMORY_FILE_QUOTA_DEFAULT_BYTES);
+    const quotaBytes = normalizeMemoryFileQuotaBytes(await this.deps.getMemoryFileQuotaBytes?.() ?? MEMORY_FILE_QUOTA_DEFAULT_BYTES);
     const largestEntries = options.includeLargestEntries
-      ? this.deps.storage.listLargestFileEntries({
+      ? await this.deps.storage.listLargestFileEntries({
           limit: normalizeLargestFileEntryLimit(options.largestLimit),
           ...(principal?.type === "session_binding" ? { allowedCharacterId: principal.characterId } : {}),
         })
       : undefined;
     return createMemoryFileUsageResponse({
       quotaBytes,
-      ...this.deps.storage.getFileUsage(),
+      ...(await this.deps.storage.getFileUsage()),
       ...(largestEntries === undefined ? {} : { largestEntries }),
     });
   }
 
-  listTargets(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryListTargetsResponse> {
+  async listTargets(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryListTargetsResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.list_targets");
     if (permissionError) {
       return permissionError;
@@ -373,7 +386,7 @@ export class MemoryV6Service {
     }
     let projectId: string | undefined;
     if (validated.value.project) {
-      const resolved = resolveMemoryV6Target(
+      const resolved = await resolveMemoryV6Target(
         { owner: "project", scope: "project", project: validated.value.project },
         principal,
         this.deps,
@@ -386,13 +399,13 @@ export class MemoryV6Service {
     }
     let characterId: string | undefined;
     if (validated.value.character) {
-      const resolved = resolveMemoryV6Target({ owner: "character", scope: "character", character: validated.value.character }, principal, this.deps);
+      const resolved = await resolveMemoryV6Target({ owner: "character", scope: "character", character: validated.value.character }, principal, this.deps);
       if (!resolved.ok) {
         return toMemoryErrorResponse(resolved.error);
       }
       characterId = resolved.target.owner.id;
     }
-    const result = this.deps.storage.listTargets({
+    const result = await this.deps.storage.listTargets({
       ownerType: validated.value.owner,
       scopeType: validated.value.scope,
       projectId,
@@ -406,7 +419,7 @@ export class MemoryV6Service {
     return createMemoryListTargetsResponse(result.items.map(toTargetInventoryItem), result.nextCursor);
   }
 
-  listEntries(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryListEntriesResponse> {
+  async listEntries(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryListEntriesResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.list_entries");
     if (permissionError) {
       return permissionError;
@@ -418,11 +431,11 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
+    const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
-    const result = this.deps.storage.listEntries({
+    const result = await this.deps.storage.listEntries({
       target: resolved.target,
       states: validated.value.states,
       kinds: validated.value.kinds,
@@ -438,7 +451,7 @@ export class MemoryV6Service {
     })), result.nextCursor);
   }
 
-  audit(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryAuditResponse> {
+  async audit(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryAuditResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.audit");
     if (permissionError) {
       return permissionError;
@@ -456,24 +469,24 @@ export class MemoryV6Service {
     let inventoryItems: MemoryV6TargetInventoryItem[];
     let nextCursor: string | undefined;
     if (validated.value.allTargets) {
-      const inventory = this.deps.storage.listTargets({ limit: validated.value.limit, cursor: validated.value.cursor });
+      const inventory = await this.deps.storage.listTargets({ limit: validated.value.limit, cursor: validated.value.cursor });
       inventoryItems = inventory.items;
       nextCursor = inventory.nextCursor;
     } else {
       inventoryItems = [];
       for (const selector of validated.value.targets ?? []) {
-        const resolved = resolveMemoryV6Target(selector, principal, this.deps, { projectPathResolution: "known" });
+        const resolved = await resolveMemoryV6Target(selector, principal, this.deps, { projectPathResolution: "known" });
         if (!resolved.ok) {
           return toMemoryErrorResponse(resolved.error);
         }
-        const inventory = this.deps.storage.listTargets({
+        const inventory = (await this.deps.storage.listTargets({
           ownerType: resolved.target.owner.type,
           scopeType: resolved.target.scope.type,
           projectId: resolved.target.scope.type === "project" ? resolved.target.scope.id : undefined,
           characterId: resolved.target.owner.type === "character" ? resolved.target.owner.id : undefined,
           includeEmpty: true,
           limit: 50,
-        }).items.find((item) => sameTarget(item.target, resolved.target));
+        })).items.find((item) => sameTarget(item.target, resolved.target));
         inventoryItems.push(inventory ?? {
           target: resolved.target,
           entryCount: 0,
@@ -483,11 +496,11 @@ export class MemoryV6Service {
       }
     }
 
-    const targets = inventoryItems.map((inventory) => {
+    const targets = await Promise.all(inventoryItems.map(async (inventory) => {
       const entries: MemoryEntryDetail[] = [];
       let cursor: string | undefined;
       do {
-        const page = this.deps.storage.listEntries({ target: inventory.target, states: ["active"], limit: 50, cursor });
+        const page = await this.deps.storage.listEntries({ target: inventory.target, states: ["active"], limit: 50, cursor });
         entries.push(...page.items);
         cursor = page.nextCursor;
       } while (cursor);
@@ -495,14 +508,14 @@ export class MemoryV6Service {
         target: toTargetInventoryItem(inventory),
         resolvedTarget: inventory.target,
         entries,
-        tagStatistics: this.deps.storage.listTagStatistics([inventory.target]),
+        tagStatistics: await this.deps.storage.listTagStatistics([inventory.target]),
         staleBefore,
       });
-    });
+    }));
     return createMemoryAuditResponse({ generatedAt, staleBefore, targets, ...(nextCursor ? { nextCursor } : {}) });
   }
 
-  search(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemorySearchResponse> {
+  async search(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemorySearchResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.search");
     if (permissionError) {
       return permissionError;
@@ -517,14 +530,14 @@ export class MemoryV6Service {
 
     const resolvedTargets: MemoryV6ResolvedTarget[] = [];
     for (const target of validated.value.targets) {
-      const resolved = resolveMemoryV6Target(target, principal, this.deps, { projectPathResolution: "known" });
+      const resolved = await resolveMemoryV6Target(target, principal, this.deps, { projectPathResolution: "known" });
       if (!resolved.ok) {
         return toMemoryErrorResponse(resolved.error);
       }
       resolvedTargets.push(resolved.target);
     }
 
-    const result = this.deps.storage.searchEntries({
+    const result = await this.deps.storage.searchEntries({
       targets: resolvedTargets,
       query: validated.value.query,
       kinds: validated.value.kinds,
@@ -538,7 +551,7 @@ export class MemoryV6Service {
     });
   }
 
-  getEntry(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryGetEntryResponse> {
+  async getEntry(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryGetEntryResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.get_entry");
     if (permissionError) {
       return permissionError;
@@ -551,13 +564,13 @@ export class MemoryV6Service {
       return toMemoryErrorResponse(validated.error);
     }
 
-    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
+    const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
     const requestedTarget = resolved.target;
 
-    const entry = this.deps.storage.getEntry(validated.value.entryId);
+    const entry = await this.deps.storage.getEntry(validated.value.entryId);
     if (!entry || entry.state !== "active") {
       return createMemoryGetEntryResponse(null);
     }
@@ -580,7 +593,7 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
+    const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
@@ -592,7 +605,7 @@ export class MemoryV6Service {
       });
     }
 
-    const metadata = this.deps.storage.getProtectedObjectForExport({
+    const metadata = await this.deps.storage.getProtectedObjectForExport({
       target: resolved.target,
       objectId: validated.value.objectId,
     });
@@ -639,7 +652,7 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
+    const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
@@ -651,7 +664,7 @@ export class MemoryV6Service {
       });
     }
 
-    const metadata = this.deps.storage.listProtectedObjectsForEntryExport({
+    const metadata = await this.deps.storage.listProtectedObjectsForEntryExport({
       target: resolved.target,
       entryId: validated.value.entryId,
     });
@@ -683,7 +696,7 @@ export class MemoryV6Service {
     }
   }
 
-  listTags(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryListTagsResponse> {
+  async listTags(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryListTagsResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.list_tags");
     if (permissionError) {
       return permissionError;
@@ -698,7 +711,7 @@ export class MemoryV6Service {
 
     const resolvedTargets: MemoryV6ResolvedTarget[] = [];
     for (const target of validated.value.targets) {
-      const resolved = resolveMemoryV6Target(target, principal, this.deps, { projectPathResolution: "known" });
+      const resolved = await resolveMemoryV6Target(target, principal, this.deps, { projectPathResolution: "known" });
       if (!resolved.ok) {
         return toMemoryErrorResponse(resolved.error);
       }
@@ -706,7 +719,7 @@ export class MemoryV6Service {
     }
 
     if (validated.value.withCounts) {
-      const page = this.deps.storage.listTagStatisticsPage(resolvedTargets, {
+      const page = await this.deps.storage.listTagStatisticsPage(resolvedTargets, {
         sampleLimit: validated.value.sampleLimit,
         limit: validated.value.limit,
         cursor: validated.value.cursor,
@@ -719,7 +732,7 @@ export class MemoryV6Service {
         ...(tag.samples.length > 0 ? { samples: tag.samples } : {}),
       })), page.nextCursor);
     }
-    const page = this.deps.storage.listTagsPage(resolvedTargets, {
+    const page = await this.deps.storage.listTagsPage(resolvedTargets, {
       limit: validated.value.limit,
       cursor: validated.value.cursor,
     });
@@ -738,7 +751,7 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps);
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
@@ -761,7 +774,7 @@ export class MemoryV6Service {
         })
         : undefined;
       if (hasFiles && validated.value.idempotencyKey && requestFingerprint) {
-        const replay = this.deps.storage.resolveAppendIdempotencyReplay({
+        const replay = await this.deps.storage.resolveAppendIdempotencyReplay({
           target: resolved.target,
           idempotencyKey: validated.value.idempotencyKey,
           bindingIdHash: bindingIdHashForPrincipal(principal),
@@ -782,7 +795,7 @@ export class MemoryV6Service {
       }
 
       const entryId = hasFiles ? `mem-${randomUUID()}` : undefined;
-      const fileQuotaBytes = normalizeMemoryFileQuotaBytes(this.deps.getMemoryFileQuotaBytes?.() ?? MEMORY_FILE_QUOTA_DEFAULT_BYTES);
+      const fileQuotaBytes = normalizeMemoryFileQuotaBytes(await this.deps.getMemoryFileQuotaBytes?.() ?? MEMORY_FILE_QUOTA_DEFAULT_BYTES);
       const protectedObjects = hasFiles && this.deps.protectedObjectImporter
         ? await this.prepareProtectedObjects({
           entryId: entryId ?? `mem-${randomUUID()}`,
@@ -792,7 +805,7 @@ export class MemoryV6Service {
         : [];
       let result;
       try {
-        result = this.deps.storage.appendEntry({
+        result = await this.deps.storage.appendEntry({
           ...(entryId ? { id: entryId } : {}),
           target: resolved.target,
           kind: validated.value.kind,
@@ -839,7 +852,7 @@ export class MemoryV6Service {
           });
         }
         if (validated.value.idempotencyKey && redundantObjects.length > 0) {
-          this.deps.storage.settleAppendCleanupObligation({
+          await this.deps.storage.settleAppendCleanupObligation({
             target: resolved.target,
             idempotencyKey: validated.value.idempotencyKey,
             bindingIdHash: bindingIdHashForPrincipal(principal),
@@ -871,7 +884,7 @@ export class MemoryV6Service {
       }),
     );
     const incomingBytes = inspections.reduce((sum, item) => sum + item.originalBytes, 0);
-    const usage = this.deps.storage.getFileUsage();
+    const usage = await this.deps.storage.getFileUsage();
     if (usage.usedBytes + incomingBytes > input.fileQuotaBytes) {
       throw new MemoryV6FileQuotaExceededError(input.fileQuotaBytes, usage.usedBytes, incomingBytes);
     }
@@ -914,7 +927,7 @@ export class MemoryV6Service {
     return results.every(Boolean);
   }
 
-  forget(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryForgetResponse> {
+  async forget(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryForgetResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.forget");
     if (permissionError) {
       return permissionError;
@@ -926,7 +939,7 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const resolved = resolveMemoryV6Target(
+    const resolved = await resolveMemoryV6Target(
       validated.value.target,
       principal,
       this.deps,
@@ -942,7 +955,7 @@ export class MemoryV6Service {
         target: resolved.target,
       });
       if (validated.value.dryRun) {
-        const results = this.deps.storage.previewForgetEntries({
+        const results = (await this.deps.storage.previewForgetEntries({
           target: resolved.target,
           entryIds: validated.value.entryIds,
           reason: validated.value.reason,
@@ -950,7 +963,7 @@ export class MemoryV6Service {
           bindingIdHash: bindingIdHashForPrincipal(principal),
           requestFingerprint,
           sourceMessageId: validated.value.sourceMessageId ?? null,
-        }).map((result) => ({
+        })).map((result) => ({
           entryId: result.entryId,
           status: result.status,
           ...(result.replayed ? { replayed: true as const } : {}),
@@ -959,7 +972,7 @@ export class MemoryV6Service {
         }));
         return createMemoryForgetResponse(results, { dryRun: true });
       }
-      const results = this.deps.storage.forgetEntries({
+      const results = await this.deps.storage.forgetEntries({
         target: resolved.target,
         entryIds: validated.value.entryIds,
         reason: validated.value.reason,
@@ -975,7 +988,7 @@ export class MemoryV6Service {
     }
   }
 
-  moveEntry(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryMoveEntryResponse> {
+  async moveEntry(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryMoveEntryResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.move_entry");
     if (permissionError) {
       return permissionError;
@@ -987,11 +1000,11 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const from = resolveMemoryV6Target(validated.value.from, principal, this.deps, { projectPathResolution: "known" });
+    const from = await resolveMemoryV6Target(validated.value.from, principal, this.deps, { projectPathResolution: "known" });
     if (!from.ok) {
       return toMemoryErrorResponse(from.error);
     }
-    const to = resolveMemoryV6Target(validated.value.to, principal, this.deps);
+    const to = await resolveMemoryV6Target(validated.value.to, principal, this.deps);
     if (!to.ok) {
       return toMemoryErrorResponse(to.error);
     }
@@ -1003,7 +1016,7 @@ export class MemoryV6Service {
       });
     }
     try {
-      const result = this.deps.storage.moveEntry({
+      const result = await this.deps.storage.moveEntry({
         entryId: validated.value.entryId,
         from: from.target,
         to: to.target,

@@ -4,6 +4,7 @@ import { cp, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promi
 import path from "node:path";
 
 import { resolveProviderSkillRootPath, type AppSettings } from "../src/provider-settings-state.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export const WITHMATE_GLOSSARY_SKILL_NAME = "withmate-glossary";
 const MANAGED_MARKER_FILE = ".withmate-managed-skill.json";
@@ -42,7 +43,7 @@ type ManagedSkillMarker = {
 };
 
 export type ManagedSkillDistributionServiceDeps = {
-  getAppSettings(): AppSettings;
+  getAppSettings(): Awaitable<AppSettings>;
   getAppVersion(): string;
   isPackagedApp(): boolean;
   platform?: NodeJS.Platform;
@@ -57,7 +58,7 @@ export class ManagedSkillDistributionService {
   async syncConfiguredProviderSkills(
     bundle: ManagedSkillBundleDescriptor,
   ): Promise<ManagedSkillSyncResult[]> {
-    const appSettings = this.deps.getAppSettings();
+    const appSettings = await this.deps.getAppSettings();
     const providerEntries = Object.entries(appSettings.codingProviderSettings);
     return Promise.all(providerEntries.map(([providerId, providerSettings]) =>
       this.syncProviderSkill(bundle, providerId, resolveProviderSkillRootPath(providerSettings)),

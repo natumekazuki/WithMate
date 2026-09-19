@@ -1,5 +1,6 @@
 import { basename, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
+import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
@@ -306,7 +307,7 @@ export function readV6DatabaseUserVersion(dbPath: string): number | null {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    db = openAppDatabaseReadOnly(dbPath);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
     return typeof row?.user_version === "number" ? row.user_version : null;
   } catch {
@@ -323,7 +324,7 @@ export function isValidV6Database(dbPath: string): boolean {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    db = openAppDatabaseReadOnly(dbPath);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
     if (row?.user_version !== APP_DATABASE_V6_SCHEMA_VERSION) {
       return false;
@@ -367,7 +368,7 @@ export function isValidV6DatabaseShallow(dbPath: string): boolean {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
+    db = openAppDatabaseReadOnly(dbPath);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
     if (row?.user_version !== APP_DATABASE_V6_SCHEMA_VERSION) {
       return false;

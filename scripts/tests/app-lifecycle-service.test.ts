@@ -247,6 +247,50 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
   ]);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "AppLifecycleServiceはclosePersistentStoresの非同期完了後にだけquitを実行する"
+// oracle = { type = "contract", ref = "src-electron/app-lifecycle-service.ts#handleBeforeQuit" }
+// fault = "closePersistentStoresの完了を待たずにElectron quitを実行する"
+// observable = "closePersistentStoresの終了後に記録されたquitApp呼出し順"
+// observation_boundary = "public-boundary"
+// scope = "application-shutdown-persistent-store"
+// lifecycle = "permanent"
+// impact = "終了時にStorage Workerや非同期storeが未完了のままprocess終了し、保存結果が不明になることを防ぐ"
+// distinction = "provider cleanupではなくAppLifecycleServiceのclosePersistentStores完了とquit順序を直接確認する"
+// @end-test-value
+test("AppLifecycleService は非同期persistent store closeの完了後にquitする", async () => {
+  const calls: string[] = [];
+  let resolveClose: (() => void) | null = null;
+  const service = new AppLifecycleService({
+    hasInFlightSessionRuns: () => false,
+    getAllowQuitWithInFlightRuns: () => false,
+    setAllowQuitWithInFlightRuns() {},
+    async createHomeWindow() {},
+    quitApp() {
+      calls.push("quitApp");
+    },
+    shouldQuitWhenAllWindowsClosed: () => true,
+    confirmQuitWhileRunning: () => true,
+    closePersistentStores() {
+      calls.push("closePersistentStores:start");
+      return new Promise<void>((resolve) => {
+        resolveClose = () => {
+          calls.push("closePersistentStores:end");
+          resolve();
+        };
+      });
+    },
+  });
+
+  const cleanup = service.handleBeforeQuit({ preventDefault() {} });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["closePersistentStores:start"]);
+  resolveClose?.();
+  await cleanup;
+  assert.deepEqual(calls, ["closePersistentStores:start", "closePersistentStores:end", "quitApp"]);
+});
+
 // @test-value v1
 // kind = "invariant"
 // claim = "binding revoke、runtime stop、store closeが個別に失敗しても終了処理は一度だけsettleする"

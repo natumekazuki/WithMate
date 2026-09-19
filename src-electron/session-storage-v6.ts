@@ -62,6 +62,7 @@ import type {
   SessionRunningTurnStartInput,
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
+import type { ProviderRuntimeMetadataPatch } from "./provider-runtime-metadata-patch.js";
 
 type SessionV6Row = {
   id: string;
@@ -138,6 +139,11 @@ export type SessionThreadPatchInput = {
   expectedThreadId: string;
   nextThreadId: string;
   updatedAt: string;
+};
+
+export type SessionRuntimeMetadataPatchInput = ProviderRuntimeMetadataPatch & {
+  sessionId: string;
+  incarnationId: string;
 };
 
 type DecodedSessionV6RuntimeState = {
@@ -517,6 +523,48 @@ export class SessionStorageV6 {
         SET thread_id = ?, updated_at = ?, last_active_at = ?
         WHERE id = ? AND incarnation_id = ? AND provider_id = ? AND thread_id = ?
       `).run(input.nextThreadId, input.updatedAt, input.updatedAt, input.sessionId, input.incarnationId, input.provider, input.expectedThreadId);
+      if (Number(result.changes) !== 1) {
+        this.db.exec("ROLLBACK");
+        return null;
+      }
+      const stored = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(input.sessionId) as SessionV6Row | undefined;
+      if (!stored) {
+        throw new SessionNotFoundError(input.sessionId);
+      }
+      const resultSession = this.rowToSession(stored);
+      this.db.exec("COMMIT");
+      return resultSession;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Session | null {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const result = this.db.prepare(`
+        UPDATE sessions_v6
+        SET provider_id = ?, catalog_revision = ?, model_id = ?, reasoning_effort = ?,
+            thread_id = ?, updated_at = ?, last_active_at = ?
+        WHERE id = ? AND incarnation_id = ? AND provider_id = ? AND catalog_revision = ?
+          AND model_id = ? AND reasoning_effort = ? AND thread_id = ?
+      `).run(
+        input.next.provider,
+        input.next.catalogRevision,
+        input.next.model,
+        input.next.reasoningEffort,
+        input.next.threadId,
+        input.next.updatedAt,
+        input.next.updatedAt,
+        input.sessionId,
+        input.incarnationId,
+        input.expected.provider,
+        input.expected.catalogRevision,
+        input.expected.model,
+        input.expected.reasoningEffort,
+        input.expected.threadId,
+      );
       if (Number(result.changes) !== 1) {
         this.db.exec("ROLLBACK");
         return null;

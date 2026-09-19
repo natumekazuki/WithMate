@@ -77,6 +77,13 @@ function createService(options: {
   listActiveCharacters?: () => readonly CharacterCatalogEntry[];
   provider: ProviderRuntimeOperationCoordinator;
   affect: CharacterAffectTurnOwnershipCoordinator;
+  onCreationStateChanged?: (result: {
+    status: string;
+    clientRequestId: string;
+    parentSessionId: string;
+    generationId: string;
+    auxiliarySessionId?: string;
+  }) => void;
 }) {
   const activeCharacters: readonly CharacterCatalogEntry[] = [{
     id: "aux-character",
@@ -99,6 +106,7 @@ function createService(options: {
     listActiveCharacters: options.listActiveCharacters ?? (() => activeCharacters),
     createCharacterRuntimeSnapshot: (id) => character(id, "Auxiliary"),
     randomCharacter: () => 0,
+    onCreationStateChanged: options.onCreationStateChanged,
   });
 }
 
@@ -186,6 +194,342 @@ test("Auxiliary作成は準備中のprovider操作を塞がずcommit前のselect
     assert.deepEqual(oldStorage.listAuxiliarySessions(parentSession.id), []);
   } finally {
     oldStorage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary作成のcancel先着はcommit前の同一要求をtombstoneで拒否する"
+// oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
+// fault = "cancel受付前に作成を開始する、またはcancel後の同一要求を再実行する"
+// observable = "取消結果、作成拒否、保存行なし"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-creation-lifecycle"
+// lifecycle = "permanent"
+// impact = "late create responseによる二重作成を防ぐ"
+// distinction = "通常の作成成功testではcancel先着と未作成要求のtombstoneを観測できない"
+// @end-test-value
+test("Auxiliary作成のcancel先着は未作成要求をtombstoneで拒否する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-cancel-first-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  const provider = new ProviderRuntimeOperationCoordinator();
+  const affect = new CharacterAffectTurnOwnershipCoordinator();
+  let releaseParent!: () => void;
+  const parentBarrier = new Promise<void>((resolve) => { releaseParent = resolve; });
+  let blockParent = false;
+  const currentParent = parent();
+  const stateChanges: Array<{ status: string; clientRequestId: string; parentSessionId: string; generationId: string }> = [];
+  const service = createService({
+    getParent: async () => {
+      if (blockParent) await parentBarrier;
+      return currentParent;
+    },
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => catalog(1),
+    provider,
+    affect,
+    onCreationStateChanged: (result) => stateChanges.push(result),
+  });
+  try {
+    const context = await service.getAuxiliaryCreationContext(currentParent.id);
+    const request = {
+      parentSessionId: currentParent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session" as const,
+      clientRequestId: "cancel-first",
+      creationContext: context,
+    };
+    blockParent = true;
+    const creation = service.createAuxiliarySession(request);
+    await Promise.resolve();
+    const cancelled = await service.cancelAuxiliaryCreation({
+      parentSessionId: currentParent.id,
+      clientRequestId: request.clientRequestId,
+      creationContext: context,
+    });
+    assert.equal(cancelled.status, "cancelled");
+    assert.deepEqual(stateChanges.map((change) => change.status), ["preparing", "cancelled"]);
+    assert.equal(stateChanges.every((change) => change.clientRequestId === request.clientRequestId), true);
+    assert.equal(stateChanges.every((change) => change.parentSessionId === request.parentSessionId), true);
+    assert.equal(stateChanges.every((change) => change.generationId === context.generationId), true);
+    releaseParent();
+    await assert.rejects(creation, /取り消した/);
+    await assert.rejects(service.createAuxiliarySession(request), /取り消し済み/);
+    assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 0);
+  } finally {
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "永続化lookup中にcancelされたAuxiliary作成要求はregistryへ再登録されず、同一要求を二重作成しない"
+// oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
+// fault = "lookup完了後にcancel tombstoneを上書きする、または同一requestの並行createを二重commitする"
+// observable = "lookup barrier中のcancel結果、両createの拒否、保存行数0"
+// observation_boundary = "implementation"
+// scope = "auxiliary-creation-lookup-race"
+// lifecycle = "permanent"
+// impact = "renderer再送とcancelの競合による孤児Auxiliaryを防ぐ"
+// distinction = "親取得barrierだけでは永続化lookup後のregistry再確認を検証できない"
+// @end-test-value
+test("Auxiliary作成はpersisted lookup中のcancelと並行createを安全に収束する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-lookup-race-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  const currentParent = parent();
+  const provider = new ProviderRuntimeOperationCoordinator();
+  const affect = new CharacterAffectTurnOwnershipCoordinator();
+  let releaseLookup!: () => void;
+  const lookupBarrier = new Promise<void>((resolve) => { releaseLookup = resolve; });
+  let lookupCalls = 0;
+  const originalList = storage.listAuxiliarySessions.bind(storage);
+  storage.listAuxiliarySessions = ((parentSessionId: string) => {
+    lookupCalls += 1;
+    return lookupBarrier.then(() => originalList(parentSessionId));
+  }) as typeof storage.listAuxiliarySessions;
+  const service = createService({
+    getParent: () => currentParent,
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => catalog(1),
+    provider,
+    affect,
+  });
+  try {
+    const context = await service.getAuxiliaryCreationContext(currentParent.id);
+    const request = {
+      parentSessionId: currentParent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session" as const,
+      clientRequestId: "lookup-cancel-race",
+      creationContext: context,
+    };
+    const first = service.createAuxiliarySession(request);
+    const second = service.createAuxiliarySession(request);
+    while (lookupCalls < 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    const cancelled = await service.cancelAuxiliaryCreation({
+      parentSessionId: currentParent.id,
+      clientRequestId: request.clientRequestId,
+      creationContext: context,
+    });
+    assert.equal(cancelled.status, "cancelled");
+    releaseLookup();
+    await assert.rejects(first, /取り消し/);
+    await assert.rejects(second, /取り消し/);
+    assert.equal((await originalList(currentParent.id)).length, 0);
+  } finally {
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "unknownのAuxiliary作成結果はDB確定までregistryに保持し、後からcommit済み行を再発見した時だけcommittedへ解決する"
+// oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
+// fault = "unknownをregistryから回収して同一requestを再実行可能にする、または遅延commit済み行を見失う"
+// observable = "DB未検出queryのunknown、同じclientRequestIdの後発行検出時のcommittedとID"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-creation-unknown-recovery"
+// lifecycle = "permanent"
+// impact = "commit結果不明時の二重作成と孤児化を防ぐ"
+// distinction = "通常のcommit成功・失敗testではDB未検出からcommit確定へ遷移するqueryを観測できない"
+// @end-test-value
+test("Auxiliary作成のunknownはDB未検出後も保持し、後発commitをqueryで解決する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-unknown-recovery-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  const currentParent = parent();
+  const originalUpsert = storage.upsertAuxiliarySession.bind(storage);
+  let captured: Parameters<typeof storage.upsertAuxiliarySession>[0] | null = null;
+  storage.upsertAuxiliarySession = ((session) => {
+    captured = session;
+    originalUpsert(session);
+    throw new Error("commit result lost after SQLite write");
+  }) as typeof storage.upsertAuxiliarySession;
+  const service = createService({
+    getParent: () => currentParent,
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => catalog(1),
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+  });
+  try {
+    const context = await service.getAuxiliaryCreationContext(currentParent.id);
+    const request = {
+      parentSessionId: currentParent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session" as const,
+      clientRequestId: "unknown-recovery",
+      creationContext: context,
+    };
+    await assert.rejects(service.createAuxiliarySession(request), /commit result lost/);
+    assert.ok(captured);
+    storage.deleteAuxiliarySessionsForParent(currentParent.id);
+    assert.deepEqual(await service.getAuxiliaryCreation({
+      parentSessionId: currentParent.id,
+      clientRequestId: request.clientRequestId,
+      creationContext: context,
+    }), { status: "unknown" });
+    storage.upsertAuxiliarySession = originalUpsert as typeof storage.upsertAuxiliarySession;
+    storage.upsertAuxiliarySession(captured);
+    assert.deepEqual(await service.getAuxiliaryCreation({
+      parentSessionId: currentParent.id,
+      clientRequestId: request.clientRequestId,
+      creationContext: context,
+    }), { status: "committed", auxiliarySessionId: captured.id });
+  } finally {
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary作成は同一request IDの同一入力だけをdedupeし異なる入力を拒否する"
+// oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
+// fault = "異なる入力を既存作成へ結合する、または同一入力を二重保存する"
+// observable = "一致するparentSessionId・provider・runtimeSelectionでの同一結果IDと、provider差異エラー"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-creation-lifecycle"
+// lifecycle = "permanent"
+// impact = "再送の安全性とclientRequestId契約を維持する"
+// distinction = "既存の再送testではrequest ID再利用時の入力差異を検証しない"
+// @end-test-value
+test("Auxiliary作成は同一request IDの異なる入力を拒否する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-request-input-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  const currentParent = parent();
+  const service = createService({
+    getParent: () => currentParent,
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => catalog(1),
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+  });
+  try {
+    const context = await service.getAuxiliaryCreationContext(currentParent.id);
+    const request = {
+      parentSessionId: currentParent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session" as const,
+      clientRequestId: "input-conflict",
+      creationContext: context,
+    };
+    const first = service.createAuxiliarySession(request);
+    const second = service.createAuxiliarySession(request);
+    assert.equal((await first).id, (await second).id);
+    await assert.rejects(
+      service.createAuxiliarySession({ ...request, provider: "other" }),
+      /異なる入力/,
+    );
+    assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 1);
+  } finally {
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary作成のowner解放は旧generationのcommitを失効させる"
+// oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
+// fault = "閉じたownerまたは置換前の親へ作成結果を書き込む"
+// observable = "旧作成の拒否、generation変更、保存行なし"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-creation-generation"
+// lifecycle = "permanent"
+// impact = "window close/reopen後の遅延作成による別scope汚染を防ぐ"
+// distinction = "通常の親identity testではowner解放によるgeneration失効を確認しない"
+// @end-test-value
+test("Auxiliary作成のowner解放は旧generationを失効させる", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-generation-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  let currentParent = parent();
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  const service = createService({
+    getParent: async () => { await barrier; return currentParent; },
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => catalog(1),
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+  });
+  try {
+    const context = await (async () => {
+      const original = currentParent;
+      currentParent = original;
+      release();
+      return service.getAuxiliaryCreationContext(original.id);
+    })();
+    const resolvedContext = await context;
+    const request = {
+      parentSessionId: currentParent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session" as const,
+      clientRequestId: "owner-release",
+      creationContext: resolvedContext,
+    };
+    const creation = service.createAuxiliarySession(request);
+    service.releaseAuxiliaryCreationOwner(currentParent.id);
+    await assert.rejects(creation);
+    assert.notEqual((await service.getAuxiliaryCreationContext(currentParent.id)).generationId, resolvedContext.generationId);
+    assert.equal(storage.listAuxiliarySessions(currentParent.id).length, 0);
+  } finally {
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary作成は保存済みclientRequestIdを新Serviceからqueryして再送結果を回収する"
+// oracle = { type = "contract", ref = "src-electron/auxiliary-session-service.ts" }
+// fault = "応答消失後にcommit済み行を見失い、同一要求を二重作成する"
+// observable = "新Serviceのqueryがcommit済みsession IDを返す"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-creation-reconnect"
+// lifecycle = "permanent"
+// impact = "renderer応答消失時の安全な再接続を可能にする"
+// distinction = "process内dedupe testではService再生成後の保存結果lookupを確認しない"
+// @end-test-value
+test("Auxiliary作成はService再生成後も保存済みclientRequestIdをqueryできる", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-reconnect-"));
+  const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
+  const currentParent = parent();
+  const options = {
+    getParent: () => currentParent,
+    getStorage: () => storage,
+    resolveSelection: async () => selection(),
+    getCatalog: () => catalog(1),
+    provider: new ProviderRuntimeOperationCoordinator(),
+    affect: new CharacterAffectTurnOwnershipCoordinator(),
+  };
+  try {
+    const firstService = createService(options);
+    const context = await firstService.getAuxiliaryCreationContext(currentParent.id);
+    const request = {
+      parentSessionId: currentParent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session" as const,
+      clientRequestId: "reconnect-result",
+      creationContext: context,
+    };
+    const created = await firstService.createAuxiliarySession(request);
+    const restarted = createService(options);
+    const result = await restarted.getAuxiliaryCreation({
+      parentSessionId: currentParent.id,
+      clientRequestId: request.clientRequestId,
+      creationContext: context,
+    });
+    assert.deepEqual(result, { status: "committed", auxiliarySessionId: created.id });
+  } finally {
+    storage.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
