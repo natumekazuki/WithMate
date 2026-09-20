@@ -88,6 +88,16 @@ describe("home-launch-projection", () => {
     assert.equal(projection.canStartSession, false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "有効provider・Character・タイトル・directory workspaceが揃うと開始可能になり選択内容を表示へ投影する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: New Session dialog" }
+  // fault = "有効providerを選べない、明示Characterを取り違える、またはdirectory開始をSessionFolderとして投影する"
+  // observable = "providerとCharacter選択値、workspace表示、sessionFolderSelected=false、canStartSession=true"
+  // observation_boundary = "public-boundary"
+  // scope = "home-launch-positive-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("有効な provider を選択でき、タイトル/ワークスペースで開始可否が変わる", () => {
     const settings = createDefaultAppSettings();
     settings.codingProviderSettings.copilot = {
@@ -113,6 +123,7 @@ describe("home-launch-projection", () => {
     assert.equal(enabledOnlyCodex.randomCharacterSelected, false);
     assert.deepEqual(enabledOnlyCodex.characterOptions.map((character) => character.id), ["mia", "noa"]);
     assert.equal(enabledOnlyCodex.launchWorkspacePathLabel, "F:/work/demo");
+    assert.equal(enabledOnlyCodex.sessionFolderSelected, false);
     assert.equal(enabledOnlyCodex.canStartSession, true);
   });
 
@@ -205,5 +216,6 @@ describe("home-launch-projection", () => {
     assert.equal(projection.selectedLaunchProvider?.id, "codex");
     assert.equal(projection.selectedCharacter, null);
     assert.equal(projection.canStartSession, false);
+    assert.equal(projection.sessionFolderSelected, false);
   });
 });

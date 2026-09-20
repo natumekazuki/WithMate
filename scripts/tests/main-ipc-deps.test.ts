@@ -8,7 +8,7 @@ import { createMainIpcRegistrationDeps } from "../../src-electron/main-ipc-deps.
 // claim = "createMainIpcRegistrationDepsはSession Monitorのcontext menu、終了flush ACK、Auxiliary ID付きwindow delegateをwindow groupからregistration depsへ保持する"
 // oracle = { type = "contract", ref = "createMainIpcRegistrationDeps window delegate mapping" }
 // fault = "window groupに追加したdelegateが内部factoryからregistration depsへ欠落するか、Auxiliary IDを親Window delegateへ渡さない"
-// observable = "生成されたregistration depsのflush ACK、context menuとwindow delegateの呼び出し引数"
+// observable = "生成されたregistration depsのflush ACK、context menu delegateへ渡るevent/request引数、およびwindow delegateの呼び出し引数"
 // observation_boundary = "component-behavior"
 // scope = "main IPC dependency grouping"
 // lifecycle = "permanent"
@@ -17,7 +17,9 @@ import { createMainIpcRegistrationDeps } from "../../src-electron/main-ipc-deps.
 // @end-test-value
 test("createMainIpcRegistrationDeps は残存する window / mate delegate を組み立てる", async () => {
   const calls: string[] = [];
-  const showSessionMonitorContextMenu = async (_event: unknown, _request: unknown) => {
+  const contextMenuArgs: unknown[][] = [];
+  const showSessionMonitorContextMenu = async (event: unknown, request: unknown) => {
+    contextMenuArgs.push([event, request]);
     calls.push("showSessionMonitorContextMenu");
     return { status: "dismissed" as const };
   };
@@ -258,7 +260,10 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   assert.equal(await deps.openSessionWindow("session-1", "aux-1"), undefined);
   assert.deepEqual(await deps.getSessionWindowRestoreSet(), ["session-1"]);
   assert.deepEqual((await deps.restoreSessionWindows()).openedSessionIds, ["session-1"]);
-  assert.deepEqual(await deps.showSessionMonitorContextMenu({} as never, {} as never), { status: "dismissed" });
+  const contextMenuEvent = { sender: "monitor" };
+  const contextMenuRequest = { sessionId: "session-1", point: { x: 12, y: 34 } };
+  assert.deepEqual(await deps.showSessionMonitorContextMenu(contextMenuEvent as never, contextMenuRequest as never), { status: "dismissed" });
+  assert.deepEqual(contextMenuArgs, [[contextMenuEvent, contextMenuRequest]]);
   await deps.getMateState();
   await deps.getMateProfile();
   await deps.createMate({ displayName: "Buddy" });

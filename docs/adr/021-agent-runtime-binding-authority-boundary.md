@@ -4,6 +4,10 @@
 
 Accepted
 
+## 適用状態
+
+binding registry、generation、operation grant、turn capability、runtime owner selection は現行 Agent / Auxiliary runtime に引き続き適用する。本文中の Companion 固有記述は当時の判断として保持するが、Companion は `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` で撤去され、保存履歴の互換性や merge / discard は現行契約ではない。この適用状態の変更は、現行 Session の authority 境界を失効させない。
+
 ## Subsequent decisions
 
 ADR 024は、agent-facing Memory CRUDと`memory.file_usage`について、本ADRの`optional` policy、bindingなしのlocal-user/operator経路、explicit Character selectorを部分的に置換する。provider executionから使うMCPとagent-bound CLI fallbackはbindingを必須とし、actor-relative targetだけを受け付ける。operator CLIのexplicit target/identityは別authority modeとして維持する。本ADRのbinding registry、generation、operation grant、turn capability、runtime owner selectionの契約は維持する。

@@ -85,6 +85,34 @@ function query<T>(dbPath: string, sql: string): T {
   try { return db.prepare(sql).get() as T; } finally { db.close(); }
 }
 
+const LEGACY_V3_COMPANION_TABLES = [
+  "companion_groups",
+  "companion_sessions",
+  "companion_messages",
+  "companion_message_artifacts",
+  "companion_merge_runs",
+  "companion_audit_logs",
+  "companion_audit_log_details",
+  "companion_audit_log_operations",
+] as const;
+
+function databaseSnapshot(db: DatabaseSync): {
+  schema: Array<{ type: string; name: string; tbl_name: string; sql: string | null }>;
+  rows: Record<string, Array<Record<string, unknown>>>;
+} {
+  const schema = (db.prepare(
+    "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name != 'sqlite_sequence' AND tbl_name NOT LIKE 'companion_%' ORDER BY type, name",
+  ).all() as Array<{ type: string; name: string; tbl_name: string; sql: string | null }>);
+  const rows: Record<string, Array<Record<string, unknown>>> = {};
+  for (const table of schema.filter((entry) => entry.type === "table")) {
+    rows[table.name] = db.prepare(`SELECT * FROM "${table.name.replaceAll('"', '""')}" ORDER BY rowid`).all() as Array<Record<string, unknown>>;
+    if (table.name === "app_settings") {
+      rows[table.name] = rows[table.name].filter((row) => row.setting_key !== "companion_removal_completed_at");
+    }
+  }
+  return { schema, rows };
+}
+
 // @test-value v2
 // kind = "invariant"
 // claim = "起動前migrationは混在DBと保存領域から専有物を削除し、通常会話・共有blob・設定を維持する"
@@ -104,7 +132,7 @@ test("bootstrap removes owned data across managed database copies and preserves 
   await copyFile(f.dbPath, backup);
   await removeCompanionData(f.userData);
   for (const dbPath of [f.dbPath, backup]) {
-    assert.equal(query(dbPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"), undefined);
+    assert.equal(query(dbPath, "SELECT name FROM sqlite_schema WHERE tbl_name LIKE 'companion_%'"), undefined);
     assert.deepEqual({ ...query<Record<string, unknown>>(dbPath, "SELECT thread_id FROM sessions_v6 WHERE id='main-729'") }, { thread_id: "keep-thread" });
     assert.equal(query<{ n: number }>(dbPath, "SELECT count(*) n FROM auxiliary_sessions").n, 1);
     assert.equal(query<{ setting_value: string }>(dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='ordinary-preference'").setting_value, "keep-setting");
@@ -191,6 +219,9 @@ test("resumes after file and database phase interruptions", async (t) => {
   }), /incomplete.*interrupt database/);
   assert.equal(existsSync(f.worktree), false);
   await removeCompanionData(f.userData);
+  assert.equal(existsSync(path.join(f.userData, "session-files", sessionId)), false);
+  assert.equal(existsSync(path.join(f.userData, "blobs", "v3", f.ownedBlob.slice(0, 2), f.ownedBlob.slice(2, 4), `${f.ownedBlob}.br`)), false);
+  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", `refs/heads/${f.branch}`, f.ref), "");
   assert.equal(query(f.dbPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"), undefined);
   assert.equal(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
 });
@@ -323,14 +354,183 @@ test("cleans an actual V3 schema but refuses a worktree shared with a live works
   const f = await fixture(t);
   const legacyPath = path.join(f.userData, "withmate-v3.db");
   const current = new DatabaseSync(f.dbPath);
-  const session = current.prepare("SELECT * FROM companion_sessions").get() as Record<string, string>;
   current.prepare("UPDATE sessions_v6 SET workspace_path = ? WHERE id='main-729'").run(f.worktree);
   current.close();
   const legacy = new DatabaseSync(legacyPath);
+  const ownedBlob = "a".repeat(64);
+  const sharedBlob = "b".repeat(64);
+  legacy.exec("PRAGMA foreign_keys = ON;");
   legacy.exec(CREATE_V3_SCHEMA_SQL.join("\n"));
-  legacy.exec("CREATE TABLE companion_sessions (id TEXT PRIMARY KEY, group_id TEXT, repo_root TEXT, target_branch TEXT, base_snapshot_ref TEXT, base_snapshot_commit TEXT, companion_branch TEXT, worktree_path TEXT)");
-  legacy.prepare("INSERT INTO companion_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(...Object.values(session));
+  // Legacy V3 definitions from d987cf565f8e0f905ccf1e2d7ec78f5b5467ddcc.
+  legacy.exec(`
+    CREATE TABLE companion_groups (
+      id TEXT PRIMARY KEY,
+      repo_root TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE companion_sessions (
+      id TEXT PRIMARY KEY,
+      group_id TEXT NOT NULL REFERENCES companion_groups(id) ON DELETE CASCADE,
+      task_title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      repo_root TEXT NOT NULL,
+      focus_path TEXT NOT NULL,
+      target_branch TEXT NOT NULL,
+      base_snapshot_ref TEXT NOT NULL DEFAULT '',
+      base_snapshot_commit TEXT NOT NULL DEFAULT '',
+      companion_branch TEXT NOT NULL,
+      worktree_path TEXT NOT NULL,
+      selected_paths_json TEXT NOT NULL DEFAULT '[]',
+      changed_files_summary_json TEXT NOT NULL DEFAULT '[]' CHECK (length(changed_files_summary_json) <= 8192),
+      sibling_warnings_summary_json TEXT NOT NULL DEFAULT '[]' CHECK (length(sibling_warnings_summary_json) <= 8192),
+      allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]',
+      run_state TEXT NOT NULL DEFAULT 'idle',
+      thread_id TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL,
+      catalog_revision INTEGER NOT NULL DEFAULT 1,
+      model TEXT NOT NULL DEFAULT 'gpt-5.4',
+      reasoning_effort TEXT NOT NULL DEFAULT 'medium',
+      custom_agent_name TEXT NOT NULL DEFAULT '',
+      approval_mode TEXT NOT NULL DEFAULT 'default',
+      codex_sandbox_mode TEXT NOT NULL DEFAULT 'workspace-write',
+      codex_speed TEXT NOT NULL DEFAULT 'standard',
+      codex_reviewer TEXT NOT NULL DEFAULT 'user',
+      character_id TEXT NOT NULL,
+      character_name TEXT NOT NULL,
+      character_role_preview TEXT NOT NULL DEFAULT '' CHECK (length(character_role_preview) <= 500),
+      character_role_blob_id TEXT,
+      character_icon_path TEXT NOT NULL,
+      character_theme_main TEXT NOT NULL DEFAULT '#6f8cff',
+      character_theme_sub TEXT NOT NULL DEFAULT '#6fb8c7',
+      character_runtime_snapshot_json TEXT NOT NULL DEFAULT '',
+      message_count INTEGER NOT NULL DEFAULT 0,
+      audit_log_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (character_role_blob_id) REFERENCES blob_objects(blob_id)
+    );
+    CREATE INDEX idx_v3_companion_sessions_group_status ON companion_sessions(group_id, status, updated_at);
+    CREATE TABLE companion_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL REFERENCES companion_sessions(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      text_preview TEXT NOT NULL DEFAULT '' CHECK (length(text_preview) <= 500),
+      text_blob_id TEXT,
+      text_original_bytes INTEGER NOT NULL DEFAULT 0,
+      text_stored_bytes INTEGER NOT NULL DEFAULT 0,
+      accent INTEGER NOT NULL DEFAULT 0,
+      artifact_available INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (text_blob_id) REFERENCES blob_objects(blob_id),
+      UNIQUE(session_id, position)
+    );
+    CREATE INDEX idx_v3_companion_messages_session_position ON companion_messages(session_id, position);
+    CREATE TABLE companion_message_artifacts (
+      message_id INTEGER PRIMARY KEY,
+      artifact_summary_json TEXT NOT NULL DEFAULT '{}' CHECK (length(artifact_summary_json) <= 8192),
+      artifact_blob_id TEXT,
+      artifact_original_bytes INTEGER NOT NULL DEFAULT 0,
+      artifact_stored_bytes INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (message_id) REFERENCES companion_messages(id) ON DELETE CASCADE,
+      FOREIGN KEY (artifact_blob_id) REFERENCES blob_objects(blob_id)
+    );
+    CREATE TABLE companion_merge_runs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES companion_sessions(id) ON DELETE CASCADE,
+      group_id TEXT NOT NULL REFERENCES companion_groups(id) ON DELETE CASCADE,
+      operation TEXT NOT NULL,
+      selected_paths_json TEXT NOT NULL DEFAULT '[]',
+      changed_files_summary_json TEXT NOT NULL DEFAULT '[]' CHECK (length(changed_files_summary_json) <= 8192),
+      sibling_warnings_summary_json TEXT NOT NULL DEFAULT '[]' CHECK (length(sibling_warnings_summary_json) <= 8192),
+      diff_snapshot_blob_id TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (diff_snapshot_blob_id) REFERENCES blob_objects(blob_id)
+    );
+    CREATE INDEX idx_v3_companion_merge_runs_session_created ON companion_merge_runs(session_id, created_at);
+    CREATE INDEX idx_v3_companion_merge_runs_group_created ON companion_merge_runs(group_id, created_at);
+    CREATE TABLE companion_audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      reasoning_effort TEXT NOT NULL,
+      approval_mode TEXT NOT NULL,
+      thread_id TEXT NOT NULL DEFAULT '',
+      assistant_text_preview TEXT NOT NULL DEFAULT '' CHECK (length(assistant_text_preview) <= 500),
+      operation_count INTEGER NOT NULL DEFAULT 0,
+      raw_item_count INTEGER NOT NULL DEFAULT 0,
+      input_tokens INTEGER,
+      cached_input_tokens INTEGER,
+      output_tokens INTEGER,
+      has_error INTEGER NOT NULL DEFAULT 0,
+      error_message_preview TEXT NOT NULL DEFAULT '' CHECK (length(error_message_preview) <= 500),
+      detail_available INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY (session_id) REFERENCES companion_sessions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX idx_v3_companion_audit_logs_session_id_desc ON companion_audit_logs(session_id, id DESC);
+    CREATE TABLE companion_audit_log_details (
+      audit_log_id INTEGER PRIMARY KEY,
+      logical_prompt_blob_id TEXT,
+      transport_payload_blob_id TEXT,
+      assistant_text_blob_id TEXT,
+      raw_items_blob_id TEXT,
+      usage_metadata_json TEXT NOT NULL DEFAULT '',
+      usage_blob_id TEXT,
+      FOREIGN KEY (audit_log_id) REFERENCES companion_audit_logs(id) ON DELETE CASCADE,
+      FOREIGN KEY (logical_prompt_blob_id) REFERENCES blob_objects(blob_id),
+      FOREIGN KEY (transport_payload_blob_id) REFERENCES blob_objects(blob_id),
+      FOREIGN KEY (assistant_text_blob_id) REFERENCES blob_objects(blob_id),
+      FOREIGN KEY (raw_items_blob_id) REFERENCES blob_objects(blob_id),
+      FOREIGN KEY (usage_blob_id) REFERENCES blob_objects(blob_id)
+    );
+    CREATE TABLE companion_audit_log_operations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      audit_log_id INTEGER NOT NULL,
+      seq INTEGER NOT NULL,
+      operation_type TEXT NOT NULL DEFAULT '',
+      summary TEXT NOT NULL DEFAULT '' CHECK (length(summary) <= 500),
+      details_preview TEXT NOT NULL DEFAULT '' CHECK (length(details_preview) <= 500),
+      details_blob_id TEXT,
+      FOREIGN KEY (audit_log_id) REFERENCES companion_audit_logs(id) ON DELETE CASCADE,
+      FOREIGN KEY (details_blob_id) REFERENCES blob_objects(blob_id),
+      UNIQUE (audit_log_id, seq)
+    );
+    CREATE INDEX idx_v3_companion_audit_log_operations_log_seq ON companion_audit_log_operations(audit_log_id, seq);
+    INSERT INTO companion_groups VALUES ('group-729', '${f.repo.replaceAll("'", "''")}', 'Companion', 'now', 'now');
+  `);
+  legacy.prepare(`INSERT INTO companion_sessions (
+    id, group_id, task_title, status, repo_root, focus_path, target_branch, base_snapshot_ref,
+    base_snapshot_commit, companion_branch, worktree_path, provider, character_id, character_name,
+    character_icon_path, created_at, updated_at
+  ) VALUES (?, 'group-729', 'Companion task', 'active', ?, 'src', 'main', ?, ?, ?, ?, 'codex', 'char', 'Character', '', 'now', 'now')`).run(
+    sessionId, f.repo, f.ref, (await git(f.repo, "rev-parse", "HEAD")), f.branch, f.worktree,
+  );
+  legacy.exec(`
+    INSERT INTO blob_objects (blob_id, codec, content_type, original_bytes, stored_bytes, raw_sha256, stored_sha256, state, created_at) VALUES
+      ('${ownedBlob}', 'br', 'text/plain', 5, 5, '${ownedBlob}', '${ownedBlob}', 'ready', 'now'),
+      ('${sharedBlob}', 'br', 'text/plain', 6, 6, '${sharedBlob}', '${sharedBlob}', 'ready', 'now');
+    INSERT INTO companion_messages (session_id, position, role, text_preview, text_blob_id, created_at) VALUES ('${sessionId}', 0, 'assistant', 'owned', '${ownedBlob}', 'now');
+    INSERT INTO companion_audit_logs (session_id, created_at, phase, provider, model, reasoning_effort, approval_mode, assistant_text_preview) VALUES ('${sessionId}', 'now', 'completed', 'codex', 'model', 'medium', 'default', 'owned audit');
+    INSERT INTO companion_audit_log_details (audit_log_id, usage_metadata_json, assistant_text_blob_id) VALUES (last_insert_rowid(), '{"owned":true}', '${ownedBlob}');
+    INSERT INTO companion_audit_log_operations (audit_log_id, seq, operation_type, summary, details_blob_id) SELECT last_insert_rowid(), 0, 'tool', 'owned operation', '${ownedBlob}';
+    INSERT INTO companion_message_artifacts (message_id, artifact_blob_id) VALUES (1, '${ownedBlob}');
+    INSERT INTO companion_merge_runs (id, session_id, group_id, operation, diff_snapshot_blob_id, created_at) VALUES ('merge-729', '${sessionId}', 'group-729', 'review', '${ownedBlob}', 'now');
+    INSERT INTO sessions (id, task_title, status, updated_at, provider, workspace_label, workspace_path, branch, character_id, character_name, character_icon_path, run_state, last_active_at)
+      VALUES ('legacy-live', 'Legacy live', 'active', 'now', 'codex', 'workspace', '${f.repo.replaceAll("'", "''")}', 'main', 'char', 'Character', '', 'idle', 1);
+    INSERT INTO session_messages (session_id, seq, role, text_preview, text_blob_id, created_at) VALUES ('legacy-live', 0, 'assistant', 'shared', '${sharedBlob}', 'now');
+    INSERT INTO audit_logs (session_id, created_at, phase, provider, model, reasoning_effort, approval_mode, thread_id)
+      VALUES ('legacy-live', 'now', 'completed', 'codex', 'model', 'default', 'never', 'thread');
+    INSERT INTO audit_log_details (audit_log_id, usage_metadata_json) VALUES (last_insert_rowid(), '{"keep":true}');
+    INSERT INTO audit_log_operations (audit_log_id, seq, operation_type, summary) SELECT audit_log_id, 0, 'tool', 'keep operation' FROM audit_log_details;
+  `);
   legacy.prepare("INSERT INTO app_settings VALUES ('ordinary-setting', 'legacy-value', 'now')").run();
+  const legacyBefore = databaseSnapshot(legacy);
+  legacyBefore.rows.blob_objects = legacyBefore.rows.blob_objects.filter((row) => row.blob_id !== ownedBlob);
   legacy.close();
   await assert.rejects(removeCompanionData(f.userData), /live owner references/);
   assert.equal(await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"), "owned unmerged work");
@@ -339,8 +539,19 @@ test("cleans an actual V3 schema but refuses a worktree shared with a live works
   resumed.close();
   await removeCompanionData(f.userData);
   assert.equal(query(legacyPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"), undefined);
-  assert.ok(query(legacyPath, "SELECT name FROM sqlite_schema WHERE name='sessions'"));
-  assert.equal(query<{ setting_value: string }>(legacyPath, "SELECT setting_value FROM app_settings WHERE setting_key='ordinary-setting'").setting_value, "legacy-value");
+  const cleaned = new DatabaseSync(legacyPath);
+  try {
+    assert.deepEqual(databaseSnapshot(cleaned), legacyBefore);
+    for (const table of LEGACY_V3_COMPANION_TABLES) {
+      assert.equal(cleaned.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table), undefined);
+    }
+    assert.equal((cleaned.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE type = 'index' AND name LIKE 'idx_v3_companion_%'").get() as { n: number }).n, 0);
+    assert.equal(cleaned.prepare("PRAGMA foreign_key_check").all().length, 0);
+    assert.equal((cleaned.prepare("SELECT count(*) AS n FROM blob_objects WHERE blob_id = ?").get(sharedBlob) as { n: number }).n, 1);
+    assert.equal((cleaned.prepare("SELECT count(*) AS n FROM blob_objects WHERE blob_id = ?").get(ownedBlob) as { n: number }).n, 0);
+  } finally {
+    cleaned.close();
+  }
 });
 
 // @test-value v2

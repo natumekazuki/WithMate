@@ -614,6 +614,58 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "V6 closeは初期化前にMain側WAL操作を行わず、初期化後はWorkerのcheckpoint完了を待ってからWorkerを閉じる"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md: V6 SQLite所有者とWAL maintenance" }
+// fault = "Worker不在のV6 closeがMainへ同期SQLite操作を委譲する、またはWorker checkpoint完了前に接続を閉じる"
+// observable = "Main/WorkerへのWAL要求、checkpoint保留中と完了後のWorker close、before-close hookの呼出し"
+// observation_boundary = "public-boundary"
+// scope = "persistent-store-worker-close"
+// lifecycle = "permanent"
+// impact = "初期化前closeの所有権違反警告と終了時checkpointの中断を防ぐ"
+// distinction = "SQLite guard単体ではlifecycleの委譲先と非同期close順序を検出できず、短い制御Promiseで待機を観測する"
+// @end-test-value
+test("PersistentStoreLifecycleService は V6 WAL の終了処理を Worker の所有境界内で行う", async () => {
+  const calls: string[] = [];
+  const service = new PersistentStoreLifecycleService({
+    createModelCatalogStorage: () => null as never,
+    createSessionStorage: () => null as never,
+    createSessionMemoryStorage: () => null as never,
+    createProjectMemoryStorage: () => null as never,
+    createAuditLogStorage: () => null as never,
+    createAppSettingsStorage: () => null as never,
+    createMateStorage: () => null as never,
+    onBeforeClose: () => { calls.push("before-close"); },
+    truncateWal: () => { calls.push("main-wal"); },
+    async removeFile() {},
+  });
+  const dbPath = path.join("user-data", APP_DATABASE_V6_FILENAME);
+  await service.close({ storageWorker: null }, dbPath);
+  assert.deepEqual(calls, ["before-close"]);
+
+  calls.length = 0;
+  let finishCheckpoint!: () => void;
+  const checkpoint = new Promise<void>((resolve) => { finishCheckpoint = resolve; });
+  const closing = service.close({
+    storageWorker: {
+      async truncateWal() {
+        calls.push("worker-wal");
+        await checkpoint;
+        calls.push("checkpoint-complete");
+      },
+      client: { async close() { calls.push("worker-close"); } },
+    } as never,
+  }, dbPath);
+  try {
+    assert.deepEqual(calls, ["before-close", "worker-wal"]);
+  } finally {
+    finishCheckpoint();
+    await closing;
+  }
+  assert.deepEqual(calls, ["before-close", "worker-wal", "checkpoint-complete", "worker-close"]);
+});
+
 test("PersistentStoreLifecycleService は WAL truncate 失敗を close 呼び出し元へ伝播しない", () => {
   const closeCalls: string[] = [];
   const warnCalls: unknown[][] = [];

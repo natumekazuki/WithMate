@@ -33,7 +33,6 @@ export type HomeLaunchProjection = {
 
 export function buildHomeLaunchProjection({
   launchProviderId,
-  launchMode,
   launchTitle,
   launchWorkspace,
   workspacePathInput = "",
@@ -47,7 +46,6 @@ export function buildHomeLaunchProjection({
   modelCatalog,
 }: {
   launchProviderId: string;
-  launchMode?: "session";
   launchTitle: string;
   launchWorkspace: LaunchWorkspaceSelection | null;
   workspacePathInput?: string;
@@ -94,7 +92,6 @@ export function buildHomeLaunchProjection({
       !!launchTitle.trim() &&
       !!launchWorkspace &&
       !!selectedLaunchProvider &&
-      validCharacterSelection &&
-      true,
+      validCharacterSelection,
   };
 }

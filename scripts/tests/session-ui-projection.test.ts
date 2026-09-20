@@ -487,7 +487,7 @@ describe("session-ui-projection", () => {
   // scope = "Session context pane Messages capability"
   // lifecycle = "permanent"
   // @end-test-value
-  it("Messages tab は明示的に有効化したSession Windowだけへ追加される", () => {
+  it("Messages tab は明示的に有効化したSession Windowだけへ既存順で追加される", () => {
     assert.deepEqual(resolveAvailableContextPaneTabs({
       isCopilotSession: true,
       includeMessages: true,

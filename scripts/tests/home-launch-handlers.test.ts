@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 
 import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
 import { buildHomeLaunchHandlers } from "../../src/home/home-launch-handlers.js";
+import { buildHomeLaunchProjection } from "../../src/home/home-launch-projection.js";
 import { createClosedLaunchDraft, type HomeLaunchDraft } from "../../src/home/home-launch-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 
 function createCharacterEntry(partial: Partial<CharacterCatalogEntry> & Pick<CharacterCatalogEntry, "id" | "name">): CharacterCatalogEntry {
   return {
@@ -100,6 +102,7 @@ describe("home-launch-handlers", () => {
 
     handlers.onCloseLaunchDialog();
     await handlers.onOpenLaunchDialog();
+    assert.equal(refreshCount, 2);
     assert.equal(draft.characterSelectionMode, "random");
 
     handlers.onSelectSessionFolder();
@@ -120,8 +123,8 @@ describe("home-launch-handlers", () => {
   // claim = "Character一覧再取得の失敗はloaded状態を解除し古い一覧でのrandom開始を防ぐ"
   // oracle = { type = "contract", ref = "src/home/home-launch-handlers.ts" }
   // fault = "取得に失敗したCharacter一覧を最新として扱い使用不能なCharacterで開始する"
-  // observable = "charactersLoaded=false、dialogのrandom状態、失敗feedback"
-  // observation_boundary = "component-behavior"
+  // observable = "charactersLoaded=false、dialogのrandom状態、失敗feedback、有効な開始入力でのprojection.canStartSessionのtrueからfalseへの変化"
+  // observation_boundary = "public-boundary"
   // scope = "Home launch catalog refresh failure"
   // lifecycle = "permanent"
   // @end-test-value
@@ -129,6 +132,18 @@ describe("home-launch-handlers", () => {
     let draft = createClosedLaunchDraft();
     let charactersLoaded = true;
     const feedback: string[] = [];
+    const characterEntries = [createCharacterEntry({ id: "stale", name: "Stale" })];
+    const canStart = () => buildHomeLaunchProjection({
+      launchProviderId: "codex",
+      launchTitle: "Valid task",
+      launchWorkspace: { kind: "session-folder" },
+      launchCharacterSelectionMode: "random",
+      characterEntries,
+      charactersLoaded,
+      appSettings: createDefaultAppSettings(),
+      modelCatalog: { revision: 1, providers: [createProvider()] },
+    }).canStartSession;
+    assert.equal(canStart(), true);
 
     const handlers = buildHomeLaunchHandlers({
       launchDraft: draft,
@@ -136,7 +151,7 @@ describe("home-launch-handlers", () => {
       mateState: "active",
       mateProfile: null,
       enabledLaunchProviders: [createProvider()],
-      characterEntries: [createCharacterEntry({ id: "stale", name: "Stale" })],
+      characterEntries,
       selectedLaunchProviderId: "codex",
       sessions: [],
       sessionCharacterUsage: [],
@@ -146,9 +161,7 @@ describe("home-launch-handlers", () => {
       refreshCharacterEntries: async () => {
         throw new Error("Character catalog refresh failed");
       },
-      setCharactersLoaded: (loaded) => {
-        charactersLoaded = loaded;
-      },
+      setCharactersLoaded: (loaded) => { charactersLoaded = loaded; },
       setLaunchFeedback: (message) => feedback.push(message),
       setLaunchStarting: () => undefined,
       setLaunchDraft: (updater) => {
@@ -167,6 +180,7 @@ describe("home-launch-handlers", () => {
     assert.equal(draft.open, true);
     assert.equal(draft.characterSelectionMode, "random");
     assert.equal(charactersLoaded, false);
+    assert.equal(canStart(), false);
     assert.deepEqual(feedback, ["", "Character catalog refresh failed"]);
   });
 });

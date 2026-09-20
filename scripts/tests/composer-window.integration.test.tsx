@@ -369,6 +369,8 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     await act(async () => { flushRelease?.({ success: false }); });
     flushAcks.length = 0;
 
+    heldSave = new Promise<void>((resolve) => { releaseSave = resolve; });
+    const closeSaveStarted = new Promise<void>((resolve) => { notifySaveStarted = resolve; });
     await input("draft before close");
     let releasePicker!: (paths: string[]) => void;
     let copies = 0;
@@ -381,14 +383,18 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.ok(copy);
     await act(async () => { copy.click(); });
     const flushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
-    await act(async () => { flushRequest?.({ requestId: "close-1", sessionId: "benchmark-main", reason: "close" }); });
+    await act(async () => {
+      flushRequest?.({ requestId: "close-1", sessionId: "benchmark-main", reason: "close" });
+      await closeSaveStarted;
+    });
     assert.equal(textarea().disabled, true, "close freezes editing before awaiting persistence");
     assert.equal(attach.disabled, true);
     await act(async () => { releasePicker(["/picked.txt"]); });
     assert.equal(copies, 0, "picker completion after freeze must not begin copying files");
     assert.equal(textarea().value, "draft before close");
     assert.deepEqual(flushAcks, []);
-    await act(async () => { await flushAck; });
+    await act(async () => { releaseSave(); await flushAck; });
+    assert.equal(drafts.get(previousAuxiliaryId)?.text, "draft before close");
     assert.deepEqual(flushAcks, [{ id: "close-1", success: true }]);
     assert.equal(textarea().disabled, true, "successful flush must remain frozen until destruction");
     await act(async () => { flushRelease?.({ success: false }); });

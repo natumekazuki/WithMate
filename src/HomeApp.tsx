@@ -720,7 +720,6 @@ export default function HomeApp() {
   const launchProjection = useMemo(
     () => buildHomeLaunchProjection({
       launchProviderId: launchDraft.providerId,
-      launchMode: "session",
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
       workspacePathInput: launchDraft.workspacePathInput,
@@ -990,7 +989,7 @@ export default function HomeApp() {
       onSelectProvider: homeLaunchHandlers.onSelectLaunchProvider,
       onSelectCharacter: homeLaunchHandlers.onSelectLaunchCharacter,
       onSelectRandomCharacter: homeLaunchHandlers.onSelectRandomLaunchCharacter,
-      onStartSession: () => void homeLaunchHandlers.onStartSession("session"),
+      onStartSession: () => void homeLaunchHandlers.onStartSession(),
     }),
   });
 

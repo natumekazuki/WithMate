@@ -127,7 +127,7 @@ test("AuxWindowService は singleton window を再利用する", async () => {
 // claim = "AuxWindowService は diff preview を保持し reset 時に close する"
 // oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
 // fault = "diff previewをregistryへ保存しないか、reset後もpreviewを残す"
-// observable = "diff load token、preview取得結果、reset後のnull"
+// observable = "diff load token、preview取得結果、reset後のWindow destroyedとregistryのnull"
 // observation_boundary = "public-boundary"
 // scope = "scripts/tests/aux-window-service.test.ts"
 // lifecycle = "permanent"
@@ -164,6 +164,7 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
   ]);
 
   service.closeResetTargetWindows();
+  assert.equal(diffStub.window.isDestroyed(), true);
   assert.equal(service.getDiffPreview("diff-token"), null);
 });
 
@@ -319,10 +320,10 @@ test("AuxWindowService は file preview entry load 失敗時に registry と win
 
 // @test-value v2
 // kind = "contract"
-// claim = "AuxWindowService は commit file preview を repository・commit・path 単位で再利用する"
+// claim = "AuxWindowService は commit file preview を root・repository・commit・path 単位で再利用する"
 // oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
 // fault = "repository・commit・pathの識別を混同し、異なるcommitを既存previewへ再利用する"
-// observable = "created/focused disposition、window identity、stub生成数"
+// observable = "root・repository・commit・pathの各識別子差分に対するcreated/focused disposition、window identity、stub生成数"
 // observation_boundary = "public-boundary"
 // scope = "scripts/tests/aux-window-service.test.ts"
 // lifecycle = "permanent"
@@ -369,13 +370,31 @@ test("AuxWindowService は commit file preview を repository・commit・path �
     ownerSessionId: "session-1",
     windowTitle: "src/file.ts",
   });
+  const otherRoot = await service.openFilePreviewWindow({
+    resource: { ...resource, rootId: "workspace-2" },
+    ownerSessionId: "session-1",
+    windowTitle: "src/file.ts",
+  });
+  const otherRepository = await service.openFilePreviewWindow({
+    resource: { ...resource, repositoryId: "git:bbbbbbbbbbbbbbbbbbbbbbbb" },
+    ownerSessionId: "session-1",
+    windowTitle: "src/file.ts",
+  });
+  const otherPath = await service.openFilePreviewWindow({
+    resource: { ...resource, relativePath: "src/other.ts" },
+    ownerSessionId: "session-1",
+    windowTitle: "src/other.ts",
+  });
 
   assert.equal(first.disposition, "created");
   assert.equal(reused.disposition, "focused");
   assert.equal(reused.window, first.window);
   assert.equal(otherCommit.disposition, "created");
   assert.notEqual(otherCommit.window, first.window);
-  assert.equal(stubs.length, 2);
+  assert.equal(otherRoot.disposition, "created");
+  assert.equal(otherRepository.disposition, "created");
+  assert.equal(otherPath.disposition, "created");
+  assert.equal(stubs.length, 5);
 });
 
 // @test-value v2
