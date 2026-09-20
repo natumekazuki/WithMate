@@ -153,6 +153,7 @@ class StubWindow implements SessionWindowLike {
 
 function createDraftFlushBridge(options: {
   waitForPendingDraftSends?: () => Promise<boolean>;
+  getWindowSender?: (window: StubWindow) => unknown;
 } = {}) {
   const requests: Array<{ window: StubWindow; requestId: string; sessionId: string; reason: "close" | "quit" }> = [];
   const releases: StubWindow[] = [];
@@ -165,7 +166,7 @@ function createDraftFlushBridge(options: {
     confirmCloseWhileRunning: () => false,
     broadcastOpenSessionWindowIds() {},
     onSessionWindowClosed: (id) => { closedIds.push(id); },
-    getWindowSender: (window) => window,
+    getWindowSender: options.getWindowSender ?? ((window) => window),
     sendDraftFlushRequest: (window, request) => { requests.push({ window, ...request }); },
     sendDraftFlushRelease: (window) => { releases.push(window); },
     waitForPendingDraftSends: options.waitForPendingDraftSends,
@@ -1019,13 +1020,15 @@ describe("SessionWindowBridge", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "通常closeのdraft flush失敗ではWindowを閉じず、再試行でのみ閉じる"
+  // claim = "通常closeのdraft flush失敗ではWindowを閉じず、再試行成功時は破棄済みWindowのsenderへ再アクセスせずcloseを完了する"
   // oracle = { type = "contract", ref = "SessionWindowBridge#requestCloseSessionWindow" }
-  // fault = "flush失敗を成功扱いして入力を失ったままWindowを閉じる"
+  // fault = "flush失敗を成功扱いして入力を失う、または破棄済みWindowのsender取得で例外になりcloseが未完了になる"
   // observable = "close結果とWindowの破棄状態"
   // observation_boundary = "public-boundary"
   // scope = "session-window-draft-flush"
   // lifecycle = "permanent"
+  // impact = "未保存入力を失うか、通常のWindow終了でmain process例外が発生する"
+  // distinction = "破棄後のsender取得を拒否するfixtureで保存失敗から成功へのcloseを検証する。型検査や常時senderを返すstubでは検出できず、追加の実プロセス起動は不要"
   // @end-test-value
   it("draft flush失敗後のclose retryを成功時だけ完了する", async () => {
     const session = createSession({ id: "draft-close" });
@@ -1040,7 +1043,10 @@ describe("SessionWindowBridge", () => {
 
       confirmCloseWhileRunning: () => false,
       broadcastOpenSessionWindowIds() {},
-      getWindowSender: () => "sender",
+      getWindowSender: (candidate) => {
+        if (candidate.isDestroyed()) throw new TypeError("Object has been destroyed");
+        return "sender";
+      },
       sendDraftFlushRequest: (_window, request) => {
         queueMicrotask(() => bridge.acknowledgeDraftFlush(request.requestId, "sender", attempt++ > 0));
       },
@@ -1352,29 +1358,45 @@ describe("SessionWindowBridge", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "共有flushのACK前にWindowが消滅した場合はquitを成功扱いせず、残るWindowを解凍して再試行できる"
+  // claim = "共有flushのACK前にWindowが消滅した場合は破棄済みsenderへアクセスせずそのWindowの要求だけ失効させ、quit失敗後に生存Windowで再試行できる"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
-  // fault = "closeとの共有を理由に未保存Windowの消滅を成功扱いする、またはquitが完了しない"
-  // observable = "quitの失敗結果、生存Windowへのrelease、再試行の新しいACKと成功結果"
+  // fault = "破棄済みWindowへのアクセスで例外となる、消滅を保存成功扱いする、または別Windowの未完了flushまで失効させる"
+  // observable = "破棄時の例外の不在、破棄済み・生存WindowのACK受理結果、quitの失敗、生存Windowへのrelease、再試行の成功"
   // observation_boundary = "public-boundary"
   // scope = "session-window-close-quit-destroy"
   // lifecycle = "permanent"
   // impact = "保存成否不明なのに全体終了するか、残ったWindowを編集できなくなる"
-  // distinction = "正常close成功ではないACK前destroyを区別し、失敗を成功へ救済しない境界を検証する"
+  // distinction = "Windowとsenderを別identityにし破棄後の取得を拒否して、ACK前destroyの失敗と別Windowの要求保持を確認する。型検査・正常closeだけでは代替できず実プロセス起動も不要"
   // @end-test-value
   it("共有flushのACK前destroyはquit失敗となり生存Windowで再試行できる", async () => {
-    const { bridge, requests, releases } = createDraftFlushBridge();
+    const senders = new Map<StubWindow, object>();
+    const { bridge, requests, releases } = createDraftFlushBridge({
+      getWindowSender: (window) => {
+        if (window.isDestroyed()) throw new TypeError("Object has been destroyed");
+        let sender = senders.get(window);
+        if (!sender) {
+          sender = {};
+          senders.set(window, sender);
+        }
+        return sender;
+      },
+    });
     const first = await bridge.openSessionWindow("destroy-a");
     const second = await bridge.openSessionWindow("destroy-b");
     void bridge.requestCloseSessionWindow("destroy-a");
     const quitting = bridge.flushSessionWindowDrafts();
-    first.destroy();
-    for (const request of requests) bridge.acknowledgeDraftFlush(request.requestId, request.window, true);
+    assert.doesNotThrow(() => first.destroy());
+    for (const request of requests) {
+      assert.equal(
+        bridge.acknowledgeDraftFlush(request.requestId, senders.get(request.window), true),
+        request.window === second,
+      );
+    }
     assert.equal(await quitting, false);
     assert.deepEqual(releases, [second]);
     const retry = bridge.flushSessionWindowDrafts();
     const latest = requests.at(-1)!;
-    bridge.acknowledgeDraftFlush(latest.requestId, second, true);
+    assert.equal(bridge.acknowledgeDraftFlush(latest.requestId, senders.get(second), true), true);
     assert.equal(await retry, true);
     second.close();
     assert.equal(second.isDestroyed(), true);

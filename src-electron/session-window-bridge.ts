@@ -381,9 +381,8 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   }
 
   private releaseWindowClaim(sessionId: string, window: TWindow): void {
-    if (this.deps.getWindowSender) {
-      this.draftFlushCoordinator.forgetWindow(this.deps.getWindowSender(window));
-    }
+    // The closed event runs after BrowserWindow destruction; do not read webContents.
+    this.draftFlushCoordinator.forgetWindow(window);
     this.draftFlushes.delete(window);
     this.resolveCloseRequest(window, true);
     this.allowCloseSessionWindows.delete(window);
