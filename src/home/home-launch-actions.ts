@@ -15,7 +15,6 @@ export type HomeLaunchSessionCreator = (input: CreateSessionRequest) => Promise<
 
 export type StartHomeLaunchInput = {
   draft: HomeLaunchDraft;
-  requestedMode?: HomeLaunchDraft["mode"];
   launchStarting: boolean;
   mateState: MateStorageState | null;
   mateProfile: MateProfile | null;
@@ -40,7 +39,6 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     return;
   }
 
-  const requestedMode = input.requestedMode ?? input.draft.mode;
   const validationMessage = resolveLaunchValidationMessage({
     draft: input.draft,
     mateState: input.mateState,

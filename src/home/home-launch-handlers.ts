@@ -49,10 +49,9 @@ export type HomeLaunchHandlers = {
   onSelectLaunchProvider: (providerId: string) => void;
   onSelectLaunchCharacter: (characterId: string) => void;
   onSelectRandomLaunchCharacter: () => void;
-  onChangeMode: (mode: HomeLaunchDraft["mode"]) => void;
   onChangeTitle: (value: string) => void;
   onChangeWorkspacePath: (value: string) => void;
-  onStartSession: (mode?: HomeLaunchDraft["mode"]) => void;
+  onStartSession: () => void;
 };
 
 export function buildHomeLaunchHandlers({
@@ -101,7 +100,6 @@ export function buildHomeLaunchHandlers({
       openLaunchDraft(
         current,
         enabledLaunchProviders[0]?.id ?? "",
-        "session",
       ),
     );
   };
@@ -118,10 +116,9 @@ export function buildHomeLaunchHandlers({
     setLaunchDraft((current) => updateLaunchDraftForProviderSelection(current, providerId));
   };
 
-  const onStartSession = async (requestedMode: HomeLaunchDraft["mode"] = launchDraft.mode) => {
+  const onStartSession = async () => {
     await startHomeLaunch({
       draft: launchDraft,
-      requestedMode,
       launchStarting,
       mateState,
       mateProfile,
@@ -159,13 +156,6 @@ export function buildHomeLaunchHandlers({
       setLaunchFeedback("");
       setLaunchDraft((current) => updateLaunchDraftForRandomCharacterSelection(current));
     },
-    onChangeMode: (mode) => {
-      setLaunchFeedback("");
-      setLaunchDraft((current) => ({
-        ...current,
-        mode,
-      }));
-    },
     onChangeTitle: (value) => {
       setLaunchFeedback("");
       setLaunchDraft((current) => ({ ...current, title: value }));
@@ -174,6 +164,6 @@ export function buildHomeLaunchHandlers({
       setLaunchFeedback("");
       scheduleWorkspaceValidation(value);
     },
-    onStartSession: (mode) => void onStartSession(mode),
+    onStartSession: () => void onStartSession(),
   };
 }

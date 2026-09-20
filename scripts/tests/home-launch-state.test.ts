@@ -58,6 +58,16 @@ function createCharacterEntry(partial: Partial<CharacterCatalogEntry> & Pick<Cha
 }
 
 describe("home-launch-state", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "New Sessionを開くと既定providerとrandom選択で入力を初期化し、閉じると次回へ古い開始条件を持ち越さない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: New Session dialog" }
+  // fault = "再表示時に古いタイトル・workspace・provider選択を持ち越す"
+  // observable = "open/close後のdraftの入力値・選択状態・検証状態"
+  // observation_boundary = "public-boundary"
+  // scope = "home-launch-draft-lifecycle"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("open と close で launch draft を reset する", () => {
     const opened = openLaunchDraft(
       {
@@ -68,12 +78,10 @@ describe("home-launch-state", () => {
         providerId: "old",
       },
       "codex",
-      "session",
     );
 
     assert.deepEqual(opened, {
       open: true,
-      mode: "session",
       title: "",
       workspacePathInput: "",
       workspaceValidation: "idle",
@@ -86,7 +94,6 @@ describe("home-launch-state", () => {
 
     assert.deepEqual(closeLaunchDraft(opened), {
       open: false,
-      mode: "session",
       title: "",
       workspacePathInput: "",
       workspaceValidation: "idle",
