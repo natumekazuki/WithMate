@@ -1345,6 +1345,12 @@ function hasInFlightSessionRuns(): boolean {
     || Boolean(auxiliarySessionRuntimeService?.hasInFlightRuns());
 }
 
+function cancelInFlightSessionRuns(): void {
+  sessionRuntimeService?.cancelAllRuns();
+  companionRuntimeService?.cancelAllRuns();
+  auxiliarySessionRuntimeService?.cancelAllRuns();
+}
+
 async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean, operation: () => T | Promise<T>, signal: AbortSignal): Promise<T> {
   const owner = requireActivePersistentStoreOwnerForFactory("Turn admission");
   return admitSessionTurn({
@@ -1355,6 +1361,9 @@ async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean,
     assertCurrent: () => {
       assertPersistentStoreOwnerIsActive(owner, "Turn admission");
       if (signal.aborted) throw new Error("Session run canceled.");
+      if (sessionWindowBridge?.isQuitPending()) {
+        throw new Error("アプリ終了処理中のため送信を開始できません。");
+      }
       if (databaseMaintenanceRequested) {
         throw new Error("DB のメンテナンス中は新しい Turn を開始できません。");
       }
@@ -1904,6 +1913,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   const initial = await requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
                   if (!initial) {
                     throw new Error("Auxiliary Session が見つからないよ。");
+                  }
+                  if (sessionWindowBridge?.isQuitPending()) {
+                    throw new Error("アプリ終了処理中のため送信を開始できません。");
                   }
                   if (auxiliaryRunParents.has(auxiliarySessionId)) {
                     throw new Error("Auxiliary Session はすでに実行中だよ。");
@@ -3383,6 +3395,7 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
         window.webContents.send(WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT, payload);
       },
       getWindowSender: (window) => window.webContents,
+      cancelInFlightSessionRuns,
       waitForPendingDraftSends: () => auxiliarySessionService?.waitForPendingDraftSends() ?? Promise.resolve(true),
       getSession,
       isRunInFlight: isSessionRunInFlight,

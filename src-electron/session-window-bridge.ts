@@ -2,7 +2,7 @@ import type { Session } from "../src/app-state.js";
 import type { AuxiliarySessionNavigationPayload } from "../src/withmate-window-types.js";
 import type { ChatEntryMode } from "./window-entry-loader.js";
 import {
-  DEFAULT_DRAFT_FLUSH_TIMEOUT_MS,
+  DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS,
   DraftFlushCoordinator,
   type DraftFlushReason,
   type DraftFlushRequest,
@@ -43,6 +43,7 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   sendDraftFlushRelease?(window: TWindow, payload: { success: boolean }): void;
   getWindowSender?(window: TWindow): unknown;
   waitForPendingDraftSends?(): Promise<boolean>;
+  cancelInFlightSessionRuns?(): void;
 };
 
 export type SessionWindowRestoreState =
@@ -223,6 +224,12 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   async flushSessionWindowDrafts(): Promise<boolean> {
     const windows = this.listWindows();
     this.draftFlushGateActive = true;
+    try {
+      this.deps.cancelInFlightSessionRuns?.();
+    } catch {
+      this.draftFlushGateActive = false;
+      return false;
+    }
     const flushing = windows.map((window) => {
       const sessionId = this.sessionIdForWindow(window);
       return sessionId ? this.flushDrafts(window, sessionId, "quit") : Promise.resolve(false);
@@ -431,7 +438,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     if (!this.deps.waitForPendingDraftSends) return true;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<boolean>((resolve) => {
-      timeout = setTimeout(() => resolve(false), DEFAULT_DRAFT_FLUSH_TIMEOUT_MS);
+      timeout = setTimeout(() => resolve(false), DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS);
     });
     try {
       return await Promise.race([

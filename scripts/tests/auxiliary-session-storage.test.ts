@@ -458,7 +458,7 @@ test("Auxiliary draft recency は旧full保存後も一覧とactive選択へ反�
 // claim = "Auxiliary turn draft operation はconsume後の失敗だけをCAS復元し、後続saveを古い復元で上書きしない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
 // fault = "consume後のadmission失敗でdraftを失う、または後続saveを古い復元で上書きする"
-// observable = "runtime callback count and durable draft text/revision"
+// observable = "runtime callback count, quit barrier result, and durable draft text/revision"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-turn-draft-operation"
 // lifecycle = "permanent"
@@ -526,6 +526,7 @@ test("Auxiliary turn draft operation は失敗時復元と後続save保全を行
       assert.equal(error.errors[0]?.message, "runtime failed");
       return true;
     });
+    assert.equal(await service.waitForPendingDraftSends(), true);
     assert.equal(auxiliaryStorage.getAuxiliaryDraft(session.id)?.text, "new pending");
     assert.equal(auxiliaryStorage.getAuxiliaryDraft(session.id)?.durableRevision, next.durableRevision + 2);
   } finally {
@@ -537,10 +538,10 @@ test("Auxiliary turn draft operation は失敗時復元と後続save保全を行
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliary送信の終了待ちはconsume後のrunと失敗時の復元保存まで待ち、復元失敗を終了失敗として返す"
+// claim = "Auxiliary送信の終了待ちは先にsettleした復元失敗も再保存まで保持し、永続済の編集・削除・再作成を上書きせず解消する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
 // fault = "DB closeが送信runまたは失敗時復元より先に進み、再起動後にconsume済みdraftが空になる"
-// observable = "pending barrier settlement, SQLite draft after reopening, and restore failure result"
+// observable = "pending barrier settlement, repeated quit failure after send settlement, restored SQLite draft after reopening, and unchanged later durable state"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-send-settlement-barrier"
 // lifecycle = "permanent"
@@ -671,6 +672,65 @@ test("Auxiliary送信の終了待ちは実SQLiteのconsumeと復元保存まで�
     await assert.rejects(failedOperation, /draft restore failed/);
     assert.equal(await failedBarrier, false);
     assert.equal(auxiliaryStorage.getAuxiliaryDraft(failedSession.id)?.text, "");
+    // Another Window can still be awaiting its ACK when this send finishes.
+    // Starting the Main barrier later must not forget the failed restoration.
+    assert.equal(await service.waitForPendingDraftSends(), false);
+    assert.equal(await service.waitForPendingDraftSends(), false);
+
+    failRestore = false;
+    let releaseRetry!: () => void;
+    heldRestore = new Promise<void>((resolve) => { releaseRetry = resolve; });
+    const retryStarted = new Promise<void>((resolve) => { notifyRestoreStarted = resolve; });
+    let retrySettled = false;
+    const retry = service.waitForPendingDraftSends().then((result) => { retrySettled = true; return result; });
+    await retryStarted;
+    assert.equal(retrySettled, false);
+    releaseRetry();
+    assert.equal(await retry, true);
+    heldRestore = null;
+    assert.equal(await service.waitForPendingDraftSends(), true);
+    auxiliaryStorage.close();
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    assert.equal(auxiliaryStorage.getAuxiliaryDraft(failedSession.id)?.text, "must restore");
+
+    for (const resolution of ["saved", "deleted", "recreated"] as const) {
+      const laterSession = auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
+        id: `aux-recovery-${resolution}`,
+        parentSessionId: parent.id,
+        composerDraft: "old failed draft",
+      }));
+      const original = auxiliaryStorage.getAuxiliaryDraft(laterSession.id)!;
+      failRestore = true;
+      await assert.rejects(service.runAuxiliaryTurnWithDraft({
+        auxiliarySessionId: laterSession.id,
+        parentSessionId: parent.id,
+        incarnation: original.incarnation,
+        expectedDurableRevision: original.durableRevision,
+        userMessage: original.text,
+        run: async () => { throw new Error("runtime failed"); },
+      }), /draft restore failed/);
+      failRestore = false;
+      if (resolution === "saved") {
+        const consumed = auxiliaryStorage.getAuxiliaryDraft(laterSession.id)!;
+        assert.equal((await service.saveAuxiliaryDraft({
+          auxiliarySessionId: laterSession.id,
+          parentSessionId: parent.id,
+          incarnation: consumed.incarnation,
+          expectedDurableRevision: consumed.durableRevision,
+          text: "",
+          updatedAt: "2026-09-20T00:00:00.000Z",
+        })).outcome, "saved", "a deliberate empty edit also supersedes recovery");
+      } else {
+        auxiliaryStorage.deleteAuxiliarySessionsForParent(parent.id);
+        if (resolution === "recreated") {
+          auxiliaryStorage.upsertAuxiliarySession({ ...laterSession, composerDraft: "replacement" });
+          assert.notEqual(auxiliaryStorage.getAuxiliaryDraft(laterSession.id)?.incarnation, original.incarnation);
+        }
+      }
+      const expected = auxiliaryStorage.getAuxiliaryDraft(laterSession.id);
+      assert.equal(await service.waitForPendingDraftSends(), true);
+      assert.deepEqual(auxiliaryStorage.getAuxiliaryDraft(laterSession.id), expected);
+    }
   } finally {
     auxiliaryStorage?.close();
     parentStorage.close();

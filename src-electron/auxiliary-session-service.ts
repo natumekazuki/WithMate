@@ -176,17 +176,11 @@ function resolveParentCharacterId(parent: Session): string {
   return parent.characterRuntimeSnapshot?.characterId || parent.characterId || "";
 }
 
-class AuxiliaryDraftRestoreError extends AggregateError {
-  constructor(error: unknown, restoreError: unknown) {
-    super([error, restoreError], "Auxiliary turn failed and draft restore failed.");
-    this.name = "AggregateError";
-  }
-}
-
 export class AuxiliarySessionService {
   private readonly creationRecords = new Map<string, AuxiliaryCreationRecord>();
   private readonly creationOwnerGenerations = new Map<string, string>();
-  private readonly pendingDraftSends = new Set<Promise<boolean>>();
+  private readonly pendingDraftSends = new Set<Promise<void>>();
+  private readonly failedDraftRestores = new Set<AuxiliaryDraftSaveInput>();
   private creationStorage: AuxiliarySessionStorageAccess | null = null;
   private creationGenerationId = randomUUID();
 
@@ -835,16 +829,36 @@ export class AuxiliarySessionService {
   }
 
   async waitForPendingDraftSends(): Promise<boolean> {
-    const pending = [...this.pendingDraftSends];
-    const results = await Promise.all(pending);
-    return results.every(Boolean);
+    await Promise.all([...this.pendingDraftSends]);
+    for (const restore of [...this.failedDraftRestores]) {
+      try {
+        const storage = this.deps.getStorage();
+        const current = await storage.getAuxiliaryDraft(restore.auxiliarySessionId);
+        // A persisted recovery/edit or explicit deletion/recreation supersedes
+        // this failed restore. Never overwrite a newer draft or resurrect it.
+        if (!current
+          || current.parentSessionId !== restore.parentSessionId
+          || current.incarnation !== restore.incarnation
+          || current.durableRevision > restore.expectedDurableRevision) {
+          this.failedDraftRestores.delete(restore);
+          continue;
+        }
+        if (current.durableRevision !== restore.expectedDurableRevision || current.text !== "") continue;
+        const result = await storage.saveAuxiliaryDraft(restore);
+        if (result.outcome === "saved") this.failedDraftRestores.delete(restore);
+      } catch {
+        // Keep the original text and retry on the next quit attempt. Settling
+        // the send Promise alone must not make failed restoration safe to quit.
+      }
+    }
+    return this.failedDraftRestores.size === 0;
   }
 
   trackPendingDraftSend<T>(operationFactory: () => Promise<T>): Promise<T> {
     const operation = operationFactory();
     const settlement = operation.then(
-      () => true,
-      (error: unknown) => !(error instanceof AuxiliaryDraftRestoreError),
+      () => undefined,
+      () => undefined,
     );
     this.pendingDraftSends.add(settlement);
     void settlement.then(() => this.pendingDraftSends.delete(settlement));
@@ -876,18 +890,20 @@ export class AuxiliarySessionService {
     try {
       await input.run();
     } catch (error) {
+      const restore: AuxiliaryDraftSaveInput = {
+        auxiliarySessionId: input.auxiliarySessionId,
+        parentSessionId: input.parentSessionId,
+        incarnation: consumed.ack.incarnation,
+        expectedDurableRevision: consumed.ack.durableRevision,
+        text: captured.text,
+        updatedAt: currentTimestampLabel(),
+      };
       try {
-        const restored = await storage.saveAuxiliaryDraft({
-          auxiliarySessionId: input.auxiliarySessionId,
-          parentSessionId: input.parentSessionId,
-          incarnation: consumed.ack.incarnation,
-          expectedDurableRevision: consumed.ack.durableRevision,
-          text: captured.text,
-          updatedAt: currentTimestampLabel(),
-        });
+        const restored = await storage.saveAuxiliaryDraft(restore);
         if (restored.outcome !== "saved") throw new Error(`Auxiliary draft restore ${restored.outcome}.`);
       } catch (restoreError) {
-        throw new AuxiliaryDraftRestoreError(error, restoreError);
+        this.failedDraftRestores.add(restore);
+        throw new AggregateError([error, restoreError], "Auxiliary turn failed and draft restore failed.");
       }
       throw error;
     }

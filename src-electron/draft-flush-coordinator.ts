@@ -1,13 +1,16 @@
+import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
+
 export type DraftFlushReason = "close" | "quit";
 export type DraftFlushRequest = Readonly<{ requestId: string; sessionId: string; reason: DraftFlushReason }>;
 export const DEFAULT_DRAFT_FLUSH_TIMEOUT_MS = 10_000;
+export const DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS = DEFAULT_DRAFT_FLUSH_TIMEOUT_MS + DEFAULT_PROVIDER_CANCEL_GRACE_MS;
 type Pending = { sender: unknown; resolve: (value: boolean) => void; timer: ReturnType<typeof setTimeout> };
 export class DraftFlushCoordinator<TWindow> {
   private sequence = 0;
   private readonly pending = new Map<string, Pending>();
   constructor(
     private readonly send: (window: TWindow, request: DraftFlushRequest) => void,
-    private readonly timeoutMs = DEFAULT_DRAFT_FLUSH_TIMEOUT_MS,
+    private readonly timeoutMs?: number,
   ) {}
   request(window: TWindow, sessionId: string, sender: unknown, reason: DraftFlushReason): Promise<boolean> {
     const requestId = `draft-flush-${++this.sequence}`;
@@ -17,7 +20,7 @@ export class DraftFlushCoordinator<TWindow> {
         if (!pending) return;
         this.pending.delete(requestId);
         pending.resolve(false);
-      }, this.timeoutMs);
+      }, this.timeoutMs ?? (reason === "quit" ? DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS : DEFAULT_DRAFT_FLUSH_TIMEOUT_MS));
       this.pending.set(requestId, { sender, resolve, timer });
       try {
         this.send(window, { requestId, sessionId, reason });

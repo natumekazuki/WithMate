@@ -181,8 +181,8 @@ Issue #726 の段階ごとの変更と検証履歴は `docs/plans/20260919-sessi
 - 実行中 session がある場合:
   - 確認ダイアログを出す
   - `戻る`: quit をキャンセル
-  - `終了する`: draft flush成功後に実行中 session を中断してアプリを終了する
-- 通常quitは全Session Windowの送信結果確定・失敗復元を含むdraft flush完了を確認し、既に閉じたWindowからの未確定Auxiliary送信とMain側の復元保存も待ってからsnapshot保存、provider等のcleanupへ進む。1つでも保存失敗・例外・待機timeoutがあれば終了を中止し、各Windowの凍結を解除する。未保存draftのあるWindowでは編集・再試行導線を保持し、再度quitできる
+  - `終了する`: 新規実行を止めて実行中 session にキャンセルを要求し、draft flushと復元保存の成功後にアプリを終了する
+- 通常quitはDBを開いたまま実行をキャンセルし、全Session Windowの送信結果確定・失敗復元を含むdraft flush完了を確認する。既に閉じたWindowからの未確定Auxiliary送信とMain側に残る復元失敗も再保存まで待ってからsnapshot保存、provider等のcleanup、DB closeへ進む。quitの待機期限はキャンセル猶予後の保存時間も確保する。1つでも保存失敗・例外・待機timeoutがあれば終了を中止し、各Windowの凍結を解除する。開始済みキャンセルは取り消さず、未保存draftのあるWindowでは編集・再試行導線を保持し、再度quitできる
 
 キャンセルは `Session Window` から明示操作で行い、アプリ終了時の accidental quit 保護とは別責務で扱う。
 

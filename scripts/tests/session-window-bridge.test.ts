@@ -8,6 +8,7 @@ import {
   type SessionWindowCloseEvent,
   type SessionWindowLike,
 } from "../../src-electron/session-window-bridge.js";
+import { DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS } from "../../src-electron/draft-flush-coordinator.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -1086,7 +1087,7 @@ describe("SessionWindowBridge", () => {
       if (outcome !== "throw") {
         assert.equal(quitCompleted, false);
         assert.deepEqual(releases, []);
-        if (outcome === "timeout") t.mock.timers.tick(10_000);
+        if (outcome === "timeout") t.mock.timers.tick(DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS);
         else releasePending(outcome === "success");
       }
       assert.equal(await quitting, outcome === "success");

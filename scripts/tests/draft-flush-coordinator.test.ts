@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { DraftFlushCoordinator } from "../../src-electron/draft-flush-coordinator.js";
+import {
+  DEFAULT_DRAFT_FLUSH_TIMEOUT_MS,
+  DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS,
+  DraftFlushCoordinator,
+} from "../../src-electron/draft-flush-coordinator.js";
+import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "../../src-electron/session-run-timeouts.js";
 
 // @test-value v2
 // kind = "invariant"
@@ -26,15 +31,32 @@ test("DraftFlushCoordinatorはsender不一致のackを無視する", async () =>
 
 // @test-value v2
 // kind = "invariant"
-// claim = "flush応答がない場合は成功扱いせず有限時間で失敗する"
+// claim = "quitのflushはcancel猶予後の保存時間を確保し、closeもquitも応答欠落は有限時間で失敗する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
-// fault = "renderer死亡や応答欠落で終了処理が永遠にpendingする"
-// observable = "timeout後のrequest Promiseの結果"
+// fault = "cancel猶予の満了時点でquitを中止するか、応答欠落で終了処理が永遠にpendingする"
+// observable = "close期限後のquit未完了、猶予後のACK成功、各timeout後のrequest Promiseのfalse"
 // observation_boundary = "public-boundary"
 // scope = "draft-flush-transport"
 // lifecycle = "permanent"
 // @end-test-value
-test("DraftFlushCoordinatorはack欠落をfalseで終端する", { timeout: 1000 }, async () => {
-  const coordinator = new DraftFlushCoordinator(() => {}, 5);
-  assert.equal(await coordinator.request({}, "session", "sender", "quit"), false);
+test("DraftFlushCoordinatorはquitのcancel猶予を確保しack欠落をfalseで終端する", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let requestId = "";
+  const coordinator = new DraftFlushCoordinator((_, payload) => { requestId = payload.requestId; });
+  const close = coordinator.request({}, "session", "sender", "close");
+  let quitSettled = false;
+  const quit = coordinator.request({}, "session", "sender", "quit").then((result) => {
+    quitSettled = true;
+    return result;
+  });
+  t.mock.timers.tick(DEFAULT_DRAFT_FLUSH_TIMEOUT_MS);
+  assert.equal(await close, false);
+  assert.equal(quitSettled, false);
+  assert.ok(DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS > DEFAULT_PROVIDER_CANCEL_GRACE_MS);
+  assert.equal(coordinator.acknowledge(requestId, "sender", true), true);
+  assert.equal(await quit, true);
+
+  const unacknowledgedQuit = coordinator.request({}, "session", "sender", "quit");
+  t.mock.timers.tick(DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS);
+  assert.equal(await unacknowledgedQuit, false);
 });
