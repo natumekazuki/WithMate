@@ -24,13 +24,12 @@ import type {
   ResetAppDatabaseTarget,
 } from "../src/withmate-window-types.js";
 import type { AuxiliarySession } from "../src/auxiliary-session-state.js";
-import type { CompanionSession } from "../src/companion-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
 import type { SessionThreadPatchInput } from "./session-storage-v6.js";
 import type { AuxiliarySessionThreadPatchInput } from "./auxiliary-session-storage.js";
 import type { AuxiliarySessionRuntimeMetadataPatchInput } from "./auxiliary-session-storage.js";
-import type { ProviderRuntimeMetadata, ProviderRuntimeMetadataPatch } from "./provider-runtime-metadata-patch.js";
+import type { ProviderRuntimeMetadata } from "./provider-runtime-metadata-patch.js";
 
 export type SettingsCatalogServiceDeps = {
   /** Captures the storage owner/generation used by a deferred operation. */
@@ -43,7 +42,6 @@ export type SettingsCatalogServiceDeps = {
   isRunningSession(session: Session): boolean;
   listSessions(): Awaitable<Session[]>;
   listAuxiliarySessions(): Awaitable<AuxiliarySession[]>;
-  listCompanionSessions?: () => Awaitable<CompanionSession[]>;
   getAppSettings(): Awaitable<AppSettings>;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getModelCatalog(revision?: number | null): Awaitable<ModelCatalogSnapshot | null>;
@@ -70,11 +68,6 @@ export type SettingsCatalogServiceDeps = {
   updateAuxiliarySessionRuntimeMetadataIfMatches(input: AuxiliarySessionRuntimeMetadataPatchInput): Awaitable<AuxiliarySession | null>;
   updateSessionThreadIfMatches(input: SessionThreadPatchInput): Awaitable<Session | null>;
   updateAuxiliarySessionThreadIfMatches(input: AuxiliarySessionThreadPatchInput): Awaitable<AuxiliarySession | null>;
-  replaceCompanionSessions?: (nextSessions: CompanionSession[]) => Awaitable<CompanionSession[]>;
-  updateCompanionRuntimeMetadataIfMatches?: (
-    sessionId: string,
-    input: ProviderRuntimeMetadataPatch,
-  ) => Awaitable<CompanionSession | null>;
   clearProviderQuotaTelemetry(providerId: string): void;
   clearSessionContextTelemetry(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
@@ -148,10 +141,6 @@ function migrateSessionToCatalog(session: Session, snapshot: ModelCatalogSnapsho
 }
 
 function migrateAuxiliarySessionToCatalog(session: AuxiliarySession, snapshot: ModelCatalogSnapshot): AuxiliarySession {
-  return migrateProviderRuntimeMetadata(session, snapshot);
-}
-
-function migrateCompanionSessionToCatalog(session: CompanionSession, snapshot: ModelCatalogSnapshot): CompanionSession {
   return migrateProviderRuntimeMetadata(session, snapshot);
 }
 
@@ -456,7 +445,6 @@ export class SettingsCatalogService {
 
     const previousSessions = await this.deps.listSessions();
     const previousAuxiliarySessions = await this.deps.listAuxiliarySessions();
-    const previousCompanionSessions = await this.deps.listCompanionSessions?.() ?? [];
     const normalizedDocument = parseModelCatalogDocument(document);
     for (const session of previousSessions) {
       migrateSessionToCatalog(session, { revision: previousSnapshot.revision, providers: normalizedDocument.providers });
@@ -464,23 +452,16 @@ export class SettingsCatalogService {
     for (const session of previousAuxiliarySessions) {
       migrateAuxiliarySessionToCatalog(session, { revision: previousSnapshot.revision, providers: normalizedDocument.providers });
     }
-    for (const session of previousCompanionSessions) {
-      migrateCompanionSessionToCatalog(session, { revision: previousSnapshot.revision, providers: normalizedDocument.providers });
-    }
 
     let importedSnapshot: ModelCatalogSnapshot | null = null;
     const appliedSessions: Array<{ previous: Session; current: Session }> = [];
     const appliedAuxiliarySessions: Array<{ previous: AuxiliarySession; current: AuxiliarySession }> = [];
-    const appliedCompanionSessions: Array<{ previous: CompanionSession; current: CompanionSession }> = [];
     try {
       importedSnapshot = await this.deps.importModelCatalogDocument(normalizedDocument, "imported");
       const nextSnapshot = importedSnapshot;
       const migratedSessions = previousSessions.map((session) => migrateSessionToCatalog(session, nextSnapshot));
       const migratedAuxiliarySessions = previousAuxiliarySessions.map((session) =>
         migrateAuxiliarySessionToCatalog(session, nextSnapshot),
-      );
-      const migratedCompanionSessions = previousCompanionSessions.map((session) =>
-        migrateCompanionSessionToCatalog(session, nextSnapshot),
       );
       for (let index = 0; index < previousSessions.length; index += 1) {
         const previous = previousSessions[index];
@@ -515,32 +496,14 @@ export class SettingsCatalogService {
           appliedAuxiliarySessions.push({ previous, current });
         }
       }
-      if (this.deps.updateCompanionRuntimeMetadataIfMatches) {
-        for (let index = 0; index < previousCompanionSessions.length; index += 1) {
-          const previous = previousCompanionSessions[index];
-          const next = migratedCompanionSessions[index];
-          if (!previous || !next) {
-            continue;
-          }
-          const current = await this.deps.updateCompanionRuntimeMetadataIfMatches(
-            previous.id,
-            { expected: getProviderRuntimeMetadata(previous), next: getProviderRuntimeMetadata(next) },
-          );
-          if (current) {
-            appliedCompanionSessions.push({ previous, current });
-          }
-        }
-      }
       this.deps.broadcastSessions(new Set([
         ...appliedSessions.map(({ current }) => current.id),
         ...appliedAuxiliarySessions.map(({ current }) => current.parentSessionId),
-        ...appliedCompanionSessions.map(({ current }) => current.id),
       ]));
       await this.deps.broadcastModelCatalog(nextSnapshot);
       const cleanupTargets = [
         ...appliedSessions,
         ...appliedAuxiliarySessions,
-        ...appliedCompanionSessions,
       ].filter(({ previous, current }) =>
         previous.provider !== current.provider || previous.model !== current.model ||
         previous.reasoningEffort !== current.reasoningEffort || previous.catalogRevision !== current.catalogRevision ||
@@ -549,7 +512,6 @@ export class SettingsCatalogService {
       const affectedProviders = Array.from(new Set([
         ...previousSessions.map((session) => session.provider),
         ...previousAuxiliarySessions.map((session) => session.provider),
-        ...previousCompanionSessions.map((session) => session.provider),
         ...normalizedDocument.providers.map((provider) => provider.id),
       ]));
       for (const providerId of affectedProviders) {
@@ -588,18 +550,9 @@ export class SettingsCatalogService {
               next: getProviderRuntimeMetadata(previous),
             });
           }
-          if (this.deps.updateCompanionRuntimeMetadataIfMatches) {
-            for (const { previous, current } of appliedCompanionSessions) {
-              await this.deps.updateCompanionRuntimeMetadataIfMatches(
-                previous.id,
-                { expected: getProviderRuntimeMetadata(current), next: getProviderRuntimeMetadata(previous) },
-              );
-            }
-          }
           this.deps.broadcastSessions(new Set([
             ...appliedSessions.map(({ previous }) => previous.id),
             ...appliedAuxiliarySessions.map(({ previous }) => previous.parentSessionId),
-            ...appliedCompanionSessions.map(({ previous }) => previous.id),
           ]));
           await this.deps.broadcastModelCatalog(restoredSnapshot);
         },
@@ -629,14 +582,6 @@ export class SettingsCatalogService {
             expected: getProviderRuntimeMetadata(current),
             next: getProviderRuntimeMetadata(previous),
           });
-        }
-        if (this.deps.updateCompanionRuntimeMetadataIfMatches) {
-          for (const { previous, current } of appliedCompanionSessions) {
-            await this.deps.updateCompanionRuntimeMetadataIfMatches(
-              previous.id,
-              { expected: getProviderRuntimeMetadata(current), next: getProviderRuntimeMetadata(previous) },
-            );
-          }
         }
       } catch (rollbackError) {
         throw new AggregateError(
@@ -717,13 +662,9 @@ export class SettingsCatalogService {
         if (!appliedTargets.has("sessions")) {
           const previousCatalogSessions = await this.deps.listSessions();
           const previousCatalogAuxiliarySessions = await this.deps.listAuxiliarySessions();
-          const previousCatalogCompanionSessions = await this.deps.listCompanionSessions?.() ?? [];
           const migratedSessions = previousCatalogSessions.map((session) => migrateSessionToCatalog(session, resetSnapshot));
           const migratedAuxiliarySessions = previousCatalogAuxiliarySessions.map((session) =>
             migrateAuxiliarySessionToCatalog(session, resetSnapshot),
-          );
-          const migratedCompanionSessions = previousCatalogCompanionSessions.map((session) =>
-            migrateCompanionSessionToCatalog(session, resetSnapshot),
           );
           for (let index = 0; index < previousCatalogSessions.length; index += 1) {
             const previous = previousCatalogSessions[index];
@@ -762,24 +703,6 @@ export class SettingsCatalogService {
                 previous.reasoningEffort !== current.reasoningEffort || previous.catalogRevision !== current.catalogRevision ||
                 previous.threadId !== current.threadId)) {
               await this.deps.invalidateProviderSessionThread(previous.provider, previous.id);
-            }
-          }
-          if (this.deps.updateCompanionRuntimeMetadataIfMatches) {
-            for (let index = 0; index < previousCatalogCompanionSessions.length; index += 1) {
-              const previous = previousCatalogCompanionSessions[index];
-              const next = migratedCompanionSessions[index];
-              if (!previous || !next) {
-                continue;
-              }
-              const current = await this.deps.updateCompanionRuntimeMetadataIfMatches(
-                previous.id,
-                { expected: getProviderRuntimeMetadata(previous), next: getProviderRuntimeMetadata(next) },
-              );
-              if (current && (previous.provider !== current.provider || previous.model !== current.model ||
-                  previous.reasoningEffort !== current.reasoningEffort || previous.catalogRevision !== current.catalogRevision ||
-                  previous.threadId !== current.threadId)) {
-                await this.deps.invalidateProviderSessionThread(previous.provider, previous.id);
-              }
             }
           }
         }

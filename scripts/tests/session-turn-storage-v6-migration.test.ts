@@ -151,6 +151,16 @@ function tableExists(db: DatabaseSync, tableName: string): boolean {
 }
 
 describe("session turn storage v6 migration dry-run", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "session_turn payloadはfinal/interim/provider outputへ再分類されdry-run件数へ反映される"
+  // oracle = { type = "contract", ref = "scripts/migrate-session-turn-storage-v6.ts" }
+  // fault = "turn payloadを誤分類し、移行前の件数報告と実データの対応を崩す"
+  // observable = "dry-run classification counts"
+  // observation_boundary = "public-boundary"
+  // scope = "session turn v6 dry-run"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("audit_events_v6 の session_turn payload を final/interim/provider output へ再分類して報告する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-session-turn-migration-"));
     try {
@@ -256,6 +266,16 @@ describe("session turn storage v6 migration dry-run", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "write modeはvalidなsession turnをturn storageへ移し、source audit tableとlegacy Memory tableを削除する"
+  // oracle = { type = "contract", ref = "scripts/migrate-session-turn-storage-v6.ts" }
+  // fault = "valid turnを欠落させるか、移行済みsource tableを残して二重処理を招く"
+  // observable = "target turn rows and source table absence"
+  // observation_boundary = "public-boundary"
+  // scope = "session turn v6 write"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("write mode は turn storage へ移行し、audit_events_v6 と legacy Memory table を削除する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-session-turn-migration-"));
     try {
@@ -264,7 +284,6 @@ describe("session turn storage v6 migration dry-run", () => {
       try {
         db.exec("PRAGMA foreign_keys = ON;");
         db.exec(CREATE_V6_AUDIT_EVENTS_TABLE_SQL);
-        db.exec("CREATE TABLE companion_groups (id TEXT PRIMARY KEY);");
         db.exec("CREATE TABLE project_memory_entries (id TEXT PRIMARY KEY);");
         insertSession(db);
         insertAuxiliarySession(db);
@@ -304,7 +323,6 @@ describe("session turn storage v6 migration dry-run", () => {
       try {
         assert.equal(tableExists(migratedDb, "audit_events_v6"), false);
         assert.equal(tableExists(migratedDb, "project_memory_entries"), false);
-        assert.equal(tableExists(migratedDb, "companion_groups"), true);
         assert.equal(
           (migratedDb.prepare("SELECT COUNT(*) AS count FROM session_turns_v6").get() as { count: number }).count,
           3,
@@ -357,6 +375,16 @@ describe("session turn storage v6 migration dry-run", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "skipped rowがあってもvalid rowは非破壊移行され、sourceと未設定markerが残る"
+  // oracle = { type = "contract", ref = "scripts/migrate-session-turn-storage-v6.ts" }
+  // fault = "skipped rowの存在でvalid rowまで失うか、再開に必要なsource markerを消す"
+  // observable = "migrated valid rows, source table, and migration marker"
+  // observation_boundary = "public-boundary"
+  // scope = "session turn v6 skipped rows"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("write mode は skipped row がある場合も valid row を非破壊移行して source table と marker 未設定を残す", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-session-turn-migration-"));
     try {
@@ -444,6 +472,16 @@ describe("session turn storage v6 migration dry-run", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "auxiliary_session_idがない旧audit eventはmain Session rowとして移行される"
+  // oracle = { type = "contract", ref = "scripts/migrate-session-turn-storage-v6.ts" }
+  // fault = "旧形式のmain eventを孤立またはAuxiliaryとして誤移行する"
+  // observable = "migrated main session turn row"
+  // observation_boundary = "public-boundary"
+  // scope = "session turn v6 legacy main event"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("write mode は auxiliary_session_id がない旧 audit_events_v6 も main session row として移行する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-session-turn-migration-"));
     try {
@@ -491,6 +529,16 @@ describe("session turn storage v6 migration dry-run", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "未移行のnon-session_turn audit rowがあってもvalid session turnは非破壊移行される"
+  // oracle = { type = "contract", ref = "scripts/migrate-session-turn-storage-v6.ts" }
+  // fault = "無関係なaudit rowの存在でvalid turnを失うか、無関係rowを誤変換する"
+  // observable = "valid target row and retained non-session-turn source row"
+  // observation_boundary = "public-boundary"
+  // scope = "session turn v6 unrelated audit rows"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("write mode は未移行の non-session_turn audit row がある場合も valid row を非破壊移行する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-session-turn-migration-"));
     try {
@@ -549,6 +597,16 @@ describe("session turn storage v6 migration dry-run", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "write mode拒否時はcleanup対象tableを削除せず、再試行可能な状態を保つ"
+  // oracle = { type = "contract", ref = "scripts/migrate-session-turn-storage-v6.ts" }
+  // fault = "拒否されたmigrationがsource cleanupを実行して復旧可能なデータを失う"
+  // observable = "cleanup table existence after rejection"
+  // observation_boundary = "public-boundary"
+  // scope = "session turn v6 rejection cleanup"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("write mode が拒否された場合は cleanup table を削除しない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-session-turn-migration-"));
     try {
@@ -599,6 +657,16 @@ describe("session turn storage v6 migration dry-run", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "重複するassistant bodyは時刻近傍で正しいSession turnへ照合される"
+  // oracle = { type = "contract", ref = "scripts/migrate-session-turn-storage-v6.ts" }
+  // fault = "同一本文の別turnへ誤結合し、移行後の履歴を入れ替える"
+  // observable = "matched target turn and timestamps"
+  // observation_boundary = "public-boundary"
+  // scope = "session turn v6 duplicate body matching"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("write mode は重複する assistant body を時刻近傍で照合する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-session-turn-migration-"));
     try {

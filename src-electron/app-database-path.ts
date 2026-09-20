@@ -20,6 +20,7 @@ import {
   readV6DatabaseUserVersion,
 } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import { removeCompanionData } from "./companion-removal.js";
 
 function v3BlobRootPath(userDataPath: string): string {
   return path.join(userDataPath, "blobs", "v3");
@@ -166,6 +167,10 @@ export async function resolveOrMigrateAppDatabasePath(
   userDataPath: string,
   onProgress?: AppDatabaseMigrationProgressListener,
 ): Promise<string> {
+  await removeCompanionData(userDataPath, (phase) => onProgress?.({
+    title: "Updating saved data",
+    detail: `Removing retired feature data (${phase}).`,
+  }));
   const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
   onProgress?.({
     title: "データベースを確認しています",

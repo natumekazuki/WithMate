@@ -12,7 +12,7 @@
 
 V5 Core では、SingleMate の `current` 固定ではなく、複数 Character を保存、列挙、取得、更新できる catalog boundary を提供する。
 
-この文書は V5 Core の Character storage 正本である。current runtime の session / companion prompt injection は後続 branch で接続するが、Character 実装ではこの storage 境界を優先する。
+この文書は V5 Core の Character storage 正本である。current runtime の session prompt injection はこの storage 境界を優先する。
 
 ## Scope
 
@@ -23,7 +23,7 @@ V5 Core に含める:
 - optional `characters/<character-id>/character-notes.md`
 - optional managed icon file `characters/<character-id>/icon.<ext>`
 - archive
-- session / companion snapshot 用 domain model
+- session snapshot 用 domain model
 - renderer から Main Process 経由で使う IPC / preload API
 
 V5 Core に含めない:
@@ -43,7 +43,7 @@ V5 Core に含めない:
 | runtime definition body | `characters/<character-id>/character.md` |
 | authoring notes | `characters/<character-id>/character-notes.md` |
 | managed icon body | `characters/<character-id>/icon.<ext>` |
-| session runtime input | session / companion 作成時に保存する `CharacterRuntimeSnapshot` |
+| session runtime input | session 作成時に保存する `CharacterRuntimeSnapshot` |
 
 Renderer は filesystem を直接走査しない。Character catalog は Main Process service 経由で取得する。
 
@@ -104,7 +104,7 @@ Character icon は保存時に Main Process が app data 配下へ materialize �
 
 ### `icon.<ext>`
 
-- Character 一覧、Editor preview、session / companion snapshot の avatar 表示に使う代表画像。
+- Character 一覧、Editor preview、session snapshot の avatar 表示に使う代表画像。
 - Renderer は filesystem を直接解決せず、storage service が materialize した `iconFilePath` を受け取る。
 - 外部絶対 path の取り込みは保存時にコピーし、保存後の正本は app data 配下の managed icon とする。
 - 新しく取り込む icon は PNG、JPG、JPEG に限定する。既存の非対応 icon は同じ参照を維持する限り継続して使用できる。
@@ -124,11 +124,11 @@ V5 Core の storage service は次を提供する:
 
 `resolveLaunchCharacter` は、明示された `characterId` がactive Characterを指す場合だけ返す。Character未指定、不明、archivedの場合は`null`を返し、特定Characterや更新日時順の先頭へ暗黙にfallbackしない。
 
-Session / Companionのランダム選択とactive Character 0件時のneutral fallbackはHome launch境界が所有し、ADR 004に従う。
+Sessionのランダム選択とactive Character 0件時のneutral fallbackはHome launch境界が所有し、ADR 004に従う。
 
 ## Runtime Snapshot
 
-通常 Session と Companion の `CharacterRuntimeSnapshot` は、作成時に保存する immutable input である。汎用 update は保存済み `characterId` と snapshot の差し替えを永続化前に拒否し、runtime prompt は catalog の現在値ではなく保存済み snapshot を使う。
+通常 Session の `CharacterRuntimeSnapshot` は、作成時に保存する immutable input である。汎用 update は保存済み `characterId` と snapshot の差し替えを永続化前に拒否し、runtime prompt は catalog の現在値ではなく保存済み snapshot を使う。
 
 `character-authoring` Session は例外である。stable owner は `Session.characterId` に保持したまま、各 turn の開始時に canonical `character.md` から runtime snapshot を再生成する。定義が hard contract を満たさない、または必須ファイルが欠落した場合は snapshot を投影せず、古い snapshot と provider thread ID を composer / provider validation より前に破棄し、process-local thread cache も無効化する。
 
@@ -152,5 +152,3 @@ snapshot の field shape は `src/character/character-catalog.ts`、normalizatio
 ## Related Docs
 
 - `docs/design/character-definition-format.md`
-- `docs/design/v5-character-transition.md`
-- `docs/plans/20260613-v5-character-core-branches.md`

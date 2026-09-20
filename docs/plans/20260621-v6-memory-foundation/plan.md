@@ -9,7 +9,6 @@ V5 Character-first runtimeを維持したまま、Skill-first Memory accessの�
 - `AGENTS.md`
 - `docs/design/documentation-map.md`
 - `docs/design/v6-database-foundation.md`
-- `docs/design/v5-character-transition.md`
 - `docs/design/character-storage.md`
 - `docs/design/v6-memory-foundation.md`
 - `docs/design/provider-adapter.md`

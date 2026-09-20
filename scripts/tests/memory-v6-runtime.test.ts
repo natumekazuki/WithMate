@@ -1577,11 +1577,13 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "DB bootstrap失敗時はlistener credential registry entry legacy generationのいずれも公開しない"
-  // oracle = { type = "adr", ref = "ADR-023 publication failure timing" }
-  // failure_mode = "runtime初期化失敗後に利用不能なcredentialまたはentryがactive候補として残る"
+  // claim = "読めない管理DBの除去migrationが失敗した場合、Memory runtimeを起動せずcurrent projectionを作らない"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // fault = "データ除去の未完了を無視してruntimeの起動を成功扱いする"
+  // observable = "runtime起動のrejectとmemory-v6.current.jsonの不在"
+  // observation_boundary = "public-boundary"
   // scope = "memory-runtime-prepublish-failure"
   // lifecycle = "permanent"
   // @end-test-value
@@ -1599,7 +1601,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
           registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
           runtimeDirectoryPath,
         }),
-        /does not match the V6 foundation schema/,
+        /Companion data removal is incomplete.*file is not a database/,
       );
       await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6.current.json")));
     } finally {

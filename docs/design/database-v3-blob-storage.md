@@ -2,7 +2,7 @@
 
 - 作成日: 2026-05-02
 - 対象: V3 DB と DB 外 compressed blob store
-- 関連: `docs/design/database-schema.md`, `docs/design/database-v2-migration.md`, `docs/design/audit-log.md`, `docs/design/companion-mode.md`
+- 関連: `docs/design/database-schema.md`, `docs/design/database-v2-migration.md`, `docs/design/audit-log.md`
 
 ## Goal
 
@@ -19,8 +19,6 @@ V3 では、一覧・検索・削除判定に必要な軽量 metadata は SQLite
 - 標準の read path は compressed blob を Main Process 内でメモリ展開する。
 - 一時ファイルへの展開は標準経路にしない。
 - 一時ファイル展開が必要な debug/export は、通常 UI と別の明示操作として扱う。
-- Session / Companion を削除する場合、関連 audit / artifact / merge diff blob も削除対象にする。
-- CompanionAudit は V3 scope で正式に追加する。
 
 ## Storage Overview
 
@@ -185,38 +183,6 @@ SessionAudit は V2 の summary/detail/lazy load 境界を維持し、detail pay
 - `details_preview` (500 chars max)
 - `details_blob_id`
 
-### Companion
-
-V3 では Companion tables を V3 schema source に昇格する。現行の `CompanionStorage` constructor 内 schema 作成は、V3 では `database-schema-v3.ts` の SQL 定数へ寄せる。
-
-`companion_messages` は `session_messages` と同様に `text_preview`, `text_blob_id`, `text_original_bytes`, `text_stored_bytes`, `artifact_available` を持つ。full artifact は `companion_message_artifacts.artifact_blob_id` に逃がし、DB には `artifact_summary_json` だけを置く。
-
-`companion_merge_runs` は merge/discard history の summary だけを持つ。
-
-- `operation`
-- `selected_paths_json`
-- `changed_files_summary_json`
-- `sibling_warnings_summary_json`
-- `diff_snapshot_blob_id`
-
-`changed_files_summary_json` は `path`, `status`, addition/deletion count, binary flag などの小さい summary として DB に残す。`sibling_warnings_summary_json` も warning code / path / short message に限定する。full `ChangedFile[]`, hunks, `diffRows`, terminal output は `diff_snapshot_blob_id` から読む。
-
-### Companion Audit
-
-CompanionAudit は SessionAudit と同じ DTO 境界を持つが、SQLite FK cascade を単純にするため table は分ける。
-
-- `companion_audit_logs`
-- `companion_audit_log_details`
-- `companion_audit_log_operations`
-
-`companion_audit_logs.session_id` は `companion_sessions(id) ON DELETE CASCADE` とする。共通 UI / IPC shape は service layer で吸収する。
-
-`companion_audit_logs` は `audit_logs` と同じ summary 列を持つ。`assistant_text_preview`, `error_message_preview`, counts, token counts, `detail_available` だけを DB に置き、assistant full text は持たない。
-
-`companion_audit_log_details` は `logical_prompt_blob_id`, `transport_payload_blob_id`, `assistant_text_blob_id`, `raw_items_blob_id`, `usage_metadata_json`, `usage_blob_id` を持つ。prompt / transport payload / raw items の JSON 本体は DB に置かない。
-
-`companion_audit_log_operations` は `operation_type`, `summary`, `details_preview`, `details_blob_id` を持つ。`summary` と `details_preview` は上限つきで、full details は blob に置く。
-
 ## Read Path
 
 ### Summary
@@ -224,7 +190,6 @@ CompanionAudit は SessionAudit と同じ DTO 境界を持つが、SQLite FK cas
 一覧 API は blob を読まない。
 
 - Session summary
-- Companion summary
 - Audit summary page
 - Merge run history
 
@@ -244,7 +209,7 @@ detail API は section 単位で blob を読む。
 
 ## Delete Policy
 
-現時点の方針では、削除済み Session / Companion の audit と raw/detail blob は保持しない。
+現時点の方針では、削除済み Session の audit と raw/detail blob は保持しない。
 
 ### Session Delete
 
@@ -254,14 +219,7 @@ detail API は section 単位で blob を読む。
 4. commit 後、収集済み blob ids を `deleteUnreferenced()` へ渡す。
 5. 削除失敗分は `delete_pending` として retry する。
 
-### Companion Delete
-
-1. 対象 companion session に紐づく message / merge run / companion audit blob ids を収集する。
-2. DB transaction で `companion_sessions` を削除する。
-3. FK cascade で関連 row を削除する。
-4. commit 後、収集済み blob ids を削除する。
-
-`clearSessions()`, `clearAuditLogs()`, `clearCompanions()`, Settings reset も同じ cleanup service を使う。
+`clearSessions()`, `clearAuditLogs()`, Settings reset も同じ cleanup service を使う。
 
 ## Garbage Collection
 
@@ -289,7 +247,6 @@ V3 migration は専用 script にする。
 - estimated compressed bytes
 - broken JSON
 - skipped rows
-- Companion table counts
 - audit detail / artifact / diff snapshot の件数
 
 ### Write Mode
@@ -308,8 +265,7 @@ V1-only install は当面 V1 のまま起動する。必要になった時点で
 - Raw Items は全文 state に入れず、preview first とする。
 - Session metadata 用の skills / custom agents / composer preview は full session hydrate を避け、`SessionSummary` の `workspacePath` / `allowedAdditionalDirectories` だけで解決する。
 - Diff Window は token 経由の lazy window を維持し、Message artifact は initial session hydrate で full diff rows を読まない。
-- Session / Companion message artifact は `getSessionMessageArtifact(sessionId, messageIndex)` / `getCompanionMessageArtifact(sessionId, messageIndex)` で Details 展開時に full artifact blob を読む。
-- Companion Review の merge run history は `CompanionMergeRunSummary` を返し、polling snapshot では `diffSnapshot` blob を復元しない。terminal / inactive read-only 表示では最新 run の full `diffSnapshot` を復元して `changedFiles` を作る。
+- Session message artifact は `getSessionMessageArtifact(sessionId, messageIndex)` で Details 展開時に full artifact blob を読む。
 
 ## Alternatives
 
@@ -320,10 +276,6 @@ DB/file の原子性は扱いやすいが、SQLite 本体と WAL の肥大化は
 ### V2 detail table に gzip text を保存する
 
 実装は小さいが、DB に raw/detail payload を持たないという V3 目的を満たさないため不採用。
-
-### SessionAudit と CompanionAudit を単一 polymorphic table にする
-
-共通 query は書きやすいが、SQLite FK cascade が弱くなり削除時 cleanup が複雑になるため、V3 初期案では採用しない。
 
 ### 一時ファイル展開を標準 read path にする
 
@@ -348,9 +300,7 @@ DB/file の原子性は扱いやすいが、SQLite 本体と WAL の肥大化は
 3. V3 SessionStorage を message text / artifact blob ref 対応にする。完了。
 4. V3 Audit storage を section blob ref 対応にする。完了。
 5. V3 lifecycle で `SessionStorageV3` / `AuditLogStorageV3` を選択する。完了。
-6. Companion tables を V3 schema source に昇格する。完了。
-7. CompanionAudit storage / runtime write path を追加する。完了。
-8. IPC / renderer の重い payload を section / summary lazy load へ移行する。Audit detail section API、metadata query の summary 化、Companion merge run history summary 化、Session / Companion message artifact detail API は完了。
+6. IPC / renderer の重い payload を section / summary lazy load へ移行する。Audit detail section API、metadata query の summary 化、Session message artifact detail API は完了。
 9. V2 -> V3 migration script を追加する。完了。
 10. delete cleanup / blob GC / repair report を追加する。完了。
 11. database schema doc と manual test checklist を同期する。完了。
@@ -361,8 +311,7 @@ DB/file の原子性は扱いやすいが、SQLite 本体と WAL の肥大化は
 - blob store test: compression / hash / max size guard / missing blob fallback。
 - audit storage test: summary は blob を読まず、section detail だけ blob を読むこと。
 - session storage test: initial hydrate が full artifact blob を読まず、message artifact detail API だけが full artifact を返すこと。
-- companion storage test: merge diff snapshot が blob ref 化され、history summary では full diff snapshot を返さないこと。
-- deletion test: Session / Companion delete 後に DB row と blob refs が消えること。
+- deletion test: Session delete 後に DB row と blob refs が消えること。
 - GC test: orphan / missing / delete_pending の report と cleanup。
 - migration test: V2 detail JSON / artifact JSON / diff snapshot が V3 blob に移ること。
 - IPC/renderer test: raw detail の巨大 payload を一括 state に載せないこと。

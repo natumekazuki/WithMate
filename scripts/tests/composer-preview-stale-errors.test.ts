@@ -70,32 +70,3 @@ test("Agent composer は draft 変更時に stale preview errors を clear す�
     await view.unmount();
   }
 });
-
-// @test-value v2
-// kind = "invariant"
-// claim = "Companion composerも会話IDごとのpreview状態を保持する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 会話IDごとのdraft・添付・caret所有" }
-// fault = "Mainの遅延previewがCompanionの入力状態へ混入する"
-// observable = "Companion Main/Auxiliary切替後のpreview.attachments/errors"
-// observation_boundary = "component-behavior"
-// scope = "shared-conversation-composer"
-// lifecycle = "permanent"
-// @end-test-value
-test("Companion composer は draft 変更時に stale preview errors を clear する", async () => {
-  const view = await mountComposer();
-  try {
-    await view.render("companion-main", "draft");
-    const staleMainPreview = view.state.setPreview;
-    await act(async () => staleMainPreview(attachmentPreview));
-    await view.render("companion-main", "corrected");
-    await view.render("companion-aux", "draft");
-    const auxiliaryPreview = { attachments: [], errors: ["auxiliary warning"] } satisfies ComposerPreview;
-    await act(async () => view.state.setPreview(auxiliaryPreview));
-    await act(async () => staleMainPreview({ attachments: [], errors: ["stale main"] }));
-    assert.deepEqual(view.state.preview, auxiliaryPreview);
-    await view.render("companion-main", "corrected");
-    assert.deepEqual(view.state.preview, { attachments: [], errors: [] });
-  } finally {
-    await view.unmount();
-  }
-});

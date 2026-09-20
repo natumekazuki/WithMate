@@ -1,4 +1,3 @@
-import type { CompanionSessionSummary } from "../companion-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import {
@@ -21,7 +20,6 @@ type HomeMateProfileHandlersContext = {
   setMateAvatarUpdating: (updating: boolean) => void;
   setLaunchFeedback: (message: string) => void;
   refreshSessionSummaries: () => Promise<void>;
-  setCompanionSessions: (sessions: CompanionSessionSummary[]) => void;
 };
 
 export type HomeMateProfileHandlers = {
@@ -47,15 +45,8 @@ export function buildHomeMateProfileHandlers({
   setMateAvatarUpdating,
   setLaunchFeedback,
   refreshSessionSummaries: refreshSessionSummariesBounded,
-  setCompanionSessions,
 }: HomeMateProfileHandlersContext): HomeMateProfileHandlers {
-  const refreshSessionSummaries = async (api: WithMateWindowApi) => {
-    const [nextCompanionSessions] = await Promise.all([
-      api.listCompanionSessionSummaries(),
-      refreshSessionSummariesBounded(),
-    ]);
-    setCompanionSessions(nextCompanionSessions);
-  };
+  const refreshSessionSummaries = async (_api: WithMateWindowApi) => refreshSessionSummariesBounded();
 
   return {
     onChangeDisplayName: (value) => {
@@ -81,11 +72,7 @@ export function buildHomeMateProfileHandlers({
         setMateCreating,
         setLaunchFeedback,
         hydrateHomeData: async () => {
-          const [nextCompanionSessions] = await Promise.all([
-            api.listCompanionSessionSummaries(),
-            refreshSessionSummariesBounded(),
-          ]);
-          setCompanionSessions(nextCompanionSessions);
+          await refreshSessionSummariesBounded();
         },
       });
     },

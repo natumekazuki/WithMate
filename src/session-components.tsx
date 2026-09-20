@@ -44,7 +44,6 @@ import {
   type RunningDetailsEntry,
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
-import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { useShortcutSettings } from "./shortcut-settings-context.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
@@ -1778,7 +1777,6 @@ export type SessionContextPaneProps = {
   runningDetailsEntries: RunningDetailsEntry[];
   liveRunReasoningText: string;
   backgroundTasks: LiveBackgroundTask[];
-  companionGroupMonitorEntries: HomeMonitorEntry[];
   selectedSessionLiveRunErrorMessage: string;
   isSelectedSessionRunning: boolean;
   isCopilotSession: boolean;
@@ -1796,7 +1794,6 @@ export type SessionContextPaneProps = {
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onSelectContextPaneTab?: (tab: ContextPaneTabKey) => void;
   onJumpToMessage?: (key: string) => void;
-  onOpenCompanionReview: (sessionId: string) => void;
 };
 
 type SessionPaneErrorBoundaryProps = {
@@ -1901,7 +1898,6 @@ export function SessionContextPane({
   runningDetailsEntries,
   liveRunReasoningText,
   backgroundTasks,
-  companionGroupMonitorEntries,
   selectedSessionLiveRunErrorMessage,
   isSelectedSessionRunning,
   isCopilotSession,
@@ -1919,7 +1915,6 @@ export function SessionContextPane({
   onCycleContextPaneTab,
   onSelectContextPaneTab,
   onJumpToMessage,
-  onOpenCompanionReview,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageNavigatorButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -1957,10 +1952,6 @@ export function SessionContextPane({
           .join("|");
       case "reasoning":
         return `${isSelectedSessionRunning ? "running" : "idle"}:${liveRunReasoningText.length}`;
-      case "companion-group":
-        return companionGroupMonitorEntries
-          .map((entry) => `${entry.kind}:${entry.session.id}:${entry.session.taskTitle}:${entry.state.kind}:${entry.state.label}:${entry.session.updatedAt}`)
-          .join("|");
       case "messages":
         return visibleMessageNavigatorEntries
           .map((entry) => `${entry.key}:${entry.preview}:${entry.isCollapsed ? "collapsed" : "expanded"}:${entry.isBookmarked ? "bookmarked" : "unbookmarked"}`)
@@ -1972,7 +1963,6 @@ export function SessionContextPane({
     }
   }, [
     activeContextPaneTab,
-    companionGroupMonitorEntries,
     latestCommandView,
     liveRunReasoningText,
     runningDetailsEntries,
@@ -2043,42 +2033,13 @@ export function SessionContextPane({
     );
   };
 
-  const renderCompanionGroupMonitorEntry = (entry: Extract<HomeMonitorEntry, { kind: "companion" }>) => {
-    const { session, state } = entry;
-    const companionSessionCharacterName = session.character.trim() || "Mate";
-    return (
-      <button
-        key={session.id}
-        className="companion-group-monitor-item"
-        type="button"
-        onClick={() => onOpenCompanionReview(session.id)}
-      >
-        <CharacterAvatar
-          character={{
-            name: companionSessionCharacterName,
-            iconPath: session.characterIconPath,
-          }}
-          size="tiny"
-        />
-        <div className="companion-group-monitor-copy">
-          <strong>{session.taskTitle}</strong>
-          <span>{companionSessionCharacterName}</span>
-        </div>
-        <div className="companion-group-monitor-badges">
-          <span className={`session-status companion-group-monitor-status ${state.kind}`.trim()}>{state.label}</span>
-        </div>
-      </button>
-    );
-  };
-
   useLayoutEffect(() => {
     const contentNode = contentRef.current;
     if (!contentNode) {
       return;
     }
 
-    contentNode.scrollTop = activeContextPaneTab === "companion-group"
-      || activeContextPaneTab === "messages"
+    contentNode.scrollTop = activeContextPaneTab === "messages"
       || activeContextPaneTab === "glossary"
       ? 0
       : contentNode.scrollHeight;
@@ -2331,21 +2292,6 @@ export function SessionContextPane({
 
             {activeContextPaneTab === "glossary" && glossaryPaneProps ? (
               <SessionGlossaryPane {...glossaryPaneProps} />
-            ) : null}
-
-            {activeContextPaneTab === "companion-group" ? (
-              companionGroupMonitorEntries.length > 0 ? (
-                <div className="command-monitor-confirmed-list">
-                  {companionGroupMonitorEntries
-                    .filter((entry): entry is Extract<HomeMonitorEntry, { kind: "companion" }> => entry.kind === "companion")
-                    .map(renderCompanionGroupMonitorEntry)}
-                </div>
-              ) : (
-                <div className="command-monitor-empty-shell">
-                  <p className="command-monitor-empty">同じ CompanionGroup の session はないよ。</p>
-                  <p className="command-monitor-empty-subtle">同じ repository の Companion がある時だけここへ出るよ。</p>
-                </div>
-              )
             ) : null}
 
           </div>

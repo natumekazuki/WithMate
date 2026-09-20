@@ -4,10 +4,10 @@ export type DraftFlushReason = "close" | "quit";
 export type DraftFlushRequest = Readonly<{ requestId: string; sessionId: string; reason: DraftFlushReason }>;
 export const DEFAULT_DRAFT_FLUSH_TIMEOUT_MS = 10_000;
 export const DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS = DEFAULT_DRAFT_FLUSH_TIMEOUT_MS + DEFAULT_PROVIDER_CANCEL_GRACE_MS;
-type Pending = { sender: unknown; resolve: (value: boolean) => void; timer: ReturnType<typeof setTimeout> };
+type Pending<TWindow> = { window: TWindow; sender: unknown; resolve: (value: boolean) => void; timer: ReturnType<typeof setTimeout> };
 export class DraftFlushCoordinator<TWindow> {
   private sequence = 0;
-  private readonly pending = new Map<string, Pending>();
+  private readonly pending = new Map<string, Pending<TWindow>>();
   constructor(
     private readonly send: (window: TWindow, request: DraftFlushRequest) => void,
     private readonly timeoutMs?: number,
@@ -21,7 +21,7 @@ export class DraftFlushCoordinator<TWindow> {
         this.pending.delete(requestId);
         pending.resolve(false);
       }, this.timeoutMs ?? (reason === "quit" ? DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS : DEFAULT_DRAFT_FLUSH_TIMEOUT_MS));
-      this.pending.set(requestId, { sender, resolve, timer });
+      this.pending.set(requestId, { window, sender, resolve, timer });
       try {
         this.send(window, { requestId, sessionId, reason });
       } catch {
@@ -40,9 +40,9 @@ export class DraftFlushCoordinator<TWindow> {
     return true;
   }
 
-  forgetWindow(sender: unknown): void {
+  forgetWindow(window: TWindow): void {
     for (const [requestId, pending] of this.pending) {
-      if (pending.sender !== sender) continue;
+      if (pending.window !== window) continue;
       this.pending.delete(requestId);
       clearTimeout(pending.timer);
       pending.resolve(false);

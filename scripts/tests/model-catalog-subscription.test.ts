@@ -270,17 +270,6 @@ test("App は model catalog subscription を有効にする", async () => {
   );
 });
 
-test("CompanionReview は merge view で model catalog load を無効にし、失敗時は null fallback にする", async () => {
-  const source = await readFile(new URL("../../src/CompanionReviewApp.tsx", import.meta.url), "utf8");
-  const subscriptionIndex = source.indexOf("startModelCatalogSubscription({");
-  const snippet = source.slice(subscriptionIndex, subscriptionIndex + 320);
-
-  assert.notEqual(subscriptionIndex, -1);
-  assert.match(snippet, /enabled: !isMergeView/);
-  assert.match(snippet, /subscribe: false/);
-  assert.match(snippet, /onInitialLoadError: \(\) => setModelCatalog\(null\)/);
-});
-
 test("Home は model catalog 初期取得と購読更新を helper に通す", async () => {
   const homeSource = await readFile(new URL("../../src/HomeApp.tsx", import.meta.url), "utf8");
   const homeSubscriptionIndex = homeSource.indexOf("startModelCatalogSubscription({");

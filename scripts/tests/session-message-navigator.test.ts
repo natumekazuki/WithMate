@@ -90,7 +90,6 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
     runningDetailsEntries: [],
     liveRunReasoningText: "",
     backgroundTasks: [],
-    companionGroupMonitorEntries: [],
     selectedSessionLiveRunErrorMessage: "",
     isSelectedSessionRunning: false,
     isCopilotSession: false,
@@ -140,7 +139,6 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
     messageNavigatorSessionId: "session-test",
     onCycleContextPaneTab() {},
     onJumpToMessage: (key) => jumpedKeys.push(key),
-    onOpenCompanionReview() {},
   };
 
   try {

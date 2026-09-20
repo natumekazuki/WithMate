@@ -1,18 +1,12 @@
-export type ChatWindowModeKind = "agent" | "companion";
+export type ChatWindowModeKind = "agent";
 
 export type ChatWindowMode =
-  | { kind: "agent"; sessionId: string | null }
-  | { kind: "companion"; companionSessionId: string };
+  | { kind: "agent"; sessionId: string | null };
 
 export type ChatWindowModeTargets<T> = Record<ChatWindowModeKind, T>;
 
 export function resolveChatWindowModeFromSearch(search: string): ChatWindowMode {
   const query = new URLSearchParams(search);
-  const companionSessionId = query.get("companionSessionId");
-  if (companionSessionId) {
-    return { kind: "companion", companionSessionId };
-  }
-
   return { kind: "agent", sessionId: query.get("sessionId") };
 }
 

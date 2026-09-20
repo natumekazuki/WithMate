@@ -55,14 +55,6 @@ import type {
   UpdateCharacterDefinitionInput,
   UpdateCharacterMetadataInput,
 } from "../src/character/character-catalog.js";
-import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
-import type {
-  CompanionMergeSelectedFilesRequest,
-  CompanionMergeSelectedFilesResult,
-  CompanionReviewSnapshot,
-  CompanionSyncTargetResult,
-  CompanionTargetWorkspaceStashResult,
-} from "../src/companion-review-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { ChatLayoutPreferenceUpdate } from "../src/chat/chat-layout-preference.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
@@ -158,7 +150,6 @@ export type MainIpcWindowDepsArgs = {
   resolveEventWindow(event: IpcMainInvokeEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
   resolveSessionWindow(sessionId: string): MaybeWindow;
-  resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow>;
   showSessionMonitorContextMenu(
     event: IpcMainInvokeEvent,
@@ -178,8 +169,6 @@ export type MainIpcWindowDepsArgs = {
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
   getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFilePreviewResourceRequest | null;
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
-  openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow>;
-  openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -264,7 +253,6 @@ export type MainIpcPromptTemplateDepsArgs = {
 export type MainIpcSessionQueryDepsArgs = {
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
-  listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
   listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
   listSessionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
   listSessionAuditLogSummaryPage(
@@ -282,23 +270,6 @@ export type MainIpcSessionQueryDepsArgs = {
     auditLogId: number,
     operationIndex: number,
   ): Awaitable<AuditLogOperationDetailFragment | null>;
-  listCompanionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
-  listCompanionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
-  listCompanionAuditLogSummaryPage(
-    sessionId: string,
-    request?: AuditLogSummaryPageRequest | null,
-  ): Awaitable<AuditLogSummaryPageResult>;
-  getCompanionAuditLogDetail(sessionId: string, auditLogId: number): Awaitable<AuditLogDetail | null>;
-  getCompanionAuditLogDetailSection(
-    sessionId: string,
-    auditLogId: number,
-    section: AuditLogDetailSection,
-  ): Awaitable<AuditLogDetailFragment | null>;
-  getCompanionAuditLogOperationDetail(
-    sessionId: string,
-    auditLogId: number,
-    operationIndex: number,
-  ): Awaitable<AuditLogOperationDetailFragment | null>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
@@ -306,7 +277,6 @@ export type MainIpcSessionQueryDepsArgs = {
   listOpenSessionWindowIdsPage(
     request?: OpenSessionWindowIdsPageRequest | null,
   ): OpenSessionWindowIdsPageResult;
-  listOpenCompanionReviewWindowIds(): string[];
   getSession(sessionId: string): Awaitable<Session | null>;
   getSessionGlossaryProjection(sessionId: string): Awaitable<SessionGlossaryProjection>;
   searchSessionGlossary(
@@ -347,23 +317,6 @@ export type MainIpcSessionQueryDepsArgs = {
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-};
-
-export type MainIpcCompanionDepsArgs = {
-  createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
-  getCompanionSession(sessionId: string): Awaitable<CompanionSession | null>;
-  getCompanionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
-  getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
-  mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
-  syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
-  stashCompanionTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
-  restoreCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
-  dropCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
-  discardCompanionSession(sessionId: string): Promise<CompanionSession>;
-  updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
-  previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
-  cancelCompanionSessionRun(sessionId: string): void;
 };
 
 export type MainIpcAuxiliaryDepsArgs = {
@@ -434,7 +387,6 @@ export type CreateMainIpcRegistrationDepsArgs = {
   promptTemplates: MainIpcPromptTemplateDepsArgs;
   sessionQuery: MainIpcSessionQueryDepsArgs;
   auxiliary?: MainIpcAuxiliaryDepsArgs;
-  companion: MainIpcCompanionDepsArgs;
   sessionRuntime: MainIpcSessionRuntimeDepsArgs;
   mate: MainIpcMateDepsArgs;
   character: MainIpcCharacterDepsArgs;
@@ -476,7 +428,6 @@ export function createMainIpcRegistrationDeps(
     resolveEventWindow: args.window.resolveEventWindow,
     resolveHomeWindow: args.window.resolveHomeWindow,
     resolveSessionWindow: args.window.resolveSessionWindow,
-    resolveCompanionReviewWindow: args.window.resolveCompanionReviewWindow,
     openSessionWindow: async (sessionId, auxiliarySessionId) => {
       await args.window.openSessionWindow(sessionId, auxiliarySessionId);
     },
@@ -507,12 +458,6 @@ export function createMainIpcRegistrationDeps(
     isFilePreviewWindow: args.window.isFilePreviewWindow,
     getFilePreviewWindowResource: args.window.getFilePreviewWindowResource,
     isFilePreviewTokenWindow: args.window.isFilePreviewTokenWindow,
-    openCompanionReviewWindow: async (sessionId, auxiliarySessionId) => {
-      await args.window.openCompanionReviewWindow(sessionId, auxiliarySessionId);
-    },
-    openCompanionMergeWindow: async (sessionId) => {
-      await args.window.openCompanionMergeWindow(sessionId);
-    },
     pickDirectory: args.window.pickDirectory,
     validateWorkspaceDirectory: args.window.validateWorkspaceDirectory,
     pickFile: args.window.pickFile,
@@ -563,25 +508,17 @@ export function createMainIpcRegistrationDeps(
     deletePromptTemplate: args.promptTemplates.deletePromptTemplate,
     listSessionSummaryPage: args.sessionQuery.listSessionSummaryPage,
     listSessionCharacterUsage: args.sessionQuery.listSessionCharacterUsage,
-    listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
     listSessionAuditLogSummaries: args.sessionQuery.listSessionAuditLogSummaries,
     listSessionAuditLogSummaryPage: args.sessionQuery.listSessionAuditLogSummaryPage,
     getSessionAuditLogDetail: args.sessionQuery.getSessionAuditLogDetail,
     getSessionAuditLogDetailSection: args.sessionQuery.getSessionAuditLogDetailSection,
     getSessionAuditLogOperationDetail: args.sessionQuery.getSessionAuditLogOperationDetail,
-    listCompanionAuditLogs: args.sessionQuery.listCompanionAuditLogs,
-    listCompanionAuditLogSummaries: args.sessionQuery.listCompanionAuditLogSummaries,
-    listCompanionAuditLogSummaryPage: args.sessionQuery.listCompanionAuditLogSummaryPage,
-    getCompanionAuditLogDetail: args.sessionQuery.getCompanionAuditLogDetail,
-    getCompanionAuditLogDetailSection: args.sessionQuery.getCompanionAuditLogDetailSection,
-    getCompanionAuditLogOperationDetail: args.sessionQuery.getCompanionAuditLogOperationDetail,
     listSessionSkills: args.sessionQuery.listSessionSkills,
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
     listWorkspaceSkills: args.sessionQuery.listWorkspaceSkills,
     listWorkspaceCustomAgents: args.sessionQuery.listWorkspaceCustomAgents,
     listOpenSessionWindowIdsPage: args.sessionQuery.listOpenSessionWindowIdsPage,
-    listOpenCompanionReviewWindowIds: args.sessionQuery.listOpenCompanionReviewWindowIds,
     getSession: args.sessionQuery.getSession,
     getSessionGlossaryProjection: args.sessionQuery.getSessionGlossaryProjection,
     searchSessionGlossary: args.sessionQuery.searchSessionGlossary,
@@ -621,20 +558,6 @@ export function createMainIpcRegistrationDeps(
     closeAuxiliarySession: auxiliary.closeAuxiliarySession,
     runAuxiliarySessionTurn: auxiliary.runAuxiliarySessionTurn,
     cancelAuxiliarySessionRun: auxiliary.cancelAuxiliarySessionRun,
-    createCompanionSession: args.companion.createCompanionSession,
-    getCompanionSession: args.companion.getCompanionSession,
-    getCompanionMessageArtifact: args.companion.getCompanionMessageArtifact,
-    getCompanionReviewSnapshot: args.companion.getCompanionReviewSnapshot,
-    mergeCompanionSelectedFiles: args.companion.mergeCompanionSelectedFiles,
-    syncCompanionTarget: args.companion.syncCompanionTarget,
-    stashCompanionTargetChanges: args.companion.stashCompanionTargetChanges,
-    restoreCompanionTargetStash: args.companion.restoreCompanionTargetStash,
-    dropCompanionTargetStash: args.companion.dropCompanionTargetStash,
-    discardCompanionSession: args.companion.discardCompanionSession,
-    updateCompanionSession: args.companion.updateCompanionSession,
-    previewCompanionComposerInput: args.companion.previewCompanionComposerInput,
-    runCompanionSessionTurn: args.companion.runCompanionSessionTurn,
-    cancelCompanionSessionRun: args.companion.cancelCompanionSessionRun,
     getLiveSessionRun: args.sessionRuntime.getLiveSessionRun,
     getProviderQuotaTelemetry: args.sessionRuntime.getProviderQuotaTelemetry,
     getSessionContextTelemetry: args.sessionRuntime.getSessionContextTelemetry,

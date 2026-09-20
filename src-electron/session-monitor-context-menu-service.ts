@@ -9,7 +9,6 @@ type SessionMonitorContextMenu = Pick<Menu, "popup">;
 
 export type SessionMonitorContextMenuServiceDeps = {
   requestCloseSessionWindow(sessionId: string): Promise<boolean>;
-  closeCompanionReviewWindow(sessionId: string): void;
   writeText(value: string): void;
   buildMenu(template: MenuItemConstructorOptions[]): SessionMonitorContextMenu;
 };
@@ -38,12 +37,7 @@ export class SessionMonitorContextMenuService {
         settled = true;
         resolve(result);
       };
-      const closeTarget = (): void | Promise<boolean> => {
-        if (request.kind === "agent") {
-          return this.deps.requestCloseSessionWindow(request.sessionId);
-        }
-        return this.deps.closeCompanionReviewWindow(request.sessionId);
-      };
+      const closeTarget = (): Promise<boolean> => this.deps.requestCloseSessionWindow(request.sessionId);
       const copySessionId = () => {
         if (settled || selectionStarted) {
           return;

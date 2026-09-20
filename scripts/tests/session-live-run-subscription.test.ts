@@ -20,7 +20,6 @@ const createLiveRunState = (message: string): LiveSessionRunState => ({
   approvalRequest: null,
   elicitationRequest: null,
 });
-
 const flushPromises = () => new Promise<void>((resolve) => {
   queueMicrotask(resolve);
 });
@@ -173,25 +172,4 @@ test("App の live run subscription 呼び出し前に session guard が残る",
     source.slice(guardIndex, subscriptionIndex),
     /setLiveRunState\(\{ ownerSessionId: null, state: null \}\);/,
   );
-});
-
-// @test-value v2
-// kind = "invariant"
-// claim = "CompanionReviewはmerge viewまたはsession未選択時にlive run subscriptionを開始しない"
-// oracle = { type = "contract", ref = "issue-710 Companion live-run ownership" }
-// fault = "merge viewや無効なsessionで購読を開始し、別表示へlive runを混入させる"
-// observable = "CompanionReviewAppのsubscription guardとstart呼出し順"
-// observation_boundary = "declaration"
-// scope = "companion-live-run-subscription-guard"
-// lifecycle = "permanent"
-// @end-test-value
-test("CompanionReview の live run subscription 呼び出し前に session / merge guard が残る", async () => {
-  const source = await readFile(new URL("../../src/CompanionReviewApp.tsx", import.meta.url), "utf8");
-  const guardIndex = source.indexOf("if (!withmateApi || !activeRunSessionId || isMergeView)");
-  const subscriptionIndex = source.indexOf("startLiveSessionRunSubscription({");
-
-  assert.notEqual(guardIndex, -1);
-  assert.notEqual(subscriptionIndex, -1);
-  assert.ok(guardIndex < subscriptionIndex);
-  assert.match(source.slice(guardIndex, subscriptionIndex), /return;/);
 });

@@ -18,6 +18,16 @@ function createWindowStub() {
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "WindowEntryLoader は dev server 使用時に loadURL する"
+// oracle = { type = "contract", ref = "src-electron/window-entry-loader.ts" }
+// fault = "dev serverの各画面URLを誤り、Session IDやtokenをURL encodeせず別targetを開く"
+// observable = "loadURLへ渡されたHome、Session、Diff、File Preview、Boot、Character EditorのURL一覧"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/window-entry-loader.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("WindowEntryLoader は dev server 使用時に loadURL する", async () => {
   const stub = createWindowStub();
   const loader = new WindowEntryLoader({
@@ -30,8 +40,6 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
   await loader.loadDiffEntry(stub.window, "diff#1");
   await loader.loadFilePreviewEntry(stub.window, "preview#1");
   await loader.loadBootEntry(stub.window);
-  await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
-  await loader.loadCompanionMergeReviewEntry(stub.window, "companion 1");
   await loader.loadCharacterEditorEntry(stub.window, "char 1");
   await loader.loadCharacterEditorEntry(stub.window);
 
@@ -41,8 +49,6 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
     { kind: "url", value: "http://localhost:5173/diff.html?token=diff%231" },
     { kind: "url", value: "http://localhost:5173/file-preview.html?token=preview%231" },
     { kind: "url", value: "http://localhost:5173/boot.html" },
-    { kind: "url", value: "http://localhost:5173/session.html?companionSessionId=companion%201&mode=companion" },
-    { kind: "url", value: "http://localhost:5173/review.html?companionSessionId=companion%201&view=merge" },
     { kind: "url", value: "http://localhost:5173/character-editor.html?characterId=char%201" },
     { kind: "url", value: "http://localhost:5173/character-editor.html" },
   ]);
@@ -50,29 +56,19 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "Chat Window entry queryは親Sessionのmodeを維持し、指定されたAuxiliary IDだけを追加する"
-// oracle = { type = "contract", ref = "issue-722 exact Auxiliary window navigation" }
-// fault = "Auxiliary選択がqueryから欠落するか、未指定時の既存queryが変わる"
-// observable = "agent/companionのbuildChatEntrySearch結果"
+// claim = "buildChatEntrySearchはagent SessionとAuxiliary IDをsession.html queryへ組み立てる"
+// oracle = { type = "contract", ref = "src-electron/window-entry-loader.ts" }
+// fault = "Session IDまたは任意のAuxiliary IDをqueryから落とすかURL encodeを誤る"
+// observable = "Session単独およびAuxiliary付きのquery文字列"
 // observation_boundary = "public-boundary"
-// scope = "WindowEntryLoader chat navigation"
+// scope = "scripts/tests/window-entry-loader.test.ts"
 // lifecycle = "permanent"
-// impact = "開いたWindowが選択済みAuxiliaryへ初期選択を渡せる"
-// distinction = "Main IPCの存在確認とは分離して、Window entryのquery serializationを検証する"
 // @end-test-value
 test("buildChatEntrySearch は chat mode ごとの session.html query を組み立てる", () => {
   assert.equal(buildChatEntrySearch({ kind: "agent", sessionId: "session 1" }), "?sessionId=session%201");
   assert.equal(
     buildChatEntrySearch({ kind: "agent", sessionId: "session 1", auxiliarySessionId: "aux 1" }),
     "?sessionId=session%201&auxiliarySessionId=aux%201",
-  );
-  assert.equal(
-    buildChatEntrySearch({ kind: "companion", sessionId: "companion 1" }),
-    "?companionSessionId=companion%201&mode=companion",
-  );
-  assert.equal(
-    buildChatEntrySearch({ kind: "companion", sessionId: "companion 1", auxiliarySessionId: "aux 1" }),
-    "?companionSessionId=companion%201&mode=companion&auxiliarySessionId=aux%201",
   );
 });
 
@@ -122,6 +118,16 @@ test("WindowEntryLoader はAuxiliary対象のagent queryをdev/prodで保持す�
   }]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "WindowEntryLoader は production build で loadFile する"
+// oracle = { type = "contract", ref = "src-electron/window-entry-loader.ts" }
+// fault = "productionのdist内entryを誤り、画面選択やtokenをloadFileのsearchから落とす"
+// observable = "loadFileへ渡されたHTML pathとsearchの一覧"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/window-entry-loader.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("WindowEntryLoader は production build で loadFile する", async () => {
   const stub = createWindowStub();
   const loader = new WindowEntryLoader({
@@ -133,8 +139,6 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
   await loader.loadHomeEntry(stub.window, "settings");
   await loader.loadBootEntry(stub.window);
   await loader.loadFilePreviewEntry(stub.window, "preview#1");
-  await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
-  await loader.loadCompanionMergeReviewEntry(stub.window, "companion 1");
   await loader.loadCharacterEditorEntry(stub.window, "char 1");
 
   assert.deepEqual(stub.calls, [
@@ -142,16 +146,6 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
     { kind: "file", value: "F:\\dist\\index.html", search: "?mode=settings" },
     { kind: "file", value: "F:\\dist\\boot.html", search: undefined },
     { kind: "file", value: "F:\\dist\\file-preview.html", search: "?token=preview%231" },
-    {
-      kind: "file",
-      value: "F:\\dist\\session.html",
-      search: "?companionSessionId=companion%201&mode=companion",
-    },
-    {
-      kind: "file",
-      value: "F:\\dist\\review.html",
-      search: "?companionSessionId=companion%201&view=merge",
-    },
     {
       kind: "file",
       value: "F:\\dist\\character-editor.html",

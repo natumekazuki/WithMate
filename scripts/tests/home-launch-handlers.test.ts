@@ -31,6 +31,16 @@ function createProvider(): ModelCatalogProvider {
 }
 
 describe("home-launch-handlers", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "launch dialog再表示はCharacter一覧を再取得しrandom選択へ戻し、workspace入力は検証へ渡す"
+  // oracle = { type = "contract", ref = "src/home/home-launch-handlers.ts" }
+  // fault = "古いCharacter選択を引き継ぐか、入力されたworkspaceを検証せず開始候補にする"
+  // observable = "refresh回数、draftの選択状態とSessionFolder、feedback、検証に渡したraw path"
+  // observation_boundary = "component-behavior"
+  // scope = "Home launch dialog handlers"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("launch dialog を開く直前に Character catalog を再取得してrandom選択へ戻す", async () => {
     let draft: HomeLaunchDraft = {
       ...createClosedLaunchDraft(),
@@ -70,11 +80,8 @@ describe("home-launch-handlers", () => {
       scheduleWorkspaceValidation: (targetPath) => scheduledWorkspacePaths.push(targetPath),
       cancelWorkspaceValidation: () => {},
       openSessionWindow: async () => undefined,
-      openCompanionReviewWindow: async () => undefined,
       createSession: async () => null,
-      createCompanionSession: async () => null,
       upsertSessionSummary: () => undefined,
-      upsertCompanionSessionSummary: () => undefined,
     });
 
     await handlers.onOpenLaunchDialog();
@@ -106,12 +113,18 @@ describe("home-launch-handlers", () => {
       "\\\\server\\share\\manual workspace\\",
       "C:\\browse workspace\\",
     ]);
-
-    handlers.onChangeMode("companion");
-    assert.equal(draft.mode, "companion");
-    assert.equal(draft.workspace, null);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character一覧再取得の失敗はloaded状態を解除し古い一覧でのrandom開始を防ぐ"
+  // oracle = { type = "contract", ref = "src/home/home-launch-handlers.ts" }
+  // fault = "取得に失敗したCharacter一覧を最新として扱い使用不能なCharacterで開始する"
+  // observable = "charactersLoaded=false、dialogのrandom状態、失敗feedback"
+  // observation_boundary = "component-behavior"
+  // scope = "Home launch catalog refresh failure"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Character catalog の再取得失敗時はstale一覧でrandom開始できない状態にする", async () => {
     let draft = createClosedLaunchDraft();
     let charactersLoaded = true;
@@ -145,11 +158,8 @@ describe("home-launch-handlers", () => {
       scheduleWorkspaceValidation: () => {},
       cancelWorkspaceValidation: () => {},
       openSessionWindow: async () => undefined,
-      openCompanionReviewWindow: async () => undefined,
       createSession: async () => null,
-      createCompanionSession: async () => null,
       upsertSessionSummary: () => undefined,
-      upsertCompanionSessionSummary: () => undefined,
     });
 
     await handlers.onOpenLaunchDialog();

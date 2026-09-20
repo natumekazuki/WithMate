@@ -1,7 +1,6 @@
 import type { CreateSessionRequest, HomeSessionSummary } from "../app-state.js";
 import { DEFAULT_CHARACTER_THEME_COLORS, type CharacterThemeColors } from "../character-state.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import type { CreateCompanionSessionInput } from "../companion-state.js";
 import {
   inferWorkspaceFromPath,
   isSessionFolderLaunchWorkspace,
@@ -33,7 +32,7 @@ export type HomeLaunchWorkspaceValidationState = "idle" | "debouncing" | "pendin
 
 export type HomeLaunchDraft = {
   open: boolean;
-  mode: "session" | "companion";
+  mode: "session";
   title: string;
   workspacePathInput: string;
   workspaceValidation: HomeLaunchWorkspaceValidationState;
@@ -76,51 +75,6 @@ export function openLaunchDraft(
     providerId: defaultProviderId,
     characterSelectionMode: "random",
     characterId: "",
-  };
-}
-
-export function buildCreateCompanionSessionInputFromLaunchDraft({
-  draft,
-  mateProfile,
-  selectedProviderId,
-  characterEntries = [],
-  sessions = [],
-  openSessionCharacterIds = [],
-  random = Math.random,
-}: {
-  draft: HomeLaunchDraft;
-  mateProfile: MateProfile | null;
-  selectedProviderId: string | null;
-  characterEntries?: readonly CharacterCatalogEntry[];
-  sessions?: readonly CharacterUsageSessionSource[];
-  openSessionCharacterIds?: readonly string[];
-  random?: () => number;
-}): CreateCompanionSessionInput | null {
-  const normalizedTitle = draft.title.trim();
-  const workspace = resolveLaunchDirectoryWorkspace(draft.workspace);
-  if (!normalizedTitle || !workspace || !selectedProviderId) {
-    return null;
-  }
-  const characterSnapshot = buildLaunchCharacterSnapshot(
-    characterEntries,
-    draft,
-    sessions,
-    openSessionCharacterIds,
-    random,
-  );
-  if (!characterSnapshot) {
-    return null;
-  }
-
-  return {
-    taskTitle: normalizedTitle,
-    workspacePath: workspace.path,
-    provider: selectedProviderId,
-    characterId: characterSnapshot.characterId,
-    character: characterSnapshot.character,
-    characterRoleMarkdown: characterSnapshot.characterRoleMarkdown,
-    characterIconPath: characterSnapshot.characterIconPath,
-    characterThemeColors: characterSnapshot.characterThemeColors,
   };
 }
 

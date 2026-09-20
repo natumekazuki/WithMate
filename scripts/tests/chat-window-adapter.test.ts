@@ -151,16 +151,6 @@ test("resolveRunningSessionCancelTargetId は UI 側 running 判定を優先で�
   );
 });
 
-test("buildRunningSessionCancelTarget は Companion turnRunning 中の cancel 対象を維持する", () => {
-  const target = buildRunningSessionCancelTarget({
-    sessionId: "companion-session-1",
-    runState: "idle",
-    isRunning: true,
-  });
-
-  assert.equal(resolveRunningSessionCancelTargetId(target), "companion-session-1");
-});
-
 test("buildRunningSessionCancelTarget は runState running の cancel 対象を作る", () => {
   const target = buildRunningSessionCancelTarget({
     sessionId: "session-1",
@@ -792,8 +782,8 @@ test("buildLiveSessionSplitterProps は context rail resize state を反映す�
 
 // @test-value v2
 // kind = "contract"
-// claim = "AgentとCompanionのmodeを共通shellへ反映し、右ペインの内容と操作をChatWindowへ渡す"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Agent / Companion shared chat screen" }
+// claim = "AgentとAuxiliaryのmodeを共通shellへ反映し、右ペインの内容と操作をChatWindowへ渡す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Agent / Auxiliary shared chat screen" }
 // fault = "mode classや右ペイン入力が失われ、対応する共通画面を表示できない"
 // observable = "shellのclassName、mainContent、rightPanePropsとChatWindow内のLatestCommand表示"
 // observation_boundary = "component-behavior"
@@ -844,13 +834,11 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
       tasks: { state: "empty", tone: "muted", label: "No tasks" },
       reasoning: { state: "empty", tone: "muted", label: "No reasoning" },
       context: { state: "empty", tone: "muted", label: "No context" },
-      companion: { state: "empty", tone: "muted", label: "No companion" },
     },
     latestCommandView: null,
     runningDetailsEntries: [],
     liveRunReasoningText: "",
     backgroundTasks: [],
-    companionGroupMonitorEntries: [],
     selectedSessionLiveRunErrorMessage: "",
     isSelectedSessionRunning: false,
     isCopilotSession: false,
@@ -863,7 +851,6 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     latestCommandEmptyText: "latest command empty",
     onToggleHeaderExpanded: noop,
     onCycleContextPaneTab: noop,
-    onOpenCompanionReview: noop,
   });
 
   const agentProps = buildLiveSessionWindowShellProps({
@@ -886,8 +873,8 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     rightPaneProps,
     modals: React.createElement("div"),
   });
-  const companionProps = buildLiveSessionWindowShellProps({
-    mode: "companion",
+  const auxiliaryProps = buildLiveSessionWindowShellProps({
+    mode: "auxiliary",
     baseClassName: "theme-accent",
     isHeaderExpanded: false,
     workbenchRef: React.createRef<HTMLDivElement>(),
@@ -910,14 +897,14 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
 
   assert.equal(agentProps.mode, "agent");
   assert.equal(agentProps.messageColumnProps.isContentActive, false);
-  assert.equal(companionProps.messageColumnProps.isContentActive, true);
+  assert.equal(auxiliaryProps.messageColumnProps.isContentActive, true);
   assert.equal(agentProps.className, "");
-  assert.equal(companionProps.className, "theme-accent auxiliary-session-mode");
+  assert.equal(auxiliaryProps.className, "theme-accent auxiliary-session-mode");
   assert.match(renderToStaticMarkup(agentProps.mainContent), /Preview/);
   assert.match(renderToStaticMarkup(React.createElement(ChatWindow, agentProps)), /LatestCommand/);
   assert.equal(agentProps.rightPaneProps?.taskTitle, "Right pane");
 
-  assert.equal(companionProps.rightPaneProps, rightPaneProps);
+  assert.equal(auxiliaryProps.rightPaneProps, rightPaneProps);
 });
 
 test("buildLiveSessionChatBodyProps は live session body props をまとめて組み立てる", () => {
@@ -1043,10 +1030,19 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
   assert.equal(bodyProps.splitterProps.onPointerDown, onPointerDown);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "live sessionのright pane propsは共通形式でcallbackとempty textを保持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+// fault = "right paneの表示情報またはtab操作callbackがprojectionから欠落する"
+// observable = "生成されたright pane propsの表示文言とtab callback"
+// observation_boundary = "public-boundary"
+// scope = "live-session-context-pane-props"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildLiveSessionContextPaneProps は right pane props を共通形式で保持する", () => {
   const onToggleHeaderExpanded = () => {};
   const onCycleContextPaneTab = () => {};
-  const onOpenCompanionReview = () => {};
   const props = buildLiveSessionContextPaneProps({
     taskTitle: "Right pane",
     isHeaderExpanded: true,
@@ -1057,13 +1053,11 @@ test("buildLiveSessionContextPaneProps は right pane props を共通形式で�
       tasks: { state: "empty", tone: "muted", label: "No tasks" },
       reasoning: { state: "empty", tone: "muted", label: "No reasoning" },
       context: { state: "empty", tone: "muted", label: "No context" },
-      companion: { state: "empty", tone: "muted", label: "No companion" },
     },
     latestCommandView: null,
     runningDetailsEntries: [],
     liveRunReasoningText: "",
     backgroundTasks: [],
-    companionGroupMonitorEntries: [],
     selectedSessionLiveRunErrorMessage: "",
     isSelectedSessionRunning: false,
     isCopilotSession: false,
@@ -1076,7 +1070,6 @@ test("buildLiveSessionContextPaneProps は right pane props を共通形式で�
     latestCommandEmptyText: "latest command empty",
     onToggleHeaderExpanded,
     onCycleContextPaneTab,
-    onOpenCompanionReview,
   });
 
   assert.equal(props.taskTitle, "Right pane");
@@ -1084,7 +1077,6 @@ test("buildLiveSessionContextPaneProps は right pane props を共通形式で�
   assert.equal(props.latestCommandEmptyText, "latest command empty");
   assert.equal(props.onToggleHeaderExpanded, onToggleHeaderExpanded);
   assert.equal(props.onCycleContextPaneTab, onCycleContextPaneTab);
-  assert.equal(props.onOpenCompanionReview, onOpenCompanionReview);
 });
 
 test("createStaticChatCharacterProfile は静的 chat 用 CharacterProfile 既定値を補う", () => {

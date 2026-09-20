@@ -106,16 +106,6 @@ provider executionでは非secretのbinding-required markerもexecution-scoped e
 - Independent review trigger: actor Characterとowner targetのcoupled authorization、Character専用routeとgeneral Memory routeのparityをtargeted reviewerで反証する。
 - Gate: ready
 
-### ARB-10 Companion retirement boundary
-
-- Accepted contract / exact anchor: ユーザー確認済み方針としてCompanion Modeは退役済みとする。新規Companion作成、新規provider turn、CompanionからのAuxiliary起動は受け付けない。既存履歴の閲覧、merge、discardはデータ整理のため維持する。
-- Scope / semantic owner: Companion Session作成service、Companion runtime、rendererのcomposer/Auxiliary導線、Companion設計文書。runtime bindingのactor scopeにはCompanionを含めない。
-- Failure mode / consumer impact: hidden UIまたは内部IPCから退役済みprovider executionを起動し、bindingなしのoptional Memory経路へ到達する。既存Companionを整理できなくなる。
-- State transitions / failure timing: create/preview/run/Auxiliary launchはworkspace作成、provider client取得、Session更新より前に拒否する。list/open/review/merge/discardは維持する。
-- Direct verification: createとturnがside effect前に拒否されるservice test、rendererでcomposer/Auxiliaryが無効になるprojection test、merge/discard既存test。
-- Independent review trigger: 退役済み実行入口の残存と、履歴整理経路の過剰停止をtargeted reviewerで反証する。
-- Gate: ready
-
 ### ARB-11 Shutdown settlement
 
 - Accepted contract / exact anchor: ISSUE-298のapp終了時失効とresource lifecycle。provider cleanup、binding revoke、persistent store closeの個別失敗があっても終了処理はsettleし、Electronの再quitへ到達する。
@@ -138,12 +128,12 @@ provider executionでは非secretのbinding-required markerもexecution-scoped e
 
 ## Closure Map
 
-- Entry points: direct HTTP、runtime exchange、managed MCP、managed CLI、provider turn、provider retry、Companion create/turn、Session delete、app shutdown。
-- State transitions: issue/reuse、expiry normalize/rotate、resolve、revoke session、revoke all、expired/unknown、provider unsupported、Copilot recoverable connection retry、Companion retired rejection。
-- Failure timing: admission前、service dispatch前、provider client create、Companion workspace/provider side effect前、retry前、Session storage delete後、shutdown cleanup settlement。
+- Entry points: direct HTTP、runtime exchange、managed MCP、managed CLI、provider turn、provider retry、Session delete、app shutdown。
+- State transitions: issue/reuse、expiry normalize/rotate、resolve、revoke session、revoke all、expired/unknown、provider unsupported、Copilot recoverable connection retry。
+- Failure timing: admission前、service dispatch前、provider client create、retry前、Session storage delete後、shutdown cleanup settlement。
 - Scope: binding item、Session/provider generation、process全体。Memory targetは明示user-global/Project/Character scopeを維持し、bound actorの別Character ownerをCRUD、inventory、file usage largest-entry projectionから除外する。
 - Projection: provider capability、structured error、optional Memory source attribution。reference、runtime secret、grant detailはpublic projectionへ含めない。
-- Excluded siblings: Session/Turn/Coordination endpointは公開契約が未導入。悪意ある同一OS user processはdesktop appのthreat model外。third-party MCPへWithMate credential/configurationは自動投影しない。background structured promptはSession actorを持たない。退役済みCompanionはprovider executionを持たず、runtime binding actor scopeへ含めない。
+- Excluded siblings: Session/Turn/Coordination endpointは公開契約が未導入。悪意ある同一OS user processはdesktop appのthreat model外。third-party MCPへWithMate credential/configurationは自動投影しない。background structured promptはSession actorを持たない。
 
 ## Test Matrix
 
@@ -168,7 +158,6 @@ provider executionでは非secretのbinding-required markerもexecution-scoped e
 | supported/unsupported provider | Codex/Copilot capability、registry、unknown provider no-env test |
 | expiry変更時にbindingをrotate | registry normalize/reuse/rotate test |
 | supported Copilot Sessionはbinding必須 | Copilot adapter pre-cache rejection test |
-| Companion create/turn退役、history整理維持 | Companion session/runtime/UI + merge/discard tests |
 | cleanup失敗後もapp終了 | AppLifecycleService failure settlement test |
 | MCP binding欠落はnon-retryableかつdispatchなし | Character/general MCP preflight tests |
 

@@ -1,66 +1,16 @@
-import type { ApprovalMode } from "./approval-mode.js";
-import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
-import type { CodexSpeed } from "./codex-speed.js";
-import type { CodexReviewer } from "./codex-reviewer.js";
-import type { ModelReasoningEffort } from "./model-catalog.js";
-import type { Message } from "./session-state.js";
-import type { CompanionSession } from "./companion-state.js";
 import type { Session } from "./session-state.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
-import type { CharacterRuntimeSnapshot } from "./character/character-catalog.js";
 
-type AuxiliaryRuntimeProjectionMode = "main" | "companion";
-
-export type AuxiliaryRuntimeProjectionInput = Pick<
-  AuxiliarySession,
-  | "id"
-  | "runState"
-  | "title"
-  | "provider"
-  | "catalogRevision"
-  | "model"
-  | "reasoningEffort"
-  | "approvalMode"
-  | "codexSandboxMode"
-  | "codexSpeed"
-  | "codexReviewer"
-  | "customAgentName"
-  | "allowedAdditionalDirectories"
-  | "threadId"
-  | "messages"
-  | "updatedAt"
-  | "characterId"
-  | "characterRuntimeSnapshot"
-  | "characterRuntimeSnapshotInvalid"
->;
-
-type AuxiliaryRuntimeSessionProjectionCommon = {
-  characterId: string;
-  characterRuntimeSnapshot: CharacterRuntimeSnapshot | null | undefined;
-  characterRuntimeSnapshotInvalid?: boolean;
-  provider: string;
-  catalogRevision: number;
-  runState: AuxiliarySession["runState"];
-  approvalMode: ApprovalMode;
-  codexSandboxMode: CodexSandboxMode;
-  codexSpeed: CodexSpeed;
-  codexReviewer: CodexReviewer;
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  customAgentName: string;
-  allowedAdditionalDirectories: string[];
-  threadId: string;
-  messages: Message[];
-};
-
-function buildAuxiliaryRuntimeSessionProjectionCommon(
-  auxiliary: AuxiliaryRuntimeProjectionInput,
-  options: { cloneAdditionalDirectories: boolean },
-): AuxiliaryRuntimeSessionProjectionCommon {
-  return {
-    characterId: auxiliary.characterId ?? "",
-    characterRuntimeSnapshot: auxiliary.characterRuntimeSnapshot,
-    characterRuntimeSnapshotInvalid: auxiliary.characterRuntimeSnapshotInvalid,
+export type AuxiliaryRuntimeProjectionInput = Pick<AuxiliarySession, "id" | "runState" | "title" | "provider" | "catalogRevision" | "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "codexSpeed" | "codexReviewer" | "customAgentName" | "allowedAdditionalDirectories" | "threadId" | "messages" | "updatedAt" | "characterId" | "characterRuntimeSnapshot" | "characterRuntimeSnapshotInvalid">;
+export function buildMainAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliaryRuntimeProjectionInput): Session {
+  if (auxiliary.characterRuntimeSnapshotInvalid) throw new Error("Auxiliary Character runtime snapshot is invalid.");
+  const snapshot = auxiliary.characterRuntimeSnapshot;
+  const projection: Session & Pick<AuxiliaryRuntimeProjectionInput, "characterRuntimeSnapshotInvalid"> = {
+    ...parent,
+    id: auxiliary.id,
+    taskTitle: parent.taskTitle,
+    status: auxiliary.runState === "running" ? "running" : "idle",
+    updatedAt: auxiliary.updatedAt,
     provider: auxiliary.provider,
     catalogRevision: auxiliary.catalogRevision,
     runState: auxiliary.runState,
@@ -71,81 +21,16 @@ function buildAuxiliaryRuntimeSessionProjectionCommon(
     model: auxiliary.model,
     reasoningEffort: auxiliary.reasoningEffort,
     customAgentName: auxiliary.customAgentName,
-    allowedAdditionalDirectories: options.cloneAdditionalDirectories
-      ? [...auxiliary.allowedAdditionalDirectories]
-      : auxiliary.allowedAdditionalDirectories,
+    allowedAdditionalDirectories: auxiliary.allowedAdditionalDirectories,
     threadId: auxiliary.threadId,
     messages: auxiliary.messages,
-  };
-}
-
-export function buildAuxiliaryRuntimeSessionProjection(
-  mode: "main",
-  parent: Session,
-  auxiliary: AuxiliaryRuntimeProjectionInput,
-): Session;
-export function buildAuxiliaryRuntimeSessionProjection(
-  mode: "companion",
-  parent: CompanionSession,
-  auxiliary: AuxiliaryRuntimeProjectionInput,
-): CompanionSession;
-export function buildAuxiliaryRuntimeSessionProjection(
-  mode: AuxiliaryRuntimeProjectionMode,
-  parent: Session | CompanionSession,
-  auxiliary: AuxiliaryRuntimeProjectionInput,
-): Session | CompanionSession {
-  const baseProjection = buildAuxiliaryRuntimeSessionProjectionCommon(
-    auxiliary,
-    { cloneAdditionalDirectories: mode === "companion" },
-  );
-  if (auxiliary.characterRuntimeSnapshotInvalid) {
-    throw new Error("Auxiliary Character runtime snapshot is invalid.");
-  }
-  const snapshot = auxiliary.characterRuntimeSnapshot;
-
-  if (mode === "main") {
-    const sessionParent = parent as Session;
-    const projection: Session = {
-      ...sessionParent,
-      id: auxiliary.id,
-      taskTitle: sessionParent.taskTitle,
-      status: auxiliary.runState === "running" ? "running" : "idle",
-      updatedAt: auxiliary.updatedAt,
-      ...baseProjection,
-      characterId: auxiliary.characterId || sessionParent.characterId,
-      character: snapshot?.name ?? sessionParent.character,
-      characterIconPath: snapshot?.iconFilePath ?? sessionParent.characterIconPath,
-      characterThemeColors: snapshot?.theme ?? sessionParent.characterThemeColors,
-      characterRuntimeSnapshot: snapshot ?? sessionParent.characterRuntimeSnapshot,
-      stream: [],
-    };
-    return projection;
-  }
-
-  const companionParent = parent as CompanionSession;
-  const projection: CompanionSession = {
-    ...companionParent,
-    id: auxiliary.id,
-    taskTitle: auxiliary.title,
-    status: "active",
-    ...baseProjection,
-    characterId: auxiliary.characterId || companionParent.characterId,
-    character: snapshot?.name ?? companionParent.character,
-    characterIconPath: snapshot?.iconFilePath ?? companionParent.characterIconPath,
-    characterThemeColors: snapshot?.theme ?? companionParent.characterThemeColors,
-    characterRuntimeSnapshot: snapshot ?? companionParent.characterRuntimeSnapshot,
-    updatedAt: auxiliary.updatedAt,
+    characterId: auxiliary.characterId || parent.characterId,
+    character: snapshot?.name ?? parent.character,
+    characterIconPath: snapshot?.iconFilePath ?? parent.characterIconPath,
+    characterThemeColors: snapshot?.theme ?? parent.characterThemeColors,
+    characterRuntimeSnapshot: snapshot ?? parent.characterRuntimeSnapshot,
+    characterRuntimeSnapshotInvalid: auxiliary.characterRuntimeSnapshotInvalid,
+    stream: [],
   };
   return projection;
-}
-
-export function buildMainAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliaryRuntimeProjectionInput): Session {
-  return buildAuxiliaryRuntimeSessionProjection("main", parent, auxiliary);
-}
-
-export function buildCompanionAuxiliaryRuntimeSession(
-  parent: CompanionSession,
-  auxiliary: AuxiliaryRuntimeProjectionInput,
-): CompanionSession {
-  return buildAuxiliaryRuntimeSessionProjection("companion", parent, auxiliary);
 }

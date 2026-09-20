@@ -38,8 +38,6 @@ import {
   type HomeLaunchWorkspaceValidationController,
 } from "./home/home-launch-workspace-validation.js";
 import { resolveSelectedLaunchProviderDraftId } from "./launch/launch-provider-selection.js";
-import { type CompanionSessionSummary } from "./companion-state.js";
-import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import { buildHomeMateProfileHandlers } from "./home/home-mate-profile-handlers.js";
 import {
   buildHomeSessionProjection,
@@ -75,7 +73,6 @@ import { getHomeWindowMode } from "./home/home-window-mode.js";
 import { useHomeOpenWindowSubscriptions } from "./home/use-home-open-window-subscriptions.js";
 import {
   openCharacterEditorWindow,
-  openCompanionReviewWindow,
   openMemoryV6ReviewWindow,
   openSessionMonitorWindow,
   openSessionWindow,
@@ -177,7 +174,6 @@ export default function HomeApp() {
     createEmptyHomeSessionSummariesState,
   );
   const sessions = sessionSummariesState.summaries;
-  const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [auxiliarySessionSummaries, setAuxiliarySessionSummaries] = useState<AuxiliarySessionSummary[]>([]);
   const [auxiliaryDataState, setAuxiliaryDataState] = useState<HomeMonitorAuxiliaryDataState>("loading");
   const [openSessionWindowIdsState, setOpenSessionWindowIdsState] = useState<OpenSessionWindowIdsState>({
@@ -185,7 +181,6 @@ export default function HomeApp() {
     sessionIds: [],
   });
   const openSessionWindowIds = openSessionWindowIdsState.sessionIds;
-  const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
   const [pendingSessionPinIds, setPendingSessionPinIds] = useState<string[]>([]);
   const [sessionWindowRestoreIds, setSessionWindowRestoreIds] = useState<string[]>([]);
@@ -479,13 +474,6 @@ export default function HomeApp() {
       setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
     };
 
-    let unsubscribeCompanionSessions: (() => void) | null = null;
-    unsubscribeCompanionSessions = startCompanionSessionSummariesSubscription({
-      api: withmateApi,
-      applySummaries: setCompanionSessions,
-      onInitialLoadError: handleInitialSummaryLoadError,
-    });
-
     void refreshMateStatus(withmateApi, { isActive: () => active }).then(() => {
       if (!active) {
         return;
@@ -542,7 +530,6 @@ export default function HomeApp() {
 
     return () => {
       active = false;
-      unsubscribeCompanionSessions?.();
       unsubscribeModelCatalog();
       unsubscribeAppSettings();
     };
@@ -617,7 +604,6 @@ export default function HomeApp() {
   useHomeOpenWindowSubscriptions({
     getApi: getWithMateApi,
     setOpenSessionWindowIdsState,
-    setOpenCompanionReviewWindowIds,
   });
 
   useEffect(() => {
@@ -709,21 +695,17 @@ export default function HomeApp() {
       unsubscribeLiveRun();
       unsubscribeSessionInvalidation();
     };
-  }, [openCompanionReviewWindowIds, openSessionWindowIds]);
+  }, [openSessionWindowIds]);
 
   const sessionProjection = useMemo(
     () => buildHomeSessionProjection(
       sessions,
       openSessionWindowIds,
       sessionSearchText,
-      companionSessions,
-      openCompanionReviewWindowIds,
       auxiliarySessionSummaries,
     ),
     [
       auxiliarySessionSummaries,
-      companionSessions,
-      openCompanionReviewWindowIds,
       openSessionWindowIds,
       sessionSearchText,
       sessions,
@@ -803,9 +785,7 @@ export default function HomeApp() {
     scheduleWorkspaceValidation: (targetPath) => workspaceValidationControllerRef.current?.schedule(targetPath),
     cancelWorkspaceValidation: () => workspaceValidationControllerRef.current?.cancel(),
     openSessionWindow,
-    openCompanionReviewWindow,
     createSession: async (input) => await withWithMateApi((api) => api.createSession(input)),
-    createCompanionSession: async (input) => await withWithMateApi((api) => api.createCompanionSession(input)),
     upsertSessionSummary: (summary) => {
       setSessionSummariesState((current) => ({
         ...current,
@@ -815,12 +795,6 @@ export default function HomeApp() {
         ],
       }));
       void refreshSessionSummariesRef.current("preserve");
-    },
-    upsertCompanionSessionSummary: (summary) => {
-      setCompanionSessions((current) => [
-        summary,
-        ...current.filter((session) => session.id !== summary.id),
-      ]);
     },
   });
 
@@ -840,7 +814,6 @@ export default function HomeApp() {
     refreshSessionSummaries: async () => {
       await refreshSessionSummariesRef.current("preserve");
     },
-    setCompanionSessions,
   });
 
   const settingsDraftHandlers = buildSettingsDraftHandlers({
@@ -931,14 +904,6 @@ export default function HomeApp() {
     }
   };
 
-  const openMonitorCompanionReview = async (sessionId: string, auxiliarySessionId?: string) => {
-    setSessionMonitorFeedback("");
-    try {
-      await openCompanionReviewWindow(sessionId, auxiliarySessionId);
-    } catch (error) {
-      setSessionMonitorFeedback(error instanceof Error ? error.message : "Companion Windowを開けなかったよ。");
-    }
-  };
 
   const monitorFeedback = sessionMonitorFeedback
     || (auxiliaryDataState === "loading" ? "Auxiliaryを確認中…" : auxiliaryLoadFeedback);
@@ -965,7 +930,6 @@ export default function HomeApp() {
       auxiliaryDataState,
       feedback: monitorFeedback,
       onOpenSession: openMonitorSession,
-      onOpenCompanionReview: openMonitorCompanionReview,
       onShowContextMenu: showSessionMonitorContextMenu,
     }),
   });
@@ -973,7 +937,6 @@ export default function HomeApp() {
   const { recentSessionsPanel, rightPane, launchDialog } = buildHomeDashboardSlots({
     recentSessionsPanel: buildHomeRecentSessionsPanelProps({
       filteredSessionEntries,
-      companionSessions,
       normalizedSessionSearch,
       searchText: sessionSearchText,
       searchIcon: renderHomeSearchIcon(),
@@ -982,7 +945,6 @@ export default function HomeApp() {
         onOpenLaunchDialog: homeLaunchHandlers.onOpenLaunchDialog,
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onSetSessionPinned: (sessionId, isPinned) => void setSessionPinned(sessionId, isPinned),
-        onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       },
       canUsePrimaryFeatures,
       hasMore: sessionSummariesState.hasMoreRecent || sessionSummariesState.hasMorePinned,
@@ -1007,7 +969,6 @@ export default function HomeApp() {
         onCreateCharacter: () => void openCharacterEditorWindow(),
         onEditCharacter: (characterId) => void openCharacterEditorWindow(characterId),
         onOpenSession: openMonitorSession,
-        onOpenCompanionReview: openMonitorCompanionReview,
         onShowSessionMonitorContextMenu: showSessionMonitorContextMenu,
       },
       canUsePrimaryFeatures,

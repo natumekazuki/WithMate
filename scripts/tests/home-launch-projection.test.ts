@@ -132,21 +132,6 @@ describe("home-launch-projection", () => {
     assert.equal(projection.canStartSession, true);
   });
 
-  it("Companion Mode では SessionFolder 選択を開始可能として投影しない", () => {
-    const projection = buildHomeLaunchProjection({
-      launchProviderId: "codex",
-      launchMode: "companion",
-      launchTitle: "task",
-      launchWorkspace: { kind: "session-folder" },
-      characterEntries: createCharacters(),
-      appSettings: createDefaultAppSettings(),
-      modelCatalog: createCatalog(),
-    });
-
-    assert.equal(projection.sessionFolderSelected, true);
-    assert.equal(projection.canStartSession, false);
-  });
-
   it("random character選択時は固定Characterを選択状態にしない", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
@@ -197,7 +182,17 @@ describe("home-launch-projection", () => {
     assert.equal(projection.canStartSession, false);
   });
 
-  it("削除済み launch mode は通常 session と同じ開始条件を使う", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "通常Sessionは標準のtitle/workspace開始条件を使う"
+  // oracle = { type = "contract", ref = "src/home/home-launch-projection.ts" }
+  // fault = "通常Sessionの開始可否を誤判定し、入力不足でも開始可能または入力済みでも開始不可にする"
+  // observable = "projected canStartSession, sessionFolderSelected, and selectedCharacter"
+  // observation_boundary = "public-boundary"
+  // scope = "home launch projection normal session"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("通常 Session は標準の開始条件を使う", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
       launchTitle: "",

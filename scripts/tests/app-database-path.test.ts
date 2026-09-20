@@ -448,13 +448,21 @@ describe("resolveAppDatabasePath", () => {
 });
 
 describe("resolveOrMigrateAppDatabasePath", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "有効な withmate-v4.db は V6 へ移行される"
+  // oracle = { type = "contract", ref = "src-electron/app-database-path.ts#resolveOrMigrateAppDatabasePath" }
+  // fault = "valid V4が無関係なplaceholder DBのため拒否される"
+  // observable = "V6 path selection and V4/V6 validity"
+  // observation_boundary = "public-boundary"
+  // scope = "resolveOrMigrateAppDatabasePath valid V4"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("有効な withmate-v4.db が存在する場合は V6 へ移行して V6 を返す", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
 
     try {
-      const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
       const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
-      await writeFile(v3Path, "not sqlite");
       createV4Database(v4Path);
 
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
@@ -792,6 +800,16 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "SQLiteとして読めないV4管理DBはV3をshadowせず、errorで停止して両DBを非破壊に残す"
+  // oracle = { type = "contract", ref = "src-electron/app-database-path.ts#resolveOrMigrateAppDatabasePath" }
+  // fault = "破損V4を成功扱いして削除・上書きするか、V3へ無断fallbackする"
+  // observable = "rejection, V3/V4 existence and validity, no V6 creation"
+  // observation_boundary = "public-boundary"
+  // scope = "managed database ownership validation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("不正な withmate-v4.db が有効な V3 を shadow しない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
 
@@ -801,11 +819,12 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       createV3Database(v3Path);
       await writeFile(v4Path, "not sqlite");
 
-      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
-      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
-      assert.equal(selectedPath, v6Path);
-      assert.equal(isValidV4Database(v4Path), true);
-      assert.equal(isValidV6Database(v6Path), true);
+      await assert.rejects(() => resolveOrMigrateAppDatabasePath(userDataPath), /Companion data removal is incomplete/);
+      assert.equal(existsSync(v3Path), true);
+      assert.equal(isValidV3Database(v3Path), true);
+      assert.equal(existsSync(v4Path), true);
+      assert.equal(isValidV4Database(v4Path), false);
+      assert.equal(existsSync(path.join(userDataPath, APP_DATABASE_V6_FILENAME)), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -831,6 +850,16 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "対応外の新しいV4 DBはunsupported newer versionとして拒否され、内容を維持する"
+  // oracle = { type = "contract", ref = "src-electron/app-database-path.ts#resolveOrMigrateAppDatabasePath" }
+  // fault = "新しいDBをlegacy migrationで上書きするか、日本語旧エラーを期待して契約を見失う"
+  // observable = "English rejection, user_version, V4 validity"
+  // observation_boundary = "public-boundary"
+  // scope = "newer managed database version"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("対応外の新しい withmate-v4.db は legacy migration で上書きしない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
 
@@ -843,7 +872,7 @@ describe("resolveOrMigrateAppDatabasePath", () => {
 
       await assert.rejects(
         () => resolveOrMigrateAppDatabasePath(userDataPath),
-        /対応していない新しい DB バージョン/,
+        /unsupported newer version/,
       );
       assert.equal(readV4DatabaseUserVersion(v4Path), newerVersion);
       assert.equal(isValidV4Database(v4Path), false);

@@ -33,16 +33,6 @@ const BLOB_REFERENCE_QUERIES = [
   "SELECT raw_items_blob_id AS blob_id FROM audit_log_details WHERE raw_items_blob_id IS NOT NULL",
   "SELECT usage_blob_id AS blob_id FROM audit_log_details WHERE usage_blob_id IS NOT NULL",
   "SELECT details_blob_id AS blob_id FROM audit_log_operations WHERE details_blob_id IS NOT NULL",
-  "SELECT character_role_blob_id AS blob_id FROM companion_sessions WHERE character_role_blob_id IS NOT NULL",
-  "SELECT text_blob_id AS blob_id FROM companion_messages WHERE text_blob_id IS NOT NULL",
-  "SELECT artifact_blob_id AS blob_id FROM companion_message_artifacts WHERE artifact_blob_id IS NOT NULL",
-  "SELECT diff_snapshot_blob_id AS blob_id FROM companion_merge_runs WHERE diff_snapshot_blob_id IS NOT NULL",
-  "SELECT logical_prompt_blob_id AS blob_id FROM companion_audit_log_details WHERE logical_prompt_blob_id IS NOT NULL",
-  "SELECT transport_payload_blob_id AS blob_id FROM companion_audit_log_details WHERE transport_payload_blob_id IS NOT NULL",
-  "SELECT assistant_text_blob_id AS blob_id FROM companion_audit_log_details WHERE assistant_text_blob_id IS NOT NULL",
-  "SELECT raw_items_blob_id AS blob_id FROM companion_audit_log_details WHERE raw_items_blob_id IS NOT NULL",
-  "SELECT usage_blob_id AS blob_id FROM companion_audit_log_details WHERE usage_blob_id IS NOT NULL",
-  "SELECT details_blob_id AS blob_id FROM companion_audit_log_operations WHERE details_blob_id IS NOT NULL",
 ] as const;
 
 function compactBlobIds(values: Iterable<string | null | undefined>): string[] {

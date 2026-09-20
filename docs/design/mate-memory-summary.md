@@ -184,12 +184,12 @@ Memory tag:
 ## Mate Growth Engine
 
 Mate Growth Engine は Main Process 内の app service とする。
-役割は Memory を大量保存することではなく、session / companion の観測結果を Mate Profile の短い現在状態へ圧縮反映すること。
+役割は Memory を大量保存することではなく、session の観測結果を Mate Profile の短い現在状態へ圧縮反映すること。
 
 基本 flow:
 
 ```text
-session / companion completed turn
+session completed turn
   -> MateGrowthEngine enqueue
   -> extraction_cursor / Memory Candidate extraction gate
   -> GrowthModelPort.extractCandidates as app internal background execution

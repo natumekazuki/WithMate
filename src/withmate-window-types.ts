@@ -16,7 +16,7 @@ export type OpenSessionWindowIdsPageResult = {
   hasMore: boolean;
 };
 
-export type SessionMonitorEntryKind = "agent" | "companion";
+export type SessionMonitorEntryKind = "agent";
 
 export type AuxiliarySessionSelectionPayload = {
   parentSessionId: string;
@@ -69,7 +69,7 @@ export function parseSessionMonitorContextMenuRequest(value: unknown): SessionMo
   }
   const point = candidate.point;
   if (
-    (candidate.kind !== "agent" && candidate.kind !== "companion")
+    candidate.kind !== "agent"
     || typeof candidate.sessionId !== "string"
     || !candidate.sessionId
     || !point

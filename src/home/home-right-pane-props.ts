@@ -16,7 +16,6 @@ type HomeRightPaneHandlers = {
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
   onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
-  onOpenCompanionReview: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowSessionMonitorContextMenu: (
     kind: SessionMonitorEntryKind,
     sessionId: string,
@@ -71,7 +70,6 @@ export function buildHomeRightPaneProps({
     onCreateCharacter: handlers.onCreateCharacter,
     onEditCharacter: handlers.onEditCharacter,
     onOpenSession: handlers.onOpenSession,
-    onOpenCompanionReview: handlers.onOpenCompanionReview,
     onShowSessionMonitorContextMenu: handlers.onShowSessionMonitorContextMenu,
     canUsePrimaryFeatures,
     sessionWindowRestoreIds,

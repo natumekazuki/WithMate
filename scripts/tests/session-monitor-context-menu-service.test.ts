@@ -37,14 +37,13 @@ function createMenuHarness() {
     },
   };
 }
-
 function invokeMenuItem(item: MenuItemConstructorOptions): void {
   item.click?.({} as never, {} as never, {} as never);
 }
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session Monitor context menu はAgentとCompanionへ閉じる項目をそれぞれのWindow管理へ送り、未選択時はdismissedで終了する"
+// claim = "Session Monitor context menu はAgentへ閉じる項目を通常のWindow管理へ送り、未選択時はdismissedで終了する"
 // oracle = { type = "contract", ref = "SessionMonitorContextMenuService close menu contract" }
 // fault = "閉じる項目が別種別のWindowを閉じる、popup座標を失う、またはmenu取消時にrequestが未解決のまま残る"
 // observable = "閉じる項目のlabel、popup座標、close delegateの呼出し、menu result"
@@ -63,10 +62,6 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
       request: { kind: "agent", sessionId: "agent-1", point: { x: 24, y: 48 } },
       expectedTarget: "agent:agent-1",
     },
-    {
-      request: { kind: "companion", sessionId: "companion-1", point: { x: 72, y: 96 } },
-      expectedTarget: "companion:companion-1",
-    },
   ];
 
   for (const testCase of cases) {
@@ -76,9 +71,6 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
       requestCloseSessionWindow(sessionId) {
         closedTargets.push(`agent:${sessionId}`);
         return Promise.resolve(true);
-      },
-      closeCompanionReviewWindow(sessionId) {
-        closedTargets.push(`companion:${sessionId}`);
       },
       writeText() {},
       buildMenu: harness.buildMenu,
@@ -105,7 +97,6 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
     requestCloseSessionWindow() {
       return Promise.resolve(true);
     },
-    closeCompanionReviewWindow() {},
     writeText() {},
     buildMenu: harness.buildMenu,
   });
@@ -134,7 +125,6 @@ test("Session Monitor context menu はclose delegateの取消をclosedとして�
   const harness = createMenuHarness();
   const service = new SessionMonitorContextMenuService({
     requestCloseSessionWindow: async () => false,
-    closeCompanionReviewWindow() {},
     writeText() {},
     buildMenu: harness.buildMenu,
   });
@@ -149,7 +139,7 @@ test("Session Monitor context menu はclose delegateの取消をclosedとして�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session Monitor context menuのSession IDをコピーはAgentとCompanionのrequest.sessionIdだけをclipboard writerへ渡し、失敗を成功扱いしない"
+// claim = "Session Monitor context menuのSession IDをコピーはAgentのrequest.sessionIdだけをclipboard writerへ渡し、失敗を成功扱いしない"
 // oracle = { type = "contract", ref = "SessionMonitorContextMenuService Session ID copy contract" }
 // fault = "コピー項目が別の値をclipboardへ渡す、対象Windowを閉じる、またはclipboard writerの例外をcopiedとして返す"
 // observable = "clipboard writerへ渡された値、close delegateの呼出し、copy result"
@@ -162,7 +152,6 @@ test("Session Monitor context menu はclose delegateの取消をclosedとして�
 test("Session Monitor context menuのSession IDをコピーは対象IDだけをclipboardへ渡す", async () => {
   const requests: SessionMonitorContextMenuRequest[] = [
     { kind: "agent", sessionId: "agent-copy", point: { x: 1, y: 2 } },
-    { kind: "companion", sessionId: "companion-copy", point: { x: 3, y: 4 } },
   ];
 
   for (const request of requests) {
@@ -173,9 +162,6 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
       requestCloseSessionWindow(sessionId) {
         closedTargets.push(`agent:${sessionId}`);
         return Promise.resolve(true);
-      },
-      closeCompanionReviewWindow(sessionId) {
-        closedTargets.push(`companion:${sessionId}`);
       },
       writeText(value) {
         copiedTexts.push(value);
@@ -192,7 +178,7 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
     assert.deepEqual(closedTargets, []);
   }
 
-  for (const kind of ["agent", "companion"] as const) {
+  for (const kind of ["agent"] as const) {
     const harness = createMenuHarness();
     let copyAttempts = 0;
     const closedTargets: string[] = [];
@@ -200,9 +186,6 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
       requestCloseSessionWindow() {
         closedTargets.push("agent");
         return Promise.resolve(true);
-      },
-      closeCompanionReviewWindow() {
-        closedTargets.push("companion");
       },
       writeText() {
         copyAttempts += 1;
@@ -259,58 +242,3 @@ function createAuxWindowStub() {
     },
   };
 }
-
-// @test-value v2
-// kind = "invariant"
-// claim = "Companion review windowをMonitorから閉じると対象registryだけを更新し、既に消滅したtargetは安全に無視する"
-// oracle = { type = "contract", ref = "AuxWindowService companion review window lifecycle" }
-// fault = "別Companionのwindowやsession recordへ作用するか、closed競合時に例外またはstale registryを残す"
-// observable = "対象windowのdestroyed state、open companion window IDs、window change通知数"
-// observation_boundary = "public-boundary"
-// scope = "AuxWindowService companion review close"
-// lifecycle = "permanent"
-// impact = "Monitorの閉じる操作で別Companionを閉じず、一覧更新がstale targetで止まらない"
-// distinction = "native menuのselection dispatchとは分離してCompanion window registryのcloseと競合を検証する"
-// @end-test-value
-test("AuxWindowService は対象Companion review windowだけを閉じ、消滅済みtargetを無視する", async () => {
-  const windows: Array<ReturnType<typeof createAuxWindowStub>> = [];
-  let changeCount = 0;
-  const service = new AuxWindowService({
-    createWindow() {
-      const window = createAuxWindowStub();
-      windows.push(window);
-      return window;
-    },
-    async loadHomeEntry() {},
-    async loadDiffEntry() {},
-    async loadFilePreviewEntry() {},
-    async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
-    async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {
-      changeCount += 1;
-    },
-    generateDiffToken() {
-      return "diff-token";
-    },
-  });
-
-  const first = await service.openCompanionReviewWindow("companion-1");
-  const second = await service.openCompanionReviewWindow("companion-2");
-  service.closeCompanionReviewWindow("companion-1");
-
-  assert.equal(first.isDestroyed(), true);
-  assert.equal(second.isDestroyed(), false);
-  assert.deepEqual(service.listOpenCompanionReviewWindowIds(), ["companion-2"]);
-  assert.equal(changeCount, 3);
-
-  service.closeCompanionReviewWindow("companion-1");
-  assert.deepEqual(service.listOpenCompanionReviewWindowIds(), ["companion-2"]);
-
-  const stale = await service.openCompanionReviewWindow("companion-3");
-  windows.at(-1)?.destroyExternally();
-  service.closeCompanionReviewWindow("companion-3");
-  assert.equal(stale.isDestroyed(), true);
-  assert.deepEqual(service.listOpenCompanionReviewWindowIds(), ["companion-2"]);
-  assert.equal(changeCount, 5);
-});

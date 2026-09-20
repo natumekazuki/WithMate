@@ -80,13 +80,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async openDiffWindow() {
         return {} as never;
       },
-      async openCompanionReviewWindow(sessionId, auxiliarySessionId) {
-        calls.push(`openCompanionReview:${sessionId}:${auxiliarySessionId ?? "none"}`);
-        return {} as never;
-      },
-      async openCompanionMergeWindow() {
-        return {} as never;
-      },
       async pickDirectory() {
         return null;
       },
@@ -158,25 +151,17 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     sessionQuery: {
       listSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
       listSessionCharacterUsage: () => [],
-      listCompanionSessionSummaries: () => [],
       listSessionAuditLogs: () => [],
       listSessionAuditLogSummaries: () => [],
       listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
       getSessionAuditLogDetail: () => null,
       getSessionAuditLogDetailSection: () => null,
       getSessionAuditLogOperationDetail: () => null,
-      listCompanionAuditLogs: () => [],
-      listCompanionAuditLogSummaries: () => [],
-      listCompanionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
-      getCompanionAuditLogDetail: () => null,
-      getCompanionAuditLogDetailSection: () => null,
-      getCompanionAuditLogOperationDetail: () => null,
       async listSessionSkills() { return []; },
       async listSessionCustomAgents() { return []; },
       async listWorkspaceSkills() { return []; },
       async listWorkspaceCustomAgents() { return []; },
       listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextCursor: null, hasMore: false }),
-      listOpenCompanionReviewWindowIds: () => [],
       getSession: () => null,
       getSessionGlossaryProjection: (sessionId) => ({
         sessionId,
@@ -192,44 +177,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async previewComposerInput() {
         return null;
       },
-    },
-    companion: {
-      async createCompanionSession() {
-        return {} as never;
-      },
-      getCompanionSession: () => null,
-      getCompanionMessageArtifact: () => null,
-      async getCompanionReviewSnapshot() {
-        return null;
-      },
-      async mergeCompanionSelectedFiles() {
-        return {} as never;
-      },
-      async syncCompanionTarget() {
-        return {} as never;
-      },
-      async stashCompanionTargetChanges() {
-        return {} as never;
-      },
-      async restoreCompanionTargetStash() {
-        return {} as never;
-      },
-      async dropCompanionTargetStash() {
-        return {} as never;
-      },
-      async discardCompanionSession() {
-        return {} as never;
-      },
-      async updateCompanionSession(session) {
-        return session;
-      },
-      async previewCompanionComposerInput() {
-        return { attachments: [], errors: [] };
-      },
-      async runCompanionSessionTurn() {
-        return {} as never;
-      },
-      cancelCompanionSessionRun: () => {},
     },
     sessionRuntime: {
       getLiveSessionRun: () => null,
@@ -309,7 +256,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   assert.equal(deps.isMemoryV6ReviewWindow({} as never), true);
   assert.equal(deps.isSettingsWindow({} as never), true);
   assert.equal(await deps.openSessionWindow("session-1", "aux-1"), undefined);
-  assert.equal(await deps.openCompanionReviewWindow("companion-1", "aux-2"), undefined);
   assert.deepEqual(await deps.getSessionWindowRestoreSet(), ["session-1"]);
   assert.deepEqual((await deps.restoreSessionWindows()).openedSessionIds, ["session-1"]);
   assert.deepEqual(await deps.showSessionMonitorContextMenu({} as never, {} as never), { status: "dismissed" });
@@ -325,7 +271,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     "isMemoryReview",
     "isSettings",
     "openSession:session-1:aux-1",
-    "openCompanionReview:companion-1:aux-2",
     "getSessionWindowRestoreSet",
     "restoreSessionWindows",
     "showSessionMonitorContextMenu",

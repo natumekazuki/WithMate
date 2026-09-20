@@ -18,7 +18,7 @@
   - `docs/design/electron-session-store.md`: Main Process を persistence owner とし、Home 系 window と Session window の通知責務を分ける方針。
   - `docs/adr/004-launch-character-random-selection.md`: open Session の Character 除外と最近の Session 利用順を使う random selection の accepted behavior。
   - Executable contracts: `src/HomeApp.tsx`、`src/home/home-session-projection.ts`、`src/home/home-launch-state.ts`、`scripts/tests/home-*`、`scripts/tests/session-summary-subscription.test.ts`、`scripts/tests/window-broadcast-service.test.ts`。
-- Scope / semantic owner: Session summary query の canonical owner を storage query / Main query service に置き、IPC parser/response、Home subscription、Home projection、broadcast facade を同じ契約へ接続する。Session detail query、Companion summary、Memory V6 entry query は別 owner として直接変更しない。
+- Scope / semantic owner: Session summary query の canonical owner を storage query / Main query service に置き、IPC parser/response、Home subscription、Home projection、broadcast facade を同じ契約へ接続する。Session detail query、Memory V6 entry query は別 owner として直接変更しない。
 - Failure mode / consumer impact: 全件 hydrate、全配列 broadcast、loaded page だけの client filter、cursor 境界の重複・欠落、pinned/open Session の消失、random Character の履歴弱体化、削除・更新後の stale 表示、detail/message/artifact の一覧混入。
 - State transitions / failure timing: 初回 page request → subscription invalidation / response loss → current query page refresh → create/update/pin/delete 後の page convergence。検索条件変更と cursor 更新は同一 query state の世代として扱い、古い response を反映しない。
 - Direct verification: storage SQL の limit / cursor / search / tie-breaker、IPC request parser と bounded response、Home subscription の initial/update/error/cleanup、Home projection の page・pinned・open・search、create/update/delete/pin 通知、random Character の open/history source、typecheck、build、data-loading benchmark。
@@ -31,7 +31,7 @@
 - Home Session Monitor は同じ `HomeApp` の summary state と open Session Window ID を突き合わせるため、最新 page にいない open Session を別経路で維持する必要がある。
 - Settings window は同じ `HomeApp` entry の session summary subscription を起動し、session cleanup 後に summary refresh を要求する。
 - Memory V6 Review window は Session summary を表示しないが、現在の `HomeApp` 初期化では同じ summary subscription が起動するため、不要な取得経路として確認対象に含める。
-- New Session / Companion の random Character selection は、summary の最近順と open Session の Character ID を使う。page だけを渡すと accepted behavior を弱体化する。
+- New Session の random Character selection は、summary の最近順と open Session の Character ID を使う。page だけを渡すと accepted behavior を弱体化する。
 - Mate profile / avatar 更新 handler は Home data hydrate の一部として全 session summary を再取得する。
 - Main の persistent-store initialize / persistence facade / query helper は内部 cache の再構築に全 summary を使う。Home public query と同じ owner に混ぜず、runtime の detail hydration 要件を確認する。
 - `MainBroadcastFacade` は現在、更新のたびに全 summary を読み、Home 系 window へ全配列を送る。Session window には既存の ID invalidation を送る。

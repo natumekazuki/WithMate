@@ -261,7 +261,7 @@ generic hard delete、archive、purge、irreversible redactionは別操作とし
 - persistent Character Memory ownerはV5 catalogの`characterId`を参照する。
 - evidence / auditはMemoryを作ったsessionと、そのsessionに保存されたCharacter snapshotを追跡できるようにする。
 - Memory ownerをsnapshot hashへ直接固定しない。
-- 通常session / companionに保存されたCharacter snapshotは不変であり、agent-facing Memory検索時のownerはruntime bindingのactor Characterから解決する。operator CLIだけが明示Character IDを使う。`character-authoring` sessionは例外としてturn開始時にcanonical definitionからsnapshotを再生成する。詳細は`docs/design/character-storage.md`を参照する。
+- 通常sessionに保存されたCharacter snapshotは不変であり、agent-facing Memory検索時のownerはruntime bindingのactor Characterから解決する。operator CLIだけが明示Character IDを使う。`character-authoring` sessionは例外としてturn開始時にcanonical definitionからsnapshotを再生成する。詳細は`docs/design/character-storage.md`を参照する。
 
 ## Mutation Policy
 

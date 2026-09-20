@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const LEGACY_MATE_SOURCE_TYPE_CHECK = "source_type IN ('session', 'companion', 'manual', 'system')";
+const LEGACY_MATE_SOURCE_TYPE_CHECK = "source_type IN ('session', 'manual', 'system')";
 
 function extractCreateTableStatement(schemaSql: string): string {
   const tableMatch = schemaSql.match(

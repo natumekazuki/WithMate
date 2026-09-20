@@ -1,7 +1,6 @@
 import type { CSSProperties, KeyboardEventHandler, PointerEventHandler, ReactNode, RefObject, UIEventHandler } from "react";
 
 import type { CharacterProfile, DiffPreviewPayload, Message, MessageArtifact } from "../app-state.js";
-import type { HomeMonitorEntry } from "../home/home-session-projection.js";
 import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
 import type { Session } from "../session-state.js";
 import {
@@ -135,7 +134,6 @@ export type AgentSessionChatProjectionInput = {
   availableContextPaneTabs: ContextPaneTabKey[];
   contextPaneProjection: SessionContextPaneProps["contextPaneProjection"];
   selectedBackgroundTasks: SessionContextPaneProps["backgroundTasks"];
-  selectedCompanionGroupMonitorEntries: HomeMonitorEntry[];
   isCopilotSession: boolean;
   selectedCopilotRemainingPercentLabel: string;
   selectedCopilotRemainingRequestsLabel: string;
@@ -229,7 +227,6 @@ export type AgentSessionChatProjectionInput = {
   onToggleFilesPaneVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onSelectContextPaneTab?: SessionContextPaneProps["onSelectContextPaneTab"];
-  onOpenCompanionReview: (sessionId: string) => void;
   onCloseDiff: () => void;
   onOpenDiffWindow: (payload: DiffPreviewPayload) => void;
   onLoadMoreAuditLogs: () => void;
@@ -419,7 +416,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     runningDetailsEntries: input.runningDetailsEntries,
     liveRunReasoningText: input.liveRunReasoningText,
     backgroundTasks: input.selectedBackgroundTasks,
-    companionGroupMonitorEntries: input.selectedCompanionGroupMonitorEntries,
     selectedSessionLiveRunErrorMessage: input.liveRunErrorMessage,
     isSelectedSessionRunning: input.isSelectedSessionRunning,
     isCopilotSession: input.isCopilotSession,
@@ -437,7 +433,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onJumpToMessage: input.onJumpToMessage,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
     onSelectContextPaneTab: input.onSelectContextPaneTab,
-    onOpenCompanionReview: input.onOpenCompanionReview,
   });
 
   return buildLiveSessionWindowShellProps({

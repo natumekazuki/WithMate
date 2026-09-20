@@ -64,18 +64,6 @@ import type {
   SetMateAvatarInput,
   UpdateMateInput,
 } from "../src/mate/mate-state.js";
-import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
-import {
-  COMPANION_MODE_RETIRED_MESSAGE,
-  COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE,
-} from "../src/companion-retirement.js";
-import type {
-  CompanionMergeSelectedFilesRequest,
-  CompanionMergeSelectedFilesResult,
-  CompanionReviewSnapshot,
-  CompanionSyncTargetResult,
-  CompanionTargetWorkspaceStashResult,
-} from "../src/companion-review-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import {
   isChatLayoutPreferenceUpdate,
@@ -160,18 +148,15 @@ import { parseCreateSessionRequest } from "./create-session-request.js";
 import { parseSessionSummaryPageRequest } from "./session-summary-query.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
-  WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
-  WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
-  WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
@@ -185,18 +170,12 @@ import {
   WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
-  WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
-  WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
-  WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_GET_MATE_PROFILE_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
-  WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
-  WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
-  WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
@@ -230,13 +209,8 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
-  WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
-  WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
-  WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
-  WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL,
-  WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
@@ -263,8 +237,6 @@ import {
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
-  WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
-  WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
@@ -281,7 +253,6 @@ import {
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
-  WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
@@ -291,7 +262,6 @@ import {
   WITHMATE_PICK_SESSION_IMAGE_FILE_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_COPY_FILES_TO_SESSION_FILES_CHANNEL,
-  WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
@@ -299,15 +269,10 @@ import {
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
-  WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
   WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL,
-  WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
-  WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
-  WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
-  WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
@@ -315,7 +280,6 @@ import {
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
-  WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_SET_SESSION_PINNED_CHANNEL,
   WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
@@ -355,7 +319,6 @@ export type MainIpcRegistrationDeps = {
   resolveEventWindow(event: IpcSenderEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
   resolveSessionWindow(sessionId: string): MaybeWindow;
-  resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string, auxiliarySessionId?: string): Promise<void>;
   showSessionMonitorContextMenu(
     event: IpcSenderEvent,
@@ -375,11 +338,8 @@ export type MainIpcRegistrationDeps = {
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
   getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFilePreviewResourceRequest | null;
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
-  openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<void>;
-  openCompanionMergeWindow(sessionId: string): Promise<void>;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
-  listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
   listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
   listSessionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
   listSessionAuditLogSummaryPage(
@@ -397,23 +357,6 @@ export type MainIpcRegistrationDeps = {
     auditLogId: number,
     operationIndex: number,
   ): Awaitable<AuditLogOperationDetailFragment | null>;
-  listCompanionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
-  listCompanionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
-  listCompanionAuditLogSummaryPage(
-    sessionId: string,
-    request?: AuditLogSummaryPageRequest | null,
-  ): Awaitable<AuditLogSummaryPageResult>;
-  getCompanionAuditLogDetail(sessionId: string, auditLogId: number): Awaitable<AuditLogDetail | null>;
-  getCompanionAuditLogDetailSection(
-    sessionId: string,
-    auditLogId: number,
-    section: AuditLogDetailSection,
-  ): Awaitable<AuditLogDetailFragment | null>;
-  getCompanionAuditLogOperationDetail(
-    sessionId: string,
-    auditLogId: number,
-    operationIndex: number,
-  ): Awaitable<AuditLogOperationDetailFragment | null>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
@@ -421,7 +364,6 @@ export type MainIpcRegistrationDeps = {
   listOpenSessionWindowIdsPage(
     request?: OpenSessionWindowIdsPageRequest | null,
   ): OpenSessionWindowIdsPageResult;
-  listOpenCompanionReviewWindowIds(): string[];
   listAuxiliarySessions?(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
   listOpenActiveAuxiliarySessionSummaries?(): Awaitable<AuxiliarySessionSummary[]>;
   listOpenAuxiliarySessionSummaries?(): Awaitable<AuxiliarySessionSummary[]>;
@@ -534,20 +476,6 @@ export type MainIpcRegistrationDeps = {
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
   createSession(input: CreateSessionRequest): Awaitable<Session>;
-  createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
-  getCompanionSession(sessionId: string): Awaitable<CompanionSession | null>;
-  getCompanionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
-  getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
-  mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
-  syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
-  stashCompanionTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
-  restoreCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
-  dropCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
-  discardCompanionSession(sessionId: string): Promise<CompanionSession>;
-  updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
-  previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
-  cancelCompanionSessionRun(sessionId: string): void;
   updateSession(session: Session): Awaitable<Session>;
   setSessionPinned(request: SetSessionPinnedRequest): Awaitable<SessionSummary>;
   deleteSession(sessionId: string): Awaitable<void>;
@@ -619,8 +547,6 @@ type MainIpcWindowDeps = Pick<
   | "openDiffWindow"
   | "isFilePreviewWindow"
   | "isFilePreviewTokenWindow"
-  | "openCompanionReviewWindow"
-  | "openCompanionMergeWindow"
   | "openPathTarget"
   | "openAppLogFolder"
   | "openCrashDumpFolder"
@@ -677,7 +603,6 @@ type MainIpcAuxiliaryDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
   | "resolveSessionWindow"
-  | "resolveCompanionReviewWindow"
   | "listAuxiliarySessions"
   | "listOpenActiveAuxiliarySessionSummaries"
   | "listOpenAuxiliarySessionSummaries"
@@ -719,31 +644,22 @@ type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
   | "resolveSessionWindow"
-  | "resolveCompanionReviewWindow"
   | "isFilePreviewWindow"
   | "getFilePreviewWindowResource"
   | "isFilePreviewTokenWindow"
   | "listSessionSummaryPage"
   | "listSessionCharacterUsage"
-  | "listCompanionSessionSummaries"
   | "listSessionAuditLogs"
   | "listSessionAuditLogSummaries"
   | "listSessionAuditLogSummaryPage"
   | "getSessionAuditLogDetail"
   | "getSessionAuditLogDetailSection"
   | "getSessionAuditLogOperationDetail"
-  | "listCompanionAuditLogs"
-  | "listCompanionAuditLogSummaries"
-  | "listCompanionAuditLogSummaryPage"
-  | "getCompanionAuditLogDetail"
-  | "getCompanionAuditLogDetailSection"
-  | "getCompanionAuditLogOperationDetail"
   | "listSessionSkills"
   | "listSessionCustomAgents"
   | "listWorkspaceSkills"
   | "listWorkspaceCustomAgents"
   | "listOpenSessionWindowIdsPage"
-  | "listOpenCompanionReviewWindowIds"
   | "getSession"
   | "getSessionGlossaryProjection"
   | "searchSessionGlossary"
@@ -774,27 +690,6 @@ type MainIpcSessionQueryDeps = Pick<
   | "getSessionMessageArtifact"
   | "getDiffPreview"
   | "previewComposerInput"
->;
-
-type MainIpcCompanionDeps = Pick<
-  MainIpcRegistrationDeps,
-  | "resolveEventWindow"
-  | "resolveHomeWindow"
-  | "validateWorkspaceDirectory"
-  | "createCompanionSession"
-  | "getCompanionSession"
-  | "getCompanionMessageArtifact"
-  | "getCompanionReviewSnapshot"
-  | "mergeCompanionSelectedFiles"
-  | "syncCompanionTarget"
-  | "stashCompanionTargetChanges"
-  | "restoreCompanionTargetStash"
-  | "dropCompanionTargetStash"
-  | "discardCompanionSession"
-  | "updateCompanionSession"
-  | "previewCompanionComposerInput"
-  | "runCompanionSessionTurn"
-  | "cancelCompanionSessionRun"
 >;
 
 type MainIpcSessionRuntimeDeps = Pick<
@@ -1018,7 +913,6 @@ async function assertSessionFileLinkSender(
     MainIpcRegistrationDeps,
     | "resolveEventWindow"
     | "resolveSessionWindow"
-    | "resolveCompanionReviewWindow"
     | "getSessionFileExplorerOwnerSessionId"
     | "getFilePreviewWindowResource"
   >,
@@ -1026,9 +920,6 @@ async function assertSessionFileLinkSender(
   const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(sessionId);
   const window = deps.resolveEventWindow(event);
   if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
-    return;
-  }
-  if (ownerSessionId && window && deps.resolveCompanionReviewWindow(ownerSessionId) === window) {
     return;
   }
   const currentResource = window
@@ -1429,30 +1320,27 @@ function parseMarkdownLinkContextMenuRequest(input: unknown): MarkdownLinkContex
   };
 }
 
-type AuxiliaryOwnerWindowKind = "session" | "companion-review";
+type AuxiliaryOwnerWindowKind = "session";
 
 function resolveAuxiliaryOwnerWindowSender(
   event: IpcMainInvokeEvent,
   parentSessionId: string,
-  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow" | "resolveCompanionReviewWindow">,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow">,
 ): AuxiliaryOwnerWindowKind {
   const window = deps.resolveEventWindow(event);
   if (!window) {
-    throw new Error("Auxiliary session IPC is only available from the target Session or Companion Review window.");
+    throw new Error("Auxiliary session IPC is only available from the target Session window.");
   }
   if (deps.resolveSessionWindow(parentSessionId) === window) {
     return "session";
   }
-  if (deps.resolveCompanionReviewWindow(parentSessionId) === window) {
-    return "companion-review";
-  }
-  throw new Error("Auxiliary session IPC is only available from the target Session or Companion Review window.");
+  throw new Error("Auxiliary session IPC is only available from the target Session window.");
 }
 
 function assertAuxiliaryOwnerWindowSender(
   event: IpcMainInvokeEvent,
   parentSessionId: string,
-  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow" | "resolveCompanionReviewWindow">,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow">,
 ): void {
   resolveAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
 }
@@ -1461,10 +1349,6 @@ function assertAuxiliaryCreateModeForOwner(
   ownerWindowKind: AuxiliaryOwnerWindowKind,
   input: CreateAuxiliarySessionInput,
 ): void {
-  if (ownerWindowKind === "companion-review") {
-    throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
-  }
-
   if (input.runtimeSelection !== "latest-session") {
     throw new Error("Session window Auxiliary creation requires latest-session runtime selection.");
   }
@@ -1554,18 +1438,6 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   });
   ipcMain.handle(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, async (_event, diffPreview: DiffPreviewPayload) => {
     await deps.openDiffWindow(diffPreview);
-  });
-  ipcMain.handle(
-    WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
-    async (_event, sessionId: string, auxiliarySessionId?: string | null) => {
-      await deps.openCompanionReviewWindow(
-        sessionId,
-        await resolveWindowAuxiliarySessionId(deps, sessionId, auxiliarySessionId),
-      );
-    },
-  );
-  ipcMain.handle(WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL, async (_event, sessionId: string) => {
-    await deps.openCompanionMergeWindow(sessionId);
   });
   ipcMain.handle(WITHMATE_PICK_DIRECTORY_CHANNEL, async (event, initialPath: string | null) =>
     deps.pickDirectory(resolveTargetWindow(event, deps), initialPath),
@@ -1721,9 +1593,7 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     const auxiliaryDeps = getAuxiliaryDeps(deps);
     const status = await auxiliaryDeps.getAuxiliarySessionStatus(input.auxiliarySessionId);
     if (!status || status.parentSessionId !== input.parentSessionId) return { outcome: "not-found" };
-    if (resolveAuxiliaryOwnerWindowSender(event, status.parentSessionId, deps) !== "session") {
-      throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
-    }
+    assertAuxiliaryOwnerWindowSender(event, status.parentSessionId, deps);
     return auxiliaryDeps.saveAuxiliaryDraft(input);
   });
   ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (event, input: CreateAuxiliarySessionInput) => {
@@ -1735,9 +1605,7 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     return getAuxiliaryDeps(deps).createAuxiliarySession(input);
   });
   ipcMain.handle(WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL, (event, parentSessionId: string) => {
-    if (resolveAuxiliaryOwnerWindowSender(event, parentSessionId, deps) !== "session") {
-      throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
-    }
+    assertAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
     if (!deps.getAuxiliaryCreationContext) {
       throw new Error("Auxiliary creation context dependency is not configured.");
     }
@@ -1777,10 +1645,7 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     async (event, auxiliarySessionId: string, request: RunSessionTurnRequest) => {
       const auxiliaryDeps = getAuxiliaryDeps(deps);
       const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
-      const ownerWindowKind = resolveAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
-      if (ownerWindowKind === "companion-review") {
-        throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
-      }
+      assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
       return auxiliaryDeps.runAuxiliarySessionTurn(auxiliarySessionId, request);
     },
   );
@@ -1877,7 +1742,6 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       deps.listSessionSummaryPage(parseSessionSummaryPageRequest(request)),
   );
   ipcMain.handle(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL, () => deps.listSessionCharacterUsage());
-  ipcMain.handle(WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL, () => deps.listCompanionSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL, (_event, sessionId: string) =>
     deps.listSessionAuditLogSummaries(sessionId),
@@ -1900,28 +1764,6 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     (_event, sessionId: string, auditLogId: number, operationIndex: number) =>
       deps.getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
   );
-  ipcMain.handle(WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listCompanionAuditLogs(sessionId));
-  ipcMain.handle(WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL, (_event, sessionId: string) =>
-    deps.listCompanionAuditLogSummaries(sessionId),
-  );
-  ipcMain.handle(
-    WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
-    (_event, sessionId: string, request: AuditLogSummaryPageRequest | null | undefined) =>
-      deps.listCompanionAuditLogSummaryPage(sessionId, request),
-  );
-  ipcMain.handle(WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL, (_event, sessionId: string, auditLogId: number) =>
-    deps.getCompanionAuditLogDetail(sessionId, auditLogId),
-  );
-  ipcMain.handle(
-    WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
-    (_event, sessionId: string, auditLogId: number, section: AuditLogDetailSection) =>
-      deps.getCompanionAuditLogDetailSection(sessionId, auditLogId, section),
-  );
-  ipcMain.handle(
-    WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
-    (_event, sessionId: string, auditLogId: number, operationIndex: number) =>
-      deps.getCompanionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
-  );
   ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, async (_event, sessionId: string) => deps.listSessionSkills(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, async (_event, sessionId: string) =>
     deps.listSessionCustomAgents(sessionId),
@@ -1939,7 +1781,6 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     (_event, request: OpenSessionWindowIdsPageRequest | null | undefined) =>
       deps.listOpenSessionWindowIdsPage(parseOpenSessionWindowIdsPageRequest(request)),
   );
-  ipcMain.handle(WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL, () => deps.listOpenCompanionReviewWindowIds());
   ipcMain.handle(WITHMATE_GET_SESSION_CHANNEL, (_event, sessionId: string) => {
     if (!sessionId) {
       return null;
@@ -2241,61 +2082,6 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   );
 }
 
-function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCompanionDeps): void {
-  ipcMain.handle(WITHMATE_GET_COMPANION_SESSION_CHANNEL, (_event, sessionId: string) => {
-    if (!sessionId) {
-      return null;
-    }
-    return deps.getCompanionSession(sessionId);
-  });
-  ipcMain.handle(WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL, (_event, sessionId: string, messageIndex: number) => {
-    if (!sessionId || !Number.isInteger(messageIndex) || messageIndex < 0) {
-      return null;
-    }
-    return deps.getCompanionMessageArtifact(sessionId, messageIndex);
-  });
-  ipcMain.handle(WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL, async (_event, sessionId: string) => {
-    if (!sessionId) {
-      return null;
-    }
-    return deps.getCompanionReviewSnapshot(sessionId);
-  });
-  ipcMain.handle(WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL, async (_event, request: CompanionMergeSelectedFilesRequest) =>
-    deps.mergeCompanionSelectedFiles(request),
-  );
-  ipcMain.handle(WITHMATE_SYNC_COMPANION_TARGET_CHANNEL, async (_event, sessionId: string) =>
-    deps.syncCompanionTarget(sessionId),
-  );
-  ipcMain.handle(WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL, async (_event, sessionId: string) =>
-    deps.stashCompanionTargetChanges(sessionId),
-  );
-  ipcMain.handle(WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL, async (_event, sessionId: string) =>
-    deps.restoreCompanionTargetStash(sessionId),
-  );
-  ipcMain.handle(WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL, async (_event, sessionId: string) =>
-    deps.dropCompanionTargetStash(sessionId),
-  );
-  ipcMain.handle(WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL, async (_event, sessionId: string) =>
-    deps.discardCompanionSession(sessionId),
-  );
-  ipcMain.handle(WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL, async (_event, session: CompanionSession) =>
-    deps.updateCompanionSession(session),
-  );
-  ipcMain.handle(WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL, async (_event, sessionId: string, userMessage: string) =>
-    Promise.reject(new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE)),
-  );
-  ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (event, input: CreateCompanionSessionInput) => {
-    assertHomeWindowSender(event, deps);
-    throw new Error(COMPANION_MODE_RETIRED_MESSAGE);
-  });
-  ipcMain.handle(WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
-    Promise.reject(new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE)),
-  );
-  ipcMain.handle(WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
-    deps.cancelCompanionSessionRun(sessionId);
-  });
-}
-
 function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionRuntimeDeps): void {
   ipcMain.handle(WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
     if (!sessionId) {
@@ -2415,7 +2201,6 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   registerSettingsHandlers(wrappedIpcMain, deps);
   registerPromptTemplateHandlers(wrappedIpcMain, deps);
   registerSessionQueryHandlers(wrappedIpcMain, deps);
-  registerCompanionHandlers(wrappedIpcMain, deps);
   registerSessionRuntimeHandlers(wrappedIpcMain, deps);
   registerMateHandlers(wrappedIpcMain, deps);
   registerCharacterHandlers(wrappedIpcMain, deps);

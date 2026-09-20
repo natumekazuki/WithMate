@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  openCompanionReviewWindow,
   openHomeWindow,
   openMemoryV6ReviewWindow,
   openSessionMonitorWindow,
@@ -63,12 +62,6 @@ const windowCommandCases = [
     apiName: "openMemoryV6ReviewWindow",
     command: () => openMemoryV6ReviewWindow(),
     expectedArgs: [],
-  },
-  {
-    name: "openCompanionReviewWindow",
-    apiName: "openCompanionReviewWindow",
-    command: () => openCompanionReviewWindow("companion-session-1"),
-    expectedArgs: ["companion-session-1"],
   },
 ];
 

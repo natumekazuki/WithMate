@@ -9,12 +9,12 @@ WithMate 4.0.0 を、複数 character を選んで使う app ではなく、1 �
 
 この文書は、SingleMate 化に伴う product boundary、storage、UI、session 連携、Growth の責務を固定する。
 
-V5 Character Core / preview では、この文書を current runtime の正本として扱わない。V5 では複数 Character catalog、`character.md` runtime definition、launch selection、runtime snapshot boundary を復帰させるため、V5 範囲の判断では `docs/design/v5-character-transition.md` と `docs/design/character-storage.md` を優先する。
+V5 Character Core / preview では、この文書を current runtime の正本として扱わない。V5 では複数 Character catalog、`character.md` runtime definition、launch selection、runtime snapshot boundary を復帰させるため、V5 範囲の判断では `docs/design/character-storage.md` を優先する。
 
 ## Position
 
 - 4.0.0 SingleMate の Mate / character 体験の正本はこの文書と `docs/design/product-direction.md` とする
-- V5 Character Core / preview では `docs/design/v5-character-transition.md`、`docs/design/character-storage.md`、`docs/design/character-definition-format.md` を優先する。この文書の MateTalk、Growth、provider instruction sync は V4 SingleMate の legacy / deferred context として扱う
+- V5 Character Core / preview では `docs/design/character-storage.md`、`docs/design/character-definition-format.md` を優先する。この文書の MateTalk、Growth、provider instruction sync は V4 SingleMate の legacy / deferred context として扱う
 - provider instruction への同期詳細は `docs/design/provider-instruction-sync.md` を参照する
 - Mate SQLite schema の詳細は `docs/design/mate-storage-schema.md` を参照する
 - Growth / Memory の全体方針は `docs/design/memory-architecture.md` を参照する
@@ -36,7 +36,7 @@ V5 Character Core / preview では、この文書を current runtime の正本�
 - `sessionKind` は現行 runtime では `default` / `character-authoring` のみを扱う
 - Mate Profile の metadata は SQLite に保存し、`profile.json` は作らない
 - SQLite DB は `withmate-v4.db` とし、Mate schema は `docs/design/mate-storage-schema.md` を正本にする
-- Home / Session / Companion は常に現在の Mate を使う
+- Home / Session は常に現在の Mate を使う
 - session 起動時に character picker は表示しない
 - WithMate は Mate Profile の正本を管理する
 - 実行時の Mate 定義注入は毎 turn prompt 合成ではなく provider instruction sync を主経路にする
@@ -52,7 +52,7 @@ V5 Character Core / preview では、この文書を current runtime の正本�
 1. ユーザーは最初に 1 人の Mate を作る
 2. Mate が未作成の間は、Mate 作成と Settings 以外の全機能を block する
 3. Home では `Characters` ではなく `Your Mate` を表示する
-4. New Session / Companion 起動では workspace、title、provider などを選ぶが、Mate は選ばない
+4. New Session 起動では workspace、title、provider などを選ぶが、Mate は選ばない
 5. session 開始前に provider instruction file へ Mate projection を同期する
 6. user prompt には Mate 定義全文を毎 turn 合成しない
 7. session 中または終了時に、Mate が Growth Candidate を生成し、必要に応じて Mate Profile へ自律反映する
@@ -84,7 +84,7 @@ V5 preview では legacy MateTalk runtime / window / `mate-talk` chat mode を c
 挙動:
 
 - 会話は通常の chat と同じように見せる
-- チャット UI は Agent / Companion と同じ Session UI 基盤を使う
+- チャット UI は Agent と同じ Session UI 基盤を使う
 - chat layout / message list / composer / right pane の実装は 1 つのみとする
 - 画面差分は `sessionKind` / mode と service adapter で切り替える
 - composer は Session と同じ入力体験を使い、メイトークでは file / folder / image / additional directory / approval / sandbox / model / depth の選択を通常 Session と同じ control で扱う
@@ -142,7 +142,7 @@ Mate が `draft` または未作成の間は、次だけを許可する。
 - Mate 作成
 - Settings
 
-Session、Companion、Growth、provider instruction sync、Memory / Growth review、recent sessions 起動は block する。
+Session、Growth、provider instruction sync、Memory / Growth review、recent sessions 起動は block する。
 
 候補構成:
 
@@ -280,7 +280,6 @@ Home は character catalog ではなく、現在の Mate と作業再開を中�
 - Your Mate
 - 最近の session
 - 新規 session 起動
-- Companion 起動
 - Growth Candidate / 最近覚えたことの短い summary
 
 表示しないもの:
@@ -312,9 +311,9 @@ Character Editor は Mate Profile 画面へ置き換える。
 
 `create multiple` / `delete current character` を通常操作にしない。
 
-### Session / Companion
+### Session
 
-Session / Companion は現在の Mate を前提に起動する。
+Session は現在の Mate を前提に起動する。
 
 - Mate snapshot は session 表示や過去ログの閲覧に必要な最小 metadata として保存してよい
 - 実行時の詳細な Mate 定義は provider instruction sync を主経路にする
@@ -322,7 +321,7 @@ Session / Companion は現在の Mate を前提に起動する。
 
 ### Chat UI Boundary
 
-WithMate の会話画面は、Agent、Companion、メイトークの 3 機能で同じ Session UI 定義を使う。
+WithMate の会話画面は、Agent とメイトークで同じ Session UI 定義を使う。
 機能ごとの差分は UI の別実装ではなく、mode と service adapter の差し替えで表す。
 
 共通化するもの:

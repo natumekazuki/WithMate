@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
-import type { CompanionSession, CompanionSessionSummary } from "../../src/companion-state.js";
 import { startHomeLaunch } from "../../src/home/home-launch-actions.js";
 import {
   createClosedLaunchDraft,
@@ -72,41 +71,6 @@ function createCharacterEntries(): CharacterCatalogEntry[] {
   ];
 }
 
-function createCompanionSession(): CompanionSession {
-  return {
-    id: "companion-1",
-    groupId: "group-1",
-    taskTitle: "Task",
-    status: "active",
-    repoRoot: "C:/work/demo",
-    focusPath: "",
-    targetBranch: "main",
-    baseSnapshotRef: "HEAD",
-    baseSnapshotCommit: "abc123",
-    companionBranch: "companion/task",
-    worktreePath: "C:/work/demo-companion",
-    selectedPaths: [],
-    changedFiles: [],
-    siblingWarnings: [],
-    runState: "idle",
-    threadId: "thread-1",
-    provider: "codex",
-    catalogRevision: 1,
-    model: "gpt-5.4-mini",
-    reasoningEffort: "medium",
-    customAgentName: "",
-    approvalMode: "on-request",
-    codexSandboxMode: "workspace-write",
-    characterId: "mate-1",
-    character: "Mia",
-    characterRoleMarkdown: "Mate profile",
-    characterIconPath: "avatar.png",
-    characterThemeColors: { main: "#111111", sub: "#f5f5f5" },
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    messages: [],
-  };
-}
 
 function createSessionSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
@@ -143,8 +107,6 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
   const startingStates: boolean[] = [];
   const openedSessions: string[] = [];
   const sessionSummaries: string[] = [];
-  const openedCompanionSessions: string[] = [];
-  const companionSummaries: string[] = [];
   let closeCount = 0;
 
   return {
@@ -152,8 +114,6 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
     startingStates,
     openedSessions,
     sessionSummaries,
-    openedCompanionSessions,
-    companionSummaries,
     get closeCount() {
       return closeCount;
     },
@@ -170,12 +130,8 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
       openSessionWindowIdsLoadStatus: "loaded" as const,
       sessionCharacterUsageLoadStatus: "loaded" as const,
       createSession: async () => createSessionSummary(),
-      createCompanionSession: async () => createCompanionSession(),
       openSessionWindow: async (sessionId: string) => {
         openedSessions.push(sessionId);
-      },
-      openCompanionReviewWindow: async (sessionId: string) => {
-        openedCompanionSessions.push(sessionId);
       },
       closeLaunchDialog: () => {
         closeCount += 1;
@@ -188,9 +144,6 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
       },
       upsertSessionSummary: (summary: SessionSummary) => {
         sessionSummaries.push(summary.id);
-      },
-      upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => {
-        companionSummaries.push(summary.id);
       },
       ...overrides,
     },
@@ -371,31 +324,6 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.startingStates, []);
   });
 
-  it("open Session Window 一覧の取得失敗後はrandom選択のcompanionを開始しない", async () => {
-    let createCount = 0;
-    const harness = createStartHomeLaunchHarness({
-      draft: {
-        ...createReadyDraft("companion"),
-        characterSelectionMode: "random",
-      },
-      requestedMode: "companion",
-      sessionCharacterUsage: [{ characterId: "mia", sessionKind: "default" }],
-      openSessionWindowIdsLoadStatus: "error",
-      createCompanionSession: async () => {
-        createCount += 1;
-        return createCompanionSession();
-      },
-    });
-
-    await startHomeLaunch(harness.input);
-
-    assert.equal(createCount, 0);
-    assert.deepEqual(harness.feedback, [
-      "開いている Session Window を確認できないため、ランダム選択を開始できないよ。",
-    ]);
-    assert.deepEqual(harness.startingStates, []);
-  });
-
   it("open Session Window 一覧の取得失敗後でも固定Characterのsessionは開始できる", async () => {
     let capturedCharacterId = "";
     const harness = createStartHomeLaunchHarness({
@@ -451,49 +379,4 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 
-  it("companion を作成して review window を開く", async () => {
-    const harness = createStartHomeLaunchHarness({
-      draft: createReadyDraft("companion"),
-      requestedMode: "companion",
-    });
-    let capturedCharacter = "";
-
-    harness.input.createCompanionSession = async (input) => {
-      capturedCharacter = input.character;
-      return createCompanionSession();
-    };
-
-    await startHomeLaunch(harness.input);
-
-    assert.equal(capturedCharacter, "Mia");
-    assert.deepEqual(harness.feedback, ["Companion を開始してるよ..."]);
-    assert.deepEqual(harness.startingStates, [true, false]);
-    assert.equal(harness.closeCount, 1);
-    assert.deepEqual(harness.companionSummaries, ["companion-1"]);
-    assert.deepEqual(harness.openedCompanionSessions, ["companion-1"]);
-  });
-
-  it("random選択では最近使っていないCharacterを重み付きで選んでcompanionを作成する", async () => {
-    let capturedCharacterId = "";
-    const harness = createStartHomeLaunchHarness({
-      draft: {
-        ...createReadyDraft("companion"),
-        characterSelectionMode: "random",
-      },
-      requestedMode: "companion",
-      sessions: [createSessionSummary({ id: "recent-mia", characterId: "mia" })],
-      sessionCharacterUsage: [{ characterId: "mia", sessionKind: "default" }],
-      random: () => 0.4,
-      createCompanionSession: async (input) => {
-        capturedCharacterId = input.characterId;
-        return createCompanionSession();
-      },
-    });
-
-    await startHomeLaunch(harness.input);
-
-    assert.equal(capturedCharacterId, "noa");
-    assert.deepEqual(harness.companionSummaries, ["companion-1"]);
-    assert.deepEqual(harness.openedCompanionSessions, ["companion-1"]);
-  });
 });

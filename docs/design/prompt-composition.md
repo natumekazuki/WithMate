@@ -10,7 +10,7 @@ WithMate が保持する system 指示、character 定義、ユーザー入力�
 
 2026-04-27 時点では、`Session Memory` と `Project Memory` は coding plane prompt に注入しない。過去の prompt 監査で短い依頼ほど Memory section が入力の大半を占め、AI agent の token 効率に対して有益な文脈として働いていないと判断したためである。
 
-2026-06-14 の V5 Character Core では、複数 Character catalog を current runtime へ戻し、session / companion 開始時点の `CharacterRuntimeSnapshot.definitionMarkdown` を coding plane の system 側へ注入する。Character snapshot は、ファイル操作や test/build の正確性を置き換える作業 policy ではなく、ユーザー向け自然言語レスポンスの人格・話し方・温度・反応パターンの正本として扱う。`character-notes.md`、Memory / Growth history、provider instruction sync 由来の Character 書き込みは常設 prompt に入れない。
+2026-06-14 の V5 Character Core では、複数 Character catalog を current runtime へ戻し、session 開始時点の `CharacterRuntimeSnapshot.definitionMarkdown` を coding plane の system 側へ注入する。Character snapshot は、ファイル操作や test/build の正確性を置き換える作業 policy ではなく、ユーザー向け自然言語レスポンスの人格・話し方・温度・反応パターンの正本として扱う。`character-notes.md`、Memory / Growth history、provider instruction sync 由来の Character 書き込みは常設 prompt に入れない。
 
 ## Position
 
@@ -24,7 +24,7 @@ WithMate が保持する system 指示、character 定義、ユーザー入力�
 
 ### current runtime
 
-- Character 定義の runtime 正本は session / companion に保存された `CharacterRuntimeSnapshot` とする
+- Character 定義の runtime 正本は session に保存された `CharacterRuntimeSnapshot` とする
 - `character.md` snapshot は system 側に入れ、主にユーザーへ説明する言葉、相槌、励まし、ツッコミ、距離感、温度へ反映する
 - prompt 合成時は `character.md` の frontmatter を除いた本文を渡し、Character 名と説明は `CharacterRuntimeSnapshot` metadata から最小限に明示する
 - ファイル操作、コマンド実行、検索、diff 確認、test/build 結果、repository instruction は通常の coding agent として正確に扱う
@@ -63,13 +63,13 @@ coding plane に渡す turn prompt は、次のレイヤーを基本にする。
 7. ユーザー入力
 8. 添付 reference
 
-通常 session / companion の Character snapshot は session / companion 開始時点の保存済み値を使い、catalog の現在値へ追従しない。`character-authoring` session は turn 開始時に最新の `character.md` から runtime snapshot を作り直す。app 共通 system prompt は挿入しない。
+通常 session の Character snapshot は session 開始時点の保存済み値を使い、catalog の現在値へ追従しない。`character-authoring` session は turn 開始時に最新の `character.md` から runtime snapshot を作り直す。app 共通 system prompt は挿入しない。
 `Folder Context` は毎 turn system 側へ置き、実行 workspace、Main Process が解決した SessionFolder、実効 Additional Directories 一覧だけを明示する。Character、`Output Boundary`、`Tool Call Presence` の安定した section の後ろ、turn ごとに変動する `Character Affect Context` の前に置き、folder 値が変わっても固定 system prefix の再利用を保ちやすくする。各 directory の利用方針は repository instruction、filesystem access grant は provider adapter と既存 allowlist が所有し、Folder Context に説明文を重ねない。
 provider に渡す `Character Definition Snapshot` では、snapshot の取得時点説明を prompt 本体には入れない。保存済み snapshot の frontmatter は除外し、Character 名と説明を metadata として示したうえで、`character.md` 本文だけを markdown block として囲む。Character section の固定説明は、話し方への反映と coding agent 境界の guard に絞る。
-通常 session / companion で Character snapshot が存在する場合は `Output Boundary` を system 側に置き、Character section が有効ならその直後に置いて、Character 定義の適用先をユーザー向け自然言語レスポンスへ限定する。コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary は、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜず、repository instruction、既存文体、対象ファイルの目的を優先する。
-通常 session / companion で Character snapshot が存在し、設定が有効な場合は `Output Boundary` の直後に `Tool Call Presence` を置き、tool call や command 実行前に短い自然言語レスポンスを返すことで、Character が無言のまま作業へ入ったように見える体験を避ける。
+通常 session で Character snapshot が存在する場合は `Output Boundary` を system 側に置き、Character section が有効ならその直後に置いて、Character 定義の適用先をユーザー向け自然言語レスポンスへ限定する。コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary は、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜず、repository instruction、既存文体、対象ファイルの目的を優先する。
+通常 session で Character snapshot が存在し、設定が有効な場合は `Output Boundary` の直後に `Tool Call Presence` を置き、tool call や command 実行前に短い自然言語レスポンスを返すことで、Character が無言のまま作業へ入ったように見える体験を避ける。
 Character Contextを取得できたturnでは、turnごとに変動する`Character Affect Context`を固定のCharacter section、`Output Boundary`、`Tool Call Presence`より後ろへ置く。providerが再利用できる固定prefixを先に保ち、Affectの意味や内容は変更しない。
-通常 session では可変な `Conversation Timing` を input 側の `User Input` 直前に置く。Copilotの`session.systemMessage`へは入れず、Codexのlogical promptとCopilotの`session.send.prompt`から同じ論理sectionを監査できるようにする。Auxiliary、Companion、`character-authoring` sessionには注入しない。
+通常 session では可変な `Conversation Timing` を input 側の `User Input` 直前に置く。Copilotの`session.systemMessage`へは入れず、Codexのlogical promptとCopilotの`session.send.prompt`から同じ論理sectionを監査できるようにする。Auxiliary、`character-authoring` sessionには注入しない。
 `character-authoring` session は `character.md` / `character-notes.md` 自体が成果物なので、`Output Boundary`、`Tool Call Presence`、coding agent 境界の固定 guard を注入しない。
 
 foreground prompt の切替範囲は次の通りとする。
@@ -81,7 +81,7 @@ foreground prompt の切替範囲は次の通りとする。
 | `conversationTimingEnabled` | input 側の `Conversation Timing` と通常 session の turn 開始時 resolver | system 側の section、ユーザー入力 |
 | `toolCallPresenceEnabled` | `Tool Call Presence` | Character 定義、`Output Boundary`、作業操作の実行 |
 
-Character snapshot が存在する通常 session / companion では、`characterDefinitionEnabled` を OFF にしても `Output Boundary` と、ON の `Tool Call Presence` は残す。snapshot がない場合や `character-authoring` では、従来どおりそれらの section 自体を作らない。
+Character snapshot が存在する通常 session では、`characterDefinitionEnabled` を OFF にしても `Output Boundary` と、ON の `Tool Call Presence` は残す。snapshot がない場合や `character-authoring` では、従来どおりそれらの section 自体を作らない。
 
 ### Other prompt sources
 
@@ -96,7 +96,7 @@ foreground の4項目とは別に、次の指示経路がある。これらは�
 
 `src-electron/session-memory-extraction.ts` のsystem指示は、現行runtimeのforeground turnでは呼び出されず、Prompt Contextの切替対象でもない。将来この経路を有効化する場合は、foregroundの4項目とは別に実行条件と保存境界を定義する。
 
-foreground prompt context の個別設定は、既存の session 種別境界を拡張しない。`Character Affect Context` と `Conversation Timing` は既存 resolver が対象にする通常 session のみで取得し、設定が `false` の場合は resolver 自体を呼ばない。背景処理や Companion の別経路で使う context には適用しない。`Tool Call Presence` は既存の character snapshot 有無と `character-authoring` 除外条件を保ち、その条件を満たす provider prompt だけで切り替える。
+foreground prompt context の個別設定は、既存の session 種別境界を拡張しない。`Character Affect Context` と `Conversation Timing` は既存 resolver が対象にする通常 session のみで取得し、設定が `false` の場合は resolver 自体を呼ばない。背景処理の別経路で使う context には適用しない。`Tool Call Presence` は既存の character snapshot 有無と `character-authoring` 除外条件を保ち、その条件を満たす provider prompt だけで切り替える。
 
 ### 4.0.0 SingleMate target
 
@@ -113,7 +113,7 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 
 論理 prompt では `Folder Context` section を Character、`Output Boundary`、`Tool Call Presence` の後ろ、`Character Affect Context` の前に置く。Character section がない場合は system 側の先頭になる。`Workspace` は `resolveRunWorkspacePath` の実行値、`SessionFolder` は `session-files.ts` を経由して Main Process が解決した値、`Additional Directories` は実行 workspace を基準に `normalizeAllowedAdditionalDirectories` で正規化した値を使う。空の Additional Directories は `なし`、取得できない path は `利用不可` と明示する。
 論理 prompt では `Character Definition Snapshot` section が有効な場合に system 側へ置く。
-通常 session / companion では Character snapshot が存在する場合に `Output Boundary` section を system 側に置き、`Tool Call Presence` は対応する設定が有効な場合だけ置く。`character-authoring` session ではどちらも置かない。
+通常 session では Character snapshot が存在する場合に `Output Boundary` section を system 側に置き、`Tool Call Presence` は対応する設定が有効な場合だけ置く。`character-authoring` session ではどちらも置かない。
 Character Contextを取得できたturnでは、`Character Affect Context` sectionをsystem側の固定sectionより後ろに置く。
 通常 session では `Conversation Timing` sectionをinput側の`User Input`直前に置く。値の解決は`src-electron/conversation-timing.ts`、sectionの合成は`src-electron/provider-prompt.ts`を参照する。
 
@@ -174,7 +174,7 @@ Character Contextを取得できたturnでは、`Character Affect Context` secti
   - コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary へ Character の口調・設定・台詞・メタ説明を混ぜないことを明示する
 - `character-authoring` session では注入しない
 
-`characterDefinitionEnabled` が `false` の場合も、通常 session / companion の Character snapshot が存在すれば `Output Boundary` は残る。これは Character の口調ではなく、coding agent の成果物へ Character 表現を混ぜないための固定境界である。
+`characterDefinitionEnabled` が `false` の場合も、通常 session の Character snapshot が存在すれば `Output Boundary` は残る。これは Character の口調ではなく、coding agent の成果物へ Character 表現を混ぜないための固定境界である。
 
 ### `# Tool Call Presence`
 
@@ -245,7 +245,7 @@ Character Contextを取得できたturnでは、`Character Affect Context` secti
 
 ### Character Runtime Snapshot
 
-session / companion 開始時点の `character.md`。
+session 開始時点の `character.md`。
 
 責務:
 - ユーザー向け自然言語レスポンスで使う Character 定義

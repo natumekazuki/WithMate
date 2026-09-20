@@ -72,7 +72,7 @@ metadata は SQLite に置くため、revision manifest JSON は作らない。
 | `mate_growth_settings` | Growth Engine の singleton 設定 |
 | `mate_growth_model_preferences` | Growth LLM 実行用 provider / model / depth の固定優先順位 |
 | `mate_growth_runs` | Growth background 実行単位の summary |
-| `mate_growth_cursors` | session / companion / project ごとの処理済み位置 |
+| `mate_growth_cursors` | session / project ごとの処理済み位置 |
 | `mate_growth_events` | Growth Candidate / Growth Event の ledger |
 | `mate_growth_event_links` | Growth Event 間の reinforce / update / contradict / supersede link |
 | `mate_growth_event_profile_item_links` | Growth Candidate が参照した Profile Item relation |
@@ -118,7 +118,7 @@ Policy:
 
 - 0 row: Mate 未作成
 - `state = 'draft'`: onboarding 中。Mate 作成と Settings 以外は block
-- `state = 'active'`: Home / Session / Companion / Growth / provider sync を許可
+- `state = 'active'`: Home / Session / Growth / provider sync を許可
 - `state = 'deleted'`: 将来の soft delete 用予約 state。4.0.0 MVP の reset は `mate_profile` row を物理削除して Mate 未作成状態へ戻す
 - `avatar_file_path = ''` は有効な未設定状態であり、file missing として扱わない
 - provider instruction projection は avatar / image 情報を使わない
@@ -321,7 +321,7 @@ Policy:
 CREATE TABLE IF NOT EXISTS mate_growth_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   mate_id TEXT NOT NULL,
-  source_type TEXT NOT NULL CHECK (source_type IN ('session', 'companion', 'manual', 'system')),
+  source_type TEXT NOT NULL CHECK (source_type IN ('session', 'manual', 'system')),
   source_session_id TEXT,
   source_audit_log_id INTEGER,
   project_digest_id TEXT,
@@ -385,7 +385,7 @@ CREATE TABLE IF NOT EXISTS mate_growth_cursors (
     'applied_event_watermark',
     'project_digest_cursor'
   )),
-  scope_type TEXT NOT NULL CHECK (scope_type IN ('global', 'session', 'companion', 'project')),
+  scope_type TEXT NOT NULL CHECK (scope_type IN ('global', 'session', 'project')),
   scope_id TEXT NOT NULL DEFAULT '',
   last_message_id TEXT NOT NULL DEFAULT '',
   last_audit_log_id INTEGER,
@@ -405,11 +405,11 @@ Policy:
 - Growth Engine は cursor と cooldown で短時間の重複実行を抑制する
 - `cursor_key` は処理済み位置の意味を固定し、nullable unique に依存しない
 - `scope_type = 'global'` の場合は `scope_id = ''` とする
-- `scope_type = 'session' | 'companion' | 'project'` の場合は `scope_id` に provider-neutral な session id または project key を入れる
+- `scope_type = 'session' | 'project'` の場合は `scope_id` に provider-neutral な session id または project key を入れる
 - `last_message_id` は provider / session 実装差を吸収するため TEXT として扱う
 - `last_message_id` は順序比較に使わない。順序は `last_audit_log_id`、source message の stored sequence、または source service が返す deterministic range boundary で判断する
 - `content_fingerprint` は処理済み入力の重複判定に使う
-- cursor は session / companion の raw content を持たない
+- cursor は session の raw content を持たない
 - 更新時は old cursor value / `content_fingerprint` を比較し、古い background run が新しい cursor を巻き戻さないようにする
 
 ### `mate_growth_events`
@@ -419,7 +419,7 @@ CREATE TABLE IF NOT EXISTS mate_growth_events (
   id TEXT PRIMARY KEY,
   mate_id TEXT NOT NULL,
   source_growth_run_id INTEGER,
-  source_type TEXT NOT NULL CHECK (source_type IN ('session', 'companion', 'manual', 'system')),
+  source_type TEXT NOT NULL CHECK (source_type IN ('session', 'manual', 'system')),
   source_session_id TEXT,
   source_audit_log_id INTEGER,
   project_digest_id TEXT,
@@ -1192,7 +1192,7 @@ CREATE INDEX IF NOT EXISTS idx_provider_instruction_sync_runs_revision
 
 ## Session Snapshot Boundary
 
-4.0.0 の `sessions` / `companion_sessions` は V3 の split/blob 方針を継承しつつ、character snapshot column を Mate snapshot column に置き換える。
+4.0.0 の `sessions` は V3 の split/blob 方針を継承しつつ、character snapshot column を Mate snapshot column に置き換える。
 
 候補 column:
 
@@ -1295,7 +1295,7 @@ file が DB と不一致になった場合は、active revision snapshot から 
 ## Validation
 
 - `mate_profile` は 0/1 row だけを許容する
-- `state != 'active'` では session / companion / provider sync / Growth を開始しない
+- `state != 'active'` では session / provider sync / Growth を開始しない
 - Growth auto apply は event / revision / section update を同一 service transaction 境界で扱う
 - forget / redact 後、同じ Growth が再抽出されないよう forgotten tombstone を Memory 生成 input に渡す
 - Growth apply / correct / forget / disable は単一 writer lock を通す

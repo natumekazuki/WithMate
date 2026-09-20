@@ -299,6 +299,16 @@ describe("database-schema-v6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V6 schemaはlegacy Memory tableを再利用しない"
+  // oracle = { type = "contract", ref = "src-electron/database-schema-v6.ts" }
+  // fault = "V6 schemaが廃止済みMemory tableを再作成し、旧保存形式を現行schemaへ戻す"
+  // observable = "created V6 table names"
+  // observation_boundary = "declaration"
+  // scope = "V6 legacy Memory schema boundary"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("V6 schema は legacy Memory table を再利用しない", () => {
     const db = createV6Schema();
     try {
@@ -306,46 +316,6 @@ describe("database-schema-v6", () => {
       for (const tableName of LEGACY_MEMORY_TABLES) {
         assert.equal(names.includes(tableName), false, `${tableName} must not exist in V6 schema`);
       }
-    } finally {
-      db.close();
-    }
-  });
-
-  it("ensureV6Schema は V6 DB に紛れた legacy Memory table を削除しない", () => {
-    const db = createV6Schema();
-    try {
-      db.exec("CREATE TABLE companion_groups (id TEXT PRIMARY KEY);");
-      db.exec("CREATE TABLE companion_sessions (id TEXT PRIMARY KEY);");
-      db.exec("CREATE TABLE companion_messages (id TEXT PRIMARY KEY);");
-      db.exec("CREATE TABLE project_memory_entries (id TEXT PRIMARY KEY);");
-
-      ensureV6Schema(db);
-
-      const names = tableNames(db);
-      assert.equal(names.includes("companion_groups"), true);
-      assert.equal(names.includes("companion_sessions"), true);
-      assert.equal(names.includes("companion_messages"), true);
-      assert.equal(names.includes("project_memory_entries"), true);
-    } finally {
-      db.close();
-    }
-  });
-
-  it("cleanupForbiddenV6Tables は legacy Memory table を削除し、Companion table は保持する", () => {
-    const db = createV6Schema();
-    try {
-      db.exec("CREATE TABLE companion_groups (id TEXT PRIMARY KEY);");
-      db.exec("CREATE TABLE companion_sessions (id TEXT PRIMARY KEY);");
-      db.exec("CREATE TABLE companion_messages (id TEXT PRIMARY KEY);");
-      db.exec("CREATE TABLE project_memory_entries (id TEXT PRIMARY KEY);");
-
-      cleanupForbiddenV6Tables(db);
-
-      const names = tableNames(db);
-      assert.equal(names.includes("companion_groups"), true);
-      assert.equal(names.includes("companion_sessions"), true);
-      assert.equal(names.includes("companion_messages"), true);
-      assert.equal(names.includes("project_memory_entries"), false);
     } finally {
       db.close();
     }

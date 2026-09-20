@@ -389,7 +389,6 @@ Copilot の quota / context telemetry / background task snapshot が既存 `tran
 11. 既存 `audit_events_v6` は移行ソースとしてだけ扱い、turn read / write path の切替後に削除する。
     ただし `event_type = 'session_turn'` 以外の row が残る場合は、この migration では移行も破棄もせず、destructive migration を拒否して source table と marker 未設定状態を残す。
 12. V6 DB 内に legacy Memory table が残っている場合は、V6 正本へ持ち込まず削除する。
-    `companion_*` table は現行Companion runtimeが参照するため、このmigrationでは削除しない。
 
 初回 migration の write path は、`audit_events_v6` を削除する前に `session_turns_v6` / child table への投入を完了し、migration marker を保存する。
 削除は同一 transaction 内で行い、途中失敗時に旧 source だけが消えないようにする。
@@ -488,7 +487,7 @@ Audit Log の明示削除は transitional source にも適用する。
 8. migration で作成または照合した main assistant message を Audit Log detail / summary で復元する。Done: completed snapshot と terminal partial は `legacy_assistant_text` provider output から復元し、`assistant_message_seq` は main message 参照として保持する。
 9. provider / runtime から取得できる `sandbox_mode` / `user_message_seq` を write path に接続する。Done: 値がない provider では空値 / `NULL` を許容する。
 10. 未対応 provider response / event を `provider_metadata` provider output と App log JSONL に保存する。Done: adapter ごとに bounded snapshot、summary、App log metadata を残す。
-11. write migration を実行し、成功後に `audit_events_v6` と legacy Memory table を削除する。Done: migration script は同一 transaction で新 table へ投入し、`audit_events_v6` と legacy Memory table を削除する。`companion_*` table は現行 runtime が使うため残す。
+11. write migration を実行し、成功後に `audit_events_v6` と legacy Memory table を削除する。Done: migration script は同一 transaction で新 table へ投入し、`audit_events_v6` と legacy Memory table を削除する。
 
 ## Validation Strategy
 

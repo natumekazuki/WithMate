@@ -188,7 +188,6 @@ Session turn の detail payload は、final message / interim message / provider
 詳細は`docs/design/session-turn-storage-v6.md`を正本にする。
 `audit_events_v6` は移行ソースとして扱い、新read / write pathが新tableへ切り替わった後は削除対象とする。
 V6 DB内に残ったlegacy Memory tableは、V6正本には持ち込まずcleanup対象にする。
-`companion_*` tableは現行Companion runtimeが参照するため、このmigrationでは削除対象にしない。
 
 ## Implementation Order
 

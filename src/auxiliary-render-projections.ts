@@ -1,13 +1,11 @@
 import { useMemo } from "react";
 
 import {
-  buildCompanionAuxiliaryRuntimeSession,
   buildMainAuxiliaryRuntimeSession,
   type AuxiliaryRuntimeProjectionInput,
 } from "./auxiliary-runtime-projection.js";
 import type { MessageListAuxiliarySession } from "./auxiliary-session-message-projection.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
-import type { CompanionSession } from "./companion-state.js";
 import type { Session } from "./session-state.js";
 
 function toMessageListAuxiliarySession(session: AuxiliarySession): MessageListAuxiliarySession {
@@ -18,7 +16,6 @@ function toMessageListAuxiliarySession(session: AuxiliarySession): MessageListAu
     createdAt: session.createdAt,
   };
 }
-
 export function useMessageListAuxiliarySessions(
   closedSessions: AuxiliarySession[],
   activeSession: AuxiliarySession | null,
@@ -105,19 +102,6 @@ export function useMainAuxiliaryRuntimeSession(
   return useMemo(
     () => parentSession && runtimeSession
       ? buildMainAuxiliaryRuntimeSession(parentSession, runtimeSession)
-      : parentSession,
-    [parentSession, runtimeSession],
-  );
-}
-
-export function useCompanionAuxiliaryRuntimeSession(
-  parentSession: CompanionSession | null,
-  activeSession: AuxiliarySession | null,
-): CompanionSession | null {
-  const runtimeSession = useRuntimeProjectionSession(activeSession);
-  return useMemo(
-    () => parentSession && runtimeSession
-      ? buildCompanionAuxiliaryRuntimeSession(parentSession, runtimeSession)
       : parentSession,
     [parentSession, runtimeSession],
   );

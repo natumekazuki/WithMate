@@ -39,8 +39,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Settings Window` の画面実装は `settings` domain に置き、Home の実装ファイルへ混ぜない
 - Character catalog は `character` / `character-editor` domain を正本にし、Home には一覧と editor window 起動だけを置く
 - chat layout の実装は 1 系統だけとし、`chat` domain を正本にする
-- Agent / Companion は同じ chat layout に乗せ、各機能側には state / service / adapter だけを置く
-- `Session` という名前の UI 実装に Agent / Companion 固有処理を詰め込まない。必要な差分は mode / capability / adapter として注入する
+- Agent は chat layout に乗せ、機能側には state / service / adapter だけを置く
+- `Session` という名前の UI 実装に provider 固有処理を詰め込まない。必要な差分は capability / adapter として注入する
 - right pane に表示する情報がない mode では、説明文や誘導文で埋めず、空の pane shell として扱う
 
 ## Runtime
@@ -193,7 +193,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - Home と同じ dark base を使う
 - キャラカラーは限定的に使い、過度に Session 全体へ広げない
 - チャット UI の実装正本は `chat` domain の単一 UI 定義だけとする
-- Agent / Companion は同じ chat screen / header / message list / composer / pane shell を使い、mode と service adapter で差分を切り替える
+- Agent は同じ chat screen / header / message list / composer / pane shell を使い、service adapter で差分を切り替える
 - 新しい会話機能を追加する場合も、chat layout 実装を増やさず、Session UI の mode を追加する
 - session title の rename / delete
 - `Audit Log` overlay
@@ -218,7 +218,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - side pane の表示状態は `files | context | none` の値として app 共通設定へ保存し、初期値は `none` とする。新しく開く Window は利用可能な永続値を初期値として使う
   - 開いている Window の表示状態は renderer local state とし、別 Window での切り替えには追従させない
   - viewport が `1400px` 未満では表示中の左右paneとwork surfaceを縦stackにし、左右splitterは縦方向のdragと上下矢印キーで高さを調整する。`1400px` 以上では横方向のdragと左右矢印キーで幅を調整する。サイズはWindow内で保持し、領域の最小サイズと利用可能領域に合わせて補正する
-  - Session / Companion Windowの最小サイズは1100x720 DIPとし、current minimumはsplit-screenを考慮して到達性を維持する
+  - Session Windowの最小サイズは1100x720 DIPとし、current minimumはsplit-screenを考慮して到達性を維持する
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
 - `Top Bar`
@@ -245,7 +245,6 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - `Files | Changes | History` を切り替え、Changes は各 Git root の Working Tree / Staged を 1 file 単位で中央 live Git Diff へ開く。History は同じ File Explorer shellでcommit履歴とcommit時点のfileをread-only表示し、History内のCompareでlocal branch / remote-tracking branch / tag / HEAD / commitをDirect comparisonまたはBranch changesとして比較する。非 Git root は表示しない。包含関係にある root は独立した scope とし、同じ file も各 root からの相対 path で表示する
   - History Compareは4つ目のtabや独自のdiff surfaceを増やさず、Historyのfile tree、filter、Open All Changesを再利用する。比較時に解決したcommit object IDを保持し、branchの移動でpatchを暗黙に差し替えない。patchはcentral surfaceまたはdetached File Preview Windowで開け、before / after previewはcentral diffのactionからcommit-scoped File Preview Windowで開ける
   - Changes は user configuration から外部 command を実行しない。root の認可と表示 scope は ADR 015、Git executable、directory identity、config / index の隔離境界は ADR 014 を正本とする。有効な clean / process filter が必要な repository では、他の操作 feedback がある場合も理由を表示して利用不可にする
-  - File Explorer の user-visible 導線は Companion に追加しない
 - 中央 file preview
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
   - Text、Markdown、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
@@ -284,7 +283,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
 - right pane 上部には collapsed state の `title handle` を置く
-- right pane shell は Agent / Companion で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
+- right pane shell は Agent で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
 - `Generate Memory` は current UI では表示しない
 - command 実行中は `Latest Command` を最優先で自動表示する
 - MemoryGeneration / 独り言の right pane 自動切り替えは行わない
@@ -325,7 +324,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - popover の `Attach` section は元 path を参照する `File / Folder / Image` を1行にまとめる
   - popover の `Session files` section は session local files を扱う `Copy / File / Folder / Image` を1行にまとめる
   - `Skill` は別カテゴリの単独 button として区別する
-- 添付 toolbar は Agent / Companion の作業 chat 用であり、メイトークでは表示しない
+- 添付 toolbar は Agent の作業 chat 用であり、メイトークでは表示しない
 - composer の attachment chip
   - basename を主表示にし、file / folder / image の kind と `ワークスペース内` / `ワークスペース外` を即判別できる
   - 補足 path は副次表示へ回し、long path でも basename を先に読める
@@ -391,7 +390,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - MonitorからAuxiliaryを選択して開いたときは、Mainがstable Auxiliary IDとparent IDを検証してnavigationし、既存Windowにはselection event、新規Windowにはentry queryで正確な会話を渡す
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
-- `Settings Window` は app 共通 system prompt や Character 本文を編集しない。V5 Character 定義は `Character Editor Window` と session / companion snapshot を正本にする
+- `Settings Window` は app 共通 system prompt や Character 本文を編集しない。V5 Character 定義は `Character Editor Window` と session snapshot を正本にする
 - legacy mate は `userData/mate/` に残る場合がある
 - `userData` は `<appData>/WithMate/` に固定する
 - Session は mate の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、composer settings、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う

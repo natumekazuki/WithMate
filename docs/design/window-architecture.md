@@ -41,7 +41,7 @@ Issue `#2 Homeとセッションは別ウインドウにする` に合わせて�
 - `Session Window`
   - coding agent の作業実行
   - `character-authoring` session の作成・改善作業実行
-  - Agent / Companion の chat mode
+  - Agent の chat mode
   - artifact summary の閲覧
   - session title の rename
   - session 削除
@@ -117,7 +117,7 @@ Character Editor に置かないもの:
 ### Session Window
 
 Session は `codex` 起動後の実作業面とする。
-ただし chat layout は Session 固有ではなく、Agent / Companion が共有する唯一の chat UI とする。
+ただし chat layout は Session 固有ではなく、Agent が使う唯一の chat UI とする。
 各会話機能の差分は専用 layout ではなく、mode / capability / service adapter で切り替える。
 
 - `Session Header`
@@ -207,7 +207,7 @@ V5 preview では legacy MateTalk runtime / window / `mode=mate-talk` route を 
 2. Main Process が `Character Editor Window` を create mode または edit mode で開く
 3. Editor は Main Process の Character storage API から detail を読み、保存時も Main Process 経由で更新する
 4. 保存後の catalog 更新は Home / launch selector の次回取得に反映される
-5. 通常 session / companion は作成時点の `CharacterRuntimeSnapshot` を使い続け、catalog 現在値へ自動追従しない。`character-authoring` session は例外として turn 開始時に canonical `character.md` から snapshot を再生成する。詳細は `docs/design/character-storage.md` を参照する
+5. 通常 session は作成時点の `CharacterRuntimeSnapshot` を使い続け、catalog 現在値へ自動追従しない。`character-authoring` session は例外として turn 開始時に canonical `character.md` から snapshot を再生成する。詳細は `docs/design/character-storage.md` を参照する
 
 ### Session Policy Update
 

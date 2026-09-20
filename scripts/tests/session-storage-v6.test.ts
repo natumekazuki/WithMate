@@ -115,24 +115,6 @@ function insertAuxiliarySessionRows(dbPath: string, rows: Array<{ id: string; pa
   }
 }
 
-function insertCompanionSessionRows(dbPath: string, rows: Array<{ id: string; status: string }>): void {
-  const db = new DatabaseSync(dbPath);
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS companion_sessions (
-        id TEXT PRIMARY KEY,
-        status TEXT NOT NULL
-      )
-    `);
-    const statement = db.prepare("INSERT INTO companion_sessions (id, status) VALUES (?, ?)");
-    for (const row of rows) {
-      statement.run(row.id, row.status);
-    }
-  } finally {
-    db.close();
-  }
-}
-
 function listAuxiliarySessionParentIds(dbPath: string): string[] {
   const db = new DatabaseSync(dbPath);
   try {
@@ -1047,6 +1029,16 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "親Sessionのdelete/replace/clear経路は関連するAuxiliary rowを一貫してcleanupする"
+  // oracle = { type = "contract", ref = "src-electron/session-storage-v6.ts" }
+  // fault = "親Session削除後にAuxiliary rowを孤立させるか、replace/clearで古いrowを残す"
+  // observable = "auxiliary_sessions parent IDs after delete, replace, and clear"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6 auxiliary cleanup"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("親 Session の削除経路で auxiliary_sessions を cleanup する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -1086,23 +1078,8 @@ describe("SessionStorageV6", () => {
       storage.deleteSession(deletedParent.id);
       assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [replacedParent.id, retainedParent.id]);
 
-      insertCompanionSessionRows(dbPath, [
-        { id: "companion-active-parent", status: "active" },
-        { id: "companion-recovery-parent", status: "recovery-required" },
-        { id: "companion-merged-parent", status: "merged" },
-        { id: "companion-discarded-parent", status: "discarded" },
-      ]);
-      insertAuxiliarySessionRows(dbPath, [
-        { id: "aux-companion-active", parentSessionId: "companion-active-parent" },
-        { id: "aux-companion-recovery", parentSessionId: "companion-recovery-parent" },
-        { id: "aux-companion-merged", parentSessionId: "companion-merged-parent" },
-        { id: "aux-companion-discarded", parentSessionId: "companion-discarded-parent" },
-      ]);
-
       storage.replaceSessions([{ ...retainedParent, taskTitle: "retained after replace" }]);
       assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [
-        "companion-active-parent",
-        "companion-recovery-parent",
         retainedParent.id,
       ]);
 
@@ -1114,6 +1091,16 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "SessionとAuxiliaryの削除経路は関連session_turns_v6 payloadをcleanupし、保持対象を残す"
+  // oracle = { type = "contract", ref = "src-electron/session-storage-v6.ts" }
+  // fault = "削除した親またはAuxiliaryのturn payloadを孤立させるか、保持対象のpayloadまで削除する"
+  // observable = "session_turns_v6 rows after parent delete, replace, and clear"
+  // observation_boundary = "public-boundary"
+  // scope = "session-storage-v6 session turn cleanup"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Session / Auxiliary 削除経路で session_turns_v6 payload を cleanup する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -1165,22 +1152,8 @@ describe("SessionStorageV6", () => {
         "audit-retained-session",
       ]);
 
-      insertCompanionSessionRows(dbPath, [
-        { id: "companion-audit-active-parent", status: "active" },
-        { id: "companion-audit-merged-parent", status: "merged" },
-      ]);
-      insertAuxiliarySessionRows(dbPath, [
-        { id: "aux-audit-companion-active", parentSessionId: "companion-audit-active-parent" },
-        { id: "aux-audit-companion-merged", parentSessionId: "companion-audit-merged-parent" },
-      ]);
-      insertSessionTurnRows(dbPath, [
-        { auxiliarySessionId: "aux-audit-companion-active", summary: "audit-companion-active-auxiliary" },
-        { auxiliarySessionId: "aux-audit-companion-merged", summary: "audit-companion-merged-auxiliary" },
-      ]);
-
       storage.replaceSessions([{ ...retainedParent, taskTitle: "retained audit after replace" }]);
       assert.deepEqual(listSessionTurnSummaries(dbPath), [
-        "audit-companion-active-auxiliary",
         "audit-retained-auxiliary",
         "audit-retained-session",
       ]);

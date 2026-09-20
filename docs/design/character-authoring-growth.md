@@ -94,7 +94,7 @@ full authoring の新しい runtime 定義は、完成返答の `Examples` や�
 - 作業eventのsynthetic-event / recorded-tool-replay / live-tool-executionを環境とは独立に記録し、Work Likeness / Task Integrity / Collaboration Comfortと実際の機能検証を分ける。シミュレーションやreplayだけでは実編集・実行の成功を主張しない。
 - ユーザー向けの作業報告と、納品コード・設定・文書の形式・文体を分ける。作業用の別人格、毎toolの実況、Character性を理由にした検証省略は導入しない。
 - authoring runtime は stable owner を維持し、各 turn で canonical definition から snapshot を再解決する。invalid 遷移時の failure timing は `src-electron/session-runtime-service.ts` と対応 test を正本とする。
-- 汎用 Session / Companion の owner と immutable snapshot 契約は `docs/design/character-storage.md` と ADR 009 を参照する。
+- 汎用 Session の owner と immutable snapshot 契約は `docs/design/character-storage.md` と ADR 009 を参照する。
 - Editor save、storage create/update、direct file runtime snapshot は共通 format validator を使う。
 
 ## Non Goals

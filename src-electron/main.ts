@@ -126,13 +126,6 @@ import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
-import { CompanionReviewService } from "./companion-review-service.js";
-import { CompanionRuntimeService } from "./companion-runtime-service.js";
-import { CompanionSessionService } from "./companion-session-service.js";
-import { CompanionAuditLogStorage } from "./companion-audit-log-storage.js";
-import { CompanionAuditLogStorageV3 } from "./companion-audit-log-storage-v3.js";
-import { CompanionStorage } from "./companion-storage.js";
-import { CompanionStorageV3 } from "./companion-storage-v3.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
 import { resolveConversationTimingContext } from "./conversation-timing.js";
 import { SessionTurnNotificationService } from "./session-turn-notification-service.js";
@@ -355,7 +348,6 @@ const sessionFileTreeContextMenuService = new SessionFileTreeContextMenuService(
 });
 const sessionMonitorContextMenuService = new SessionMonitorContextMenuService({
   requestCloseSessionWindow: (sessionId) => requireMainWindowFacade().requestCloseSessionWindow(sessionId),
-  closeCompanionReviewWindow: (sessionId) => requireMainWindowFacade().closeCompanionReviewWindow(sessionId),
   writeText: (value) => clipboard.writeText(value),
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
@@ -399,9 +391,6 @@ let storageWorker: V6StorageWorkerBundle | null = null;
 let promptTemplateStorage: PromptTemplateStorage | V6StorageWorkerBundle["stores"]["prompt"] | null = null;
 let mateStorage: PersistentStoreBundle["mateStorage"] | null = null;
 let mateProfileItemStorage: MateProfileItemStorage | null = null;
-type CompanionStorageHandle = CompanionStorage | CompanionStorageV3 | V6StorageWorkerBundle["stores"]["companion"];
-
-let companionStorage: CompanionStorageHandle | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
 let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
@@ -437,11 +426,6 @@ let sessionApprovalService: SessionApprovalService | null = null;
 let sessionElicitationService: SessionElicitationService | null = null;
 let auditLogService: AuditLogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
-let companionSessionService: CompanionSessionService | null = null;
-let companionAuditLogStorage: CompanionAuditLogStorage | CompanionAuditLogStorageV3 | null = null;
-let companionAuditLogService: AuditLogService | null = null;
-let companionRuntimeService: CompanionRuntimeService | null = null;
-let companionReviewService: CompanionReviewService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
 let mainProviderFacade: MainProviderFacade | null = null;
@@ -1323,10 +1307,6 @@ async function listSessionCharacterUsage(): Promise<SessionCharacterUsage[]> {
   return requireMainQueryService().listSessionCharacterUsage();
 }
 
-async function listCompanionSessionSummaries() {
-  return await requireCompanionStorage().listSessionSummaries();
-}
-
 async function listFullStoredSessions(): Promise<Session[]> {
   const storage = requireSessionStorage();
   const summaries = await storage.listSessionSummaries();
@@ -1341,13 +1321,11 @@ function isRunningSession(session: Session): boolean {
 function hasInFlightSessionRuns(): boolean {
   return auxiliaryRunParents.size > 0
     || Boolean(sessionRuntimeService?.hasInFlightRuns())
-    || Boolean(companionRuntimeService?.hasInFlightRuns())
     || Boolean(auxiliarySessionRuntimeService?.hasInFlightRuns());
 }
 
 function cancelInFlightSessionRuns(): void {
   sessionRuntimeService?.cancelAllRuns();
-  companionRuntimeService?.cancelAllRuns();
   auxiliarySessionRuntimeService?.cancelAllRuns();
 }
 
@@ -1508,12 +1486,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             window.webContents.send(WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, payload);
           },
           loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
-          loadCompanionMergeReviewEntry: (window, sessionId) =>
-            requireWindowEntryLoader().loadCompanionMergeReviewEntry(window, sessionId),
           loadCharacterEditorEntry: (window, characterId) =>
             requireWindowEntryLoader().loadCharacterEditorEntry(window, characterId),
           generateDiffToken: () => crypto.randomUUID(),
-          onCompanionReviewWindowsChanged: () => broadcastOpenCompanionReviewWindowIds(),
         }),
       createPersistentStoreLifecycleService: () =>
         new PersistentStoreLifecycleService({
@@ -1641,8 +1616,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender) ?? null,
                 resolveHomeWindow: () => requireAuxWindowService().getHomeWindow(),
                 resolveSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
-                resolveCompanionReviewWindow: (sessionId) =>
-                  requireMainWindowFacade().getCompanionReviewWindow(sessionId),
                 openSessionWindow,
                 showSessionMonitorContextMenu: (event, request) =>
                   sessionMonitorContextMenuService.showContextMenu(
@@ -1666,8 +1639,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainWindowFacade().getFilePreviewWindowResource(window, sessionId),
                 isFilePreviewTokenWindow: (window, token) =>
                   requireMainWindowFacade().isFilePreviewTokenWindow(window, token),
-                openCompanionReviewWindow,
-                openCompanionMergeWindow,
                 pickDirectory: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickDirectory(targetWindow, initialPath),
                 validateWorkspaceDirectory: (targetPath) =>
@@ -1762,7 +1733,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               sessionQuery: {
                 listSessionSummaryPage: (request) => listSessionSummaryPage(request),
                 listSessionCharacterUsage: () => listSessionCharacterUsage(),
-                listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
                 listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
                 listSessionAuditLogSummaries: (sessionId) => listSessionAuditLogSummaries(sessionId),
                 listSessionAuditLogSummaryPage: (sessionId, request) =>
@@ -1772,15 +1742,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   getSessionAuditLogDetailSection(sessionId, auditLogId, section),
                 getSessionAuditLogOperationDetail: (sessionId, auditLogId, operationIndex) =>
                   getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
-                listCompanionAuditLogs: (sessionId) => listCompanionAuditLogs(sessionId),
-                listCompanionAuditLogSummaries: (sessionId) => listCompanionAuditLogSummaries(sessionId),
-                listCompanionAuditLogSummaryPage: (sessionId, request) =>
-                  listCompanionAuditLogSummaryPage(sessionId, request),
-                getCompanionAuditLogDetail: (sessionId, auditLogId) => getCompanionAuditLogDetail(sessionId, auditLogId),
-                getCompanionAuditLogDetailSection: (sessionId, auditLogId, section) =>
-                  getCompanionAuditLogDetailSection(sessionId, auditLogId, section),
-                getCompanionAuditLogOperationDetail: (sessionId, auditLogId, operationIndex) =>
-                  getCompanionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
                 listSessionSkills: async (sessionId) => listSessionSkills(sessionId),
                 listSessionCustomAgents: async (sessionId) => listSessionCustomAgents(sessionId),
                 listWorkspaceSkills: async (providerId, workspacePath) =>
@@ -1788,7 +1749,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listWorkspaceCustomAgents: async (providerId, workspacePath) =>
                   requireMainQueryService().listWorkspaceCustomAgents(providerId, workspacePath),
                 listOpenSessionWindowIdsPage: (request) => listOpenSessionWindowIdsPage(request),
-                listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
                 getSession: (sessionId) => getDisplaySession(sessionId),
                 getSessionGlossaryProjection: (sessionId) =>
                   glossarySessionProjectionService.load(sessionId),
@@ -1834,12 +1794,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listOpenActiveAuxiliarySessionSummaries: () =>
                   requireAuxiliarySessionService().listActiveAuxiliarySessionSummaries([
                     ...listOpenSessionWindowIds(),
-                    ...listOpenCompanionReviewWindowIds(),
                   ]),
                 listOpenAuxiliarySessionSummaries: () => {
                   const parentSessionIds = Array.from(new Set([
                     ...listOpenSessionWindowIds(),
-                    ...listOpenCompanionReviewWindowIds(),
                   ]));
                   return requireAuxiliarySessionService().listAuxiliarySessionSummaries(parentSessionIds);
                 },
@@ -1948,79 +1906,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 }),
                 cancelAuxiliarySessionRun: (auxiliarySessionId) =>
                   requireAuxiliarySessionRuntimeService().cancelRun(auxiliarySessionId),
-              },
-              companion: {
-                createCompanionSession: async (input) => {
-                  writeAppLog({
-                    level: "info",
-                    kind: "companion.session.create.started",
-                    process: "main",
-                    message: "Companion session creation started",
-                    data: {
-                      taskTitle: input.taskTitle,
-                      workspacePath: input.workspacePath,
-                      provider: input.provider,
-                    },
-                  });
-                  const session = await requireCompanionSessionService().createSession(input);
-                  writeAppLog({
-                    level: "info",
-                    kind: "companion.session.create.completed",
-                    process: "main",
-                    message: "Companion session creation completed",
-                    data: {
-                      sessionId: session.id,
-                      repoRoot: session.repoRoot,
-                      worktreePath: session.worktreePath,
-                    },
-                  });
-                  broadcastCompanionSessions();
-                  return session;
-                },
-                getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
-                getCompanionMessageArtifact,
-                getCompanionReviewSnapshot: (sessionId) => requireCompanionReviewService().getReviewSnapshot(sessionId),
-                mergeCompanionSelectedFiles: async (request) => {
-                  const result = await requireCompanionReviewService().mergeSelectedFiles(request.sessionId, request.selectedPaths);
-                  broadcastCompanionSessions();
-                  return result;
-                },
-                syncCompanionTarget: async (sessionId) => {
-                  const result = await requireCompanionReviewService().syncTarget(sessionId);
-                  broadcastCompanionSessions();
-                  return result;
-                },
-                stashCompanionTargetChanges: async (sessionId) => {
-                  const result = await requireCompanionReviewService().stashTargetChanges(sessionId);
-                  broadcastCompanionSessions();
-                  return result;
-                },
-                restoreCompanionTargetStash: async (sessionId) => {
-                  const result = await requireCompanionReviewService().restoreTargetChanges(sessionId);
-                  broadcastCompanionSessions();
-                  return result;
-                },
-                dropCompanionTargetStash: async (sessionId) => {
-                  const result = await requireCompanionReviewService().dropTargetStash(sessionId);
-                  broadcastCompanionSessions();
-                  return result;
-                },
-                updateCompanionSession: async (session) => {
-                  const saved = await requireCompanionStorage().updateSession(session);
-                  void broadcastCompanionSessions();
-                  return saved;
-                },
-                previewCompanionComposerInput: (sessionId, userMessage) =>
-                  requireCompanionRuntimeService().previewComposerInput(sessionId, userMessage),
-                discardCompanionSession: async (sessionId) => {
-                  const session = await requireCompanionReviewService().discardSession(sessionId);
-                  await cleanupSessionFilesDirectory(sessionId);
-                  broadcastCompanionSessions();
-                  return session;
-                },
-                runCompanionSessionTurn: (sessionId, request) =>
-                  requireCompanionRuntimeService().runSessionTurn(sessionId, request),
-                cancelCompanionSessionRun: (sessionId) => requireCompanionRuntimeService().cancelRun(sessionId),
               },
               sessionRuntime: {
                 getLiveSessionRun: (sessionId) => getLiveSessionRun(sessionId),
@@ -2154,7 +2039,6 @@ function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       listPromptTemplates,
       listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
-      listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
     });
   }
 
@@ -2599,44 +2483,6 @@ function requireMateProfileItemStorage(): NonNullable<typeof mateProfileItemStor
   }
 
   return mateProfileItemStorage;
-}
-
-function requireCompanionStorage(): CompanionStorageHandle {
-  if (!companionStorage) {
-    if (!dbPath) {
-      throw new Error("DB path が初期化されていないよ。");
-    }
-    companionStorage = storageWorker?.stores.companion ?? (isValidV3Database(dbPath)
-      ? new CompanionStorageV3(dbPath, path.join(path.dirname(dbPath), "blobs", "v3"))
-      : new CompanionStorage(dbPath));
-  }
-
-  return companionStorage;
-}
-
-function canUseCompanionAuditLogStorage(): boolean {
-  return !storageWorker && dbPath.length > 0 && (isValidV3Database(dbPath) || isValidV4Database(dbPath));
-}
-
-function requireCompanionAuditLogStorage(): CompanionAuditLogStorage | CompanionAuditLogStorageV3 {
-  if (!companionAuditLogStorage) {
-    if (!canUseCompanionAuditLogStorage()) {
-      throw new Error("companion audit log storage は V3/V4 DB でだけ利用できます。");
-    }
-    companionAuditLogStorage = isValidV3Database(dbPath)
-      ? new CompanionAuditLogStorageV3(dbPath, path.join(path.dirname(dbPath), "blobs", "v3"))
-      : new CompanionAuditLogStorage(dbPath, path.join(path.dirname(dbPath), "blobs", "v3"));
-  }
-
-  return companionAuditLogStorage;
-}
-
-function requireCompanionAuditLogService(): AuditLogService {
-  if (!companionAuditLogService) {
-    companionAuditLogService = new AuditLogService(requireCompanionAuditLogStorage());
-  }
-
-  return companionAuditLogService;
 }
 
 function requireSessionMemorySupportService(): SessionMemorySupportService {
@@ -3109,88 +2955,6 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
   return auxiliarySessionRuntimeService;
 }
 
-function requireCompanionSessionService(): CompanionSessionService {
-  if (!companionSessionService) {
-    companionSessionService = new CompanionSessionService({
-      appDataPath: app.getPath("userData"),
-      resolveSessionLaunchSelection: (providerId) =>
-        requireSessionLaunchSelectionService().resolve(providerId),
-      runProviderRuntimeOperationExclusive: (operation) =>
-        providerRuntimeOperationCoordinator.runExclusive(operation),
-      getStorage: () => requireCompanionStorage(),
-      createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
-    });
-  }
-
-  return companionSessionService;
-}
-
-function requireCompanionRuntimeService(): CompanionRuntimeService {
-  if (!companionRuntimeService) {
-    companionRuntimeService = new CompanionRuntimeService({
-      getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
-      listCompanionSessionSummaries: () => requireCompanionStorage().listSessionSummaries(),
-      updateCompanionSession: (session) => requireCompanionStorage().updateSession(session),
-      resolveComposerPreview,
-      resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
-      resolveSessionFolderPath: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
-      getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      resolveProviderCatalog,
-      getProviderCodingAdapter,
-      ...(canUseCompanionAuditLogStorage()
-        ? {
-            createAuditLog: (entry) => requireCompanionAuditLogService().createAuditLog(entry),
-            updateAuditLog: (id, entry) => requireCompanionAuditLogService().updateAuditLog(id, entry),
-            listAuditLogs: (sessionId) => requireCompanionAuditLogService().listSessionAuditLogs(sessionId),
-          }
-        : {}),
-      setLiveSessionRun,
-      getLiveSessionRun,
-      waitForApprovalDecision: (sessionId, request, signal) => waitForLiveApprovalDecision(sessionId, request, signal),
-      waitForElicitationResponse: (sessionId, request, signal) => waitForLiveElicitationResponse(sessionId, request, signal),
-      setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry),
-      setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry),
-      invalidateProviderSessionThread,
-      scheduleProviderQuotaTelemetryRefresh,
-      broadcastCompanionSessions,
-      resolvePendingApprovalRequest: (sessionId, decision) => {
-        const liveRun = getLiveSessionRun(sessionId);
-        const requestId = liveRun?.approvalRequest?.requestId;
-        if (requestId) {
-          requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision);
-        }
-      },
-      resolvePendingElicitationRequest: (sessionId, response) => {
-        const liveRun = getLiveSessionRun(sessionId);
-        const requestId = liveRun?.elicitationRequest?.requestId;
-        if (requestId) {
-          requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
-        }
-      },
-      currentTimestampLabel,
-    });
-  }
-
-  return companionRuntimeService;
-}
-
-function requireCompanionReviewService(): CompanionReviewService {
-  if (!companionReviewService) {
-    companionReviewService = new CompanionReviewService({
-      getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
-      listCompanionSessionSummaries: () => requireCompanionStorage().listSessionSummaries(),
-      updateCompanionSession: (session) => requireCompanionStorage().updateSession(session),
-      updateCompanionSessionBaseSnapshot: (session) => requireCompanionStorage().updateSessionBaseSnapshot(session),
-      createCompanionMergeRun: (run) => requireCompanionStorage().createMergeRun(run),
-      listCompanionMergeRunsForSession: (sessionId) => requireCompanionStorage().listMergeRunsForSession(sessionId),
-      listCompanionMergeRunSummariesForSession: (sessionId) =>
-        requireCompanionStorage().listMergeRunSummariesForSession(sessionId),
-    });
-  }
-
-  return companionReviewService;
-}
-
 function requireSessionPersistenceService(): SessionPersistenceService {
   if (!sessionPersistenceService) {
     const owner = requireActivePersistentStoreOwnerForFactory("Session persistence service");
@@ -3459,11 +3223,6 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       isRunningSession,
       listSessions: listFullStoredSessions,
       listAuxiliarySessions: () => requireAuxiliarySessionService().listAllAuxiliarySessions(),
-      listCompanionSessions: async () => {
-        const summaries = await requireCompanionStorage().listSessionSummaries();
-        const sessions = await Promise.all(summaries.map((summary) => requireCompanionStorage().getSession(summary.id)));
-        return sessions.filter((session): session is NonNullable<typeof session> => session !== null);
-      },
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       updateAppSettings,
       getModelCatalog,
@@ -3482,18 +3241,11 @@ function requireSettingsCatalogService(): SettingsCatalogService {
         requireAuxiliarySessionService().updateAuxiliarySessionThreadIfMatches(input),
       updateAuxiliarySessionRuntimeMetadataIfMatches: (input) =>
         requireAuxiliarySessionService().updateAuxiliarySessionRuntimeMetadataIfMatches(input),
-      updateCompanionRuntimeMetadataIfMatches: (sessionId, input) =>
-        requireCompanionStorage().updateRuntimeMetadataIfMatches(sessionId, input),
-      replaceCompanionSessions: async (nextSessions) =>
-        Promise.all(nextSessions.map((session) => requireCompanionStorage().updateSession(session))),
       clearProviderQuotaTelemetry,
       clearSessionContextTelemetry,
       invalidateProviderSessionThread,
       clearAuditLogs: async () => {
         await requireAuditLogService().clearAuditLogs();
-        if (canUseCompanionAuditLogStorage()) {
-          await requireCompanionAuditLogService().clearAuditLogs();
-        }
       },
       resetAppSettings,
       resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
@@ -3707,10 +3459,6 @@ async function closePersistentStores(): Promise<void> {
   }
   characterAffectTurnSettlementStorage = null;
   characterAffectTurnDrainCursor = undefined;
-  if (!storageWorker) {
-    await companionStorage?.close();
-  }
-  companionAuditLogStorage?.close();
   await requirePersistentStoreLifecycleService().close({
     storageWorker,
     modelCatalogStorage,
@@ -3743,12 +3491,6 @@ async function closePersistentStores(): Promise<void> {
   promptTemplateStorage = null;
   mateStorage = null;
   mateProfileItemStorage = null;
-  companionStorage = null;
-  companionAuditLogStorage = null;
-  companionAuditLogService = null;
-  companionSessionService = null;
-  companionRuntimeService = null;
-  companionReviewService = null;
   settingsCatalogService = null;
   sessionObservabilityService = null;
   sessionApprovalService = null;
@@ -3792,10 +3534,6 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   characterAffectTurnDrainCursor = undefined;
   await requireMateStorage().deleteMateProjectionDirectory();
   mateProfileItemStorage = null;
-  if (!storageWorker) {
-    await companionStorage?.close();
-  }
-  companionAuditLogStorage?.close();
   const bundle = await requirePersistentStoreLifecycleService().recreate(dbPath, bundledModelCatalogPath, {
     storageWorker,
     modelCatalogStorage,
@@ -3813,15 +3551,9 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   characterService = null;
   characterAuthoringService = null;
   auditLogService = null;
-  companionStorage = null;
-  companionAuditLogService = null;
-  companionAuditLogStorage = null;
   auxiliarySessionService = null;
   auxiliarySessionRuntimeService = null;
   sessionRuntimeService = null;
-  companionSessionService = null;
-  companionRuntimeService = null;
-  companionReviewService = null;
   settingsCatalogService = null;
   sessionObservabilityService = null;
   sessionApprovalService = null;
@@ -4012,135 +3744,6 @@ async function getSessionAuditLogOperationDetail(
   }
 }
 
-async function listCompanionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
-  return requireCompanionAuditLogStorage().listSessionAuditLogs(sessionId);
-}
-
-async function listCompanionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]> {
-  return requireCompanionAuditLogStorage().listSessionAuditLogSummaries(sessionId);
-}
-
-async function listCompanionAuditLogSummaryPage(
-  sessionId: string,
-  request?: AuditLogSummaryPageRequest | null,
-): Promise<AuditLogSummaryPageResult> {
-  return requireCompanionAuditLogStorage().listSessionAuditLogSummaryPage(sessionId, request);
-}
-
-async function getCompanionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null> {
-  return requireCompanionAuditLogStorage().getSessionAuditLogDetail(sessionId, auditLogId);
-}
-
-async function getCompanionAuditLogDetailSection(
-  sessionId: string,
-  auditLogId: number,
-  section: AuditLogDetailSection,
-): Promise<AuditLogDetailFragment | null> {
-  const startedAt = Date.now();
-  writeAppLog({
-    level: "debug",
-    kind: "audit-log.detail.main-load-started",
-    process: "main",
-    message: "Audit log detail section main load started",
-    data: {
-      sessionId,
-      auditLogId,
-      section,
-      source: "companion",
-    },
-  });
-
-  try {
-    const fragment = await requireCompanionAuditLogStorage().getSessionAuditLogDetailSection(sessionId, auditLogId, section);
-    writeAppLog({
-      level: "debug",
-      kind: "audit-log.detail.main-load-completed",
-      process: "main",
-      message: "Audit log detail section main load completed",
-      data: {
-        sessionId,
-        auditLogId,
-        section,
-        source: "companion",
-        durationMs: Date.now() - startedAt,
-        metrics: summarizeAuditLogDetailFragment(fragment),
-      },
-    });
-    return fragment;
-  } catch (error) {
-    writeAppLog({
-      level: "error",
-      kind: "audit-log.detail.main-load-failed",
-      process: "main",
-      message: "Audit log detail section main load failed",
-      data: {
-        sessionId,
-        auditLogId,
-        section,
-        source: "companion",
-        durationMs: Date.now() - startedAt,
-      },
-      error: appLogService.errorToLogError(error),
-    });
-    throw error;
-  }
-}
-
-async function getCompanionAuditLogOperationDetail(
-  sessionId: string,
-  auditLogId: number,
-  operationIndex: number,
-): Promise<AuditLogOperationDetailFragment | null> {
-  const startedAt = Date.now();
-  writeAppLog({
-    level: "debug",
-    kind: "audit-log.operation-detail.main-load-started",
-    process: "main",
-    message: "Audit log operation detail main load started",
-    data: {
-      sessionId,
-      auditLogId,
-      operationIndex,
-      source: "companion",
-    },
-  });
-
-  try {
-    const fragment = await requireCompanionAuditLogStorage().getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex);
-    writeAppLog({
-      level: "debug",
-      kind: "audit-log.operation-detail.main-load-completed",
-      process: "main",
-      message: "Audit log operation detail main load completed",
-      data: {
-        sessionId,
-        auditLogId,
-        operationIndex,
-        source: "companion",
-        durationMs: Date.now() - startedAt,
-        detailsChars: fragment?.details.length ?? 0,
-      },
-    });
-    return fragment;
-  } catch (error) {
-    writeAppLog({
-      level: "error",
-      kind: "audit-log.operation-detail.main-load-failed",
-      process: "main",
-      message: "Audit log operation detail main load failed",
-      data: {
-        sessionId,
-        auditLogId,
-        operationIndex,
-        source: "companion",
-        durationMs: Date.now() - startedAt,
-      },
-      error: appLogService.errorToLogError(error),
-    });
-    throw error;
-  }
-}
-
 async function listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {
   return requireMainQueryService().listSessionSkills(sessionId);
 }
@@ -4175,14 +3778,7 @@ async function getSessionFileExplorerContext(sessionId: string): Promise<Session
       allowedAdditionalDirectories: session.allowedAdditionalDirectories,
     };
   }
-  const companionSession = await requireCompanionStorage().getSession(sessionId);
-  return companionSession
-    ? {
-        workspacePath: companionSession.worktreePath,
-        parentSessionId: companionSession.id,
-        allowedAdditionalDirectories: companionSession.allowedAdditionalDirectories ?? [],
-      }
-    : null;
+  return null;
 }
 
 async function getSessionFileExplorerOwnerSessionId(sessionId: string): Promise<string | null> {
@@ -4222,7 +3818,6 @@ async function getAuxiliaryParentSession(parentSessionId: string): Promise<Sessi
     parentSessionId,
     getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
     getCachedSession: getSession,
-    getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
   });
 }
 
@@ -4248,21 +3843,12 @@ async function getSessionMessageArtifact(sessionId: string, messageIndex: number
   return requireMainQueryService().getSessionMessageArtifact(sessionId, messageIndex);
 }
 
-async function getCompanionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null> {
-  const artifact = await requireCompanionStorage().getMessageArtifact(sessionId, messageIndex);
-  return artifact ?? null;
-}
-
 async function openSessionTerminal(sessionId: string): Promise<void> {
   await requireMainQueryService().openSessionTerminal(sessionId);
 }
 
 function broadcastSessions(sessionIds?: Iterable<string>): void {
   requireMainBroadcastFacade().broadcastSessions(sessionIds);
-}
-
-async function broadcastCompanionSessions(): Promise<void> {
-  requireWindowBroadcastService().broadcastCompanionSessionSummaries(await listCompanionSessionSummaries());
 }
 
 async function broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): Promise<void> {
@@ -4354,16 +3940,8 @@ function listOpenSessionWindowIdsPage(
   return buildOpenSessionWindowIdsPage(listOpenSessionWindowIds(), request);
 }
 
-function listOpenCompanionReviewWindowIds(): string[] {
-  return requireMainWindowFacade().listOpenCompanionReviewWindowIds();
-}
-
 function broadcastOpenSessionWindowIds(): void {
   requireMainBroadcastFacade().broadcastOpenSessionWindowIds();
-}
-
-function broadcastOpenCompanionReviewWindowIds(): void {
-  requireMainBroadcastFacade().broadcastOpenCompanionReviewWindowIds();
 }
 
 function hasRunningSessions(): boolean {
@@ -4445,7 +4023,6 @@ async function replaceAllSessions(
 
 async function recoverInterruptedSessions(): Promise<void> {
   await requireMainSessionPersistenceFacade().recoverInterruptedSessions();
-  await requireCompanionRuntimeService().recoverInterruptedSessions();
   await requireAuxiliarySessionService().recoverInterruptedSessions();
 }
 
@@ -4721,49 +4298,6 @@ async function openSessionFilePreviewWindow(
       message: error instanceof Error ? error.message : "The file preview could not be opened.",
     };
   }
-}
-
-async function openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow> {
-  writeAppLog({
-    level: "info",
-    kind: "companion.review-window.open.started",
-    process: "main",
-    message: "Companion review window open started",
-    data: { sessionId, auxiliarySessionId: auxiliarySessionId ?? null },
-  });
-  const window = await requireMainWindowFacade().openCompanionReviewWindow(sessionId, auxiliarySessionId);
-  if (auxiliarySessionId) {
-    requireMainBroadcastFacade().broadcastAuxiliarySessionSelection(sessionId, auxiliarySessionId);
-  }
-  writeAppLog({
-    level: "info",
-    kind: "companion.review-window.open.completed",
-    process: "main",
-    message: "Companion review window open completed",
-    windowId: window.id,
-    data: { sessionId, auxiliarySessionId: auxiliarySessionId ?? null },
-  });
-  return window;
-}
-
-async function openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow> {
-  writeAppLog({
-    level: "info",
-    kind: "companion.merge-window.open.started",
-    process: "main",
-    message: "Companion merge window open started",
-    data: { sessionId },
-  });
-  const window = await requireMainWindowFacade().openCompanionMergeWindow(sessionId);
-  writeAppLog({
-    level: "info",
-    kind: "companion.merge-window.open.completed",
-    process: "main",
-    message: "Companion merge window open completed",
-    windowId: window.id,
-    data: { sessionId },
-  });
-  return window;
 }
 
 async function inspectCurrentAppDatabase(): Promise<AppDatabaseDiagnostics> {

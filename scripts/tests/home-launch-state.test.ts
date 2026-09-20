@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 
 import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
 import {
-  buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionRequestFromLaunchDraft,
   applyLaunchWorkspacePathValidation,
   beginLaunchWorkspacePathValidation,
@@ -146,7 +145,17 @@ describe("home-launch-state", () => {
     );
   });
 
-  it("validated manual workspace は session / companion request に同じ path を投影する", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "validなmanual workspace pathを通常Session requestへ投影する"
+  // oracle = { type = "contract", ref = "src/home/home-launch-state.ts" }
+  // fault = "canonical workspace pathがSession requestから欠落する"
+  // observable = "session requestのworkspace tuple"
+  // observation_boundary = "public-boundary"
+  // scope = "home-launch-session-workspace"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("validated manual workspace は session request に同じ path を投影する", () => {
     const targetPath = "\\\\server\\share\\work space\\";
     const draft = {
       ...applyLaunchWorkspacePathValidation(
@@ -167,12 +176,6 @@ describe("home-launch-state", () => {
       mateProfile: null,
       selectedProviderId: "codex",
     });
-    const companionRequest = buildCreateCompanionSessionInputFromLaunchDraft({
-      draft: { ...draft, mode: "companion" },
-      mateProfile: null,
-      selectedProviderId: "codex",
-    });
-
     assert.equal(sessionRequest?.workspace.kind, "directory");
     if (sessionRequest?.workspace.kind === "directory") {
       assert.deepEqual(sessionRequest.workspace, {
@@ -182,7 +185,6 @@ describe("home-launch-state", () => {
         branch: "",
       });
     }
-    assert.equal(companionRequest?.workspacePath, targetPath);
   });
 
   it("provider 選択時に launch draft の providerId を更新する", () => {
@@ -492,111 +494,13 @@ describe("home-launch-state", () => {
     assert.equal(input, null);
   });
 
-  it("specific Character がmissingなら別Characterへ置換せずCompanion開始を拒否する", () => {
-    const input = buildCreateCompanionSessionInputFromLaunchDraft({
-      draft: {
-        ...createClosedLaunchDraft(),
-        open: true,
-        mode: "companion",
-        title: "task",
-        workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
-        providerId: "codex",
-        characterId: "missing",
-        characterSelectionMode: "specific",
-      },
-      mateProfile: null,
-      selectedProviderId: "codex",
-      characterEntries: [
-        createCharacterEntry({ id: "noa", name: "Noa", description: "active profile" }),
-      ],
-    });
 
-    assert.equal(input, null);
-  });
 
-  it("Mate 未作成でも neutral character で Companion input を組み立てる", () => {
-    const input = buildCreateCompanionSessionInputFromLaunchDraft({
-      draft: {
-        ...createClosedLaunchDraft(),
-        open: true,
-        mode: "companion",
-        title: "  task  ",
-        workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
-        providerId: "codex",
-      },
-      mateProfile: null,
-      selectedProviderId: "codex",
-    });
 
-    assert.equal(input?.characterId, "withmate-neutral-character");
-    assert.equal(input?.character, "WithMate");
-    assert.equal(input?.characterRoleMarkdown, "");
-    assert.equal(input?.characterIconPath, "");
-    assert.deepEqual(input?.characterThemeColors, {
-      main: "#6f8cff",
-      sub: "#6fb8c7",
-    });
-    assert.equal("approvalMode" in (input ?? {}), false);
-    assert.equal("codexSandboxMode" in (input ?? {}), false);
-  });
 
-  it("Companion launch request は runtime option を renderer から送らない", () => {
-    const input = buildCreateCompanionSessionInputFromLaunchDraft({
-      draft: {
-        ...createClosedLaunchDraft(),
-        open: true,
-        mode: "companion",
-        title: "  task  ",
-        workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
-        providerId: "codex",
-        characterId: "mia",
-        characterSelectionMode: "specific",
-      },
-      mateProfile: createMateProfile({
-        id: "mate-a",
-        displayName: "Mia",
-        description: "assistant profile",
-      }),
-      selectedProviderId: "codex",
-      characterEntries: [
-        createCharacterEntry({
-          id: "mia",
-          name: "Mia",
-          description: "assistant profile",
-          iconFilePath: "icon.png",
-          theme: { main: "#000000", sub: "#ffffff" },
-        }),
-      ],
-    });
 
-    assert.equal("model" in (input ?? {}), false);
-    assert.equal("reasoningEffort" in (input ?? {}), false);
-    assert.equal("approvalMode" in (input ?? {}), false);
-    assert.equal("codexSandboxMode" in (input ?? {}), false);
-    assert.equal("customAgentName" in (input ?? {}), false);
-  });
 
-  it("active Character がない時だけ Companion input は neutral fallback を使う", () => {
-    const input = buildCreateCompanionSessionInputFromLaunchDraft({
-      draft: {
-        ...createClosedLaunchDraft(),
-        open: true,
-        mode: "companion",
-        title: "task",
-        workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
-        providerId: "codex",
-        characterId: "mia",
-      },
-      mateProfile: null,
-      selectedProviderId: "codex",
-      characterEntries: [
-        createCharacterEntry({ id: "mia", name: "Mia", state: "archived" }),
-      ],
-    });
 
-    assert.equal(input?.characterId, "withmate-neutral-character");
-    assert.equal(input?.character, "WithMate");
-  });
 
   it("launch 条件が欠けている時は session input を返さない", () => {
     const input = buildCreateSessionRequestFromLaunchDraft({

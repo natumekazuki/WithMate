@@ -419,7 +419,7 @@ description: "作業を一緒に進める相手"
         ["Character directory scope", /app database、packaged resource、このCharacter directory外のfileを編集しない/],
         ["config.toml hidden input", /`config\.toml`.*hidden inputとして使わない/],
         ["Memory hidden input", /Memory.*hidden inputとして使わない/],
-        ["unrelated Session history hidden input", /unrelated Session \/ companion \/ chat history.*hidden inputとして使わない/],
+        ["unrelated Session history hidden input", /unrelated Session \/ chat history.*hidden inputとして使わない/],
         ["Character root artifacts", /Character rootへsource report、review checklist、manifest、pack directory、Zipを作らない/],
         ["Notion sync", /Notion同期.*必須処理にしない/],
         ["parent and child pages", /親・子page作成.*必須処理にしない/],
