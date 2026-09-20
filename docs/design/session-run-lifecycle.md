@@ -114,6 +114,8 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
   - `閉じない`: close をキャンセル
   - `閉じて続行`: draft flush成功後にwindowを閉じる。session実行は継続する
 - 通常closeは入力を凍結し、未保存Auxiliary draftのflush完了ACKを待つ。保存失敗・例外・ACKのtimeoutでは閉じず、凍結を解除して編集・再試行を可能にする。成功時は実際に閉じるまで凍結を維持する。詳細は[Auxiliary Sessionの保存・終了契約](auxiliary-session.md#composer-の更新保存境界)を参照する
+- 通常closeとapp quitが重なる場合は、同じWindowの進行中flushを共有し、保存成功で閉じたWindowをquitの保存失敗にしない。ACK後も送信失敗による復元pendingが生まれ得るため、その後の通常closeは新しくflushする。quitは待機中に追加されたflushも待ち、どれかが失敗したら終了を中止する。quitが他Windowの結果を待っている間は、通常closeの失敗だけでは解凍しない。全体の失敗確定後に生存Windowを解凍し、再試行では新しくflushする。ACK前のWindow消滅は保存成功として扱わない
+- Sessionを対象に含む明示的DBリセットでは、通常closeの保存待ちを使わずWindowを破棄する。管理登録とownerの解放は実際のclosed通知に合わせ、Windowが残ったまま登録だけを消さない
 - close 時に Session Memory extraction は自動実行しない
 
 ### Session Run Cancel

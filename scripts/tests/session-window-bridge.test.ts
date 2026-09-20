@@ -150,6 +150,25 @@ class StubWindow implements SessionWindowLike {
   }
 }
 
+function createDraftFlushBridge() {
+  const requests: Array<{ window: StubWindow; requestId: string; sessionId: string }> = [];
+  const releases: StubWindow[] = [];
+  const closedIds: string[] = [];
+  const bridge = new SessionWindowBridge({
+    createWindow: () => new StubWindow(),
+    async loadChatEntry() {},
+    getSession: (id) => createSession({ id }),
+    isRunInFlight: () => false,
+    confirmCloseWhileRunning: () => false,
+    broadcastOpenSessionWindowIds() {},
+    onSessionWindowClosed: (id) => { closedIds.push(id); },
+    getWindowSender: (window) => window,
+    sendDraftFlushRequest: (window, request) => { requests.push({ window, ...request }); },
+    sendDraftFlushRelease: (window) => { releases.push(window); },
+  });
+  return { bridge, requests, releases, closedIds };
+}
+
 describe("SessionWindowBridge", () => {
   // @test-value v2
   // kind = "contract"
@@ -1078,5 +1097,186 @@ describe("SessionWindowBridge", () => {
     bridge.acknowledgeDraftFlush(requests.get("flush-b")!.requestId, "sender", true);
     assert.equal(await flushing, false);
     assert.deepEqual(releases.sort(), ["flush-a", "flush-b"]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "明示的DBリセットの一括closeは保存ACKを待たずWindowを破棄し、closedに合わせて管理とownerを解放する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+  // fault = "通常closeのflush失敗で実Windowが残り、registryだけ空になる"
+  // observable = "Window破棄状態、公開registry、closed通知、進行中closeの結果"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-reset-discard"
+  // lifecycle = "permanent"
+  // impact = "削除済みSessionのWindowが管理外で残り、終了や対象解決が壊れる"
+  // distinction = "DBを書き換えずreset consumerの一括closeと遅延closedを検証する。通常close単独のtestでは検出できない"
+  // @end-test-value
+  it("resetの一括closeは未応答のdraft保存を待たず実Windowと管理を解放する", async () => {
+    const { bridge, requests, closedIds } = createDraftFlushBridge();
+    const first = await bridge.openSessionWindow("reset-a");
+    const second = await bridge.openSessionWindow("reset-b");
+    second.delayClosedEvent = true;
+    const closing = bridge.requestCloseSessionWindow("reset-a");
+    try {
+      bridge.closeAllSessionWindows();
+      assert.equal(first.isDestroyed(), true);
+      assert.equal(second.isDestroyed(), true);
+      assert.equal(await closing, true);
+      assert.deepEqual(bridge.listOpenSessionWindowIds(), []);
+      assert.deepEqual(closedIds, ["reset-a"]);
+      second.emitClosed();
+      assert.deepEqual(closedIds, ["reset-a", "reset-b"]);
+      assert.equal(bridge.getWindow("reset-b"), null);
+      for (const request of requests) {
+        assert.equal(bridge.acknowledgeDraftFlush(request.requestId, request.window, false), false);
+      }
+    } finally {
+      first.destroy();
+      second.destroy();
+      second.emitClosed();
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "通常closeとquitが重なっても同じWindowの保存結果を共有し、保存済みcloseによってquitを失敗にしない"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
+  // fault = "同一Windowに二重flushを発行し、先行closeのclosedでquit側の未完了要求を失敗にする"
+  // observable = "closeとquitの結果、Window破棄状態、rendererへの保存要求数"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-close-quit-overlap"
+  // lifecycle = "permanent"
+  // impact = "保存できたのにアプリ終了が取り消される"
+  // distinction = "両方の開始順序を制御し、単独closeやquitでは観測できない競合を小さいメモリWindowで検証する"
+  // @end-test-value
+  it("close先行とquit先行のどちらでも保存成功を共有する", async () => {
+    for (const closeFirst of [true, false]) {
+      const { bridge, requests } = createDraftFlushBridge();
+      const window = await bridge.openSessionWindow("overlap");
+      const first = closeFirst ? bridge.requestCloseSessionWindow("overlap") : bridge.flushSessionWindowDrafts();
+      const second = closeFirst ? bridge.flushSessionWindowDrafts() : bridge.requestCloseSessionWindow("overlap");
+      try {
+        bridge.acknowledgeDraftFlush(requests[0].requestId, window, true);
+        await new Promise((resolve) => setImmediate(resolve));
+        for (const request of requests.slice(1)) bridge.acknowledgeDraftFlush(request.requestId, window, true);
+        assert.deepEqual(await Promise.all([first, second]), [true, true]);
+        assert.equal(window.isDestroyed(), true);
+        assert.equal(requests.length, 1);
+      } finally {
+        window.destroy();
+      }
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "closeの保存失敗またはtimeoutがquitと重なると全Windowの確認まで凍結を維持し、中止後は新しい保存で再試行できる"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
+  // fault = "close失敗でquit待機中のWindowを解凍する、または失敗結果を再試行へ流用する"
+  // observable = "全体待機中のrelease通知、closeとquitの結果、再試行後のWindow破棄状態"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-close-quit-failure"
+  // lifecycle = "permanent"
+  // impact = "終了確認中の追加編集を保存対象から漏らす、または保存を再試行できなくなる"
+  // distinction = "ACK失敗と時間差timeoutを制御し、複数Window間の解凍境界と再試行を検証する"
+  // @end-test-value
+  it("closeの失敗とtimeoutではquit全体が終わるまで解凍しない", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const failure of ["ack", "timeout"]) {
+      const { bridge, requests, releases } = createDraftFlushBridge();
+      const first = await bridge.openSessionWindow("failure-a");
+      const second = await bridge.openSessionWindow("failure-b");
+      const closing = bridge.requestCloseSessionWindow("failure-a");
+      t.mock.timers.tick(5_000);
+      const quitting = bridge.flushSessionWindowDrafts();
+      try {
+        if (failure === "ack") bridge.acknowledgeDraftFlush(requests[0].requestId, first, false);
+        else t.mock.timers.tick(5_000);
+        assert.equal(await closing, false);
+        assert.equal(first.isDestroyed(), false);
+        assert.deepEqual(releases, []);
+        for (const request of requests.slice(1)) bridge.acknowledgeDraftFlush(request.requestId, request.window, true);
+        assert.equal(await quitting, false);
+        assert.deepEqual(releases, [first, second]);
+        const retry = bridge.requestCloseSessionWindow("failure-a");
+        const latest = requests.at(-1)!;
+        assert.notEqual(latest.requestId, requests[0].requestId);
+        bridge.acknowledgeDraftFlush(latest.requestId, first, true);
+        assert.equal(await retry, true);
+        assert.equal(first.isDestroyed(), true);
+      } finally {
+        first.destroy();
+        second.destroy();
+      }
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "quitのACK後に通常closeを要求したら復元pendingを再flushし、quitもその保存結果を待ち、失敗なら双方を中止する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
+  // fault = "古い成功ACKで新しい復元pendingを確認せずcloseまたはquitを完了する"
+  // observable = "新flushのACK前のWindow生存とquit未完了、新ACK失敗後のclose/quit結果とrelease対象"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-quit-ack-close"
+  // lifecycle = "permanent"
+  // impact = "送信失敗で復元された未保存本文を閉じる操作で失う"
+  // distinction = "進行中のPromise共有とは別にACK後の新しいcloseを検証し、旧成功ACKによる保存確認の省略を検出する"
+  // @end-test-value
+  it("quit中のACK後closeは再flushし、quitも新しいACKを待つ", async () => {
+    const { bridge, requests, releases } = createDraftFlushBridge();
+    const first = await bridge.openSessionWindow("saved-a");
+    const second = await bridge.openSessionWindow("saved-b");
+    let quitCompleted = false;
+    const quitting = bridge.flushSessionWindowDrafts().then((result) => { quitCompleted = true; return result; });
+    try {
+      bridge.acknowledgeDraftFlush(requests[0].requestId, first, true);
+      await new Promise((resolve) => setImmediate(resolve));
+      const closing = bridge.requestCloseSessionWindow("saved-a");
+      assert.equal(first.isDestroyed(), false);
+      assert.equal(requests.length, 3);
+      bridge.acknowledgeDraftFlush(requests[1].requestId, second, true);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(quitCompleted, false);
+      assert.deepEqual(releases, []);
+      bridge.acknowledgeDraftFlush(requests[2].requestId, first, false);
+      assert.equal(await closing, false);
+      assert.equal(first.isDestroyed(), false);
+      assert.equal(await quitting, false);
+      assert.deepEqual(releases, [first, second]);
+    } finally {
+      first.destroy();
+      second.destroy();
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "共有flushのACK前にWindowが消滅した場合はquitを成功扱いせず、残るWindowを解凍して再試行できる"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
+  // fault = "closeとの共有を理由に未保存Windowの消滅を成功扱いする、またはquitが完了しない"
+  // observable = "quitの失敗結果、生存Windowへのrelease、再試行の新しいACKと成功結果"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-close-quit-destroy"
+  // lifecycle = "permanent"
+  // impact = "保存成否不明なのに全体終了するか、残ったWindowを編集できなくなる"
+  // distinction = "正常close成功ではないACK前destroyを区別し、失敗を成功へ救済しない境界を検証する"
+  // @end-test-value
+  it("共有flushのACK前destroyはquit失敗となり生存Windowで再試行できる", async () => {
+    const { bridge, requests, releases } = createDraftFlushBridge();
+    const first = await bridge.openSessionWindow("destroy-a");
+    const second = await bridge.openSessionWindow("destroy-b");
+    void bridge.requestCloseSessionWindow("destroy-a");
+    const quitting = bridge.flushSessionWindowDrafts();
+    first.destroy();
+    for (const request of requests) bridge.acknowledgeDraftFlush(request.requestId, request.window, true);
+    assert.equal(await quitting, false);
+    assert.deepEqual(releases, [second]);
+    const retry = bridge.flushSessionWindowDrafts();
+    const latest = requests.at(-1)!;
+    bridge.acknowledgeDraftFlush(latest.requestId, second, true);
+    assert.equal(await retry, true);
+    second.close();
+    assert.equal(second.isDestroyed(), true);
   });
 });

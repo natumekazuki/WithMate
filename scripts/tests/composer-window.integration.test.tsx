@@ -9,15 +9,15 @@ import type { AuxiliaryDraftRecord } from "../../src/auxiliary-draft-contract.js
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Session Windowは入力を局所反映し、owner/送信revisionを保ち、失敗復元を終了flushとRetryで保存し、凍結中の添付操作を止める"
+// claim = "実Session Windowは入力を局所反映し、owner/送信revisionを保ち、終了flushのACK後も凍結中の失敗送信復元を表示し、保存失敗をrelease後のRetryと再flushで完了し、凍結中の添付操作を止める"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
-// fault = "rootが一覧全件を再計算する、古いowner/revisionを送信する、失敗復元を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
+// fault = "rootが一覧全件を再計算する、古いowner/revisionを送信する、凍結中の失敗復元を表示しない、復元を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
 // observable = "textarea/feedback/Sendの状態、summary read回数、保存要求・永続draft・送信対象・flush ACK、picker後のコピー回数"
 // observation_boundary = "component-behavior"
 // scope = "composer-window-input-wiring"
 // lifecycle = "permanent"
 // impact = "多数会話での入力遅延、切替による下書き消失、古い入力や別会話への誤送信を防ぐ"
-// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証する。壁時計の性能値をCI合否にしない"
+// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証し、送信pending→flush ACK→失敗復元→release(false)→Retry→再flushの順序も確認する。壁時計の性能値をCI合否にしない"
 // @end-test-value
 test("Session Windowの入力境界と切替後の最新値送信を実配線で守る", { timeout: 8000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
@@ -69,6 +69,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
   let heldSave: Promise<void> | null = null;
   let notifySaveStarted: (() => void) | undefined;
   let notifySaved: ((text: string) => void) | undefined;
+  let notifyDraftSaveFailed: (() => void) | undefined;
   let failDraftWrites = false;
   api.getAuxiliaryDraft = async (id) => {
     if (!drafts.has(id)) {
@@ -79,7 +80,10 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     return drafts.get(id)!;
   };
   api.saveAuxiliaryDraft = async (input) => {
-    if (failDraftWrites) throw new Error("Draft storage unavailable");
+    if (failDraftWrites) {
+      notifyDraftSaveFailed?.();
+      throw new Error("Draft storage unavailable");
+    }
     if (heldSave) {
       const wait = heldSave;
       heldSave = null;
@@ -239,6 +243,51 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(textarea().value, "Main while Auxiliary sends", "another owner's completion must preserve Main input");
     await target("Auxiliary");
     assert.equal(textarea().value, "", "a consumed draft must not reappear after switching back");
+
+    // A shutdown flush may freeze editing while the send is still pending.
+    // The failed-send recovery must still become visible before release.
+    heldRun = new Promise<void>((resolve) => { releaseRun = resolve; });
+    const frozenRunStarted = new Promise<void>((resolve) => { notifyRunStarted = resolve; });
+    await input("recover during quit");
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
+      await frozenRunStarted;
+    });
+    const frozenAuxiliaryId = sent.at(-1)!.id;
+    rejectRun = true;
+    const frozenFlushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
+    await act(async () => {
+      flushRequest?.({ requestId: "frozen-recovery-close", sessionId: "benchmark-main" });
+      await frozenFlushAck;
+    });
+    assert.deepEqual(flushAcks, [{ id: "frozen-recovery-close", success: true }]);
+    assert.equal(textarea().disabled, true, "flush freezes editing while the send is pending");
+    assert.equal(textarea().value, "", "the consumed draft stays hidden until send failure");
+    failRunRestore = true;
+    const frozenRunFailed = new Promise<void>((resolve) => { notifyRunFailed = resolve; });
+    const frozenRecoveryWriteFailed = new Promise<void>((resolve) => { notifyDraftSaveFailed = resolve; });
+    await act(async () => { releaseRun(); await frozenRunFailed; await frozenRecoveryWriteFailed; });
+    notifyDraftSaveFailed = undefined;
+    assert.equal(textarea().value, "recover during quit", "failed-send recovery updates the visible draft during freeze");
+    assert.equal(textarea().disabled, true, "recovery does not release the shutdown freeze");
+    assert.equal(drafts.get(frozenAuxiliaryId)?.text, "", "Main and renderer recovery writes failed");
+    await act(async () => { flushRelease?.({ success: false }); });
+    assert.equal(textarea().disabled, false, "failed shutdown release restores editing");
+    assert.ok(dom.window.document.getElementById("composer-save-feedback"), "failed recovery save remains retryable after release");
+    failDraftWrites = false;
+    const frozenRecoverySaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "recover during quit") resolve(); }; });
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(".composer-save-retry")!.click();
+      await frozenRecoverySaved;
+    });
+    assert.equal(drafts.get(frozenAuxiliaryId)?.text, "recover during quit", "retry must persist the restored draft");
+    const frozenRecoveryFlushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
+    await act(async () => { flushRequest?.({ requestId: "frozen-recovery-retry", sessionId: "benchmark-main" }); await frozenRecoveryFlushAck; });
+    assert.deepEqual(flushAcks.at(-1), { id: "frozen-recovery-retry", success: true }, "retry must be persisted before the subsequent close ACK");
+    await act(async () => { flushRelease?.({ success: false }); });
+    assert.deepEqual(alerts, ["Auxiliary turn failed and draft restore failed."]);
+    alerts.length = 0;
+    flushAcks.length = 0;
 
     const previousAuxiliaryId = sent.at(-1)!.id;
     heldRun = new Promise<void>((resolve) => { releaseRun = resolve; });

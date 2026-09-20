@@ -109,9 +109,14 @@ export class ComposerControllerRegistry {
     entry.listeners.forEach((listener) => listener());
   }
 
-  setDraft(owner: ComposerOwner, draft: string, selection?: ComposerSelection): number {
+  private setDraftInternal(
+    owner: ComposerOwner,
+    draft: string,
+    selection?: ComposerSelection,
+    allowWhileFrozen = false,
+  ): number {
     const current = this.get(owner);
-    if (this.frozen) return current.revision;
+    if (this.frozen && !allowWhileFrozen) return current.revision;
     const nextSelection = clampSelection(selection ?? current.selection, draft);
     if (
       current.draft === draft
@@ -131,6 +136,10 @@ export class ComposerControllerRegistry {
       revision = entry.revision;
     });
     return revision;
+  }
+
+  setDraft(owner: ComposerOwner, draft: string, selection?: ComposerSelection): number {
+    return this.setDraftInternal(owner, draft, selection);
   }
 
   replaceDraft(owner: ComposerOwner, draft: string, selection?: ComposerSelection): number {
@@ -153,7 +162,9 @@ export class ComposerControllerRegistry {
   ): number | null {
     const current = this.get(owner);
     if (current.revision !== expectedRevision) return null;
-    return this.setDraft(owner, update(current.draft), current.selection);
+    // Failure recovery is an internal mutation: it must still restore the
+    // captured draft when shutdown has frozen user edits.
+    return this.setDraftInternal(owner, update(current.draft), current.selection, true);
   }
 
   setSelection(owner: ComposerOwner, selection: SetStateAction<ComposerSelection>): void {

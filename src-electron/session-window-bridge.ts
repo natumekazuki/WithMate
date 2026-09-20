@@ -53,6 +53,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     resolve: (closed: boolean) => void;
   }>();
   private readonly pendingDraftFlushWindows = new Set<TWindow>();
+  private readonly draftFlushes = new Map<TWindow, { promise: Promise<boolean>; pending: boolean }>();
   private draftFlushGateActive = false;
   private readonly draftFlushCoordinator = new DraftFlushCoordinator<TWindow>((window, request) => {
     this.deps.sendDraftFlushRequest?.(window, request);
@@ -208,13 +209,23 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   async flushSessionWindowDrafts(): Promise<boolean> {
     const windows = this.listWindows();
     this.draftFlushGateActive = true;
-    const results = await Promise.all(windows.map(async (window) => {
+    let flushing = windows.map((window) => {
       const sessionId = this.sessionIdForWindow(window);
-      return sessionId ? this.flushDrafts(window, sessionId) : false;
-    }));
-    if (results.every(Boolean)) {
+      return sessionId ? this.flushDrafts(window, sessionId) : Promise.resolve(false);
+    });
+    let succeeded = true;
+    while (true) {
+      const results = await Promise.all(flushing);
+      succeeded = results.every(Boolean) && succeeded;
+      // A close after an ACK may flush a newly restored draft. Quit must wait
+      // for that newer request too, without turning an earlier failure into success.
+      const latest = windows.map((window, index) => this.draftFlushes.get(window)?.promise ?? flushing[index]);
+      if (latest.every((promise, index) => promise === flushing[index])) break;
+      flushing = latest;
+    }
+    if (succeeded) {
       for (const window of windows) {
-        this.allowCloseSessionWindows.add(window);
+        if (!window.isDestroyed()) this.allowCloseSessionWindows.add(window);
       }
       return true;
     }
@@ -263,15 +274,10 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   }
 
   closeAllSessionWindows(): void {
+    // DB reset explicitly discards sessions; ordinary close must still save drafts.
     for (const sessionId of Array.from(this.sessionWindows.keys())) {
-      this.closeSessionWindow(sessionId);
+      this.discardSessionWindow(sessionId);
     }
-    this.sessionWindows.clear();
-    this.openingSessionWindows.clear();
-    this.allowCloseSessionWindows.clear();
-    this.snapshotEligibleWindows.clear();
-    this.broadcast();
-    void this.persistSnapshotBestEffort();
   }
 
   async prepareSnapshotForQuit(): Promise<void> {
@@ -331,7 +337,8 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     void this.flushDrafts(window, sessionId).then((flushed) => {
       this.pendingDraftFlushWindows.delete(window);
       if (!flushed || window.isDestroyed()) {
-        this.releaseDraftFlush(window, false);
+        // A concurrent quit owns the freeze until all its windows have settled.
+        if (!this.draftFlushGateActive) this.releaseDraftFlush(window, false);
         this.resolveCloseRequest(window, false);
         return;
       }
@@ -344,6 +351,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     if (this.deps.getWindowSender) {
       this.draftFlushCoordinator.forgetWindow(this.deps.getWindowSender(window));
     }
+    this.draftFlushes.delete(window);
     this.resolveCloseRequest(window, true);
     this.allowCloseSessionWindows.delete(window);
     this.pendingDraftFlushWindows.delete(window);
@@ -369,14 +377,26 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     return null;
   }
 
-  private async flushDrafts(window: TWindow, sessionId: string): Promise<boolean> {
+  private flushDrafts(window: TWindow, sessionId: string): Promise<boolean> {
+    const pending = this.draftFlushes.get(window);
+    if (pending?.pending) return pending.promise;
     if (!this.deps.sendDraftFlushRequest || !this.deps.getWindowSender) {
-      return true;
+      return Promise.resolve(true);
     }
-    return this.draftFlushCoordinator.request(window, sessionId, this.deps.getWindowSender(window));
+    const request = this.draftFlushCoordinator.request(window, sessionId, this.deps.getWindowSender(window));
+    const flushing = {
+      pending: true,
+      promise: request.then((success) => {
+        flushing.pending = false;
+        return success;
+      }),
+    };
+    this.draftFlushes.set(window, flushing);
+    return flushing.promise;
   }
 
   private releaseDraftFlush(window: TWindow, success: boolean): void {
+    if (!this.draftFlushes.delete(window) || window.isDestroyed()) return;
     try {
       this.deps.sendDraftFlushRelease?.(window, { success });
     } catch {

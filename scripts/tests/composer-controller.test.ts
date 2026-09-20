@@ -139,6 +139,38 @@ describe("ComposerControllerRegistry", () => {
 
   // @test-value v2
   // kind = "invariant"
+  // claim = "終了flushの凍結中も、revisionが一致する失敗送信の内部復元だけは本文を戻し、ユーザー編集は凍結解除まで拒否する"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+  // fault = "終了待ちの凍結が失敗送信の復元まで拒否する、または凍結中のユーザー編集を受理する"
+  // observable = "clear後のrevision guard、凍結中のdraft復元、凍結状態、release後の後続編集"
+  // observation_boundary = "public-boundary"
+  // scope = "composer-send-lifecycle"
+  // lifecycle = "permanent"
+  // distinction = "通常のsetDraftと異なり、restoreIfRevisionだけが失敗送信の内部復元として凍結中のdraft mutationを許可する"
+  // @end-test-value
+  it("restores a failed send while shutdown freeze blocks user edits", () => {
+    const registry = new ComposerControllerRegistry();
+    const owner = { kind: "auxiliary" as const, id: "auxiliary" };
+    registry.setDraft(owner, "draft before send");
+    const capturedRevision = registry.capture(owner).revision;
+    const clearedRevision = registry.clearIfRevision(owner, capturedRevision);
+    assert.equal(registry.capture(owner).draft, "");
+    assert.equal(clearedRevision, capturedRevision + 1);
+
+    registry.freeze();
+    assert.equal(registry.setDraft(owner, "user edit during shutdown"), clearedRevision);
+    const restoredRevision = registry.restoreIfRevision(owner, clearedRevision!, () => "draft before send");
+    assert.equal(restoredRevision, clearedRevision! + 1);
+    assert.equal(registry.capture(owner).draft, "draft before send");
+    assert.equal(registry.isFrozen, true);
+
+    registry.unfreeze();
+    assert.equal(registry.setDraft(owner, "follow-up edit"), restoredRevision! + 1);
+    assert.equal(registry.capture(owner).draft, "follow-up edit");
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "A failed draft save retains the local latest value and permits explicit retry"
   // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
   // fault = "A failed save is reported as success or silently discards the latest local draft"
