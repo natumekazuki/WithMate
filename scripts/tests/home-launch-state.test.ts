@@ -237,6 +237,16 @@ describe("home-launch-state", () => {
     assert.equal(resolveLaunchCharacterId(entries, "mia"), "");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "通常Sessionの最終利用順に応じ未使用・古いCharacterほど選択されやすく、archivedは選ばれない"
+  // oracle = { type = "contract", ref = "docs/adr/004-launch-character-random-selection.md#decision" }
+  // fault = "authoring履歴を通常利用と混同する、重みの向きを逆転する、archivedを抽選候補に含める"
+  // observable = "0から1を等分した600点で抽選した各Characterの回数の大小とarchivedの0回"
+  // observation_boundary = "public-boundary"
+  // scope = "home-launch-character-random-selection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("random character selection は最近使っていないactive Characterほど選択範囲を広くする", () => {
     const entries = [
       createCharacterEntry({ id: "mia", name: "Mia" }),
@@ -250,7 +260,7 @@ describe("home-launch-state", () => {
       { characterId: "archived", sessionKind: "default" as const },
       { characterId: "noa", sessionKind: "default" as const },
     ];
-    const selectionCounts = new Map(entries.map((entry) => [entry.id, 0] as const));
+    const selectionCounts = new Map<string, number>(entries.map((entry) => [entry.id, 0]));
 
     for (let index = 0; index < 600; index += 1) {
       const characterId = selectWeightedRandomLaunchCharacterId(
@@ -271,12 +281,22 @@ describe("home-launch-state", () => {
     assert.equal(selectWeightedRandomLaunchCharacterId([], [], [], () => 0.5), "");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "利用履歴がない2名のactive Characterは乱数範囲を半分ずつ占める"
+  // oracle = { type = "contract", ref = "docs/adr/004-launch-character-random-selection.md#decision" }
+  // fault = "履歴がない同順位の候補に異なる重みを割り当てる"
+  // observable = "0から1を等分した200点で両候補が100回ずつ選択されること"
+  // observation_boundary = "public-boundary"
+  // scope = "home-launch-character-random-selection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("random character selection は利用履歴がなければactive Characterを均等に選ぶ", () => {
     const entries = [
       createCharacterEntry({ id: "mia", name: "Mia" }),
       createCharacterEntry({ id: "noa", name: "Noa" }),
     ];
-    const selectionCounts = new Map(entries.map((entry) => [entry.id, 0] as const));
+    const selectionCounts = new Map<string, number>(entries.map((entry) => [entry.id, 0]));
 
     for (let index = 0; index < 200; index += 1) {
       const characterId = selectWeightedRandomLaunchCharacterId(
@@ -304,6 +324,16 @@ describe("home-launch-state", () => {
     );
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "使用中の候補を除外後、履歴がある候補とない候補を1対2の重みで抽選する"
+  // oracle = { type = "contract", ref = "docs/adr/004-launch-character-random-selection.md#decision" }
+  // fault = "使用中候補を抽選する、除外前の順位で重みを計算する、残り候補を均等に扱う"
+  // observable = "300個の等分乱数に対するmia/noa/yuiの選択回数0/100/200"
+  // observation_boundary = "public-boundary"
+  // scope = "home-launch-character-random-selection"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("random character selection は未使用候補の中で最終利用順の重み付けを維持する", () => {
     const entries = [
       createCharacterEntry({ id: "mia", name: "Mia" }),
@@ -314,7 +344,7 @@ describe("home-launch-state", () => {
       { characterId: "mia", sessionKind: "default" as const },
       { characterId: "noa", sessionKind: "default" as const },
     ];
-    const selectionCounts = new Map(entries.map((entry) => [entry.id, 0] as const));
+    const selectionCounts = new Map<string, number>(entries.map((entry) => [entry.id, 0]));
 
     for (let index = 0; index < 300; index += 1) {
       const characterId = selectWeightedRandomLaunchCharacterId(
