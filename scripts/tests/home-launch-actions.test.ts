@@ -32,11 +32,10 @@ function createMateProfile(): MateProfile {
   };
 }
 
-function createReadyDraft(mode: HomeLaunchDraft["mode"] = "session"): HomeLaunchDraft {
+function createReadyDraft(): HomeLaunchDraft {
   return {
     ...setLaunchWorkspaceFromPath(createClosedLaunchDraft(), "C:/work/demo"),
     open: true,
-    mode,
     title: "Task",
     providerId: "codex",
     characterSelectionMode: "specific",
