@@ -191,7 +191,6 @@ SessionAudit は V2 の summary/detail/lazy load 境界を維持し、detail pay
 
 - Session summary
 - Audit summary page
-- Merge run history
 
 ### Detail
 
@@ -203,7 +202,6 @@ detail API は section 単位で blob を読む。
 - `rawItems`
 - `operationDetails`
 - `messageArtifact`
-- `diffSnapshot`
 
 巨大 section は一括 IPC しない。`original_bytes` に基づいて preview / pagination / max size guard を適用する。
 
@@ -247,7 +245,7 @@ V3 migration は専用 script にする。
 - estimated compressed bytes
 - broken JSON
 - skipped rows
-- audit detail / artifact / diff snapshot の件数
+- audit detail / artifact の件数
 
 ### Write Mode
 
@@ -313,5 +311,5 @@ DB/file の原子性は扱いやすいが、SQLite 本体と WAL の肥大化は
 - session storage test: initial hydrate が full artifact blob を読まず、message artifact detail API だけが full artifact を返すこと。
 - deletion test: Session delete 後に DB row と blob refs が消えること。
 - GC test: orphan / missing / delete_pending の report と cleanup。
-- migration test: V2 detail JSON / artifact JSON / diff snapshot が V3 blob に移ること。
+- migration test: V2 detail JSON / artifact JSON が V3 blob に移ること。
 - IPC/renderer test: raw detail の巨大 payload を一括 state に載せないこと。

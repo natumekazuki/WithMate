@@ -3,6 +3,10 @@
 - 状態: Accepted
 - 日付: 2026-08-09
 
+## 適用状態
+
+Agent / 通常 Session の recovery action surface と共通 ChatWindow 配置は現行のまま適用する。本文中の Companion に関する記述は当時の設計判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。現行の transcript と recovery 操作の境界は変更しない。
+
 ## Context
 
 失敗、中断、キャンセル後の retry UI は Action Dock の expanded composer 内にあり、表示時に dock を強制展開していた。banner には停止地点と前回の依頼も複製されていたが、停止地点は直前の chat response、依頼は user message から確認できる。情報の重複により中央領域と composer の高さが圧迫され、file preview 中や狭い Window では回復操作を見つけにくかった。

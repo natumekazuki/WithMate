@@ -3,6 +3,10 @@
 - 状態: Accepted
 - 日付: 2026-07-30
 
+## 適用状態
+
+通常 Session、Auxiliary Session、provider runtime の実行設定継承と ownership 境界は現行のまま適用する。本文中の Companion 作成・閲覧・merge・discard に関する記述は当時の設計判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。現行の Main / Auxiliary / Character / SessionFolder 契約を失効させず、撤去済み Companion service の再公開も行わない。
+
 ## Context
 
 New Session と New Companion の launch dialog には、model、reasoning effort、approval mode、sandbox mode、Codex Reviewer、Codex Speed、custom agent を表示しない。一方、同じ provider を使う新規作業では、直近 Session の選択を維持したい。
@@ -32,7 +36,7 @@ Home が保持する Session summary は Character のランダム選択にも�
 - V6 の SQLite は Main Process が直接同期接続を作らず、限定された typed command だけを storage Worker の current generation へ送る。close / reset / reopen で generation が変わった後の旧 command は、新しい storage へ付け替えず失効させる。commit 結果を確定できない応答は成功・未実行へ推測変換せず、呼出し元へ結果不明として返す。
 - Character のランダム選択に使う履歴は実行権限の決定と分離し、ADR 004 の Home キャッシュ方針を維持する。
 
-実装の正本は `src-electron/session-launch-selection-service.ts`、各 Session storage の provider 別最新一件 query、`src-electron/provider-runtime-operation-coordinator.ts`、`src-electron/main-session-command-facade.ts`、`src-electron/companion-session-service.ts`、`src-electron/auxiliary-session-service.ts` とする。観測可能な契約は対応する `scripts/tests/` の test に置く。
+実装の正本は `src-electron/session-launch-selection-service.ts`、各 Session storage の provider 別最新一件 query、`src-electron/provider-runtime-operation-coordinator.ts`、`src-electron/main-session-command-facade.ts`、当時の [`src-electron/companion-session-service.ts`](https://github.com/natumekazuki/WithMate/blob/d987cf565f8e0f905ccf1e2d7ec78f5b5467ddcc/src-electron/companion-session-service.ts)、`src-electron/auxiliary-session-service.ts` とする。観測可能な契約は対応する `scripts/tests/` の test に置く。
 
 ## Alternatives
 

@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-08-01
 
+## 適用状態
+
+通常 Session の stable Character owner 契約は現行のまま適用する。本文中の Companion 固有記述は歴史的な判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。現行 Session / Auxiliary Session の owner と snapshot 契約を失効させるものではない。
+
 ## Context
 
 Session と Companion は Character の runtime snapshot を保存する。snapshot は通常 Session では immutable だが、canonical definition が無効な場合は生成できず、既存の壊れた row では保存済み owner と一致しないこともある。
