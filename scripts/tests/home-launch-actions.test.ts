@@ -10,7 +10,7 @@ import {
   type HomeLaunchDraft,
 } from "../../src/home/home-launch-state.js";
 import type { MateProfile } from "../../src/mate/mate-state.js";
-import type { SessionSummary } from "../../src/session-state.js";
+import type { HomeSessionSummary, SessionSummary } from "../../src/session-state.js";
 
 function createMateProfile(): MateProfile {
   return {
@@ -77,6 +77,7 @@ function createSessionSummary(overrides: Partial<SessionSummary> = {}): SessionS
     taskTitle: "Task",
     status: "idle",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    isPinned: false,
     provider: "codex",
     catalogRevision: 1,
     workspaceLabel: "demo",
@@ -92,6 +93,8 @@ function createSessionSummary(overrides: Partial<SessionSummary> = {}): SessionS
     runState: "idle",
     approvalMode: "on-request",
     codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
     model: "gpt-5.4-mini",
     reasoningEffort: "medium",
     customAgentName: "",
@@ -141,7 +144,7 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
       setLaunchStarting: (launchStarting: boolean) => {
         startingStates.push(launchStarting);
       },
-      upsertSessionSummary: (summary: SessionSummary) => {
+      upsertSessionSummary: (summary: HomeSessionSummary) => {
         sessionSummaries.push(summary.id);
       },
       ...overrides,
