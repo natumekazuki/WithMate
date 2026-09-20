@@ -454,6 +454,16 @@ test("Session workspace validation IPC は対象 Session window の保存済み 
   assert.deepEqual(validatedPaths, ["C:\\session-workspace"]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "SessionFolder作成IPCはfilesystem validationを要求せずHomeから作成できる"
+// oracle = { type = "contract", ref = "src-electron/main-ipc-registration.ts#create-session" }
+// fault = "SessionFolder作成で不要なworkspace validationを行うか、Homeからの作成を拒否する"
+// observable = "validation dependency未到達とcreateSession成功"
+// observation_boundary = "public-boundary"
+// scope = "Main IPC SessionFolder creation"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionFolder 作成 IPC は filesystem validation を行わず Home から作成できる", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const homeWindow = createWindowStub("http://localhost:5173/");
@@ -477,9 +487,65 @@ test("SessionFolder 作成 IPC は filesystem validation を行わず Home か�
     {},
     createSessionRequest({ kind: "session-folder" }),
   );
-
   assert.equal(validationCount, 0);
   assert.equal(creationCount, 1);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常Session作成IPCはHomeからworkspace検証後に作成し、不正workspaceまたはHome以外からの要求を拒否する"
+// oracle = { type = "contract", ref = "src-electron/main-ipc-registration.ts#create-session" }
+// fault = "通常Session作成の成功経路・workspace拒否・Home以外の認可境界が検出されず、拒否前に作成dependencyへ到達する"
+// observable = "workspace validationの入力、createSession payload、validation失敗とHome以外の拒否、および拒否時のdependency未到達"
+// observation_boundary = "public-boundary"
+// scope = "Main IPC create session authorization and workspace validation"
+// lifecycle = "permanent"
+// @end-test-value
+test("通常Session作成 IPC は workspace を検証し Home からだけ作成する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  let eventWindow: unknown = homeWindow;
+  const validatedPaths: unknown[] = [];
+  const createdInputs: unknown[] = [];
+  let validationResult: { valid: boolean; reason?: string } = { valid: true };
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveHomeWindow: () => homeWindow,
+    validateWorkspaceDirectory: async (workspacePath: string) => {
+      validatedPaths.push(workspacePath);
+      return validationResult;
+    },
+    createSession: async (input: unknown) => {
+      createdInputs.push(input);
+      return {};
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  const handler = handlers.get(WITHMATE_CREATE_SESSION_CHANNEL);
+  const directoryRequest = createSessionRequest({
+    kind: "directory",
+    label: "Workspace",
+    path: "C:\\workspace",
+    branch: "main",
+  });
+  await handler?.({}, directoryRequest);
+  assert.deepEqual(validatedPaths, ["C:\\workspace"]);
+  assert.deepEqual(createdInputs, [directoryRequest]);
+
+  validationResult = { valid: false, reason: "not-a-workspace" };
+  await assert.rejects(() => handler?.({}, directoryRequest) as Promise<unknown>);
+  assert.equal(createdInputs.length, 1);
+
+  eventWindow = otherWindow;
+  validationResult = { valid: true };
+  await assert.rejects(
+    () => handler?.({}, directoryRequest) as Promise<unknown>,
+    /only available from the Home window/,
+  );
+  assert.equal(createdInputs.length, 1);
+  assert.equal(validatedPaths.length, 2);
 });
 
 test("prompt template IPC は CRUD payload を専用 dependency へ渡す", async () => {
@@ -1460,6 +1526,7 @@ test("file tree context menu IPCはstrict requestとowning Session windowだけ�
 test("Markdown link context menu IPCはtargetと認可用file contextを変換せず渡す", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const sourceWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherOwnerWindow = createWindowStub("file:///session.html?sessionId=session-2");
   let currentWindow: ReturnType<typeof createWindowStub> | null = sourceWindow;
   const requests: unknown[] = [];
   const { deps } = createDeps({
@@ -1489,8 +1556,6 @@ test("Markdown link context menu IPCはtargetと認可用file contextを変換�
   );
   assert.deepEqual(requests, [request]);
 
-  assert.deepEqual(requests, [request]);
-
   for (const invalidRequest of [
     null,
     { target: "", point: { x: 1, y: 2 } },
@@ -1510,6 +1575,13 @@ test("Markdown link context menu IPCはtargetと認可用file contextを変換�
       /Markdown link (?:context menu request|file context) is invalid/,
     );
   }
+  assert.deepEqual(requests, [request]);
+
+  currentWindow = otherOwnerWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request) as Promise<unknown>,
+    /File Preview navigation must use the current Preview resource as its base/,
+  );
   assert.deepEqual(requests, [request]);
 
   currentWindow = null;
@@ -1866,12 +1938,13 @@ test("DB reset IPC は Settings window 以外からの呼び出しを拒否す�
 test("Auxiliary create IPC は送信元 window と runtime selection mode を結び付ける", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const otherSessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-2");
   const auxiliarySession = createAuxiliarySessionStub();
   let eventWindow: unknown = sessionWindow;
   const forwardedInputs: unknown[] = [];
   const { deps } = createDeps({
     resolveEventWindow: () => eventWindow,
-    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : otherSessionWindow,
     createAuxiliarySession: async (input: unknown) => {
       forwardedInputs.push(input);
       return auxiliarySession;
@@ -1936,6 +2009,27 @@ test("Auxiliary create IPC は送信元 window と runtime selection mode を結
   });
 
 
+  assert.deepEqual(forwardedInputs, [
+    {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      clientRequestId: "ipc-create-2",
+      creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+    },
+  ]);
+
+  eventWindow = otherSessionWindow;
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      clientRequestId: "ipc-create-other-owner",
+      creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+    }) as Promise<unknown>,
+    /only available from the target Session window/,
+  );
   assert.deepEqual(forwardedInputs, [
     {
       parentSessionId: "session-1",
