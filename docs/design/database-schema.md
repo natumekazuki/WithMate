@@ -44,7 +44,7 @@ V6 Session は `sessions_v6.incarnation_id` で同じ ID の削除・再作成�
 V6ではSQLite DB定義全体を再設計し、V5以前のsession履歴やlegacy Memory互換を保持要件にしない。
 V6 DB再設計の正本は`docs/design/v6-database-foundation.md`とし、この文書のV1〜V4 schema説明をV6設計へ持ち込まない。
 
-2026-05-19 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。`withmate-v4.db` が存在しない状態で既存の V3 / V2 / V1 DB がある場合は、起動時に同じ `<userData>` 配下へ V4 DB を自動作成する。migration 元の DB と blob / character file は削除せず、そのまま残す。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
+2026-05-19 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。`withmate-v4.db` が存在しない状態で既存の V3 / V2 / V1 DB がある場合は、起動時に同じ `<userData>` 配下へ V4 DB を自動作成する。個別の migration import は source DB と blob / character file を変更しない。起動時の退役データ cleanup は、管理下の旧DB・migration backupに含まれるCompanion専用table / 行と、それらだけが参照する専有blob / fileだけを対象とし、通常Session / Audit、共有blob、その他の通常データは保持する。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
 
 V1 schema の SQL 正本は `src-electron/database-schema-v1.ts`、V2 schema の SQL 正本は `src-electron/database-schema-v2.ts`、V3 schema の SQL 正本は `src-electron/database-schema-v3.ts`、V4 schema の SQL 正本は `src-electron/database-schema-v4.ts` に置く。
 V6 schema の SQL 正本は `src-electron/database-schema-v6.ts` に置き、current runtime の active DB path selection は `withmate-v6.db` を最終 migration target とする。Memory V6 runtime API は app ready 時に V6 DB を best-effort で作成または検証する。V6 DB の設計判断は `docs/design/v6-database-foundation.md` を優先する。
@@ -107,7 +107,7 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - V1 / V2 から V4 へ上げる場合は、既存の `scripts/migrate-database-v1-to-v2.ts`、`scripts/migrate-database-v2-to-v3.ts` で V3 へ上げた後、V3 -> V4 import を実行する
   - V3 -> V4 import は `session`、`audit log`、`app_settings`、`model_catalog_*` を V4 DB 内の runtime 互換 table へ取り込む。Mate profile / growth / provider instruction targets は V4 側で新規開始する
   - V4 import target では、V3 の分割 payload table で V4 runtime が参照しないものを作成後に削除する
-  - migration 元の V3 / V2 / V1 DB、`<userData>/blobs/v3/`、`<userData>/characters/` は削除しない
+  - 個別の V4 import は migration 元の V3 / V2 / V1 DB、`<userData>/blobs/v3/`、`<userData>/characters/` を変更しない。起動時の退役データ cleanup が変更できるのはCompanion専用table / 行と専有blob / fileに限り、通常Session / Auditと共有blobは保持する
   - dry-run: `npx tsx scripts/migrate-database-v3-to-v4.ts --dry-run --v3 <userData>/withmate-v3.db [--blob-root <userData>/blobs/v3]`
   - write: `npx tsx scripts/migrate-database-v3-to-v4.ts --write --v3 <userData>/withmate-v3.db --v4 <userData>/withmate-v4.db [--blob-root <userData>/blobs/v3] [--overwrite]`
   - `--overwrite` を指定した場合、既存 `withmate-v4.db` / `-wal` / `-shm` は rename backup してから import し、成功後に backup を破棄する
@@ -122,8 +122,9 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - `PRAGMA foreign_keys = ON`
 - WAL maintenance:
   - 全 SQLite connection は `src-electron/sqlite-connection.ts` の共通 helper で初期化する
-  - app 起動中は Main Process が 5 分ごとに選択中 DB の `-wal` file size を確認し、64 MiB を超えていれば短い `busy_timeout = 250` で `PRAGMA wal_checkpoint(TRUNCATE)` を実行する
-  - app 終了時と DB 再生成前にも `PRAGMA wal_checkpoint(TRUNCATE)` を実行し、選択中 DB の WAL 肥大化を抑制する
+  - V6 の SQLite 起動・通常 storage・WAL maintenance は storage Worker が owner となる。Main Process の5分ごとの保守 timer は Worker の `truncateWal` RPC を呼び、Worker 側が WAL size 条件と `PRAGMA wal_checkpoint(TRUNCATE)` を判定・実行する
+  - 初期化前など Worker がまだ生成されていない V6 の close では、Main Process から V6 WAL を操作しない。通常終了では Worker の truncate 完了後に Worker client を close する
+  - DB 再生成前の close も同じ Worker ownership 境界を使う。V6 以外の legacy DB を扱う既存経路では、対応する同期 connection helper の WAL maintenance を使う
   - WAL truncate は実行前に共通接続設定を適用し、DB が WAL mode でない状態からでも `journal_mode = WAL` へ戻してから checkpoint する
 
 ### DB 外保存
@@ -747,7 +748,7 @@ V4 DB 内の既存 runtime table:
 - 3.x character catalog: `<userData>/characters/` は legacy source として残る場合があるが、V4 migration では読み込まない
 
 runtime 起動時の自動 migration は V3 -> V4、V2 -> V3 -> V4、V1 -> V2 -> V3 -> V4 の順で実行する。
-migration 元の legacy DB と file storage は削除しない。
+個別 migration の実行中は migration 元の legacy DB と file storage を削除しない。起動時の退役データ cleanup は管理下の旧DB・backupに含まれるCompanion専用table / 行と専有fileだけを撤去し、通常Session / Auditと共有blobを保持する。
 V4 Mate table は legacy DB へ作成せず、新規 `withmate-v4.db` にだけ作成する。
 
 ### V2 migration target
@@ -794,8 +795,8 @@ V4 import target の資源棚卸:
 | --- | --- | --- |
 | `session_messages` / `session_message_artifacts` | 削除 | V4 runtime は `sessions.messages_json` を正本にする |
 | `audit_log_details` / `audit_log_operations` | 削除 | V4 runtime は `audit_logs` の inline JSON を正本にする |
-| migration 元の `withmate-v3.db` / `withmate-v2.db` / `withmate.db` | 保持 | rollback、再移行、ユーザー確認のため source data を破壊しない |
-| migration 元の `blobs/v3/` / `characters/` | 保持 | legacy source data とユーザー管理 file を migration が勝手に削除しない |
+| migration 元の `withmate-v3.db` / `withmate-v2.db` / `withmate.db` | import中は変更なし | 個別 import は source data を破壊しない。起動時cleanupでもCompanion専用table / 行だけを撤去し、通常Session / Auditを保持する |
+| migration 元の `blobs/v3/` / `characters/` | import中は変更なし | 個別 import は legacy source data とユーザー管理 file を削除しない。起動時cleanupでもCompanion専有blob / file以外を削除しない |
 
 ### Future design only
 
