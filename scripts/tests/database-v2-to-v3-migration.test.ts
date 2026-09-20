@@ -114,6 +114,17 @@ function readAllTextValues(db: DatabaseSync): string[] {
   return values;
 }
 
+function readDatabaseSnapshot(db: DatabaseSync): Record<string, Array<Record<string, unknown>>> {
+  const snapshot: Record<string, Array<Record<string, unknown>>> = {};
+  for (const tableName of tableNames(db)) {
+    const columns = (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((row) => row.name);
+    snapshot[tableName] = db.prepare(
+      `SELECT ${columns.join(", ")} FROM ${tableName} ORDER BY rowid`,
+    ).all() as Array<Record<string, unknown>>;
+  }
+  return snapshot;
+}
+
 function insertAppSettingsAndModelCatalog(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -239,8 +250,10 @@ describe("V2 to V3 database migration dry-run", () => {
       const sourceStatBefore = statSync(fixture.dbPath);
       const sourceDbBefore = new DatabaseSync(fixture.dbPath, { readOnly: true });
       let sessionCountBefore = 0;
+      let sourceSnapshotBefore: Record<string, Array<Record<string, unknown>>> = {};
       try {
         sessionCountBefore = readCount(sourceDbBefore, "sessions");
+        sourceSnapshotBefore = readDatabaseSnapshot(sourceDbBefore);
       } finally {
         sourceDbBefore.close();
       }
@@ -268,6 +281,7 @@ describe("V2 to V3 database migration dry-run", () => {
       const sourceDbAfter = new DatabaseSync(fixture.dbPath, { readOnly: true });
       try {
         assert.equal(readCount(sourceDbAfter, "sessions"), sessionCountBefore);
+        assert.deepEqual(readDatabaseSnapshot(sourceDbAfter), sourceSnapshotBefore);
       } finally {
         sourceDbAfter.close();
       }
@@ -523,6 +537,16 @@ describe("V2 to V3 database migration write mode", () => {
         blobRootPath,
       });
 
+      const targetBeforeReject = new DatabaseSync(v3DbPath);
+      try {
+        targetBeforeReject.prepare("UPDATE sessions SET task_title = ? WHERE id = ?").run(
+          "stale target marker",
+          "session-1",
+        );
+      } finally {
+        targetBeforeReject.close();
+      }
+
       await assert.rejects(
         () =>
           createMigrationWriteReport({
@@ -532,6 +556,16 @@ describe("V2 to V3 database migration write mode", () => {
           }),
         /V3 database already exists/,
       );
+
+      const rejectedTarget = new DatabaseSync(v3DbPath, { readOnly: true });
+      try {
+        assert.equal(
+          readRequiredRow<{ task_title: string }>(rejectedTarget, "SELECT task_title FROM sessions WHERE id = ?", "session-1").task_title,
+          "stale target marker",
+        );
+      } finally {
+        rejectedTarget.close();
+      }
 
       const overwriteReport = await createMigrationWriteReport({
         sourceDatabaseFile: fixture.dbPath,
@@ -544,6 +578,15 @@ describe("V2 to V3 database migration write mode", () => {
       assert.equal(overwriteReport.migratedV3Counts.sessions, 1);
       assert.equal(existsSync(v3DbPath), true);
       assert.equal(existsSync(blobRootPath), true);
+      const replacedTarget = new DatabaseSync(v3DbPath, { readOnly: true });
+      try {
+        assert.equal(
+          readRequiredRow<{ task_title: string }>(replacedTarget, "SELECT task_title FROM sessions WHERE id = ?", "session-1").task_title,
+          "V2 migration fixture",
+        );
+      } finally {
+        replacedTarget.close();
+      }
     } finally {
       fixture.cleanup();
     }

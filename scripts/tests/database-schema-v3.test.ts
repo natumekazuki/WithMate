@@ -118,6 +118,16 @@ describe("database-schema-v3", () => {
       const validDb = createV3Schema(validDbPath);
       validDb.close();
 
+      const wrongVersionDirPath = join(dirPath, "wrong-version");
+      mkdirSync(wrongVersionDirPath);
+      const wrongVersionDbPath = join(wrongVersionDirPath, APP_DATABASE_V3_FILENAME);
+      const wrongVersionDb = createV3Schema(wrongVersionDbPath);
+      try {
+        wrongVersionDb.exec("PRAGMA user_version = 2;");
+      } finally {
+        wrongVersionDb.close();
+      }
+
       const wrongNameDbPath = join(dirPath, "withmate-v2.db");
       const wrongNameDb = createV3Schema(wrongNameDbPath);
       wrongNameDb.close();
@@ -129,6 +139,7 @@ describe("database-schema-v3", () => {
       closeSync(openSync(emptyV3DbPath, "w"));
 
       assert.equal(isValidV3Database(validDbPath), true);
+      assert.equal(isValidV3Database(wrongVersionDbPath), false);
       assert.equal(isValidV3Database(wrongNameDbPath), false);
       assert.equal(isValidV3Database(emptyV3DbPath), false);
     } finally {
