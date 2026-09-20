@@ -93,28 +93,8 @@ export class MainWindowFacade {
     this.deps.getAuxWindowService().closeFilePreviewWindowsForSession(sessionId);
   }
 
-  async openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<BrowserWindow> {
-    return this.deps.getAuxWindowService().openCompanionReviewWindow(sessionId, auxiliarySessionId);
-  }
-
-  async openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow> {
-    return this.deps.getAuxWindowService().openCompanionMergeWindow(sessionId);
-  }
-
   listOpenSessionWindowIds(): string[] {
     return this.deps.getSessionWindowBridge().listOpenSessionWindowIds();
-  }
-
-  listOpenCompanionReviewWindowIds(): string[] {
-    return this.deps.getAuxWindowService().listOpenCompanionReviewWindowIds();
-  }
-
-  getCompanionReviewWindow(sessionId: string): BrowserWindow | null {
-    return this.deps.getAuxWindowService().getCompanionReviewWindow(sessionId);
-  }
-
-  closeCompanionReviewWindow(sessionId: string): void {
-    this.deps.getAuxWindowService().closeCompanionReviewWindow(sessionId);
   }
 
   closeResetTargetWindows(): void {

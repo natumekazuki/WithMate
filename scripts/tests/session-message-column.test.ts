@@ -18,8 +18,6 @@ import {
 } from "../../src/session-components.js";
 import { StableSessionMessageColumn } from "../../src/chat/chat-window.js";
 import { ConversationMessageColumn } from "../../src/chat/conversation-message-column.js";
-import { useCompanionCharacterProfile } from "../../src/companion-character-profile.js";
-import type { CompanionSession } from "../../src/companion-state.js";
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
 import { buildMessageCollapseTargets, type MessageCollapseTarget } from "../../src/session-message-collapse.js";
 import type { MessageListSource } from "../../src/auxiliary-session-message-projection.js";
@@ -155,59 +153,6 @@ function createCharacterProfile(): CharacterProfile {
       contextEmpty: ["context usage はまだありません"],
     },
   };
-}
-
-const companionSession: CompanionSession = {
-  id: "companion-session-1",
-  groupId: "group-1",
-  taskTitle: "Companion session",
-  status: "active",
-  repoRoot: "C:/workspace/WithMate",
-  focusPath: "",
-  targetBranch: "master",
-  baseSnapshotRef: "master",
-  baseSnapshotCommit: "abc123",
-  companionBranch: "companion/test",
-  worktreePath: "C:/workspace/WithMate-companion",
-  selectedPaths: [],
-  changedFiles: [],
-  siblingWarnings: [],
-  allowedAdditionalDirectories: [],
-  runState: "idle",
-  threadId: "thread-1",
-  provider: "codex",
-  catalogRevision: 1,
-  model: "gpt-test",
-  reasoningEffort: "low",
-  customAgentName: "",
-  approvalMode: "never",
-  codexSandboxMode: "workspace-write",
-  characterId: "companion",
-  character: "Companion",
-  characterRoleMarkdown: "",
-  characterIconPath: "",
-  characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-  characterRuntimeSnapshot: null,
-  createdAt: "2026-05-25T00:00:00.000Z",
-  updatedAt: "2026-05-25T00:00:00.000Z",
-  messages: [],
-};
-
-function CompanionDraftMessageColumn(props: SessionMessageColumnProps) {
-  const [draft, setDraft] = useState("");
-  const character = useCompanionCharacterProfile(companionSession);
-  assert.ok(character);
-
-  return React.createElement(
-    React.Fragment,
-    null,
-    React.createElement(StableSessionMessageColumn, { ...props, character }),
-    React.createElement(
-      "button",
-      { type: "button", onClick: () => setDraft((current) => `${current}a`) },
-      `draft:${draft}`,
-    ),
-  );
 }
 
 const conversationTestThemeColors = {};
@@ -1650,37 +1595,6 @@ test("ConversationMessageColumn は callback 再生成だけでは既存 message
   }
 });
 
-test("Companion draft 更新では既存 message column を再描画しない", async () => {
-  let messageTextReadCount = 0;
-  const message = {
-    role: "assistant" as const,
-    get text() {
-      messageTextReadCount += 1;
-      return "stable companion message";
-    },
-  };
-  const mounted = await mountSessionMessageColumn({
-    messages: [message],
-    component: CompanionDraftMessageColumn,
-  });
-
-  try {
-    const initialReadCount = messageTextReadCount;
-    assert.ok(initialReadCount > 0);
-    const draftButton = Array.from(mounted.container.querySelectorAll("button"))
-      .find((button) => button.textContent?.startsWith("draft:"));
-    assert.ok(draftButton);
-
-    await act(async () => {
-      draftButton.dispatchEvent(new mounted.dom.window.MouseEvent("click", { bubbles: true }));
-    });
-
-    assert.equal(messageTextReadCount, initialReadCount);
-  } finally {
-    await mounted.cleanup();
-  }
-});
-
 test("SessionMessageColumn は未追従時に message list 内の jump UI を描画しない", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(2),
@@ -2953,6 +2867,16 @@ test("SessionActionDockCompactRow はcontroller-only preview通知で添付件�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "latest commandがないright paneは指定されたempty textを表示する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+// fault = "latest commandがない状態でempty textまたはempty shellが表示されない"
+// observable = "right paneのempty textとempty shell markup"
+// observation_boundary = "component-behavior"
+// scope = "session-context-pane-empty-command"
+// lifecycle = "permanent"
+// @end-test-value
 test("SessionContextPane は latest command がないとき empty text を表示する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionContextPane, {
@@ -2970,7 +2894,6 @@ test("SessionContextPane は latest command がないとき empty text を表示
       runningDetailsEntries: [],
       liveRunReasoningText: "",
       backgroundTasks: [],
-      companionGroupMonitorEntries: [],
       selectedSessionLiveRunErrorMessage: "",
       isSelectedSessionRunning: false,
       isCopilotSession: false,
@@ -2989,7 +2912,6 @@ test("SessionContextPane は latest command がないとき empty text を表示
       contextEmptyText: "context usage はまだありません",
       onToggleHeaderExpanded() {},
       onCycleContextPaneTab() {},
-      onOpenCompanionReview() {},
     }),
   );
 

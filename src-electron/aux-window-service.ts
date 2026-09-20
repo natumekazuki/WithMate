@@ -12,8 +12,6 @@ import {
 import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
   CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
-  COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
-  COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
   DIFF_WINDOW_DEFAULT_BOUNDS,
   FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS,
 } from "./window-defaults.js";
@@ -66,10 +64,8 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
     payload: SessionFilePreviewWindowPayload,
   ): void;
   loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
-  loadCompanionMergeReviewEntry(window: TWindow, sessionId: string): Promise<void>;
   loadCharacterEditorEntry(window: TWindow, characterId?: string | null): Promise<void>;
   generateDiffToken(): string;
-  onCompanionReviewWindowsChanged(): void;
 };
 
 export class AuxWindowService<TWindow extends BaseWindowLike> {
@@ -82,8 +78,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private readonly filePreviewResourceTokens = new Map<string, string>();
   private readonly filePreviewLoads = new Map<string, Promise<void>>();
   private readonly closedFilePreviewSessionIds = new Set<string>();
-  private readonly companionReviewWindows = new Map<string, TWindow>();
-  private readonly companionMergeWindows = new Map<string, TWindow>();
   private readonly characterEditorWindows = new Map<string, TWindow>();
   private readonly diffPreviewStore = new Map<string, DiffPreviewPayload>();
   private readonly filePreviewStore = new Map<string, SessionFilePreviewWindowPayload>();
@@ -173,34 +167,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
         window.close();
       }
     }
-  }
-
-  listOpenCompanionReviewWindowIds(): string[] {
-    const sessionIds: string[] = [];
-    for (const [sessionId, window] of this.companionReviewWindows.entries()) {
-      if (!window.isDestroyed()) {
-        sessionIds.push(sessionId);
-      }
-    }
-    return sessionIds;
-  }
-
-  getCompanionReviewWindow(sessionId: string): TWindow | null {
-    const window = this.companionReviewWindows.get(sessionId) ?? null;
-    return window && !window.isDestroyed() ? window : null;
-  }
-
-  closeCompanionReviewWindow(sessionId: string): void {
-    const window = this.companionReviewWindows.get(sessionId) ?? null;
-    if (!window || window.isDestroyed()) {
-      if (window) {
-        this.companionReviewWindows.delete(sessionId);
-        this.deps.onCompanionReviewWindowsChanged();
-      }
-      return;
-    }
-
-    window.close();
   }
 
   async openHomeWindow(): Promise<TWindow> {
@@ -395,50 +361,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     }
   }
 
-  async openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<TWindow> {
-    const existing = this.reuseWindow(this.companionReviewWindows.get(sessionId) ?? null);
-    if (existing) {
-      return existing;
-    }
-
-    const window = this.deps.createWindow({
-      ...COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
-      title: `Companion - ${sessionId}`,
-    });
-    this.companionReviewWindows.set(sessionId, window);
-    this.deps.onCompanionReviewWindowsChanged();
-    window.once("ready-to-show", () => window.show());
-    window.on("closed", () => {
-      this.companionReviewWindows.delete(sessionId);
-      this.deps.onCompanionReviewWindowsChanged();
-    });
-    await this.deps.loadChatEntry(window, {
-      kind: "companion",
-      sessionId,
-      ...(auxiliarySessionId ? { auxiliarySessionId } : {}),
-    });
-    return window;
-  }
-
-  async openCompanionMergeWindow(sessionId: string): Promise<TWindow> {
-    const existing = this.reuseWindow(this.companionMergeWindows.get(sessionId) ?? null);
-    if (existing) {
-      return existing;
-    }
-
-    const window = this.deps.createWindow({
-      ...COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
-      title: `Companion Merge - ${sessionId}`,
-    });
-    this.companionMergeWindows.set(sessionId, window);
-    window.once("ready-to-show", () => window.show());
-    window.on("closed", () => {
-      this.companionMergeWindows.delete(sessionId);
-    });
-    await this.deps.loadCompanionMergeReviewEntry(window, sessionId);
-    return window;
-  }
-
   closeResetTargetWindows(): void {
     if (this.memoryV6ReviewWindow && !this.memoryV6ReviewWindow.isDestroyed()) {
       this.memoryV6ReviewWindow.close();
@@ -461,18 +383,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     this.filePreviewResourceTokens.clear();
     this.filePreviewStore.clear();
     this.filePreviewLoads.clear();
-    for (const window of this.companionReviewWindows.values()) {
-      if (!window.isDestroyed()) {
-        window.close();
-      }
-    }
-    this.companionReviewWindows.clear();
-    for (const window of this.companionMergeWindows.values()) {
-      if (!window.isDestroyed()) {
-        window.close();
-      }
-    }
-    this.companionMergeWindows.clear();
     for (const window of this.characterEditorWindows.values()) {
       if (!window.isDestroyed()) {
         window.close();

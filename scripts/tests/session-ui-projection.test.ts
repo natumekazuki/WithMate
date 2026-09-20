@@ -301,54 +301,6 @@ describe("session-ui-projection", () => {
     assert.equal(projection.badgeLabel, "失敗");
   });
 
-  it("ContextPaneProjection は CompanionGroup tab の件数と tone を作る", () => {
-    const projection = buildContextPaneProjection({
-      activeContextPaneTab: "companion-group",
-      latestCommandView: null,
-      backgroundTasks: [],
-      companionGroupMonitorEntries: [
-        {
-          kind: "companion",
-          groupLabel: "WithMate",
-          state: { kind: "running", label: "実行中" },
-          session: {
-            id: "companion-1",
-            groupId: "group-1",
-            taskTitle: "Companion",
-            status: "active",
-            repoRoot: "F:/workspace/WithMate",
-            focusPath: "",
-            targetBranch: "main",
-            baseSnapshotRef: "refs/withmate/base/1",
-            baseSnapshotCommit: "base-1",
-            selectedPaths: [],
-            changedFiles: [],
-            siblingWarnings: [],
-            allowedAdditionalDirectories: [],
-            runState: "running",
-            threadId: "",
-            provider: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "high",
-            approvalMode: "untrusted",
-            codexSandboxMode: "danger-full-access",
-            character: "Mia",
-            characterRoleMarkdown: "",
-            characterIconPath: "icon.png",
-            characterThemeColors: {
-              main: "#000000",
-              sub: "#ffffff",
-            },
-            updatedAt: "2026-03-28T00:00:00.000Z",
-            latestMergeRun: null,
-          },
-        },
-      ],
-    });
-
-    assert.equal(projection.toneClassName, "running");
-    assert.equal(projection.badgeLabel, "1");
-  });
 
   it("running details は確定済み step だけを末尾から拾い、最新 command は重複表示しない", () => {
     const entries = buildRunningDetailsEntries({
@@ -471,11 +423,30 @@ describe("session-ui-projection", () => {
     assert.equal(projection.conversationTokensLabel, "3,090");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "context pane tab cycleは通常Sessionで利用可能なtabだけを循環する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // fault = "削除済み専用tabをcycle結果へ返す"
+  // observable = "cycleContextPaneTabの通常tab結果"
+  // observation_boundary = "public-boundary"
+  // scope = "session-context-pane-tab-cycle"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("cycleContextPaneTab は利用可能な command pane を循環する", () => {
     assert.equal(cycleContextPaneTab("latest-command", 1), "messages");
-    assert.equal(cycleContextPaneTab("latest-command", -1), "companion-group");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "通常Sessionのavailable context tabsはprovider capabilityに従う"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // fault = "通常Sessionへ利用不可のtabを公開する"
+  // observable = "resolveAvailableContextPaneTabsの通常Session結果"
+  // observation_boundary = "public-boundary"
+  // scope = "session-context-pane-available-tabs"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("available tabs は non-Copilot で Tasks を除外し、Reasoning は capability がある時点で表示する", () => {
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false }), [
       "latest-command",
@@ -498,10 +469,6 @@ describe("session-ui-projection", () => {
       "reasoning",
       "tasks",
     ]);
-    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasCompanionGroupMonitor: true }), [
-      "latest-command",
-      "companion-group",
-    ]);
   });
 
   it("cycleContextPaneTab は利用可能 tab だけを循環する", () => {
@@ -510,18 +477,26 @@ describe("session-ui-projection", () => {
     assert.equal(cycleContextPaneTab("latest-command", -1, availableTabs), "latest-command");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Messages tabは有効化されたSessionにだけ既存pane順で追加される"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+  // fault = "Messages tabの表示条件または順序を誤り利用できるpaneの切替先を失う"
+  // observable = "利用可能tab一覧、Messages label、循環切替先"
+  // observation_boundary = "public-boundary"
+  // scope = "Session context pane Messages capability"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Messages tab は明示的に有効化したSession Windowだけへ追加される", () => {
     assert.deepEqual(resolveAvailableContextPaneTabs({
       isCopilotSession: true,
       includeMessages: true,
       hasReasoningCapability: true,
-      hasCompanionGroupMonitor: true,
     }), [
       "latest-command",
       "messages",
       "reasoning",
       "tasks",
-      "companion-group",
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
       "latest-command",

@@ -19,20 +19,6 @@ export function resolveAgentSessionDocumentTitle(input: {
   return resolveSessionDocumentTitle(input.sessionTitle, fallbackTitle || "Session");
 }
 
-export function resolveCompanionDocumentTitle(input: {
-  mode: "chat" | "merge";
-  sessionTitle: string | null | undefined;
-  sessionId: string | null | undefined;
-}): string | null {
-  const normalizedSessionId = input.sessionId?.trim() ?? "";
-  if (input.mode === "merge") {
-    return normalizedSessionId ? `Companion Merge - ${normalizedSessionId}` : "WithMate Companion";
-  }
-
-  const fallbackTitle = normalizedSessionId ? `Companion - ${normalizedSessionId}` : "WithMate Companion";
-  return resolveSessionDocumentTitle(input.sessionTitle, fallbackTitle);
-}
-
 export function applySessionDocumentTitle(
   title: string | null | undefined,
 ): void {

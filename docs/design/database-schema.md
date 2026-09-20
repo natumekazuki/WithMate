@@ -794,9 +794,6 @@ V4 import target の資源棚卸:
 | --- | --- | --- |
 | `session_messages` / `session_message_artifacts` | 削除 | V4 runtime は `sessions.messages_json` を正本にする |
 | `audit_log_details` / `audit_log_operations` | 削除 | V4 runtime は `audit_logs` の inline JSON を正本にする |
-| `companion_message_artifacts` | 削除 | V4 Companion runtime は `companion_messages.artifact_json` を正本にする |
-| `companion_audit_logs` / `companion_audit_log_details` / `companion_audit_log_operations` | 保持 | Companion audit は現行 runtime でも blob-backed storage を使う |
-| `blob_objects` と V4 DB 側の `blobs/v3/` | 保持 | Companion audit payload の blob metadata / file storage として現行 runtime が参照する |
 | migration 元の `withmate-v3.db` / `withmate-v2.db` / `withmate.db` | 保持 | rollback、再移行、ユーザー確認のため source data を破壊しない |
 | migration 元の `blobs/v3/` / `characters/` | 保持 | legacy source data とユーザー管理 file を migration が勝手に削除しない |
 

@@ -6,7 +6,6 @@ import { describe, it } from "node:test";
 
 import type { Session } from "../../src/app-state.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
-import type { CompanionSession } from "../../src/companion-state.js";
 import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { getSessionIncarnationId } from "../../src/session-state.js";
@@ -18,7 +17,7 @@ import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 import { SettingsCatalogService as SettingsCatalogServiceImpl } from "../../src-electron/settings-catalog-service.js";
 
 class SettingsCatalogService extends SettingsCatalogServiceImpl {
-  constructor(deps: Omit<ConstructorParameters<typeof SettingsCatalogServiceImpl>[0], "updateSessionThreadIfMatches" | "updateAuxiliarySessionThreadIfMatches" | "updateSessionRuntimeMetadataIfMatches" | "updateAuxiliarySessionRuntimeMetadataIfMatches" | "updateCompanionRuntimeMetadataIfMatches"> & Partial<Pick<ConstructorParameters<typeof SettingsCatalogServiceImpl>[0], "updateSessionThreadIfMatches" | "updateAuxiliarySessionThreadIfMatches" | "updateSessionRuntimeMetadataIfMatches" | "updateAuxiliarySessionRuntimeMetadataIfMatches" | "updateCompanionRuntimeMetadataIfMatches">>) {
+  constructor(deps: Omit<ConstructorParameters<typeof SettingsCatalogServiceImpl>[0], "updateSessionThreadIfMatches" | "updateAuxiliarySessionThreadIfMatches" | "updateSessionRuntimeMetadataIfMatches" | "updateAuxiliarySessionRuntimeMetadataIfMatches"> & Partial<Pick<ConstructorParameters<typeof SettingsCatalogServiceImpl>[0], "updateSessionThreadIfMatches" | "updateAuxiliarySessionThreadIfMatches" | "updateSessionRuntimeMetadataIfMatches" | "updateAuxiliarySessionRuntimeMetadataIfMatches">>) {
     super({
       runProviderRuntimeOperationExclusive: async (operation) => await operation(),
       ...deps,
@@ -82,20 +81,6 @@ class SettingsCatalogService extends SettingsCatalogServiceImpl {
         const next = { ...target, ...input.next };
         if (deps.replaceAuxiliarySessions) {
           const replaced = await deps.replaceAuxiliarySessions(sessions.map((session) => session.id === next.id ? next : session));
-          return replaced.find((session) => session.id === next.id) ?? next;
-        }
-        Object.assign(target, next);
-        return next;
-      }),
-      updateCompanionRuntimeMetadataIfMatches: deps.updateCompanionRuntimeMetadataIfMatches ?? (async (sessionId: string, input: ProviderRuntimeMetadataPatch) => {
-        const sessions = await deps.listCompanionSessions?.() ?? [];
-        const target = sessions.find((session) => session.id === sessionId);
-        if (!target || target.provider !== input.expected.provider || target.catalogRevision !== input.expected.catalogRevision ||
-            target.model !== input.expected.model || target.reasoningEffort !== input.expected.reasoningEffort ||
-            target.threadId !== input.expected.threadId) return null;
-        const next = { ...target, ...input.next };
-        if (deps.replaceCompanionSessions) {
-          const replaced = await deps.replaceCompanionSessions(sessions.map((session) => session.id === next.id ? next : session));
           return replaced.find((session) => session.id === next.id) ?? next;
         }
         Object.assign(target, next);
@@ -165,45 +150,6 @@ function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): Auxiliar
     createdAt: "2026-03-28T00:00:00.000Z",
     updatedAt: "2026-03-28T00:00:00.000Z",
     closedAt: "",
-    ...overrides,
-  };
-}
-
-function createCompanionSession(overrides?: Partial<CompanionSession>): CompanionSession {
-  return {
-    id: "companion-1",
-    groupId: "group-1",
-    taskTitle: "Companion",
-    status: "active",
-    repoRoot: "C:/workspace",
-    focusPath: "src",
-    targetBranch: "main",
-    baseSnapshotRef: "refs/withmate/companion/companion-1/base",
-    baseSnapshotCommit: "abc123",
-    companionBranch: "withmate/companion/companion-1",
-    worktreePath: "C:/workspace/.withmate/companion-1",
-    selectedPaths: [],
-    changedFiles: [],
-    siblingWarnings: [],
-    allowedAdditionalDirectories: [],
-    runState: "idle",
-    threadId: "companion-thread-1",
-    provider: "codex",
-    catalogRevision: 1,
-    model: "gpt-5.4",
-    reasoningEffort: "high",
-    customAgentName: "",
-    approvalMode: "on-request",
-    codexSandboxMode: "workspace-write",
-    characterId: "char",
-    character: "A",
-    characterRoleMarkdown: "伴走する。",
-    characterIconPath: "",
-    characterThemeColors: { main: "#000", sub: "#111" },
-    characterRuntimeSnapshot: null,
-    createdAt: "2026-03-28T00:00:00.000Z",
-    updatedAt: "2026-03-28T00:00:00.000Z",
-    messages: [{ role: "assistant", text: "companion result" }],
     ...overrides,
   };
 }
@@ -1541,125 +1487,14 @@ describe("SettingsCatalogService", () => {
   });
 
   // @test-value v2
-  // kind = "invariant"
-  // claim = "model catalog import は Companion の runtime metadata も限定更新する"
-  // fault = "Companion 本文を full replace で失う"
-  // observable = "Companion catalog revision、model、thread、messages、invalidation"
-  // observation_boundary = "component-behavior"
-  // scope = "catalog-import-companion-metadata"
-  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
-  // lifecycle = "permanent"
-  // impact = "Companion の実行状態と本文を catalog import で破壊する"
-  // distinction = "Companion metadata CAS と provider cleanup を確認する"
-  // @end-test-value
-  it("model catalog import で companion metadata も新 revision に移行する", async () => {
-    const previousSessions = [createSession()];
-    const previousCompanionSessions = [
-      createCompanionSession({
-        model: "missing-model",
-        reasoningEffort: "high",
-        threadId: "companion-thread-1",
-      }),
-    ];
-    const importedDocument: ModelCatalogDocument = {
-      providers: createCatalogSnapshot(2).providers,
-    };
-    const invalidated: string[] = [];
-    let replacedCompanionSessions: CompanionSession[] = [];
-
-    const service = new SettingsCatalogService({
-      hasInFlightSessionRuns() {
-        return false;
-      },
-      isSessionRunInFlight() {
-        return false;
-      },
-      isRunningSession() {
-        return false;
-      },
-      listSessions() {
-        return previousSessions;
-      },
-      listAuxiliarySessions() {
-        return [];
-      },
-      listCompanionSessions() {
-        return previousCompanionSessions;
-      },
-      getAppSettings() {
-        return createDefaultAppSettings();
-      },
-      updateAppSettings(settings) {
-        return settings;
-      },
-      getModelCatalog() {
-        return createCatalogSnapshot(1);
-      },
-      ensureModelCatalogSeeded() {
-        return createCatalogSnapshot(1);
-      },
-      importModelCatalogDocument(document) {
-        return {
-          revision: 2,
-          providers: document.providers,
-        };
-      },
-      exportModelCatalogDocument() {
-        return { providers: createCatalogSnapshot(1).providers };
-      },
-      replaceAllSessions() {
-        throw new Error("catalog import must use metadata CAS");
-      },
-      updateSessionRuntimeMetadataIfMatches(input) {
-        const current = previousSessions[0];
-        if (!current || current.provider !== input.expected.provider || current.catalogRevision !== input.expected.catalogRevision || current.model !== input.expected.model || current.threadId !== input.expected.threadId) return null;
-        previousSessions[0] = { ...current, ...input.next };
-        return previousSessions[0];
-      },
-      replaceAuxiliarySessions() {
-        throw new Error("catalog import must use metadata CAS");
-      },
-      replaceCompanionSessions() {
-        throw new Error("catalog import must use metadata CAS");
-      },
-      updateCompanionRuntimeMetadataIfMatches(sessionId, input) {
-        const current = previousCompanionSessions.find((session) => session.id === sessionId);
-        if (!current || current.provider !== input.expected.provider || current.catalogRevision !== input.expected.catalogRevision || current.model !== input.expected.model || current.threadId !== input.expected.threadId) return null;
-        const next = { ...current, ...input.next };
-        previousCompanionSessions[0] = next;
-        replacedCompanionSessions = previousCompanionSessions;
-        return next;
-      },
-      clearProviderQuotaTelemetry() {},
-      clearSessionContextTelemetry() {},
-      invalidateProviderSessionThread(providerId, sessionId) {
-        invalidated.push(`${providerId}:${sessionId}`);
-      },
-      broadcastSessions() {},
-      broadcastAppSettings() {},
-      broadcastModelCatalog() {},
-    });
-
-    await service.importModelCatalogDocument(importedDocument);
-
-    assert.equal(replacedCompanionSessions[0]?.catalogRevision, 2);
-    assert.equal(replacedCompanionSessions[0]?.model, "gpt-5.4");
-    assert.equal(replacedCompanionSessions[0]?.threadId, "");
-    assert.deepEqual(replacedCompanionSessions[0]?.messages, previousCompanionSessions[0].messages);
-    assert.deepEqual(invalidated, ["codex:session-1", "codex:companion-1"]);
-  });
-
-  // @test-value v2
   // kind = "contract"
-  // claim = "model catalog export は storage が返す document をそのまま公開する"
-  // fault = "export service が document を変形し import/export 契約を壊す"
-  // observable = "返却 document の providers"
-  // observation_boundary = "component-behavior"
-  // scope = "catalog-export-contract"
-  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
+  // claim = "model catalog exportはstorage documentをそのまま返す"
+  // oracle = { type = "contract", ref = "src-electron/settings-catalog-service.ts" }
+  // fault = "export時に保存済みprovider/model情報を置換または欠落させる"
+  // observable = "exportされたdocumentとstorageのdocumentの内容一致"
+  // observation_boundary = "public-boundary"
+  // scope = "model catalog export"
   // lifecycle = "permanent"
-  // impact = "catalog backup の再利用性を失う"
-  // distinction = "storage document の透過性を確認する"
   // @end-test-value
   it("model catalog export は storage の document をそのまま返す", () => {
     const document = { providers: createCatalogSnapshot(1).providers };
@@ -2082,146 +1917,23 @@ describe("SettingsCatalogService", () => {
     assert.deepEqual(invalidated, ["codex:session-1", "codex:aux-1"]);
   });
 
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "model catalog reset は Companion の runtime metadata だけを bundled catalog へ移行する"
-  // fault = "reset で Companion 本文を全置換する"
-  // observable = "Companion revision、model、thread、messages、invalidation"
-  // observation_boundary = "component-behavior"
-  // scope = "catalog-reset-companion-metadata"
-  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
-  // lifecycle = "permanent"
-  // impact = "catalog reset で Companion 実行状態を失う"
-  // distinction = "reset 時の限定 metadata 更新を確認する"
-  // @end-test-value
-  it("model catalog reset で companion metadata も bundled catalog へ移行する", async () => {
-    const sessions = [createSession()];
-    const companionSessions = [
-      createCompanionSession({
-        model: "missing-model",
-        reasoningEffort: "high",
-        threadId: "companion-thread-1",
-      }),
-    ];
-    const invalidated: string[] = [];
-    let replacedCompanionSessions: CompanionSession[] = [];
-
-    const service = new SettingsCatalogService({
-      hasInFlightSessionRuns() {
-        return false;
-      },
-      isSessionRunInFlight() {
-        return false;
-      },
-      isRunningSession() {
-        return false;
-      },
-      listSessions() {
-        return sessions;
-      },
-      listAuxiliarySessions() {
-        return [];
-      },
-      listCompanionSessions() {
-        return companionSessions;
-      },
-      getAppSettings() {
-        return createDefaultAppSettings();
-      },
-      updateAppSettings(settings) {
-        return settings;
-      },
-      getModelCatalog() {
-        return createCatalogSnapshot(3);
-      },
-      ensureModelCatalogSeeded() {
-        return createCatalogSnapshot(3);
-      },
-      importModelCatalogDocument() {
-        return createCatalogSnapshot(3);
-      },
-      exportModelCatalogDocument() {
-        return { providers: createCatalogSnapshot(3).providers };
-      },
-      replaceAllSessions() {
-        throw new Error("catalog reset must use metadata CAS");
-      },
-      replaceAuxiliarySessions() {
-        throw new Error("catalog reset must use metadata CAS");
-      },
-      replaceCompanionSessions() {
-        throw new Error("catalog reset must use metadata CAS");
-      },
-      updateSessionRuntimeMetadataIfMatches(input) {
-        const current = sessions[0];
-        if (!current || current.provider !== input.expected.provider || current.catalogRevision !== input.expected.catalogRevision || current.model !== input.expected.model || current.threadId !== input.expected.threadId) return null;
-        sessions[0] = { ...current, ...input.next };
-        return sessions[0];
-      },
-      updateCompanionRuntimeMetadataIfMatches(sessionId, input) {
-        const current = companionSessions.find((session) => session.id === sessionId);
-        if (!current || current.provider !== input.expected.provider || current.catalogRevision !== input.expected.catalogRevision || current.model !== input.expected.model || current.threadId !== input.expected.threadId) return null;
-        const next = { ...current, ...input.next };
-        companionSessions[0] = next;
-        replacedCompanionSessions = companionSessions;
-        return next;
-      },
-      clearProviderQuotaTelemetry() {},
-      clearSessionContextTelemetry() {},
-      invalidateProviderSessionThread(providerId, sessionId) {
-        invalidated.push(`${providerId}:${sessionId}`);
-      },
-      clearAuditLogs() {},
-      resetAppSettings() {
-        return createDefaultAppSettings();
-      },
-      resetModelCatalogToBundled() {
-        return createCatalogSnapshot(3);
-      },
-      clearProjectMemories() {},
-      resetSessionRuntime() {},
-      clearAllProviderQuotaTelemetry() {},
-      clearAllSessionContextTelemetry() {},
-      clearAllSessionBackgroundActivities() {},
-      invalidateAllProviderSessionThreads() {},
-      closeResetTargetWindows() {},
-      async recreateDatabaseFile() {
-        return createCatalogSnapshot(3);
-      },
-      broadcastSessions() {},
-      broadcastAppSettings() {},
-      broadcastModelCatalog() {},
-    });
-
-    await service.resetAppDatabase({ targets: ["modelCatalog"] });
-
-    assert.equal(replacedCompanionSessions[0]?.catalogRevision, 3);
-    assert.equal(replacedCompanionSessions[0]?.model, "gpt-5.4");
-    assert.equal(replacedCompanionSessions[0]?.threadId, "");
-    assert.deepEqual(replacedCompanionSessions[0]?.messages, companionSessions[0].messages);
-    assert.deepEqual(invalidated, ["codex:session-1", "codex:companion-1"]);
-  });
-});
 
 // @test-value v2
 // kind = "invariant"
-// claim = "catalog import の失敗時は試行済み collection を復元し、未試行 collection の並行更新・削除を保持する"
-// oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
-// fault = "先行 collection の保存失敗で未試行 collection まで古い snapshot に置換される"
-// observable = "失敗後の各 collection、catalog rollback、元の例外と rollback 失敗の伝播"
-// observation_boundary = "component-behavior"
+// claim = "catalog import の失敗時は試行済みのMain/Auxiliary collectionだけを復元する"
+// oracle = { type = "contract", ref = "src-electron/settings-catalog-service.ts" }
+// fault = "未試行collectionの並行更新を古いsnapshotへ戻すか、rollback失敗を隠す"
+// observable = "collection state, catalog state, rollback errors"
+// observation_boundary = "public-boundary"
 // scope = "catalog-import-rollback-ownership"
 // lifecycle = "permanent"
-// impact = "catalog import の失敗で無関係な会話更新が失われ、削除済み会話が復活する"
-// distinction = "制御した非同期保存失敗と並行変更の組合せは正常系 test や型検査では検出できない"
 // @end-test-value
 it("catalog import の rollback は試行済み collection に限定する", { timeout: 10_000 }, async () => {
-  for (const failedCollection of ["main", "auxiliary", "companion"] as const) {
+  for (const failedCollection of ["main", "auxiliary"] as const) {
     for (const rollbackFails of [false, true]) {
       const original = {
         main: [createSession()],
         auxiliary: [createAuxiliarySession()],
-        companion: [createCompanionSession(), createCompanionSession({ id: "companion-2" })],
       };
       const current = structuredClone(original);
       const entered = createDeferred();
@@ -2250,7 +1962,6 @@ it("catalog import の rollback は試行済み collection に限定する", { t
         isRunningSession: () => false,
         listSessions: () => current.main,
         listAuxiliarySessions: () => current.auxiliary,
-        listCompanionSessions: () => current.companion,
         getAppSettings: createDefaultAppSettings,
         updateAppSettings: (settings) => settings,
         getModelCatalog: () => catalog,
@@ -2298,27 +2009,8 @@ it("catalog import の rollback は試行済み collection に限定する", { t
           }
           return current.auxiliary[0];
         },
-        updateCompanionRuntimeMetadataIfMatches: async (sessionId, input) => {
-          const index = current.companion.findIndex((session) => session.id === sessionId);
-          const currentSession = index >= 0 ? current.companion[index] : undefined;
-          if (!currentSession || currentSession.catalogRevision !== input.expected.catalogRevision || currentSession.threadId !== input.expected.threadId) {
-            return null;
-          }
-          current.companion[index] = { ...currentSession, ...input.next };
-          if (!rollingBack && failedCollection === "companion") {
-            entered.resolve();
-            await resume.promise;
-            rollingBack = true;
-            throw importError;
-          }
-          if (rollingBack && rollbackFails && failedCollection === "companion") {
-            throw rollbackError;
-          }
-          return current.companion[index];
-        },
         replaceAllSessions: (rows) => replace("main", rows),
         replaceAuxiliarySessions: (rows) => replace("auxiliary", rows),
-        replaceCompanionSessions: (rows) => replace("companion", rows),
         clearProviderQuotaTelemetry() {},
         clearSessionContextTelemetry() {},
         invalidateProviderSessionThread() {},
@@ -2343,13 +2035,7 @@ it("catalog import の rollback は試行済み collection に限定する", { t
       if (failedCollection === "main") {
         current.auxiliary = [];
       }
-      if (failedCollection !== "companion") {
-        current.companion = [
-          { ...original.companion[0], title: "concurrent edit", messages: [] },
-        ];
-      }
       const expectedAuxiliary = structuredClone(current.auxiliary);
-      const expectedCompanion = structuredClone(current.companion);
       resume.resolve();
       await rejection;
       if (rollbackFails) {
@@ -2367,14 +2053,11 @@ it("catalog import の rollback は試行済み collection に限定する", { t
       } else {
         assert.deepEqual(current.auxiliary, failedCollection === "main" ? expectedAuxiliary : original.auxiliary);
       }
-      if (failedCollection === "companion") {
-        assert.equal(current.companion[0]?.catalogRevision, 2);
-      } else {
-        assert.deepEqual(current.companion, expectedCompanion);
-      }
       assert.deepEqual(sources, ["imported", "rollback"]);
       assert.deepEqual(catalog.providers, (rollbackFails ? incomingCatalog : createCatalogSnapshot(1)).providers);
     }
   }
 });
 
+
+});

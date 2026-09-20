@@ -128,7 +128,7 @@ Common Preparationに加えて、次を最後まで読む。
 
 - `character.md`と`character-notes.md`以外を編集しない。ただしworkspace instructionsがmanaged authoring fileの更新を明示した場合を除く。
 - app database、packaged resource、このCharacter directory外のfileを編集しない。
-- `config.toml`、Memory、unrelated Session / companion / chat historyをhidden inputとして使わない。
+- `config.toml`、Memory、unrelated Session / chat historyをhidden inputとして使わない。
 - Character rootへsource report、review checklist、manifest、pack directory、Zipを作らない。
 - Notion同期、親・子page作成、CharacterPack Zipの作成・展開検証、asset生成・添付・配布、catalog metadataの色更新を必須処理にしない。
 - `character.md`の必須frontmatterを削除しない。

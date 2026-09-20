@@ -31,7 +31,6 @@ import type {
   SessionSummary,
   SetSessionPinnedRequest,
 } from "./app-state.js";
-import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
 import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
 import type { AuxiliaryDraftRecord, AuxiliaryDraftSaveInput, AuxiliaryDraftSaveResult, AuxiliarySessionStatus } from "./auxiliary-draft-contract.js";
 import type {
@@ -39,13 +38,6 @@ import type {
   PromptTemplate,
   UpdatePromptTemplateInput,
 } from "./prompt-template.js";
-import type {
-  CompanionMergeSelectedFilesRequest,
-  CompanionMergeSelectedFilesResult,
-  CompanionReviewSnapshot,
-  CompanionSyncTargetResult,
-  CompanionTargetWorkspaceStashResult,
-} from "./companion-review-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
 import type { RendererLogInput } from "./app-log-types.js";
 import type {
@@ -160,8 +152,6 @@ export type WithMateWindowNavigationApi = {
   openSessionFilePreviewWindow(
     request: SessionFilePreviewWindowOpenRequest,
   ): Promise<SessionFilePreviewWindowOpenResult>;
-  openCompanionReviewWindow(sessionId: string, auxiliarySessionId?: string): Promise<void>;
-  openCompanionMergeWindow(sessionId: string): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
   showMarkdownLinkContextMenu(
     request: MarkdownLinkContextMenuRequest,
@@ -284,41 +274,6 @@ export type WithMateWindowAuxiliaryApi = {
   cancelAuxiliarySessionRun(auxiliarySessionId: string): Promise<void>;
 };
 
-export type WithMateWindowCompanionApi = {
-  listCompanionSessionSummaries(): Promise<CompanionSessionSummary[]>;
-  getCompanionSession(sessionId: string): Promise<CompanionSession | null>;
-  getCompanionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
-  getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
-  mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
-  syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
-  stashCompanionTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
-  restoreCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
-  dropCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
-  discardCompanionSession(sessionId: string): Promise<CompanionSession>;
-  createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
-  updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
-  previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
-  runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
-  cancelCompanionSessionRun(sessionId: string): Promise<void>;
-  listCompanionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
-  listCompanionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]>;
-  listCompanionAuditLogSummaryPage(
-    sessionId: string,
-    request?: AuditLogSummaryPageRequest | null,
-  ): Promise<AuditLogSummaryPageResult>;
-  getCompanionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null>;
-  getCompanionAuditLogDetailSection(
-    sessionId: string,
-    auditLogId: number,
-    section: AuditLogDetailSection,
-  ): Promise<AuditLogDetailFragment | null>;
-  getCompanionAuditLogOperationDetail(
-    sessionId: string,
-    auditLogId: number,
-    operationIndex: number,
-  ): Promise<AuditLogOperationDetailFragment | null>;
-};
-
 export type WithMateWindowObservabilityApi = {
   reportRendererLog(input: RendererLogInput): void;
   getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
@@ -328,7 +283,6 @@ export type WithMateWindowObservabilityApi = {
     kind: SessionBackgroundActivityKind,
   ): Promise<SessionBackgroundActivityState | null>;
   listOpenSessionWindowIds(): Promise<string[]>;
-  listOpenCompanionReviewWindowIds(): Promise<string[]>;
 };
 
 export type WithMateWindowSettingsApi = {
@@ -396,8 +350,6 @@ export type WithMateWindowSubscriptionApi = {
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeSessionWindowRestoreSet(listener: (sessionIds: string[]) => void): () => void;
   subscribeAuxiliarySessionNavigation(listener: (payload: AuxiliarySessionNavigationPayload) => void): () => void;
-  subscribeOpenCompanionReviewWindowIds(listener: (sessionIds: string[]) => void): () => void;
-  subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;
 };
 
 export type WithMateWindowMateApi = {
@@ -426,7 +378,6 @@ export type WithMateWindowApi =
   & WithMateWindowCatalogApi
   & WithMateWindowAuxiliaryApi
   & WithMateWindowSessionApi
-  & WithMateWindowCompanionApi
   & WithMateWindowObservabilityApi
   & WithMateWindowSettingsApi
   & WithMateWindowPromptTemplateApi

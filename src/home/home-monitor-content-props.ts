@@ -11,7 +11,6 @@ export type HomeMonitorContentInput = {
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
   feedback?: string;
   onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
-  onOpenCompanionReview: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowContextMenu: (
     kind: SessionMonitorEntryKind,
     sessionId: string,
@@ -25,7 +24,6 @@ export function buildHomeMonitorContentProps({
   auxiliaryDataState,
   feedback,
   onOpenSession,
-  onOpenCompanionReview,
   onShowContextMenu,
 }: HomeMonitorContentInput): HomeMonitorContentProps {
   return {
@@ -34,7 +32,6 @@ export function buildHomeMonitorContentProps({
     auxiliaryDataState,
     feedback,
     onOpenSession,
-    onOpenCompanionReview,
     onShowContextMenu,
   };
 }

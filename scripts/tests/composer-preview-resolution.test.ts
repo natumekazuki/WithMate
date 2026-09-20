@@ -12,10 +12,6 @@ function createApi(events: string[]): ComposerPreviewRequestApi {
       events.push(`session:${sessionId}:${message}`);
       return { attachments: [], errors: [] };
     },
-    async previewCompanionComposerInput(sessionId, message) {
-      events.push(`companion:${sessionId}:${message}`);
-      return { attachments: [], errors: [] };
-    },
   };
 }
 
@@ -39,17 +35,4 @@ test("createComposerPreviewRequest は session preview request を作る", async
   await request?.("hello");
 
   assert.deepEqual(events, ["session:s1:hello"]);
-});
-
-test("createComposerPreviewRequest は companion preview request を作る", async () => {
-  const events: string[] = [];
-  const request = createComposerPreviewRequest({
-    api: createApi(events),
-    mode: "companion",
-    sessionId: "c1",
-  });
-
-  await request?.("review");
-
-  assert.deepEqual(events, ["companion:c1:review"]);
 });

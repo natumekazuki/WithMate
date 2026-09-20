@@ -17,7 +17,7 @@ import { runSessionMonitorContextMenu } from "../../src/home/home-session-monito
 // distinction = "native menu serviceの失敗発生やMonitor contentのDOM描画ではなく、API resultからHomeApp state setterまでのdeliveryを検証する"
 // @end-test-value
 test("Session Monitor context menu API resultをfeedback setterへ届ける", async () => {
-  const request = { kind: "companion" as const, sessionId: "companion-1", point: { x: 24, y: 48 } };
+  const request = { kind: "agent" as const, sessionId: "agent-1", point: { x: 24, y: 48 } };
   const cases: Array<{ result: SessionMonitorContextMenuResult; expectedFeedback: string }> = [
     { result: { status: "closed" }, expectedFeedback: "" },
     { result: { status: "copied" }, expectedFeedback: "" },

@@ -25,7 +25,6 @@ export type HomeRightPaneProps = {
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
   onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
-  onOpenCompanionReview: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowSessionMonitorContextMenu: (
     kind: SessionMonitorEntryKind,
     sessionId: string,
@@ -53,7 +52,6 @@ export function HomeRightPane({
   onCreateCharacter,
   onEditCharacter,
   onOpenSession,
-  onOpenCompanionReview,
   onShowSessionMonitorContextMenu,
   canUsePrimaryFeatures = true,
   sessionWindowRestoreIds = [],
@@ -71,12 +69,6 @@ export function HomeRightPane({
       return;
     }
     onOpenSession(sessionId, auxiliarySessionId);
-  };
-  const openCompanionReview = (sessionId: string, auxiliarySessionId?: string) => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
-    onOpenCompanionReview(sessionId, auxiliarySessionId);
   };
   const showSessionMonitorContextMenu = (
     kind: SessionMonitorEntryKind,
@@ -159,7 +151,6 @@ export function HomeRightPane({
             auxiliaryDataState={auxiliaryDataState}
             feedback={sessionMonitorFeedback}
             onOpenSession={openSession}
-            onOpenCompanionReview={openCompanionReview}
             onShowContextMenu={showSessionMonitorContextMenu}
           />
         </section>

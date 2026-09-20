@@ -9,8 +9,6 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { buildNewSession, type MessageArtifact } from "../../src/app-state.js";
 import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
-import { CompanionStorage } from "../../src-electron/companion-storage.js";
-import { CompanionStorageV3 } from "../../src-electron/companion-storage-v3.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
 import {
   CREATE_V3_SCHEMA_SQL,
@@ -155,7 +153,6 @@ function checkpointAndRemoveSqliteSidecars(dbPath: string): void {
 function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY"): void {
   const sessionStorage = new SessionStorageV2(dbPath);
   const auditStorage = new AuditLogStorageV2(dbPath);
-  const companionStorage = new CompanionStorage(dbPath);
   const longMessage = `${"m".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:message-tail`;
   const session = buildNewSession({
     taskTitle: "V2 migration fixture",
@@ -215,81 +212,25 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
       errorMessage: "",
     });
 
-    const companionGroup = companionStorage.ensureGroup({
-      id: "companion-group-1",
-      repoRoot: "/workspace",
-      displayName: "workspace",
-      createdAt: "2026-04-28T02:00:00.000Z",
-      updatedAt: "2026-04-28T02:00:00.000Z",
-    });
-    const companionSession = companionStorage.createSession({
-      id: "companion-session-1",
-      groupId: companionGroup.id,
-      taskTitle: "V2 companion fixture",
-      status: "active",
-      repoRoot: "/workspace",
-      focusPath: "src",
-      targetBranch: "main",
-      baseSnapshotRef: "refs/withmate/base",
-      baseSnapshotCommit: "abc123",
-      companionBranch: "withmate/companion/session-1",
-      worktreePath: "/workspace/.withmate/companion/session-1",
-      selectedPaths: ["src/index.ts"],
-      changedFiles: [{ path: "src/index.ts", kind: "edit" }],
-      siblingWarnings: [],
-      allowedAdditionalDirectories: [],
-      runState: "idle",
-      threadId: "companion-thread-1",
-      provider: "codex",
-      catalogRevision: 1,
-      model: "gpt-5.4-mini",
-      reasoningEffort: "medium",
-      customAgentName: "",
-      approvalMode: DEFAULT_APPROVAL_MODE,
-      codexSandboxMode: "workspace-write",
-      characterId: "companion-char",
-      character: "Companion",
-      characterRoleMarkdown: `${"role ".repeat(160)}${sentinel}:companion-role-tail`,
-      characterIconPath: "",
-      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-      createdAt: "2026-04-28T02:01:00.000Z",
-      updatedAt: "2026-04-28T02:01:00.000Z",
-      messages: [
-        {
-          role: "assistant",
-          text: `${"c".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:companion-message-tail`,
-          artifact: createArtifact(`${sentinel}:companion`),
-        },
-      ],
-    });
-    companionStorage.createMergeRun({
-      id: "companion-merge-1",
-      sessionId: companionSession.id,
-      groupId: companionGroup.id,
-      operation: "merge",
-      selectedPaths: ["src/index.ts"],
-      changedFiles: [{ path: "src/index.ts", kind: "edit" }],
-      diffSnapshot: [
-        {
-          kind: "edit",
-          path: "src/index.ts",
-          summary: "companion diff",
-          diffRows: [{ kind: "add", rightNumber: 1, rightText: `${sentinel}:companion-diff-tail` }],
-        },
-      ],
-      siblingWarnings: [],
-      createdAt: "2026-04-28T02:02:00.000Z",
-    });
   } finally {
     sessionStorage.close();
     auditStorage.close();
-    companionStorage.close();
   }
 
   insertAppSettingsAndModelCatalog(dbPath);
 }
 
 describe("V2 to V3 database migration dry-run", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V2 migration dry-runはsourceを変更せず通常Session/Audit/blob/settings/catalogの件数とestimateを返す"
+  // oracle = { type = "contract", ref = "scripts/migrate-database-v2-to-v3.ts" }
+  // fault = "dry-runがsourceを変更するか、通常データの件数またはblob見積りを誤る"
+  // observable = "dry-run report counts, estimates, and source file state"
+  // observation_boundary = "public-boundary"
+  // scope = "database-v2-to-v3 dry-run"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("V2 source を変更せず件数と estimate bytes を返す", () => {
     const fixture = createV2FixtureDatabase();
     try {
@@ -314,11 +255,6 @@ describe("V2 to V3 database migration dry-run", () => {
         auditLogs: 1,
         auditLogDetails: 1,
         auditLogOperations: 1,
-        companionGroups: 1,
-        companionSessions: 1,
-        companionMessages: 1,
-        companionMessageArtifacts: 1,
-        companionMergeRuns: 1,
         appSettings: 1,
         modelCatalogRevisions: 1,
         modelCatalogProviders: 1,
@@ -345,10 +281,10 @@ describe("V2 to V3 database migration dry-run", () => {
 describe("V2 to V3 database migration write mode", () => {
   // @test-value v2
   // kind = "invariant"
-  // claim = "V2からV3への移行はsession messageのbookmark stateを引き継ぎ、Companionの既存blob-backed artifactを維持する"
+  // claim = "V2からV3への移行はsession messageのbookmark stateとblob-backed artifactを維持する"
   // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: V2/V3 migration" }
-  // fault = "V2 session sourceのbookmark stateを読み落とすか、V3 targetへの書込時に解除し、またはCompanion artifactを失う"
-  // observable = "V3 SessionStorageV3のmessage isBookmarkedとCompanionStorageV3のmessage artifact"
+  // fault = "V2 session sourceのbookmark stateを読み落とすか、V3 targetへの書込時に解除し、またはartifactを失う"
+  // observable = "V3 SessionStorageV3のmessage isBookmarkedとmessage artifact"
   // observation_boundary = "public-boundary"
   // scope = "database-v2-to-v3 message bookmark migration"
   // lifecycle = "permanent"
@@ -374,11 +310,6 @@ describe("V2 to V3 database migration write mode", () => {
       assert.equal(report.migratedV3Counts.sessionMessageArtifacts, 1);
       assert.equal(report.migratedV3Counts.auditLogs, 1);
       assert.equal(report.migratedV3Counts.auditLogOperations, 1);
-      assert.equal(report.migratedV3Counts.companionGroups, 1);
-      assert.equal(report.migratedV3Counts.companionSessions, 1);
-      assert.equal(report.migratedV3Counts.companionMessages, 1);
-      assert.equal(report.migratedV3Counts.companionMessageArtifacts, 1);
-      assert.equal(report.migratedV3Counts.companionMergeRuns, 1);
       assert.equal(report.migratedV3Counts.appSettings, 1);
       assert.equal(report.migratedV3Counts.modelCatalogModels, 1);
       assert.equal(report.migratedV3Counts.blobObjects > 0, true);
@@ -388,12 +319,6 @@ describe("V2 to V3 database migration write mode", () => {
         for (const statement of CREATE_V3_SCHEMA_SQL) {
           assert.equal(typeof statement, "string");
         }
-        assert.equal(tableExists(db, "companion_sessions"), true);
-        assert.equal(readCount(db, "companion_groups"), 1);
-        assert.equal(readCount(db, "companion_sessions"), 1);
-        assert.equal(readCount(db, "companion_messages"), 1);
-        assert.equal(readCount(db, "companion_message_artifacts"), 1);
-        assert.equal(readCount(db, "companion_merge_runs"), 1);
         assert.equal(readCount(db, "sessions"), 1);
         assert.equal(readCount(db, "session_messages"), 2);
         assert.equal(readCount(db, "audit_logs"), 1);
@@ -406,7 +331,6 @@ describe("V2 to V3 database migration write mode", () => {
 
       const sessionStorage = new SessionStorageV3(v3DbPath, blobRootPath);
       const auditStorage = new AuditLogStorageV3(v3DbPath, blobRootPath);
-      const companionStorage = new CompanionStorageV3(v3DbPath, blobRootPath);
       try {
         const migratedSession = await sessionStorage.getSession("session-1");
         assert.ok(migratedSession);
@@ -428,25 +352,25 @@ describe("V2 to V3 database migration write mode", () => {
         assert.equal(detail.rawItemsJson.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:raw-item-tail"), true);
         assert.equal(detail.operations[0]?.details?.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:operation-details-tail"), true);
 
-        const migratedCompanion = await companionStorage.getSession("companion-session-1");
-        assert.ok(migratedCompanion);
-        assert.equal(migratedCompanion.messages[0]?.text.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:companion-message-tail"), true);
-        assert.equal(
-          (await companionStorage.getMessageArtifact("companion-session-1", 0))?.changedFiles[0]?.diffRows[0]?.rightText,
-          "SENTINEL_V2_TO_V3_BLOB_ONLY:companion:artifact-diff-tail",
-        );
-        const mergeRuns = await companionStorage.listMergeRunsForSession("companion-session-1");
-        assert.equal(mergeRuns[0]?.diffSnapshot[0]?.diffRows[0]?.rightText, "SENTINEL_V2_TO_V3_BLOB_ONLY:companion-diff-tail");
       } finally {
         sessionStorage.close();
         auditStorage.close();
-        companionStorage.close();
       }
     } finally {
       fixture.cleanup();
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V2からV3への移行は長いSession message/artifact/Audit payloadをSQLite text columnへ戻さずblobへ保持する"
+  // oracle = { type = "contract", ref = "scripts/migrate-database-v2-to-v3.ts" }
+  // fault = "重いpayloadのtailをV3 SQLite text columnへ保存し、blob-backed storage境界を破る"
+  // observable = "V3 SQLite text values and migrated blob-backed detail values"
+  // observation_boundary = "public-boundary"
+  // scope = "database-v2-to-v3 blob payload boundary"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("長い message / artifact / audit details / raw items / operation details の sentinel tail を sqlite text columns に残さない", async () => {
     const fixture = createV2FixtureDatabase();
     try {
@@ -475,7 +399,6 @@ describe("V2 to V3 database migration write mode", () => {
 
       const sessionStorage = new SessionStorageV3(v3DbPath, blobRootPath);
       const auditStorage = new AuditLogStorageV3(v3DbPath, blobRootPath);
-      const companionStorage = new CompanionStorageV3(v3DbPath, blobRootPath);
       try {
         const session = await sessionStorage.getSession("session-1");
         assert.ok(session);
@@ -493,28 +416,25 @@ describe("V2 to V3 database migration write mode", () => {
         assert.equal(detail.rawItemsJson.includes(`${sentinel}:raw-item-tail`), true);
         assert.equal(detail.operations[0]?.details?.includes(`${sentinel}:operation-details-tail`), true);
 
-        const companion = await companionStorage.getSession("companion-session-1");
-        assert.ok(companion);
-        assert.equal(companion.characterRoleMarkdown.endsWith(`${sentinel}:companion-role-tail`), true);
-        assert.equal(companion.messages[0]?.text.includes(`${sentinel}:companion-message-tail`), true);
-        assert.equal(
-          (await companionStorage.getMessageArtifact("companion-session-1", 0))?.changedFiles[0]?.diffRows[0]?.rightText,
-          `${sentinel}:companion:artifact-diff-tail`,
-        );
-        assert.equal(
-          (await companionStorage.listMergeRunsForSession("companion-session-1"))[0]?.diffSnapshot[0]?.diffRows[0]?.rightText,
-          `${sentinel}:companion-diff-tail`,
-        );
       } finally {
         sessionStorage.close();
         auditStorage.close();
-        companionStorage.close();
       }
     } finally {
       fixture.cleanup();
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V2のlast_active_atとSession orderingはV3 migration後も保持される"
+  // oracle = { type = "contract", ref = "scripts/migrate-database-v2-to-v3.ts" }
+  // fault = "migration後にSessionの最終利用時刻または一覧順を失う"
+  // observable = "V3 session summaries and last_active_at values"
+  // observation_boundary = "public-boundary"
+  // scope = "database-v2-to-v3 session ordering"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("V2 の last_active_at と session ordering を V3 に保持する", async () => {
     const fixture = createV2FixtureDatabase();
     try {
@@ -580,6 +500,16 @@ describe("V2 to V3 database migration write mode", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V2 to V3 writeは既存targetを安全に拒否し、overwrite指定時だけ置換する"
+  // oracle = { type = "contract", ref = "scripts/migrate-database-v2-to-v3.ts" }
+  // fault = "既存targetを無断上書きするか、overwrite指定でもV3 targetを作成できない"
+  // observable = "write rejection and overwrite report/target existence"
+  // observation_boundary = "public-boundary"
+  // scope = "database-v2-to-v3 overwrite policy"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("overwrite=false で既存 target があると失敗し、overwrite=true で置き換える", async () => {
     const fixture = createV2FixtureDatabase();
     try {

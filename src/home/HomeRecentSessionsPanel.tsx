@@ -1,13 +1,11 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { isReadOnlySession, type HomeSessionSummary } from "../app-state.js";
-import type { CompanionSessionSummary } from "../companion-state.js";
-import { getHomeCompanionSessionState, type HomeSessionState } from "./home-session-projection.js";
+import type { HomeSessionState } from "./home-session-projection.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
 
 export type HomeRecentSessionsPanelProps = {
   filteredSessionEntries: Array<{ session: HomeSessionSummary; state: HomeSessionState }>;
-  companionSessions: CompanionSessionSummary[];
   normalizedSessionSearch: string;
   searchText: string;
   searchIcon: ReactNode;
@@ -15,7 +13,6 @@ export type HomeRecentSessionsPanelProps = {
   onOpenLaunchDialog: () => void;
   onOpenSession: (sessionId: string) => void;
   onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
-  onOpenCompanionReview: (sessionId: string) => void;
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
@@ -39,7 +36,6 @@ function getAgentSessionModeBadge(session: HomeSessionSummary): { className: str
 
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
-  companionSessions,
   normalizedSessionSearch,
   searchText,
   searchIcon,
@@ -47,7 +43,6 @@ export function HomeRecentSessionsPanel({
   onOpenLaunchDialog,
   onOpenSession,
   onSetSessionPinned,
-  onOpenCompanionReview,
   hasMore = false,
   loadingMore = false,
   onLoadMore,
@@ -87,41 +82,12 @@ export function HomeRecentSessionsPanel({
     }
     onOpenSession(sessionId);
   };
-  const openCompanionReview = (sessionId: string) => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
-    onOpenCompanionReview(sessionId);
-  };
-  const visibleCompanionSessions = companionSessions.filter((session) => {
-    if (!normalizedSessionSearch) {
-      return true;
-    }
-    const haystack = [
-      "companion",
-      session.taskTitle,
-      session.character,
-      session.repoRoot,
-      session.focusPath,
-      session.targetBranch,
-      session.status,
-    ].join(" ").toLowerCase();
-    return haystack.includes(normalizedSessionSearch);
-  });
-  const visibleSessionEntries = [
-    ...filteredSessionEntries.map((entry) => ({
+  const visibleSessionEntries = filteredSessionEntries.map((entry) => ({
       kind: "agent" as const,
       updatedAt: entry.session.updatedAt,
       isPinned: entry.session.isPinned,
       entry,
-    })),
-    ...visibleCompanionSessions.map((session) => ({
-      kind: "companion" as const,
-      updatedAt: session.updatedAt,
-      isPinned: false,
-      session,
-    })),
-  ].sort((left, right) => {
+    })).sort((left, right) => {
     if (left.isPinned !== right.isPinned) {
       return left.isPinned ? -1 : 1;
     }
@@ -159,41 +125,6 @@ export function HomeRecentSessionsPanel({
 
       <div className="session-card-list home-session-card-list">
         {visibleSessionEntries.map((item) => {
-          if (item.kind === "companion") {
-            const { session } = item;
-            const companionState = getHomeCompanionSessionState(session);
-            return (
-              <button
-                key={`companion-${session.id}`}
-                className="session-card home-session-card"
-                type="button"
-                style={buildCardThemeStyle(session.characterThemeColors)}
-                onClick={() => openCompanionReview(session.id)}
-                aria-disabled={!canUsePrimaryFeatures}
-                disabled={!canUsePrimaryFeatures}
-              >
-                <CharacterAvatar
-                  character={{ name: session.character, iconPath: session.characterIconPath }}
-                  size="tiny"
-                  className="home-session-card-avatar"
-                />
-                <div className="session-card-copy">
-                  <div className="session-card-topline home-session-card-topline">
-                    <strong>{session.taskTitle}</strong>
-                    <div className="home-session-card-badges">
-                      <span className="session-mode-badge companion">Companion</span>
-                      <span className={`session-status home-session-status ${companionState.kind}`.trim()}>{companionState.label}</span>
-                    </div>
-                  </div>
-                  <div className="session-card-subline home-session-card-meta">
-                    <span>{`Workspace : ${session.focusPath || session.repoRoot}`}</span>
-                    <span>{`updatedAt: ${session.updatedAt}`}</span>
-                  </div>
-                </div>
-              </button>
-            );
-          }
-
           const { session, state } = item.entry;
           const isReadOnly = isReadOnlySession(session);
           const modeBadge = getAgentSessionModeBadge(session);

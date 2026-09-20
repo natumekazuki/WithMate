@@ -154,7 +154,6 @@ type DecodedSessionV6RuntimeState = {
 };
 
 const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
-const COMPANION_SESSIONS_TABLE_NAME = "companion_sessions";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -1243,28 +1242,8 @@ export class SessionStorageV6 {
     if (this.auxiliaryDraftsTableExists()) this.db.prepare("DELETE FROM auxiliary_session_drafts").run();
   }
 
-  private companionSessionsTableExists(): boolean {
-    return Boolean(this.db.prepare(`
-      SELECT 1
-      FROM sqlite_master
-      WHERE type = 'table'
-        AND name = ?
-    `).get(COMPANION_SESSIONS_TABLE_NAME));
-  }
-
   private auxiliaryDraftsTableExists(): boolean {
     return Boolean(this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'auxiliary_session_drafts'`).get());
-  }
-
-  private listRetainedCompanionSessionIds(): string[] {
-    if (!this.companionSessionsTableExists()) {
-      return [];
-    }
-
-    const rows = this.db
-      .prepare("SELECT id FROM companion_sessions WHERE status NOT IN ('merged', 'discarded')")
-      .all() as SessionIdRow[];
-    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
   }
 
   private listAuxiliarySessionIdsWithoutValidParents(retainedParentSessionIds: Iterable<string>): string[] {
@@ -1274,7 +1253,6 @@ export class SessionStorageV6 {
 
     const validParentSessionIds = Array.from(new Set([
       ...retainedParentSessionIds,
-      ...this.listRetainedCompanionSessionIds(),
     ]));
     if (validParentSessionIds.length === 0) {
       const rows = this.db.prepare("SELECT id FROM auxiliary_sessions").all() as SessionIdRow[];

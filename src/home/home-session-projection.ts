@@ -1,313 +1,40 @@
 import type { HomeSessionSummary } from "../app-state.js";
 import type { AuxiliarySessionSummary } from "../auxiliary-session-state.js";
-import type { CompanionSessionSummary } from "../companion-state.js";
 import { sessionStateLabel } from "../ui-utils.js";
 
-export type HomeSessionState = {
-  kind: "running" | "interrupted" | "error" | "neutral";
-  label: string;
-};
-
+export type HomeSessionState = { kind: "running" | "interrupted" | "error" | "neutral"; label: string };
 export type HomeMonitorAuxiliaryDataState = "loading" | "ready" | "error";
-
-export type HomeAgentMonitorEntry = {
-  kind: "agent";
-  session: HomeSessionSummary;
-  state: HomeSessionState;
-  mainState: HomeSessionState;
-  auxiliarySessions: AuxiliarySessionSummary[];
-};
-
-export type HomeCompanionMonitorEntry = {
-  kind: "companion";
-  session: CompanionSessionSummary;
-  isWindowOpen: boolean;
-  state: HomeSessionState;
-  mainState: HomeSessionState;
-  auxiliarySessions: AuxiliarySessionSummary[];
-};
-
-export type HomeMonitorEntry = HomeAgentMonitorEntry | HomeCompanionMonitorEntry;
-
-export type HomeSessionProjection = {
-  filteredSessionEntries: HomeAgentMonitorEntry[];
-  normalizedSessionSearch: string;
-  monitorEntries: HomeMonitorEntry[];
-  runningMonitorEntries: HomeMonitorEntry[];
-  nonRunningMonitorEntries: HomeMonitorEntry[];
-  monitorBaseEmptyMessage: string;
-  monitorRunningEmptyMessage: string;
-  monitorCompletedEmptyMessage: string;
-};
+export type HomeAgentMonitorEntry = { kind: "agent"; session: HomeSessionSummary; state: HomeSessionState; mainState: HomeSessionState; auxiliarySessions: AuxiliarySessionSummary[] };
+export type HomeMonitorEntry = HomeAgentMonitorEntry;
+export type HomeSessionProjection = { filteredSessionEntries: HomeAgentMonitorEntry[]; normalizedSessionSearch: string; monitorEntries: HomeMonitorEntry[]; runningMonitorEntries: HomeMonitorEntry[]; nonRunningMonitorEntries: HomeMonitorEntry[]; monitorBaseEmptyMessage: string; monitorRunningEmptyMessage: string; monitorCompletedEmptyMessage: string };
 
 export function getHomeSessionKindSearchLabels(session: HomeSessionSummary): string[] {
-  if (session.sessionKind === "character-authoring") {
-    return ["character", "character authoring", "authoring", "agent"];
-  }
-
-  return ["agent", session.sessionKind];
+  return session.sessionKind === "character-authoring" ? ["character", "character authoring", "authoring", "agent"] : ["agent", session.sessionKind];
 }
-
-export function getHomeSessionState(
-  session: HomeSessionSummary,
-  auxiliarySessions: readonly AuxiliarySessionSummary[] | AuxiliarySessionSummary | null = [],
-): HomeSessionState {
-  const auxiliaries = normalizeAuxiliarySessions(auxiliarySessions);
-  if (
-    session.status === "running" ||
-    session.runState === "running" ||
-    auxiliaries.some((auxiliary) => auxiliary.runState === "running")
-  ) {
-    return {
-      kind: "running",
-      label: "実行中",
-    };
-  }
-
-  if (session.runState === "interrupted") {
-    return {
-      kind: "interrupted",
-      label: "中断",
-    };
-  }
-
-  if (session.runState === "error") {
-    return {
-      kind: "error",
-      label: "エラー",
-    };
-  }
-
-  if (session.runState && session.runState !== "idle") {
-    return {
-      kind: "neutral",
-      label: session.runState,
-    };
-  }
-
-  return {
-    kind: "neutral",
-    label: sessionStateLabel(session),
-  };
+export function getHomeSessionState(session: HomeSessionSummary, auxiliarySessions: readonly AuxiliarySessionSummary[] | AuxiliarySessionSummary | null = []): HomeSessionState {
+  const auxiliaries = !auxiliarySessions ? [] : Array.isArray(auxiliarySessions) ? auxiliarySessions : [auxiliarySessions];
+  if (session.status === "running" || session.runState === "running" || auxiliaries.some((item) => item.runState === "running")) return { kind: "running", label: "実行中" };
+  if (session.runState === "interrupted") return { kind: "interrupted", label: "中断" };
+  if (session.runState === "error") return { kind: "error", label: "エラー" };
+  if (session.runState && session.runState !== "idle") return { kind: "neutral", label: session.runState };
+  return { kind: "neutral", label: sessionStateLabel(session) };
 }
-
-export function getHomeCompanionSessionState(
-  session: CompanionSessionSummary,
-  auxiliarySessions: readonly AuxiliarySessionSummary[] | AuxiliarySessionSummary | null = [],
-): HomeSessionState {
-  const auxiliaries = normalizeAuxiliarySessions(auxiliarySessions);
-  if (session.runState === "running" || auxiliaries.some((auxiliary) => auxiliary.runState === "running")) {
-    return {
-      kind: "running",
-      label: "実行中",
-    };
-  }
-
-  if (session.runState === "error" || session.status === "recovery-required") {
-    return {
-      kind: "error",
-      label: session.status === "recovery-required" ? "要復旧" : "エラー",
-    };
-  }
-
-  if (session.status === "merged") {
-    return {
-      kind: "neutral",
-      label: "merged",
-    };
-  }
-
-  if (session.status === "discarded") {
-    return {
-      kind: "neutral",
-      label: "discarded",
-    };
-  }
-
-  return {
-    kind: "neutral",
-    label: "待機",
-  };
-}
-
-function normalizePathKey(value: string): string {
-  return value.replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
-}
-
-function normalizeAuxiliarySessions(
-  value: readonly AuxiliarySessionSummary[] | AuxiliarySessionSummary | null | undefined,
-): AuxiliarySessionSummary[] {
-  if (!value) {
-    return [];
-  }
-  return Array.isArray(value)
-    ? Array.from(value as readonly AuxiliarySessionSummary[])
-    : [value as AuxiliarySessionSummary];
-}
-
 function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
-  return [...sessions].sort((left, right) => {
-    const runningOrder = Number(right.runState === "running") - Number(left.runState === "running");
-    if (runningOrder !== 0) {
-      return runningOrder;
-    }
-
-    const updatedAtOrder = right.updatedAt.localeCompare(left.updatedAt);
-    return updatedAtOrder || right.id.localeCompare(left.id);
-  });
+  return [...sessions].sort((left, right) => Number(right.runState === "running") - Number(left.runState === "running") || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
 }
-
-export function isWorkspaceInCompanionGroup(workspacePath: string, repoRoot: string): boolean {
-  const normalizedWorkspacePath = normalizePathKey(workspacePath);
-  const normalizedRepoRoot = normalizePathKey(repoRoot);
-
-  if (!normalizedWorkspacePath || !normalizedRepoRoot) {
-    return false;
-  }
-
-  return normalizedWorkspacePath === normalizedRepoRoot || normalizedWorkspacePath.startsWith(`${normalizedRepoRoot}/`);
-}
-
-export function buildHomeCompanionMonitorEntries(
-  companionSessions: readonly CompanionSessionSummary[],
-  normalizedSessionSearch = "",
-  openCompanionReviewWindowIds: readonly string[] = [],
-  auxiliarySessionsByParentId: ReadonlyMap<
-    string,
-    readonly AuxiliarySessionSummary[] | AuxiliarySessionSummary | null
-  > = new Map(),
-): HomeCompanionMonitorEntry[] {
-  const openCompanionIdSet = new Set(openCompanionReviewWindowIds);
-  const openGroupIds = new Set(
-    companionSessions
-      .filter((session) => openCompanionIdSet.has(session.id))
-      .map((session) => session.groupId),
-  );
-
-  if (openGroupIds.size === 0) {
-    return [];
-  }
-
-  return companionSessions
-    .filter((session) => openGroupIds.has(session.groupId))
-    .filter((session) => {
-      if (!normalizedSessionSearch) {
-        return true;
-      }
-
-      const haystacks = [
-        session.taskTitle,
-        session.character,
-        session.groupId,
-        session.repoRoot,
-        session.focusPath,
-        session.targetBranch,
-        session.status,
-      ].map((value) => value.toLocaleLowerCase());
-      return haystacks.some((value) => value.includes(normalizedSessionSearch));
-    })
-    .map((session) => {
-      const auxiliarySessions = sortAuxiliarySessions(
-        normalizeAuxiliarySessions(auxiliarySessionsByParentId.get(session.id)),
-      );
-      return {
-        kind: "companion" as const,
-        session,
-        isWindowOpen: openCompanionIdSet.has(session.id),
-        state: getHomeCompanionSessionState(session, auxiliarySessions),
-        mainState: getHomeCompanionSessionState(session),
-        auxiliarySessions,
-      };
-    });
-}
-
-export function buildCompanionGroupMonitorEntries(
-  companionSessions: readonly CompanionSessionSummary[],
-  openCompanionReviewWindowIds: readonly string[] = [],
-): HomeCompanionMonitorEntry[] {
-  return buildHomeCompanionMonitorEntries(
-    companionSessions,
-    "",
-    openCompanionReviewWindowIds,
-  );
-}
-
-export function buildHomeSessionProjection(
-  sessions: readonly HomeSessionSummary[],
-  openSessionWindowIds: readonly string[],
-  sessionSearchText: string,
-  companionSessions: readonly CompanionSessionSummary[] = [],
-  openCompanionReviewWindowIds: readonly string[] = [],
-  auxiliarySessionSummaries: readonly AuxiliarySessionSummary[] = [],
-): HomeSessionProjection {
+export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary[], openSessionWindowIds: readonly string[], sessionSearchText: string, auxiliarySessionSummaries: readonly AuxiliarySessionSummary[] = []): HomeSessionProjection {
   const normalizedSessionSearch = sessionSearchText.trim().toLocaleLowerCase();
-  const auxiliarySessionsByParentId = new Map<string, AuxiliarySessionSummary[]>();
-  for (const auxiliary of auxiliarySessionSummaries) {
-    const siblings = auxiliarySessionsByParentId.get(auxiliary.parentSessionId) ?? [];
-    siblings.push(auxiliary);
-    auxiliarySessionsByParentId.set(auxiliary.parentSessionId, siblings);
-  }
-  for (const [parentSessionId, auxiliarySessions] of auxiliarySessionsByParentId) {
-    auxiliarySessionsByParentId.set(parentSessionId, sortAuxiliarySessions(auxiliarySessions));
-  }
-  const filteredSessionEntries = sessions
-    .filter((session) => {
-      if (!normalizedSessionSearch) {
-        return true;
-      }
-
-      const haystacks = [
-        session.taskTitle,
-        session.workspacePath,
-        session.workspaceLabel,
-        ...getHomeSessionKindSearchLabels(session),
-      ]
-        .map((value) => value.toLocaleLowerCase());
-      return haystacks.some((value) => value.includes(normalizedSessionSearch));
-    })
-    .map((session) => {
-      const auxiliarySessions = [...(auxiliarySessionsByParentId.get(session.id) ?? [])];
-      return {
-        kind: "agent" as const,
-        session,
-        state: getHomeSessionState(session, auxiliarySessions),
-        mainState: getHomeSessionState(session),
-        auxiliarySessions,
-      };
-    });
-
-  const openSessionWindowIdSet = new Set(openSessionWindowIds);
-  const companionMonitorEntries = buildHomeCompanionMonitorEntries(
-    companionSessions,
-    normalizedSessionSearch,
-    openCompanionReviewWindowIds,
-    auxiliarySessionsByParentId,
-  );
-  const monitorEntries = [
-    ...filteredSessionEntries.filter(({ session }) => openSessionWindowIdSet.has(session.id)),
-    ...companionMonitorEntries,
-  ];
+  const byParent = new Map<string, AuxiliarySessionSummary[]>();
+  for (const auxiliary of auxiliarySessionSummaries) byParent.set(auxiliary.parentSessionId, [...(byParent.get(auxiliary.parentSessionId) ?? []), auxiliary]);
+  for (const [id, auxiliaries] of byParent) byParent.set(id, sortAuxiliarySessions(auxiliaries));
+  const filteredSessionEntries = sessions.filter((session) => {
+    if (!normalizedSessionSearch) return true;
+    return [session.taskTitle, session.workspacePath, session.workspaceLabel, ...getHomeSessionKindSearchLabels(session)].map((value) => value.toLocaleLowerCase()).some((value) => value.includes(normalizedSessionSearch));
+  }).map((session) => { const auxiliarySessions = [...(byParent.get(session.id) ?? [])]; return { kind: "agent" as const, session, state: getHomeSessionState(session, auxiliarySessions), mainState: getHomeSessionState(session), auxiliarySessions }; });
+  const openIds = new Set(openSessionWindowIds);
+  const monitorEntries = filteredSessionEntries.filter(({ session }) => openIds.has(session.id));
   const runningMonitorEntries = monitorEntries.filter(({ state }) => state.kind === "running");
   const nonRunningMonitorEntries = monitorEntries.filter(({ state }) => state.kind !== "running");
-
-  const hasOpenSessionWindows = openSessionWindowIds.length > 0;
-  const monitorBaseEmptyMessage =
-    filteredSessionEntries.length === 0 && companionMonitorEntries.length === 0
-      ? normalizedSessionSearch
-        ? "一致するセッションはないよ。"
-        : "表示できるセッションはまだないよ。"
-      : hasOpenSessionWindows
-        ? "一致する開いているセッションはないよ。"
-        : "開いているセッションはないよ。";
-
-  return {
-    filteredSessionEntries,
-    normalizedSessionSearch,
-    monitorEntries,
-    runningMonitorEntries,
-    nonRunningMonitorEntries,
-    monitorBaseEmptyMessage,
-    monitorRunningEmptyMessage: monitorEntries.length > 0 ? "実行中はないよ。" : monitorBaseEmptyMessage,
-    monitorCompletedEmptyMessage: monitorEntries.length > 0 ? "停止・完了はないよ。" : monitorBaseEmptyMessage,
-  };
+  const monitorBaseEmptyMessage = filteredSessionEntries.length === 0 ? (normalizedSessionSearch ? "一致するセッションはないよ。" : "表示できるセッションはまだないよ。") : openSessionWindowIds.length > 0 ? "一致する開いているセッションはないよ。" : "開いているセッションはないよ。";
+  return { filteredSessionEntries, normalizedSessionSearch, monitorEntries, runningMonitorEntries, nonRunningMonitorEntries, monitorBaseEmptyMessage, monitorRunningEmptyMessage: monitorEntries.length > 0 ? "実行中はないよ。" : monitorBaseEmptyMessage, monitorCompletedEmptyMessage: monitorEntries.length > 0 ? "停止・完了はないよ。" : monitorBaseEmptyMessage };
 }

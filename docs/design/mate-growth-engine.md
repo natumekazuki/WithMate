@@ -21,7 +21,7 @@ WithMate 4.0.0 の Growth を、旧 MemoryGeneration の復活ではなく、Mat
 ## Core Decisions
 
 - Mate Growth Engine は Main Process 内の app service として実装する
-- 入力は WithMate が持つ session / companion / audit / message metadata と Mate Profile に限定する
+- 入力は WithMate が持つ session / audit / message metadata と Mate Profile に限定する
 - 出力は Growth ledger、Mate Profile revision、Markdown projection の再生成に限定する
 - Growth Event 履歴をそのまま prompt / provider instruction に入れない
 - Growth Event から Markdown を直接更新しない
@@ -82,7 +82,7 @@ Growth 処理の orchestrator。
 
 責務:
 
-- session / companion の完了済み差分を `extraction_cursor` から取得する
+- session の完了済み差分を `extraction_cursor` から取得する
 - Mate が active でない場合は実行しない
 - Growth が disabled、前回 `extraction_cursor` から差分なし、または `memory_candidate_mode` が現行 runtime で自動生成対象外の場合は Memory Candidate 生成を実行しない
 - 1 時間間隔などの Growth apply cooldown は consolidation / Profile apply の trigger であり、`memory_candidate_mode = 'every_turn'` の抽出を止めない
@@ -281,7 +281,7 @@ type GrowthExtractionInput = {
     sourceMessageIds: string[];
   };
   sessionMetadata: {
-    sourceType: "session" | "companion";
+    sourceType: "session";
     sourceSessionId: string;
     projectDigestId?: string | null;
   };
@@ -640,7 +640,7 @@ Growth Review UI は日常的な承認 queue ではなく、事故対応とメ�
 ## Data Flow
 
 ```text
-session / companion completed turn
+session completed turn
   -> MateGrowthEngine enqueue
   -> extraction_cursor / Memory Candidate extraction gate
   -> GrowthModelPort.extractCandidates as app internal background execution

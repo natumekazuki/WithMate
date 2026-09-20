@@ -6,8 +6,6 @@ import type { DiffPreviewPayload } from "../../src/session-state.js";
 import { AuxWindowService } from "../../src-electron/aux-window-service.js";
 import {
   CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
-  COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
-  COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
   DIFF_WINDOW_DEFAULT_BOUNDS,
   FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS,
 } from "../../src-electron/window-defaults.js";
@@ -73,6 +71,16 @@ function createDiffPreview(): DiffPreviewPayload {
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は singleton window を再利用する"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "singleton各windowの再利用・分類判定・close後のregistry解除を誤る"
+// observable = "home/settings/memory-reviewのwindow identity、load mode列、生成数、close後の判定"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は singleton window を再利用する", async () => {
   const created: unknown[] = [];
   const homeLoads: string[] = [];
@@ -88,9 +96,7 @@ test("AuxWindowService は singleton window を再利用する", async () => {
     async loadDiffEntry() {},
     async loadFilePreviewEntry() {},
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
     },
@@ -116,6 +122,16 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   assert.equal(service.isSettingsWindow(settings), false);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は diff preview を保持し reset 時に close する"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "diff previewをregistryへ保存しないか、reset後もpreviewを残す"
+// observable = "diff load token、preview取得結果、reset後のnull"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は diff preview を保持し reset 時に close する", async () => {
   const diffLoads: string[] = [];
   const diffStub = createWindowStub();
@@ -131,9 +147,7 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
     },
     async loadFilePreviewEntry() {},
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
     },
@@ -153,6 +167,16 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
   assert.equal(service.getDiffPreview("diff-token"), null);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は同じ file preview resource を再利用し close 後は作り直す"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "同一resourceを別windowとして重複生成するか、close後にregistry・payloadを残す"
+// observable = "created/focused disposition、window identity、navigation payload、preview payload、生成数"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は同じ file preview resource を再利用し close 後は作り直す", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   const createdOptions: Array<Record<string, unknown>> = [];
@@ -175,9 +199,7 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
       navigations.push(nextPayload);
     },
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       tokenSequence += 1;
       return `preview-${tokenSequence}`;
@@ -240,6 +262,16 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
   assert.equal(service.getFilePreviewPayload("preview-3"), null);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は file preview entry load 失敗時に registry と window を残さない"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "entry load失敗後に破棄済みwindowまたはpreview registryを残し、再試行を妨げる"
+// observable = "reject error、destroyed state、preview payload null、再open disposition"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は file preview entry load 失敗時に registry と window を残さない", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   const createdOptions: Array<Record<string, unknown>> = [];
@@ -259,9 +291,7 @@ test("AuxWindowService は file preview entry load 失敗時に registry と win
       }
     },
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return `preview-${stubs.length}`;
     },
@@ -287,6 +317,16 @@ test("AuxWindowService は file preview entry load 失敗時に registry と win
   assert.equal(service.getFilePreviewPayload("preview-1")?.windowTitle, "File Preview");
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は commit file preview を repository・commit・path 単位で再利用する"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "repository・commit・pathの識別を混同し、異なるcommitを既存previewへ再利用する"
+// observable = "created/focused disposition、window identity、stub生成数"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は commit file preview を repository・commit・path 単位で再利用する", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   let tokenSequence = 0;
@@ -300,9 +340,7 @@ test("AuxWindowService は commit file preview を repository・commit・path �
     async loadDiffEntry() {},
     async loadFilePreviewEntry() {},
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       tokenSequence += 1;
       return `commit-preview-${tokenSequence}`;
@@ -340,6 +378,16 @@ test("AuxWindowService は commit file preview を repository・commit・path �
   assert.equal(stubs.length, 2);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は absolute file preview を path 単位で再利用し close 後に破棄する"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "同一absolute pathを再利用せず、close後のpayloadを残す"
+// observable = "created/focused disposition、window生成数、destroy後payload null、window title"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は absolute file preview を path 単位で再利用し close 後に破棄する", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   const createdOptions: Array<Record<string, unknown>> = [];
@@ -355,9 +403,7 @@ test("AuxWindowService は absolute file preview を path 単位で再利用し 
     async loadDiffEntry() {},
     async loadFilePreviewEntry() {},
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       tokenSequence += 1;
       return `absolute-preview-${tokenSequence}`;
@@ -387,6 +433,16 @@ test("AuxWindowService は absolute file preview を path 単位で再利用し 
   assert.equal(service.getFilePreviewPayload("absolute-preview-2")?.windowTitle, "notes.md");
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は大小文字だけが異なる absolute path を別 Preview として扱う"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "pathの大文字小文字を正規化しすぎて異なるPreviewを同一windowへ束ねる"
+// observable = "各openのcreated disposition、window identity、stub生成数"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は大小文字だけが異なる absolute path を別 Preview として扱う", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   let tokenSequence = 0;
@@ -400,9 +456,7 @@ test("AuxWindowService は大小文字だけが異なる absolute path を別 Pr
     async loadDiffEntry() {},
     async loadFilePreviewEntry() {},
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       tokenSequence += 1;
       return `case-preview-${tokenSequence}`;
@@ -426,6 +480,16 @@ test("AuxWindowService は大小文字だけが異なる absolute path を別 Pr
   assert.equal(stubs.length, 2);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は literal backslash を含む canonical path を separator path と区別する"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "literal backslashとseparatorを同一pathとして扱いPreviewを誤って共有する"
+// observable = "各openのcreated disposition、window identity、stub生成数"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は literal backslash を含む canonical path を separator path と区別する", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   let tokenSequence = 0;
@@ -439,9 +503,7 @@ test("AuxWindowService は literal backslash を含む canonical path を separa
     async loadDiffEntry() {},
     async loadFilePreviewEntry() {},
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       tokenSequence += 1;
       return `separator-preview-${tokenSequence}`;
@@ -465,6 +527,16 @@ test("AuxWindowService は literal backslash を含む canonical path を separa
   assert.equal(stubs.length, 2);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は entry load 中に閉じた Session を opened 扱いにしない"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "entry load中のSession close後もopen処理を成功扱いし、window・payloadを残す"
+// observable = "reject error、destroyed state、preview payload null"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は entry load 中に閉じた Session を opened 扱いにしない", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   let finishLoad: (() => void) | null = null;
@@ -483,9 +555,7 @@ test("AuxWindowService は entry load 中に閉じた Session を opened 扱い�
       await load;
     },
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "delayed-preview";
     },
@@ -504,6 +574,16 @@ test("AuxWindowService は entry load 中に閉じた Session を opened 扱い�
   assert.equal(service.getFilePreviewPayload("delayed-preview"), null);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は共有 entry load 中に閉じた Session を reused 扱いにしない"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "共有load中のSession close後に再利用処理を成功扱いし、registryを残す"
+// observable = "両openのreject error、destroyed state、preview payload null"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は共有 entry load 中に閉じた Session を reused 扱いにしない", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   let finishLoad: (() => void) | null = null;
@@ -522,9 +602,7 @@ test("AuxWindowService は共有 entry load 中に閉じた Session を reused �
       await load;
     },
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "shared-delayed-preview";
     },
@@ -546,6 +624,16 @@ test("AuxWindowService は共有 entry load 中に閉じた Session を reused �
   assert.equal(service.getFilePreviewPayload("shared-delayed-preview"), null);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は close 済み Session の遅延 file preview admission を拒否する"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "close済みSessionのpreview admissionを受け入れwindowやpayloadを作成する"
+// observable = "reject error、stub生成数、preview payload null"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は close 済み Session の遅延 file preview admission を拒否する", async () => {
   const stubs: Array<ReturnType<typeof createWindowStub>> = [];
   const service = new AuxWindowService({
@@ -558,10 +646,8 @@ test("AuxWindowService は close 済み Session の遅延 file preview admission
     loadDiffEntry: async () => {},
     loadFilePreviewEntry: async () => {},
     loadChatEntry: async () => {},
-    loadCompanionMergeReviewEntry: async () => {},
     loadCharacterEditorEntry: async () => {},
     generateDiffToken: () => "preview-1",
-    onCompanionReviewWindowsChanged: () => {},
   });
   const payload = {
     resource: { sessionId: "aux-1", rootId: "workspace", relativePath: "src/file.ts" },
@@ -579,6 +665,16 @@ test("AuxWindowService は close 済み Session の遅延 file preview admission
   assert.equal(service.getFilePreviewPayload("preview-1"), null);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は reset 時に Memory Review window を close する"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "reset後もMemory Review windowをregistryに残しclose判定を誤る"
+// observable = "destroyed state、Memory Review判定、home window一覧"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は reset 時に Memory Review window を close する", async () => {
   const service = new AuxWindowService({
     createWindow() {
@@ -589,9 +685,7 @@ test("AuxWindowService は reset 時に Memory Review window を close する", 
     async loadDiffEntry() {},
     async loadFilePreviewEntry() {},
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
     },
@@ -607,59 +701,16 @@ test("AuxWindowService は reset 時に Memory Review window を close する", 
   assert.deepEqual(service.listHomeWindows(), []);
 });
 
-test("AuxWindowService は companion chat と merge の entry を分けて開く", async () => {
-  const chatLoads: unknown[] = [];
-  const companionMergeLoads: string[] = [];
-  let companionReviewWindowChangeCount = 0;
-  const createdOptions: Array<Record<string, unknown>> = [];
-  const service = new AuxWindowService({
-    createWindow(options) {
-      const stub = createWindowStub();
-      createdOptions.push(options);
-      return stub.window;
-    },
-    async loadHomeEntry() {},
-    async loadDiffEntry() {},
-    async loadFilePreviewEntry() {},
-    async loadChatEntry(_window, mode) {
-      chatLoads.push(mode);
-    },
-    async loadCompanionMergeReviewEntry(_window, sessionId) {
-      companionMergeLoads.push(sessionId);
-    },
-    async loadCharacterEditorEntry() {},
-    onCompanionReviewWindowsChanged() {
-      companionReviewWindowChangeCount += 1;
-    },
-    generateDiffToken() {
-      return "diff-token";
-    },
-  });
-
-  const chat = await service.openCompanionReviewWindow("companion-1");
-  const chatReopened = await service.openCompanionReviewWindow("companion-1");
-  const merge = await service.openCompanionMergeWindow("companion-1");
-  const mergeReopened = await service.openCompanionMergeWindow("companion-1");
-
-  assert.equal(chat, chatReopened);
-  assert.equal(merge, mergeReopened);
-  assert.notEqual(chat, merge);
-  assert.deepEqual(service.listOpenCompanionReviewWindowIds(), ["companion-1"]);
-  assert.equal(companionReviewWindowChangeCount, 1);
-  assert.deepEqual(chatLoads, [{ kind: "companion", sessionId: "companion-1" }]);
-  assert.deepEqual(companionMergeLoads, ["companion-1"]);
-  assert.deepEqual(createdOptions, [
-    {
-      ...COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
-      title: "Companion - companion-1",
-    },
-    {
-      ...COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
-      title: "Companion Merge - companion-1",
-    },
-  ]);
-});
-
+// @test-value v2
+// kind = "contract"
+// claim = "AuxWindowService は Character Editor window を create/edit key ごとに再利用する"
+// oracle = { type = "contract", ref = "src-electron/aux-window-service.ts" }
+// fault = "create keyとedit keyのwindowを混同するか、同一keyを再利用しない"
+// observable = "window identity、characterId load列、created options"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/aux-window-service.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("AuxWindowService は Character Editor window を create/edit key ごとに再利用する", async () => {
   const characterEditorLoads: Array<string | null | undefined> = [];
   const createdOptions: Array<Record<string, unknown>> = [];
@@ -673,11 +724,9 @@ test("AuxWindowService は Character Editor window を create/edit key ごとに
     async loadDiffEntry() {},
     async loadFilePreviewEntry() {},
     async loadChatEntry() {},
-    async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry(_window, characterId) {
       characterEditorLoads.push(characterId);
     },
-    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
     },

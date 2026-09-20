@@ -1,8 +1,6 @@
-import type { CompanionSessionSummary } from "../companion-state.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { CreateSessionRequest, HomeSessionSummary, Session, SessionCharacterUsage, SessionSummary } from "../session-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
-import type { CreateCompanionSessionInput, CompanionSession } from "../companion-state.js";
 import type { ModelCatalogProvider } from "../model-catalog.js";
 import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
 import type { OpenSessionWindowIdsLoadStatus } from "../open-session-window-subscription.js";
@@ -15,7 +13,6 @@ import {
   updateLaunchDraftForProviderSelection,
   updateLaunchDraftForRandomCharacterSelection,
 } from "./home-launch-state.js";
-import { isSessionFolderLaunchWorkspace } from "./home-launch-workspace.js";
 import { startHomeLaunch } from "./home-launch-actions.js";
 
 type HomeLaunchHandlersContext = {
@@ -40,11 +37,8 @@ type HomeLaunchHandlersContext = {
   scheduleWorkspaceValidation: (targetPath: string) => void;
   cancelWorkspaceValidation: () => void;
   openSessionWindow: (sessionId: string) => Promise<void>;
-  openCompanionReviewWindow: (sessionId: string) => Promise<void>;
   createSession: (input: CreateSessionRequest) => Promise<Session | SessionSummary | null>;
-  createCompanionSession: (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
   upsertSessionSummary: (summary: HomeSessionSummary) => void;
-  upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
 };
 
 export type HomeLaunchHandlers = {
@@ -83,11 +77,8 @@ export function buildHomeLaunchHandlers({
   scheduleWorkspaceValidation,
   cancelWorkspaceValidation,
   openSessionWindow,
-  openCompanionReviewWindow,
   createSession,
-  createCompanionSession,
   upsertSessionSummary,
-  upsertCompanionSessionSummary,
 }: HomeLaunchHandlersContext): HomeLaunchHandlers {
   const onBrowseWorkspace = async () => {
     const selectedPath = await pickWorkspaceDirectory();
@@ -142,14 +133,11 @@ export function buildHomeLaunchHandlers({
       openSessionWindowIdsLoadStatus,
       sessionCharacterUsageLoadStatus,
       createSession,
-      createCompanionSession,
       openSessionWindow,
-      openCompanionReviewWindow,
       closeLaunchDialog: onCloseLaunchDialog,
       setLaunchFeedback,
       setLaunchStarting,
       upsertSessionSummary,
-      upsertCompanionSessionSummary,
     });
   };
 
@@ -176,9 +164,6 @@ export function buildHomeLaunchHandlers({
       setLaunchDraft((current) => ({
         ...current,
         mode,
-        workspace: mode === "companion" && isSessionFolderLaunchWorkspace(current.workspace)
-          ? null
-          : current.workspace,
       }));
     },
     onChangeTitle: (value) => {

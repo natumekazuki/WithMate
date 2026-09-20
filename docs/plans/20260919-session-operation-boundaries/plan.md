@@ -24,7 +24,6 @@
 | Memory review | `memory-v6-review-service.ts` が要求ごとに直接 DB 接続 | Main の同期接続の抜け道を閉じる |
 | 起動・maintenance | database path/bootstrap、schema、WAL、診断、Auxiliary read 内 backfill | 明示的な Worker command と中断・再開契約 |
 
-Companion の作成 service と依存配線は残るが、現行 create IPC handler は退役エラーを返し、作成 service に到達しない。新規作成の準備分離は今回の対象に含めず、legacy を復活させない。既存会話の閲覧・merge・discard と catalog 更新の対象は維持する。
 
 ## 実装単位と完了条件
 
@@ -58,7 +57,7 @@ Companion の作成 service と依存配線は残るが、現行 create IPC hand
 
 ## 進捗
 
-- 棚卸し: V6/Main/Auxiliary/Memory/Affect の caller を非同期 storage boundary へ移行した。Main の同期 SQLite 接続を runtime guard と静的 check で禁止する。Companion の新規作成は退役済みのまま維持する。
+- 棚卸し: V6/Main/Auxiliary/Memory/Affect の caller を非同期 storage boundary へ移行した。Main の同期 SQLite 接続を runtime guard と静的 check で禁止する。
 - 実装単位 1: 完了。Affect の評価は ownership 外、owner 再検証・appraise・settlement 確定は同じ境界に配置。通常保存と terminal 保存は incarnation を照合する既存行限定 API を使用する。
 - 実装単位 2: 完了。削除の外部後処理、作成の準備、Character authoring のファイル反映を広域排他から分離した。Character 単位の反映と maintenance drain、親子 Turn admission、Settings の provider admission と限定 field / CAS rollback を組み合わせる。
 - 実装単位 3: 完了。Session / Settings / Catalog / Auxiliary / Character / Mate / Affect settlement と bootstrap / maintenance の Worker 経路、および Memory / Affect の Worker 経路を接続した。typed command whitelist、fault、shutdown drain、generation、結果不明、domain error の transport を検証した。summary backfill は明示的・bounded・再開可能な command とする。
@@ -105,7 +104,7 @@ Companion の作成 service と依存配線は残るが、現行 create IPC hand
 
 - 確定指摘は 0 件。Q1 は runtime 交換時の未保存評価と durable evaluation を文書が区別していなかったため、ADR 020 の既存 idempotency 契約に合わせて明確化した。未保存結果は破棄し、保存済み candidate / expected version / key は同一のまま再照合する。新しい評価や key を runtime 交換だけで発行しない。
 - Main で確認した Memory runtime の lifecycle は起動時 start と終了時 stop であり、通常操作による runtime-only restart の到達を確認したとは扱わない。component test で保存後の ownership 待ち・appraise 応答待ちを明示的に中断し、次回 drain まで検証した。
-- 続きは Main SessionFolder の外部準備を provider coordinator 外へ分離した。commit 前に現行 storage identity と launch selection を再検証し、準備途中の変更を別の権限や provider へ救済しない。再検証失敗時は今回の folder のみを cleanup し、保存呼出し開始後の結果不明エラーでは folder を保持する。directory workspace、Character authoring、Companion、Auxiliary の外部準備はこの単位には含めない。
+- 続きは Main SessionFolder の外部準備を provider coordinator 外へ分離した。commit 前に現行 storage identity と launch selection を再検証し、準備途中の変更を別の権限や provider へ救済しない。再検証失敗時は今回の folder のみを cleanup し、保存呼出し開始後の結果不明エラーでは folder を保持する。directory workspace、Character authoring、Auxiliary の外部準備はこの単位には含めない。
 - 検証: Affect / Main 作成 / Settings / launch selection / SessionFolder の関連 81 tests、`npm run typecheck`、`npm run build` が成功。保存中の Settings 待機 assertion 補強後も Main 作成の 24 tests が成功。renderer の既存 chunk サイズ warning は残る。全体 `npm test`、Electron E2E、実ユーザーデータコピーの検証は今回未実施。
 - 変更 test は今回の起点から 5 records / 5 transitions を抽出し、diagnostics は 0 件。通常の read-only `general_luna` で全件を審査した。保存中の Settings 更新待機を直接観測する assertion を補強し、最新差分で追加指摘なし。保存済み評価の再利用と起動設定・storage 再検証は継続する契約であり、恒久保持する。
 
@@ -145,9 +144,8 @@ Companion の作成 service と依存配線は残るが、現行 create IPC hand
 
 ### catalog import rollback の対象限定（4d24f808 起点）
 
-- Main / Auxiliary / Companion の置換試行を個別に記録し、失敗時に未試行 collection を復元しない。試行済み collection の全 snapshot 復元は維持し、限定 field 更新や結果不明の解消まで完了したとは扱わない。
+- Main / Auxiliary の置換試行を個別に記録し、失敗時に未試行 collection を復元しない。試行済み collection の全 snapshot 復元は維持し、限定 field 更新や結果不明の解消まで完了したとは扱わない。
 - controlled deps の保存待ちで未試行 collection の並行更新・削除を再現する。書込み後の失敗と rollback 失敗も組み合わせ、保存内容と元の例外・AggregateError を検証する。実 DB / Electron の競合再現ではない。
-- Companion の作成は現行 IPC handler が退役エラーを返すため、残存 service の準備分離は実施しない。
 - 検証: Settings の 17 tests（追加 test は失敗位置と rollback 成否の 6 組合せ）、`npm run typecheck`、`npm run build:electron` が成功。今回の変更で全体 test、renderer build、実 Electron / 実 DB の競合検証は実施していない。
 - `review-test-value` で今回起点から 1 record / 1 transition を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が最新版を審査し、追加修正要求なし。catalog の入力と復元値を区別する assertion を補強した。未試行 collection のデータ保護は継続する契約で、型検査では代替できず、約 1 ms の component test として保持する。
 
@@ -188,7 +186,6 @@ Companion の作成 service と依存配線は残るが、現行 create IPC hand
 - 取消側の永続化 lookup 前に要求を予約し、並行 create の割込みを抑止する。lookup 待機中に照会側で確定した状態を古い成功・失敗結果で上書きしない。確定結果は必要な Session ID を同期的に保持し、詳細 hydrate を結果確定の条件にしない。保存済みと確定した取消予約は除去し、同じ request ID の再送は既存行へ収束させる。取消だけの lookup 失敗は再照会で収束し、owner 失効後は `expired` とする。
 - renderer は `committed` の詳細回復中も開始操作を無効にし、適用後に解除する。`design-ui-information` に従い既存 Session の theme / launch dialog / native disabled を再利用し、画面構造と文言は変更しない。実 hook と dialog の操作 test、および分離した Electron fixture の 1024×768 描画で詳細待機中と適用後の disabled / enabled を確認した。実 Main IPC、実データ、実 Provider を使った操作の証拠ではない。
 - 通知設定の並行取得は両 Promise の拒否を取得開始時から処理する。通知可否の失敗は通知抑止、preview のみの失敗は既存の固定文へ戻し、process の未処理 rejection へ漏らさない。F5/F6 は修正前に失敗を確認し、修正後の関連 29 tests が成功した。
-- Q1 の Legacy Companion V3 CAS は通常起動のサポート経路から到達しない。bootstrap は V3 を V4→V6 へ移行して V6 path を Main に返し、V6 Worker は `CompanionStorage` を使う。preview tag 時点も同じ移行経路であるため、残存 V3 分岐を新たな runtime 維持契約へ広げず、今回の修正対象には含めない。V3 データからの既存移行・読取り契約は維持する。
 - 全体 `npm test` は 2,967 tests、2,966 pass / 0 fail / 1 skip。全体実行後の Auxiliary 確定競合の補強については関連 224 tests、`npm run typecheck`（SQLite owner check を含む）、`npm run build:electron` が成功した。`npm run build` も成功し、renderer の既存 chunk サイズ warning は残る。renderer は全体 build 後に変更していない。
 - `review-test-value` で今回起点から 7 records / 7 transitions を抽出し、diagnostics は 0 件。通常の read-only `general_luna` が全件を確認し、metadata の観測境界と遅延取消 test の未使用 fixture を整理した。最終差分で追加の修正要求・context 不足はない。公開結果・再送抑止・通知失敗・操作可否の現在契約を確認する test であり、型や build では代替できず、小さい SQLite / 制御 Promise / jsdom の実行・保守負担に対して保持価値がある。fixture 整理後の対象 12 tests も成功した。
 - 実装差分も別の read-only 審査を実施した。取消と照会の並行確定、ID の同期保持、確定した取消予約の除去を補強し、最終確認で追加の高確度不具合は確認されなかった。最後の再送ケース補強後も関連 224 tests、型検査、Electron build が成功した。

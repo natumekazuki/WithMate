@@ -19,7 +19,7 @@ WithMate の Session ごとに、repo へ入れない一時資料を置ける ma
 
 ## Directory Layout
 
-通常 Session、Companion Session、legacy MateTalk は同じ layout で保存する。
+通常 Session と legacy MateTalk は同じ layout で保存する。
 
 ```text
 session-files/{sessionId}/
@@ -37,7 +37,6 @@ Session local files directory は次の経路で常に effective allowed directo
 - provider prompt composition の `additionalDirectories`
 - Codex thread options
 - Copilot session config / attachment roots
-- Companion runtime の composer preview と provider runtime
 - legacy MateTalk の picker / paste 由来 attachment と provider runtime
 
 DB の `allowedAdditionalDirectories` へは保存しない。

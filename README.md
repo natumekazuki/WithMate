@@ -40,8 +40,6 @@ coding agentと作業する中心画面です。
 - Audit Log、Terminal、session title変更、session削除へ移動
 - File Explorer、Repository Glossary、File Preview、Git Diffを同じ作業面から利用
 
-AgentとCompanionは同じchat layoutを使い、modeとprovider adapterで動作を切り替えます。
-
 ### File ExplorerとFile Preview
 
 Session WindowのFile Explorerには次のタブがあります。

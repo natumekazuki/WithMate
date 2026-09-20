@@ -64,6 +64,16 @@ function columnNames(db: DatabaseSync, tableName: string): string[] {
 }
 
 describe("database-schema-v3", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V3 schema constantsとrequired tablesは現行Session/Audit/blob/catalog schemaを満たす"
+  // oracle = { type = "contract", ref = "src-electron/database-schema-v3.ts" }
+  // fault = "schema作成後にrequired tableが欠落するか、定義済みversion/nameと実体が不一致になる"
+  // observable = "schema version, filename, table names, and required table coverage"
+  // observation_boundary = "public-boundary"
+  // scope = "database schema v3 table contract"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("withmate-v3.db 用の schema constants と required tables を固定する", () => {
     assert.equal(APP_DATABASE_V3_FILENAME, "withmate-v3.db");
     assert.equal(APP_DATABASE_V3_SCHEMA_VERSION, 3);
@@ -78,14 +88,6 @@ describe("database-schema-v3", () => {
         "audit_log_operations",
         "audit_logs",
         "blob_objects",
-        "companion_audit_log_details",
-        "companion_audit_log_operations",
-        "companion_audit_logs",
-        "companion_groups",
-        "companion_merge_runs",
-        "companion_message_artifacts",
-        "companion_messages",
-        "companion_sessions",
         "model_catalog_models",
         "model_catalog_providers",
         "model_catalog_revisions",
@@ -99,6 +101,16 @@ describe("database-schema-v3", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "isValidV3Databaseはfilenameとschema versionが一致するDBだけを有効と判定する"
+  // oracle = { type = "contract", ref = "src-electron/database-schema-v3.ts" }
+  // fault = "異なるfilenameまたは空DBを有効DBとして受け入れる"
+  // observable = "isValidV3Database result for valid, wrong-name, and empty databases"
+  // observation_boundary = "public-boundary"
+  // scope = "database schema v3 validation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("isValidV3Database は filename と schema version を検証する", () => {
     const dirPath = mkdtempSync(join(tmpdir(), "withmate-v3-schema-"));
     try {
@@ -124,6 +136,16 @@ describe("database-schema-v3", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V3 schemaはheavy payload columnを物理tableへ戻さない"
+  // oracle = { type = "contract", ref = "src-electron/database-schema-v3.ts" }
+  // fault = "V2/V1由来のheavy payloadを新schemaへ再導入し、保存領域の契約を壊す"
+  // observable = "all V3 table column names"
+  // observation_boundary = "public-boundary"
+  // scope = "database schema v3 payload boundary"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("V3 schema は V2/V1 の heavy payload column 名を持たない", () => {
     const db = createV3Schema();
     try {
@@ -144,96 +166,14 @@ describe("database-schema-v3", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "V3 session message schema は bookmark stateをmessage rowで保持し、retired Companion message schemaには追加しない"
-  // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 永続化" }
-  // fault = "V3 session message tableにbookmark列がなくstateを失うか、退役済みCompanion message tableへ列が残る"
-  // observable = "session_messagesとcompanion_messagesのschema column names"
-  // observation_boundary = "declaration"
-  // scope = "database-schema-v3 message columns"
+  // claim = "V3 preview/summary fieldsは定義された上限内で重いpayloadを戻さない"
+  // oracle = { type = "contract", ref = "src-electron/database-schema-v3.ts" }
+  // fault = "preview/summaryの上限を緩め、重いpayloadがschemaへ戻る"
+  // observable = "size constants and schema CHECK constraints"
+  // observation_boundary = "public-boundary"
+  // scope = "database schema v3 preview limits"
   // lifecycle = "permanent"
-  // impact = "V3 sessionのbookmark roundtripが成立しないか、退役済みCompanionへ保存契約が広がる"
-  // distinction = "blob payloadのroundtrip testとは別に、保存契約のschema形状を直接確認する"
   // @end-test-value
-  it("session/audit/companion payload は preview と blob ref に分離する", () => {
-    const db = createV3Schema();
-    try {
-      assert.deepEqual(columnNames(db, "session_messages"), [
-        "id",
-        "session_id",
-        "seq",
-        "role",
-        "text_preview",
-        "text_blob_id",
-        "text_original_bytes",
-        "text_stored_bytes",
-        "accent",
-        "is_bookmarked",
-        "artifact_available",
-        "created_at",
-      ]);
-      assert.deepEqual(columnNames(db, "session_message_artifacts"), [
-        "message_id",
-        "artifact_summary_json",
-        "artifact_blob_id",
-        "artifact_original_bytes",
-        "artifact_stored_bytes",
-      ]);
-      assert.deepEqual(columnNames(db, "audit_log_details"), [
-        "audit_log_id",
-        "logical_prompt_blob_id",
-        "transport_payload_blob_id",
-        "assistant_text_blob_id",
-        "raw_items_blob_id",
-        "usage_metadata_json",
-        "usage_blob_id",
-      ]);
-      assert.deepEqual(columnNames(db, "audit_log_operations"), [
-        "id",
-        "audit_log_id",
-        "seq",
-        "operation_type",
-        "summary",
-        "details_preview",
-        "details_blob_id",
-      ]);
-      assert.deepEqual(columnNames(db, "companion_messages"), [
-        "id",
-        "session_id",
-        "position",
-        "role",
-        "text_preview",
-        "text_blob_id",
-        "text_original_bytes",
-        "text_stored_bytes",
-        "accent",
-        "artifact_available",
-        "created_at",
-      ]);
-      assert.deepEqual(columnNames(db, "companion_merge_runs"), [
-        "id",
-        "session_id",
-        "group_id",
-        "operation",
-        "selected_paths_json",
-        "changed_files_summary_json",
-        "sibling_warnings_summary_json",
-        "diff_snapshot_blob_id",
-        "created_at",
-      ]);
-      assert.deepEqual(columnNames(db, "companion_audit_log_details"), [
-        "audit_log_id",
-        "logical_prompt_blob_id",
-        "transport_payload_blob_id",
-        "assistant_text_blob_id",
-        "raw_items_blob_id",
-        "usage_metadata_json",
-        "usage_blob_id",
-      ]);
-    } finally {
-      db.close();
-    }
-  });
-
   it("preview と summary は DB に重い payload を戻せないよう上限を持つ", () => {
     const schemaSql = CREATE_V3_SCHEMA_SQL.join("\n");
 
@@ -247,7 +187,6 @@ describe("database-schema-v3", () => {
     assert.match(schemaSql, /CHECK \(length\(summary\) <= 500\)/);
     assert.match(schemaSql, /CHECK \(length\(details_preview\) <= 500\)/);
     assert.match(schemaSql, /CHECK \(length\(artifact_summary_json\) <= 8192\)/);
-    assert.match(schemaSql, /CHECK \(length\(changed_files_summary_json\) <= 8192\)/);
     assert.doesNotMatch(schemaSql, /\bchanged_files_json\b/);
     assert.doesNotMatch(schemaSql, /\bsibling_warnings_json\b/);
   });

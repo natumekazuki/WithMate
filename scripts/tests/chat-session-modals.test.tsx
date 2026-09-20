@@ -26,6 +26,16 @@ function createAuditLogSummary(): AuditLogSummary {
   };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "共有modalは呼び出し側の追加表示を同じfragmentへ描画する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+// fault = "共有modalまたは追加childrenが描画結果から欠落する"
+// observable = "Audit Log見出し、監査カード、呼び出し側の追加表示"
+// observation_boundary = "component-behavior"
+// scope = "chat-session-modals-shared-content"
+// lifecycle = "permanent"
+// @end-test-value
 test("ChatSessionModals は共有 modal と呼び出し側の追加表示を同じ fragment に描画する", () => {
   const html = renderToStaticMarkup(
     <ChatSessionModals
@@ -46,13 +56,13 @@ test("ChatSessionModals は共有 modal と呼び出し側の追加表示を同�
       onLoadAuditLogOperationDetail={() => {}}
       onCloseAuditLog={() => {}}
     >
-      <div className="companion-session-toast success">merged</div>
+      <div className="session-toast success">merged</div>
     </ChatSessionModals>,
   );
 
   assert.match(html, /<h2>Audit Log<\/h2>/);
   assert.match(html, /audit-log-card completed/);
-  assert.match(html, /companion-session-toast success/);
+  assert.match(html, /session-toast success/);
   assert.doesNotMatch(html, /diff-editor panel/);
 });
 

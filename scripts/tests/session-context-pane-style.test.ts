@@ -136,10 +136,9 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
 // distinction = "hookの数値clampやpointer経路、narrow layoutの縦stack、full-width ActionDock内のcomposer制約とは分け、wide layoutの固定dockとexpanded rowのCSS境界を確認する"
 // @end-test-value
 test("wide layout はHeaderとActionDockを全幅dockとして表示する", async () => {
-  const [componentSource, sessionProjectionSource, companionProjectionSource, stylesSource] = await Promise.all([
+  const [componentSource, sessionProjectionSource, stylesSource] = await Promise.all([
     readFile("src/session-components.tsx", "utf8"),
     readFile("src/chat/session-chat-projection.tsx", "utf8"),
-    readFile("src/chat/companion-chat-projection.tsx", "utf8"),
     readFile("src/styles.css", "utf8"),
   ]);
 
@@ -155,7 +154,6 @@ test("wide layout はHeaderとActionDockを全幅dockとして表示する", asy
     /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),\s*calc\(\s*100%\s*-\s*var\(--session-header-dock-row-height\)\s*-\s*var\(--session-dock-splitter-size\)\s*-\s*var\(--session-dock-splitter-size\)\s*\)/,
   );
   assert.doesNotMatch(sessionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
-  assert.doesNotMatch(companionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
 });
 
 // @test-value v2

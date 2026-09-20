@@ -3,7 +3,6 @@
 - Status: Follow-up Implementation Complete / Review In Progress
 - Created: 2026-08-02
 - Target: Agent Session UI and Auxiliary Session UI
-- Out of scope: Companion UI
 
 ## Task Brief
 
@@ -36,7 +35,7 @@
 - 現在開いているペインのトグル操作は `none` に戻す。
 - ペイン状態は既存の right pane 専用設定更新境界を置き換えて永続化する。
 - 新しい Session window は永続値を初期値として読み、既存 window は各 window のローカル状態を維持する。
-- File Explorer の表示対象は Agent Session UI と Auxiliary Session UI とする。Companion 固有対応は行わない。
+- File Explorer の表示対象は Agent Session UI と Auxiliary Session UI とする。
 
 ### File Explorer のルートと列挙
 
@@ -464,8 +463,6 @@ npm run build
 - 複数ファイルの tab、履歴、永続 cache
 - archive、PDF、Office、audio、video の内蔵 preview
 - IDE 相当の構文解析、language server、workspace-wide search / replace
-- Companion UI への導線または専用対応
-- shared type の変更で既存 Companion source の build 維持に必要な機械的移行は許容するが、File Explorer または preview の user-visible 対応は追加しない
 - Git commit、stage、unstage、checkout、revert などの書込操作
 - generic operation の command output 中央表示と再実行
 - 既存 chat artifact の Open Diff、`SessionDiffModal`、Diff Window の中央 live Git Diff surface への統合
@@ -502,7 +499,7 @@ npm run build
 - [x] inspect / chunk read を認可済み file handle へ結び付け、identity、size、mtime、ctime を含む revision と read 後の再確認で変更を拒否
 - [x] default app open / reveal は認可済みの元 file path を OS へ渡し、実 file を編集できる UX を優先すると決定して ADR 013 に記録
 - [x] 条件付き find / feedback に依存せず preview content を固定 grid row へ配置
-- [x] typed `openPath` result を Workspace、Companion shared caller、MessageRichText default handler で利用者へ通知
+- [x] typed `openPath` result を Workspace、MessageRichText default handler で利用者へ通知
 - [x] Auto decode を全 loaded bytes の strict UTF-8 / Shift_JIS 判定へ変更
 - [x] Markdown extension より binary 判定を優先し、inspection prefix 後に判明した binary も rich renderer へ渡さない
 - [x] directory identity / metadata、preview grid、typed openPath feedback の targeted review

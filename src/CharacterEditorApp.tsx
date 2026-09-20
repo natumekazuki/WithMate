@@ -618,7 +618,7 @@ export default function CharacterEditorApp() {
                   Import / Replace
                 </button>
               </div>
-              <p className="settings-help">Runtime definition の正本です。session / companion 開始時に snapshot 化されます。</p>
+              <p className="settings-help">The runtime definition is captured as a snapshot when a session starts.</p>
               <ValidationList issues={validation.definitionIssues} emptyLabel="character.md validation OK" />
               <input
                 ref={definitionImportInputRef}

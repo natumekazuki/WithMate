@@ -15,7 +15,7 @@ WithMate における Memory を、保存データとしての責務と coding p
 
 2026-04-27 時点では、MemoryGeneration と独り言 / character reflection runtime は削除する。理由は保存容量や描画軽量化ではなく、AI agent に渡す prompt の token 効率と有用性を改善するためである。
 
-2026-06-14 の V5 Character Core では、Memory / Growth history を Character runtime prompt へ常設注入しない。Character の runtime 正本は session / companion 開始時点の `CharacterRuntimeSnapshot.definitionMarkdown` であり、Memory / Growth 再設計は V5 preview 後の deferred scope とする。
+2026-06-14 の V5 Character Core では、Memory / Growth history を Character runtime prompt へ常設注入しない。Character の runtime 正本は session 開始時点の `CharacterRuntimeSnapshot.definitionMarkdown` であり、Memory / Growth 再設計は V5 preview 後の deferred scope とする。
 
 2026-06-22 の V6 Memory foundation では、旧MemoryGenerationやV4 Growthを復活させず、V5 Character-first runtimeの外側にlocal Memory serviceを追加した。現在のagent-facing入口はprovider共通MCPであり、V6のowner / scope / API / binding / storage / privacy方針は`docs/design/v6-memory-foundation.md`を正本にする。
 
@@ -269,7 +269,7 @@ Mate が育つとは、過去ログを大量に保存して prompt に戻すこ�
 
 Growth Candidate の実装正本は `docs/design/mate-growth-engine.md` とする。
 
-4.0.0 MVP では MCP を必須にしない。WithMate が保持する session / companion / audit / message metadata と Mate Profile を入力にし、Growth ledger、Mate Profile revision、Markdown section の更新を出力にする。
+4.0.0 MVP では MCP を必須にしない。WithMate が保持する session / audit / message metadata と Mate Profile を入力にし、Growth ledger、Mate Profile revision、Markdown section の更新を出力にする。
 
 Growth Engine は provider instruction file を直接書かない。Growth apply 後に provider instruction target を stale にし、書き込みは provider instruction sync に委譲する。
 

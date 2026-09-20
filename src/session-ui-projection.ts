@@ -7,11 +7,10 @@ import type {
   ProviderQuotaTelemetry,
   SessionContextTelemetry,
 } from "./app-state.js";
-import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import type { SessionGlossaryProjection } from "./glossary-contract.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
 
-export type ContextPaneTabKey = "latest-command" | "messages" | "glossary" | "reasoning" | "tasks" | "companion-group";
+export type ContextPaneTabKey = "latest-command" | "messages" | "glossary" | "reasoning" | "tasks";
 
 export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = [
   "latest-command",
@@ -19,7 +18,6 @@ export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = [
   "glossary",
   "reasoning",
   "tasks",
-  "companion-group",
 ];
 
 export type LatestCommandView = {
@@ -366,8 +364,6 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
       return "Reasoning";
     case "tasks":
       return "Tasks";
-    case "companion-group":
-      return "CompanionGroup";
     default:
       return tab;
   }
@@ -377,14 +373,12 @@ export function resolveAvailableContextPaneTabs({
   isCopilotSession,
   includeMessages = false,
   includeGlossary = false,
-  hasCompanionGroupMonitor = false,
   hasReasoningCapability = false,
   hasReasoningText = false,
 }: {
   isCopilotSession: boolean;
   includeMessages?: boolean;
   includeGlossary?: boolean;
-  hasCompanionGroupMonitor?: boolean;
   hasReasoningCapability?: boolean;
   hasReasoningText?: boolean;
 }): ContextPaneTabKey[] {
@@ -403,10 +397,6 @@ export function resolveAvailableContextPaneTabs({
 
     if (tab === "tasks") {
       return isCopilotSession;
-    }
-
-    if (tab === "companion-group") {
-      return hasCompanionGroupMonitor;
     }
 
     return true;
@@ -435,14 +425,12 @@ export function buildContextPaneProjection({
   activeContextPaneTab,
   latestCommandView,
   backgroundTasks,
-  companionGroupMonitorEntries = [],
   hasReasoningText = false,
   isSelectedSessionRunning = false,
 }: {
   activeContextPaneTab: ContextPaneTabKey;
   latestCommandView: LatestCommandView | null;
   backgroundTasks: LiveBackgroundTask[];
-  companionGroupMonitorEntries?: HomeMonitorEntry[];
   hasReasoningText?: boolean;
   isSelectedSessionRunning?: boolean;
 }): ContextPaneProjection {
@@ -453,12 +441,6 @@ export function buildContextPaneProjection({
   const reasoningToneClassName = hasReasoningText
     ? (isSelectedSessionRunning ? "in_progress" : "completed")
     : "unknown";
-  const companionGroupToneClassName = companionGroupMonitorEntries.some((entry) => entry.state.kind === "running")
-    ? "running"
-    : companionGroupMonitorEntries.some((entry) => entry.state.kind === "error")
-      ? "error"
-      : "neutral";
-
   let badgeLabel = "";
   switch (activeContextPaneTab) {
     case "tasks":
@@ -468,9 +450,6 @@ export function buildContextPaneProjection({
       break;
     case "reasoning":
       badgeLabel = hasReasoningText ? (isSelectedSessionRunning ? "Live" : "Hold") : "";
-      break;
-    case "companion-group":
-      badgeLabel = companionGroupMonitorEntries.length > 0 ? String(companionGroupMonitorEntries.length) : "";
       break;
     default:
       badgeLabel = "";
@@ -487,9 +466,6 @@ export function buildContextPaneProjection({
       break;
     case "reasoning":
       toneClassName = reasoningToneClassName;
-      break;
-    case "companion-group":
-      toneClassName = companionGroupToneClassName;
       break;
     default:
       toneClassName = "unknown";

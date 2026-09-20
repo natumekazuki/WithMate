@@ -1,13 +1,10 @@
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../companion-state.js";
-import { createCompanionSessionSummary } from "../companion-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { CreateSessionRequest, HomeSessionSummary, Session, SessionCharacterUsage, SessionSummary } from "../session-state.js";
 import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
 import type { OpenSessionWindowIdsLoadStatus } from "../open-session-window-subscription.js";
 import { projectHomeSessionSummary } from "../session-state.js";
 import {
-  buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionRequestFromLaunchDraft,
   resolveLaunchValidationMessage,
   type HomeLaunchDraft,
@@ -15,7 +12,6 @@ import {
 
 export type HomeLaunchSessionCreator = (input: CreateSessionRequest) => Promise<Session | SessionSummary | null>;
 
-export type HomeLaunchCompanionSessionCreator = (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
 
 export type StartHomeLaunchInput = {
   draft: HomeLaunchDraft;
@@ -31,14 +27,11 @@ export type StartHomeLaunchInput = {
   openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
   sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
   createSession: HomeLaunchSessionCreator;
-  createCompanionSession: HomeLaunchCompanionSessionCreator;
   openSessionWindow: (sessionId: string) => Promise<void>;
-  openCompanionReviewWindow: (sessionId: string) => Promise<void>;
   closeLaunchDialog: () => void;
   setLaunchFeedback: (message: string) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
   upsertSessionSummary: (summary: HomeSessionSummary) => void;
-  upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
   random?: () => number;
 };
 
@@ -77,7 +70,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     return;
   }
 
-  input.setLaunchFeedback(requestedMode === "companion" ? "Companion を開始してるよ..." : "Session を開始してるよ...");
+  input.setLaunchFeedback("Session を開始してるよ...");
   input.setLaunchStarting(true);
 
   try {
@@ -85,33 +78,6 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     const openSessionCharacterIds = input.sessions
       .filter((session) => openSessionWindowIdSet.has(session.id))
       .map((session) => session.characterId);
-
-    if (requestedMode === "companion") {
-      const companionInput = buildCreateCompanionSessionInputFromLaunchDraft({
-        draft: input.draft,
-        mateProfile: input.mateProfile,
-        selectedProviderId: input.selectedProviderId,
-        characterEntries: input.characterEntries,
-        sessions: input.sessionCharacterUsage,
-        openSessionCharacterIds,
-        random: input.random,
-      });
-      if (!companionInput) {
-        input.setLaunchFeedback("Companion の開始条件が揃ってないよ。");
-        return;
-      }
-
-      const createdSession = await input.createCompanionSession(companionInput);
-      if (!createdSession) {
-        input.setLaunchFeedback("Companion を開始できなかったよ。");
-        return;
-      }
-
-      input.upsertCompanionSessionSummary(createCompanionSessionSummary(createdSession));
-      input.closeLaunchDialog();
-      await input.openCompanionReviewWindow(createdSession.id);
-      return;
-    }
 
     const sessionInput = buildCreateSessionRequestFromLaunchDraft({
       draft: input.draft,

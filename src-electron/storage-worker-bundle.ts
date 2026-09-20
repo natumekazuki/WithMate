@@ -3,7 +3,6 @@ import type { WorkerOptions } from "node:worker_threads";
 import { AuditLogStorageV6 } from "./audit-log-storage-v6.js";
 import { CharacterAffectTurnSettlementStorage } from "./character-affect-turn-settlement-storage.js";
 import { CharacterStorage } from "./character-storage.js";
-import { CompanionStorage } from "./companion-storage.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { MateStorage } from "./mate-storage.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
@@ -64,11 +63,6 @@ const STORE_METHODS = {
     "listUnreadyPendingBefore", "markReady", "getPending", "saveEvaluation", "recordAppraisalFailure", "recordAttempt",
     "recoverInterruptedAttempts", "recordFailure", "releaseQuarantined", "markSettled", "markDiscarded",
   ],
-  companion: [
-    "ensureGroup", "createSession", "listSessionSummaries", "listActiveSessionSummaries", "getSession",
-    "getMessageArtifact", "updateSession", "updateRuntimeMetadataIfMatches", "deleteSession",
-    "updateSessionBaseSnapshot", "createMergeRun", "listMergeRunsForSession", "listMergeRunSummariesForSession", "clearCompanions",
-  ],
 } as const;
 
 const MUTATIONS = new Set([
@@ -83,8 +77,6 @@ const MUTATIONS = new Set([
   "deleteMateProjectionDirectory", "applyProfileFiles", "createPromptTemplate", "updatePromptTemplate", "deletePromptTemplate",
   "enqueue", "markReady", "saveEvaluation",
   "recordAppraisalFailure", "recordAttempt", "recoverInterruptedAttempts", "recordFailure", "releaseQuarantined", "markSettled", "markDiscarded",
-  "ensureGroup", "createSession", "updateSession", "updateRuntimeMetadataIfMatches", "deleteSession", "updateSessionBaseSnapshot",
-  "createMergeRun", "clearCompanions",
 ]);
 
 type StorageInstances = Record<keyof typeof STORE_METHODS, object>;
@@ -114,8 +106,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const mate = new MateStorage(data.dbPath, data.userDataPath);
   const prompt = new PromptTemplateStorage(data.dbPath);
   const settlement = new CharacterAffectTurnSettlementStorage(data.dbPath);
-  const companion = new CompanionStorage(data.dbPath);
-  instances = { session, audit, auxiliary, character, settings, catalog, mate, prompt, settlement, companion };
+  instances = { session, audit, auxiliary, character, settings, catalog, mate, prompt, settlement };
   const currentInstances = instances;
   catalog.ensureSeeded();
 
@@ -249,6 +240,5 @@ export type V6StorageWorkerBundle = {
     mate: AsyncStore<MateStorage>;
     prompt: AsyncStore<PromptTemplateStorage>;
     settlement: AsyncStore<CharacterAffectTurnSettlementStorage>;
-    companion: AsyncStore<CompanionStorage>;
   };
 };

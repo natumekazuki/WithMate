@@ -14,7 +14,6 @@ import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 import type { AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
 import type { HomeSessionSummary, SessionSummary } from "../../src/session-state.js";
-import type { CompanionSessionSummary } from "../../src/companion-state.js";
 import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
@@ -571,14 +570,22 @@ describe("HomeLaunchDialog", () => {
     />,
   );
 
-  it("新規作成導線は Session 専用で Companion Mode を表示しない", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Homeの新規Sessionダイアログは開始操作とSessionFolder選択を識別可能に表示する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+  // fault = "開始ボタンのaccessible nameまたはworkspace選択肢を失いSessionを作成できない"
+  // observable = "開始label、New Session accessible name、SessionFolder表示"
+  // observation_boundary = "component-behavior"
+  // scope = "Home launch dialog entry"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("新規作成導線は Session 専用である", () => {
     const html = renderHomeLaunchDialog();
 
     assert.ok(html.includes("Start New Session"));
     assert.ok(html.includes('aria-label="New Session"'));
     assert.ok(!html.includes("Agent Mode"));
-    assert.ok(!html.includes("Companion Mode"));
-    assert.ok(!html.includes("Start Companion"));
     assert.ok(html.includes("SessionFolder"));
   });
 
@@ -680,40 +687,9 @@ describe("HomeRecentSessionsPanel", () => {
     threadId: "",
     ...partial,
   });
-  const createCompanionSummary = (
-    partial: Partial<CompanionSessionSummary> & Pick<CompanionSessionSummary, "id" | "taskTitle">,
-  ): CompanionSessionSummary => ({
-    status: "active",
-    updatedAt: "2026-06-17T00:00:00.000Z",
-    groupId: "group-1",
-    repoRoot: "C:/workspace/repo",
-    focusPath: "",
-    targetBranch: "main",
-    baseSnapshotRef: "refs/withmate/base/1",
-    baseSnapshotCommit: "base-1",
-    selectedPaths: [],
-    changedFiles: [],
-    siblingWarnings: [],
-    allowedAdditionalDirectories: [],
-    runState: "idle",
-    threadId: "",
-    provider: "codex",
-    model: "gpt-5.4",
-    reasoningEffort: "high",
-    approvalMode: "untrusted",
-    codexSandboxMode: "danger-full-access",
-    character: "Mia",
-    characterRoleMarkdown: "",
-    characterIconPath: "",
-    characterThemeColors: { main: "#223344", sub: "#88bbcc" },
-    latestMergeRun: null,
-    ...partial,
-  });
-
   const renderHomeRecentSessions = ({
     canUsePrimaryFeatures = true,
     filteredSessionEntries = [],
-    companionSessions = [],
     normalizedSessionSearch = "",
     searchText = "",
     hasMore = false,
@@ -722,7 +698,6 @@ describe("HomeRecentSessionsPanel", () => {
   }: {
     canUsePrimaryFeatures?: boolean;
     filteredSessionEntries?: React.ComponentProps<typeof HomeRecentSessionsPanel>["filteredSessionEntries"];
-    companionSessions?: CompanionSessionSummary[];
     normalizedSessionSearch?: string;
     searchText?: string;
     hasMore?: boolean;
@@ -731,7 +706,6 @@ describe("HomeRecentSessionsPanel", () => {
   } = {}) => renderToStaticMarkup(
     <HomeRecentSessionsPanel
       filteredSessionEntries={filteredSessionEntries}
-      companionSessions={companionSessions}
       normalizedSessionSearch={normalizedSessionSearch}
       searchText={searchText}
       searchIcon={<span />}
@@ -739,7 +713,6 @@ describe("HomeRecentSessionsPanel", () => {
       onOpenLaunchDialog={noOp}
       onOpenSession={noOp}
       onSetSessionPinned={noOp}
-      onOpenCompanionReview={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
       hasMore={hasMore}
       loadingMore={loadingMore}
@@ -775,6 +748,16 @@ describe("HomeRecentSessionsPanel", () => {
     assert.doesNotMatch(html, /class="secondary-button"/);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Homeの履歴一覧は末尾の交差を観測してから次ページの読み込みを要求する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+  // fault = "末尾が見える前に繰り返し読み込むか末尾到達時に次ページを読み込まない"
+  // observable = "observerの監視対象と交差前後のloadMore callback回数"
+  // observation_boundary = "component-behavior"
+  // scope = "Home recent Session pagination"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("一覧末尾のsentinelが交差した時だけ追加読み込みcallbackを呼ぶ", async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
       pretendToBeVisual: true,
@@ -817,7 +800,6 @@ describe("HomeRecentSessionsPanel", () => {
         root.render(
           <HomeRecentSessionsPanel
             filteredSessionEntries={[]}
-            companionSessions={[]}
             normalizedSessionSearch=""
             searchText=""
             searchIcon={<span />}
@@ -825,7 +807,6 @@ describe("HomeRecentSessionsPanel", () => {
             onOpenLaunchDialog={noOp}
             onOpenSession={noOp}
             onSetSessionPinned={noOp}
-            onOpenCompanionReview={noOp}
             hasMore
             onLoadMore={() => {
               loadMoreCount += 1;
@@ -920,51 +901,40 @@ describe("HomeRecentSessionsPanel", () => {
     assert.match(html, />ピン解除<\/button>/);
   });
 
-  it("companion kind label で Companion session を検索できる", () => {
-    const html = renderHomeRecentSessions({
-      companionSessions: [
-        createCompanionSummary({ id: "companion-1", taskTitle: "Review task" }),
-      ],
-      normalizedSessionSearch: "companion",
-      searchText: "companion",
-    });
-
-    assert.ok(html.includes("Review task"));
-    assert.ok(html.includes(">Companion<"));
-  });
-
+  // @test-value v2
+  // kind = "contract"
+  // claim = "履歴カードはMate iconを表示し、V4以前のAgent Sessionを閲覧専用として開ける"
+  // oracle = { type = "contract", ref = "src/home/HomeRecentSessionsPanel.tsx" }
+  // fault = "legacy Agent Sessionのcharacter iconまたは閲覧専用open affordanceを欠落させる"
+  // observable = "rendered avatar, read-only label, and open button accessibility"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeRecentSessionsPanel legacy Session card"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("履歴カードに Mate アイコンを表示し、V4 以前の Agent session は閲覧専用として開ける", () => {
     const html = renderHomeRecentSessions({
-      filteredSessionEntries: [
-        {
-          kind: "agent",
-          session: createSessionSummary({
-            id: "session-v4",
-            taskTitle: "Legacy task",
-            sourceSchemaVersion: 4,
-            character: "Solo Mate",
-            characterIconPath: "mate.png",
-          }),
-          state: { kind: "neutral", label: "idle" },
-        },
-      ],
-      companionSessions: [
-        createCompanionSummary({
-          id: "companion-1",
-          taskTitle: "Companion task",
+      filteredSessionEntries: [{
+        kind: "agent",
+        session: createSessionSummary({
+          id: "session-v4",
+          taskTitle: "Legacy task",
+          sourceSchemaVersion: 4,
           character: "Solo Mate",
           characterIconPath: "mate.png",
         }),
-      ],
+        state: { kind: "neutral", label: "idle" },
+      }],
     });
 
-    assert.equal((html.match(/character-avatar tiny home-session-card-avatar/g) ?? []).length, 2);
+    assert.equal((html.match(/character-avatar tiny home-session-card-avatar/g) ?? []).length, 1);
     assert.ok(html.includes("mate.png"));
     assert.ok(html.includes("閲覧専用"));
     assert.match(html, /class="home-session-card-open"[^>]*aria-disabled="false"/);
-    assert.match(html, /class="session-card home-session-card"[^>]*aria-disabled="false"/);
+    assert.match(html, /class="session-card home-session-card/);
   });
+
 });
+
 
 describe("HomeMonitorContent", () => {
   const noOp = (..._args: unknown[]) => undefined;
@@ -1011,36 +981,7 @@ describe("HomeMonitorContent", () => {
     ...overrides,
   } as AuxiliarySessionSummary);
 
-  const createMonitorCompanion = (id: string, taskTitle: string): CompanionSessionSummary => ({
-    id,
-    groupId: "group-1",
-    taskTitle,
-    status: "active",
-    repoRoot: "C:/workspace/repo",
-    focusPath: "",
-    targetBranch: "main",
-    baseSnapshotRef: "refs/withmate/base/1",
-    baseSnapshotCommit: "base-1",
-    selectedPaths: [],
-    changedFiles: [],
-    siblingWarnings: [],
-    allowedAdditionalDirectories: [],
-    runState: "idle",
-    threadId: "",
-    provider: "codex",
-    model: "gpt-5.4",
-    reasoningEffort: "high",
-    approvalMode: "untrusted",
-    codexSandboxMode: "danger-full-access",
-    codexSpeed: "standard",
-    codexReviewer: "none",
-    character: "Solo Mate",
-    characterRoleMarkdown: "",
-    characterIconPath: "mate.png",
-    characterThemeColors: { main: "#223344", sub: "#88bbcc" },
-    updatedAt: "2026-03-30T00:00:00.000Z",
-    latestMergeRun: null,
-  });
+
 
   // @test-value v2
   // kind = "invariant"
@@ -1074,42 +1015,25 @@ describe("HomeMonitorContent", () => {
         mainState: { kind: "running", label: "実行中" },
         auxiliarySessions: [],
       },
-      {
-        kind: "companion",
-        session: createMonitorCompanion("companion-1", "Companion task"),
-        isWindowOpen: true,
-        state: { kind: "interrupted", label: "中断" },
-        mainState: { kind: "interrupted", label: "中断" },
-        auxiliarySessions: [],
-      },
-      {
-        kind: "companion",
-        session: createMonitorCompanion("companion-2", "Companion Auxiliary task"),
-        isWindowOpen: true,
-        state: { kind: "running", label: "実行中" },
-        mainState: { kind: "running", label: "実行中" },
-        auxiliarySessions: [],
-      },
+
+
     ];
     const html = renderToStaticMarkup(
       <HomeMonitorContent
         runningEntries={entries}
         nonRunningEntries={[]}
         onOpenSession={noOp}
-        onOpenCompanionReview={noOp}
         onShowContextMenu={noOp}
       />,
     );
     const document = new JSDOM(html).window.document;
     const cards = Array.from(document.querySelectorAll(".home-monitor-card"));
-    const expectedMainStates = ["neutral", "running", "interrupted", "running"] as const;
+    const expectedMainStates = ["neutral", "running"] as const;
 
     assert.ok(html.includes("Agent task"));
     assert.ok(html.includes("Auxiliary task"));
-    assert.ok(html.includes("Companion task"));
-    assert.ok(html.includes("Companion Auxiliary task"));
     assert.equal(html.includes("workspace"), false);
-    assert.equal(cards.length, 4);
+    assert.equal(cards.length, 2);
     for (const [index, card] of cards.entries()) {
       const parentRow = card.querySelector(".home-monitor-parent-row");
       const summaryRow = card.querySelector(".home-monitor-summary-row");
@@ -1136,21 +1060,18 @@ describe("HomeMonitorContent", () => {
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.closed").length, 1);
     assert.equal(cards[1]?.querySelectorAll(".home-monitor-status-cluster").length, 1);
     assert.equal(cards[1]?.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
-    assert.equal(html.match(/>Main<\/span>/g)?.length, 4);
+    assert.equal(html.match(/>Main<\/span>/g)?.length, 2);
     assert.equal(html.match(/>Aux<\/span>/g)?.length, 1);
-    assert.equal(html.match(/class="home-monitor-status-icon running"/g)?.length, 2);
+    assert.equal(html.match(/class="home-monitor-status-icon running"/g)?.length, 1);
     assert.equal(html.match(/class="home-monitor-status-icon neutral"/g)?.length, 1);
-    assert.equal(html.match(/class="home-monitor-status-icon interrupted"/g)?.length, 1);
     assert.equal(html.match(/class="home-monitor-status-icon error"/g)?.length, 1);
     assert.equal(html.match(/class="home-monitor-status-icon closed"/g)?.length, 1);
-    assert.equal(html.match(/aria-label="Main 実行中"/g)?.length, 2);
+    assert.equal(html.match(/aria-label="Main 実行中"/g)?.length, 1);
     assert.equal(html.match(/aria-label="Main 待機"/g)?.length, 1);
-    assert.ok(html.includes('aria-label="Main 中断"'));
     assert.ok(html.includes('aria-label="Auxiliary エラー 1件"'));
     assert.ok(html.includes('aria-label="Auxiliary 終了 1件"'));
-    assert.ok(html.includes('aria-label="Companion Reviewを開く: Companion task"'));
-    assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 4);
-    assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 4);
+    assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 2);
+    assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 2);
   });
 
   // @test-value v2
@@ -1209,7 +1130,6 @@ describe("HomeMonitorContent", () => {
           runningEntries={[]}
           nonRunningEntries={[entry]}
           onOpenSession={noOp}
-          onOpenCompanionReview={noOp}
           onShowContextMenu={noOp}
         />,
       ));
@@ -1273,7 +1193,6 @@ describe("HomeMonitorContent", () => {
         runningEntries={[entry]}
         nonRunningEntries={[]}
         onOpenSession={noOp}
-        onOpenCompanionReview={noOp}
         onShowContextMenu={noOp}
       />,
     );
@@ -1319,7 +1238,6 @@ describe("HomeMonitorContent", () => {
           nonRunningEntries={entries}
           auxiliaryDataState={auxiliaryDataState}
           onOpenSession={noOp}
-          onOpenCompanionReview={noOp}
           onShowContextMenu={noOp}
         />,
       );
@@ -1359,7 +1277,6 @@ describe("HomeMonitorContent", () => {
     const container = dom.window.document.getElementById("root") as HTMLElement;
     const root = createRoot(container);
     const openedSessions: Array<{ sessionId: string; auxiliarySessionId?: string }> = [];
-    const openedCompanions: Array<{ sessionId: string; auxiliarySessionId?: string }> = [];
     const auxiliarySessions = [
       {
         id: "aux-a",
@@ -1397,19 +1314,7 @@ describe("HomeMonitorContent", () => {
         }),
       ],
     };
-    const companionEntry: HomeMonitorEntry = {
-      kind: "companion",
-      session: createMonitorCompanion("companion-expand", "Companion expandable task"),
-      isWindowOpen: true,
-      state: { kind: "neutral", label: "待機" },
-      mainState: { kind: "neutral", label: "待機" },
-      auxiliarySessions: [
-        createMonitorAuxiliary("aux-companion", {
-          parentSessionId: "companion-expand",
-          preview: "Companion auxiliary",
-        }),
-      ],
-    };
+
 
     Object.defineProperties(globalThis, {
       window: { configurable: true, value: dom.window },
@@ -1426,25 +1331,23 @@ describe("HomeMonitorContent", () => {
       await act(async () => root.render(
         <HomeMonitorContent
           runningEntries={[]}
-          nonRunningEntries={[entry, secondEntry, companionEntry]}
+          nonRunningEntries={[entry, secondEntry]}
           onOpenSession={(sessionId, auxiliarySessionId) => openedSessions.push({ sessionId, auxiliarySessionId })}
-          onOpenCompanionReview={(sessionId, auxiliarySessionId) => openedCompanions.push({ sessionId, auxiliarySessionId })}
           onShowContextMenu={noOp}
         />,
       ));
 
       const disclosures = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-disclosure"));
       const parentButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-parent-button"));
-      assert.equal(disclosures.length, 3);
-      assert.equal(parentButtons.length, 3);
+      assert.equal(disclosures.length, 2);
+      assert.equal(parentButtons.length, 2);
       assert.equal(container.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
 
       await act(async () => disclosures[0]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
       let cards = Array.from(container.querySelectorAll<HTMLElement>(".home-monitor-card"));
-      assert.equal(cards.length, 3);
+      assert.equal(cards.length, 2);
       assert.equal(cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 2);
       assert.equal(cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
-      assert.equal(cards[2]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
       const auxiliaryRows = Array.from(cards[0]?.querySelectorAll<HTMLButtonElement>("button.home-monitor-auxiliary-row") ?? []);
       assert.ok(auxiliaryRows[0]?.textContent?.includes("First auxiliary"));
       assert.equal(
@@ -1464,42 +1367,20 @@ describe("HomeMonitorContent", () => {
       await act(async () => root.render(
         <HomeMonitorContent
           runningEntries={[entry]}
-          nonRunningEntries={[secondEntry, companionEntry]}
+          nonRunningEntries={[secondEntry]}
           onOpenSession={(sessionId, auxiliarySessionId) => openedSessions.push({ sessionId, auxiliarySessionId })}
-          onOpenCompanionReview={(sessionId, auxiliarySessionId) => openedCompanions.push({ sessionId, auxiliarySessionId })}
           onShowContextMenu={noOp}
         />,
       ));
       cards = Array.from(container.querySelectorAll<HTMLElement>(".home-monitor-card"));
       assert.equal(cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 2);
       assert.equal(cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
-      assert.equal(cards[2]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
 
       const movedDisclosures = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-disclosure"));
       await act(async () => movedDisclosures[1]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
       cards = Array.from(container.querySelectorAll<HTMLElement>(".home-monitor-card"));
       assert.equal(cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 2);
       assert.equal(cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 1);
-
-      const latestDisclosures = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-disclosure"));
-      await act(async () => latestDisclosures[2]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-      const companionRows = Array.from(
-        container.querySelectorAll<HTMLElement>(".home-monitor-card"),
-      )[2]?.querySelectorAll<HTMLButtonElement>("button.home-monitor-auxiliary-row");
-      assert.equal(companionRows?.length, 1);
-      await act(async () => companionRows?.[0]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-      assert.deepEqual(openedCompanions, [
-        { sessionId: "companion-expand", auxiliarySessionId: "aux-companion" },
-      ]);
-      assert.equal(
-        parentButtons[2]?.getAttribute("aria-label"),
-        "Companion Reviewを開く: Companion expandable task",
-      );
-      await act(async () => parentButtons[2]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-      assert.deepEqual(openedCompanions, [
-        { sessionId: "companion-expand", auxiliarySessionId: "aux-companion" },
-        { sessionId: "companion-expand", auxiliarySessionId: undefined },
-      ]);
     } finally {
       await act(async () => root.unmount());
       dom.window.close();
@@ -1518,15 +1399,13 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "開いているAgent/CompanionのMonitor parent buttonは右クリックとContextMenu/Shift+F10を対象entryと座標へ変換し、閉じているCompanion cardはmenu対象外としてbrowser default menuを抑止する"
-  // oracle = { type = "contract", ref = "HomeMonitorContent session monitor context menu contract" }
-  // fault = "Agent/Companionの種別またはkeyboard context menuの分岐が別entryへ送られる、keyboard座標が原点に固定される、または閉じたCompanion rowからmenu操作が送られる"
-  // observable = "callbackへ渡されたkind、sessionId、point、非ゼロgetBoundingClientRectから生成されたkeyboard座標、aria-haspopup、およびcontext menu eventのdefaultPrevented"
+  // claim = "開いているAgentのMonitor parent buttonは右クリックとContextMenu/Shift+F10を対象Sessionと座標へ変換する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
+  // fault = "Agentの種別またはkeyboard context menuの分岐が別Sessionへ送られるか、keyboard座標が原点に固定される"
+  // observable = "callbackへ渡されたkind、sessionId、point、aria-haspopup、およびcontext menu eventのdefaultPrevented"
   // observation_boundary = "component-behavior"
-  // scope = "HomeMonitorContent context menu interaction"
+  // scope = "HomeMonitorContent agent context menu interaction"
   // lifecycle = "permanent"
-  // impact = "誤ったSession Windowを閉じる操作やbrowser menuとの競合を防ぐ"
-  // distinction = "native menuのselectionやMain IPCのrequest validationとは分離してrendererのentry mappingを検証する"
   // @end-test-value
   it("Monitor row は右クリックとkeyboard context menuを対象entryへ渡す", async () => {
     const previousGlobals = {
@@ -1539,7 +1418,7 @@ describe("HomeMonitorContent", () => {
       KeyboardEvent: globalThis.KeyboardEvent,
       PointerEvent: globalThis.PointerEvent,
     };
-    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
       pretendToBeVisual: true,
     });
     const container = dom.window.document.getElementById("root") as HTMLElement;
@@ -1559,35 +1438,6 @@ describe("HomeMonitorContent", () => {
       mainState: { kind: "neutral", label: "待機" },
       auxiliarySessions: [],
     } as HomeMonitorEntry;
-    const companionEntry: HomeMonitorEntry = {
-      kind: "companion",
-      session: {
-        id: "companion-context-menu",
-        groupId: "group-context-menu",
-        taskTitle: "Companion context menu task",
-        character: "Solo Mate",
-        characterIconPath: "mate.png",
-      },
-      isWindowOpen: true,
-      state: { kind: "neutral", label: "待機" },
-      mainState: { kind: "neutral", label: "待機" },
-      auxiliarySessions: [],
-    } as HomeMonitorEntry;
-    const closedCompanionEntry: HomeMonitorEntry = {
-      kind: "companion",
-      session: {
-        id: "companion-context-menu-closed",
-        groupId: "group-context-menu",
-        taskTitle: "Closed Companion context menu task",
-        character: "Solo Mate",
-        characterIconPath: "mate.png",
-      },
-      isWindowOpen: false,
-      state: { kind: "neutral", label: "待機" },
-      mainState: { kind: "neutral", label: "待機" },
-      auxiliarySessions: [],
-    } as HomeMonitorEntry;
-
     Object.defineProperties(globalThis, {
       window: { configurable: true, value: dom.window },
       document: { configurable: true, value: dom.window.document },
@@ -1598,107 +1448,47 @@ describe("HomeMonitorContent", () => {
       KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
       PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
     });
-
     try {
       await act(async () => root.render(
         <HomeMonitorContent
-          runningEntries={[entry, companionEntry, closedCompanionEntry]}
+          runningEntries={[entry]}
           nonRunningEntries={[]}
           onOpenSession={noOp}
-          onOpenCompanionReview={noOp}
           onShowContextMenu={(kind, sessionId, point) => requests.push({ kind, sessionId, point })}
         />,
       ));
-
-      const [row, companionRow, closedCompanionRow] = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-parent-button"));
+      const row = container.querySelector<HTMLButtonElement>("button.home-monitor-parent-button");
       assert.ok(row);
-      assert.ok(companionRow);
-      assert.ok(closedCompanionRow);
       assert.equal(row.getAttribute("aria-haspopup"), "menu");
-      assert.equal(companionRow.getAttribute("aria-haspopup"), "menu");
-      assert.equal(closedCompanionRow.getAttribute("aria-haspopup"), null);
       Object.defineProperty(row, "getBoundingClientRect", {
         configurable: true,
         value: () => ({ left: 120.4, bottom: 240.6 }),
       });
-      Object.defineProperty(companionRow, "getBoundingClientRect", {
-        configurable: true,
-        value: () => ({ left: 320.4, bottom: 440.6 }),
-      });
       const contextMenuEvent = new dom.window.MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        clientX: 24,
-        clientY: 48,
+        bubbles: true, cancelable: true, clientX: 24, clientY: 48,
       });
       await act(async () => row.dispatchEvent(contextMenuEvent));
       assert.equal(contextMenuEvent.defaultPrevented, true);
-      assert.deepEqual(requests, [{
-        kind: "agent",
-        sessionId: "session-context-menu",
-        point: { x: 24, y: 48 },
-      }]);
-
-      const companionContextMenuEvent = new dom.window.MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        clientX: 72,
-        clientY: 96,
+      assert.deepEqual(requests, [{ kind: "agent", sessionId: "session-context-menu", point: { x: 24, y: 48 } }]);
+      const keyboardEvent = new dom.window.KeyboardEvent("keydown", {
+        bubbles: true, cancelable: true, key: "ContextMenu",
       });
-      await act(async () => companionRow.dispatchEvent(companionContextMenuEvent));
-      assert.equal(companionContextMenuEvent.defaultPrevented, true);
+      await act(async () => row.dispatchEvent(keyboardEvent));
+      assert.equal(keyboardEvent.defaultPrevented, true);
       assert.deepEqual(requests.at(-1), {
-        kind: "companion",
-        sessionId: "companion-context-menu",
-        point: { x: 72, y: 96 },
+        kind: "agent", sessionId: "session-context-menu", point: { x: 120, y: 241 },
       });
-
-      const contextMenuKeyEvent = new dom.window.KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        key: "ContextMenu",
-      });
-      await act(async () => row.dispatchEvent(contextMenuKeyEvent));
-      assert.equal(contextMenuKeyEvent.defaultPrevented, true);
-      assert.deepEqual(requests.at(-1), {
-        kind: "agent",
-        sessionId: "session-context-menu",
-        point: { x: 120, y: 241 },
-      });
-
       const shiftF10Event = new dom.window.KeyboardEvent("keydown", {
         bubbles: true,
         cancelable: true,
         key: "F10",
         shiftKey: true,
       });
-      await act(async () => companionRow.dispatchEvent(shiftF10Event));
+      await act(async () => row.dispatchEvent(shiftF10Event));
       assert.equal(shiftF10Event.defaultPrevented, true);
       assert.deepEqual(requests.at(-1), {
-        kind: "companion",
-        sessionId: "companion-context-menu",
-        point: { x: 320, y: 441 },
+        kind: "agent", sessionId: "session-context-menu", point: { x: 120, y: 241 },
       });
-
-      const requestsBeforeClosedCompanion = requests.length;
-      const closedCompanionContextMenuEvent = new dom.window.MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        clientX: 144,
-        clientY: 288,
-      });
-      await act(async () => closedCompanionRow.dispatchEvent(closedCompanionContextMenuEvent));
-      assert.equal(closedCompanionContextMenuEvent.defaultPrevented, true);
-      assert.equal(requests.length, requestsBeforeClosedCompanion);
-
-      const closedCompanionContextMenuKeyEvent = new dom.window.KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        key: "ContextMenu",
-      });
-      await act(async () => closedCompanionRow.dispatchEvent(closedCompanionContextMenuKeyEvent));
-      assert.equal(closedCompanionContextMenuKeyEvent.defaultPrevented, true);
-      assert.equal(requests.length, requestsBeforeClosedCompanion);
     } finally {
       await act(async () => root.unmount());
       dom.window.close();
@@ -1733,7 +1523,6 @@ describe("HomeMonitorContent", () => {
         runningEntries={[]}
         nonRunningEntries={[]}
         onOpenSession={noOp}
-        onOpenCompanionReview={noOp}
         onShowContextMenu={noOp}
       />,
     );
@@ -1743,7 +1532,6 @@ describe("HomeMonitorContent", () => {
         nonRunningEntries={[]}
         feedback="Session IDをコピーできませんでした。"
         onOpenSession={noOp}
-        onOpenCompanionReview={noOp}
         onShowContextMenu={noOp}
       />,
     );
@@ -1791,7 +1579,6 @@ describe("HomeRightPane", () => {
       onCreateCharacter={noOp}
       onEditCharacter={noOp}
       onOpenSession={noOp}
-      onOpenCompanionReview={noOp}
       onShowSessionMonitorContextMenu={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
       sessionWindowRestoreIds={sessionWindowRestoreIds}

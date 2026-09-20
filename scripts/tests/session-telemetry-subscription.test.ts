@@ -27,7 +27,6 @@ const sessionTelemetry: SessionContextTelemetry = {
 const flushPromises = () => new Promise<void>((resolve) => {
   queueMicrotask(resolve);
 });
-
 test("startProviderQuotaTelemetrySubscription は api 不在なら null telemetry を反映して no-op cleanup を返す", () => {
   const updates: ProviderOwnedQuotaTelemetry[] = [];
 
@@ -43,7 +42,6 @@ test("startProviderQuotaTelemetrySubscription は api 不在なら null telemetr
     { ownerProviderId: "copilot", telemetry: null },
   ]);
 });
-
 test("startProviderQuotaTelemetrySubscription は disabled provider では fetch せず null telemetry を反映する", () => {
   const updates: ProviderOwnedQuotaTelemetry[] = [];
   let getCallCount = 0;
@@ -236,18 +234,6 @@ test("App の provider quota telemetry subscription は Copilot provider だけ�
     /enabled: providerId === "copilot"/,
   );
 });
-
-test("CompanionReview の provider quota telemetry subscription は merge view で無効にする", async () => {
-  const source = await readFile(new URL("../../src/CompanionReviewApp.tsx", import.meta.url), "utf8");
-  const subscriptionIndex = source.indexOf("startProviderQuotaTelemetrySubscription({");
-
-  assert.notEqual(subscriptionIndex, -1);
-  assert.match(
-    source.slice(subscriptionIndex, subscriptionIndex + 240),
-    /enabled: !isMergeView/,
-  );
-});
-
 test("startSessionContextTelemetrySubscription は api 不在なら null telemetry を反映して no-op cleanup を返す", () => {
   const updates: SessionOwnedContextTelemetry[] = [];
 
@@ -454,16 +440,5 @@ test("App の session context telemetry subscription は Copilot provider だけ
   assert.match(
     source.slice(subscriptionIndex, subscriptionIndex + 240),
     /enabled: providerId === "copilot"/,
-  );
-});
-
-test("CompanionReview の session context telemetry subscription は merge view で無効にする", async () => {
-  const source = await readFile(new URL("../../src/CompanionReviewApp.tsx", import.meta.url), "utf8");
-  const subscriptionIndex = source.indexOf("startSessionContextTelemetrySubscription({");
-
-  assert.notEqual(subscriptionIndex, -1);
-  assert.match(
-    source.slice(subscriptionIndex, subscriptionIndex + 240),
-    /enabled: !isMergeView/,
   );
 });

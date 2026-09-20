@@ -2,8 +2,8 @@ import type { ComposerPreview } from "../app-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 
 export type ComposerPreviewRequest = (message: string) => Promise<ComposerPreview>;
-export type ComposerPreviewRequestMode = "session" | "companion";
-export type ComposerPreviewRequestApi = Pick<WithMateWindowApi, "previewComposerInput" | "previewCompanionComposerInput">;
+export type ComposerPreviewRequestMode = "session";
+export type ComposerPreviewRequestApi = Pick<WithMateWindowApi, "previewComposerInput">;
 
 export function createComposerPreviewRequest({
   api,
@@ -18,7 +18,5 @@ export function createComposerPreviewRequest({
     return null;
   }
 
-  return mode === "companion"
-    ? (message: string) => api.previewCompanionComposerInput(sessionId, message)
-    : (message: string) => api.previewComposerInput(sessionId, message);
+  return (message: string) => api.previewComposerInput(sessionId, message);
 }

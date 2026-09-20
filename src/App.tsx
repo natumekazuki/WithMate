@@ -37,9 +37,6 @@ import {
   buildSessionWithReasoningEffort,
 } from "./runtime-option-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
-import type { CompanionSessionSummary } from "./companion-state.js";
-import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
-import { startOpenCompanionReviewWindowIdsSubscription } from "./open-companion-review-window-subscription.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import {
   createDefaultAppSettings,
@@ -220,7 +217,6 @@ import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { ShortcutSettingsProvider } from "./shortcut-settings-context.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
-import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import {
   INITIAL_SESSION_WORKSPACE_AVAILABILITY,
   applySessionWorkspaceAvailabilityResult,
@@ -521,8 +517,6 @@ export default function AgentSessionWindowApp() {
     sessionProjectionRevisionRef.current.advance();
     setSessionsBase(update);
   }, []);
-  const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
-  const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const composerRegistryRef = useRef<ComposerControllerRegistry | null>(null);
   if (!composerRegistryRef.current) {
     composerRegistryRef.current = new ComposerControllerRegistry();
@@ -806,19 +800,6 @@ export default function AgentSessionWindowApp() {
     };
   }, [selectedId, setAuthoritativeSessions, withmateApi]);
 
-  useEffect(() => {
-    return startCompanionSessionSummariesSubscription({
-      api: withmateApi,
-      applySummaries: setCompanionSessions,
-    });
-  }, [withmateApi]);
-
-  useEffect(() => {
-    return startOpenCompanionReviewWindowIdsSubscription({
-      api: withmateApi,
-      applyOpenWindowIds: setOpenCompanionReviewWindowIds,
-    });
-  }, [withmateApi]);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
@@ -827,13 +808,6 @@ export default function AgentSessionWindowApp() {
   const displayedSession = useMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession);
   const selectedAuxiliaryRuntimeSession = useMainAuxiliaryRuntimeSession(selectedSession, auxiliaryWorkspace.selectedSession);
   const isAuxiliaryMode = activeAuxiliarySession !== null;
-  const selectedCompanionGroupMonitorEntries = useMemo(
-    () => buildCompanionGroupMonitorEntries(
-      companionSessions,
-      openCompanionReviewWindowIds,
-    ),
-    [companionSessions, openCompanionReviewWindowIds],
-  );
   const selectedSessionId = selectedSession?.id ?? null;
   const validateSessionWorkspace = useCallback(async (
     session: Session,
@@ -2115,7 +2089,6 @@ export default function AgentSessionWindowApp() {
       isCopilotSession,
       includeMessages: true,
       includeGlossary: includeGlossaryContextPane,
-      hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
       hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
     }),
@@ -2123,7 +2096,6 @@ export default function AgentSessionWindowApp() {
       hasLiveRunReasoningText,
       hasReasoningCapability,
       isCopilotSession,
-      selectedCompanionGroupMonitorEntries.length,
       includeGlossaryContextPane,
     ],
   );
@@ -4044,7 +4016,6 @@ export default function AgentSessionWindowApp() {
       activeContextPaneTab,
       latestCommandView,
       backgroundTasks: selectedBackgroundTasks,
-      companionGroupMonitorEntries: selectedCompanionGroupMonitorEntries,
       hasReasoningText: hasLiveRunReasoningText,
       isSelectedSessionRunning: renderedIsRunning,
     }),
@@ -4054,7 +4025,6 @@ export default function AgentSessionWindowApp() {
       latestCommandView,
       renderedIsRunning,
       selectedBackgroundTasks,
-      selectedCompanionGroupMonitorEntries,
     ],
   );
 
@@ -4453,7 +4423,6 @@ export default function AgentSessionWindowApp() {
         glossaryAnnotationMatcher,
         onActivateGlossaryEntry: handleActivateGlossaryEntry,
         selectedBackgroundTasks,
-        selectedCompanionGroupMonitorEntries,
         isCopilotSession,
         selectedCopilotRemainingPercentLabel,
         selectedCopilotRemainingRequestsLabel,
@@ -4637,7 +4606,6 @@ export default function AgentSessionWindowApp() {
         onKeyDownFilesPaneResize: handleKeyDownFilesPaneResize,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onSelectContextPaneTab: setActiveContextPaneTab,
-        onOpenCompanionReview: (sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId),
         onCloseDiff: () => setSelectedDiff(null),
         onOpenDiffWindow: (payload) => void handleOpenDiffWindow(payload),
         onLoadMoreAuditLogs: handleLoadMoreAuditLogs,

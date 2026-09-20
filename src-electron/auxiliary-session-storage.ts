@@ -530,13 +530,11 @@ export class AuxiliarySessionStorage {
         const current = row ? parseAuxiliarySessionRow(row) : null;
         const parentTables = (db.prepare(`
           SELECT name FROM sqlite_master
-          WHERE type = 'table' AND name IN ('sessions_v6', 'companion_sessions', 'sessions')
+          WHERE type = 'table' AND name IN ('sessions_v6', 'sessions')
         `).all() as Array<{ name: string }>);
         const hasV6ParentTable = parentTables.some(({ name }) => name === "sessions_v6");
         const parent = parentTables.filter(({ name }) => name !== (hasV6ParentTable ? "sessions" : "sessions_v6")).some(({ name }) => {
-          const row = name === "companion_sessions"
-            ? db.prepare(`SELECT 1 AS present FROM ${name} WHERE id = ? AND status IN ('active', 'recovery-required') LIMIT 1`).get(input.expectedSession.parentSessionId)
-            : db.prepare(`SELECT 1 AS present FROM ${name} WHERE id = ? LIMIT 1`).get(input.expectedSession.parentSessionId);
+          const row = db.prepare(`SELECT 1 AS present FROM ${name} WHERE id = ? LIMIT 1`).get(input.expectedSession.parentSessionId);
           return Boolean(row);
         });
         const expected = normalizeAuxiliarySession(input.expectedSession);
@@ -831,7 +829,7 @@ function touchAuxiliarySummaryRecency(db: DatabaseSync, auxiliarySessionId: stri
 
 function hasWritableAuxiliaryParent(db: DatabaseSync, parentSessionId: string): boolean {
   const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'
-    AND name IN ('sessions_v6', 'companion_sessions', 'sessions')`).all() as Array<{ name: string }>;
+    AND name IN ('sessions_v6', 'sessions')`).all() as Array<{ name: string }>;
   if (tables.some(({ name }) => name === "sessions_v6")) {
     const row = db.prepare(`SELECT runtime_policy_json FROM sessions_v6 WHERE id = ? LIMIT 1`)
       .get(parentSessionId) as { runtime_policy_json: string } | undefined;
@@ -846,9 +844,6 @@ function hasWritableAuxiliaryParent(db: DatabaseSync, parentSessionId: string): 
     });
   }
   return tables.some(({ name }) => {
-    if (name === "companion_sessions") {
-      return Boolean(db.prepare(`SELECT 1 AS present FROM ${name} WHERE id = ? AND status IN ('active', 'recovery-required') LIMIT 1`).get(parentSessionId));
-    }
     const row = db.prepare(`SELECT access_mode, source_schema_version FROM ${name} WHERE id = ? LIMIT 1`)
       .get(parentSessionId) as { access_mode: string; source_schema_version: number } | undefined;
     return Boolean(row && !isReadOnlySession({

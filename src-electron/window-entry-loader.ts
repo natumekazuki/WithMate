@@ -7,8 +7,7 @@ export type WindowLike = {
 
 export type HomeEntryMode = "home" | "monitor" | "settings" | "memory-review";
 export type ChatEntryMode =
-  | { kind: "agent"; sessionId: string; auxiliarySessionId?: string | null }
-  | { kind: "companion"; sessionId: string; auxiliarySessionId?: string | null };
+  | { kind: "agent"; sessionId: string; auxiliarySessionId?: string | null };
 
 export type WindowEntryLoaderDeps = {
   devServerUrl?: string | null;
@@ -41,11 +40,6 @@ export class WindowEntryLoader {
     await this.load(window, "session.html", buildChatEntrySearch(mode));
   }
 
-  async loadCompanionMergeReviewEntry(window: WindowLike, sessionId: string): Promise<void> {
-    const search = `?companionSessionId=${encodeURIComponent(sessionId)}&view=merge`;
-    await this.load(window, "review.html", search);
-  }
-
   async loadCharacterEditorEntry(window: WindowLike, characterId?: string | null): Promise<void> {
     const normalizedCharacterId = characterId?.trim() ?? "";
     const search = normalizedCharacterId ? `?characterId=${encodeURIComponent(normalizedCharacterId)}` : "";
@@ -76,8 +70,5 @@ export function buildChatEntrySearch(mode: ChatEntryMode): string {
   if (mode.kind === "agent") {
     return `?sessionId=${encodeURIComponent(mode.sessionId)}${auxiliarySessionQuery}`;
   }
-  if (mode.kind === "companion") {
-    return `?companionSessionId=${encodeURIComponent(mode.sessionId)}&mode=companion${auxiliarySessionQuery}`;
-  }
-  throw new Error(`Unsupported chat entry mode: ${(mode as { kind: string }).kind}`);
+  return `?sessionId=${encodeURIComponent(mode.sessionId)}${auxiliarySessionQuery}`;
 }

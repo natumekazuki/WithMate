@@ -8,12 +8,12 @@ import { MainBroadcastFacade } from "../../src-electron/main-broadcast-facade.js
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainBroadcastFacadeは非同期のcatalog/settings/prompt取得を待って各broadcastへ委譲する"
-// oracle = { type = "contract", ref = "src-electron/main-broadcast-facade.ts#broadcastModelCatalog" }
-// fault = "非同期storageのPromiseをpayloadとして送信するかprompt broadcastを取りこぼす"
-// observable = "各WindowBroadcastService呼び出しのpayloadと順序"
+// claim = "MainBroadcastFacade は payload を組み立てて WindowBroadcastService へ委譲する"
+// oracle = { type = "contract", ref = "src-electron/main-broadcast-facade.ts" }
+// fault = "現行catalogや設定を取得せず、Session更新やWindow一覧のbroadcastを欠落させる"
+// observable = "broadcast先に渡されたSession ID、catalog revision、設定、template件数、Window件数"
 // observation_boundary = "public-boundary"
-// scope = "main-broadcast-facade"
+// scope = "scripts/tests/main-broadcast-facade.test.ts"
 // lifecycle = "permanent"
 // @end-test-value
 test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService へ委譲する", () => {
@@ -37,9 +37,6 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
         broadcastOpenSessionWindowIds(payload: string[]) {
           calls.push(`windows:${payload.length}`);
         },
-        broadcastOpenCompanionReviewWindowIds(payload: string[]) {
-          calls.push(`reviews:${payload.length}`);
-        },
       }) as never,
     getModelCatalog: async () => ({ revision: 3, providers: [] }),
     getAppSettings: async () =>
@@ -51,7 +48,6 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
       }) as never,
     listPromptTemplates: async () => [{ id: "template-1" }] as never,
     listOpenSessionWindowIds: () => ["s-1", "s-2"],
-    listOpenCompanionReviewWindowIds: () => ["review-1"],
     });
 
     facade.broadcastSessions(["s-1"]);
@@ -59,12 +55,21 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
     await facade.broadcastAppSettings();
     await facade.broadcastPromptTemplates();
     facade.broadcastOpenSessionWindowIds();
-    facade.broadcastOpenCompanionReviewWindowIds();
 
-    assert.deepEqual(calls, ["invalidated:ids:s-1", "catalog:3", "settings", "templates:1", "windows:2", "reviews:1"]);
+    assert.deepEqual(calls, ["invalidated:ids:s-1", "catalog:3", "settings", "templates:1", "windows:2"]);
   })();
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "MainBroadcastFacade は invalidation ID の上限超過を all に収束させる"
+// oracle = { type = "contract", ref = "src-electron/main-broadcast-facade.ts" }
+// fault = "多数IDを途中で切り詰めて更新通知を失うか、空指定で全体更新を通知しない"
+// observable = "257 IDおよび空配列から生成されたscope=allの通知payload"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/main-broadcast-facade.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
 test("MainBroadcastFacade は invalidation ID の上限超過を all に収束させる", () => {
   const payloads: SessionSummaryInvalidation[] = [];
   const facade = new MainBroadcastFacade({
@@ -75,7 +80,6 @@ test("MainBroadcastFacade は invalidation ID の上限超過を all に収束�
     getAppSettings: () => ({}) as never,
     listPromptTemplates: () => [],
     listOpenSessionWindowIds: () => [],
-    listOpenCompanionReviewWindowIds: () => [],
   });
 
   facade.broadcastSessions(Array.from({ length: 257 }, (_, index) => `session-${index}`));

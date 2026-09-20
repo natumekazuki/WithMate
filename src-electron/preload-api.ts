@@ -17,7 +17,6 @@ import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
   WithMateWindowCharacterApi,
-  WithMateWindowCompanionApi,
   WithMateWindowNavigationApi,
   WithMateWindowObservabilityApi,
   WithMateWindowAuxiliaryApi,
@@ -36,17 +35,14 @@ import {
   WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL,
   WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
-  WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
-  WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
-  WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
   WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
@@ -74,12 +70,6 @@ import {
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
-  WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
-  WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
-  WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
-  WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
-  WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
-  WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MATE_PROFILE_CHANNEL,
@@ -120,11 +110,6 @@ import {
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
-  WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
-  WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL,
-  WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
-  WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
-  WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
@@ -140,8 +125,6 @@ import {
   WITHMATE_AUXILIARY_SESSION_SELECTION_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
-  WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
-  WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
@@ -157,7 +140,6 @@ import {
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT,
-  WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
@@ -170,10 +152,8 @@ import {
   WITHMATE_PICK_SESSION_IMAGE_FILE_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_COPY_FILES_TO_SESSION_FILES_CHANNEL,
-  WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
-  WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
@@ -183,14 +163,8 @@ import {
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
-  WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
-  WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
-  WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
-  WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
-  WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL,
-  WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
@@ -202,7 +176,6 @@ import {
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_MATE_CHANNEL,
-  WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_SET_SESSION_PINNED_CHANNEL,
@@ -314,16 +287,6 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     },
     openSessionFilePreviewWindow(request) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL, request);
-    },
-    openCompanionReviewWindow(sessionId, auxiliarySessionId) {
-      return ipcRenderer.invoke(
-        WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
-        sessionId,
-        auxiliarySessionId ?? null,
-      );
-    },
-    openCompanionMergeWindow(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL, sessionId);
     },
     openPath(target, options) {
       return ipcRenderer.invoke(WITHMATE_OPEN_PATH_CHANNEL, target, options ?? null);
@@ -571,74 +534,6 @@ function createAuxiliaryApi(ipcRenderer: IpcRendererLike): WithMateWindowAuxilia
   };
 }
 
-function createCompanionApi(ipcRenderer: IpcRendererLike): WithMateWindowCompanionApi {
-  return {
-    listCompanionSessionSummaries() {
-      return ipcRenderer.invoke(WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL);
-    },
-    getCompanionSession(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_SESSION_CHANNEL, sessionId);
-    },
-    getCompanionMessageArtifact(sessionId, messageIndex) {
-      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL, sessionId, messageIndex);
-    },
-    getCompanionReviewSnapshot(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL, sessionId);
-    },
-    mergeCompanionSelectedFiles(request) {
-      return ipcRenderer.invoke(WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL, request);
-    },
-    syncCompanionTarget(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_SYNC_COMPANION_TARGET_CHANNEL, sessionId);
-    },
-    stashCompanionTargetChanges(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL, sessionId);
-    },
-    restoreCompanionTargetStash(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL, sessionId);
-    },
-    dropCompanionTargetStash(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL, sessionId);
-    },
-    discardCompanionSession(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL, sessionId);
-    },
-    createCompanionSession(input) {
-      return ipcRenderer.invoke(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, input);
-    },
-    updateCompanionSession(session) {
-      return ipcRenderer.invoke(WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL, session);
-    },
-    previewCompanionComposerInput(sessionId, userMessage) {
-      return ipcRenderer.invoke(WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL, sessionId, userMessage);
-    },
-    runCompanionSessionTurn(sessionId, request) {
-      return ipcRenderer.invoke(WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL, sessionId, request);
-    },
-    cancelCompanionSessionRun(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL, sessionId);
-    },
-    listCompanionAuditLogs(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL, sessionId);
-    },
-    listCompanionAuditLogSummaries(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL, sessionId);
-    },
-    listCompanionAuditLogSummaryPage(sessionId, request) {
-      return ipcRenderer.invoke(WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL, sessionId, request ?? null);
-    },
-    getCompanionAuditLogDetail(sessionId, auditLogId) {
-      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL, sessionId, auditLogId);
-    },
-    getCompanionAuditLogDetailSection(sessionId, auditLogId, section) {
-      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL, sessionId, auditLogId, section);
-    },
-    getCompanionAuditLogOperationDetail(sessionId, auditLogId, operationIndex) {
-      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL, sessionId, auditLogId, operationIndex);
-    },
-  };
-}
-
 function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
   WithMateWindowObservabilityApi,
   | "reportRendererLog"
@@ -646,7 +541,6 @@ function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
   | "getSessionContextTelemetry"
   | "getSessionBackgroundActivity"
   | "listOpenSessionWindowIds"
-  | "listOpenCompanionReviewWindowIds"
 > {
   return {
     reportRendererLog(input) {
@@ -663,9 +557,6 @@ function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
     },
     listOpenSessionWindowIds() {
       return listAllOpenSessionWindowIds(ipcRenderer);
-    },
-    listOpenCompanionReviewWindowIds() {
-      return ipcRenderer.invoke(WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL);
     },
   };
 }
@@ -947,12 +838,6 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
         }
       });
     },
-    subscribeOpenCompanionReviewWindowIds(listener) {
-      return subscribe(ipcRenderer, WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT, listener);
-    },
-    subscribeCompanionSessionSummaries(listener) {
-      return subscribe(ipcRenderer, WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT, listener);
-    },
   };
 }
 
@@ -1044,7 +929,6 @@ export function createWithMateWindowApi(
     ...createCatalogApi(ipcRenderer),
     ...createSessionApi(ipcRenderer, platform),
     ...createAuxiliaryApi(ipcRenderer),
-    ...createCompanionApi(ipcRenderer),
     ...createObservabilityApi(ipcRenderer),
     ...createSettingsApi(ipcRenderer),
     ...createPromptTemplateApi(ipcRenderer),

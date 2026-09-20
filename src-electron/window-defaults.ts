@@ -26,20 +26,6 @@ export const FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS = {
   minHeight: 560,
 } as const;
 
-export const COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS = {
-  width: SESSION_WINDOW_DEFAULT_BOUNDS.width,
-  height: SESSION_WINDOW_DEFAULT_BOUNDS.height,
-  minWidth: SESSION_WINDOW_DEFAULT_BOUNDS.minWidth,
-  minHeight: SESSION_WINDOW_DEFAULT_BOUNDS.minHeight,
-} as const;
-
-export const COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS = {
-  width: 1680,
-  height: 980,
-  minWidth: 980,
-  minHeight: 680,
-} as const;
-
 export const CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS = {
   width: 1280,
   height: 920,

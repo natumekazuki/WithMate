@@ -17,7 +17,6 @@ export type HomeMonitorContentProps = {
   auxiliaryDataState?: HomeMonitorAuxiliaryDataState;
   feedback?: string;
   onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
-  onOpenCompanionReview: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowContextMenu: (
     kind: SessionMonitorEntryKind,
     sessionId: string,
@@ -30,7 +29,6 @@ type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading" | "closed";
 function getEntryKey(entry: HomeMonitorEntry): string {
   return `${entry.kind}:${entry.session.id}`;
 }
-
 function getAuxiliaryStatus(summary: HomeMonitorEntry["auxiliarySessions"][number]): {
   kind: HomeMonitorStatusKind;
   label: string;
@@ -97,7 +95,6 @@ export function HomeMonitorContent({
   auxiliaryDataState = "ready",
   feedback = "",
   onOpenSession,
-  onOpenCompanionReview,
   onShowContextMenu,
 }: HomeMonitorContentProps) {
   const [expandedEntryKeys, setExpandedEntryKeys] = useState<Set<string>>(() => new Set());
@@ -120,9 +117,6 @@ export function HomeMonitorContent({
     entry: HomeMonitorEntry,
   ) => {
     event.preventDefault();
-    if (entry.kind === "companion" && !entry.isWindowOpen) {
-      return;
-    }
     onShowContextMenu(entry.kind, entry.session.id, {
       x: Math.max(0, Math.round(event.clientX)),
       y: Math.max(0, Math.round(event.clientY)),
@@ -137,9 +131,6 @@ export function HomeMonitorContent({
       return;
     }
     event.preventDefault();
-    if (entry.kind === "companion" && !entry.isWindowOpen) {
-      return;
-    }
     const rect = event.currentTarget.getBoundingClientRect();
     onShowContextMenu(entry.kind, entry.session.id, {
       x: Math.max(0, Math.round(rect.left)),
@@ -154,17 +145,13 @@ export function HomeMonitorContent({
     const canExpand = auxiliarySessions.length > 0;
     const title = entry.session.taskTitle || entry.session.id;
     const openParent = () => {
-      if (entry.kind === "companion") {
-        onOpenCompanionReview(entry.session.id);
-      } else {
-        onOpenSession(entry.session.id);
-      }
+      onOpenSession(entry.session.id);
     };
 
     return (
       <div
         key={entryKey}
-        className={`home-monitor-card${entry.kind === "companion" ? ` companion ${companionGroupMarkerClassName(entry.session.groupId)}` : ""}`}
+        className="home-monitor-card"
         onContextMenu={(event) => showEntryContextMenu(event, entry)}
       >
         <div className="home-monitor-parent-row">
@@ -186,8 +173,8 @@ export function HomeMonitorContent({
             type="button"
             onClick={openParent}
             onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
-            aria-haspopup={entry.kind === "agent" || entry.isWindowOpen ? "menu" : undefined}
-            aria-label={`${entry.kind === "companion" ? "Companion Reviewを開く" : "Sessionを開く"}: ${title}`}
+            aria-haspopup="menu"
+            aria-label={`Sessionを開く: ${title}`}
           >
             <CharacterAvatar
               character={{ name: entry.session.character, iconPath: entry.session.characterIconPath }}
@@ -215,11 +202,7 @@ export function HomeMonitorContent({
               const status = getAuxiliaryStatus(summary);
               const preview = summary.preview?.trim() ?? "";
               const openAuxiliary = () => {
-                if (entry.kind === "companion") {
-                  onOpenCompanionReview(entry.session.id, summary.id);
-                } else {
-                  onOpenSession(entry.session.id, summary.id);
-                }
+                onOpenSession(entry.session.id, summary.id);
               };
               return (
                 <button
@@ -281,12 +264,4 @@ export function HomeMonitorContent({
       </section>
     </div>
   );
-}
-
-function companionGroupMarkerClassName(groupId: string): string {
-  let hash = 0;
-  for (let index = 0; index < groupId.length; index += 1) {
-    hash = (hash * 31 + groupId.charCodeAt(index)) >>> 0;
-  }
-  return `companion-group-${hash % 6}`;
 }

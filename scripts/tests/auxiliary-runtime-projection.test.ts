@@ -6,17 +6,13 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 
 import {
-  useCompanionAuxiliaryRuntimeSession,
   useMainAuxiliaryRuntimeSession,
   useMessageListAuxiliarySessions,
 } from "../../src/auxiliary-render-projections.js";
 import {
-  buildAuxiliaryRuntimeSessionProjection,
-  buildCompanionAuxiliaryRuntimeSession,
   buildMainAuxiliaryRuntimeSession,
 } from "../../src/auxiliary-runtime-projection.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
-import type { CompanionSession } from "../../src/companion-state.js";
 import type { Session } from "../../src/session-state.js";
 
 function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
@@ -87,54 +83,16 @@ function createSession(): Session {
   };
 }
 
-function createCompanionSession(): CompanionSession {
-  return {
-    id: "companion-1",
-    groupId: "group-1",
-    taskTitle: "Companion Session",
-    status: "active",
-    repoRoot: "C:/workspace",
-    focusPath: "src",
-    targetBranch: "main",
-    baseSnapshotRef: "base-ref",
-    baseSnapshotCommit: "base-commit",
-    companionBranch: "companion/main",
-    worktreePath: "C:/workspace-companion",
-    selectedPaths: [],
-    changedFiles: [],
-    siblingWarnings: [],
-    allowedAdditionalDirectories: ["C:/companion"],
-    runState: "idle",
-    threadId: "companion-thread",
-    provider: "provider-companion",
-    catalogRevision: 1,
-    model: "gpt-companion",
-    reasoningEffort: "medium",
-    customAgentName: "buddy",
-    approvalMode: "on-request",
-    codexSandboxMode: "workspace-write",
-    characterId: "companion-char",
-    character: "Companion",
-    characterRoleMarkdown: "",
-    characterIconPath: "",
-    characterThemeColors: { main: "#000", sub: "#fff" },
-    characterRuntimeSnapshot: {
-      characterId: "companion-char",
-      name: "Companion",
-      description: "Companion auxiliary projection character snapshot",
-      iconFilePath: "",
-      theme: { main: "#000", sub: "#fff" },
-      definitionMarkdown: "# Character\n\nCompanion auxiliary projection keeps this prompt.",
-      definitionSha256: "companion-character-sha",
-      definitionByteSize: 61,
-      snapshotAt: "2026-01-01T00:00:00.000Z",
-    },
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    messages: [{ role: "assistant", text: "companion response" }],
-  };
-}
-
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliaryのdraft-only更新は履歴とMain runtime projectionの参照を維持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+// fault = "draft変更だけで履歴またはruntime projectionを不要に再生成する"
+// observable = "draft-only、transcript、runtime、anchor更新後のprojection参照"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-runtime-projection"
+// lifecycle = "permanent"
+// @end-test-value
 test("Auxiliary render projection は draft-only 更新で履歴と runtime の参照を維持する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -151,19 +109,16 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
 
   const root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
   const mainSession = createSession();
-  const companionSession = createCompanionSession();
   const closedSessions: AuxiliarySession[] = [];
   let latestProjection: {
     messageListSessions: ReturnType<typeof useMessageListAuxiliarySessions>;
     mainRuntime: Session | null;
-    companionRuntime: CompanionSession | null;
   } | null = null;
 
   function ProjectionProbe({ activeSession }: { activeSession: AuxiliarySession }) {
     latestProjection = {
       messageListSessions: useMessageListAuxiliarySessions(closedSessions, activeSession),
       mainRuntime: useMainAuxiliaryRuntimeSession(mainSession, activeSession),
-      companionRuntime: useCompanionAuxiliaryRuntimeSession(companionSession, activeSession),
     };
     return null;
   }
@@ -187,7 +142,6 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
 
     assert.equal(draftOnly.messageListSessions, initial.messageListSessions);
     assert.equal(draftOnly.mainRuntime, initial.mainRuntime);
-    assert.equal(draftOnly.companionRuntime, initial.companionRuntime);
 
     const transcriptChanged = await renderProjection({
       ...initialSession,
@@ -196,7 +150,6 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
     });
     assert.notEqual(transcriptChanged.messageListSessions, draftOnly.messageListSessions);
     assert.notEqual(transcriptChanged.mainRuntime, draftOnly.mainRuntime);
-    assert.notEqual(transcriptChanged.companionRuntime, draftOnly.companionRuntime);
 
     const runtimeChanged = await renderProjection({
       ...initialSession,
@@ -205,7 +158,6 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
     });
     assert.equal(runtimeChanged.messageListSessions, transcriptChanged.messageListSessions);
     assert.notEqual(runtimeChanged.mainRuntime, transcriptChanged.mainRuntime);
-    assert.notEqual(runtimeChanged.companionRuntime, transcriptChanged.companionRuntime);
 
     const anchorChanged = await renderProjection({
       ...initialSession,
@@ -215,7 +167,6 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
     });
     assert.notEqual(anchorChanged.messageListSessions, runtimeChanged.messageListSessions);
     assert.equal(anchorChanged.mainRuntime, runtimeChanged.mainRuntime);
-    assert.equal(anchorChanged.companionRuntime, runtimeChanged.companionRuntime);
   } finally {
     await act(async () => {
       root.unmount();
@@ -230,13 +181,14 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
   }
 });
 
+
 // @test-value v2
 // kind = "invariant"
 // claim = "Auxiliary runtime projectionは保存済みCharacter snapshotの表示情報とownerをMainへ投影する"
-// oracle = { type = "contract", ref = "issue-710 Auxiliary Character owner projection" }
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md" }
 // fault = "Auxiliaryの表示名・icon・themeが親Characterへ戻り、会話identityと表示identityが混線する"
 // observable = "projection characterId/name/icon/theme/snapshot"
-// observation_boundary = "declaration"
+// observation_boundary = "public-boundary"
 // scope = "auxiliary-runtime-projection"
 // lifecycle = "permanent"
 // @end-test-value
@@ -250,7 +202,7 @@ test("Auxiliary runtime projectionはCharacter snapshotの表示情報を保持�
     iconFilePath: "auxiliary/icon.png",
     theme: { main: "#111111", sub: "#222222" },
   };
-  const projection = buildAuxiliaryRuntimeSessionProjection("main", parent, {
+  const projection = buildMainAuxiliaryRuntimeSession(parent, {
     ...auxiliary,
     characterId: snapshot.characterId,
     characterRuntimeSnapshot: snapshot,
@@ -265,46 +217,19 @@ test("Auxiliary runtime projectionはCharacter snapshotの表示情報を保持�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Companionで選択中Auxiliaryのruntime投影は会話ID・thread・Character snapshotを保持する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Character identity projection" }
-// fault = "Companion Auxiliaryの表示を親CompanionのthreadまたはCharacterへ差し替え、別会話の結果を表示する"
-// observable = "buildCompanionAuxiliaryRuntimeSessionの返却runtime sessionのID/thread/Character表示情報"
-// observation_boundary = "declaration"
-// scope = "companion-auxiliary-runtime-projection"
+// claim = "MainのAuxiliary表示はAuxiliary会話のruntimeと親Sessionの表示contextを投影する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md" }
+// fault = "Auxiliaryを選択しても親Sessionの会話・provider・threadを表示する"
+// observable = "投影SessionのID、provider、model、thread、messages、directories、status、親titleとsnapshot"
+// observation_boundary = "public-boundary"
+// scope = "Main Auxiliary runtime projection"
 // lifecycle = "permanent"
 // @end-test-value
-test("Companion Auxiliary runtime projectionはCharacter snapshotと会話identityを保持する", () => {
-  const parent = createCompanionSession();
-  const auxiliary = createAuxiliarySession({
-    parentSessionId: parent.id,
-    threadId: "companion-auxiliary-thread",
-    characterId: "auxiliary-character",
-    characterRuntimeSnapshot: {
-      ...parent.characterRuntimeSnapshot!,
-      characterId: "auxiliary-character",
-      name: "Companion Auxiliary Character",
-      iconFilePath: "companion-auxiliary.png",
-      theme: { main: "#123456", sub: "#654321" },
-    },
-  });
-  const projection = buildCompanionAuxiliaryRuntimeSession(parent, auxiliary);
-
-  assert.equal(projection.id, auxiliary.id);
-  assert.equal(projection.threadId, auxiliary.threadId);
-  assert.equal(projection.characterId, auxiliary.characterId);
-  assert.equal(projection.characterRuntimeSnapshot?.characterId, auxiliary.characterRuntimeSnapshot?.characterId);
-  assert.equal(projection.character, auxiliary.characterRuntimeSnapshot?.name);
-  assert.equal(projection.characterIconPath, auxiliary.characterRuntimeSnapshot?.iconFilePath);
-  assert.deepEqual(projection.characterThemeColors, auxiliary.characterRuntimeSnapshot?.theme);
-  assert.deepEqual(projection.characterRuntimeSnapshot, auxiliary.characterRuntimeSnapshot);
-  assert.deepEqual(projection.messages, auxiliary.messages);
-});
-
 test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff fields", () => {
   const parent = createSession();
   const auxiliary = createAuxiliarySession();
 
-  const projection = buildAuxiliaryRuntimeSessionProjection("main", parent, auxiliary);
+  const projection = buildMainAuxiliaryRuntimeSession(parent, auxiliary);
 
   assert.equal(projection.id, auxiliary.id);
   assert.equal(projection.provider, auxiliary.provider);
@@ -318,54 +243,25 @@ test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff 
   assert.deepEqual(projection.stream, []);
 });
 
-test("buildMainAuxiliaryRuntimeSession wraps main runtime projection", () => {
-  const parent = createSession();
-  const auxiliary = createAuxiliarySession();
-
-  assert.deepEqual(
-    buildMainAuxiliaryRuntimeSession(parent, auxiliary),
-    buildAuxiliaryRuntimeSessionProjection("main", parent, auxiliary),
-  );
-});
-
+// @test-value v2
+// kind = "invariant"
+// claim = "error状態のAuxiliaryはrunStateを維持しSession statusをidleへ投影する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md" }
+// fault = "終了または失敗したAuxiliaryを実行中として表示する"
+// observable = "投影SessionのrunStateとstatus"
+// observation_boundary = "public-boundary"
+// scope = "Main Auxiliary runtime projection status"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildAuxiliaryRuntimeSessionProjection main maps non-running auxiliary to idle status", () => {
   const parent = createSession();
   const auxiliary = createAuxiliarySession();
 
-  const projection = buildAuxiliaryRuntimeSessionProjection("main", parent, {
+  const projection = buildMainAuxiliaryRuntimeSession(parent, {
     ...auxiliary,
     runState: "error",
   });
 
   assert.equal(projection.runState, "error");
   assert.equal(projection.status, "idle");
-});
-
-test("buildAuxiliaryRuntimeSessionProjection companion keeps companion projection diff fields", () => {
-  const parent = createCompanionSession();
-  const auxiliary = createAuxiliarySession();
-
-  const projection = buildAuxiliaryRuntimeSessionProjection("companion", parent, auxiliary);
-
-  assert.equal(projection.id, auxiliary.id);
-  assert.equal(projection.provider, auxiliary.provider);
-  assert.equal(projection.model, auxiliary.model);
-  assert.equal(projection.threadId, auxiliary.threadId);
-  assert.deepEqual(projection.messages, auxiliary.messages);
-  assert.deepEqual(projection.allowedAdditionalDirectories, auxiliary.allowedAdditionalDirectories);
-  assert.notEqual(projection.allowedAdditionalDirectories, auxiliary.allowedAdditionalDirectories);
-  assert.equal(projection.status, "active");
-  assert.equal(projection.taskTitle, auxiliary.title);
-  assert.equal(projection.characterRuntimeSnapshot, parent.characterRuntimeSnapshot);
-  assert.equal("stream" in projection, false);
-});
-
-test("buildCompanionAuxiliaryRuntimeSession wraps companion runtime projection", () => {
-  const parent = createCompanionSession();
-  const auxiliary = createAuxiliarySession();
-
-  assert.deepEqual(
-    buildCompanionAuxiliaryRuntimeSession(parent, auxiliary),
-    buildAuxiliaryRuntimeSessionProjection("companion", parent, auxiliary),
-  );
 });

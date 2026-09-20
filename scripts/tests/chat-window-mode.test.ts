@@ -10,12 +10,6 @@ test("resolveChatWindowModeFromSearch は通常 session を解決する", () => 
   });
 });
 
-test("resolveChatWindowModeFromSearch は companion session を優先して解決する", () => {
-  assert.deepEqual(resolveChatWindowModeFromSearch("?sessionId=session-1&companionSessionId=companion-1"), {
-    kind: "companion",
-    companionSessionId: "companion-1",
-  });
-});
 
 test("resolveChatWindowModeFromSearch は sessionId がない通常 window を許容する", () => {
   assert.deepEqual(resolveChatWindowModeFromSearch(""), {
@@ -24,18 +18,23 @@ test("resolveChatWindowModeFromSearch は sessionId がない通常 window を�
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Session window routingは登録されたAgent用の表示targetを返す"
+// oracle = { type = "contract", ref = "src/chat/ChatWindowAppRouter.tsx" }
+// fault = "通常Sessionを対応するchat window componentへルーティングしない"
+// observable = "resolveChatWindowModeTargetが返す登録target"
+// observation_boundary = "public-boundary"
+// scope = "Session window target routing"
+// lifecycle = "permanent"
+// @end-test-value
 test("resolveChatWindowModeTarget は mode kind に対応する target を解決する", () => {
   const targets = {
     agent: "AgentSessionWindowApp",
-    companion: "CompanionChatModeApp",
   };
 
   assert.equal(
     resolveChatWindowModeTarget({ kind: "agent", sessionId: "session-1" }, targets),
     "AgentSessionWindowApp",
-  );
-  assert.equal(
-    resolveChatWindowModeTarget({ kind: "companion", companionSessionId: "companion-1" }, targets),
-    "CompanionChatModeApp",
   );
 });

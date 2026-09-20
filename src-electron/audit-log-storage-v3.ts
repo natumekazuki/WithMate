@@ -245,12 +245,6 @@ const LIVE_BLOB_REF_QUERIES = [
   "SELECT 1 FROM session_message_artifacts WHERE artifact_blob_id = ? LIMIT 1",
   "SELECT 1 FROM audit_log_details WHERE logical_prompt_blob_id = ? OR transport_payload_blob_id = ? OR assistant_text_blob_id = ? OR raw_items_blob_id = ? OR usage_blob_id = ? LIMIT 1",
   "SELECT 1 FROM audit_log_operations WHERE details_blob_id = ? LIMIT 1",
-  "SELECT 1 FROM companion_sessions WHERE character_role_blob_id = ? LIMIT 1",
-  "SELECT 1 FROM companion_messages WHERE text_blob_id = ? LIMIT 1",
-  "SELECT 1 FROM companion_message_artifacts WHERE artifact_blob_id = ? LIMIT 1",
-  "SELECT 1 FROM companion_merge_runs WHERE diff_snapshot_blob_id = ? LIMIT 1",
-  "SELECT 1 FROM companion_audit_log_details WHERE logical_prompt_blob_id = ? OR transport_payload_blob_id = ? OR assistant_text_blob_id = ? OR raw_items_blob_id = ? OR usage_blob_id = ? LIMIT 1",
-  "SELECT 1 FROM companion_audit_log_operations WHERE details_blob_id = ? LIMIT 1",
 ] as const;
 
 const LIST_SESSION_AUDIT_LOGS_SQL = `

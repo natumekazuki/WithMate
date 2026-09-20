@@ -759,8 +759,18 @@ describe("applyPickedAdditionalDirectoryUiStateCommand", () => {
 });
 
 describe("applyContextPaneTabCycleCommand", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "context paneのactive tabは利用可能なtabだけを循環する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // fault = "削除済みtabを循環対象にして存在しないpaneを選択する"
+  // observable = "tab cycle後のactive tab"
+  // observation_boundary = "public-boundary"
+  // scope = "context-pane-tab-cycle"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("利用可能な context pane tab の中で active tab を循環する", () => {
-    let activeTab: "latest-command" | "reasoning" | "tasks" | "companion-group" = "latest-command";
+    let activeTab: "latest-command" | "reasoning" | "tasks" = "latest-command";
 
     applyContextPaneTabCycleCommand({
       direction: 1,
@@ -790,8 +800,18 @@ describe("applyContextPaneTabCycleCommand", () => {
     assert.equal(activeTab, "tasks");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "利用不可のactive tabは利用可能なcontext pane tabへ退避する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // fault = "利用不可tabを保持してpaneが空になる"
+  // observable = "fallback後のactive tab"
+  // observation_boundary = "public-boundary"
+  // scope = "context-pane-tab-cycle"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("active tab が利用可能タブにない場合は先頭から循環する", () => {
-    let activeTab: "latest-command" | "reasoning" | "tasks" | "companion-group" = "reasoning";
+    let activeTab: "latest-command" | "reasoning" | "tasks" = "reasoning";
 
     applyContextPaneTabCycleCommand({
       direction: 1,
@@ -804,8 +824,18 @@ describe("applyContextPaneTabCycleCommand", () => {
     assert.equal(activeTab, "tasks");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "利用可能tabが空でもactive tabはlatest-commandへ戻る"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // fault = "空のtab一覧で無効なtabを保持する"
+  // observable = "空一覧処理後のactive tab"
+  // observation_boundary = "public-boundary"
+  // scope = "context-pane-tab-cycle"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("利用可能タブが空の場合は latest-command を維持する", () => {
-    let activeTab: "latest-command" | "reasoning" | "tasks" | "companion-group" = "reasoning";
+    let activeTab: "latest-command" | "reasoning" | "tasks" = "reasoning";
 
     applyContextPaneTabCycleCommand({
       direction: 1,
@@ -820,8 +850,18 @@ describe("applyContextPaneTabCycleCommand", () => {
 });
 
 describe("createContextPaneTabCycleHandler", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "context pane tab cycle handlerはsetterへ循環結果を渡す"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // fault = "handlerがactive tabを更新しない"
+  // observable = "handler実行後のactive tab"
+  // observation_boundary = "public-boundary"
+  // scope = "context-pane-tab-cycle-handler"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("context pane tab cycle handler を作る", () => {
-    let activeTab: "latest-command" | "reasoning" | "tasks" | "companion-group" = "tasks";
+    let activeTab: "latest-command" | "reasoning" | "tasks" = "tasks";
     const cycleTab = createContextPaneTabCycleHandler({
       availableTabs: ["latest-command", "tasks"],
       setActiveTab: (updater) => {

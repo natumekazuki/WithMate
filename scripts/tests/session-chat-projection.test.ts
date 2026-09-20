@@ -162,10 +162,8 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
       tasks: { state: "empty", tone: "muted", label: "No tasks" },
       reasoning: { state: "empty", tone: "muted", label: "No reasoning" },
       context: { state: "empty", tone: "muted", label: "No context" },
-      companion: { state: "empty", tone: "muted", label: "No companion" },
     } as AgentSessionChatProjectionInput["contextPaneProjection"],
     selectedBackgroundTasks: [],
-    selectedCompanionGroupMonitorEntries: [],
     isCopilotSession: false,
     selectedCopilotRemainingPercentLabel: "",
     selectedCopilotRemainingRequestsLabel: "",
@@ -245,7 +243,6 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onStartContextRailResize: noop,
     onToggleContextRailVisibility: noop,
     onCycleContextPaneTab: noop,
-    onOpenCompanionReview: noop,
     onCloseDiff: noop,
     onOpenDiffWindow: noop,
     onLoadMoreAuditLogs: noop,
@@ -464,13 +461,11 @@ test("buildAgentSessionChatWindowProps はglossary annotation projectionとactiv
 test("buildAgentSessionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {
   const onToggleHeaderExpanded = () => {};
   const onCycleContextPaneTab = () => {};
-  const onOpenCompanionReview = () => {};
   const props = buildAgentSessionChatWindowProps(createProjectionInput({
     selectedContextEmptyText: "Agent context empty",
     latestCommandEmptyText: "Agent latest command empty",
     onToggleHeaderExpanded,
     onCycleContextPaneTab,
-    onOpenCompanionReview,
   }));
   const paneProps = props.rightPaneProps as SessionContextPaneProps;
 
@@ -478,7 +473,6 @@ test("buildAgentSessionChatWindowProps は Header から独立した right pane 
   assert.equal(paneProps.latestCommandEmptyText, "Agent latest command empty");
   assert.equal("onToggleHeaderExpanded" in paneProps, false);
   assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
-  assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
   const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
   assert.match(html, /Agent latest command empty/);
 });

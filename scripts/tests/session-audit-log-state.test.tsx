@@ -30,6 +30,16 @@ function createAuditLogSummary(id: number): AuditLogSummary {
 }
 
 describe("useSessionAuditLogs", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Audit Logを開いたとき対象Sessionのsummaryを再取得する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // fault = "modalを開いても監査ログsummaryが更新されない"
+  // observable = "audit log APIへのsession IDとcursor付き呼び出し"
+  // observation_boundary = "component-behavior"
+  // scope = "session-audit-log-state"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("AuditLog modal open 時に summary を再取得する", async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
       pretendToBeVisual: true,
@@ -104,7 +114,7 @@ describe("useSessionAuditLogs", () => {
 
     function Harness() {
       const [currentSession, setCurrentSession] = useState(session);
-      const [cacheScope, setCacheScope] = useState("companion");
+      const [cacheScope, setCacheScope] = useState("session");
       const auditLogs = useSessionAuditLogs({
         withmateApi: null,
         selectedSession: currentSession,

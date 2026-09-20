@@ -4,17 +4,12 @@ import { pathToFileURL } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
 import type { AuditLogEntry } from "../src/app-state.js";
-import type { CompanionGroup, CompanionSession } from "../src/companion-state.js";
 import type { Session } from "../src/session-state.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL, CREATE_MODEL_CATALOG_TABLES_SQL } from "../src-electron/database-schema-v1.js";
 import { APP_DATABASE_V3_FILENAME, isValidV3Database } from "../src-electron/database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME, CREATE_V4_SCHEMA_SQL } from "../src-electron/database-schema-v4.js";
 import { AuditLogStorage } from "../src-electron/audit-log-storage.js";
 import { AuditLogStorageV3 } from "../src-electron/audit-log-storage-v3.js";
-import { CompanionAuditLogStorage } from "../src-electron/companion-audit-log-storage.js";
-import { CompanionAuditLogStorageV3 } from "../src-electron/companion-audit-log-storage-v3.js";
-import { CompanionStorage } from "../src-electron/companion-storage.js";
-import { CompanionStorageV3 } from "../src-electron/companion-storage-v3.js";
 import { MateStorage } from "../src-electron/mate-storage.js";
 import { SessionStorage } from "../src-electron/session-storage.js";
 import { SessionStorageV3 } from "../src-electron/session-storage-v3.js";
@@ -28,14 +23,6 @@ type CountRow = {
   count: number;
 };
 
-type CompanionGroupRow = {
-  id: string;
-  repo_root: string;
-  display_name: string;
-  created_at: string;
-  updated_at: string;
-};
-
 type IdRow = {
   id: string;
 };
@@ -47,13 +34,6 @@ export type V3ToV4MigrationCounts = {
   auditLogs: number;
   auditLogDetails: number;
   auditLogOperations: number;
-  companionGroups: number;
-  companionSessions: number;
-  companionMessages: number;
-  companionMergeRuns: number;
-  companionAuditLogs: number;
-  companionAuditLogDetails: number;
-  companionAuditLogOperations: number;
   appSettings: number;
   modelCatalogRevisions: number;
   modelCatalogProviders: number;
@@ -102,7 +82,6 @@ const MODEL_CATALOG_MODEL_COLUMNS = [
 ] as const;
 
 export const OBSOLETE_V4_IMPORT_TARGET_TABLES = [
-  "companion_message_artifacts",
   "session_message_artifacts",
   "session_messages",
   "audit_log_details",
@@ -200,13 +179,6 @@ function readCounts(db: DatabaseSync): V3ToV4MigrationCounts {
     auditLogs: readCount(db, "audit_logs"),
     auditLogDetails: readCount(db, "audit_log_details"),
     auditLogOperations: readCount(db, "audit_log_operations"),
-    companionGroups: readCount(db, "companion_groups"),
-    companionSessions: readCount(db, "companion_sessions"),
-    companionMessages: readCount(db, "companion_messages"),
-    companionMergeRuns: readCount(db, "companion_merge_runs"),
-    companionAuditLogs: readCount(db, "companion_audit_logs"),
-    companionAuditLogDetails: readCount(db, "companion_audit_log_details"),
-    companionAuditLogOperations: readCount(db, "companion_audit_log_operations"),
     appSettings: readCount(db, "app_settings"),
     modelCatalogRevisions: readCount(db, "model_catalog_revisions"),
     modelCatalogProviders: readCount(db, "model_catalog_providers"),
@@ -255,10 +227,6 @@ function createV4BaseSchema(targetDatabaseFile: string, userDataPath: string): v
 
   const mateStorage = new MateStorage(targetDatabaseFile, userDataPath);
   mateStorage.close();
-  const companionStorage = new CompanionStorage(targetDatabaseFile);
-  companionStorage.close();
-  const companionAuditLogStorage = new CompanionAuditLogStorageV3(targetDatabaseFile, resolveBlobRootPath(targetDatabaseFile));
-  companionAuditLogStorage.close();
 }
 
 function copyTableRows(
@@ -318,132 +286,6 @@ function dropObsoleteV4ImportTargetTables(targetDb: DatabaseSync): void {
 function auditLogInput(entry: AuditLogEntry): Omit<AuditLogEntry, "id"> {
   const { id: _id, ...input } = entry;
   return input;
-}
-
-function rowToCompanionGroup(row: CompanionGroupRow): CompanionGroup {
-  return {
-    id: row.id,
-    repoRoot: row.repo_root,
-    displayName: row.display_name,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function toV4CompanionSession(session: CompanionSession): CompanionSession {
-  return {
-    ...session,
-    runState: session.runState === "running" ? "idle" : session.runState,
-    characterIconPath: "",
-  };
-}
-
-function listCompanionGroupRows(db: DatabaseSync): CompanionGroupRow[] {
-  if (!tableExists(db, "companion_groups")) {
-    return [];
-  }
-
-  return db.prepare(`
-    SELECT id, repo_root, display_name, created_at, updated_at
-    FROM companion_groups
-    ORDER BY created_at ASC, id ASC
-  `).all() as CompanionGroupRow[];
-}
-
-function listCompanionSessionIds(db: DatabaseSync): string[] {
-  if (!tableExists(db, "companion_sessions")) {
-    return [];
-  }
-
-  return (db.prepare(`
-    SELECT id
-    FROM companion_sessions
-    ORDER BY created_at ASC, id ASC
-  `).all() as IdRow[]).map((row) => row.id);
-}
-
-async function migrateCompanionData(input: {
-  sourceDb: DatabaseSync;
-  sourceDatabaseFile: string;
-  targetDatabaseFile: string;
-  sourceBlobRootPath: string;
-  targetBlobRootPath: string;
-}): Promise<Pick<
-  V3ToV4MigrationCounts,
-  | "companionGroups"
-  | "companionSessions"
-  | "companionMessages"
-  | "companionMergeRuns"
-  | "companionAuditLogs"
-  | "companionAuditLogDetails"
-  | "companionAuditLogOperations"
->> {
-  const sourceCompanionStorage = new CompanionStorageV3(input.sourceDatabaseFile, input.sourceBlobRootPath);
-  const targetCompanionStorage = new CompanionStorage(input.targetDatabaseFile);
-  const sourceCompanionAuditStorage = new CompanionAuditLogStorageV3(
-    input.sourceDatabaseFile,
-    input.sourceBlobRootPath,
-  );
-  const targetCompanionAuditStorage = new CompanionAuditLogStorage(
-    input.targetDatabaseFile,
-    input.targetBlobRootPath,
-  );
-
-  try {
-    let companionGroups = 0;
-    for (const row of listCompanionGroupRows(input.sourceDb)) {
-      targetCompanionStorage.ensureGroup(rowToCompanionGroup(row));
-      companionGroups += 1;
-    }
-
-    let companionSessions = 0;
-    let companionMessages = 0;
-    let companionMergeRuns = 0;
-    let companionAuditLogs = 0;
-    let companionAuditLogDetails = 0;
-    let companionAuditLogOperations = 0;
-    const sessionIds = listCompanionSessionIds(input.sourceDb);
-    for (const sessionId of sessionIds) {
-      const session = await sourceCompanionStorage.getSession(sessionId);
-      if (!session) {
-        continue;
-      }
-
-      const targetSession = toV4CompanionSession(session);
-      targetCompanionStorage.createSession(targetSession);
-      companionSessions += 1;
-      companionMessages += targetSession.messages.length;
-
-      const mergeRuns = await sourceCompanionStorage.listMergeRunsForSession(sessionId);
-      for (const mergeRun of mergeRuns) {
-        targetCompanionStorage.createMergeRun(mergeRun);
-        companionMergeRuns += 1;
-      }
-
-      const auditLogs = await sourceCompanionAuditStorage.listSessionAuditLogs(sessionId);
-      for (const auditLog of auditLogs) {
-        await targetCompanionAuditStorage.createAuditLog(auditLogInput(auditLog));
-        companionAuditLogs += 1;
-        companionAuditLogDetails += 1;
-        companionAuditLogOperations += auditLog.operations.length;
-      }
-    }
-
-    return {
-      companionGroups,
-      companionSessions,
-      companionMessages,
-      companionMergeRuns,
-      companionAuditLogs,
-      companionAuditLogDetails,
-      companionAuditLogOperations,
-    };
-  } finally {
-    sourceCompanionStorage.close();
-    targetCompanionStorage.close();
-    sourceCompanionAuditStorage.close();
-    targetCompanionAuditStorage.close();
-  }
 }
 
 function toLegacyReadOnlySession(session: Session): Session {
@@ -530,14 +372,6 @@ export async function createMigrationWriteReport(input: {
       }
     }
 
-    const companionCounts = await migrateCompanionData({
-      sourceDb,
-      sourceDatabaseFile: input.sourceDatabaseFile,
-      targetDatabaseFile: tempTargetDatabaseFile,
-      sourceBlobRootPath,
-      targetBlobRootPath,
-    });
-
     targetDb = new DatabaseSync(tempTargetDatabaseFile);
     const catalogCounts = copySettingsAndCatalog(sourceDb, targetDb);
     dropObsoleteV4ImportTargetTables(targetDb);
@@ -567,7 +401,6 @@ export async function createMigrationWriteReport(input: {
         auditLogs: migratedAuditLogs,
         auditLogDetails: v3Counts.auditLogDetails,
         auditLogOperations: v3Counts.auditLogOperations,
-        ...companionCounts,
         ...catalogCounts,
       },
     };

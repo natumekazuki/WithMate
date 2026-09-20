@@ -15,13 +15,13 @@ const RUNS_TABLE_NAME = "mate_growth_runs";
 const MIGRATION_TEMP_SUFFIX = "__mate_talk_migration";
 
 const LEGACY_GROWTH_EVENTS_TABLE_SQL = CREATE_V4_MATE_GROWTH_EVENTS_TABLE_SQL.replace(
-  /source_type TEXT NOT NULL CHECK \(source_type IN \('session', 'companion', 'manual', 'system', 'mate_talk'\)\)/i,
-  "source_type TEXT NOT NULL CHECK (source_type IN ('session', 'companion', 'manual', 'system'))",
+  /source_type TEXT NOT NULL CHECK \(source_type IN \('session', 'manual', 'system', 'mate_talk'\)\)/i,
+  "source_type TEXT NOT NULL CHECK (source_type IN ('session', 'manual', 'system'))",
 );
 
 const LEGACY_GROWTH_RUNS_TABLE_SQL = CREATE_V4_MATE_GROWTH_RUNS_TABLE_SQL.replace(
-  /source_type TEXT NOT NULL CHECK \(source_type IN \('session', 'companion', 'manual', 'system', 'mate_talk'\)\)/i,
-  "source_type TEXT NOT NULL CHECK (source_type IN ('session', 'companion', 'manual', 'system'))",
+  /source_type TEXT NOT NULL CHECK \(source_type IN \('session', 'manual', 'system', 'mate_talk'\)\)/i,
+  "source_type TEXT NOT NULL CHECK (source_type IN ('session', 'manual', 'system'))",
 );
 
 type CountRow = {
@@ -157,6 +157,16 @@ function insertGrowthRun(db: DatabaseSync, sourceType: string): void {
 }
 
 describe("mate-source-type-migration", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "旧mate growth eventsのsource_type制約をmate_talk対応へ再構築し、既存行とindexを保持する"
+  // oracle = { type = "contract", ref = "src-electron/mate-source-type-migration.ts" }
+  // fault = "旧制約を残すかtemp table参照を残し、既存growth eventを移行後に扱えなくする"
+  // observable = "table check, row counts, temp table absence, and index count"
+  // observation_boundary = "public-boundary"
+  // scope = "mate growth event source type migration"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("legacy source_type CHECK テーブルを migration して mate_talk を許可し、temp table と index 再作成を完了する", () => {
     const db = createLegacyGrowthEventsDb();
 
@@ -164,12 +174,12 @@ describe("mate-source-type-migration", () => {
       seedParentRows(db);
       insertGrowthEvent(db, { id: "legacy-session", sourceType: "session" });
 
-      assert.equal(tableSql(db).includes("source_type IN ('session', 'companion', 'manual', 'system')"), true);
+      assert.equal(tableSql(db).includes("source_type IN ('session', 'manual', 'system')"), true);
       assert.equal(rowCount(db, "mate_talk"), 0);
 
       ensureSourceTypeCheckSupportsMateTalk(db, TABLE_NAME, CREATE_V4_MATE_GROWTH_EVENTS_TABLE_SQL);
 
-      assert.equal(tableSql(db).includes("source_type IN ('session', 'companion', 'manual', 'system', 'mate_talk')"), true);
+      assert.equal(tableSql(db).includes("source_type IN ('session', 'manual', 'system', 'mate_talk')"), true);
       ensureMigrationTempTableNotExists(db);
       assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'index' AND tbl_name = ?").get(TABLE_NAME).count >= 4, true);
       insertGrowthEvent(db, { id: "legacy-mate-talk", sourceType: "mate_talk" });
@@ -180,6 +190,16 @@ describe("mate-source-type-migration", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "既にmate_talk対応済みのgrowth events tableへのsource_type migrationはno-opである"
+  // oracle = { type = "contract", ref = "src-electron/mate-source-type-migration.ts" }
+  // fault = "既存のmate_talk行を重複移行または削除し、再実行を非冪等にする"
+  // observable = "mate_talk row count and table constraint"
+  // observation_boundary = "public-boundary"
+  // scope = "mate growth event migration idempotency"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("既に mate_talk 対応済み DB は no-op で、INSERT が成功する", () => {
     const db = createSupportedGrowthEventsDb();
 
@@ -191,13 +211,23 @@ describe("mate-source-type-migration", () => {
       ensureSourceTypeCheckSupportsMateTalk(db, TABLE_NAME, CREATE_V4_MATE_GROWTH_EVENTS_TABLE_SQL);
 
       assert.equal(rowCount(db, "mate_talk"), beforeCount);
-      assert.equal(tableSql(db).includes("source_type IN ('session', 'companion', 'manual', 'system', 'mate_talk')"), true);
+      assert.equal(tableSql(db).includes("source_type IN ('session', 'manual', 'system', 'mate_talk')"), true);
       ensureMigrationTempTableNotExists(db);
     } finally {
       db.close();
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "full schemaでgrowth event source_type migration後のforeign keyはtemp tableを参照しない"
+  // oracle = { type = "contract", ref = "src-electron/mate-source-type-migration.ts" }
+  // fault = "再構築後の関連tableが一時tableへ接続し、migration完了後のINSERTを壊す"
+  // observable = "foreign-key references and mate_talk insert"
+  // observation_boundary = "public-boundary"
+  // scope = "mate growth event schema migration"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("full schema でも関連 table の foreign key が migration temp table を参照しない", () => {
     const db = new DatabaseSync(":memory:");
 
@@ -222,6 +252,16 @@ describe("mate-source-type-migration", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "mate growth runsの旧source_type制約もmate_talk対応へ移行できる"
+  // oracle = { type = "contract", ref = "src-electron/mate-source-type-migration.ts" }
+  // fault = "eventsだけを移行してrunsのsource_type制約を旧状態に残す"
+  // observable = "runs table check, temp table references, and mate_talk row"
+  // observation_boundary = "public-boundary"
+  // scope = "mate growth run source type migration"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("mate_growth_runs も legacy source_type CHECK から mate_talk 対応へ migration できる", () => {
     const db = new DatabaseSync(":memory:");
 
@@ -236,11 +276,11 @@ describe("mate-source-type-migration", () => {
       }
       seedFullCurrentMateProfile(db);
 
-      assert.equal(tableSql(db, RUNS_TABLE_NAME).includes("source_type IN ('session', 'companion', 'manual', 'system')"), true);
+      assert.equal(tableSql(db, RUNS_TABLE_NAME).includes("source_type IN ('session', 'manual', 'system')"), true);
 
       ensureSourceTypeCheckSupportsMateTalk(db, RUNS_TABLE_NAME, CREATE_V4_MATE_GROWTH_RUNS_TABLE_SQL);
 
-      assert.equal(tableSql(db, RUNS_TABLE_NAME).includes("source_type IN ('session', 'companion', 'manual', 'system', 'mate_talk')"), true);
+      assert.equal(tableSql(db, RUNS_TABLE_NAME).includes("source_type IN ('session', 'manual', 'system', 'mate_talk')"), true);
       assert.deepEqual(listTablesReferencingMigrationTempTable(db, RUNS_TABLE_NAME), []);
       insertGrowthRun(db, "mate_talk");
       const row = db.prepare(`SELECT COUNT(*) AS count FROM ${RUNS_TABLE_NAME} WHERE source_type = 'mate_talk'`).get() as CountRow;

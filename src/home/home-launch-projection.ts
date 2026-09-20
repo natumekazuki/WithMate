@@ -47,7 +47,7 @@ export function buildHomeLaunchProjection({
   modelCatalog,
 }: {
   launchProviderId: string;
-  launchMode?: "session" | "companion";
+  launchMode?: "session";
   launchTitle: string;
   launchWorkspace: LaunchWorkspaceSelection | null;
   workspacePathInput?: string;
@@ -95,6 +95,6 @@ export function buildHomeLaunchProjection({
       !!launchWorkspace &&
       !!selectedLaunchProvider &&
       validCharacterSelection &&
-      (launchMode !== "companion" || !sessionFolderSelected),
+      true,
   };
 }

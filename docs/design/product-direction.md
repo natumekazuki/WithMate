@@ -15,11 +15,8 @@ WithMate を「キャラ付きチャットアプリ」や「複数 character cat
 
 V5 Character Core / preview では、4.0.0 SingleMate 方針を current runtime の正本として扱わない。V5 の Character catalog、`character.md` runtime definition、launch selection、runtime snapshot boundary は次の文書を優先する。
 
-- `docs/design/v5-character-transition.md`
 - `docs/design/character-definition-format.md`
 - `docs/design/character-storage.md`
-- `docs/design/v5-character-core-release-gate.md`
-- `docs/design/v5-character-preview-release.md`
 
 この文書に残る SingleMate / Mate Profile / Growth / provider instruction sync の記述は、V5 preview では pre-V5 / 4.0.0 の判断履歴または deferred context として読む。
 
@@ -45,7 +42,7 @@ WithMate 4.0.0 は完全 SingleMate とする。
 - Mate avatar / icon は任意であり、未設定は Mate name と theme color の placeholder で表現する
 - Mate Profile storage / API は完全に単一化し、character catalog API の内部互換は維持しない
 - Mate Profile の metadata は SQLite に保存し、`profile.json` は作らない
-- Home / Session / Companion は常に現在の Mate を使う
+- Home / Session は常に現在の Mate を使う
 - session 起動時の character picker は廃止する
 - 実行時の Mate 定義注入は毎 turn prompt 合成ではなく provider instruction sync を主経路にする
 - provider instruction sync の MVP 対象は current 実装でサポートしている provider に限定する
