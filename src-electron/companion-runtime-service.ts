@@ -332,6 +332,12 @@ export class CompanionRuntimeService {
     this.runControllers.get(sessionId)?.abort();
   }
 
+  cancelAllRuns(): void {
+    for (const sessionId of this.inFlightRuns) {
+      this.cancelRun(sessionId);
+    }
+  }
+
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession> {
     const session = await this.deps.getCompanionSession(sessionId);
     if (!session) {

@@ -11,6 +11,7 @@ type AppLifecycleServiceDeps = {
   shouldQuitWhenAllWindowsClosed(): boolean;
   confirmQuitWhileRunning(): boolean;
   prepareSessionWindowSnapshotForQuit?(): Promise<void>;
+  flushSessionWindowDrafts?(): Promise<boolean>;
   stopMemoryRuntime?(): Promise<void>;
   closePersistentStores(): void | Promise<void>;
   invalidateAllProviderSessionThreads?(): Promise<void>;
@@ -47,6 +48,7 @@ export class AppLifecycleService {
       return Promise.resolve();
     }
 
+    let allowQuitWasSetForThisAttempt = false;
     if (this.deps.hasInFlightSessionRuns() && !this.deps.getAllowQuitWithInFlightRuns()) {
       event.preventDefault();
 
@@ -55,11 +57,27 @@ export class AppLifecycleService {
       }
 
       this.deps.setAllowQuitWithInFlightRuns(true);
+      allowQuitWasSetForThisAttempt = true;
     }
 
     event.preventDefault();
     if (!this.quitCleanupPromise) {
       this.quitCleanupPromise = (async () => {
+        if (this.deps.flushSessionWindowDrafts) {
+          let flushed = false;
+          try {
+            flushed = await this.deps.flushSessionWindowDrafts();
+          } catch {
+            flushed = false;
+          }
+          if (!flushed) {
+            if (allowQuitWasSetForThisAttempt) {
+              this.deps.setAllowQuitWithInFlightRuns(false);
+            }
+            this.quitCleanupPromise = null;
+            return;
+          }
+        }
         try {
           if (this.deps.prepareSessionWindowSnapshotForQuit) {
             await this.deps.prepareSessionWindowSnapshotForQuit();

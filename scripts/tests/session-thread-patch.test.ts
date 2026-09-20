@@ -155,6 +155,8 @@ test("SessionStorageV6 thread patchはowner条件を満たすとthreadだけ更�
 test("AuxiliarySessionStorage thread patchはpayloadとsummaryを同期する", async () => {
   await withTempDb(async (dbPath) => {
     const storage = new AuxiliarySessionStorage(dbPath);
+    const parentStorage = new SessionStorageV6(dbPath);
+    parentStorage.upsertSession(createSession("parent-1"));
     try {
       const stored = storage.upsertAuxiliarySession(createAuxiliary());
       const current = storage.getAuxiliarySession(stored.id)!;
@@ -184,9 +186,18 @@ test("AuxiliarySessionStorage thread patchはpayloadとsummaryを同期する", 
       storage.upsertAuxiliarySession({
         ...reset!,
         messages: [{ role: "assistant", text: "newer auxiliary body" }],
-        composerDraft: "newer draft",
+        composerDraft: "keep draft",
         updatedAt: "2026-09-19T00:03:00.000Z",
       });
+      const newerDraft = storage.getAuxiliaryDraft(stored.id)!;
+      assert.equal(storage.saveAuxiliaryDraft({
+        auxiliarySessionId: stored.id,
+        parentSessionId: stored.parentSessionId,
+        incarnation: newerDraft.incarnation,
+        expectedDurableRevision: newerDraft.durableRevision,
+        text: "newer draft",
+        updatedAt: "2026-09-19T00:03:00.000Z",
+      }).outcome, "saved");
       const reversed = storage.updateAuxiliarySessionThreadIfMatches({
         auxiliarySessionId: stored.id,
         parentSessionId: stored.parentSessionId,
@@ -248,6 +259,7 @@ test("AuxiliarySessionStorage thread patchはpayloadとsummaryを同期する", 
       }), null);
     } finally {
       storage.close();
+      parentStorage.close();
     }
   });
 });

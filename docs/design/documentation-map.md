@@ -36,6 +36,8 @@ V5 Character Core に関しては `A2. V5 Character Core Source Of Truth` を優
 | `database-schema.md` | current 保存構造と DB 定義の正本。V6 DB再設計では `v6-database-foundation.md` を優先する |
 | `model-catalog.md` | model catalog 保存 / 解決ロジック |
 | `session-run-lifecycle.md` | session 実行 lifecycle と background task のつながり |
+| [auxiliary-session.md](auxiliary-session.md) | 複数 Auxiliary の保存・最終使用順・共通 Composer の入力購読、draft 保存 / consume / flush 境界 |
+| [chat-mode-convergence.md](chat-mode-convergence.md) | 共通 chat shell / Composer と mode / capability / adapter の責務 |
 
 ### A2. V5 Character Core Source Of Truth
 

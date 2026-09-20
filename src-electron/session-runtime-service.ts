@@ -37,11 +37,11 @@ import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-bind
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
+import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
-const DEFAULT_PROVIDER_CANCEL_GRACE_MS = 10_000;
 const DEFAULT_AUDIT_ENRICHMENT_GRACE_MS = 5_000;
 const DEFAULT_APPRAISAL_READY_RETRY_MS = 1_000;
 const AUDIT_ENRICHMENT_TIMEOUT = Symbol("audit-enrichment-timeout");
@@ -857,6 +857,17 @@ export class SessionRuntimeService {
     }
 
     controller.abort();
+  }
+
+  cancelAllRuns(): void {
+    const sessionIds = new Set([
+      ...this.inFlightSessionRuns,
+      ...this.startingSessionRuns,
+      ...this.waitingSessionRunAdmissions,
+    ]);
+    for (const sessionId of sessionIds) {
+      this.cancelRun(sessionId);
+    }
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {

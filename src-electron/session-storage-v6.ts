@@ -1212,6 +1212,9 @@ export class SessionStorageV6 {
 
     const placeholders = uniqueParentIds.map(() => "?").join(", ");
     this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id IN (${placeholders})`).run(...uniqueParentIds);
+    if (this.auxiliaryDraftsTableExists()) {
+      this.db.prepare(`DELETE FROM auxiliary_session_drafts WHERE parent_session_id IN (${placeholders})`).run(...uniqueParentIds);
+    }
   }
 
   private deleteAuxiliarySessionsByIdsIfTableExists(auxiliarySessionIds: readonly string[]): void {
@@ -1226,6 +1229,9 @@ export class SessionStorageV6 {
 
     const placeholders = uniqueAuxiliarySessionIds.map(() => "?").join(", ");
     this.db.prepare(`DELETE FROM auxiliary_sessions WHERE id IN (${placeholders})`).run(...uniqueAuxiliarySessionIds);
+    if (this.auxiliaryDraftsTableExists()) {
+      this.db.prepare(`DELETE FROM auxiliary_session_drafts WHERE auxiliary_session_id IN (${placeholders})`).run(...uniqueAuxiliarySessionIds);
+    }
   }
 
   private deleteAllAuxiliarySessionsIfTableExists(): void {
@@ -1234,6 +1240,7 @@ export class SessionStorageV6 {
     }
 
     this.db.prepare("DELETE FROM auxiliary_sessions").run();
+    if (this.auxiliaryDraftsTableExists()) this.db.prepare("DELETE FROM auxiliary_session_drafts").run();
   }
 
   private companionSessionsTableExists(): boolean {
@@ -1243,6 +1250,10 @@ export class SessionStorageV6 {
       WHERE type = 'table'
         AND name = ?
     `).get(COMPANION_SESSIONS_TABLE_NAME));
+  }
+
+  private auxiliaryDraftsTableExists(): boolean {
+    return Boolean(this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'auxiliary_session_drafts'`).get());
   }
 
   private listRetainedCompanionSessionIds(): string[] {

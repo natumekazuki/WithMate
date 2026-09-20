@@ -79,6 +79,7 @@ export type SessionPersistenceServiceDeps = {
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   revokeSessionAgentRuntimeBindings?(sessionId: string): void;
   closeSessionWindow(sessionId: string): void;
+  discardSessionWindow?(sessionId: string): void;
   broadcastSessions(sessionIds?: Iterable<string>): void;
   runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
 };
@@ -411,7 +412,7 @@ export class SessionPersistenceService {
       runtimeIdentities.push({ id: sessionId, provider: deletedSession?.provider ?? null });
       projectDeletion(() => this.deps.clearSessionContextTelemetry(sessionId));
       projectDeletion(() => this.deps.clearSessionBackgroundActivities(sessionId));
-      projectDeletion(() => this.deps.closeSessionWindow(sessionId));
+      projectDeletion(() => (this.deps.discardSessionWindow ?? this.deps.closeSessionWindow)(sessionId));
     }
     const deletableParentIds = new Set(deletableSessionIds);
     const deletedAuxiliarySessionIds = auxiliaryRuntimeIdentities
@@ -425,7 +426,7 @@ export class SessionPersistenceService {
       runtimeIdentities.push({ id: auxiliary.id, provider: auxiliary.provider });
       projectDeletion(() => this.deps.clearSessionContextTelemetry(auxiliary.id));
       projectDeletion(() => this.deps.clearSessionBackgroundActivities(auxiliary.id));
-      projectDeletion(() => this.deps.closeSessionWindow(auxiliary.id));
+      projectDeletion(() => (this.deps.discardSessionWindow ?? this.deps.closeSessionWindow)(auxiliary.id));
     }
 
     projectDeletion(() => this.deps.broadcastSessions(deletableSessionIds));

@@ -108,11 +108,14 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 
 ### Session Window Close
 
-- 対象 session が `running` でなければ、そのまま閉じる
+- 対象 session が `running` でなければ、実行継続の確認なしで下記のdraft flushへ進む
 - 対象 session が `running` の場合:
   - 確認ダイアログを出す
   - `閉じない`: close をキャンセル
-  - `閉じて続行`: window は閉じるが session 実行は継続する
+  - `閉じて続行`: draft flush成功後にwindowを閉じる。session実行は継続する
+- 通常closeは入力を凍結し、未保存Auxiliary draftのflush完了ACKを待つ。保存失敗・例外・ACKのtimeoutでは閉じず、凍結を解除して編集・再試行を可能にする。成功時は実際に閉じるまで凍結を維持する。詳細は[Auxiliary Sessionの保存・終了契約](auxiliary-session.md#composer-の更新保存境界)を参照する
+- 通常closeとapp quitが重なる場合、保存だけを待つclose ACKをquitに流用しない。quitは送信結果と復元保存まで待つ専用requestを送り、全体の終了判定まで通常closeによるWindow破棄と解凍を保留する。失敗時は生存Windowを解凍し、保留中の通常closeも中止して再試行を可能にする。ACK前のWindow消滅は保存成功として扱わない
+- Sessionを対象に含む明示的DBリセットでは、通常closeの保存待ちを使わずWindowを破棄する。管理登録とownerの解放は実際のclosed通知に合わせ、Windowが残ったまま登録だけを消さない
 - close 時に Session Memory extraction は自動実行しない
 
 ### Session Run Cancel
@@ -174,11 +177,12 @@ Issue #726 の段階ごとの変更と検証履歴は `docs/plans/20260919-sessi
 ### App Quit
 
 - 実行中 session が無い場合:
-  - そのまま終了する
+  - 実行中断の確認なしで下記のdraft flushへ進む
 - 実行中 session がある場合:
   - 確認ダイアログを出す
   - `戻る`: quit をキャンセル
-  - `終了する`: 実行中 session を中断してアプリを終了する
+  - `終了する`: 新規実行を止めて実行中 session にキャンセルを要求し、draft flushと復元保存の成功後にアプリを終了する
+- 通常quitはDBを開いたまま実行をキャンセルし、全Session Windowの送信結果確定・失敗復元を含むdraft flush完了を確認する。既に閉じたWindowからの未確定Auxiliary送信とMain側に残る復元失敗も再保存まで待ってからsnapshot保存、provider等のcleanup、DB closeへ進む。quitの待機期限はキャンセル猶予後の保存時間も確保する。1つでも保存失敗・例外・待機timeoutがあれば終了を中止し、各Windowの凍結を解除する。開始済みキャンセルは取り消さず、未保存draftのあるWindowでは編集・再試行導線を保持し、再度quitできる
 
 キャンセルは `Session Window` から明示操作で行い、アプリ終了時の accidental quit 保護とは別責務で扱う。
 

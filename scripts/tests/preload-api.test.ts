@@ -532,6 +532,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
 
   const keys = Object.keys(api).sort();
   const expectedKeys = [
+    "acknowledgeSessionDraftFlush",
     "cancelCompanionSessionRun",
     "cancelAuxiliarySessionRun",
     "cancelSessionRun",
@@ -561,7 +562,9 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getAuxiliarySession",
     "getAuxiliaryCreation",
     "getAuxiliaryCreationContext",
+    "getAuxiliaryDraft",
     "getCharacter",
+    "getAuxiliarySessionStatus",
     "getCompanionAuditLogDetail",
     "getCompanionAuditLogDetailSection",
     "getCompanionAuditLogOperationDetail",
@@ -667,6 +670,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "runAuxiliarySessionTurn",
     "runCompanionSessionTurn",
     "runSessionTurn",
+    "saveAuxiliaryDraft",
     "savePastedSessionFile",
     "searchMemoryV6Entries",
     "searchSessionGlossary",
@@ -694,6 +698,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeSessionInvalidation",
     "subscribeSessionBackgroundActivity",
     "subscribeSessionContextTelemetry",
+    "subscribeSessionDraftFlushRelease",
+    "subscribeSessionDraftFlushRequest",
     "subscribeSessionGlossary",
     "syncCompanionTarget",
     "forgetMemoryV6Entry",

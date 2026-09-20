@@ -5,14 +5,14 @@ import { createMainIpcRegistrationDeps } from "../../src-electron/main-ipc-deps.
 
 // @test-value v2
 // kind = "contract"
-// claim = "createMainIpcRegistrationDepsはSession Monitorのcontext menuとAuxiliary ID付きwindow delegateをwindow groupからregistration depsへ保持する"
+// claim = "createMainIpcRegistrationDepsはSession Monitorのcontext menu、終了flush ACK、Auxiliary ID付きwindow delegateをwindow groupからregistration depsへ保持する"
 // oracle = { type = "contract", ref = "createMainIpcRegistrationDeps window delegate mapping" }
-// fault = "window groupに追加したdelegateがregistration depsから欠落するか、Auxiliary IDを親Window delegateへ渡さない"
-// observable = "生成されたregistration depsのcontext menuとwindow delegateの呼び出し引数"
-// observation_boundary = "public-boundary"
+// fault = "window groupに追加したdelegateが内部factoryからregistration depsへ欠落するか、Auxiliary IDを親Window delegateへ渡さない"
+// observable = "生成されたregistration depsのflush ACK、context menuとwindow delegateの呼び出し引数"
+// observation_boundary = "component-behavior"
 // scope = "main IPC dependency grouping"
 // lifecycle = "permanent"
-// impact = "Main IPC handlerからSession Monitor native menu serviceへ到達できるようにする"
+// impact = "Main IPC handlerから終了flush ACKとSession Monitor native menu serviceへ到達できるようにする"
 // distinction = "grouped dependency mappingだけを検証し、IPC request validationとnative selectionは別testで扱う"
 // @end-test-value
 test("createMainIpcRegistrationDeps は残存する window / mate delegate を組み立てる", async () => {
@@ -21,9 +21,14 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     calls.push("showSessionMonitorContextMenu");
     return { status: "dismissed" as const };
   };
+  let acknowledged: { sender: unknown; payload: { requestId: string; success: boolean } } | null = null;
+  const acknowledgeSessionDraftFlush = (event: { sender: unknown }, payload: { requestId: string; success: boolean }) => {
+    acknowledged = { sender: event.sender, payload };
+  };
 
   const deps = createMainIpcRegistrationDeps({
     window: {
+      acknowledgeSessionDraftFlush,
       resolveEventWindow: () => null,
       resolveHomeWindow: () => null,
       resolveSessionWindow: () => null,
@@ -295,6 +300,11 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   });
 
   assert.equal(await deps.openHomeWindow(), undefined);
+  assert.equal(deps.acknowledgeSessionDraftFlush, acknowledgeSessionDraftFlush);
+  const sender = {};
+  const payload = { requestId: "flush-1", success: true };
+  deps.acknowledgeSessionDraftFlush({ sender }, payload);
+  assert.deepEqual(acknowledged, { sender, payload });
   assert.equal(await deps.openMemoryV6ReviewWindow(), undefined);
   assert.equal(deps.isMemoryV6ReviewWindow({} as never), true);
   assert.equal(deps.isSettingsWindow({} as never), true);

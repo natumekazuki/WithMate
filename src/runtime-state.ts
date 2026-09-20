@@ -357,6 +357,8 @@ export type RunSessionTurnRequest = {
   codexSandboxMode?: CodexSandboxMode;
   codexSpeed?: CodexSpeed;
   codexReviewer?: CodexReviewer;
+  auxiliaryDraftIncarnation?: string;
+  auxiliaryDraftDurableRevision?: number;
 };
 
 const SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

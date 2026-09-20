@@ -22,6 +22,8 @@ import {
   WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,
+  WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
@@ -76,6 +78,7 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
+  WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
@@ -2240,6 +2243,103 @@ test("Auxiliary full read IPC は対象 Session / Companion Review window から
     "getActiveAuxiliarySession:session-1",
     "getAuxiliarySession:aux-1",
   ]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary draft readはowner Session/Reviewから許可し、draft mutationはowner Sessionだけへ限定する"
+// oracle = { type = "contract", ref = "src-electron/main-ipc-registration.ts#registerAuxiliaryHandlers" }
+// fault = "Home・別Session・退役Companionからdraftを保存できる、または正規ownerへ届かない"
+// observable = "draft handler result, dependency calls, and authorization errors"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-draft-ipc-authorization"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary draft IPC はreadをownerへ、mutationをSession ownerへ限定する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const otherSessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-2");
+  const companionReviewWindow = createWindowStub("http://localhost:5173/?mode=companion&sessionId=session-1");
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const auxiliarySession = createAuxiliarySessionStub();
+  const draft = {
+    auxiliarySessionId: "aux-1",
+    parentSessionId: "session-1",
+    incarnation: "incarnation-1",
+    durableRevision: 3,
+    text: "draft",
+    updatedAt: "2026-07-30T00:00:00.000Z",
+  };
+  const status = {
+    id: "aux-1",
+    parentSessionId: "session-1",
+    status: "active" as const,
+    createdAt: auxiliarySession.createdAt,
+    incarnation: draft.incarnation,
+    runState: "idle" as const,
+  };
+  let eventWindow: unknown = sessionWindow;
+  const calls: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) =>
+      sessionId === "session-1" ? sessionWindow : sessionId === "session-2" ? otherSessionWindow : null,
+    resolveCompanionReviewWindow: (sessionId: string) =>
+      sessionId === "session-1" ? companionReviewWindow : null,
+    getAuxiliarySessionStatus: async (auxiliarySessionId: string) => {
+      assert.equal(auxiliarySessionId, "aux-1");
+      return status;
+    },
+    getAuxiliaryDraft: async () => {
+      calls.push("getAuxiliaryDraft");
+      return draft;
+    },
+    saveAuxiliaryDraft: async () => {
+      calls.push("saveAuxiliaryDraft");
+      return { outcome: "saved", ack: { auxiliarySessionId: "aux-1", incarnation: draft.incarnation, durableRevision: 4, updatedAt: draft.updatedAt } };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(await handlers.get(WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL)?.({}, "aux-1"), draft);
+  assert.deepEqual(await handlers.get(WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL)?.({}, "aux-1"), status);
+  const input = {
+    auxiliarySessionId: "aux-1",
+    parentSessionId: "session-1",
+    incarnation: draft.incarnation,
+    expectedDurableRevision: draft.durableRevision,
+    text: "next",
+    updatedAt: draft.updatedAt,
+  };
+  assert.equal((await handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, input)).outcome, "saved");
+
+  eventWindow = companionReviewWindow;
+  assert.deepEqual(await handlers.get(WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL)?.({}, "aux-1"), status);
+  assert.deepEqual(await handlers.get(WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL)?.({}, "aux-1"), draft);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, input) as Promise<unknown>,
+    /Companion provider execution is retired/,
+  );
+
+  for (const unauthorizedWindow of [homeWindow, otherSessionWindow]) {
+    eventWindow = unauthorizedWindow;
+    await assert.rejects(
+      () => handlers.get(WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+    await assert.rejects(
+      () => handlers.get(WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+    await assert.rejects(
+      () => handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, input) as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+  }
+  eventWindow = sessionWindow;
+  const mismatchedParentInput = { ...input, parentSessionId: "other-parent" };
+  assert.deepEqual(await handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, mismatchedParentInput), { outcome: "not-found" });
+  assert.deepEqual(calls, ["getAuxiliaryDraft", "saveAuxiliaryDraft", "getAuxiliaryDraft"]);
 });
 
 test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run に到達しない", async () => {

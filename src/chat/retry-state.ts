@@ -72,7 +72,7 @@ export function applyRetryDraftRestoreCommand(input: {
 export function applyRetryEditCommand(input: {
   isDisabled: boolean;
   messageText: string | null | undefined;
-  shouldProtectDraft: boolean;
+  shouldProtectDraft: boolean | (() => boolean);
   requestDraftReplaceConfirmation: () => void;
   restoreDraft: (messageText: string) => void;
 }): void {
@@ -80,7 +80,7 @@ export function applyRetryEditCommand(input: {
     return;
   }
 
-  if (input.shouldProtectDraft) {
+  if (typeof input.shouldProtectDraft === "function" ? input.shouldProtectDraft() : input.shouldProtectDraft) {
     input.requestDraftReplaceConfirmation();
     return;
   }
@@ -91,7 +91,7 @@ export function applyRetryEditCommand(input: {
 export function createRetryEditHandler(input: {
   isDisabled: boolean;
   messageText: string | null | undefined;
-  shouldProtectDraft: boolean;
+  shouldProtectDraft: boolean | (() => boolean);
   requestDraftReplaceConfirmation: () => void;
   restoreDraft: (messageText: string) => void;
 }): () => void {

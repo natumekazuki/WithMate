@@ -36,6 +36,8 @@ import {
 } from "./live-session-projection.js";
 
 export type AgentSessionChatProjectionInput = {
+  composerController?: SessionComposerExpandedProps["composerController"];
+  onRetryComposerSave?: SessionComposerExpandedProps["onRetryComposerSave"];
   mainContent?: ReactNode;
   leftPane?: ReactNode;
   isFilesPaneVisible: boolean;
@@ -108,6 +110,8 @@ export type AgentSessionChatProjectionInput = {
   isComposerDisabled: boolean;
   isSendDisabled: boolean;
   composerSendability: SessionComposerExpandedProps["composerSendability"];
+  forceComposerBlockedFeedback?: SessionComposerExpandedProps["forceComposerBlockedFeedback"];
+  isComposerFrozen?: boolean;
   composerSendButtonTitle: string | undefined;
   isComposerBlockedFeedbackActive: boolean;
   approvalChoiceOptions: SessionComposerExpandedProps["approvalOptions"];
@@ -300,10 +304,13 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       customAgentItems: input.customAgentItems,
       attachmentItems: input.composerAttachmentItems,
       draft: input.draft,
+      composerController: input.composerController,
+      onRetryComposerSave: input.onRetryComposerSave,
       composerTextareaRef: input.composerTextareaRef,
       isComposerDisabled: input.isComposerDisabled,
       isSendDisabled: input.isSendDisabled,
       composerSendability: input.composerSendability,
+      forceComposerBlockedFeedback: input.forceComposerBlockedFeedback,
       sendButtonTitle: input.composerSendButtonTitle,
       isComposerBlockedFeedbackActive: input.isComposerBlockedFeedbackActive,
       approvalOptions: input.approvalChoiceOptions,
@@ -486,11 +493,15 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     additionalDirectoryListProps: {
       isOpen: input.isAdditionalDirectoryListOpen,
       items: input.additionalDirectoryItems,
-      isInteractionDisabled: input.isSelectedSessionRunning || input.composerBlocked,
+      isInteractionDisabled:
+        input.isSelectedSessionRunning
+        || input.composerBlocked
+        || input.isComposerFrozen === true,
       onRemove: input.onRemoveAdditionalDirectory,
     },
     skillPickerProps: {
       isOpen: !isCharacterAuthoringSession && input.isSkillPickerOpen,
+      isInteractionDisabled: input.isComposerFrozen === true,
       isLoading: input.isSkillListLoading,
       errorMessage: input.skillListError,
       items: input.skillItems,

@@ -115,6 +115,10 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "updateAuxiliarySessionIfMatches"
   | "deleteAuxiliarySessionsForParent"
   | "deleteAuxiliarySessionsExceptParents"
+  | "getAuxiliaryDraft"
+  | "saveAuxiliaryDraft"
+  | "consumeAuxiliaryDraft"
+  | "getAuxiliarySessionStatus"
 > & Pick<AuxiliarySessionStorage, "close"> & {
   updateAuxiliarySessionThreadIfMatches?(input: import("./auxiliary-session-storage.js").AuxiliarySessionThreadPatchInput): Awaitable<AuxiliarySession | null>;
   updateAuxiliarySessionRuntimeMetadataIfMatches?(
@@ -453,6 +457,18 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
 
   getAuxiliarySession(): AuxiliarySession | null {
     return null;
+  }
+
+  getAuxiliaryDraft(): null { return null; }
+
+  getAuxiliarySessionStatus(): null { return null; }
+
+  saveAuxiliaryDraft(): never {
+    throw new Error("Auxiliary draft は legacy DB では利用できません。");
+  }
+
+  consumeAuxiliaryDraft(): never {
+    throw new Error("Auxiliary draft は legacy DB では利用できません。");
   }
 
   upsertAuxiliarySession(): AuxiliarySession {

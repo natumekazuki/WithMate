@@ -1,6 +1,6 @@
 # 実機テスト項目表
 
-## Issue #710 Auxiliary Session
+## Auxiliary Session の独立性と切り替え
 
 複数Auxiliaryを追加して最終使用順に一覧・左右切り替えできること、Mainと兄弟Auxiliaryのrun・draft・Character snapshotが混線しないこと、非表示会話のterminal保存が続くことを確認する。一覧ではCharacter iconと非AI previewだけを表示し、実行中のAuxiliaryはicon内のprocessing indicatorで判別できること、preview用Provider呼び出しがないことを確認する。Auxiliaryを閉じた状態ではAuxiliaryのタイトル枠・切り替えUI・追加`＋`を表示せず、Mainが残り幅を使うこと、中央のsplitterだけが残りクリックで既定幅へ戻せることを確認する。Auxiliaryを再度開いた後はタイトル枠、左右切り替え、追加`＋`が利用でき、追加不可の状態では`＋`がdisabledになることを確認する。Electron GUI、Provider、cross-provider並行実行を未実施の場合は未確認として記録する。
 
@@ -185,6 +185,10 @@ npm run electron:start
 | MT-052 | Home session badge precedence / sort | Home に `status === "running"`、`runState === "running"`、`runState === "interrupted"`、`runState === "error"`、non-active session が混在する状態を作る | `running` が最優先、次に `interrupted`、次に `error`、それ以外は neutral badge で card に残る。card 並びは active state 優先へ再ソートされず、storage 既定の `last_active_at DESC` を保つ |
 | MT-053 | Home monitor open session truth source / search sync | 複数 session を用意し、そのうち一部だけ `SessionWindow` を開く。Home 右ペインを `Session Monitor` にして、続けて session search で一部 session だけに絞り込む。open session のAuxiliaryを6件以上作り、MainとAuxiliaryで状態を分ける | monitor panel は open な `SessionWindow` を持つ親だけを2行集約カードで出し、`実行中` と `停止・完了` に分かれる。親Mainが待機中でもAuxiliaryが実行中なら `実行中` 側へ入る。同じ親のAuxiliaryは実行中が先頭に並び、各グループ内は最終使用順で表示される。5行程度を超えた分は親カード内の一覧だけがスクロールし、全件へ到達できる。`interrupted` / `error` / neutral は状態アイコンの形で判別でき、Auxiliaryの件数集約も維持される。検索結果から外れた session は `Recent Sessions` card とmonitor cardの両方から消える |
 | MT-054 | Home monitor open / close follow | Home を開いたまま session card から `SessionWindow` を開き、続けて対象 window を閉じる。可能なら複数 session で繰り返す | `SessionWindow` を開いた session は monitor に追加され、閉じた session は monitor から消える。Home 再読み込みなしで右ペイン表示が追従する |
+| MT-054A | Failed send during quit | 検証用環境でAuxiliary送信の応答を遅延させ、quit待機中に送信を失敗させる。通常close済みのWindowでは、別WindowのACKより先に復元保存を失敗させる。保存障害を残した再quitと、障害解消後の再quitを試す | 送信結果と復元保存が未確定のままquit ACKやDB閉鎖に進まない。送信Promiseが完了済みでも復元失敗を保持して終了を中止する。障害解消後は元の本文を再保存し、終了・再起動後も下書きが残る。生存Windowでは本文とRetryを保持して編集・再試行できる |
+| MT-054B | Close / quit overlap | 検証用環境で送信結果と保存ACKを遅延させ、通常closeとapp quitを両方の開始順で重ねる。ACK成功、失敗、timeout、ACK前のWindow破棄を確認する | 通常close単独では実行を継続できるが、quitは保存だけのclose ACKを流用せず送信結果・復元保存も待つ。quit待機中は通常closeによる破棄を保留し、全体の失敗時は生存Windowを解凍して再終了できる。ACK前の破棄は保存成功扱いにしない |
+| MT-054C | Database reset window disposal | 検証専用DBでSession Windowを複数開き、通常closeの保存ACKが未応答の状態を含めてSessionを対象とするDBリセットを確定する | 保存ACKを待たず対象Windowが閉じ、Window一覧からも除去される。リセット前のWindowが管理外で残らない |
+| MT-054D | Quit during a long Auxiliary run | 検証用環境で長時間のAuxiliary実行中にquitを要求して終了を確定する。キャンセルが即時に完了する場合と猶予満了まで応答しない場合を確認する | DBを開いたままキャンセルを先に要求し、terminal処理と下書き復元保存が収束してから終了する。providerの自然完了を待つだけのtimeoutにはならず、保存失敗時はDBを閉じずに終了を中止する |
 | MT-055 | Home right pane segmented toggle / initial state | Home を起動し、右ペイン上部の切替 UI を確認した後、`Session Monitor` / `Characters` を相互に切り替える | 起動時は `Session Monitor` が選択済みで、right pane には片方だけが表示される。segmented toggle だけで現在選択中が見分けられ、`Characters` 選択時に Character list / Create が出る |
 | MT-056 | Home session empty / no-result と monitor empty state | session 0 件の状態で Home を開き、その後 session を作成して `SessionWindow` を開かないケース、さらに search で 0 件になる条件も試す | session 0 件では `Recent Sessions` に空状態メッセージと `New Session` 導線が見える。open な `SessionWindow` が 0 件なら monitor 側は説明文ではなく短い empty state を出す。search 0 件では `一致するセッションはないよ。` が出て、monitor 側も同じ検索条件に追従した no-result 表示になる |
 | MT-057 | Home right pane heading dedupe | Home を開いて `Session Monitor` / `Characters` を切り替え、right pane の先頭付近を確認する | active pane は segmented toggle だけで判別でき、pane 内トップに `Session Monitor` / `Characters` の重複 heading は出ない。Characters 側に legacy MateTalk / Mate editor 導線は出ない |
@@ -210,3 +214,21 @@ npm run electron:start
 | MT-068 | Windows notification Session activation | Windows で通常の完了通知、返答 preview 通知、非 cancel の error 終端通知をそれぞれ発生させる。WithMate 以外を前面にした状態で、対象 Session Window が通常表示、最小化、非表示、未作成の各状態から live toast または Action Center の通知をクリックする | 成功通知は従来の完了文または preview、error 通知は成功と区別できる短い固定文を表示し、保存済み failure notice や raw provider error は表示しない。既存 Window は同じ位置のまま可視化され、最小化時は復元されて前面へ focus する。未作成なら対象 Session の Window が1つだけ新規表示される。別 Session WindowやHomeが開かず、同じ通知を再度activateしても追加のWindowは開かない |
 | MT-068A | Windows notification stale / fallback | 同じ Session で成功通知と error 通知を連続して発生させ、置き換え前の通知が操作可能なら古い通知と最新通知を順にクリックする。対象 Session Window が focus 中の error 終端と利用者 cancel も確認する。続けて通知後に対象 Session を削除する場合と、開く処理を失敗させる開発用条件を確認する | outcome が変わっても古い通知や同じ通知の多重activationはSessionを再openせず、最新通知の最初のactivationだけが対象を開く。対象 Session Window が focus 中の終端と利用者 cancel では通知しない。削除済みまたはopen失敗ではHomeが表示・focusされ、失敗が記録される |
 | MT-069 | Auxiliary processing indicator | Auxiliaryを3件以上用意して一覧を開き、表示中・非表示のAuxiliaryをそれぞれ実行する。実行中に一覧を開閉し、狭い幅と`prefers-reduced-motion`でも確認する | 実行中の行だけicon内に小さなprocessing indicatorが表示され、previewは既存の最大2行表示を維持し、indicator追加で行の高さとpreviewの幅は変わらない。待機中の行にindicatorは出ず、一覧を閉じても実行は継続する。reduced motionではindicatorが回転しない |
+
+
+## Composer 入力性能の測定
+
+このbenchmarkはhidden Electron BrowserWindowで本番の `session.html` を読み込み、AgentSessionWindowAppと共通Composerのrenderer/IPC境界を確認する。合成API fixtureのため、実DB・Storage Workerの性能値とは分けて扱う。
+
+```powershell
+npm run build:renderer
+npx electron scripts/run-composer-input-benchmark.cjs
+```
+
+変更前rendererの比較は `--renderer-dir` で展開済みbaselineの `dist` を指定する。
+
+```powershell
+npx electron scripts/run-composer-input-benchmark.cjs --renderer-dir C:\path\to\composer-input-baseline\source\dist
+```
+
+Auxiliary件数1/10/100、short/long履歴、Main/Auxiliary owner、通常入力/delete、synthetic pasteを出力する。各条件は先頭5入力をwarmupとして除き、24入力のmedian/p95を計算する。測定区間はinput eventから2回目のrequestAnimationFrameまでで、実paint時間ではない。hidden Windowのbackground throttlingを無効にしたrenderer比較値として扱う。pasteはユーザーclipboardを読み書きせず、合成ClipboardEventとInputEventである。実clipboardと日本語IMEは別途Electron手動確認とし、実行環境・commit・build種別・fixture・入力方法を結果へ記録する。`GIT_COMMIT`へ比較対象のcommitを設定し、同じbuild種別・条件でbaselineと変更後を比較する。

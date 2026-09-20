@@ -397,21 +397,21 @@ button:disabled {
   .composer-path-match-list,
   .composer-attachment-list
 ) {
-  flex-shrink: 1;
+  flex-shrink: 0;
   min-height: 0;
   overflow-y: auto;
 }
 
 .session-action-dock-slot.is-expanded .composer-input-row {
-  flex: 1 0 100px;
-  min-height: 100px;
-  overflow: hidden;
+  flex: 1 0 auto;
+  min-height: min-content;
 }
 
 .session-action-dock-slot.is-expanded .composer-box {
-  height: 100%;
+  height: auto;
   min-height: 0;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(100px, 1fr);
+  grid-auto-rows: auto;
 }
 
 .session-action-dock-slot.is-expanded .composer-box textarea {
@@ -11104,6 +11104,50 @@ button:disabled {
   gap: 4px;
   list-style: disc;
   padding-left: 18px;
+}
+
+.composer-save-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  grid-column: 1 / -1;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #f87171 48%, var(--character-main));
+  border-radius: 14px;
+  background: color-mix(in srgb, #7f1d1d 36%, rgba(15, 19, 26, 0.9));
+  color: #fecaca;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.composer-save-retry {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, #fca5a5 58%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, #7f1d1d 48%, rgba(255, 255, 255, 0.08));
+  color: #fff1f2;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.composer-save-retry:hover:not(:disabled),
+.composer-save-retry:focus-visible {
+  border-color: #fecaca;
+  background: color-mix(in srgb, #991b1b 62%, rgba(255, 255, 255, 0.1));
+}
+
+.composer-save-retry:focus-visible {
+  outline: 2px solid color-mix(in srgb, #fecaca 76%, transparent);
+  outline-offset: 2px;
+}
+
+.composer-save-retry:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
 }
 
 .composer-copy {

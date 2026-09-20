@@ -9,6 +9,7 @@ type CreateAppLifecycleDepsArgs = {
   shouldQuitWhenAllWindowsClosed(): boolean;
   confirmQuitWhileRunning(): boolean;
   prepareSessionWindowSnapshotForQuit?(): Promise<void>;
+  flushSessionWindowDrafts?(): Promise<boolean>;
   stopMemoryRuntime?(): Promise<void>;
   closePersistentStores(): void | Promise<void>;
   invalidateAllProviderSessionThreads?(): Promise<void>;
@@ -28,6 +29,9 @@ export function createAppLifecycleDeps(
     confirmQuitWhileRunning: args.confirmQuitWhileRunning,
     ...(args.prepareSessionWindowSnapshotForQuit
       ? { prepareSessionWindowSnapshotForQuit: args.prepareSessionWindowSnapshotForQuit }
+      : {}),
+    ...(args.flushSessionWindowDrafts
+      ? { flushSessionWindowDrafts: args.flushSessionWindowDrafts }
       : {}),
     ...(args.stopMemoryRuntime ? { stopMemoryRuntime: args.stopMemoryRuntime } : {}),
     closePersistentStores: args.closePersistentStores,

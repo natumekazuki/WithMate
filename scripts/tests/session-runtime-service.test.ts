@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 
 import {
   buildNewSession,
@@ -39,6 +39,9 @@ import type { ConversationTimingContext } from "../../src-electron/conversation-
 import type { CharacterContextResponse } from "../../src/character-context/character-context-contract.js";
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
 import type { SessionTurnTerminalCommit } from "../../src-electron/session-turn-terminal-commit.js";
+import { SessionWindowBridge } from "../../src-electron/session-window-bridge.js";
+import { AppLifecycleService } from "../../src-electron/app-lifecycle-service.js";
+import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "../../src-electron/session-run-timeouts.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -2137,11 +2140,29 @@ describe("SessionRuntimeService", () => {
     assert.equal(service.hasInFlightRuns(), false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "quitはproviderを先にcancelし、非協力providerの猶予満了後もterminal保存を待ってDBを閉じ、実終了までは再送を拒否する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#app-quit" }
+  // fault = "cancelより先に送信結果を待つか、cancel猶予と同時にquitがtimeoutするか、terminal保存前にDBを閉じる"
+  // observable = "provider abort、保存gate中のDB close回数、quit完了、再送拒否、provider実終了後のin-flight解除"
+  // observation_boundary = "public-boundary"
+  // scope = "runtime-bridge-lifecycle-quit"
+  // lifecycle = "permanent"
+  // distinction = "実runtimeの非協力providerとbridge・lifecycleを接続し、復元保存単体では検出できない停止順序と待機期限を確認する"
+  // @end-test-value
   it("provider が cancel 後も生存する間は terminal session への再送を拒否する", async () => {
     const session = createSession();
     const approvalResolutions: Array<{ sessionId: string; decision: LiveApprovalDecision }> = [];
     let observedAbortSignal: AbortSignal | undefined;
     let observedAbort = false;
+    let providerStarted!: () => void;
+    const providerReady = new Promise<void>((resolve) => { providerStarted = resolve; });
+    let terminalStarted!: () => void;
+    const terminalReady = new Promise<void>((resolve) => { terminalStarted = resolve; });
+    let releaseTerminal!: () => void;
+    const terminalGate = new Promise<void>((resolve) => { releaseTerminal = resolve; });
+    let terminalStored = false;
     let resolveProvider: ((result: RunSessionTurnResult) => void) | null = null;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
@@ -2168,6 +2189,7 @@ describe("SessionRuntimeService", () => {
         signal.addEventListener("abort", () => {
           observedAbort = true;
         }, { once: true });
+        providerStarted();
         return new Promise<RunSessionTurnResult>((resolve) => {
           resolveProvider = resolve;
         });
@@ -2225,17 +2247,66 @@ describe("SessionRuntimeService", () => {
       resolvePendingApprovalRequest(sessionId, decision) {
         approvalResolutions.push({ sessionId, decision });
       },
+      async upsertTerminalSession(next) {
+        terminalStarted();
+        await terminalGate;
+        terminalStored = true;
+        return next;
+      },
       resolvePendingElicitationRequest() {},
       currentTimestampLabel,
-      providerCancelGraceMs: 5,
     });
 
     const promise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await providerReady;
     if (!observedAbortSignal) {
       throw new Error("provider setup が開始されていないよ。");
     }
-    service.cancelRun(session.id);
+    // A previously closed Window has no renderer ACK; Main must still cancel
+    // and wait for the send lifecycle before AppLifecycle closes persistence.
+    const bridge = new SessionWindowBridge({
+      createWindow() { throw new Error("no Window should be created"); },
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: (id) => service.isRunInFlight(id),
+      confirmCloseWhileRunning: () => true,
+      broadcastOpenSessionWindowIds() {},
+      cancelInFlightSessionRuns: () => service.cancelAllRuns(),
+      waitForPendingDraftSends: async () => { await promise; return true; },
+    });
+    let closeCount = 0;
+    let quitCount = 0;
+    const lifecycle = new AppLifecycleService({
+      hasInFlightSessionRuns: () => service.hasInFlightRuns(),
+      getAllowQuitWithInFlightRuns: () => false,
+      setAllowQuitWithInFlightRuns() {},
+      async createHomeWindow() {},
+      shouldQuitWhenAllWindowsClosed: () => false,
+      confirmQuitWhileRunning: () => true,
+      flushSessionWindowDrafts: () => bridge.flushSessionWindowDrafts(),
+      closePersistentStores: () => { assert.equal(terminalStored, true); closeCount += 1; },
+      quitApp: () => { quitCount += 1; },
+    });
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const quitting = lifecycle.handleBeforeQuit({ preventDefault() {} });
+      assert.equal(observedAbort, true);
+      assert.equal(bridge.isQuitPending(), true);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      mock.timers.tick(DEFAULT_PROVIDER_CANCEL_GRACE_MS);
+      await terminalReady;
+      mock.timers.tick(1);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(closeCount, 0);
+      assert.equal(quitCount, 0);
+      assert.equal(bridge.isQuitPending(), true, "quit must allow persistence time after cancellation grace");
+      releaseTerminal();
+      await quitting;
+      assert.equal(closeCount, 1);
+      assert.equal(quitCount, 1);
+    } finally {
+      mock.timers.reset();
+    }
     const result = await promise;
 
     if (!observedAbortSignal) {
@@ -2252,7 +2323,7 @@ describe("SessionRuntimeService", () => {
       throw new Error("provider resolve が取得できていないよ。");
     }
     resolveProvider(createPartialResult());
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setImmediate(resolve));
     assert.equal(service.hasInFlightRuns(), false);
     assert.deepEqual(approvalResolutions, [
       { sessionId: session.id, decision: "deny" },
