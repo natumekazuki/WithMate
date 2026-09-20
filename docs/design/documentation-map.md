@@ -1,140 +1,77 @@
 # Documentation Map
 
-- 作成日: 2026-03-28
-- 対象: `docs/design/` の current 棚卸し
+現在の利用・開発・保守に必要な文書と、設計判断・リリースの履歴への入口です。現行仕様は一般文書で説明し、過去のADRをたどらないと現在の仕様が分からない構成にはしません。
 
-## Goal
+## 文書の保存区分
 
-`docs/design/` にある文書を、current 実装に対する役割ごとに整理する。  
-この文書は、docs 精査で何を正本として残し、何を supporting doc とし、何を統合候補として扱うかを判断するための入口にする。
+- 一般文書は、対象branchの現行実装・設定・呼び出し経路について正しく、現在必要な情報だけを残します。旧仕様、未実装の構想、作業計画・記録は、新しさ・進行中・採用済み・参照の有無を理由に保存しません。
+- 設計・作業文書の履歴保持を認める例外はADRです。背景、代替案、採否、結果、置換関係を保持でき、古いことや現行実装との違いだけを理由に削除・上書きしません。決定の記録と現在の適用状態は区別します。
+- リリースノートと索引は、ADRとは別枠でrepository内に恒久保存します。当時の変更内容・互換性・検証結果を現在の仕様へ書き換えません。
 
-利用者向けの機能別ガイドは[`docs/features/`](../features/README.md)、versionごとの変更内容は[`docs/releases/`](../releases/README.md)に分離する。設計上の責務や不変条件は引き続き`docs/design/`と`docs/adr/`を正本とする。
+それ以外の過去情報はGit履歴、課題・作業計画はGitHub Issue／PR、一時的な棚卸し・検証記録はSessionFolder等のrepository外で扱います。不要な一般文書をArchive、移転案内、完了サマリーとして残したり、ADR・リリースノートへ詰め替えたりしません。
 
-## Classification
+更新時は現行に必要な情報だけを正本へ整理し、元の作業文書や旧正本を削除します。ADR・リリースノートに必要な当時の資料・画像への参照は実在する適切な版へ固定し、参照されているだけの一般文書や専用assetsは残しません。詳細は[Documentation Policy](../../AGENTS.md#documentation-policy)と[リリースノートの保存・参照規則](../releases/README.md#保存と参照)を参照してください。
 
-### A. Current Source Of Truth
+## 現在の利用・運用
 
-current 実装の正本として維持する文書。  
-仕様変更やコード変更に追従して更新する前提で扱う。
-V5 Character Core に関しては `A2. V5 Character Core Source Of Truth` を優先し、V6 Memory / DB foundation に関しては `A3. V6 Foundation Source Of Truth` を優先する。V4 SingleMate / MateTalk / Growth / provider instruction sync と矛盾する記述は V5 preview 以降では legacy / deferred として扱う。
-
-| Doc | Role |
+| 文書 | 内容 |
 | --- | --- |
-| `product-direction.md` | プロダクトの優先順位と milestone の判断基準。V5 Character Core では `A2` の文書を優先し、4.0.0 SingleMate 方針は pre-V5 context として扱う |
-| `single-mate-architecture.md` | 4.0.0 SingleMate / Mate Profile / Growth 方針の正本。V5 Character Core では `A2` の文書を優先し、この文書は legacy / deferred context として扱う |
-| `mate-storage-schema.md` | 4.0.0 Mate Profile / Growth / provider instruction sync の SQLite schema 正本 |
-| `mate-growth-engine.md` | 4.0.0 Growth Candidate / Mate Memory Engine の責務と policy gate の正本。V5 Character Core の runtime prompt 注入経路では使わない |
-| `mate-memory-summary.md` | Memory / Growth 周りを外部検討に渡すための単一 summary |
-| `provider-instruction-sync.md` | Mate Profile と provider instruction file 同期方針の正本 |
-| `window-architecture.md` | Window 構成と mode 切り替えの正本 |
-| `desktop-ui.md` | current UI の全体像 |
-| `provider-adapter.md` | provider 差分と adapter 責務 |
-| `coding-agent-capability-matrix.md` | current の provider capability 一覧 |
-| `memory-architecture.md` | V1〜V4 Memory / Growth と V5 current runtime policy の入口。V6 Memory foundation では `v6-memory-foundation.md` を優先する |
-| `settings-ui.md` | Settings Window と設定責務 |
-| `audit-log.md` | audit 記録の current 仕様 |
-| `database-schema.md` | current 保存構造と DB 定義の正本。V6 DB再設計では `v6-database-foundation.md` を優先する |
-| `model-catalog.md` | model catalog 保存 / 解決ロジック |
-| `session-run-lifecycle.md` | session 実行 lifecycle と background task のつながり |
-| [auxiliary-session.md](auxiliary-session.md) | 複数 Auxiliary の保存・最終使用順・共通 Composer の入力購読、draft 保存 / consume / flush 境界 |
-| [chat-mode-convergence.md](chat-mode-convergence.md) | 共通 chat shell / Composer と mode / capability / adapter の責務 |
+| [README](../../README.md) | 機能の入口、起動、開発・build手順 |
+| [Feature Guides](../features/README.md) | 利用者向けの機能別ガイド |
+| [Manual Test Checklist](../manual-test-checklist.md) | 現行機能の実機確認手順 |
+| [Memory / Affect MCP Runbook](../runbooks/memory-affect-mcp.md) | Memory / Affect MCPの運用・診断 |
+| [Repository Glossary Runbook](../runbooks/repository-glossary.md) | 用語集の運用・診断 |
 
-### A2. V5 Character Core Source Of Truth
+## 設計・実装の入口
 
-V5 Character Core で採用済みの Character-first 実装に対する正本。
-Character catalog、definition format、snapshot、prompt boundary、release gate を確認するときはこの分類を優先する。
+### 製品・Window・UI
 
-| Doc | Role |
+| 文書 | 内容 |
 | --- | --- |
-| `v5-character-transition.md` | V4 SingleMate から V5 Character-first への移行方針、scope、non-goals、completion criteria の入口 |
-| `character-definition-format.md` | V5 Core の `character.md` / `character-notes.md` format 正本 |
-| `character-storage.md` | V5 Core の Character catalog / storage / snapshot 境界の正本 |
-| `character-authoring-growth.md` | Character directory、通常 Session composer、app 管理 Skill を使う post-Core authoring workflow の現行設計 |
-| `v5-character-core-release-gate.md` | V5 Core の automated checks、manual checklist、release note、known risks を固定する release gate 正本 |
-| `v5-character-preview-release.md` | V5 Character Core preview release note、verification checklist、known risks の正本 |
+| [Product Direction](product-direction.md) | 製品の目的と判断基準 |
+| [Window Architecture](window-architecture.md) | Windowの責務とmode |
+| [Desktop UI](desktop-ui.md) | 画面構成と操作 |
+| [Settings UI](settings-ui.md) | Settings Windowと設定の責務 |
+| [Electron Window Runtime](electron-window-runtime.md) | BrowserWindow、preload、runtime |
+| [Message Rich Text](message-rich-text.md) | メッセージの表示とresourceの扱い |
 
-### A3. V6 Foundation Source Of Truth
+### Session・provider
 
-V6で採用するDB再設計、Skill-first Memory access、contract、storage 境界の正本。
-旧 MemoryGeneration / V4 Growth / V5以前session互換を戻すのではなく、V5 Character-first資産を中心にV6 runtimeを新規構築する。
-
-| Doc | Role |
+| 文書 | 内容 |
 | --- | --- |
-| `v6-database-foundation.md` | V6 DB全体再設計、destructive reset、legacy data境界、project scope再設計の正本 |
-| `v6-memory-foundation.md` | V6 Memory foundation の owner / scope / entry / API / CLI / explicit target / storage / privacy / verification 正本 |
-| `v6-memory-protected-objects.md` | V6 Memory に紐づく暗号化 file object / quota / export / GC の supporting design |
-| `session-turn-storage-v6.md` | V6 Session turn の final / interim / provider output / run context 分離と初回 migration 方針の正本 |
+| [Session Run Lifecycle](session-run-lifecycle.md) | 実行・取消・終了と永続化の境界 |
+| [Auxiliary Session](auxiliary-session.md) | 複数Auxiliary、一覧、共通Composer、draftの保存・consume・flush |
+| [Chat Mode Convergence](chat-mode-convergence.md) | 共通chat shell、mode、capability、adapterの責務 |
+| [Provider Adapter](provider-adapter.md) | provider連携とadapterの境界 |
+| [Coding Agent Capability Matrix](coding-agent-capability-matrix.md) | providerごとの対応機能 |
+| [Provider Usage Telemetry](provider-usage-telemetry.md) | usage、quota、context情報 |
+| [Model Catalog](model-catalog.md) | model catalogの保存と解決 |
+| [Prompt Composition](prompt-composition.md) | providerへ渡すpromptの構成 |
 
-### B. Supporting / Domain Detail
+### Character・Memory・永続化
 
-正本を補助する詳細文書。  
-単独で入口にするより、関連する A 文書から参照される前提で残す。
-
-| Doc | Role |
+| 文書 | 内容 |
 | --- | --- |
-| `project-memory-storage.md` | Project Memory の storage / promotion / retrieval detail |
-| `prompt-composition.md` | coding plane prompt の section / format detail |
-| `monologue-provider-policy.md` | 独り言 provider 方針 |
-| `message-rich-text.md` | message renderer の仕様 |
-| `session-character-copy.md` | Session copy slot の詳細 |
-| `session-live-activity-monitor.md` | Session 右ペイン activity 表示の詳細 |
-| `session-launch-ui.md` | 新規 session 起動 UI の詳細 |
-| `electron-session-store.md` | Electron 側 session / audit / memory storage 実装詳細 |
-| `electron-window-runtime.md` | BrowserWindow / preload / runtime 詳細 |
-| `manual-test-checklist.md` | 実機テスト項目の current 一覧 |
-| `provider-usage-telemetry.md` | Copilot quota / context telemetry の詳細 |
-| `distribution-packaging.md` | installer / app bundle の packaging 方針 |
-| `refactor-roadmap.md` | current リファクタの進行管理 |
+| [Character Definition Format](character-definition-format.md) | Character定義・補助メモの形式 |
+| [Character Storage](character-storage.md) | catalog、storage、snapshotの境界 |
+| [Character Authoring And Improvement](character-authoring-growth.md) | 通常Sessionを使うCharacter作成・改善 |
+| [Database Schema](database-schema.md) | SQLiteとfile storageの保存構造 |
+| [V6 Database Foundation](v6-database-foundation.md) | DBの責務と移行・データ境界 |
+| [V6 Memory Foundation](v6-memory-foundation.md) | Memoryのowner、scope、API、storage、privacy |
+| [Audit Log](audit-log.md) | 監査記録 |
+| [Session Local Files](session-local-files.md) | Session Folderと添付ファイル |
 
-### B-legacy. Removed Character Documents
+### 開発・検証・配布
 
-SingleMate 化に伴い、次の文書は current runtime の正本・supporting doc ではない。旧 3.x の調査・履歴参照に限って読む。
-
-| Doc | Legacy Scope |
+| 文書 | 内容 |
 | --- | --- |
-| `character-management-ui.md` | 旧 Character 管理 UI の superseded pointer。現行 Editor と authoring workflow への参照だけを残す |
-| `character-update-workspace.md` | 旧 `character-update` workflow の superseded pointer。ADR 010 と現行 authoring 設計を参照する |
-| `character-memory-storage.md` | 削除済み Character Memory と reflection cycle |
+| [Agent Guide](../../AGENTS.md) | 開発規則、文書保存、互換性・リリースの境界 |
+| [Manual Test Checklist Policy](manual-test-checklist.md) | 実機確認項目の更新責務と運用 |
+| [Distribution Packaging](distribution-packaging.md) | installer、app bundle、配布build |
 
-### B2. Future Design / Migration Candidate
+## 設計判断とリリースの履歴
 
-current 実装の正本ではないが、次の保存構造や migration の採否判断に使う文書。
-V5 Character Core で採用済みの文書は `A2. V5 Character Core Source Of Truth` に置く。
-
-| Doc | Role |
+| 文書 | 役割 |
 | --- | --- |
-| `database-v2-migration.md` | V1 -> V2 migration と V2 schema 方針 |
-| `database-v3-blob-storage.md` | V3 DB と compressed blob store の方針 |
-
-### C. Archived Design Notes
-
-latest 実装とは一致しないが、設計経緯や調査記録として archive に退避した文書。  
-current 正本としては扱わず、必要時だけ archive を参照する。
-
-| Doc | Archived View |
-| --- | --- |
-| `archive/2026/03/character-chat-ui.md` | `product-direction.md` に current 方針が吸収済みのため archive |
-| `archive/2026/03/home-ui-brushup.md` | `desktop-ui.md` に current 要件が吸収済みのため archive |
-| `archive/2026/03/recent-sessions-ui.md` | `desktop-ui.md` に current 要件が吸収済みのため archive |
-| `archive/2026/03/session-window-chrome-reduction.md` | `desktop-ui.md` に current 要件が吸収済みのため archive |
-| `archive/2026/03/session-window-layout-redesign.md` | `desktop-ui.md` に current 要件が吸収済みのため archive |
-| `archive/2026/03/codex-approval-research.md` | approval surface の調査記録として archive |
-| `archive/2026/03/agent-event-ui.md` | event UI の検討メモとして archive |
-| `archive/2026/03/skill-command-design.md` | skill command 設計メモとして archive |
-| `archive/2026/03/slash-command-integration.md` | slash command 統合検討メモとして archive |
-| `archive/2026/03/provider-sdk-pending-items.md` | SDK pending items の review note として archive |
-| `archive/2026/03/session-persistence.md` | SQLite / Memory current 実装は `electron-session-store.md` と `database-schema.md` に吸収済みのため archive |
-
-## Next Review Order
-
-docs 精査は次の順で進める。
-
-1. `desktop-ui.md` と UI 系文書の統合方針を決める
-2. `window-architecture.md` / `electron-window-runtime.md` / `session-run-lifecycle.md` / `electron-session-store.md` の境界を見直す
-3. archive した調査メモから、current 正本へ戻すべき論点が出た時だけ follow-up を切る
-4. current docs に新しい historical / review 文書を増やさない運用を維持する
-
-## Notes
-
-- この文書自体は `docs/design/` の案内板として扱う
-- 実際に統合や archive を行う時は、個別 task と plan を切って進める
+| [ADR](../adr/) | 設計判断の背景、代替案、採否、結果、置換関係。各ADRの適用状態を確認し、判断の採用と実装済みの状態を区別する |
+| [Release Notes](../releases/README.md) | versionごとの変更内容、互換性、当時の検証結果と未確認事項を恒久保存する |

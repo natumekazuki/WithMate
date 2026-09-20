@@ -1,6 +1,6 @@
 # Feature Guides
 
-WithMateの利用者向け機能ガイドです。リリースごとの変更一覧は[Release Notes](../releases/README.md)、実装上の責務や不変条件は`docs/design/`と`docs/adr/`を参照してください。
+WithMateの利用者向け機能ガイドです。現在の設計・実装上の責務は[Documentation Map](../design/documentation-map.md)、設計判断の履歴と適用状態は[ADR](../adr/)、恒久保存するリリースごとの変更一覧は[Release Notes](../releases/README.md)を参照してください。一般文書・ADR・リリースノートの保存区分は[Documentation Policy](../../AGENTS.md#documentation-policy)に従います。
 
 ## Sessionと画面操作
 
