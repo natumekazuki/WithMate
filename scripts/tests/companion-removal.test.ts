@@ -342,3 +342,170 @@ test("cleans an actual V3 schema but refuses a worktree shared with a live works
   assert.ok(query(legacyPath, "SELECT name FROM sqlite_schema WHERE name='sessions'"));
   assert.equal(query<{ setting_value: string }>(legacyPath, "SELECT setting_value FROM app_settings WHERE setting_key='ordinary-setting'").setting_value, "legacy-value");
 });
+
+// @test-value v2
+// kind = "invariant"
+// claim = "ref削除で中断した更新を再開しても、削除済みworktreeとbranchの同名replacementを変更しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+// fault = "base refの残件を再試行するとき完了済みのpathやbranchまで再削除する"
+// observable = "中断後に作ったdirectory本文とbranch OIDの保持、base ref撤去、pending消去"
+// observation_boundary = "public-boundary"
+// scope = "bootstrap Git removal replay"
+// lifecycle = "permanent"
+// impact = "中断後に利用者が置いた無関係データの不可逆な誤削除を防ぐ"
+// distinction = "実Git lockで部分完了を作り次のbootstrap呼出しへ引き継ぐため、型検査や単回削除testでは代替できない"
+// risk_tags = ["irreversible-data-loss"]
+// @end-test-value
+test("keeps recreated worktree paths and branches when resuming a base ref failure", async (t) => {
+  const f = await fixture(t);
+  const mainOid = await git(f.repo, "rev-parse", "main");
+  const baseLock = path.join(f.repo, ".git", `${f.ref}.lock`);
+  await writeFile(baseLock, "fixture lock");
+  await assert.rejects(removeCompanionData(f.userData), /incomplete/);
+  assert.equal(existsSync(f.worktree), false);
+  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", `refs/heads/${f.branch}`), "");
+
+  await mkdir(f.worktree);
+  await writeFile(path.join(f.worktree, "keep.txt"), "new unrelated work");
+  const replacementOid = await git(f.repo, "commit-tree", `${mainOid}^{tree}`, "-m", "new unrelated branch");
+  await git(f.repo, "update-ref", `refs/heads/${f.branch}`, replacementOid);
+  await rm(baseLock);
+  await removeCompanionData(f.userData);
+
+  assert.equal(await readFile(path.join(f.worktree, "keep.txt"), "utf8"), "new unrelated work");
+  assert.equal(await git(f.repo, "rev-parse", `refs/heads/${f.branch}`), replacementOid);
+  assert.equal(await git(f.repo, "rev-parse", "main"), mainOid);
+  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", f.ref), "");
+  assert.equal(query(f.dbPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"), undefined);
+  assert.equal(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "削除計画後に置換された未処理worktreeは元のdirectoryと区別して削除を拒否する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+// fault = "保存した専用pathに新しく置かれたdirectoryを元のworktreeとして削除する"
+// observable = "replacement拒否、置換directoryと退避した元worktreeの本文保持、pending保持"
+// observation_boundary = "public-boundary"
+// scope = "bootstrap worktree identity"
+// lifecycle = "permanent"
+// impact = "未処理worktreeを再開するときの無関係ファイル損失を防ぐ"
+// distinction = "Git登録のpathを残したまま実directoryを置換し、SessionFolderのidentity testとは別のGit経路を検証する"
+// risk_tags = ["irreversible-data-loss"]
+// @end-test-value
+test("refuses a worktree replaced after the removal plan was saved", async (t) => {
+  const f = await fixture(t);
+  await assert.rejects(removeCompanionData(f.userData, (phase) => {
+    if (phase === "git") throw new Error("interrupt before Git");
+  }), /interrupt before Git/);
+  const original = path.join(f.root, "retained-worktree");
+  await rename(f.worktree, original);
+  await mkdir(f.worktree);
+  await writeFile(path.join(f.worktree, "keep.txt"), "replacement directory");
+
+  await assert.rejects(removeCompanionData(f.userData), /replaced/);
+  assert.equal(await readFile(path.join(f.worktree, "keep.txt"), "utf8"), "replacement directory");
+  assert.equal(await readFile(path.join(original, "uncommitted.txt"), "utf8"), "owned unmerged work");
+  assert.ok(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"));
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "未処理refの現在OIDを削除計画時点と照合し、置換されたbranchまたはbase refを削除しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+// fault = "古いpendingから同名の新しいrefを削除する、または拒否前にworktreeを消す"
+// observable = "branch/base refの各置換での拒否とOID・worktree本文保持、元対象復帰後の撤去完了"
+// observation_boundary = "public-boundary"
+// scope = "bootstrap Git ref replacement"
+// lifecycle = "permanent"
+// impact = "中断中に作り直したrefと未コミット作業の消失を防ぐ"
+// distinction = "過去DBのbase commitではなく今回の削除計画からの置換を実Gitと永続pendingで検証する"
+// risk_tags = ["irreversible-data-loss"]
+// @end-test-value
+test("refuses replaced branch and base refs before continuing pending deletion", async (t) => {
+  const f = await fixture(t);
+  const originalOid = await git(f.repo, "rev-parse", "main");
+  await assert.rejects(removeCompanionData(f.userData, (phase) => {
+    if (phase === "git") throw new Error("interrupt before Git");
+  }), /interrupt before Git/);
+  const replacementOid = await git(f.repo, "commit-tree", `${originalOid}^{tree}`, "-m", "replacement ref");
+  for (const ref of [`refs/heads/${f.branch}`, f.ref]) {
+    await git(f.repo, "update-ref", ref, replacementOid);
+    await assert.rejects(removeCompanionData(f.userData), /ref was replaced/);
+    assert.equal(await git(f.repo, "rev-parse", ref), replacementOid);
+    assert.equal(await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"), "owned unmerged work");
+    assert.ok(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"));
+    await git(f.repo, "update-ref", ref, originalOid);
+  }
+  await removeCompanionData(f.userData);
+  assert.equal(existsSync(f.worktree), false);
+  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", `refs/heads/${f.branch}`, f.ref), "");
+  assert.equal(await git(f.repo, "rev-parse", "main"), originalOid);
+  assert.equal(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "管理DBに物理削除対象がない場合は通常Sessionの不正な参照JSONを変更せずDB起動を継続する"
+// oracle = { type = "contract", ref = "src-electron/session-storage-v6.ts#parseJsonArray" }
+// fault = "撤去対象と無関係な追加directoryやAuxiliary payloadのJSONで起動が失敗する"
+// observable = "bootstrapが返すDB path、保存された不正JSON・通常Sessionの保持、pendingの不在"
+// observation_boundary = "public-boundary"
+// scope = "bootstrap without physical removal targets"
+// lifecycle = "permanent"
+// impact = "旧データの任意参照列だけで正常な会話すべてを起動不能にしない"
+// distinction = "collector単体だけでなく実V6 DBの初回bootstrapから再起動までを小規模fixtureで検証する"
+// @end-test-value
+test("boots without parsing live reference JSON when there are no removal targets", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-removal-empty-"));
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 3 }));
+  const dbPath = path.join(root, "withmate-v6.db");
+  const db = new DatabaseSync(dbPath);
+  try {
+    ensureV6Schema(db);
+    db.exec(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id, approval_mode, created_at, updated_at, last_active_at, allowed_additional_directories_json)
+      VALUES ('normal', 'Normal task', 'active', 'codex', 1, 'fixture', 'never', 'now', 'now', 'now', 'invalid-json');
+      INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at, payload_json)
+      VALUES ('normal-aux', 'normal', 'active', 'now', 'now', 'invalid-payload');`);
+  } finally { db.close(); }
+
+  assert.equal(await resolveOrMigrateAppDatabasePath(root), dbPath);
+  assert.equal(query<{ allowed_additional_directories_json: string }>(dbPath, "SELECT allowed_additional_directories_json FROM sessions_v6 WHERE id='normal'").allowed_additional_directories_json, "invalid-json");
+  assert.equal(query<{ payload_json: string }>(dbPath, "SELECT payload_json FROM auxiliary_sessions WHERE id='normal-aux'").payload_json, "invalid-payload");
+  assert.equal(query(dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
+  assert.equal(await resolveOrMigrateAppDatabasePath(root), dbPath);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "別の管理DBに削除候補がある場合は通常会話の共有参照確認を省略せず、解決不能または共有worktreeを削除しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+// fault = "専用tableがないDBの参照を省き他DBが所有する共有ファイルを消す"
+// observable = "不正JSONと共有参照それぞれでの拒否、worktree・SessionFolderの本文保持、pending未作成"
+// observation_boundary = "public-boundary"
+// scope = "cross-database shared reference safety"
+// lifecycle = "permanent"
+// impact = "起動継続の修正が共有ファイル保護を迂回して通常データを失うことを防ぐ"
+// distinction = "所有DBと共有参照DBを分離した実SQLite fixtureは単一DBのcollector testでは代替できない"
+// risk_tags = ["irreversible-data-loss"]
+// @end-test-value
+test("checks live references across databases before deleting any owned files", async (t) => {
+  const f = await fixture(t);
+  const backup = path.join(f.userData, "withmate-v6.db.migration-backup-321-654");
+  const db = new DatabaseSync(backup);
+  try {
+    ensureV6Schema(db);
+    db.exec(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id, approval_mode, created_at, updated_at, last_active_at, allowed_additional_directories_json)
+      VALUES ('shared-owner', 'Shared owner', 'active', 'codex', 1, 'fixture', 'never', 'now', 'now', 'now', 'invalid-json')`);
+  } finally { db.close(); }
+  await assert.rejects(removeCompanionData(f.userData), /incomplete.*JSON/);
+  assert.equal(await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"), "owned unmerged work");
+  assert.equal(await readFile(path.join(f.userData, "session-files", sessionId, "file.txt"), "utf8"), sessionId);
+  assert.equal(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
+
+  const repaired = new DatabaseSync(backup);
+  try { repaired.prepare("UPDATE sessions_v6 SET allowed_additional_directories_json = ?").run(JSON.stringify([f.worktree])); }
+  finally { repaired.close(); }
+  await assert.rejects(removeCompanionData(f.userData), /live owner references/);
+  assert.equal(await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"), "owned unmerged work");
+});

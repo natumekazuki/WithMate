@@ -12,7 +12,7 @@ import {
   collectCompanionRemovalFileReferences,
   type CompanionRemovalDatabaseTarget,
 } from "./companion-removal-database.js";
-import { removeCompanionGitAssets } from "./companion-removal-git.js";
+import { captureCompanionGitRemovalProgress, removeCompanionGitAssets, type CompanionRemovalGitProgress } from "./companion-removal-git.js";
 
 const COMPLETED_KEY = "companion_removal_completed_at";
 const PENDING_KEY = "companion_removal_pending";
@@ -22,7 +22,12 @@ const BLOB_ROOT_NAME = /^v3(?:\.migration-backup-\d+-\d+)?$/;
 type FileIdentity = { device: number; inode: number; born: number };
 type FileTarget = { path: string; identity: FileIdentity; done: boolean };
 type DatabaseTarget = FileTarget & { data: CompanionRemovalDatabaseTarget };
-type GitTarget = { session: CompanionRemovalDatabaseTarget["sessions"][number]; done: boolean };
+type GitTarget = {
+  session: CompanionRemovalDatabaseTarget["sessions"][number];
+  worktree: FileTarget | null;
+  progress: CompanionRemovalGitProgress;
+  done: boolean;
+};
 type RemovalPlan = { userDataPath: string; databasePaths: string[]; databases: DatabaseTarget[]; files: FileTarget[]; git: GitTarget[] };
 export type CompanionRemovalPhase = "prepare" | "files" | "git" | "database";
 
@@ -278,7 +283,7 @@ function parsePlan(value: string, root: string, paths: string[]): RemovalPlan {
     || plan.databases.some((database) => !paths.includes(database.path))) {
     throw new Error("Managed databases changed while Companion removal was pending.");
   }
-  for (const target of [...plan.databases, ...plan.files]) {
+  for (const target of [...plan.databases, ...plan.files, ...plan.git.flatMap((target) => target.worktree ? [target.worktree] : [])]) {
     if (typeof target.path !== "string" || !isWithin(root, target.path) || typeof target.done !== "boolean"
       || !target.identity || ![target.identity.device, target.identity.inode, target.identity.born].every(Number.isFinite)) {
       throw new Error("Companion removal target metadata is invalid.");
@@ -333,7 +338,14 @@ export async function removeCompanionData(
       onProgress?.("prepare");
       // Include completed databases in reference checks: their live owners may
       // still share files/blobs with a newly discovered migration backup.
-      const inventories = databasePaths.map((databasePath) => withDatabase(databasePath, collectCompanionRemovalDatabaseTarget));
+      let inventories = databasePaths.map((databasePath) => withDatabase(databasePath,
+        (db) => collectCompanionRemovalDatabaseTarget(db, { includeFileReferences: false })));
+      // Shared paths matter only when any managed database has physical removal
+      // candidates. Include all databases then, not just the one owning them.
+      if (inventories.some((data) => data.sessions.length || data.auxiliarySessionIds.length
+        || data.ownedBlobIds.length || data.ownedProtectedObjectIds.length)) {
+        inventories = databasePaths.map((databasePath) => withDatabase(databasePath, collectCompanionRemovalDatabaseTarget));
+      }
       const databases: DatabaseTarget[] = [];
       for (const databasePath of unfinished) {
         const file = await captureFile(root, databasePath);
@@ -348,7 +360,12 @@ export async function removeCompanionData(
           && samePath(item.session.worktreePath, session.worktreePath)
           && item.session.companionBranch === session.companionBranch
           && item.session.baseSnapshotRef === session.baseSnapshotRef);
-        if (!duplicate) git.push({ session, done: false });
+        if (!duplicate) git.push({
+          session,
+          worktree: await statIfPresent(session.worktreePath) ? await captureFile(root, session.worktreePath) : null,
+          progress: await captureCompanionGitRemovalProgress({ ...session, sessionId: session.id, userDataPath: root }),
+          done: false,
+        });
       }
       anchor = databases[0].path;
       plan = { userDataPath: root, databasePaths, databases, files: await collectFileTargets(root, inventories), git };
@@ -366,11 +383,18 @@ export async function removeCompanionData(
     for (const target of plan.git) {
       if (target.done) continue;
       onProgress?.("git");
-      await removeCompanionGitAssets({ ...target.session, sessionId: target.session.id, userDataPath: root });
+      if (!target.progress.worktreeDone) {
+        if (target.worktree) await assertSameFile(root, target.worktree, true);
+        else if (await statIfPresent(target.session.worktreePath)) {
+          throw new Error("A Companion removal worktree appeared after preparation; it will not be deleted.");
+        }
+      }
+      await removeCompanionGitAssets({ ...target.session, sessionId: target.session.id, userDataPath: root }, target.progress, save);
       target.done = true;
       save();
     }
-    const survivingBlobs = new Set(databasePaths.flatMap((databasePath) => withDatabase(databasePath, collectCompanionRemovalDatabaseTarget).survivingBlobIds));
+    const survivingBlobs = new Set(databasePaths.flatMap((databasePath) => withDatabase(databasePath,
+      (db) => collectCompanionRemovalDatabaseTarget(db, { includeFileReferences: false })).survivingBlobIds));
     for (const database of plan.databases) {
       if (database.done) continue;
       onProgress?.("database");

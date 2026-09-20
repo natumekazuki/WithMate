@@ -24,6 +24,11 @@ export type CompanionRemovalGitResult = {
   stashesRemoved: number;
 };
 
+export type CompanionRemovalGitProgress = {
+  worktreeDone: boolean;
+  refs: Array<{ name: string; oid: string; symbolicTarget: string; done: boolean }>;
+};
+
 type GitResult = { stdout: string; stderr: string };
 
 async function runGit(cwd: string, args: string[]): Promise<GitResult> {
@@ -135,24 +140,79 @@ async function inspectRepo(input: CompanionRemovalGitInput, branchRef: string) {
   return { repoRoot, registered };
 }
 
-export async function removeCompanionGitAssets(input: CompanionRemovalGitInput): Promise<CompanionRemovalGitResult> {
+async function readRef(repoRoot: string, name: string) {
+  const output = (await runGit(repoRoot, ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)", name])).stdout;
+  const row = output.split("\n").map((line) => line.split("\0")).find((fields) => fields[0] === name);
+  return row ? { name, oid: row[1], symbolicTarget: row[2] ?? "" } : null;
+}
+
+/** Capture current removal targets, not the retired session's historical commit. */
+export async function captureCompanionGitRemovalProgress(input: CompanionRemovalGitInput): Promise<CompanionRemovalGitProgress> {
+  const { branchRef, baseRef, worktree } = await expectedPaths(input);
+  await assertExistingWorktreeBoundary(input, worktree);
+  const repo = await inspectRepo(input, branchRef);
+  const refs: CompanionRemovalGitProgress["refs"] = [];
+  if (repo) {
+    for (const name of [branchRef, baseRef]) {
+      const ref = await readRef(repo.repoRoot, name);
+      if (ref) refs.push({ ...ref, done: false });
+    }
+  }
+  return { worktreeDone: false, refs };
+}
+
+export async function removeCompanionGitAssets(
+  input: CompanionRemovalGitInput,
+  progress?: CompanionRemovalGitProgress,
+  saveProgress: () => void = () => undefined,
+): Promise<CompanionRemovalGitResult> {
+  const state = progress ?? await captureCompanionGitRemovalProgress(input);
   const { branchRef, baseRef, worktree: expectedWorktree } = await expectedPaths(input);
-  const worktreeExists = await assertExistingWorktreeBoundary(input, expectedWorktree);
+  if (typeof state.worktreeDone !== "boolean" || !Array.isArray(state.refs)
+    || state.refs.some((ref) => ![branchRef, baseRef].includes(ref.name) || !/^[a-f0-9]{40,64}$/.test(ref.oid)
+      || typeof ref.symbolicTarget !== "string" || typeof ref.done !== "boolean")) {
+    throw new Error("Companion Git removal progress is invalid.");
+  }
+  const worktreeExists = !state.worktreeDone && await assertExistingWorktreeBoundary(input, expectedWorktree);
   const repo = await inspectRepo(input, branchRef);
   if (!repo) {
     if (worktreeExists) await rm(input.worktreePath, { recursive: true, force: true });
+    state.worktreeDone = true;
+    saveProgress();
     return { worktreeRemoved: worktreeExists, branchRemoved: false, baseSnapshotRefRemoved: false, stashesRemoved: 0 };
   }
   const { repoRoot, registered } = repo;
-  let worktreeRemoved = registered.length > 0;
-  if (registered.length > 0) await runGit(repoRoot, ["worktree", "remove", "--force", input.worktreePath]);
-  else if (worktreeExists) {
-    await rm(input.worktreePath, { recursive: true, force: true });
-    worktreeRemoved = true;
+  const assertRefUnchanged = async (ref: CompanionRemovalGitProgress["refs"][number]) => {
+    const current = await readRef(repoRoot, ref.name);
+    if (current && (current.oid !== ref.oid || current.symbolicTarget !== ref.symbolicTarget)) {
+      throw new Error("A Companion removal ref was replaced; the replacement will not be deleted.");
+    }
+    return current;
+  };
+  for (const ref of state.refs) if (!ref.done) await assertRefUnchanged(ref);
+  let worktreeRemoved = false;
+  if (!state.worktreeDone) {
+    if (registered.length > 0) {
+      await runGit(repoRoot, ["worktree", "remove", "--force", input.worktreePath]);
+      worktreeRemoved = true;
+    } else if (worktreeExists) {
+      await rm(input.worktreePath, { recursive: true, force: true });
+      worktreeRemoved = true;
+    }
+    state.worktreeDone = true;
+    saveProgress();
   }
-  const branchExists = (await runGit(repoRoot, ["for-each-ref", "--format=%(refname)", branchRef])).stdout === branchRef;
-  const baseExists = (await runGit(repoRoot, ["for-each-ref", "--format=%(refname)", baseRef])).stdout === baseRef;
-  if (branchExists) await runGit(repoRoot, ["update-ref", "--no-deref", "-d", branchRef]);
-  if (baseExists) await runGit(repoRoot, ["update-ref", "--no-deref", "-d", baseRef]);
-  return { worktreeRemoved, branchRemoved: branchExists, baseSnapshotRefRemoved: baseExists, stashesRemoved: 0 };
+  let branchRemoved = false;
+  let baseSnapshotRefRemoved = false;
+  for (const ref of state.refs) {
+    if (ref.done) continue;
+    if (await assertRefUnchanged(ref)) {
+      await runGit(repoRoot, ["update-ref", "--no-deref", "-d", ref.name, ref.oid]);
+      if (ref.name === branchRef) branchRemoved = true;
+      else baseSnapshotRefRemoved = true;
+    }
+    ref.done = true;
+    saveProgress();
+  }
+  return { worktreeRemoved, branchRemoved, baseSnapshotRefRemoved, stashesRemoved: 0 };
 }

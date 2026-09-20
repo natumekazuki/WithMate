@@ -126,6 +126,36 @@ describe("companion removal database", () => {
 
   // @test-value v2
   // kind = "invariant"
+  // claim = "Companion削除候補の有無を確認する軽量走査は通常SessionのJSON本文を読まず、不正JSONでも削除対象の収集を継続する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // fault = "退役CompanionがないDBの通常Sessionに残った不正な補助JSONで起動を拒否する"
+  // observable = "軽量収集の完了・専有ID集合・survivingFilePathsが空であること"
+  // observation_boundary = "public-boundary"
+  // scope = "companion-removal-database lightweight collection"
+  // lifecycle = "permanent"
+  // impact = "全DBの事前棚卸しで、削除候補がないDBの本文・draft解析を避けて起動を継続する"
+  // distinction = "通常Sessionの不正JSONを含む最小SQLiteで軽量経路と従来の参照収集経路を分離して確認する"
+  // @end-test-value
+  it("skips normal-session JSON and file references in lightweight collection", () => {
+    const db = database();
+    try {
+      db.exec("ALTER TABLE sessions_v6 ADD COLUMN payload_json TEXT; ALTER TABLE sessions_v6 ADD COLUMN messages_json TEXT;");
+      db.exec(`
+        INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id, approval_mode,
+          allowed_additional_directories_json, payload_json, messages_json, created_at, updated_at, last_active_at)
+          VALUES ('normal', 'Normal', 'active', 'test', 1, 'model', 'never',
+            '{not-json', '{also-not-json', '{still-not-json', 'now', 'now', 'now');
+      `);
+      const target = collectCompanionRemovalDatabaseTarget(db, { includeFileReferences: false });
+      assert.deepEqual(target.sessions, []);
+      assert.deepEqual(target.preservedSessionIds, ["normal"]);
+      assert.deepEqual(target.survivingFilePaths, []);
+      assert.throws(() => collectCompanionRemovalDatabaseTarget(db), /JSON|Unexpected token/);
+    } finally { db.close(); }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "FS処理後のDB transactionで専用schemaだけを除去し本文を保持する"
   // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
   // fault = "専用schema削除時に共有Memory本文を消去する"

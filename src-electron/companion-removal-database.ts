@@ -140,7 +140,15 @@ function collectBlobReferences(db: DatabaseSync, names: Set<string>, deletedSess
 }
 
 /** Read removal metadata while the existing storage owner still has the database open. */
-export function collectCompanionRemovalDatabaseTarget(db: DatabaseSync): CompanionRemovalDatabaseTarget {
+export interface CollectCompanionRemovalDatabaseTargetOptions {
+  includeFileReferences?: boolean;
+}
+
+export function collectCompanionRemovalDatabaseTarget(
+  db: DatabaseSync,
+  options: CollectCompanionRemovalDatabaseTargetOptions = {},
+): CompanionRemovalDatabaseTarget {
+  const includeFileReferences = options.includeFileReferences ?? true;
   const names = tableNames(db);
   const sessions: CompanionRemovalSessionTarget[] = [];
   const companionSessionIds = new Set<string>();
@@ -204,13 +212,16 @@ export function collectCompanionRemovalDatabaseTarget(db: DatabaseSync): Compani
   }
   for (const table of ["sessions", "sessions_v6", "auxiliary_sessions"]) {
     if (!names.has(table)) continue;
-    for (const row of rows(db, table, [
-      "id", "workspace_path", "session_folder_path", "folder_path",
-      "allowed_additional_directories_json", "payload_json", "messages_json",
-    ])) {
+    const requestedColumns = includeFileReferences
+      ? [
+        "id", "workspace_path", "session_folder_path", "folder_path",
+        "allowed_additional_directories_json", "payload_json", "messages_json",
+      ]
+      : ["id"];
+    for (const row of rows(db, table, requestedColumns)) {
       const id = text(row, "id");
       if (id && !deletedSessionIds.has(id)) preservedSessionIds.add(id);
-      if (deletedSessionIds.has(id)) continue;
+      if (!includeFileReferences || deletedSessionIds.has(id)) continue;
       for (const column of ["workspace_path", "session_folder_path", "folder_path"]) {
         const filePath = text(row, column);
         if (filePath && !deletedSessionIds.has(id)) survivingFilePaths.add(filePath);
@@ -222,7 +233,7 @@ export function collectCompanionRemovalDatabaseTarget(db: DatabaseSync): Compani
       if (text(row, "messages_json")) preservePaths({ messages: JSON.parse(text(row, "messages_json")) });
     }
   }
-  for (const table of ["session_messages", "session_messages_v6", "auxiliary_session_drafts"]) {
+  for (const table of includeFileReferences ? ["session_messages", "session_messages_v6", "auxiliary_session_drafts"] : []) {
     if (!names.has(table)) continue;
     for (const row of rows(db, table, [...CONVERSATION_OWNER_COLUMNS, "text", "body", "text_preview", "draft_text"])) {
       if (deletedConversationRow(row, deletedSessionIds)) continue;
