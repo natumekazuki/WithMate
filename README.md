@@ -183,14 +183,19 @@ WithMateのソースコードは[ISC License](LICENSE)で提供します。
 - `scripts/tests/`: Node test runner用test
 - `docs/design/`: 現行設計の正本とdomain detail
 - `docs/features/`: 利用者向けの機能別ガイド
-- `docs/releases/`: versionごとのrepository内リリースノート
-- `docs/adr/`: 長期的な設計判断
-- `docs/plans/`: 複数sessionまたは高リスク作業のplan
+- `docs/runbooks/`: 現在の運用・診断・復旧手順
+- `docs/adr/`: 過去の判断や置換関係を含む設計判断の履歴
+- `docs/releases/`: ADRとは別枠で恒久保存するリリースノートと索引
 - `build/`: icon、installer、CLIなどのpackaging入力
+
+一般文書には、現行実装について正しく、現在の利用・開発・保守に必要な情報だけを残します。設計判断の履歴はADR、リリースの履歴はリリースノートと索引に分け、古い判断や当時のリリース内容を現在の仕様で上書きしません。それ以外の過去情報はGit履歴、課題・作業計画はGitHub Issue／PR、一時的な棚卸しや検証記録はSessionFolder等のrepository外で扱います。
+
+一般の作業文書や未実装の構想は、進行中・採用済みであっても保存対象にしません。Archiveや移転案内として残したり、ADR・リリースノートへ改名して温存したりしません。保存・更新規則の詳細は[Documentation Policy](AGENTS.md#documentation-policy)を参照してください。
 
 ## 関連ドキュメント
 
-- [Release Notes](docs/releases/README.md): versionごとの追加機能、変更、互換性、検証結果
+### 現在の利用・開発・保守
+
 - [Feature Guides](docs/features/README.md): 利用者向けの機能別ガイド
 - [Product Direction](docs/design/product-direction.md): プロダクトの優先順位と判断基準
 - [Documentation Map](docs/design/documentation-map.md): 現行設計文書の分類と入口
@@ -202,3 +207,8 @@ WithMateのソースコードは[ISC License](LICENSE)で提供します。
 - [Database Schema](docs/design/database-schema.md): SQLiteとfile storageの保存構造
 - [Session Local Files](docs/design/session-local-files.md): Session Folderと添付ファイル
 - [Manual Test Checklist](docs/manual-test-checklist.md): 実機確認項目
+
+### 設計判断とリリースの履歴
+
+- [ADR](docs/adr/): 設計判断の背景、代替案、採否、結果、置換関係。現在の適用状態は各ADRで区別
+- [Release Notes](docs/releases/README.md): versionごとの追加機能、変更、互換性、当時の検証結果を恒久保存
