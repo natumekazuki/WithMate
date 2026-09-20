@@ -236,16 +236,16 @@ test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff 
   assert.equal(projection.model, auxiliary.model);
   assert.equal(projection.threadId, auxiliary.threadId);
   assert.deepEqual(projection.messages, auxiliary.messages);
-  assert.equal(projection.allowedAdditionalDirectories, auxiliary.allowedAdditionalDirectories);
+  assert.deepEqual(projection.allowedAdditionalDirectories, auxiliary.allowedAdditionalDirectories);
   assert.equal(projection.status, "running");
   assert.equal(projection.taskTitle, parent.taskTitle);
-  assert.equal(projection.characterRuntimeSnapshot, parent.characterRuntimeSnapshot);
+  assert.deepEqual(projection.characterRuntimeSnapshot, parent.characterRuntimeSnapshot);
   assert.deepEqual(projection.stream, []);
 });
 
 // @test-value v2
 // kind = "invariant"
-// claim = "error状態のAuxiliaryはrunStateを維持しSession statusをidleへ投影する"
+// claim = "non-running状態のAuxiliaryはrunStateを維持しSession statusをidleへ投影する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md" }
 // fault = "終了または失敗したAuxiliaryを実行中として表示する"
 // observable = "投影SessionのrunStateとstatus"
@@ -254,14 +254,16 @@ test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff 
 // lifecycle = "permanent"
 // @end-test-value
 test("buildAuxiliaryRuntimeSessionProjection main maps non-running auxiliary to idle status", () => {
-  const parent = createSession();
-  const auxiliary = createAuxiliarySession();
+  for (const runState of ["idle", "error"] as const) {
+    const parent = createSession();
+    const auxiliary = createAuxiliarySession();
 
-  const projection = buildMainAuxiliaryRuntimeSession(parent, {
-    ...auxiliary,
-    runState: "error",
-  });
+    const projection = buildMainAuxiliaryRuntimeSession(parent, {
+      ...auxiliary,
+      runState,
+    });
 
-  assert.equal(projection.runState, "error");
-  assert.equal(projection.status, "idle");
+    assert.equal(projection.runState, runState);
+    assert.equal(projection.status, "idle");
+  }
 });
