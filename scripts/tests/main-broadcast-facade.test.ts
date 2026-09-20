@@ -11,7 +11,7 @@ import { MainBroadcastFacade } from "../../src-electron/main-broadcast-facade.js
 // claim = "MainBroadcastFacade は payload を組み立てて WindowBroadcastService へ委譲する"
 // oracle = { type = "contract", ref = "src-electron/main-broadcast-facade.ts" }
 // fault = "現行catalogや設定を取得せず、Session更新やWindow一覧のbroadcastを欠落させる"
-// observable = "broadcast先に渡されたSession ID、catalog revision、設定、template件数、Window件数"
+// observable = "broadcast先に渡されたSession ID、catalog全体、設定全体、template配列、Window ID配列"
 // observation_boundary = "public-boundary"
 // scope = "scripts/tests/main-broadcast-facade.test.ts"
 // lifecycle = "permanent"
@@ -19,6 +19,12 @@ import { MainBroadcastFacade } from "../../src-electron/main-broadcast-facade.js
 test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService へ委譲する", () => {
   return (async () => {
     const calls: string[] = [];
+    const payloads: {
+      catalog?: ModelCatalogSnapshot;
+      settings?: AppSettings;
+      templates?: unknown[];
+      windows?: string[];
+    } = {};
     const facade = new MainBroadcastFacade({
     getWindowBroadcastService: () =>
       ({
@@ -26,15 +32,19 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
           calls.push(`invalidated:${payload.scope}:${payload.scope === "ids" ? payload.sessionIds.join(",") : "all"}`);
         },
         broadcastModelCatalog(payload: ModelCatalogSnapshot) {
+          payloads.catalog = payload;
           calls.push(`catalog:${payload.revision}`);
         },
-        broadcastAppSettings(_payload: AppSettings) {
+        broadcastAppSettings(payload: AppSettings) {
+          payloads.settings = payload;
           calls.push("settings");
         },
         broadcastPromptTemplates(payload: unknown[]) {
+          payloads.templates = payload;
           calls.push(`templates:${payload.length}`);
         },
         broadcastOpenSessionWindowIds(payload: string[]) {
+          payloads.windows = payload;
           calls.push(`windows:${payload.length}`);
         },
       }) as never,
@@ -57,6 +67,15 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
     facade.broadcastOpenSessionWindowIds();
 
     assert.deepEqual(calls, ["invalidated:ids:s-1", "catalog:3", "settings", "templates:1", "windows:2"]);
+    assert.deepEqual(payloads.catalog, { revision: 3, providers: [] });
+    assert.deepEqual(payloads.settings, {
+      providers: {},
+      codingProviderSettings: {},
+      memoryExtractionProviderSettings: {},
+      characterReflectionProviderSettings: {},
+    });
+    assert.deepEqual(payloads.templates, [{ id: "template-1" }]);
+    assert.deepEqual(payloads.windows, ["s-1", "s-2"]);
   })();
 });
 

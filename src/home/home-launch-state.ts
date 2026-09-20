@@ -32,7 +32,6 @@ export type HomeLaunchWorkspaceValidationState = "idle" | "debouncing" | "pendin
 
 export type HomeLaunchDraft = {
   open: boolean;
-  mode: "session";
   title: string;
   workspacePathInput: string;
   workspaceValidation: HomeLaunchWorkspaceValidationState;
@@ -46,7 +45,6 @@ export type HomeLaunchDraft = {
 export function createClosedLaunchDraft(): HomeLaunchDraft {
   return {
     open: false,
-    mode: "session",
     title: "",
     workspacePathInput: "",
     workspaceValidation: "idle",
@@ -61,12 +59,10 @@ export function createClosedLaunchDraft(): HomeLaunchDraft {
 export function openLaunchDraft(
   draft: HomeLaunchDraft,
   defaultProviderId: string,
-  mode: HomeLaunchDraft["mode"] = "session",
 ): HomeLaunchDraft {
   return {
     ...draft,
     open: true,
-    mode,
     title: "",
     workspacePathInput: "",
     workspaceValidation: "idle",

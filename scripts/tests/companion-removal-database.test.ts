@@ -209,7 +209,7 @@ describe("companion removal database", () => {
       `);
       const target = collectCompanionRemovalDatabaseTarget(db);
       applyCompanionRemovalDatabaseTarget(db, target);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name = 'companion_sessions'").get() as { n: number }).n, 0);
+      assert.deepEqual(db.prepare("SELECT name FROM sqlite_schema WHERE tbl_name LIKE 'companion_%'").all(), []);
       assert.equal((db.prepare("SELECT count(*) AS n FROM auxiliary_sessions").get() as { n: number }).n, 1);
       assert.deepEqual(db.prepare("SELECT id, body, source_session_id FROM memory_entries_v6 ORDER BY id").all().map((row) => ({ ...row })), [
         { id: "shared-memory", body: "shared body", source_session_id: null },
@@ -238,7 +238,7 @@ describe("companion removal database", () => {
   // claim = "途中失敗時に専用schemaと本文をtransaction rollbackする"
   // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
   // fault = "DB削除途中のエラーで専用schemaだけが部分削除される"
-  // observable = "rollback後の専用table行"
+  // observable = "rollback後の専用table行・行本文・参照"
   // observation_boundary = "public-boundary"
   // scope = "companion-removal-database"
   // lifecycle = "permanent"
@@ -248,10 +248,26 @@ describe("companion removal database", () => {
     try {
       db.exec("INSERT INTO companion_sessions VALUES ('c1', 'g1', '/repo', 'main', '', '', 'branch', '/tmp/wt');");
       db.exec("INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at, payload_json) VALUES ('a1', 'c1', 'active', 'now', 'now', '{}');");
-      db.exec("CREATE TRIGGER fail_companion_removal BEFORE DELETE ON auxiliary_sessions BEGIN SELECT RAISE(ABORT, 'forced'); END;");
+      db.exec("INSERT INTO companion_messages (id, session_id, text_blob_id) VALUES (1, 'c1', 'owned');");
+      db.exec("INSERT INTO companion_audit_logs VALUES ('audit-owned', 'c1', 'Preserve this body on rollback');");
+      db.exec("INSERT INTO blob_objects VALUES ('owned');");
+      db.exec("CREATE TRIGGER fail_companion_removal BEFORE DELETE ON blob_objects BEGIN SELECT RAISE(ABORT, 'forced'); END;");
       const target = collectCompanionRemovalDatabaseTarget(db);
       assert.throws(() => applyCompanionRemovalDatabaseTarget(db, target), /forced/);
       assert.equal((db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name = 'companion_sessions'").get() as { n: number }).n, 1);
+      assert.deepEqual(db.prepare("SELECT id, group_id, worktree_path FROM companion_sessions").all().map((row) => ({ ...row })), [
+        { id: "c1", group_id: "g1", worktree_path: "/tmp/wt" },
+      ]);
+      assert.deepEqual(db.prepare("SELECT id, session_id, text_blob_id FROM companion_messages").all().map((row) => ({ ...row })), [
+        { id: 1, session_id: "c1", text_blob_id: "owned" },
+      ]);
+      assert.deepEqual(db.prepare("SELECT id, parent_session_id, payload_json FROM auxiliary_sessions").all().map((row) => ({ ...row })), [
+        { id: "a1", parent_session_id: "c1", payload_json: "{}" },
+      ]);
+      assert.deepEqual(db.prepare("SELECT * FROM companion_audit_logs").all().map((row) => ({ ...row })), [
+        { id: "audit-owned", session_id: "c1", summary: "Preserve this body on rollback" },
+      ]);
+      assert.deepEqual(db.prepare("SELECT * FROM blob_objects").all().map((row) => ({ ...row })), [{ blob_id: "owned" }]);
       db.exec("DROP TRIGGER fail_companion_removal;");
       applyCompanionRemovalDatabaseTarget(db, target);
       assert.equal((db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name = 'companion_sessions'").get() as { n: number }).n, 0);

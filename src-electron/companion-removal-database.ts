@@ -289,7 +289,9 @@ function deleteByIds(db: DatabaseSync, table: string, column: string, ids: Set<s
 /** Apply only after filesystem/Git removal has succeeded. The transaction contains DB work only. */
 export function applyCompanionRemovalDatabaseTarget(
   db: DatabaseSync,
-  target: CompanionRemovalDatabaseTarget,
+  target: Pick<CompanionRemovalDatabaseTarget,
+    "sessions" | "auxiliarySessionIds" | "ownedBlobIds" | "ownedMemoryEntryIds"
+    | "dropTables" | "survivingBlobIds">,
   survivingBlobIds: Iterable<string> = target.survivingBlobIds,
 ): void {
   const names = tableNames(db);

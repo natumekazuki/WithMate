@@ -2451,7 +2451,6 @@ export default function AgentSessionWindowApp() {
 
       const previewRequest = createComposerPreviewRequest({
         api: withmateApi,
-        mode: "session",
         sessionId,
       });
       if (!previewRequest) {

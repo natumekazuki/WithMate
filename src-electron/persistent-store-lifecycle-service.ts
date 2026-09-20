@@ -331,7 +331,7 @@ export class PersistentStoreLifecycleService {
         console.warn("SQLite WAL truncate failed", error);
       }
       await bundle.storageWorker.client.close();
-    } else if (dbPath) {
+    } else if (dbPath && basename(dbPath) !== APP_DATABASE_V6_FILENAME) {
       try {
         this.deps.truncateWal(dbPath);
       } catch (error) {

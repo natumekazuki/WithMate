@@ -114,6 +114,17 @@ function readAllTextValues(db: DatabaseSync): string[] {
   return values;
 }
 
+function readDatabaseSnapshot(db: DatabaseSync): Record<string, Array<Record<string, unknown>>> {
+  const snapshot: Record<string, Array<Record<string, unknown>>> = {};
+  for (const tableName of tableNames(db)) {
+    const columns = (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((row) => row.name);
+    snapshot[tableName] = db.prepare(
+      `SELECT ${columns.join(", ")} FROM ${tableName} ORDER BY rowid`,
+    ).all() as Array<Record<string, unknown>>;
+  }
+  return snapshot;
+}
+
 function insertAppSettingsAndModelCatalog(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -223,10 +234,10 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
 describe("V2 to V3 database migration dry-run", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "V2 migration dry-runはsourceを変更せず通常Session/Audit/blob/settings/catalogの件数とestimateを返す"
+  // claim = "V2 migration dry-runはsourceを変更せず通常データの件数とblob化対象8項目のUTF-8 byte数を返す"
   // oracle = { type = "contract", ref = "scripts/migrate-database-v2-to-v3.ts" }
   // fault = "dry-runがsourceを変更するか、通常データの件数またはblob見積りを誤る"
-  // observable = "dry-run report counts, estimates, and source file state"
+  // observable = "dry-run report counts、全8項目のestimatedSourceBytes、source全tableの内容とfile size"
   // observation_boundary = "public-boundary"
   // scope = "database-v2-to-v3 dry-run"
   // lifecycle = "permanent"
@@ -234,13 +245,16 @@ describe("V2 to V3 database migration dry-run", () => {
   it("V2 source を変更せず件数と estimate bytes を返す", () => {
     const fixture = createV2FixtureDatabase();
     try {
-      seedV2Storage(fixture.dbPath);
+      const sentinel = "見積り🙂";
+      seedV2Storage(fixture.dbPath, sentinel);
       checkpointAndRemoveSqliteSidecars(fixture.dbPath);
       const sourceStatBefore = statSync(fixture.dbPath);
       const sourceDbBefore = new DatabaseSync(fixture.dbPath, { readOnly: true });
       let sessionCountBefore = 0;
+      let sourceSnapshotBefore: Record<string, Array<Record<string, unknown>>> = {};
       try {
         sessionCountBefore = readCount(sourceDbBefore, "sessions");
+        sourceSnapshotBefore = readDatabaseSnapshot(sourceDbBefore);
       } finally {
         sourceDbBefore.close();
       }
@@ -261,13 +275,40 @@ describe("V2 to V3 database migration dry-run", () => {
         modelCatalogModels: 1,
       });
       assert.deepEqual(report.plannedV3Counts, report.v2Counts);
-      assert.equal(report.estimatedSourceBytes.sessionMessageText > 0, true);
-      assert.equal(report.estimatedSourceBytes.auditAssistantText > 0, true);
-      assert.equal(report.estimatedSourceBytes.auditOperationDetails > 0, true);
+      // seedV2Storageへ渡した本文をoracleとし、reportやmigrationの集計helperから期待値を作らない。
+      // 複数messageの合計とmulti-byte文字を含め、正数だけ返す・先頭行だけ数える・文字数を返す誤りを検出する。
+      assert.deepEqual(report.estimatedSourceBytes, {
+        sessionMessageText: Buffer.byteLength(
+          `${"m".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:message-tail`, "utf8",
+        ) + Buffer.byteLength("assistant reply", "utf8"),
+        sessionMessageArtifactsJson: Buffer.byteLength(JSON.stringify(createArtifact(sentinel)), "utf8"),
+        auditLogicalPromptJson: Buffer.byteLength(JSON.stringify({
+          systemText: `${sentinel}:logical-system`,
+          inputText: "input",
+          composedText: `${sentinel}:logical-system\n\ninput`,
+        }), "utf8"),
+        auditTransportPayloadJson: Buffer.byteLength(JSON.stringify({
+          summary: `${sentinel}:transport-summary`,
+          fields: [{ label: "payload", value: `${sentinel}:transport-field` }],
+        }), "utf8"),
+        auditAssistantText: Buffer.byteLength(
+          `${"a".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:assistant-tail`, "utf8",
+        ),
+        auditRawItemsJson: Buffer.byteLength(JSON.stringify([
+          { type: "message", text: `${sentinel}:raw-item-tail` },
+        ]), "utf8"),
+        auditUsageJson: Buffer.byteLength(JSON.stringify({
+          inputTokens: 11, cachedInputTokens: 2, outputTokens: 7,
+        }), "utf8"),
+        auditOperationDetails: Buffer.byteLength(
+          `${"d".repeat(V3_DETAILS_PREVIEW_MAX_LENGTH + 20)}${sentinel}:operation-details-tail`, "utf8",
+        ),
+      });
 
       const sourceDbAfter = new DatabaseSync(fixture.dbPath, { readOnly: true });
       try {
         assert.equal(readCount(sourceDbAfter, "sessions"), sessionCountBefore);
+        assert.deepEqual(readDatabaseSnapshot(sourceDbAfter), sourceSnapshotBefore);
       } finally {
         sourceDbAfter.close();
       }
@@ -523,6 +564,16 @@ describe("V2 to V3 database migration write mode", () => {
         blobRootPath,
       });
 
+      const targetBeforeReject = new DatabaseSync(v3DbPath);
+      try {
+        targetBeforeReject.prepare("UPDATE sessions SET task_title = ? WHERE id = ?").run(
+          "stale target marker",
+          "session-1",
+        );
+      } finally {
+        targetBeforeReject.close();
+      }
+
       await assert.rejects(
         () =>
           createMigrationWriteReport({
@@ -532,6 +583,16 @@ describe("V2 to V3 database migration write mode", () => {
           }),
         /V3 database already exists/,
       );
+
+      const rejectedTarget = new DatabaseSync(v3DbPath, { readOnly: true });
+      try {
+        assert.equal(
+          readRequiredRow<{ task_title: string }>(rejectedTarget, "SELECT task_title FROM sessions WHERE id = ?", "session-1").task_title,
+          "stale target marker",
+        );
+      } finally {
+        rejectedTarget.close();
+      }
 
       const overwriteReport = await createMigrationWriteReport({
         sourceDatabaseFile: fixture.dbPath,
@@ -544,6 +605,15 @@ describe("V2 to V3 database migration write mode", () => {
       assert.equal(overwriteReport.migratedV3Counts.sessions, 1);
       assert.equal(existsSync(v3DbPath), true);
       assert.equal(existsSync(blobRootPath), true);
+      const replacedTarget = new DatabaseSync(v3DbPath, { readOnly: true });
+      try {
+        assert.equal(
+          readRequiredRow<{ task_title: string }>(replacedTarget, "SELECT task_title FROM sessions WHERE id = ?", "session-1").task_title,
+          "V2 migration fixture",
+        );
+      } finally {
+        replacedTarget.close();
+      }
     } finally {
       fixture.cleanup();
     }

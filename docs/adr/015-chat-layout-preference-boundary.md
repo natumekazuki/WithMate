@@ -4,6 +4,10 @@
 - 日付: 2026-08-04
 - Supersedes: `docs/adr/011-session-side-pane-preference-boundary.md`
 
+## 適用状態
+
+共通 chat layout と Agent / 通常 Session の preference 境界は現行のまま適用する。本文中の Companion Window に関する記述は当時の設計判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。Auxiliary Window を含む現行の chat layout 契約を失効させるものではない。
+
 ## Context
 
 共通 chat layout の Header、ActionDock、File Explorer、Context pane を、それぞれ対応する splitter から開閉できるようにする。左右paneは中央の作業領域を確保するため排他的に表示する。上下 dock と左右 pane のどちらを Window 全長へ通すかは、追加の切替ボタンではなく splitter 操作の軸で選べるようにする。

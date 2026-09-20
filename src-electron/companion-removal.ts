@@ -21,14 +21,18 @@ const BLOB_ROOT_NAME = /^v3(?:\.migration-backup-\d+-\d+)?$/;
 
 type FileIdentity = { device: number; inode: number; born: number };
 type FileTarget = { path: string; identity: FileIdentity; done: boolean };
-type DatabaseTarget = FileTarget & { data: CompanionRemovalDatabaseTarget };
+type PersistedDatabaseTarget = FileTarget & {
+  data: Pick<CompanionRemovalDatabaseTarget,
+    "sessions" | "auxiliarySessionIds" | "ownedBlobIds" | "ownedMemoryEntryIds"
+    | "ownedProtectedObjectIds" | "dropTables">
+};
 type GitTarget = {
   session: CompanionRemovalDatabaseTarget["sessions"][number];
   worktree: FileTarget | null;
   progress: CompanionRemovalGitProgress;
   done: boolean;
 };
-type RemovalPlan = { userDataPath: string; databasePaths: string[]; databases: DatabaseTarget[]; files: FileTarget[]; git: GitTarget[] };
+type RemovalPlan = { userDataPath: string; databasePaths: string[]; databases: PersistedDatabaseTarget[]; files: FileTarget[]; git: GitTarget[] };
 export type CompanionRemovalPhase = "prepare" | "files" | "git" | "database";
 
 function hasCode(error: unknown, code: string): boolean {
@@ -346,11 +350,22 @@ export async function removeCompanionData(
         || data.ownedBlobIds.length || data.ownedProtectedObjectIds.length)) {
         inventories = databasePaths.map((databasePath) => withDatabase(databasePath, collectCompanionRemovalDatabaseTarget));
       }
-      const databases: DatabaseTarget[] = [];
+      const databases: PersistedDatabaseTarget[] = [];
       for (const databasePath of unfinished) {
         const file = await captureFile(root, databasePath);
         if (!file) throw new Error("A database disappeared while preparing Companion removal.");
-        databases.push({ ...file, data: inventories[databasePaths.indexOf(databasePath)] });
+        const data = inventories[databasePaths.indexOf(databasePath)];
+        databases.push({
+          ...file,
+          data: {
+            sessions: data.sessions,
+            auxiliarySessionIds: data.auxiliarySessionIds,
+            ownedBlobIds: data.ownedBlobIds,
+            ownedMemoryEntryIds: data.ownedMemoryEntryIds,
+            ownedProtectedObjectIds: data.ownedProtectedObjectIds,
+            dropTables: data.dropTables,
+          },
+        });
       }
       const sessions = databases.flatMap((database) => database.data.sessions);
       const git: GitTarget[] = [];
@@ -400,7 +415,7 @@ export async function removeCompanionData(
       onProgress?.("database");
       await assertSameFile(root, database, false);
       withDatabase(database.path, (db) => {
-        applyCompanionRemovalDatabaseTarget(db, database.data, survivingBlobs);
+        applyCompanionRemovalDatabaseTarget(db, { ...database.data, survivingBlobIds: [...survivingBlobs] });
         writeSetting(db, COMPLETED_KEY, new Date().toISOString());
         const checkpoint = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number };
         if (checkpoint.busy) throw new Error("Companion removal database checkpoint is busy.");
