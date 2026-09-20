@@ -9,15 +9,15 @@ import type { AuxiliaryDraftRecord } from "../../src/auxiliary-draft-contract.js
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Session Windowは入力を局所反映し、owner/送信revisionを保ち、終了flushのACK後も凍結中の失敗送信復元を表示し、保存失敗をrelease後のRetryと再flushで完了し、凍結中の添付操作を止める"
+// claim = "実Session Windowは入力と送信revisionをowner別に保ち、quitでは未確定送信と失敗復元の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは実行完了を待たず、凍結後の送信前保存からのrun開始と添付を止める"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
-// fault = "rootが一覧全件を再計算する、古いowner/revisionを送信する、凍結中の失敗復元を表示しない、復元を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
-// observable = "textarea/feedback/Sendの状態、summary read回数、保存要求・永続draft・送信対象・flush ACK、picker後のコピー回数"
+// fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、凍結中の失敗復元を表示しない、復元を未保存のままflush成功にする、または凍結後にpicker結果からコピーする"
+// observable = "textarea/feedback/Sendの状態、summaryアイコン参照回数、保存要求・永続draft・送信対象・flush ACK、picker後のコピー回数"
 // observation_boundary = "component-behavior"
 // scope = "composer-window-input-wiring"
 // lifecycle = "permanent"
 // impact = "多数会話での入力遅延、切替による下書き消失、古い入力や別会話への誤送信を防ぐ"
-// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証し、送信pending→flush ACK→失敗復元→release(false)→Retry→再flushの順序も確認する。壁時計の性能値をCI合否にしない"
+// distinction = "controller単体や型検査では検出できないApp・ActionDock・workspace・送信adapterの実配線を合成API境界で検証し、送信pending→quit待機→失敗復元保存→ACKの順序、非選択owner、closeとの違いも確認する。壁時計の性能値をCI合否にしない"
 // @end-test-value
 test("Session Windowの入力境界と切替後の最新値送信を実配線で守る", { timeout: 8000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
@@ -239,7 +239,19 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(textarea().value, "", "the captured draft clears when its run starts");
     await target("Main");
     await input("Main while Auxiliary sends");
-    await act(async () => { releaseRun(); });
+    const runningCloseAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
+    await act(async () => {
+      flushRequest?.({ requestId: "running-close", sessionId: "benchmark-main", reason: "close" });
+      await runningCloseAck;
+    });
+    assert.deepEqual(flushAcks, [{ id: "running-close", success: true }], "normal close must allow the run to continue in Main");
+    const runningQuitAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
+    await act(async () => { flushRequest?.({ requestId: "running-quit", sessionId: "benchmark-main", reason: "quit" }); });
+    assert.equal(flushAcks.length, 1, "quit cannot reuse a save-only close ACK while a hidden owner's send is pending");
+    await act(async () => { releaseRun(); await runningQuitAck; });
+    assert.deepEqual(flushAcks.at(-1), { id: "running-quit", success: true });
+    await act(async () => { flushRelease?.({ success: false }); });
+    flushAcks.length = 0;
     assert.equal(textarea().value, "Main while Auxiliary sends", "another owner's completion must preserve Main input");
     await target("Auxiliary");
     assert.equal(textarea().value, "", "a consumed draft must not reappear after switching back");
@@ -257,16 +269,16 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     rejectRun = true;
     const frozenFlushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
     await act(async () => {
-      flushRequest?.({ requestId: "frozen-recovery-close", sessionId: "benchmark-main" });
-      await frozenFlushAck;
+      flushRequest?.({ requestId: "frozen-recovery-quit", sessionId: "benchmark-main", reason: "quit" });
     });
-    assert.deepEqual(flushAcks, [{ id: "frozen-recovery-close", success: true }]);
+    assert.deepEqual(flushAcks, [], "quit must not ACK before the pending send settles");
     assert.equal(textarea().disabled, true, "flush freezes editing while the send is pending");
     assert.equal(textarea().value, "", "the consumed draft stays hidden until send failure");
     failRunRestore = true;
     const frozenRunFailed = new Promise<void>((resolve) => { notifyRunFailed = resolve; });
     const frozenRecoveryWriteFailed = new Promise<void>((resolve) => { notifyDraftSaveFailed = resolve; });
-    await act(async () => { releaseRun(); await frozenRunFailed; await frozenRecoveryWriteFailed; });
+    await act(async () => { releaseRun(); await frozenRunFailed; await frozenRecoveryWriteFailed; await frozenFlushAck; });
+    assert.deepEqual(flushAcks, [{ id: "frozen-recovery-quit", success: false }], "failed restoration must prevent quit");
     notifyDraftSaveFailed = undefined;
     assert.equal(textarea().value, "recover during quit", "failed-send recovery updates the visible draft during freeze");
     assert.equal(textarea().disabled, true, "recovery does not release the shutdown freeze");
@@ -282,7 +294,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     });
     assert.equal(drafts.get(frozenAuxiliaryId)?.text, "recover during quit", "retry must persist the restored draft");
     const frozenRecoveryFlushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
-    await act(async () => { flushRequest?.({ requestId: "frozen-recovery-retry", sessionId: "benchmark-main" }); await frozenRecoveryFlushAck; });
+    await act(async () => { flushRequest?.({ requestId: "frozen-recovery-retry", sessionId: "benchmark-main", reason: "quit" }); await frozenRecoveryFlushAck; });
     assert.deepEqual(flushAcks.at(-1), { id: "frozen-recovery-retry", success: true }, "retry must be persisted before the subsequent close ACK");
     await act(async () => { flushRelease?.({ success: false }); });
     assert.deepEqual(alerts, ["Auxiliary turn failed and draft restore failed."]);
@@ -300,7 +312,14 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     });
     await act(async () => { navigateAuxiliary?.({ parentSessionId: "benchmark-main", auxiliarySessionId: "benchmark-aux-1" }); });
     await input("another Auxiliary draft");
-    await act(async () => { releaseRun(); });
+    const hiddenRecoveryAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
+    await act(async () => { flushRequest?.({ requestId: "hidden-recovery-quit", sessionId: "benchmark-main", reason: "quit" }); });
+    assert.deepEqual(flushAcks, [], "quit must include the non-selected owner's pending send");
+    await act(async () => { releaseRun(); await hiddenRecoveryAck; });
+    assert.deepEqual(flushAcks, [{ id: "hidden-recovery-quit", success: true }]);
+    assert.equal(drafts.get(previousAuxiliaryId)?.text, "restore failed send", "recovery must be durable before quit ACK");
+    await act(async () => { flushRelease?.({ success: false }); });
+    flushAcks.length = 0;
     assert.equal(textarea().value, "another Auxiliary draft", "a failed old send must not restore into the selected owner");
     await act(async () => { navigateAuxiliary?.({ parentSessionId: "benchmark-main", auxiliarySessionId: previousAuxiliaryId }); });
     assert.equal(textarea().value, "restore failed send", "the failed send restores only its captured owner");
@@ -318,7 +337,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(textarea().value, "recover after storage failure");
     assert.equal(drafts.get(previousAuxiliaryId)?.text, "");
     const failedFlushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
-    await act(async () => { flushRequest?.({ requestId: "recovery-close", sessionId: "benchmark-main" }); await failedFlushAck; });
+    await act(async () => { flushRequest?.({ requestId: "recovery-close", sessionId: "benchmark-main", reason: "close" }); await failedFlushAck; });
     assert.deepEqual(flushAcks, [{ id: "recovery-close", success: false }], "restored unsaved input must prevent a successful close ACK");
     await act(async () => { flushRelease?.({ success: false }); });
     assert.equal(textarea().value, "recover after storage failure");
@@ -330,6 +349,24 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.disabled, false);
     assert.deepEqual(alerts, ["Auxiliary turn failed and draft restore failed."]);
     alerts.length = 0;
+    flushAcks.length = 0;
+
+    heldSave = new Promise<void>((resolve) => { releaseSave = resolve; });
+    const preflightSaveStarted = new Promise<void>((resolve) => { notifySaveStarted = resolve; });
+    await input("quit during send preflight");
+    const sentBeforePreflight = sent.length;
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.click();
+      await preflightSaveStarted;
+    });
+    const preflightQuitAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
+    await act(async () => { flushRequest?.({ requestId: "preflight-quit", sessionId: "benchmark-main", reason: "quit" }); });
+    assert.deepEqual(flushAcks, []);
+    await act(async () => { releaseSave(); await preflightQuitAck; });
+    assert.equal(sent.length, sentBeforePreflight, "preflight must not consume a draft after shutdown freezes input");
+    assert.equal(drafts.get(previousAuxiliaryId)?.text, "quit during send preflight");
+    assert.deepEqual(flushAcks, [{ id: "preflight-quit", success: true }]);
+    await act(async () => { flushRelease?.({ success: false }); });
     flushAcks.length = 0;
 
     await input("draft before close");
@@ -344,7 +381,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.ok(copy);
     await act(async () => { copy.click(); });
     const flushAck = new Promise<void>((resolve) => { notifyFlushAck = resolve; });
-    await act(async () => { flushRequest?.({ requestId: "close-1", sessionId: "benchmark-main" }); });
+    await act(async () => { flushRequest?.({ requestId: "close-1", sessionId: "benchmark-main", reason: "close" }); });
     assert.equal(textarea().disabled, true, "close freezes editing before awaiting persistence");
     assert.equal(attach.disabled, true);
     await act(async () => { releasePicker(["/picked.txt"]); });

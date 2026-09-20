@@ -410,6 +410,47 @@ describe("runAuxiliarySessionSendOperation", () => {
     assert.equal(didRun, false);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "保存queue待機中に終了凍結した送信は本文をconsumeせず、凍結解除後の明示送信で同じ本文を送れる"
+  // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+  // fault = "保存queue前だけ送信可否を確認して凍結後にdraftをclear/consumeする"
+  // observable = "凍結時のstale結果と本文保持、解凍後のcompleted結果と送信本文"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-send-queue-freeze"
+  // lifecycle = "permanent"
+  // impact = "終了待ちに後発送信が入り、保存済み下書きがconsumeされるデータ消失を防ぐ"
+  // distinction = "Appのdraft保存前処理より後に待機する会話保存queue境界を検証する。型検査では非同期の凍結順序を保証できない"
+  // @end-test-value
+  it("保存queue待機中の終了凍結は本文を保持し、解凍後に送信できる", async () => {
+    let frozen = false;
+    let draft = "kept draft";
+    const sent: string[] = [];
+    const input = {
+      activeSession: makeAuxiliarySession(), messageText: draft, parentMessageCount: 1, updatedAt: "running",
+      draftSaveQueue: { current: Promise.resolve() },
+      sessionSaveQueue: { current: Promise.resolve().then(() => { frozen = true; }) },
+      mutationRevision: { current: 0 },
+      getCurrentSession: () => makeAuxiliarySession(),
+      canStartRun: () => !frozen,
+      beforeRunningSessionApplied: () => { draft = ""; },
+      applyRunningSession: () => {}, applySavedSession: () => {},
+      restoreSessionAfterError: () => {}, clearPendingLiveRun: () => {},
+      updateAuxiliarySession: async (session: AuxiliarySession) => session,
+      runAuxiliarySessionTurn: async (_id: string, request: { userMessage: string }) => {
+        sent.push(request.userMessage);
+        return makeAuxiliarySession();
+      },
+    };
+    assert.deepEqual(await runAuxiliarySessionSendOperation(input), { status: "stale" });
+    assert.equal(draft, "kept draft");
+    assert.deepEqual(sent, []);
+    frozen = false;
+    assert.equal((await runAuxiliarySessionSendOperation(input)).status, "completed");
+    assert.equal(draft, "");
+    assert.deepEqual(sent, ["kept draft"]);
+  });
+
   it("保存後の current session が running の場合は target-blocked を返す", async () => {
     const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
     const mutationRevision = { current: 0 };

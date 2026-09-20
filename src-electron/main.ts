@@ -1897,7 +1897,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   broadcastSessions([closed.parentSessionId]);
                   return closed;
                 },
-                runAuxiliarySessionTurn: async (auxiliarySessionId, request) => {
+                runAuxiliarySessionTurn: (auxiliarySessionId, request) => requireAuxiliarySessionService().trackPendingDraftSend(async () => {
+                  if (sessionWindowBridge?.isQuitPending()) {
+                    throw new Error("アプリ終了処理中のため送信を開始できません。");
+                  }
                   const initial = await requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
                   if (!initial) {
                     throw new Error("Auxiliary Session が見つからないよ。");
@@ -1930,7 +1933,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   } finally {
                     auxiliaryRunParents.delete(auxiliarySessionId);
                   }
-                },
+                }),
                 cancelAuxiliarySessionRun: (auxiliarySessionId) =>
                   requireAuxiliarySessionRuntimeService().cancelRun(auxiliarySessionId),
               },
@@ -3380,6 +3383,7 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
         window.webContents.send(WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT, payload);
       },
       getWindowSender: (window) => window.webContents,
+      waitForPendingDraftSends: () => auxiliarySessionService?.waitForPendingDraftSends() ?? Promise.resolve(true),
       getSession,
       isRunInFlight: isSessionRunInFlight,
       onSessionWindowClosed: (sessionId) => auxiliarySessionService?.releaseAuxiliaryCreationOwner(sessionId),

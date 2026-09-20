@@ -1,7 +1,12 @@
 import type { Session } from "../src/app-state.js";
 import type { AuxiliarySessionNavigationPayload } from "../src/withmate-window-types.js";
 import type { ChatEntryMode } from "./window-entry-loader.js";
-import { DraftFlushCoordinator, type DraftFlushRequest } from "./draft-flush-coordinator.js";
+import {
+  DEFAULT_DRAFT_FLUSH_TIMEOUT_MS,
+  DraftFlushCoordinator,
+  type DraftFlushReason,
+  type DraftFlushRequest,
+} from "./draft-flush-coordinator.js";
 
 export type SessionWindowCloseEvent = {
   preventDefault(): void;
@@ -37,6 +42,7 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   sendDraftFlushRequest?(window: TWindow, request: DraftFlushRequest): void;
   sendDraftFlushRelease?(window: TWindow, payload: { success: boolean }): void;
   getWindowSender?(window: TWindow): unknown;
+  waitForPendingDraftSends?(): Promise<boolean>;
 };
 
 export type SessionWindowRestoreState =
@@ -53,7 +59,11 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     resolve: (closed: boolean) => void;
   }>();
   private readonly pendingDraftFlushWindows = new Set<TWindow>();
-  private readonly draftFlushes = new Map<TWindow, { promise: Promise<boolean>; pending: boolean }>();
+  private readonly draftFlushes = new Map<TWindow, {
+    promise: Promise<boolean>;
+    pending: boolean;
+    reason: DraftFlushReason;
+  }>();
   private draftFlushGateActive = false;
   private readonly draftFlushCoordinator = new DraftFlushCoordinator<TWindow>((window, request) => {
     this.deps.sendDraftFlushRequest?.(window, request);
@@ -61,6 +71,10 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private snapshotUpdatesSuspended = false;
 
   constructor(private readonly deps: SessionWindowBridgeDeps<TWindow>) {}
+
+  isQuitPending(): boolean {
+    return this.draftFlushGateActive;
+  }
 
   listOpenSessionWindowIds(): string[] {
     const openSessionIds: string[] = [];
@@ -209,19 +223,13 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   async flushSessionWindowDrafts(): Promise<boolean> {
     const windows = this.listWindows();
     this.draftFlushGateActive = true;
-    let flushing = windows.map((window) => {
+    const flushing = windows.map((window) => {
       const sessionId = this.sessionIdForWindow(window);
-      return sessionId ? this.flushDrafts(window, sessionId) : Promise.resolve(false);
+      return sessionId ? this.flushDrafts(window, sessionId, "quit") : Promise.resolve(false);
     });
-    let succeeded = true;
-    while (true) {
-      const results = await Promise.all(flushing);
-      succeeded = results.every(Boolean) && succeeded;
-      // A close after an ACK may flush a newly restored draft. Quit must wait
-      // for that newer request too, without turning an earlier failure into success.
-      const latest = windows.map((window, index) => this.draftFlushes.get(window)?.promise ?? flushing[index]);
-      if (latest.every((promise, index) => promise === flushing[index])) break;
-      flushing = latest;
+    let succeeded = (await Promise.all(flushing)).every(Boolean);
+    if (succeeded) {
+      succeeded = await this.waitForPendingDraftSends();
     }
     if (succeeded) {
       for (const window of windows) {
@@ -232,6 +240,8 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     this.draftFlushGateActive = false;
     for (const candidate of windows) {
       this.releaseDraftFlush(candidate, false);
+      this.pendingDraftFlushWindows.delete(candidate);
+      this.resolveCloseRequest(candidate, false);
     }
     return false;
   }
@@ -312,6 +322,11 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       return;
     }
 
+    if (this.draftFlushGateActive) {
+      event.preventDefault();
+      return;
+    }
+
     if (this.deps.isRunInFlight(sessionId)) {
       event.preventDefault();
       if (!this.deps.confirmCloseWhileRunning(window, sessionId)) {
@@ -334,12 +349,23 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
 
     event.preventDefault();
     this.pendingDraftFlushWindows.add(window);
-    void this.flushDrafts(window, sessionId).then((flushed) => {
+    const closeFlush = this.flushDrafts(window, sessionId, "close");
+    void closeFlush.then((flushed) => {
+      if (this.draftFlushes.get(window)?.promise !== closeFlush) {
+        // A stronger quit request superseded this close request. Its late ACK
+        // must not close the Window or affect a later retry.
+        return;
+      }
       this.pendingDraftFlushWindows.delete(window);
       if (!flushed || window.isDestroyed()) {
         // A concurrent quit owns the freeze until all its windows have settled.
         if (!this.draftFlushGateActive) this.releaseDraftFlush(window, false);
         this.resolveCloseRequest(window, false);
+        return;
+      }
+      if (this.draftFlushGateActive) {
+        // Quit owns the renderer freeze. A normal close ACK must not destroy
+        // the renderer while the stronger quit barrier is still settling.
         return;
       }
       this.allowCloseSessionWindows.add(window);
@@ -377,15 +403,21 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     return null;
   }
 
-  private flushDrafts(window: TWindow, sessionId: string): Promise<boolean> {
+  private flushDrafts(window: TWindow, sessionId: string, reason: DraftFlushReason): Promise<boolean> {
     const pending = this.draftFlushes.get(window);
-    if (pending?.pending) return pending.promise;
+    if (pending?.pending && (pending.reason === "quit" || reason === "close")) return pending.promise;
     if (!this.deps.sendDraftFlushRequest || !this.deps.getWindowSender) {
       return Promise.resolve(true);
     }
-    const request = this.draftFlushCoordinator.request(window, sessionId, this.deps.getWindowSender(window));
+    const request = this.draftFlushCoordinator.request(
+      window,
+      sessionId,
+      this.deps.getWindowSender(window),
+      reason,
+    );
     const flushing = {
       pending: true,
+      reason,
       promise: request.then((success) => {
         flushing.pending = false;
         return success;
@@ -393,6 +425,24 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     };
     this.draftFlushes.set(window, flushing);
     return flushing.promise;
+  }
+
+  private async waitForPendingDraftSends(): Promise<boolean> {
+    if (!this.deps.waitForPendingDraftSends) return true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<boolean>((resolve) => {
+      timeout = setTimeout(() => resolve(false), DEFAULT_DRAFT_FLUSH_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([
+        Promise.resolve()
+          .then(() => this.deps.waitForPendingDraftSends!())
+          .catch(() => false),
+        timeoutPromise,
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
   }
 
   private releaseDraftFlush(window: TWindow, success: boolean): void {

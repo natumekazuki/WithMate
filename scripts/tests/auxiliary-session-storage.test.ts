@@ -537,6 +537,149 @@ test("Auxiliary turn draft operation は失敗時復元と後続save保全を行
 
 // @test-value v2
 // kind = "contract"
+// claim = "Auxiliary送信の終了待ちはconsume後のrunと失敗時の復元保存まで待ち、復元失敗を終了失敗として返す"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// fault = "DB closeが送信runまたは失敗時復元より先に進み、再起動後にconsume済みdraftが空になる"
+// observable = "pending barrier settlement, SQLite draft after reopening, and restore failure result"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-send-settlement-barrier"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary送信の終了待ちは実SQLiteのconsumeと復元保存まで待つ", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-send-settlement-"));
+  const dbPath = path.join(directory, "app.db");
+  const parentStorage = new SessionStorage(dbPath);
+  let auxiliaryStorage: AuxiliarySessionStorage | null = new AuxiliarySessionStorage(dbPath);
+  const parent = buildNewSession({
+    id: "session-send-settlement",
+    taskTitle: "parent",
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    branch: "main",
+    characterId: "mate",
+    character: "Mate",
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    approvalMode: DEFAULT_APPROVAL_MODE,
+  });
+  parentStorage.upsertSession(parent);
+  let heldRestore: Promise<void> | null = null;
+  let notifyRestoreStarted: (() => void) | undefined;
+  let failRestore = false;
+  const service = new AuxiliarySessionService({
+    getParentSession: (id) => id === parent.id ? parentStorage.getSession(id) : null,
+    getStorage: () => {
+      if (!auxiliaryStorage) throw new Error("storage closed");
+      // The production Worker adapter is asynchronous; gate only its save boundary.
+      const storage = auxiliaryStorage;
+      return new Proxy(storage, {
+        get(target, key) {
+          if (key === "saveAuxiliaryDraft") return async (input: Parameters<typeof storage.saveAuxiliaryDraft>[0]) => {
+            notifyRestoreStarted?.();
+            if (heldRestore) await heldRestore;
+            if (failRestore) throw new Error("injected restore failure");
+            return storage.saveAuxiliaryDraft(input);
+          };
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    },
+  });
+  let releaseRun: (() => void) | null = null;
+  let runStarted: (() => void) | null = null;
+  const started = new Promise<void>((resolve) => { runStarted = resolve; });
+  const runGate = new Promise<void>((resolve) => { releaseRun = resolve; });
+  let releaseLookup: (() => void) | null = null;
+  const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve; });
+  try {
+    const session = auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-send-settlement",
+      parentSessionId: parent.id,
+      composerDraft: "deferred draft",
+    }));
+    const initial = auxiliaryStorage.getAuxiliaryDraft(session.id)!;
+    const operation = service.trackPendingDraftSend(async () => {
+      await lookupGate;
+      return await service.runAuxiliaryTurnWithDraft({
+        auxiliarySessionId: session.id,
+        parentSessionId: parent.id,
+        incarnation: initial.incarnation,
+        expectedDurableRevision: initial.durableRevision,
+        userMessage: "deferred draft",
+        run: async () => {
+          runStarted?.();
+          await runGate;
+          throw new Error("runtime failed after admission");
+        },
+      });
+    });
+    let barrierSettled = false;
+    const barrier = service.waitForPendingDraftSends().then((result) => { barrierSettled = true; return result; });
+    releaseLookup?.();
+    await started;
+    assert.equal(barrierSettled, false, "quit must wait even if only the outer IPC lookup existed at the barrier");
+    assert.equal(auxiliaryStorage.getAuxiliaryDraft(session.id)?.text, "");
+    let releaseRestore!: () => void;
+    heldRestore = new Promise<void>((resolve) => { releaseRestore = resolve; });
+    const restoreStarted = new Promise<void>((resolve) => { notifyRestoreStarted = resolve; });
+    releaseRun?.();
+    await restoreStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(barrierSettled, false, "a failed run is not settled until its restoration save finishes");
+    releaseRestore();
+    await assert.rejects(operation, /runtime failed after admission/);
+    assert.equal(await barrier, true);
+    heldRestore = null;
+
+    auxiliaryStorage.close();
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    assert.equal(auxiliaryStorage.getAuxiliaryDraft(session.id)?.text, "deferred draft");
+
+    const failedSession = auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-send-settlement-failed",
+      parentSessionId: parent.id,
+      composerDraft: "must restore",
+    }));
+    const failedInitial = auxiliaryStorage.getAuxiliaryDraft(failedSession.id)!;
+    let releaseFailedRun: (() => void) | null = null;
+    const failedRun = new Promise<void>((resolve) => { releaseFailedRun = resolve; });
+    let failedStarted: (() => void) | null = null;
+    const failedStartedPromise = new Promise<void>((resolve) => { failedStarted = resolve; });
+    let releaseFailedLookup!: () => void;
+    const failedLookup = new Promise<void>((resolve) => { releaseFailedLookup = resolve; });
+    const failedOperation = service.trackPendingDraftSend(async () => {
+      await failedLookup;
+      return service.runAuxiliaryTurnWithDraft({
+        auxiliarySessionId: failedSession.id,
+        parentSessionId: parent.id,
+        incarnation: failedInitial.incarnation,
+        expectedDurableRevision: failedInitial.durableRevision,
+        userMessage: "must restore",
+        run: async () => {
+          failedStarted?.();
+          await failedRun;
+          throw new Error("runtime failed");
+        },
+      });
+    });
+    const failedBarrier = service.waitForPendingDraftSends();
+    releaseFailedLookup();
+    await failedStartedPromise;
+    failRestore = true;
+    releaseFailedRun?.();
+    await assert.rejects(failedOperation, /draft restore failed/);
+    assert.equal(await failedBarrier, false);
+    assert.equal(auxiliaryStorage.getAuxiliaryDraft(failedSession.id)?.text, "");
+  } finally {
+    auxiliaryStorage?.close();
+    parentStorage.close();
+    await removeDirectoryWithRetry(directory);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "旧Auxiliary schemaの初期化はcreated_at列を補完し、現行の最終使用順indexだけを保持する"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md:5" }
 // fault = "created_atなしの既存tableを初期化できないか、旧作成順indexを残して最終使用順indexを欠落させる"

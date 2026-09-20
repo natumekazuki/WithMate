@@ -115,6 +115,7 @@ export type AuxiliarySessionSendOperationInput = {
   sessionSaveQueue: { current: Promise<void> };
   mutationRevision: { current: number };
   getCurrentSession: () => AuxiliarySession | null;
+  canStartRun?: () => boolean;
   beforeRunningSessionApplied?: () => void;
   onRunError?: () => void;
   applyRunningSession: (session: AuxiliarySession) => void;
@@ -147,7 +148,7 @@ export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSe
   const sendStartRevision = input.mutationRevision.current;
   await input.draftSaveQueue.current.catch(() => undefined);
   await input.sessionSaveQueue.current.catch(() => undefined);
-  if (input.mutationRevision.current !== sendStartRevision) {
+  if (input.mutationRevision.current !== sendStartRevision || input.canStartRun?.() === false) {
     return { status: "stale" };
   }
 

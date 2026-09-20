@@ -1,10 +1,15 @@
-export type DraftFlushRequest = Readonly<{ requestId: string; sessionId: string }>;
+export type DraftFlushReason = "close" | "quit";
+export type DraftFlushRequest = Readonly<{ requestId: string; sessionId: string; reason: DraftFlushReason }>;
+export const DEFAULT_DRAFT_FLUSH_TIMEOUT_MS = 10_000;
 type Pending = { sender: unknown; resolve: (value: boolean) => void; timer: ReturnType<typeof setTimeout> };
 export class DraftFlushCoordinator<TWindow> {
   private sequence = 0;
   private readonly pending = new Map<string, Pending>();
-  constructor(private readonly send: (window: TWindow, request: DraftFlushRequest) => void, private readonly timeoutMs = 10_000) {}
-  request(window: TWindow, sessionId: string, sender: unknown): Promise<boolean> {
+  constructor(
+    private readonly send: (window: TWindow, request: DraftFlushRequest) => void,
+    private readonly timeoutMs = DEFAULT_DRAFT_FLUSH_TIMEOUT_MS,
+  ) {}
+  request(window: TWindow, sessionId: string, sender: unknown, reason: DraftFlushReason): Promise<boolean> {
     const requestId = `draft-flush-${++this.sequence}`;
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -15,7 +20,7 @@ export class DraftFlushCoordinator<TWindow> {
       }, this.timeoutMs);
       this.pending.set(requestId, { sender, resolve, timer });
       try {
-        this.send(window, { requestId, sessionId });
+        this.send(window, { requestId, sessionId, reason });
       } catch {
         this.pending.delete(requestId);
         clearTimeout(timer);

@@ -176,9 +176,17 @@ function resolveParentCharacterId(parent: Session): string {
   return parent.characterRuntimeSnapshot?.characterId || parent.characterId || "";
 }
 
+class AuxiliaryDraftRestoreError extends AggregateError {
+  constructor(error: unknown, restoreError: unknown) {
+    super([error, restoreError], "Auxiliary turn failed and draft restore failed.");
+    this.name = "AggregateError";
+  }
+}
+
 export class AuxiliarySessionService {
   private readonly creationRecords = new Map<string, AuxiliaryCreationRecord>();
   private readonly creationOwnerGenerations = new Map<string, string>();
+  private readonly pendingDraftSends = new Set<Promise<boolean>>();
   private creationStorage: AuxiliarySessionStorageAccess | null = null;
   private creationGenerationId = randomUUID();
 
@@ -815,7 +823,7 @@ export class AuxiliarySessionService {
     return await storage.saveAuxiliaryDraft(input);
   }
 
-  async runAuxiliaryTurnWithDraft(input: {
+  runAuxiliaryTurnWithDraft(input: {
     auxiliarySessionId: string;
     parentSessionId: string;
     incarnation: string;
@@ -823,6 +831,36 @@ export class AuxiliarySessionService {
     userMessage: string;
     run: () => Promise<void>;
   }): Promise<void> {
+    return this.trackPendingDraftSend(() => this.runAuxiliaryTurnWithDraftInternal(input));
+  }
+
+  async waitForPendingDraftSends(): Promise<boolean> {
+    const pending = [...this.pendingDraftSends];
+    const results = await Promise.all(pending);
+    return results.every(Boolean);
+  }
+
+  trackPendingDraftSend<T>(operationFactory: () => Promise<T>): Promise<T> {
+    const operation = operationFactory();
+    const settlement = operation.then(
+      () => true,
+      (error: unknown) => !(error instanceof AuxiliaryDraftRestoreError),
+    );
+    this.pendingDraftSends.add(settlement);
+    void settlement.then(() => this.pendingDraftSends.delete(settlement));
+    return operation;
+  }
+
+  private async runAuxiliaryTurnWithDraftInternal(
+    input: {
+      auxiliarySessionId: string;
+      parentSessionId: string;
+      incarnation: string;
+      expectedDurableRevision: number;
+      userMessage: string;
+      run: () => Promise<void>;
+    },
+  ): Promise<void> {
     const storage = this.deps.getStorage();
     const captured = await storage.getAuxiliaryDraft(input.auxiliarySessionId);
     if (!captured
@@ -849,7 +887,7 @@ export class AuxiliarySessionService {
         });
         if (restored.outcome !== "saved") throw new Error(`Auxiliary draft restore ${restored.outcome}.`);
       } catch (restoreError) {
-        throw new AggregateError([error, restoreError], "Auxiliary turn failed and draft restore failed.");
+        throw new AuxiliaryDraftRestoreError(error, restoreError);
       }
       throw error;
     }

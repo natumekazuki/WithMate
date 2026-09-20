@@ -713,6 +713,7 @@ export default function AgentSessionWindowApp() {
   const auxiliaryDraftSaveQueueRef = auxiliaryBinding.draftSaveQueue;
   const auxiliarySessionSaveQueueRef = auxiliaryBinding.sessionSaveQueue;
   const auxiliaryDraftPersistenceOwnersRef = useRef(new Map<string, AuxiliaryDraftPersistenceOwner>());
+  const pendingAuxiliarySendsRef = useRef(new Set<Promise<void>>());
   const mainComposerCaretRef = useRef(0);
   const promptTemplateSelectionRef = useRef({ start: 0, end: 0 });
   const fileRootDiffRequestRevisionRef = useRef(0);
@@ -941,7 +942,13 @@ export default function AgentSessionWindowApp() {
     const unsubscribeRequest = withmateApi.subscribeSessionDraftFlushRequest((request) => {
       composerRegistry.freeze();
       setIsComposerFrozen(true);
-      void Promise.all(Array.from(auxiliaryDraftPersistenceOwnersRef.current.values(), (owner) => owner.flush()))
+      void (async () => {
+        if (request.reason === "quit") {
+          // A failed send can enqueue recovery after the current save queue is empty.
+          await Promise.allSettled(Array.from(pendingAuxiliarySendsRef.current));
+        }
+        await Promise.all(Array.from(auxiliaryDraftPersistenceOwnersRef.current.values(), (owner) => owner.flush()));
+      })()
         .then(() => withmateApi.acknowledgeSessionDraftFlush(request.requestId, true))
         .catch(() => withmateApi.acknowledgeSessionDraftFlush(request.requestId, false));
     });
@@ -3474,7 +3481,16 @@ export default function AgentSessionWindowApp() {
     void observeAuxiliaryDraftSave(activeAuxiliarySession.id, composerRegistry.capture(composerOwner).revision, operation);
   };
 
-  const sendAuxiliaryMessage = async (messageText: string) => {
+  const sendAuxiliaryMessage = (messageText: string): Promise<void> => {
+    if (composerRegistry.isFrozen) return Promise.resolve();
+    const operation = performAuxiliarySend(messageText);
+    pendingAuxiliarySendsRef.current.add(operation);
+    const release = () => { pendingAuxiliarySendsRef.current.delete(operation); };
+    void operation.then(release, release);
+    return operation;
+  };
+
+  const performAuxiliarySend = async (messageText: string) => {
     if (!withmateApi || !activeAuxiliarySession) {
       return;
     }
@@ -3489,6 +3505,7 @@ export default function AgentSessionWindowApp() {
       composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
       return;
     }
+    if (composerRegistry.isFrozen) return;
     const durableDraft = draftOwner?.durableRecord;
     const latestCapture = composerRegistry.capture(composerOwner);
     if (!draftOwner || !durableDraft || latestCapture.revision !== sendCapture.revision || latestCapture.draft !== sendCapture.draft || durableDraft.text !== sendCapture.draft) {
@@ -3515,6 +3532,7 @@ export default function AgentSessionWindowApp() {
       sessionSaveQueue: auxiliarySessionSaveQueueRef,
       mutationRevision: auxiliarySessionMutationRevisionRef,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
+      canStartRun: () => !composerRegistry.isFrozen,
       beforeRunningSessionApplied: () => {
         clearedRevision = composerRegistry.clearIfRevision(composerOwner, sendCapture.revision);
         setIsActionDockPinnedExpanded(false);

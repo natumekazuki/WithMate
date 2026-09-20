@@ -370,7 +370,7 @@ export type WithMateWindowPickerApi = {
 };
 
 export type WithMateWindowSubscriptionApi = {
-  subscribeSessionDraftFlushRequest(listener: (request: { requestId: string; sessionId: string }) => void): () => void;
+  subscribeSessionDraftFlushRequest(listener: (request: { requestId: string; sessionId: string; reason: "close" | "quit" }) => void): () => void;
   subscribeSessionDraftFlushRelease(listener: (payload: { success: boolean }) => void): () => void;
   acknowledgeSessionDraftFlush(requestId: string, success: boolean): void;
   getAppBootStatus(): Promise<AppBootStatus>;

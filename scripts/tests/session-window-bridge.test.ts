@@ -150,8 +150,10 @@ class StubWindow implements SessionWindowLike {
   }
 }
 
-function createDraftFlushBridge() {
-  const requests: Array<{ window: StubWindow; requestId: string; sessionId: string }> = [];
+function createDraftFlushBridge(options: {
+  waitForPendingDraftSends?: () => Promise<boolean>;
+} = {}) {
+  const requests: Array<{ window: StubWindow; requestId: string; sessionId: string; reason: "close" | "quit" }> = [];
   const releases: StubWindow[] = [];
   const closedIds: string[] = [];
   const bridge = new SessionWindowBridge({
@@ -165,6 +167,7 @@ function createDraftFlushBridge() {
     getWindowSender: (window) => window,
     sendDraftFlushRequest: (window, request) => { requests.push({ window, ...request }); },
     sendDraftFlushRelease: (window) => { releases.push(window); },
+    waitForPendingDraftSends: options.waitForPendingDraftSends,
   });
   return { bridge, requests, releases, closedIds };
 }
@@ -1050,6 +1053,56 @@ describe("SessionWindowBridge", () => {
 
   // @test-value v2
   // kind = "invariant"
+  // claim = "quitは全renderer ACK後にMainの送信確定待ちを開始し、成功後だけ終了を許可し、失敗・例外・timeoutでは解凍する"
+  // oracle = { type = "contract", ref = "SessionWindowBridge#flushSessionWindowDrafts" }
+  // fault = "draft保存ACKだけでDB closeへ進み、送信失敗後の復元保存を待たない"
+  // observable = "ACK前後のMain待機呼出し回数、送信確定前後のquit結果、Window closeと失敗release"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-pending-send-settlement"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("quitはrenderer ACK後の送信確定まで待ち、失敗やtimeoutでは解凍する", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const outcome of ["success", "failure", "timeout", "throw"]) {
+      let releasePending!: (success: boolean) => void;
+      const pendingSend = new Promise<boolean>((resolve) => { releasePending = resolve; });
+      let waitCalls = 0;
+      let quitCompleted = false;
+      const { bridge, requests, releases } = createDraftFlushBridge({
+        waitForPendingDraftSends: () => {
+          waitCalls += 1;
+          if (outcome === "throw") throw new Error("send settlement failed");
+          return pendingSend;
+        },
+      });
+      const window = await bridge.openSessionWindow("pending-send");
+      const quitting = bridge.flushSessionWindowDrafts().then((result) => { quitCompleted = true; return result; });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(waitCalls, 0, "Main must snapshot pending sends only after renderer send/recovery ACKs");
+      assert.equal(requests[0].reason, "quit");
+      bridge.acknowledgeDraftFlush(requests[0].requestId, window, true);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(waitCalls, 1);
+      if (outcome !== "throw") {
+        assert.equal(quitCompleted, false);
+        assert.deepEqual(releases, []);
+        if (outcome === "timeout") t.mock.timers.tick(10_000);
+        else releasePending(outcome === "success");
+      }
+      assert.equal(await quitting, outcome === "success");
+      assert.deepEqual(releases, outcome === "success" ? [] : [window]);
+      assert.equal(window.isDestroyed(), false);
+      if (outcome === "success") {
+        window.close();
+        assert.equal(window.isDestroyed(), true);
+      }
+      releasePending(true);
+      window.destroy();
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
   // claim = "app quitの全Window flushは全ackを待ち、1件失敗なら全Windowへreleaseする"
   // oracle = { type = "contract", ref = "SessionWindowBridge#flushSessionWindowDrafts" }
   // fault = "先に失敗したWindowだけで終了し、別Windowの未完了flushやfreeze解除を取りこぼす"
@@ -1139,14 +1192,14 @@ describe("SessionWindowBridge", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "通常closeとquitが重なっても同じWindowの保存結果を共有し、保存済みcloseによってquitを失敗にしない"
+  // claim = "通常closeとquitが重なってもquitの強いflushを待ち、保存済みcloseだけでrendererを先に破棄しない"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
-  // fault = "同一Windowに二重flushを発行し、先行closeのclosedでquit側の未完了要求を失敗にする"
+  // fault = "close ACKだけでrendererを破棄し、quitの強いflushやpending sendのsettlementを取りこぼす"
   // observable = "closeとquitの結果、Window破棄状態、rendererへの保存要求数"
   // observation_boundary = "public-boundary"
   // scope = "session-window-close-quit-overlap"
   // lifecycle = "permanent"
-  // impact = "保存できたのにアプリ終了が取り消される"
+  // impact = "送信結果が未確定の下書きを失ったままDBを閉じる"
   // distinction = "両方の開始順序を制御し、単独closeやquitでは観測できない競合を小さいメモリWindowで検証する"
   // @end-test-value
   it("close先行とquit先行のどちらでも保存成功を共有する", async () => {
@@ -1155,13 +1208,21 @@ describe("SessionWindowBridge", () => {
       const window = await bridge.openSessionWindow("overlap");
       const first = closeFirst ? bridge.requestCloseSessionWindow("overlap") : bridge.flushSessionWindowDrafts();
       const second = closeFirst ? bridge.flushSessionWindowDrafts() : bridge.requestCloseSessionWindow("overlap");
+      const quitting = closeFirst ? second : first;
       try {
+        assert.deepEqual(
+          requests.map((request) => request.reason),
+          closeFirst ? ["close", "quit"] : ["quit"],
+        );
         bridge.acknowledgeDraftFlush(requests[0].requestId, window, true);
         await new Promise((resolve) => setImmediate(resolve));
         for (const request of requests.slice(1)) bridge.acknowledgeDraftFlush(request.requestId, window, true);
-        assert.deepEqual(await Promise.all([first, second]), [true, true]);
+        assert.equal(await quitting, true);
+        assert.equal(window.isDestroyed(), false);
+        window.close();
         assert.equal(window.isDestroyed(), true);
-        assert.equal(requests.length, 1);
+        assert.deepEqual(await Promise.all([first, second]), [true, true]);
+        assert.equal(requests.length, closeFirst ? 2 : 1);
       } finally {
         window.destroy();
       }
@@ -1170,15 +1231,47 @@ describe("SessionWindowBridge", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "closeの保存失敗またはtimeoutがquitと重なると全Windowの確認まで凍結を維持し、中止後は新しい保存で再試行できる"
+  // claim = "quit失敗後の新しいclose retryは、失敗した旧close ACKに破棄や失敗を汚染されない"
+  // oracle = { type = "contract", ref = "SessionWindowBridge#requestCloseSessionWindow" }
+  // fault = "quit failure後に到着した旧close ACKがWindowを閉じる、または新しいclose flushを失敗扱いにする"
+  // observable = "旧ACK前後のWindow破棄状態、新retryの結果、flush release対象"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-close-quit-stale-ack"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("quit失敗後の旧close ACKを無視して新しいclose retryを完了する", async () => {
+    const { bridge, requests, releases } = createDraftFlushBridge();
+    const window = await bridge.openSessionWindow("stale-close");
+    const closing = bridge.requestCloseSessionWindow("stale-close");
+    const quitting = bridge.flushSessionWindowDrafts();
+    assert.deepEqual(requests.map((request) => request.reason), ["close", "quit"]);
+    bridge.acknowledgeDraftFlush(requests[1].requestId, window, false);
+    assert.equal(await quitting, false);
+    assert.deepEqual(releases, [window]);
+    const retry = bridge.requestCloseSessionWindow("stale-close");
+    const retryRequest = requests.at(-1)!;
+    assert.equal(retryRequest.reason, "close");
+    bridge.acknowledgeDraftFlush(requests[0].requestId, window, true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(window.isDestroyed(), false);
+    assert.deepEqual(releases, [window], "a late close ACK must not release the retry's freeze");
+    bridge.acknowledgeDraftFlush(retryRequest.requestId, window, true);
+    assert.equal(await retry, true);
+    assert.equal(await closing, false);
+    assert.equal(window.isDestroyed(), true);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "close失敗またはclose timeoutがquitと重なっても、quitの強いflush結果を優先する"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
-  // fault = "close失敗でquit待機中のWindowを解凍する、または失敗結果を再試行へ流用する"
-  // observable = "全体待機中のrelease通知、closeとquitの結果、再試行後のWindow破棄状態"
+  // fault = "弱いclose timeoutをquitの失敗と誤認し、強いquit ACK前にWindowを破棄する"
+  // observable = "close timeout後のquit結果、release通知、Window生存状態"
   // observation_boundary = "public-boundary"
   // scope = "session-window-close-quit-failure"
   // lifecycle = "permanent"
-  // impact = "終了確認中の追加編集を保存対象から漏らす、または保存を再試行できなくなる"
-  // distinction = "ACK失敗と時間差timeoutを制御し、複数Window間の解凍境界と再試行を検証する"
+  // impact = "送信settlement待ちを省略し、未保存本文を失う"
+  // distinction = "closeの弱い失敗とquitの強いflush結果を分離して確認する"
   // @end-test-value
   it("closeの失敗とtimeoutではquit全体が終わるまで解凍しない", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -1192,18 +1285,16 @@ describe("SessionWindowBridge", () => {
       try {
         if (failure === "ack") bridge.acknowledgeDraftFlush(requests[0].requestId, first, false);
         else t.mock.timers.tick(5_000);
-        assert.equal(await closing, false);
         assert.equal(first.isDestroyed(), false);
         assert.deepEqual(releases, []);
         for (const request of requests.slice(1)) bridge.acknowledgeDraftFlush(request.requestId, request.window, true);
-        assert.equal(await quitting, false);
-        assert.deepEqual(releases, [first, second]);
-        const retry = bridge.requestCloseSessionWindow("failure-a");
-        const latest = requests.at(-1)!;
-        assert.notEqual(latest.requestId, requests[0].requestId);
-        bridge.acknowledgeDraftFlush(latest.requestId, first, true);
-        assert.equal(await retry, true);
-        assert.equal(first.isDestroyed(), true);
+        assert.equal(await quitting, true);
+        assert.deepEqual(releases, []);
+        assert.equal(first.isDestroyed(), false);
+        assert.deepEqual(requests.map((request) => request.reason), ["close", "quit", "quit"]);
+        first.close();
+        second.close();
+        assert.equal(await closing, true);
       } finally {
         first.destroy();
         second.destroy();
@@ -1213,18 +1304,20 @@ describe("SessionWindowBridge", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "quitのACK後に通常closeを要求したら復元pendingを再flushし、quitもその保存結果を待ち、失敗なら双方を中止する"
+  // claim = "quitのACK後も通常closeはquit gate中にWindowを破棄せず、quitの結果を優先する"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md" }
-  // fault = "古い成功ACKで新しい復元pendingを確認せずcloseまたはquitを完了する"
-  // observable = "新flushのACK前のWindow生存とquit未完了、新ACK失敗後のclose/quit結果とrelease対象"
+  // fault = "quit gate中の通常closeでrendererを先に破棄し、pending sendのsettlementを迂回する"
+  // observable = "quit完了前後のWindow生存、close要求の保留、release対象"
   // observation_boundary = "public-boundary"
   // scope = "session-window-quit-ack-close"
   // lifecycle = "permanent"
-  // impact = "送信失敗で復元された未保存本文を閉じる操作で失う"
-  // distinction = "進行中のPromise共有とは別にACK後の新しいcloseを検証し、旧成功ACKによる保存確認の省略を検出する"
+  // impact = "送信結果が未確定のままWindowを閉じ、復元対象の本文を失う"
+  // distinction = "quit gate中のcloseが追加flushや破棄へ進まず、quitの強いACK境界を守ることを確認する"
   // @end-test-value
-  it("quit中のACK後closeは再flushし、quitも新しいACKを待つ", async () => {
-    const { bridge, requests, releases } = createDraftFlushBridge();
+  it("quit中のACK後closeはWindowを破棄せずquit結果を待つ", async () => {
+    let releasePending!: () => void;
+    const pendingSend = new Promise<boolean>((resolve) => { releasePending = () => resolve(true); });
+    const { bridge, requests, releases } = createDraftFlushBridge({ waitForPendingDraftSends: () => pendingSend });
     const first = await bridge.openSessionWindow("saved-a");
     const second = await bridge.openSessionWindow("saved-b");
     let quitCompleted = false;
@@ -1232,18 +1325,24 @@ describe("SessionWindowBridge", () => {
     try {
       bridge.acknowledgeDraftFlush(requests[0].requestId, first, true);
       await new Promise((resolve) => setImmediate(resolve));
-      const closing = bridge.requestCloseSessionWindow("saved-a");
+      let closeCompleted = false;
+      const closing = bridge.requestCloseSessionWindow("saved-a").then((result) => { closeCompleted = true; return result; });
       assert.equal(first.isDestroyed(), false);
-      assert.equal(requests.length, 3);
+      assert.equal(requests.length, 2);
       bridge.acknowledgeDraftFlush(requests[1].requestId, second, true);
       await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(quitCompleted, false);
+      assert.equal(quitCompleted, false, "renderer ACKs alone must not bypass Main's pending sends");
+      assert.equal(closeCompleted, false);
       assert.deepEqual(releases, []);
-      bridge.acknowledgeDraftFlush(requests[2].requestId, first, false);
-      assert.equal(await closing, false);
       assert.equal(first.isDestroyed(), false);
-      assert.equal(await quitting, false);
-      assert.deepEqual(releases, [first, second]);
+      first.close();
+      assert.equal(first.isDestroyed(), false, "close remains deferred during Main send settlement");
+      releasePending();
+      assert.equal(await quitting, true);
+      first.close();
+      assert.equal(first.isDestroyed(), true);
+      assert.equal(await closing, true);
+      assert.equal(await quitting, true);
     } finally {
       first.destroy();
       second.destroy();
