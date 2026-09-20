@@ -113,13 +113,30 @@ npm run electron:dev
 npm run typecheck
 ```
 
+`typecheck`はSQLite実行ownerと依存方向のcheckも実行します。依存方向checkは、RendererのTSX entry/component・型宣言から到達する依存と、`src-shared/`全体を対象にします。RendererからMain・CLI・開発script・Node/Electron/Provider SDKへの依存、およびsharedから環境固有層・Reactへの依存を、type-onlyを含むimport・re-export・dynamic importで検査します。現在`src/`にあるMain/CLI専用moduleと、Main/preload側からの依存方向は、このcheckの対象に含みません。
+
 ### テスト
 
 ```bash
 npm test
 ```
 
-テストは`scripts/tests/*.test.ts`と`scripts/tests/*.test.tsx`をNode test runnerで実行します。
+テストは`scripts/tests/`と`tests/`内の`*.test.ts`・`*.test.tsx`を再帰列挙し、Node test runnerで実行します。移設中の両rootを明示的に対象とし、helperやfixtureの名前にはこのsuffixを使いません。通常実行とshardは同じ列挙・選択経路を使います。
+
+```bash
+# 実行対象の一覧（testは実行しない）
+npm test -- --list
+# CIと同じ3分割のうち1番目
+npm run test:shard -- --shard=1/3
+# 対象を絞った実行
+node --import tsx --test scripts/tests/session-storage.test.ts
+# testとhelper/fixtureを含む型検査（実行時transpileとは別）
+npm run typecheck:tests
+```
+
+Windows PowerShellで`--`以降の引数を渡す場合は、`npm.ps1`による区切りの消費を避けるため、`npm.cmd test -- --list`、`npm.cmd run test:shard -- --shard=1/3`のように`npm.cmd`を使います。Windows CIも同じ呼び方です。
+
+`typecheck`はproduction・階層化した開発script・test runnerのtest、`typecheck:tests`はtest全体を検査します。型検査用の不正入力を含むfixtureは、期待する型エラーをその箇所で明示してください。
 
 ### 本番向けbuild
 

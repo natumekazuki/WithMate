@@ -13,9 +13,12 @@
     ]
   },
   "include": [
-    "scripts/*.ts",
+    "scripts/**/*.ts",
+    "src-cli/**/*.ts",
+    "src-shared/**/*.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
     "vite.config.ts"
-  ]
+  ],
+  "exclude": ["scripts/tests", "tests"]
 }

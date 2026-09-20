@@ -53,7 +53,7 @@ jobs:
         run: npm ci
 
       - name: Test
-        run: npm run test:shard -- --shard=${{ matrix.shard }}/3
+        run: npm.cmd run test:shard -- --shard=${{ matrix.shard }}/3
 
   ci:
     name: Typecheck and test
