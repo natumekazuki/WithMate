@@ -58,6 +58,9 @@ test("removes owned assets while preserving target branch, other worktree, and s
   await git(root, "update-ref", ref, base);
   await git(root, "branch", branch, base);
   await git(root, "worktree", "add", worktree, branch);
+  const registeredWorktrees = (await git(root, "worktree", "list", "--porcelain")).replaceAll("\\", "/");
+  assert.equal(registeredWorktrees.includes(worktree.replaceAll("\\", "/")), true);
+  assert.equal(registeredWorktrees.includes(otherWorktree.replaceAll("\\", "/")), true);
   await writeFile(path.join(worktree, "uncommitted.txt"), "discard me\n");
   await git(worktree, "add", "uncommitted.txt");
   await git(worktree, "commit", "-m", "unmerged companion change");
@@ -83,7 +86,9 @@ test("removes owned assets while preserving target branch, other worktree, and s
   assert.equal(await git(root, "rev-parse", "refs/heads/main"), base);
   assert.equal(existsSync(worktree), false);
   assert.equal(await git(root, "for-each-ref", "--format=%(refname)", `refs/heads/${branch}`, ref), "");
-  assert.equal((await git(root, "worktree", "list", "--porcelain")).replaceAll("\\", "/").includes(worktree.replaceAll("\\", "/")), false);
+  const remainingWorktrees = (await git(root, "worktree", "list", "--porcelain")).replaceAll("\\", "/");
+  assert.equal(remainingWorktrees.includes(worktree.replaceAll("\\", "/")), false);
+  assert.equal(remainingWorktrees.includes(otherWorktree.replaceAll("\\", "/")), true);
   assert.equal((await git(root, "stash", "list")).includes("user stash"), true);
   assert.equal((await git(root, "stash", "list")).includes(`session=${sessionId}`), true);
   assert.equal(await readFile(path.join(root, "tracked.txt"), "utf8"), "base\n");
