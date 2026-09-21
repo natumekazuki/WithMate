@@ -11,7 +11,7 @@ import {
   resolveMarkdownImageTarget,
   resolveRelativeMarkdownResourcePath,
 } from "../../src/file-explorer/file-preview-utils.js";
-import { detectSessionFileEncoding } from "../../src/file-explorer/file-content-detection.js";
+import { detectSessionFileEncoding } from "../../src-shared/file-explorer/file-content-detection.js";
 
 test("calculateImageFitZoom は画像を拡大せずviewport内に収める倍率を返す", () => {
   assert.equal(calculateImageFitZoom(800, 450, 1600, 900), 50);

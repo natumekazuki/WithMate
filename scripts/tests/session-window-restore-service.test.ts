@@ -11,7 +11,7 @@ import {
 } from "../../src-electron/session-window-bridge.js";
 import { SessionWindowRestoreService } from "../../src-electron/session-window-restore-service.js";
 import { SessionWindowRestoreStorage } from "../../src-electron/session-window-restore-storage.js";
-import { SESSION_WINDOW_RESTORE_SET_MAX } from "../../src/session-window-restore.js";
+import { SESSION_WINDOW_RESTORE_SET_MAX } from "../../src-shared/window/session-window-restore.js";
 
 class StubWindow implements SessionWindowLike {
   destroyed = false;

@@ -1,10 +1,7 @@
-import type {
-  AuditLogSummary,
-  LiveSessionRunState,
-} from "./app-state.js";
+import type { AuditLogSummary, LiveSessionRunState } from "../src-shared/session/runtime-state.js";
 import { buildLiveRunAuditOperations } from "./live-run-audit-operations.js";
-import type { SessionBackgroundActivityState } from "./memory/memory-state.js";
-import type { Session } from "./session-state.js";
+import type { SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
 
 type AuditLogRefreshActivity = Pick<SessionBackgroundActivityState, "kind" | "status" | "updatedAt"> | null | undefined;
 

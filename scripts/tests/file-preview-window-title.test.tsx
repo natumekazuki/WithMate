@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src/character-state.js";
+import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
 import DiffApp from "../../src/DiffApp.js";
 import FilePreviewApp from "../../src/FilePreviewApp.js";
 import {
@@ -14,8 +14,8 @@ import {
   resolveSessionFileGitCommitPreviewWindowTitle,
   resolveSessionFilePreviewWindowTitle,
   type SessionFileDescriptor,
-} from "../../src/file-explorer/file-explorer-contract.js";
-import type { WithMateWindowApi } from "../../src/withmate-window-api.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 test("resolveSessionFilePreviewWindowTitle は basename だけを返し不正な名前を fallback する", () => {
   assert.equal(resolveSessionFilePreviewWindowTitle("C:\\Users\\private\\notes.md"), "notes.md");

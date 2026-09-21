@@ -1,8 +1,8 @@
-import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } from "./model-catalog.js";
-import type { ApprovalMode } from "./approval-mode.js";
-import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
-import { getCodexSpeedOptions, type CodexSpeed } from "./codex-speed.js";
-import { getCodexReviewerOptions, type CodexReviewer } from "./codex-reviewer.js";
+import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } from "../src-shared/settings/model-catalog.js";
+import type { ApprovalMode } from "../src-shared/settings/approval-mode.js";
+import type { CodexSandboxMode } from "../src-shared/settings/codex-sandbox-mode.js";
+import { getCodexSpeedOptions, type CodexSpeed } from "../src-shared/settings/codex-speed.js";
+import { getCodexReviewerOptions, type CodexReviewer } from "../src-shared/settings/codex-reviewer.js";
 import {
   buildModelSelectOptions,
   buildReasoningEffortSelectOptions,
@@ -14,7 +14,7 @@ import {
   getApprovalOptionsForProvider,
   getSandboxOptionsForProviderSelection,
   type RuntimeSelectOption,
-} from "./provider-runtime-options.js";
+} from "../src-shared/settings/provider-runtime-options.js";
 
 export type RuntimeSelectionOptions = {
   approvalChoiceOptions: RuntimeSelectOption<ApprovalMode>[];

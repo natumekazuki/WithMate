@@ -20,18 +20,18 @@ import {
   type SessionSummaryPageRequest,
   type HomeSessionSummaryPageResult,
   type SessionSummary,
-} from "../src/session-state.js";
-import { normalizeProviderId } from "../src/model-catalog.js";
+} from "../src-shared/session/session-state.js";
+import { normalizeProviderId } from "../src-shared/settings/model-catalog.js";
 import {
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
-} from "../src/character/character-runtime-snapshot.js";
+} from "../src-shared/character/character-runtime-snapshot.js";
 import {
   UNKNOWN_CHARACTER_OWNER_ID,
   isUnknownCharacterOwnerId,
   normalizeCharacterOwnerId,
   recoverStoredCharacterOwnerId,
-} from "../src/character/character-owner.js";
+} from "../src-shared/character/character-owner.js";
 import {
   registerSessionProviderIdNormalizer,
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
@@ -51,7 +51,7 @@ import {
   encodeSessionSummaryCursor,
   parseSessionSummaryPageRequest,
 } from "./session-summary-query.js";
-import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
+import type { DeleteSessionsLastActiveBeforeCutoff } from "../src-shared/window/withmate-window-types.js";
 import {
   writeSessionTurnTerminalCommit,
   type SessionTurnTerminalCommit,

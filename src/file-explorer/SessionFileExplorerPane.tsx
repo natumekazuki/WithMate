@@ -16,8 +16,8 @@ import type {
   SessionDirectoryEntry,
   SessionFileRootResourceRequest,
   SessionFileRoot,
-} from "./file-explorer-contract.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 type FileExplorerApi = Pick<
   WithMateWindowApi,

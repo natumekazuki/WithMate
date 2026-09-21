@@ -8,8 +8,8 @@ import { describe, it } from "node:test";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { AuditLogStorageV6 } from "../../src-electron/audit-log-storage-v6.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
-import { buildNewSession } from "../../src/session-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 
 function insertCharacter(db: DatabaseSync, id: string): void {
   db.prepare(`

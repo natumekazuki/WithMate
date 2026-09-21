@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { buildNewSession, type Session } from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { drainCharacterAffectTurnSettlementBatch } from "../../src-electron/character-affect-turn-drain.js";
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
 

@@ -7,13 +7,13 @@ import {
   MEMORY_FORGET_REASONS,
   MEMORY_V6_SCHEMA_VERSION,
   type MemoryValidationResult,
-} from "../src/memory-v6/memory-contract.js";
+} from "../src-shared/memory/memory-contract.js";
 import {
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
   normalizeWithMateMemoryApiBaseUrl,
 } from "../src/memory-v6/memory-discovery.js";
-import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
+import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src-shared/memory/memory-response-contract.js";
 import {
   validateMemoryAppendRequest,
   validateMemoryAuditRequest,
@@ -30,7 +30,7 @@ import {
 import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
   createCharacterContextError,
-} from "../src/character-context/character-context-contract.js";
+} from "../src-shared/character-context/character-context-contract.js";
 import {
   CharacterContextValidationError,
   validateCharacterAffectAppraiseRequest,
@@ -47,7 +47,7 @@ import {
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
-} from "../src/agent-runtime/agent-runtime-binding-contract.js";
+} from "../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   callWithMateMemoryRuntime,

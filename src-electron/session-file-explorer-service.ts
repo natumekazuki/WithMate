@@ -19,17 +19,17 @@ import type {
   SessionFileRootKind,
   SessionFileTreePathActionNodeKind,
   SessionFileTreePathActionTargetRequest,
-} from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileAbsoluteResource,
   isSessionFileGitCommitResource,
   isSessionFileRootResource,
-} from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import {
   detectSessionFileResourceKind,
   detectSessionFileEncoding,
-} from "../src/file-explorer/file-content-detection.js";
-import type { OpenPathResult } from "../src/withmate-window-types.js";
+} from "../src-shared/file-explorer/file-content-detection.js";
+import type { OpenPathResult } from "../src-shared/window/withmate-window-types.js";
 import {
   listIdentityBoundDirectory,
   type IdentityBoundDirectorySnapshot,

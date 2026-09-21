@@ -1,4 +1,4 @@
-import type { Session, SessionSummary } from "../src/session-state.js";
+import type { Session, SessionSummary } from "../src-shared/session/session-state.js";
 
 type SessionSummaryHydrationSource = {
   listSessionSummaries(): SessionSummary[];

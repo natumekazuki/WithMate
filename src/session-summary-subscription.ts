@@ -1,4 +1,4 @@
-import type { SessionSummaryInvalidation } from "./session-state.js";
+import type { SessionSummaryInvalidation } from "../src-shared/session/session-state.js";
 
 export type SessionSummariesLoadStatus = "loading" | "loaded" | "error";
 

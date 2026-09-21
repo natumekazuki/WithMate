@@ -1,4 +1,4 @@
-import type { AppSettings } from "./provider-settings-state.js";
+import type { AppSettings } from "../src-shared/settings/provider-settings-state.js";
 
 export type AppSettingsSubscriptionApi = {
   getAppSettings?: () => Promise<AppSettings>;

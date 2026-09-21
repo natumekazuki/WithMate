@@ -3,7 +3,7 @@ import { useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as 
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
-} from "../withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 import type {
   HomeMonitorAuxiliaryDataState,
   HomeMonitorEntry,

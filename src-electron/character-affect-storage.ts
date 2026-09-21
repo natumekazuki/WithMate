@@ -15,7 +15,7 @@ import {
   type CharacterAffectFamily,
   type EffectiveAffectComponent,
   type EffectiveAffectState,
-} from "../src/character-affect/affect-contract.js";
+} from "../src-shared/character-affect/affect-contract.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 const LOCAL_USER_ID = "local-user";

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DEFAULT_CHARACTER_THEME, type CharacterDetail } from "../../src/character/character-catalog.js";
+import { DEFAULT_CHARACTER_THEME, type CharacterDetail } from "../../src-shared/character/character-catalog.js";
 import {
   CHARACTER_DEFINITION_MAX_CHARACTERS,
   countCharacterDefinitionCharacters,
   validateCharacterDefinitionMarkdown,
-} from "../../src/character/character-definition.js";
+} from "../../src-shared/character/character-definition.js";
 import {
   buildDefaultCharacterDefinition,
   buildCharacterEditorValidationSummary,

@@ -1,4 +1,4 @@
-import type { AuxiliarySession } from "../src/auxiliary-session-state.js";
+import type { AuxiliarySession } from "../src-shared/auxiliary/auxiliary-session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type AuxiliaryRuntimeIdentity = Pick<

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
@@ -11,8 +11,8 @@ import {
   type HomeSettingsApi,
 } from "../../src/settings/settings-actions.js";
 import { buildSettingsCommandHandlers } from "../../src/settings/settings-command-handlers.js";
-import type { AppSettings } from "../../src/provider-settings-state.js";
-import type { WithMateWindowApi } from "../../src/withmate-window-api.js";
+import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 function createApi(overrides?: Partial<HomeSettingsApi>): HomeSettingsApi {
   return {

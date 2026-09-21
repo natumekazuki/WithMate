@@ -1,4 +1,4 @@
-import type { SessionGlossaryProjection } from "../src/glossary-contract.js";
+import type { SessionGlossaryProjection } from "../src-shared/glossary/glossary-contract.js";
 
 export type SessionGlossaryWindowLike = {
   id: number;

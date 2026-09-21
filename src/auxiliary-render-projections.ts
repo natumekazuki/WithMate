@@ -5,8 +5,8 @@ import {
   type AuxiliaryRuntimeProjectionInput,
 } from "./auxiliary-runtime-projection.js";
 import type { MessageListAuxiliarySession } from "./auxiliary-session-message-projection.js";
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
-import type { Session } from "./session-state.js";
+import type { AuxiliarySession } from "../src-shared/auxiliary/auxiliary-session-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
 
 function toMessageListAuxiliarySession(session: AuxiliarySession): MessageListAuxiliarySession {
   return {

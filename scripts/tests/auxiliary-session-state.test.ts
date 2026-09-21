@@ -24,8 +24,8 @@ import {
   resolveAuxiliaryPreview,
   normalizeAuxiliarySession,
   type AuxiliarySession,
-} from "../../src/auxiliary-session-state.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+} from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 
 const providerCatalog = {
   id: "codex",

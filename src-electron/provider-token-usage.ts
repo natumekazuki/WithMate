@@ -1,4 +1,4 @@
-import type { AuditLogUsage } from "../src/app-state.js";
+import type { AuditLogUsage } from "../src-shared/session/runtime-state.js";
 
 export type CodexTokenUsageLike = {
   input_tokens?: unknown;

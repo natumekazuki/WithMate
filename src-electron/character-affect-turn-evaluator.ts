@@ -1,6 +1,6 @@
-import { AFFECT_SCHEMA_VERSION, type AffectEventInput } from "../src/character-affect/affect-contract.js";
-import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
-import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
+import { AFFECT_SCHEMA_VERSION, type AffectEventInput } from "../src-shared/character-affect/affect-contract.js";
+import type { CharacterContextResponse } from "../src-shared/character-context/character-context-contract.js";
+import type { CharacterRuntimeSnapshot } from "../src-shared/character/character-catalog.js";
 
 export const CHARACTER_AFFECT_TURN_OUTPUT_SCHEMA = {
   type: "object",

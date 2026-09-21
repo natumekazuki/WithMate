@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
-import type { AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { createHomeAuxiliarySessionRefresher } from "../../src/home/home-active-auxiliary-refresh.js";
 
 function createDeferred<T>() {

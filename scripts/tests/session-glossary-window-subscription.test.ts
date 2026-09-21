@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 
 import { SessionGlossaryWindowSubscriptionCoordinator } from "../../src-electron/session-glossary-window-subscription.js";
-import type { SessionGlossaryProjection } from "../../src/glossary-contract.js";
+import type { SessionGlossaryProjection } from "../../src-shared/glossary/glossary-contract.js";
 
 class TestWindow {
   readonly id: number;

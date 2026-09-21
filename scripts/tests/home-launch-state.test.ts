@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import {
   buildCreateSessionRequestFromLaunchDraft,
   applyLaunchWorkspacePathValidation,
@@ -19,7 +19,7 @@ import {
   updateLaunchDraftForProviderSelection,
   updateLaunchDraftForRandomCharacterSelection,
 } from "../../src/home/home-launch-state.js";
-import type { MateProfile } from "../../src/mate/mate-state.js";
+import type { MateProfile } from "../../src-shared/mate/mate-state.js";
 
 function createMateProfile(partial: Partial<MateProfile> & Pick<MateProfile, "id" | "displayName">): MateProfile {
   const { id, displayName, ...rest } = partial;

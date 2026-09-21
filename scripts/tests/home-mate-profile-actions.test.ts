@@ -7,7 +7,7 @@ import {
   selectHomeMateAvatar,
   type HomeMateProfileApi,
 } from "../../src/home/home-mate-profile-actions.js";
-import type { MateProfile } from "../../src/mate/mate-state.js";
+import type { MateProfile } from "../../src-shared/mate/mate-state.js";
 
 function createMateProfile(displayName = "Mia", avatarFilePath = "avatar.png"): MateProfile {
   return {

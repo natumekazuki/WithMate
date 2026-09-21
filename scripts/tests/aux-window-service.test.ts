@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src/character-state.js";
-import type { DiffPreviewPayload } from "../../src/session-state.js";
+import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
+import type { DiffPreviewPayload } from "../../src-shared/session/session-state.js";
 import { AuxWindowService } from "../../src-electron/aux-window-service.js";
 import {
   CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,

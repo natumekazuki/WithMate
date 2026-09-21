@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { buildNewSession } from "../../src/app-state.js";
-import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
-import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src/model-catalog.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
+import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src-shared/settings/model-catalog.js";
 import { AuditLogStorage } from "../../src-electron/audit-log-storage.js";
 import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
 import { CREATE_V3_SCHEMA_SQL, V3_TEXT_PREVIEW_MAX_LENGTH } from "../../src-electron/database-schema-v3.js";

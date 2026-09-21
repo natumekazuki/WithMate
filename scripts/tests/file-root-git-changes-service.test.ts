@@ -24,7 +24,7 @@ import {
   parseGitPorcelainV1Z,
   FileRootGitChangesService,
 } from "../../src-electron/file-root-git-changes-service.js";
-import type { FileRootChangesResult } from "../../src/file-explorer/file-explorer-contract.js";
+import type { FileRootChangesResult } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 const EXPECTED_GIT_GLOBAL_ARGS = ["--no-optional-locks", "--no-pager", "-c", "core.fsmonitor=false"];
 

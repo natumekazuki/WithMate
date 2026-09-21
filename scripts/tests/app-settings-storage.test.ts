@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import {
   MEMORY_FILE_QUOTA_DEFAULT_BYTES,
   createDefaultAppSettings,
-} from "../../src/provider-settings-state.js";
+} from "../../src-shared/settings/provider-settings-state.js";
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 
 describe("AppSettingsStorage", () => {

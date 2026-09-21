@@ -6,13 +6,13 @@ import {
   cloneProjectScopes,
   normalizeProjectMemoryEntry,
   normalizeProjectScope,
-} from "../src/memory/memory-state.js";
+} from "../src-shared/memory/session-memory-state.js";
 import type {
   ManagedProjectMemoryGroup,
   MemoryPageRequest,
   ProjectMemoryEntry,
   ProjectScope,
-} from "../src/memory/memory-state.js";
+} from "../src-shared/memory/session-memory-state.js";
 import { CREATE_PROJECT_MEMORY_TABLES_SQL } from "./database-schema-v1.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 import { openAppDatabase } from "./sqlite-connection.js";

@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type {
-  Session,
-  SessionMemory,
-} from "../../src/app-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import type { SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { SessionMemorySupportService } from "../../src-electron/session-memory-support-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {

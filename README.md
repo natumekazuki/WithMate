@@ -192,7 +192,8 @@ WithMateのソースコードは[ISC License](LICENSE)で提供します。
 
 ## Repository構成
 
-- `src/`: React renderer、UI state、Window API型
+- `src/`: React renderer、UI state
+- `src-shared/`: Main、preload、renderer、CLIで共有する副作用のない契約・正規化・定数
 - `src-electron/`: Electron main、preload、IPC、永続化、provider連携
 - `scripts/`: build、生成、migration、検証用script
 - `scripts/tests/`: Node test runner用test
@@ -202,6 +203,10 @@ WithMateのソースコードは[ISC License](LICENSE)で提供します。
 - `docs/adr/`: 過去の判断や置換関係を含む設計判断の履歴
 - `docs/releases/`: ADRとは別枠で恒久保存するリリースノートと索引
 - `build/`: icon、installer、CLIなどのpackaging入力
+
+Main、preload、renderer、CLIの境界をまたぐ型・定数・正規化処理は、`src-shared/`のIPC、session、settings、character、memoryなどのdomainを正本とします。利用側は必要なdomainから直接importし、共有層へReact・DOM・Electron・filesystem・DBの実装を持ち込みません。
+
+Chat layout preferenceの型・既定値・検証は`src-shared/settings/chat-layout-preference.ts`に置き、保存APIを呼ぶrenderer adapterは`src/chat/chat-layout-preference.ts`に置きます。URLからsessionやdiffの識別子を読む処理は`src/app/session-location.ts`が担当します。
 
 一般文書には、現行実装について正しく、現在の利用・開発・保守に必要な情報だけを残します。設計判断の履歴はADR、リリースの履歴はリリースノートと索引に分け、古い判断や当時のリリース内容を現在の仕様で上書きしません。それ以外の過去情報はGit履歴、課題・作業計画はGitHub Issue／PR、一時的な棚卸しや検証記録はSessionFolder等のrepository外で扱います。
 

@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import type { Session } from "../../src/app-state.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
-import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
-import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import { getSessionIncarnationId } from "../../src/session-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import { createDefaultAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import { getSessionIncarnationId } from "../../src-shared/session/session-state.js";
 import type { SessionThreadPatchInput } from "../../src-electron/session-storage-v6.js";
 import type { AuxiliarySessionThreadPatchInput } from "../../src-electron/auxiliary-session-storage.js";
 import type { AuxiliarySessionRuntimeMetadataPatchInput } from "../../src-electron/auxiliary-session-storage.js";

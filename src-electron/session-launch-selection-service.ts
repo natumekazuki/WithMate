@@ -1,10 +1,10 @@
-import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../src/approval-mode.js";
+import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../src-shared/settings/approval-mode.js";
 import {
   DEFAULT_CODEX_SANDBOX_MODE,
   type CodexSandboxMode,
-} from "../src/codex-sandbox-mode.js";
-import { DEFAULT_CODEX_SPEED, type CodexSpeed } from "../src/codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER, type CodexReviewer } from "../src/codex-reviewer.js";
+} from "../src-shared/settings/codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED, type CodexSpeed } from "../src-shared/settings/codex-speed.js";
+import { DEFAULT_CODEX_REVIEWER, type CodexReviewer } from "../src-shared/settings/codex-reviewer.js";
 import {
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,
@@ -12,9 +12,9 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
   type ModelReasoningEffort,
-} from "../src/model-catalog.js";
-import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
-import type { SessionSummary } from "../src/session-state.js";
+} from "../src-shared/settings/model-catalog.js";
+import { getProviderAppSettings, type AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import type { SessionSummary } from "../src-shared/session/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export type SessionLaunchSelection = {

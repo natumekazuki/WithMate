@@ -10,10 +10,10 @@ import {
   type MemoryExtractionProviderSettings,
   type MateMemoryGenerationProviderSettings,
   type ProviderAppSettings,
-} from "../provider-settings-state.js";
-import { coerceModelSelection, type ModelCatalogProvider } from "../model-catalog.js";
-import type { MicrocopySlot } from "../microcopy-state.js";
-import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
+} from "../../src-shared/settings/provider-settings-state.js";
+import { coerceModelSelection, type ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+import type { MicrocopySlot } from "../../src-shared/settings/microcopy-state.js";
+import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 
 export function updateMemoryGenerationEnabled(
   draft: AppSettings,

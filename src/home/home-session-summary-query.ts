@@ -2,8 +2,8 @@ import type {
   HomeSessionSummary,
   SessionCharacterUsage,
   HomeSessionSummaryPageResult,
-} from "../session-state.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+} from "../../src-shared/session/session-state.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 export const HOME_SESSION_SUMMARY_OPEN_ID_CHUNK_SIZE = 100;
 

@@ -1,11 +1,11 @@
-import type { ProviderQuotaTelemetry } from "../src/app-state.js";
+import type { ProviderQuotaTelemetry } from "../src-shared/session/runtime-state.js";
 import {
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
-} from "../src/model-catalog.js";
-import type { AppSettings } from "../src/provider-settings-state.js";
+} from "../src-shared/settings/model-catalog.js";
+import type { AppSettings } from "../src-shared/settings/provider-settings-state.js";
 import type {
   ProviderBackgroundAdapter,
   ProviderCodingAdapter,

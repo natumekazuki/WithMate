@@ -12,7 +12,7 @@ import {
   parseCharacterDefinitionMarkdown,
   validateCharacterDefinitionMarkdown,
   validateCharacterNotesMarkdown,
-} from "../../src/character/character-definition.js";
+} from "../../src-shared/character/character-definition.js";
 import {
   buildDefaultCharacterDefinition,
   buildDefaultCharacterNotes,

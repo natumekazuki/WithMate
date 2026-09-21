@@ -1,4 +1,4 @@
-import type { AuditLogEntry } from "../src/app-state.js";
+import type { AuditLogEntry } from "../src-shared/session/runtime-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;

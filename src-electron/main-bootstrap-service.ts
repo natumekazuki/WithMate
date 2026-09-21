@@ -1,6 +1,6 @@
-import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { AppBootStatus } from "../src/app-boot-state.js";
-import type { MateStorageState } from "../src/mate/mate-state.js";
+import type { ModelCatalogSnapshot } from "../src-shared/settings/model-catalog.js";
+import type { AppBootStatus } from "../src-shared/window/app-boot-state.js";
+import type { MateStorageState } from "../src-shared/mate/mate-state.js";
 
 type MainBootstrapServiceDeps = {
   initializePersistentStores(): Promise<ModelCatalogSnapshot>;

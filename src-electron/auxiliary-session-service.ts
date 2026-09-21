@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
-import { currentTimestampLabel } from "../src/time-state.js";
-import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
+import { currentTimestampLabel } from "../src-shared/time-state.js";
+import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../src-shared/settings/approval-mode.js";
 import type {
   AuxiliaryRuntimeSelectionMode,
   AuxiliarySession,
@@ -13,23 +13,23 @@ import type {
   AuxiliaryCreationResult,
   AuxiliaryCreationStateChange,
   CreateAuxiliarySessionInput,
-} from "../src/auxiliary-session-state.js";
-import { resolveAuxiliaryPreview } from "../src/auxiliary-session-state.js";
+} from "../src-shared/auxiliary/auxiliary-session-state.js";
+import { resolveAuxiliaryPreview } from "../src-shared/auxiliary/auxiliary-session-state.js";
 import {
   CODEX_SANDBOX_MODE_VALUES,
   DEFAULT_CODEX_SANDBOX_MODE,
-} from "../src/codex-sandbox-mode.js";
-import { CODEX_SPEED_VALUES, DEFAULT_CODEX_SPEED } from "../src/codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER, resolveCodexReviewerUpdate } from "../src/codex-reviewer.js";
+} from "../src-shared/settings/codex-sandbox-mode.js";
+import { CODEX_SPEED_VALUES, DEFAULT_CODEX_SPEED } from "../src-shared/settings/codex-speed.js";
+import { DEFAULT_CODEX_REVIEWER, resolveCodexReviewerUpdate } from "../src-shared/settings/codex-reviewer.js";
 import {
   coerceModelSelection,
   getModelCatalogItem,
   getProviderCatalog,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
-} from "../src/model-catalog.js";
-import { getSessionIncarnationId, type Session } from "../src/session-state.js";
-import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
+} from "../src-shared/settings/model-catalog.js";
+import { getSessionIncarnationId, type Session } from "../src-shared/session/session-state.js";
+import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../src-shared/character/character-catalog.js";
 import { selectWeightedRandomLaunchCharacterId } from "../src/home/home-launch-state.js";
 import type { Awaitable, AuxiliarySessionStorageAccess } from "./persistent-store-lifecycle-service.js";
 import type { SessionLaunchSelection } from "./session-launch-selection-service.js";
@@ -44,7 +44,7 @@ import type {
   AuxiliaryDraftSaveInput,
   AuxiliaryDraftSaveResult,
   AuxiliarySessionStatus,
-} from "../src/auxiliary-draft-contract.js";
+} from "../src-shared/auxiliary/auxiliary-draft-contract.js";
 
 type AuxiliarySessionServiceDeps = {
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;

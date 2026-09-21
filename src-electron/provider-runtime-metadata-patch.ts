@@ -1,4 +1,4 @@
-import type { ModelReasoningEffort } from "../src/model-catalog.js";
+import type { ModelReasoningEffort } from "../src-shared/settings/model-catalog.js";
 
 export type ProviderRuntimeMetadata = {
   provider: string;

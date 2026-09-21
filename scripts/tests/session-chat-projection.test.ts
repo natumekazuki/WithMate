@@ -8,9 +8,9 @@ import {
   type AgentSessionChatProjectionInput,
 } from "../../src/chat/session-chat-projection.js";
 import { ChatWindow } from "../../src/chat/chat-window.js";
-import type { CharacterProfile } from "../../src/app-state.js";
+import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import { SessionComposerExpanded, type SessionContextPaneProps } from "../../src/session-components.js";
-import type { Session } from "../../src/session-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 
 const noop = () => {};

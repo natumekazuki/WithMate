@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
-import type { AppLogEntry, AppLogError, AppLogInput } from "../src/app-log-types.js";
+import type { AppLogEntry, AppLogError, AppLogInput } from "../src-shared/window/app-log-types.js";
 
 export type AppLogServiceRuntimeInfo = {
   appVersion: string;

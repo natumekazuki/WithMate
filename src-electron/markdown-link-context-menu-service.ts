@@ -3,9 +3,9 @@ import type { BrowserWindow, Menu, MenuItemConstructorOptions } from "electron";
 import type {
   MarkdownLinkContextMenuRequest,
   MarkdownLinkContextMenuResult,
-} from "../src/markdown-link-context-menu.js";
-import type { SessionFileResourceRequest } from "../src/file-explorer/file-explorer-contract.js";
-import type { SessionFileObjectCopyResult } from "../src/file-explorer/session-file-object-copy-contract.js";
+} from "../src-shared/window/markdown-link-context-menu.js";
+import type { SessionFileResourceRequest } from "../src-shared/file-explorer/file-explorer-contract.js";
+import type { SessionFileObjectCopyResult } from "../src-shared/file-explorer/session-file-object-copy-contract.js";
 import { resolveMarkdownLinkCopyTarget } from "./open-path.js";
 
 type LinkContextMenu = Pick<Menu, "popup">;

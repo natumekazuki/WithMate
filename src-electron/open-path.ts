@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { OpenPathOptions, OpenPathResult } from "../src/withmate-window-types.js";
+import type { OpenPathOptions, OpenPathResult } from "../src-shared/window/withmate-window-types.js";
 
 export type ResolvedOpenPathTarget =
   | {

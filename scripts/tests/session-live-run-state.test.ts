@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState } from "../../src/runtime-state.js";
+import type { LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import {
   applyOptimisticSessionRunUpdate,
   applyResolvedSessionRunUpdate,
@@ -12,7 +12,7 @@ import {
   resolveSessionRunErrorMessage,
   type OwnedLiveSessionRunState,
 } from "../../src/session-live-run-state.js";
-import type { Message } from "../../src/session-state.js";
+import type { Message } from "../../src-shared/session/session-state.js";
 
 function makeLiveRunState(
   sessionId: string,
@@ -80,7 +80,7 @@ test("resolveSessionRunErrorMessage は message 付き object でも非 Error �
 // @test-value v2
 // kind = "contract"
 // claim = "optimistic session updateはrunning sessionとowner付きpending live runを整合して生成する"
-// oracle = { type = "contract", ref = "live run optimistic update ownership" }
+// oracle = { type = "contract", ref = "src/session-live-run-state.ts" }
 // fault = "user message、running state、background taskが不整合なownerへ反映される"
 // observable = "running session and pending live run snapshots"
 // observation_boundary = "public-boundary"
@@ -130,6 +130,28 @@ test("buildOptimisticSessionRunUpdate は running session と pending live run u
       reasoningText: "",
       steps: [],
       backgroundTasks: [{ id: "task-1", kind: "shell", title: "Install", status: "running", updatedAt: "before" }],
+      usage: null,
+      errorMessage: "",
+      approvalRequest: null,
+      elicitationRequest: null,
+    },
+  });
+
+  assert.deepEqual(update.createPendingLiveRunState({
+    ownerSessionId: "session-other",
+    state: {
+      ...makeLiveRunState("session-other"),
+      backgroundTasks: [{ id: "stale-task", kind: "shell", title: "Stale", status: "running", updatedAt: "before" }],
+    },
+  }), {
+    ownerSessionId: "session-1",
+    state: {
+      sessionId: "session-1",
+      threadId: "thread-1",
+      assistantText: "",
+      reasoningText: "",
+      steps: [],
+      backgroundTasks: [],
       usage: null,
       errorMessage: "",
       approvalRequest: null,

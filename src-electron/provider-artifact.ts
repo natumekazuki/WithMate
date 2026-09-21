@@ -1,13 +1,6 @@
-import type {
-  AuditLogOperation,
-  AuditLogUsage,
-  ChangedFile,
-  DiffRow,
-  MessageArtifact,
-  RunCheck,
-  Session,
-} from "../src/app-state.js";
-import { reasoningEffortLabel, type ModelCatalogProvider, type ResolvedModelSelection } from "../src/model-catalog.js";
+import type { AuditLogOperation, AuditLogUsage, ChangedFile, DiffRow, RunCheck } from "../src-shared/session/runtime-state.js";
+import type { MessageArtifact, Session } from "../src-shared/session/session-state.js";
+import { reasoningEffortLabel, type ModelCatalogProvider, type ResolvedModelSelection } from "../src-shared/settings/model-catalog.js";
 import type { SnapshotCaptureStats, WorkspaceSnapshot } from "./snapshot-ignore.js";
 
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { SessionMonitorContextMenuResult } from "../../src/withmate-window-types.js";
+import type { SessionMonitorContextMenuResult } from "../../src-shared/window/withmate-window-types.js";
 import { runSessionMonitorContextMenu } from "../../src/home/home-session-monitor-feedback.js";
 
 // @test-value v2

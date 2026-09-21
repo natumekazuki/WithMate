@@ -1,26 +1,14 @@
-import {
-  currentTimestampLabel as defaultCurrentTimestampLabel,
-  type AuditLogEntry,
-  type ComposerPreview,
-  type LiveApprovalDecision,
-  type LiveApprovalRequest,
-  type LiveElicitationRequest,
-  type LiveElicitationResponse,
-  type LiveSessionRunState,
-  type MessageArtifact,
-  type ProviderQuotaTelemetry,
-  type ProjectMemoryEntry,
-  type RunSessionTurnRequest,
-  type SessionContextTelemetry,
-  type SessionMemory,
-} from "../src/app-state.js";
-import { normalizeSessionTurnCorrelation } from "../src/runtime-state.js";
-import { type CharacterProfile } from "../src/character-state.js";
+import { currentTimestampLabel as defaultCurrentTimestampLabel } from "../src-shared/time-state.js";
+import type { AuditLogEntry, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import type { MessageArtifact } from "../src-shared/session/session-state.js";
+import type { ProjectMemoryEntry, SessionMemory } from "../src-shared/memory/session-memory-state.js";
+import { normalizeSessionTurnCorrelation } from "../src-shared/session/runtime-state.js";
+import { type CharacterProfile } from "../src-shared/character/character-state.js";
 import { buildLiveRunAuditOperations } from "../src/live-run-audit-operations.js";
-import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
-import { isReadOnlySession, type Session } from "../src/session-state.js";
-import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { MateStorageState } from "../src/mate/mate-state.js";
+import { getProviderAppSettings, type AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import { isReadOnlySession, type Session } from "../src-shared/session/session-state.js";
+import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src-shared/settings/model-catalog.js";
+import type { MateStorageState } from "../src-shared/mate/mate-state.js";
 import {
   ProviderTurnError,
   type ProviderCodingAdapter,
@@ -35,7 +23,7 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { SessionTurnTerminalNotification } from "./session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
-import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
+import type { CharacterContextResponse } from "../src-shared/character-context/character-context-contract.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
 

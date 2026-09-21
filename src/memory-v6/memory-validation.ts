@@ -24,7 +24,7 @@ import {
   type MemoryValidationResult,
   type NormalizedMemoryTag,
   type ProjectTargetRef,
-} from "./memory-contract.js";
+} from "../../src-shared/memory/memory-contract.js";
 
 const MEMORY_ENTRY_KIND_SET = new Set<MemoryEntryKind>(MEMORY_ENTRY_KINDS);
 const MEMORY_APPEND_FILE_ROLE_SET = new Set<MemoryAppendFileRole>(MEMORY_APPEND_FILE_ROLES);

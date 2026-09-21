@@ -49,7 +49,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __hasOwnProp.call(mod, "module.exports") ? mod["module.exports"] : __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __require = /* #__PURE__ */ (() => createRequire(import.meta.url))();
 //#endregion
-//#region src/glossary-contract.ts
+//#region src-shared/glossary/glossary-contract.ts
 var GLOSSARY_RUNTIME_SCHEMA_VERSION = "withmate-glossary-v1";
 var GLOSSARY_LIMITS = {
 	maxFileBytes: 2097152,
@@ -21525,10 +21525,10 @@ function resolveDefaultWithMateMemoryDiscoveryFilePath(env = process.env, _adapt
 	return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
 }
 //#endregion
-//#region src/memory-v6/memory-contract.ts
+//#region src-shared/memory/memory-contract.ts
 var MEMORY_V6_SCHEMA_VERSION = "withmate-memory-v1";
 //#endregion
-//#region src/memory-v6/memory-response-contract.ts
+//#region src-shared/memory/memory-response-contract.ts
 function createMemoryErrorResponse(error) {
 	return {
 		schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -21536,7 +21536,7 @@ function createMemoryErrorResponse(error) {
 	};
 }
 //#endregion
-//#region src/agent-runtime/agent-runtime-binding-contract.ts
+//#region src-shared/agent-runtime/agent-runtime-binding-contract.ts
 var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
 var WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED";
 /** Canonical, client-scoped selector for the Memory runtime owner. */

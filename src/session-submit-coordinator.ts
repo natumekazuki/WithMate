@@ -1,5 +1,5 @@
-import type { LiveSessionRunState } from "./runtime-state.js";
-import type { Session } from "./session-state.js";
+import type { LiveSessionRunState } from "../src-shared/session/runtime-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
 import type { OwnedLiveSessionRunState } from "./session-live-run-state.js";
 
 export type SessionSubmitLease = {

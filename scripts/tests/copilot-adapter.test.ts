@@ -4,15 +4,13 @@ import { describe, it } from "node:test";
 
 import type { PermissionRequest } from "@github/copilot-sdk";
 
-import {
-  buildNewSession,
-  createDefaultSessionMemory,
-  type LiveRunStep,
-} from "../../src/app-state.js";
-import type { LiveBackgroundTask, LiveApprovalDecision } from "../../src/runtime-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src/model-catalog.js";
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
+import type { LiveRunStep } from "../../src-shared/session/runtime-state.js";
+import type { LiveBackgroundTask, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   applyCopilotAssistantEvent,
   applyCopilotBackgroundTaskEvent,

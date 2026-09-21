@@ -9,8 +9,8 @@ import {
   resolvePendingAuxiliaryMessageGroupId,
   shouldProjectLiveAssistantBridge,
 } from "../../src/auxiliary-session-message-projection.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
-import type { Message, MessageArtifact } from "../../src/session-state.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { Message, MessageArtifact } from "../../src-shared/session/session-state.js";
 
 function createAuxiliarySession(
   messages: Message[],

@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import path from "node:path";
 
-import type { WorkspaceDirectoryValidationResult } from "../src/workspace-directory-validation.js";
+import type { WorkspaceDirectoryValidationResult } from "../src-shared/window/workspace-directory-validation.js";
 
 type WorkspaceDirectoryValidationServiceDeps = {
   isAbsolute(targetPath: string): boolean;

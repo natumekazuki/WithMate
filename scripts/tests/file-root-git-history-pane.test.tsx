@@ -16,8 +16,8 @@ import type {
   FileRootGitHistoryDiffRequest,
   FileRootGitHistoryRepositoriesResult,
   FileRootGitHistoryRepository,
-} from "../../src/file-explorer/file-explorer-contract.js";
-import { isFileRootGitHistoryComparisonDiffRequest } from "../../src/file-explorer/file-explorer-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
+import { isFileRootGitHistoryComparisonDiffRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 type ObserverEntry = { isIntersecting: boolean };
 

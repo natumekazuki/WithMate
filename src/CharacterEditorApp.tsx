@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { CharacterDetail, CharacterRuntimeSnapshot } from "./character/character-catalog.js";
-import { parseCharacterDefinitionMarkdown } from "./character/character-definition.js";
-import { buildCharacterRuntimePromptSection } from "./character/character-runtime-snapshot.js";
+import type { CharacterDetail, CharacterRuntimeSnapshot } from "../src-shared/character/character-catalog.js";
+import { parseCharacterDefinitionMarkdown } from "../src-shared/character/character-definition.js";
+import { buildCharacterRuntimePromptSection } from "../src-shared/character/character-runtime-snapshot.js";
 import {
   buildCharacterEditorValidationSummary,
   buildCreateCharacterInputFromDraft,
@@ -25,8 +25,8 @@ import {
   DEFAULT_PROVIDER_ID,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
-} from "./model-catalog.js";
-import { getProviderAppSettings, type AppSettings } from "./provider-settings-state.js";
+} from "../src-shared/settings/model-catalog.js";
+import { getProviderAppSettings, type AppSettings } from "../src-shared/settings/provider-settings-state.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { CharacterAvatar } from "./ui-utils.js";

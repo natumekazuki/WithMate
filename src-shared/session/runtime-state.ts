@@ -1,8 +1,8 @@
-import { type ApprovalMode } from "./approval-mode.js";
-import { type CodexSandboxMode } from "./codex-sandbox-mode.js";
-import { type CodexSpeed } from "./codex-speed.js";
-import { type CodexReviewer } from "./codex-reviewer.js";
-import { type ModelReasoningEffort } from "./model-catalog.js";
+import { type ApprovalMode } from "../settings/approval-mode.js";
+import { type CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
+import { type CodexSpeed } from "../settings/codex-speed.js";
+import { type CodexReviewer } from "../settings/codex-reviewer.js";
+import { type ModelReasoningEffort } from "../settings/model-catalog.js";
 
 export type DiffRow = {
   kind: "context" | "add" | "delete" | "modify";

@@ -10,9 +10,9 @@ import { MemoryV6FileQuotaExceededError } from "../../src-electron/memory-v6-sto
 import { createV6StorageWorkerBundle } from "../../src-electron/storage-worker-bundle.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { createPersistentStoreLifecycleService } from "../../src-electron/persistent-store-lifecycle-service.js";
-import { buildNewSession } from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 
 function createFixtureWorkerUrl(): URL {
   const source = `

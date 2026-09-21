@@ -17,13 +17,13 @@ import {
   type SessionSummaryPageRequest,
   type HomeSessionSummaryPageResult,
   type SessionSummary,
-} from "../src/session-state.js";
-import { normalizeProviderId } from "../src/model-catalog.js";
-import type { AuditLogOperation, ChangedFile, RunCheck } from "../src/runtime-state.js";
+} from "../src-shared/session/session-state.js";
+import { normalizeProviderId } from "../src-shared/settings/model-catalog.js";
+import type { AuditLogOperation, ChangedFile, RunCheck } from "../src-shared/session/runtime-state.js";
 import {
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
-} from "../src/character/character-runtime-snapshot.js";
+} from "../src-shared/character/character-runtime-snapshot.js";
 import {
   registerSessionProviderIdNormalizer,
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
@@ -31,7 +31,7 @@ import {
 import { V3_SUMMARY_JSON_MAX_LENGTH, V3_TEXT_PREVIEW_MAX_LENGTH } from "./database-schema-v3.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { type BlobRef, TextBlobStore } from "./text-blob-store.js";
-import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
+import type { DeleteSessionsLastActiveBeforeCutoff } from "../src-shared/window/withmate-window-types.js";
 import {
   buildSessionSummaryKeysetClause,
   buildSessionSummarySearchClauseForColumns,

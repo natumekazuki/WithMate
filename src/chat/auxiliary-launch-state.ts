@@ -1,10 +1,10 @@
-import type { ModelCatalogProvider } from "../model-catalog.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type {
   AuxiliaryCreationContext,
   AuxiliaryCreationResult,
   AuxiliarySession,
   CreateAuxiliarySessionInput,
-} from "../auxiliary-session-state.js";
+} from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 import { LAUNCH_EMPTY_PROVIDER_MESSAGE, LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 

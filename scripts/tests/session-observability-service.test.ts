@@ -2,13 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { SessionObservabilityService } from "../../src-electron/session-observability-service.js";
-import type {
-  LiveSessionRunState,
-  ProviderQuotaTelemetry,
-  SessionBackgroundActivityKind,
-  SessionBackgroundActivityState,
-  SessionContextTelemetry,
-} from "../../src/app-state.js";
+import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
 
 function createService() {
   const events: Array<{ type: string; payload: unknown }> = [];

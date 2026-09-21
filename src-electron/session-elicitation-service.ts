@@ -1,4 +1,4 @@
-import type { LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState } from "../src/app-state.js";
+import type { LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState } from "../src-shared/session/runtime-state.js";
 
 type PendingElicitationRequest = {
   requestId: string;

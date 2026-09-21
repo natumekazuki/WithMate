@@ -1,5 +1,5 @@
-import { currentTimestampLabel } from "../src/time-state.js";
-import type { Session } from "../src/session-state.js";
+import { currentTimestampLabel } from "../src-shared/time-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
 import type { SessionPersistenceService } from "./session-persistence-service.js";
 import type { SessionStorageRead } from "./persistent-store-lifecycle-service.js";
 import { sessionSummariesToSessions } from "./session-summary-adapter.js";

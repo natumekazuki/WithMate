@@ -8,9 +8,9 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 
-import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src/character-context/character-context-contract.js";
-import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
-import { createMemoryErrorResponse } from "../../src/memory-v6/memory-response-contract.js";
+import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src-shared/character-context/character-context-contract.js";
+import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
+import { createMemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
 import {
   createWithMateMemoryRuntimeChallenge,
   WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
@@ -2142,7 +2142,7 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
   // @test-value v2
   // kind = "invariant"
   // claim = "operator CLIは複数active候補を列挙でき、暗黙のlast-writer選択を行わない"
-  // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+  // oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
   // fault = "instances/status --allが一意性を確認せず後発runtimeへ接続する"
   // observable = "instancesとstatus --allのsafe metadata列挙結果、およびactive候補ごとのidentity"
   // observation_boundary = "public-boundary"
@@ -2200,6 +2200,12 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
       }), WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
       const listed = output.json() as { instances: Array<Record<string, unknown>> };
       assert.equal(listed.instances.length, 2);
+      assert.deepEqual(
+        listed.instances
+          .map((instance) => [instance.applicationInstanceId, instance.runtimeGenerationId])
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+        ids.map(([applicationInstanceId, runtimeGenerationId]) => [applicationInstanceId, runtimeGenerationId]),
+      );
       assert.equal(JSON.stringify(listed).includes("secret"), false);
       const allOutput = createOutputCapture();
       assert.equal(await runWithMateMemoryCli(["status", "--all"], {
@@ -2208,7 +2214,14 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
         readFile: async () => { throw new Error("no legacy projection"); },
         stdout: allOutput.stream,
       }), WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-      assert.equal((allOutput.json() as { instances: unknown[] }).instances.length, 2);
+      const allListed = allOutput.json() as { instances: Array<Record<string, unknown>> };
+      assert.equal(allListed.instances.length, 2);
+      assert.deepEqual(
+        allListed.instances
+          .map((instance) => [instance.applicationInstanceId, instance.runtimeGenerationId])
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+        ids.map(([applicationInstanceId, runtimeGenerationId]) => [applicationInstanceId, runtimeGenerationId]),
+      );
     } finally {
       for (const publication of publications.reverse()) {
         await publication.unpublish();

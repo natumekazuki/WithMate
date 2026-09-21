@@ -5,7 +5,7 @@ import { mathFromMarkdown } from "mdast-util-math";
 import { gfm } from "micromark-extension-gfm";
 import { math } from "micromark-extension-math";
 
-import type { Session } from "../src/session-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 const RESPONSE_PREVIEW_MAX_GRAPHEMES = 40;

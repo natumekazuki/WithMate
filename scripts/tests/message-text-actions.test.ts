@@ -31,9 +31,9 @@ test("copyMessageTextToClipboard は空でない response text だけを書き�
 // @test-value v2
 // kind = "contract"
 // claim = "clipboard失敗の例外をfailure handlerから取得でき、空白入力ではhandlerを追加で呼ばない"
-// oracle = { type = "contract", ref = "message text copy actions" }
+// oracle = { type = "contract", ref = "src/message-text-actions.ts" }
 // fault = "clipboard失敗の例外がhandlerへ届かない、または空白入力で追加通知する"
-// observable = "copy result and collected failure errors"
+// observable = "copy result, collected failure errors, and clipboard call count"
 // observation_boundary = "public-boundary"
 // scope = "message-copy-failure-handler"
 // lifecycle = "permanent"
@@ -41,7 +41,9 @@ test("copyMessageTextToClipboard は空でない response text だけを書き�
 test("copyMessageTextToClipboardWithFailureHandler は失敗時だけ handler を呼ぶ", async () => {
   const failures: unknown[] = [];
   const error = new Error("denied");
+  let writeCount = 0;
   const writeText = async () => {
+    writeCount += 1;
     throw error;
   };
   const onFailure = (caughtError: unknown) => failures.push(caughtError);
@@ -55,6 +57,7 @@ test("copyMessageTextToClipboardWithFailureHandler は失敗時だけ handler �
     false,
   );
   assert.deepEqual(failures, [error]);
+  assert.equal(writeCount, 1);
 
   assert.equal(
     await copyMessageTextToClipboardWithFailureHandler({
@@ -65,6 +68,7 @@ test("copyMessageTextToClipboardWithFailureHandler は失敗時だけ handler �
     false,
   );
   assert.deepEqual(failures, [error]);
+  assert.equal(writeCount, 1);
 });
 
 test("createCopyMessageTextHandler は response text copy を fire-and-forget で開始する", async () => {

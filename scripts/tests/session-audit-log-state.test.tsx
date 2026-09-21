@@ -4,9 +4,9 @@ import { JSDOM } from "jsdom";
 import React, { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { buildNewSession } from "../../src/app-state.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { useSessionAuditLogs } from "../../src/session-audit-log-state.js";
-import type { AuditLogSummary } from "../../src/runtime-state.js";
+import type { AuditLogSummary } from "../../src-shared/session/runtime-state.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

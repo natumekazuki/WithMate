@@ -1,8 +1,8 @@
-import type { ComposerPreview } from "./app-state.js";
+import type { ComposerPreview } from "../src-shared/session/runtime-state.js";
 import {
   resolveMicrocopy,
   type MicrocopyCatalog,
-} from "./microcopy-state.js";
+} from "../src-shared/settings/microcopy-state.js";
 
 const TEXT_PATH_NOT_FOUND_ERROR_PATTERN = /^Path not found: (.+)$/;
 

@@ -1,14 +1,14 @@
-import type { ApprovalMode } from "./approval-mode.js";
-import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
-import type { CodexSpeed } from "./codex-speed.js";
-import type { CodexReviewer } from "./codex-reviewer.js";
+import type { ApprovalMode } from "../src-shared/settings/approval-mode.js";
+import type { CodexSandboxMode } from "../src-shared/settings/codex-sandbox-mode.js";
+import type { CodexSpeed } from "../src-shared/settings/codex-speed.js";
+import type { CodexReviewer } from "../src-shared/settings/codex-reviewer.js";
 import {
   resolveModelChangeSelection,
   resolveModelSelection,
   type ModelCatalogProvider,
   type ModelReasoningEffort,
   type ResolvedModelSelection,
-} from "./model-catalog.js";
+} from "../src-shared/settings/model-catalog.js";
 
 type ApprovalModeSessionLike = {
   approvalMode: ApprovalMode;

@@ -1,4 +1,4 @@
-import type { MateProfileSectionState } from "./mate-state.js";
+import type { MateProfileSectionState } from "../../src-shared/mate/mate-state.js";
 
 export type MateProfileRuntimeSectionKey = Exclude<MateProfileSectionState["sectionKey"], "project_digest">;
 

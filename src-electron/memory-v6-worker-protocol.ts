@@ -1,4 +1,4 @@
-import type { AffectEventInput } from "../src/character-affect/affect-contract.js";
+import type { AffectEventInput } from "../src-shared/character-affect/affect-contract.js";
 import type { AffectResetInput } from "./character-affect-storage.js";
 import type { MemoryV6Storage } from "./memory-v6-storage.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";

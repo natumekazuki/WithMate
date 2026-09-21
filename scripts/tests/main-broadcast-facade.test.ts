@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { SessionSummaryInvalidation } from "../../src/app-state.js";
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import type { AppSettings } from "../../src/provider-settings-state.js";
+import type { SessionSummaryInvalidation } from "../../src-shared/session/session-state.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { MainBroadcastFacade } from "../../src-electron/main-broadcast-facade.js";
 
 // @test-value v2

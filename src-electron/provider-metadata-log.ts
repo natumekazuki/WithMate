@@ -1,4 +1,4 @@
-import type { AuditLogProviderMetadata } from "../src/runtime-state.js";
+import type { AuditLogProviderMetadata } from "../src-shared/session/runtime-state.js";
 
 export type ProviderMetadataLogData = Omit<AuditLogProviderMetadata, "payload"> & {
   payloadPresent: boolean;

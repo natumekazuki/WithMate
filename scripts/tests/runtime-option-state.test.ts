@@ -8,7 +8,7 @@ import {
   buildSessionWithReasoningEffort,
   resolveRuntimeOptionValue,
 } from "../../src/runtime-option-state.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 
 const providerCatalog = {
   id: "codex",

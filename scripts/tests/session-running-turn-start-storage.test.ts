@@ -5,9 +5,9 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
-import { buildNewSession, type Message, type MessageArtifact } from "../../src/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
+import { buildNewSession, type Message, type MessageArtifact } from "../../src-shared/session/session-state.js";
 import { SessionRunningTurnStartConflictError } from "../../src-electron/session-storage-errors.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 

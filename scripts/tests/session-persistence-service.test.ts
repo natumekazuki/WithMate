@@ -2,16 +2,12 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import {
-  buildNewSession,
-  projectSessionSummary,
-  type CreateSessionInput,
-  type Session,
-} from "../../src/app-state.js";
-import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
-import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import { buildNewSession, projectSessionSummary } from "../../src-shared/session/session-state.js";
+import type { CreateSessionInput, Session } from "../../src-shared/session/session-state.js";
+import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character-affect-turn-ownership-coordinator.js";
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
 

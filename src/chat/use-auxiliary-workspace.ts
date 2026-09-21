@@ -3,8 +3,8 @@ import {
   projectAuxiliarySessionSummary,
   type AuxiliarySession,
   type AuxiliarySessionSummary,
-} from "../auxiliary-session-state.js";
-import type { LiveSessionRunState } from "../app-state.js";
+} from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 
 export type AuxiliaryWorkspaceApi = {
   listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;

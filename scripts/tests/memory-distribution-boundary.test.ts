@@ -7,8 +7,8 @@ import { describe, it } from "node:test";
 import {
   projectMemoryV6Diagnostics,
   type MemoryV6Diagnostics,
-} from "../../src/memory-v6/memory-diagnostics-state.js";
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+} from "../../src-shared/memory/memory-diagnostics-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   ManagedSkillDistributionService,
   WITHMATE_GLOSSARY_SKILL_NAME,
@@ -69,16 +69,18 @@ describe("Memory distribution boundary", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "Memory diagnosticsはgeneratedAt、runtime、cliShim、lastErrorsだけを投影し、SettingsはSkill同期とprovider sampleを表示しない"
-  // oracle = { type = "adr", ref = "ADR-024 diagnostics projection" }
-  // failure_mode = "managed Skill停止後もprovider状態、Skill同期結果、Memory provider instructionがrendererへ公開される"
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "managed Skill停止後もprovider状態、Skill同期結果、Memory provider instructionがrendererへ公開される"
+  // observable = "diagnosticsの公開key集合とSettingsの表示ソース"
+  // observation_boundary = "public-boundary"
   // scope = "memory-diagnostics-public-projection"
   // lifecycle = "permanent"
   // @end-test-value
   it("diagnosticsとSettingsからmanaged Skill projectionを除外する", async () => {
-    const diagnosticsSource = await readFile("src/memory-v6/memory-diagnostics-state.ts", "utf8");
+    const diagnosticsSource = await readFile("src-shared/memory/memory-diagnostics-state.ts", "utf8");
     const settingsSource = await readFile("src/settings/SettingsContent.tsx", "utf8");
 
     assert.doesNotMatch(diagnosticsSource, /skillSync|providerSupported|skillRootConfigured/);

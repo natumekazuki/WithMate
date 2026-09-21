@@ -1,15 +1,15 @@
 import { basename, dirname, join } from "node:path";
 import { rm } from "node:fs/promises";
 
-import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { ModelCatalogSnapshot } from "../src-shared/settings/model-catalog.js";
 import type {
   Session,
   SessionCharacterUsage,
   SessionSummary,
   SessionSummaryPageRequest,
   HomeSessionSummaryPageResult,
-} from "../src/session-state.js";
-import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
+} from "../src-shared/session/session-state.js";
+import type { AuxiliarySession, AuxiliarySessionSummary } from "../src-shared/auxiliary/auxiliary-session-state.js";
 import type {
   CharacterCatalogEntry,
   CharacterDetail,
@@ -18,7 +18,7 @@ import type {
   ResolveLaunchCharacterInput,
   UpdateCharacterDefinitionInput,
   UpdateCharacterMetadataInput,
-} from "../src/character/character-catalog.js";
+} from "../src-shared/character/character-catalog.js";
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME } from "./database-schema-v4.js";

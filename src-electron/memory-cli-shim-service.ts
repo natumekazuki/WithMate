@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { MemoryV6CliShimDiagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
+import type { MemoryV6CliShimDiagnostics } from "../src-shared/memory/memory-diagnostics-state.js";
 
 type MemoryCliShimServiceDiagnostics = MemoryV6CliShimDiagnostics & {
   shimDirectory: string | null;

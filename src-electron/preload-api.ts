@@ -1,6 +1,6 @@
 import type { IpcRenderer } from "electron";
 
-import type { RendererLogInput } from "../src/app-log-types.js";
+import type { RendererLogInput } from "../src-shared/window/app-log-types.js";
 import { normalizeSessionSummaryInvalidation } from "./session-summary-query.js";
 import {
   normalizeAuxiliarySessionNavigationPayload,
@@ -8,11 +8,11 @@ import {
   normalizeOpenSessionWindowIdsPageResult,
   normalizeAuxiliarySessionSelectionPayload,
   OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
-} from "../src/withmate-window-types.js";
+} from "../src-shared/window/withmate-window-types.js";
 import {
   normalizeSessionWindowRestoreIds,
   normalizeSessionWindowRestoreResult,
-} from "../src/session-window-restore.js";
+} from "../src-shared/window/session-window-restore.js";
 import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
@@ -26,7 +26,7 @@ import type {
   WithMateWindowSettingsApi,
   WithMateWindowMateApi,
   WithMateWindowSubscriptionApi,
-} from "../src/withmate-window-api.js";
+} from "../src-shared/ipc/withmate-window-api.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT,
@@ -182,7 +182,7 @@ import {
   WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
   WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
-} from "../src/withmate-ipc-channels.js";
+} from "../src-shared/ipc/withmate-ipc-channels.js";
 
 type IpcRendererLike = Pick<IpcRenderer, "invoke" | "on" | "removeListener" | "send">;
 type ListenerDisposer = () => void;

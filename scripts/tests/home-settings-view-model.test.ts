@@ -5,8 +5,8 @@ import {
   MEMORY_FILE_QUOTA_MAX_BYTES,
   MEMORY_FILE_QUOTA_MIN_BYTES,
   createDefaultAppSettings,
-} from "../../src/provider-settings-state.js";
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+} from "../../src-shared/settings/provider-settings-state.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import {
   buildPersistedAppSettingsFromRows,
   buildHomeProviderSettingRows,

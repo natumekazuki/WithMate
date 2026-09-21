@@ -1,11 +1,11 @@
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
-import { DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
-import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
-import { DEFAULT_CODEX_SPEED } from "../src/codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER } from "../src/codex-reviewer.js";
-import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import { DEFAULT_APPROVAL_MODE } from "../src-shared/settings/approval-mode.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../src-shared/settings/codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED } from "../src-shared/settings/codex-speed.js";
+import { DEFAULT_CODEX_REVIEWER } from "../src-shared/settings/codex-reviewer.js";
+import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src-shared/settings/model-catalog.js";
 import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
 export const APP_DATABASE_V3_FILENAME = "withmate-v3.db";

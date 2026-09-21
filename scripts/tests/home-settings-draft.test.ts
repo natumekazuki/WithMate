@@ -6,8 +6,8 @@ import {
   MEMORY_FILE_QUOTA_DEFAULT_BYTES,
   resolveProviderSkillRootPath,
   type AppSettings,
-} from "../../src/provider-settings-state.js";
-import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
+} from "../../src-shared/settings/provider-settings-state.js";
+import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import {
   updateAutoCollapseActionDockOnSend,
   updateScrollToLatestOnSend,

@@ -7,7 +7,8 @@ export type MemoryV6RuntimeDiagnostics = {
 };
 
 export type MemoryV6CliShimDiagnostics = {
-  platform: NodeJS.Platform;
+  platform: "aix" | "android" | "darwin" | "freebsd" | "haiku" | "linux"
+    | "openbsd" | "sunos" | "win32" | "cygwin" | "netbsd";
   commandName: "withmate-memory";
   supported: boolean;
   status:

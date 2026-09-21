@@ -7,7 +7,7 @@ import {
   normalizeCharacterOwnerId,
 } from "./character-owner.js";
 import { stripCharacterDefinitionFrontmatter } from "./character-definition.js";
-import { DEFAULT_CHARACTER_THEME_COLORS } from "../character-state.js";
+import { DEFAULT_CHARACTER_THEME_COLORS } from "./character-state.js";
 
 export function normalizeCharacterRuntimeSnapshot(value: unknown): CharacterRuntimeSnapshot | null {
   if (!value || typeof value !== "object") {

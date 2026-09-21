@@ -5,7 +5,7 @@ import {
   buildOpenSessionWindowIdsPage,
   normalizeOpenSessionWindowIdsChangedPayload,
   normalizeOpenSessionWindowIdsPageResult,
-} from "../../src/withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 test("open Session Window ID page は100件単位で全体を返せる", () => {
   const sessionIds = Array.from({ length: 101 }, (_, index) => `session-${String(index).padStart(3, "0")}`);

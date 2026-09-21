@@ -6,7 +6,7 @@ import {
   parseCreatePromptTemplateInput,
   parseUpdatePromptTemplateInput,
   type PromptTemplate,
-} from "../src/prompt-template.js";
+} from "../src-shared/prompt-template.js";
 import { CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 

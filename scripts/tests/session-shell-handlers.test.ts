@@ -659,14 +659,14 @@ describe("applySkillPromptInsertionCommand", () => {
 describe("createSkillPromptInsertionHandler", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "providerがある場合だけskill prompt handlerがdraftとUI stateを反映する"
+  // claim = "providerがある場合はskill prompt handlerがdraftとUI stateを反映し、providerがない場合は何もしない"
   // oracle = { type = "contract", ref = "src/chat/session-shell-handlers.ts" }
   // fault = "providerなしでもdraft/stateを更新する、またはproviderありの反映を欠落させる"
   // observable = "provider有無ごとのhandler return valueとevents"
   // observation_boundary = "component-behavior"
   // scope = "session-shell-handlers.skill-prompt"
   // lifecycle = "permanent"
-  // distinction = "provider guardとstate projectionを有無の両ケースで確認する"
+  // distinction = "providerあり・なしを同一handler契約の隣接caseで確認する"
   // @end-test-value
   it("skill prompt 挿入 handler を作り、provider がある場合だけ draft と UI state を反映する", () => {
     const events: string[] = [];

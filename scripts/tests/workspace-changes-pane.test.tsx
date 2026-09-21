@@ -10,7 +10,7 @@ import type {
   FileRootFileDiffRequest,
   FileRootGitChangeEntry,
   SessionFileRoot,
-} from "../../src/file-explorer/file-explorer-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 // @test-value v1
 // kind = "contract"

@@ -3,9 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { buildNewSession, type Session } from "../../src/app-state.js";
-import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { AuxiliarySessionService } from "../../src-electron/auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary-session-storage.js";
 import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character-affect-turn-ownership-coordinator.js";
@@ -13,15 +14,15 @@ import { ProviderRuntimeOperationCoordinator } from "../../src-electron/provider
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
-import type { AffectEventInput } from "../../src/character-affect/affect-contract.js";
+import type { AffectEventInput } from "../../src-shared/character-affect/affect-contract.js";
 import {
   createCharacterContextError,
   type CharacterAffectAppraiseResponse,
   type CharacterContextErrorResponse,
   type CharacterContextResponse,
-} from "../../src/character-context/character-context-contract.js";
+} from "../../src-shared/character-context/character-context-contract.js";
 import { CharacterAffectTurnSettlementStorage, hasCommittedAssistantMessage } from "../../src-electron/character-affect-turn-settlement-storage.js";
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import {
   CharacterAffectTurnRetryScheduler,
   settleCharacterAffectTurnOrScheduleRetry,

@@ -3,7 +3,7 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import type {
   GlossaryEntry,
   SessionGlossaryProjection,
-} from "../glossary-contract.js";
+} from "../../src-shared/glossary/glossary-contract.js";
 import { BackNavigationButton } from "../back-navigation-button.js";
 
 export type SessionGlossaryPaneProps = {

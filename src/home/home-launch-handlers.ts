@@ -1,7 +1,7 @@
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import type { CreateSessionRequest, HomeSessionSummary, Session, SessionCharacterUsage, SessionSummary } from "../session-state.js";
-import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
-import type { ModelCatalogProvider } from "../model-catalog.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
+import type { CreateSessionRequest, HomeSessionSummary, Session, SessionCharacterUsage, SessionSummary } from "../../src-shared/session/session-state.js";
+import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
 import type { OpenSessionWindowIdsLoadStatus } from "../open-session-window-subscription.js";
 import type { HomeLaunchDraft } from "./home-launch-state.js";

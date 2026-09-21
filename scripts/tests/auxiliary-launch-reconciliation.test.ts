@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { reconcileAuxiliaryLaunchCreation } from "../../src/chat/auxiliary-launch-reconciliation.js";
-import type { AuxiliaryCreationRequest, AuxiliaryCreationResult, AuxiliarySession } from "../../src/auxiliary-session-state.js";
+import type { AuxiliaryCreationRequest, AuxiliaryCreationResult, AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 
 const request: AuxiliaryCreationRequest = {
   parentSessionId: "parent-1",

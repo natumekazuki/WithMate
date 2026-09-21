@@ -2,7 +2,7 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   normalizeSessionWindowRestoreIds,
   type SessionWindowRestoreResult,
-} from "../src/session-window-restore.js";
+} from "../src-shared/window/session-window-restore.js";
 import type { SessionWindowRestoreState } from "./session-window-bridge.js";
 
 type SessionWindowRestoreStorageLike = {

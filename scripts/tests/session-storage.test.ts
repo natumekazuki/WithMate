@@ -5,8 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { buildNewSession } from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
 
 async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {

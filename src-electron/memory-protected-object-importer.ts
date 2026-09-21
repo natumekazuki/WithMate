@@ -10,7 +10,7 @@ import {
   createMemoryProtectedObjectId,
   type MemoryProtectedObjectStore,
 } from "./memory-protected-object-store.js";
-import type { MemoryAppendFileInput } from "../src/memory-v6/memory-contract.js";
+import type { MemoryAppendFileInput } from "../src-shared/memory/memory-contract.js";
 import type {
   MemoryV6AppendProtectedObjectInput,
   MemoryV6ProtectedObjectMediaKind,

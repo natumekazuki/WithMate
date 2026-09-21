@@ -1,4 +1,4 @@
-import type { MateProfile, MateStorageState } from "./mate-state.js";
+import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
 import type { HomeMateSetupPanelProps } from "./MateSetupPanel.js";
 
 export type HomeMateSetupContentInput = {

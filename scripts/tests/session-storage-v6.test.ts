@@ -5,10 +5,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
-import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
-import { buildNewSession, getSessionIncarnationId, type MessageArtifact } from "../../src/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
+import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src-shared/character/character-owner.js";
+import { buildNewSession, getSessionIncarnationId, type MessageArtifact } from "../../src-shared/session/session-state.js";
 import { resolveCharacterAuthoringRuntimeSessionForTurn } from "../../src-electron/character-authoring-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 

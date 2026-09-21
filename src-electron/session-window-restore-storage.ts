@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { normalizeSessionWindowRestoreIds } from "../src/session-window-restore.js";
+import { normalizeSessionWindowRestoreIds } from "../src-shared/window/session-window-restore.js";
 
 const SNAPSHOT_FILE_NAME = "session-window-restore-set.json";
 const SNAPSHOT_VERSION = 1;

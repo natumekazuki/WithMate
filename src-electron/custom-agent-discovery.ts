@@ -4,7 +4,7 @@ import path from "node:path";
 
 import type { CustomAgentConfig } from "@github/copilot-sdk";
 
-import type { DiscoveredCustomAgent, DiscoveredCustomAgentSource } from "../src/app-state.js";
+import type { DiscoveredCustomAgent, DiscoveredCustomAgentSource } from "../src-shared/session/runtime-state.js";
 
 type CustomAgentRoot = {
   rootPath: string;

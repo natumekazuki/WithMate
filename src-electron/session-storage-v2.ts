@@ -16,14 +16,14 @@ import {
   type SessionSummaryPageRequest,
   type HomeSessionSummaryPageResult,
   type SessionSummary,
-} from "../src/session-state.js";
-import { normalizeProviderId } from "../src/model-catalog.js";
+} from "../src-shared/session/session-state.js";
+import { normalizeProviderId } from "../src-shared/settings/model-catalog.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import {
   registerSessionProviderIdNormalizer,
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
 } from "./session-provider-id-sql.js";
-import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
+import type { DeleteSessionsLastActiveBeforeCutoff } from "../src-shared/window/withmate-window-types.js";
 import {
   buildSessionSummaryKeysetClause,
   buildSessionSummarySearchClauseForColumns,

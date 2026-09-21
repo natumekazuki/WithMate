@@ -1,26 +1,7 @@
-import {
-  type ComposerPreview,
-  type DiscoveredCustomAgent,
-  type DiscoveredSkill,
-  type MessageArtifact,
-  type Session,
-  type AuditLogDetail,
-  type AuditLogDetailFragment,
-  type AuditLogDetailSection,
-  type AuditLogEntry,
-  type AuditLogOperationDetailFragment,
-  type AuditLogSummary,
-  type AuditLogSummaryPageRequest,
-  type AuditLogSummaryPageResult,
-  type SessionCharacterUsage,
-  type SessionSummaryPageRequest,
-  type HomeSessionSummaryPageResult,
-  type SessionSummary,
-  cloneHomeSessionSummaries,
-  cloneSessionSummaries,
-  cloneSessions,
-} from "../src/app-state.js";
-import { getProviderAppSettings, resolveProviderSkillRootPath, type AppSettings } from "../src/provider-settings-state.js";
+import type { ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogOperationDetailFragment, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult } from "../src-shared/session/runtime-state.js";
+import type { MessageArtifact, Session, SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary } from "../src-shared/session/session-state.js";
+import { cloneHomeSessionSummaries, cloneSessionSummaries, cloneSessions } from "../src-shared/session/session-state.js";
+import { getProviderAppSettings, resolveProviderSkillRootPath, type AppSettings } from "../src-shared/settings/provider-settings-state.js";
 import { extractComposerAttachmentReferenceCandidates } from "../src/path-reference.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 

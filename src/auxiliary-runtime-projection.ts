@@ -1,5 +1,5 @@
-import type { Session } from "./session-state.js";
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
+import type { AuxiliarySession } from "../src-shared/auxiliary/auxiliary-session-state.js";
 
 export type AuxiliaryRuntimeProjectionInput = Pick<AuxiliarySession, "id" | "runState" | "title" | "provider" | "catalogRevision" | "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "codexSpeed" | "codexReviewer" | "customAgentName" | "allowedAdditionalDirectories" | "threadId" | "messages" | "updatedAt" | "characterId" | "characterRuntimeSnapshot" | "characterRuntimeSnapshotInvalid">;
 export function buildMainAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliaryRuntimeProjectionInput): Session {

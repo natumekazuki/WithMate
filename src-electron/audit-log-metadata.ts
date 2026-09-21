@@ -1,4 +1,4 @@
-import type { AuditTransportPayload } from "../src/app-state.js";
+import type { AuditTransportPayload } from "../src-shared/session/runtime-state.js";
 
 export function appendTransportPayloadFields(
   payload: AuditTransportPayload | null,

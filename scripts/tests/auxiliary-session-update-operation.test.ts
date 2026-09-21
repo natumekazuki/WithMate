@@ -13,7 +13,7 @@ import {
   syncActiveAuxiliarySessionRef,
   type AuxiliarySessionUpdateOperationResult,
 } from "../../src/auxiliary-session-update-operation.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 
 function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
   return {

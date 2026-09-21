@@ -4,9 +4,9 @@ import {
   isChatActionDockMode,
   isChatHeaderVisibility,
   type ChatLayoutPreferenceUpdate,
-} from "../src/chat/chat-layout-preference.js";
-import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../src/provider-settings-state.js";
-import { normalizeSessionSidePane, type SessionSidePane } from "../src/session-side-pane.js";
+} from "../src-shared/settings/chat-layout-preference.js";
+import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import { normalizeSessionSidePane, type SessionSidePane } from "../src-shared/settings/session-side-pane.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-import type { SessionDirectoryEntry } from "../src/file-explorer/file-explorer-contract.js";
+import type { SessionDirectoryEntry } from "../src-shared/file-explorer/file-explorer-contract.js";
 
 const WORKER_SOURCE = String.raw`
 const { lstat, readdir, stat } = require("node:fs/promises");

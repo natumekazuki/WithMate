@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { WorkspaceDirectoryValidationService } from "../../src-electron/workspace-directory-validation-service.js";
-import { resolveWorkspaceDirectoryValidationMessage } from "../../src/workspace-directory-validation.js";
+import { resolveWorkspaceDirectoryValidationMessage } from "../../src-shared/window/workspace-directory-validation.js";
 
 function createService({
   absolute = true,

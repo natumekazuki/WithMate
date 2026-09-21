@@ -17,7 +17,7 @@ import {
   normalizeGlossaryLookup,
   type GlossaryEntry,
   type GlossaryProjectionState,
-} from "../../src/glossary-contract.js";
+} from "../../src-shared/glossary/glossary-contract.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];

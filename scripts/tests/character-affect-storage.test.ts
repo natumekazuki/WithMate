@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
 
-import { AFFECT_SCHEMA_VERSION, type AffectEventInput } from "../../src/character-affect/affect-contract.js";
+import { AFFECT_SCHEMA_VERSION, type AffectEventInput } from "../../src-shared/character-affect/affect-contract.js";
 import {
   CharacterAffectIdempotencyConflictError,
   CharacterAffectStorage,

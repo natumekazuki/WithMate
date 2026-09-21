@@ -6,12 +6,12 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   parseCharacterDefinitionMarkdown,
   validateCharacterNotesMarkdown,
-} from "../src/character/character-definition.js";
+} from "../src-shared/character/character-definition.js";
 import {
   buildDefaultCharacterDefinition,
   buildDefaultCharacterNotes,
 } from "../src/character/character-definition-template.js";
-import { isUnknownCharacterOwnerId } from "../src/character/character-owner.js";
+import { isUnknownCharacterOwnerId } from "../src-shared/character/character-owner.js";
 import {
   DEFAULT_CHARACTER_THEME,
   type CharacterCatalogEntry,
@@ -23,7 +23,7 @@ import {
   type ResolveLaunchCharacterInput,
   type UpdateCharacterDefinitionInput,
   type UpdateCharacterMetadataInput,
-} from "../src/character/character-catalog.js";
+} from "../src-shared/character/character-catalog.js";
 import {
   areCharacterIconPathReferencesEquivalent,
   hasCharacterIconPathScheme,

@@ -7,7 +7,7 @@ import type {
   MemoryForgetReason,
   MemoryEntryState,
   NormalizedMemoryTag,
-} from "../src/memory-v6/memory-contract.js";
+} from "../src-shared/memory/memory-contract.js";
 import {
   decodeMemoryListTagsCursor,
   encodeMemoryListTagsCursor,
@@ -17,7 +17,7 @@ import type {
   MemoryV6ReviewForgetResult,
   MemoryV6ReviewSearchHit,
   MemoryV6ReviewSearchResult,
-} from "../src/memory-v6/memory-review-state.js";
+} from "../src-shared/memory/memory-review-state.js";
 import {
   toMemorySearchHit,
   type ActiveMemoryEntryDetail,
@@ -26,7 +26,7 @@ import {
   type MemorySearchHit,
   type MemorySearchMatch,
   type MemorySearchMatchField,
-} from "../src/memory-v6/memory-state.js";
+} from "../src-shared/memory/memory-state.js";
 import { isValidV6Database } from "./database-schema-v6.js";
 import {
   MEMORY_V6_ENTRY_SELECT_COLUMNS,

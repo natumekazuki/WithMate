@@ -1,7 +1,7 @@
 import type { KeyboardEventHandler, ReactNode } from "react";
 
 import type { SessionHeaderProps } from "../session-components.js";
-import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
+import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../shortcut-registry.js";
 import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { createSessionFilesActions } from "./session-files-actions.js";

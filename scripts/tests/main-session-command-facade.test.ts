@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
-import type { Session } from "../../src/session-state.js";
-import type { DeleteSessionsLastActiveBeforeCutoff } from "../../src/withmate-window-types.js";
+import { createDefaultAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import type { DeleteSessionsLastActiveBeforeCutoff } from "../../src-shared/window/withmate-window-types.js";
 import { MainSessionCommandFacade } from "../../src-electron/main-session-command-facade.js";
 import {
   ProviderRuntimeOperationCoordinator,
@@ -1467,7 +1467,7 @@ test("MainSessionCommandFacade は実在しない cutoff delete 日付を拒否�
 // claim = "staleなCopilot quotaはrun開始前に非同期refreshされ、その後Session turnがruntime serviceへ委譲される"
 // oracle = { type = "contract", ref = "provider quota telemetry refresh" }
 // fault = "stale quotaを更新せずrunする、Copilot以外を更新する、またはruntime turnを委譲しない"
-// observable = "refreshProviderQuotaTelemetryのprovider ID、runtime run call、返却Session ID"
+// observable = "refreshProviderQuotaTelemetryのprovider ID、runtime run call、両者の呼出し順、返却Session ID"
 // observation_boundary = "public-boundary"
 // scope = "main-session-command-facade-copilot-quota"
 // lifecycle = "permanent"
@@ -1496,6 +1496,7 @@ test("MainSessionCommandFacade は stale な Copilot quota を非同期更新し
     isProviderQuotaTelemetryStale: () => true,
     refreshProviderQuotaTelemetry: async (providerId) => {
       refreshedProviderId = providerId;
+      calls.push(`refresh:${providerId}`);
       return null;
     },
     createSessionId: () => "launch-test",
@@ -1507,7 +1508,7 @@ test("MainSessionCommandFacade は stale な Copilot quota を非同期更新し
 
   assert.equal(result.id, "s-1");
   assert.equal(refreshedProviderId, "copilot");
-  assert.deepEqual(calls, ["run:s-1"]);
+  assert.deepEqual(calls, ["refresh:copilot", "run:s-1"]);
 });
 
 // @test-value v2

@@ -5,7 +5,7 @@ import {
   startSessionSummaryInvalidationSubscription,
   type SessionSummaryInvalidationSubscriptionApi,
 } from "../../src/session-summary-subscription.js";
-import type { SessionSummaryInvalidation } from "../../src/session-state.js";
+import type { SessionSummaryInvalidation } from "../../src-shared/session/session-state.js";
 
 test("startSessionSummaryInvalidationSubscription は api がない場合 no-op cleanup を返す", () => {
   const received: SessionSummaryInvalidation[] = [];

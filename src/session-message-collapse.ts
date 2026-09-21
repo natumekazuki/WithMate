@@ -1,4 +1,4 @@
-import { isMessageBookmarked, type Message } from "./session-state.js";
+import { isMessageBookmarked, type Message } from "../src-shared/session/session-state.js";
 import type { MessageListSource } from "./auxiliary-session-message-projection.js";
 import { projectMessageRenderedSearchText } from "./message-rendered-search-text.js";
 

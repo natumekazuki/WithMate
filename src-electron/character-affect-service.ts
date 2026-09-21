@@ -4,7 +4,7 @@ import {
   type AffectEvaluator,
   type AffectMemoryEpisodeCandidate,
   type EffectiveAffectState,
-} from "../src/character-affect/affect-contract.js";
+} from "../src-shared/character-affect/affect-contract.js";
 import {
   CharacterAffectStorage,
   type AffectResetInput,

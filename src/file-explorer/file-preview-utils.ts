@@ -3,9 +3,9 @@ import type {
   SessionFileRoot,
   FileRootChangesResult,
   FileRootGitDiffScope,
-} from "./file-explorer-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { findTextMatches } from "../find-text-matches.js";
-import { detectSessionFileEncoding } from "./file-content-detection.js";
+import { detectSessionFileEncoding } from "../../src-shared/file-explorer/file-content-detection.js";
 
 export type SessionFileEncodingSelection = "auto" | SessionFileEncoding;
 

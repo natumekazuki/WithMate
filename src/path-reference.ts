@@ -1,5 +1,5 @@
 import { extractLocalMarkdownImagePaths } from "./composer-image-reference.js";
-import type { ComposerAttachmentInput } from "./runtime-state.js";
+import type { ComposerAttachmentInput } from "../src-shared/session/runtime-state.js";
 
 export const TEXT_PATH_REFERENCE_PATTERN = /(^|[\s(])@(?:"([^"\r\n]+)"|([^\s@]+))/gm;
 export const TEXT_PATH_REFERENCE_SIGNATURE_SEPARATOR = "\u001f";

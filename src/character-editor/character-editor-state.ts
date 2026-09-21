@@ -4,13 +4,13 @@ import {
   DEFAULT_CHARACTER_THEME,
   type CharacterDetail,
   type CharacterTheme,
-} from "../character/character-catalog.js";
+} from "../../src-shared/character/character-catalog.js";
 import {
   parseCharacterDefinitionMarkdown,
   validateCharacterDefinitionMarkdown,
   validateCharacterNotesMarkdown,
   type CharacterDefinitionValidationIssue,
-} from "../character/character-definition.js";
+} from "../../src-shared/character/character-definition.js";
 import {
   areCharacterIconPathReferencesEquivalent,
   validateCharacterIconRegistrationPath,

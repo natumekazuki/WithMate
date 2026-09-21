@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { Session, SessionSummary } from "../../src/app-state.js";
+import type { Session, SessionSummary } from "../../src-shared/session/session-state.js";
 import {
   hydrateSessionsFromSummaries,
   sessionSummariesToSessions,

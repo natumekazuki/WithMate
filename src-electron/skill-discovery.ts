@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { DiscoveredSkill, DiscoveredSkillSource } from "../src/app-state.js";
+import type { DiscoveredSkill, DiscoveredSkillSource } from "../src-shared/session/runtime-state.js";
 
 type SkillRoot = {
   rootPath: string;

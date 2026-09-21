@@ -6,7 +6,7 @@ import {
   startAppSettingsSubscription,
   type AppSettingsSubscriptionApi,
 } from "../../src/app-settings-subscription.js";
-import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
+import { createDefaultAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
 const appSettings: AppSettings = createDefaultAppSettings();
 const nextAppSettings: AppSettings = {

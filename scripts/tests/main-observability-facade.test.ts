@@ -4,7 +4,7 @@ import test from "node:test";
 import type { ProviderCodingAdapter } from "../../src-electron/provider-runtime.js";
 import { MainObservabilityFacade } from "../../src-electron/main-observability-facade.js";
 import { SessionObservabilityService } from "../../src-electron/session-observability-service.js";
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
 function createService() {
   return new SessionObservabilityService({

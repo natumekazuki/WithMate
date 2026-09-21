@@ -6,7 +6,7 @@ import {
   createDefaultUserMicrocopyCatalog,
   normalizeUserMicrocopyCatalog,
   resolveMicrocopy,
-} from "../../src/microcopy-state.js";
+} from "../../src-shared/settings/microcopy-state.js";
 
 describe("microcopy-state", () => {
   it("user default catalog は built-in default を clone する", () => {

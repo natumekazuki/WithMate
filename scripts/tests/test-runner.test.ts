@@ -19,6 +19,10 @@ function writeFixture(root: string, name: string, text = ""): void {
   writeFileSync(filePath, text);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function run(root: string, args: string[] = []) {
   // Child runners must not inherit a parent node:test context or CI shard selection.
   const env = { ...process.env };
@@ -95,9 +99,10 @@ test("partitions the complete collection exactly once with stable ties", () => {
 test("normal and shard CLI execute the same nested test collection", () => {
   const root = createFixture();
   const expected = ["scripts/tests/first.test.ts", "tests/renderer/nested/second.test.tsx"];
+  const titleByPath = new Map(expected.map((name) => [name, `fixture execution: ${name}`]));
   try {
     for (const name of expected) {
-      writeFixture(root, name, "import test from 'node:test'; test('fixture execution', () => {});\n");
+      writeFixture(root, name, `import test from 'node:test'; test(${JSON.stringify(titleByPath.get(name))}, () => {});\n`);
     }
     const normal = run(root, ["--list"]);
     assert.equal(normal.status, 0, normal.stderr);
@@ -109,6 +114,12 @@ test("normal and shard CLI execute the same nested test collection", () => {
       shardPaths.push(...JSON.parse(listed.stdout));
       const executed = run(root, [`--shard=${shard}`, "--test-reporter=tap"]);
       assert.equal(executed.status, 0, executed.stdout + executed.stderr);
+      const selected = JSON.parse(listed.stdout) as string[];
+      assert.equal(selected.length, 1);
+      assert.match(executed.stdout, new RegExp(`fixture execution: ${escapeRegExp(selected[0])}`));
+      const omitted = expected.find((name) => !selected.includes(name));
+      assert.ok(omitted);
+      assert.doesNotMatch(executed.stdout, new RegExp(`fixture execution: ${escapeRegExp(omitted)}`));
       assert.match(executed.stdout, /# tests 1\b/);
     }
     assert.deepEqual(shardPaths.sort(), expected);
@@ -142,7 +153,7 @@ test("propagates failing tests and rejects an empty collection", () => {
     assert.match(empty.stderr, /No test files selected/);
     writeFixture(root, "tests/failure.test.ts", "import test from 'node:test'; test('intentional failure', () => { throw new Error('fixture failure'); });\n");
     const failed = run(root, ["--test-reporter=tap"]);
-    assert.equal(failed.status, 1, failed.stderr);
+    assert.notEqual(failed.status, 0, failed.stderr);
     assert.match(failed.stdout, /fixture failure/);
   } finally {
     rmSync(root, { recursive: true, force: true });

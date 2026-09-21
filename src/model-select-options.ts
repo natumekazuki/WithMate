@@ -1,4 +1,4 @@
-import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } from "./model-catalog.js";
+import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } from "../src-shared/settings/model-catalog.js";
 import { modelDisplayLabel, modelOptionLabel, reasoningDepthLabel } from "./ui-utils.js";
 
 export type ModelSelectOption = {

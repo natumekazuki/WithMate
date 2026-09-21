@@ -5,8 +5,8 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { buildNewSession } from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { AuditLogStorage } from "../../src-electron/audit-log-storage.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
 

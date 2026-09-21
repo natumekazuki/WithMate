@@ -3,7 +3,7 @@ import type {
   MemoryError,
   MemoryTargetSelector,
   ProjectTargetRef,
-} from "../src/memory-v6/memory-contract.js";
+} from "../src-shared/memory/memory-contract.js";
 import type { MemoryV6ProjectScopeAdmission, MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 import {
   canAccessMemoryTarget,

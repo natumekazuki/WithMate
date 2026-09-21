@@ -1,4 +1,4 @@
-import type { LiveApprovalDecision, LiveApprovalRequest, LiveSessionRunState } from "../src/app-state.js";
+import type { LiveApprovalDecision, LiveApprovalRequest, LiveSessionRunState } from "../src-shared/session/runtime-state.js";
 
 type PendingApprovalRequest = {
   requestId: string;

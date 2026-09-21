@@ -1,6 +1,6 @@
-import type { MicrocopySlot } from "../microcopy-state.js";
-import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
-import type { AppSettings } from "../provider-settings-state.js";
+import type { MicrocopySlot } from "../../src-shared/settings/microcopy-state.js";
+import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
+import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
   handleChangeAutoCollapseActionDockOnSend,

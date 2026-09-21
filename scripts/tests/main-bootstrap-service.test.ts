@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { MainBootstrapService } from "../../src-electron/main-bootstrap-service.js";
 
 test("MainBootstrapService は runtime side effect なしで起動シーケンスを順に実行する", async () => {

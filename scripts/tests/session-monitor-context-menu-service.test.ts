@@ -11,7 +11,7 @@ import { AuxWindowService } from "../../src-electron/aux-window-service.js";
 import type {
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
-} from "../../src/withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 type PopupOptions = {
   x?: number;

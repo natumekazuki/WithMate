@@ -15,7 +15,7 @@ import {
   DEFAULT_CHAT_LAYOUT_PREFERENCE,
   normalizeChatLayoutPreference,
   type ChatLayoutPreference,
-} from "./chat/chat-layout-preference.js";
+} from "./chat-layout-preference.js";
 import {
   createDefaultKeyboardShortcutSettings,
   normalizeKeyboardShortcutSettings,

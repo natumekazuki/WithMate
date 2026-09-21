@@ -1,4 +1,4 @@
-import type { WithMateWindowPickerApi } from "../withmate-window-api.js";
+import type { WithMateWindowPickerApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { isSupportedComposerImagePath } from "../composer-image-reference.js";
 import type { ComposerReferenceInput } from "../session-composer-paths.js";
 

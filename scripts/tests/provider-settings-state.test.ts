@@ -12,7 +12,7 @@ import {
   MEMORY_FILE_QUOTA_MIN_BYTES,
   getMateMemoryGenerationSettings,
   normalizeAppSettings,
-} from "../../src/provider-settings-state.js";
+} from "../../src-shared/settings/provider-settings-state.js";
 
 describe("provider-settings-state", () => {
   // @test-value v2

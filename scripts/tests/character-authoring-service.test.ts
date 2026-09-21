@@ -4,12 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import {
   DEFAULT_CHARACTER_THEME,
   type CharacterDetail,
-} from "../../src/character/character-catalog.js";
-import { buildNewSession, type CreateSessionInput } from "../../src/session-state.js";
+} from "../../src-shared/character/character-catalog.js";
+import { buildNewSession, type CreateSessionInput } from "../../src-shared/session/session-state.js";
 import {
   CharacterAuthoringService,
   CHARACTER_AUTHORING_SKILL_NAME,

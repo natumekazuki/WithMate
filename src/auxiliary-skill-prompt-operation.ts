@@ -1,4 +1,4 @@
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import type { AuxiliarySession } from "../src-shared/auxiliary/auxiliary-session-state.js";
 import {
   buildSkillPromptInsertionState,
   type SkillPromptInsertionState,

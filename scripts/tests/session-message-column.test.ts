@@ -21,7 +21,9 @@ import { ConversationMessageColumn } from "../../src/chat/conversation-message-c
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
 import { buildMessageCollapseTargets, type MessageCollapseTarget } from "../../src/session-message-collapse.js";
 import type { MessageListSource } from "../../src/auxiliary-session-message-projection.js";
-import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
+import type { CharacterProfile } from "../../src-shared/character/character-state.js";
+import type { LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
+import type { Message } from "../../src-shared/session/session-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";

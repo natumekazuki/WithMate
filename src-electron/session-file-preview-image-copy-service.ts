@@ -9,7 +9,7 @@ import type {
   SessionFilePreviewImageContextMenuResult,
   SessionFilePreviewImageCopyResult,
   SessionFilePreviewImagePoint,
-} from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 
 type ImageCopyWebContents = Pick<WebContents, "copyImageAt" | "isDestroyed">;
 type ImageCopyMenu = Pick<Menu, "popup">;

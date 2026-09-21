@@ -1,7 +1,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { tsImport } from "tsx/esm/api";
 
-import type { AffectEventInput } from "../../../src/character-affect/affect-contract.js";
+import type { AffectEventInput } from "../../../src-shared/character-affect/affect-contract.js";
 
 const { CharacterAffectStorage } = await tsImport(
   "../../../src-electron/character-affect-storage.ts",

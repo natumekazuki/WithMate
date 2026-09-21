@@ -7,8 +7,8 @@ import {
   runAuxiliaryReasoningEffortChangeOperation,
   runAuxiliarySandboxModeChangeOperation,
 } from "../../src/auxiliary-runtime-option-operation.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 
 const providerCatalog: ModelCatalogProvider = {
   id: "codex",

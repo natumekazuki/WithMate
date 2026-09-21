@@ -11,16 +11,16 @@ import { filterCharactersByName } from "../../src/home/HomeCharactersPanel.js";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
-import type { AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
-import type { HomeSessionSummary, SessionSummary } from "../../src/session-state.js";
+import type { HomeSessionSummary, SessionSummary } from "../../src-shared/session/session-state.js";
 import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import type { MemoryV6Diagnostics } from "../../src/memory-v6/memory-diagnostics-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
-import { formatTimestampLabel } from "../../src/time-state.js";
+import { formatTimestampLabel } from "../../src-shared/time-state.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

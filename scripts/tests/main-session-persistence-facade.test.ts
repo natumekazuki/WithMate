@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { Session } from "../../src/app-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
 import type { SessionTurnTerminalCommit } from "../../src-electron/session-turn-terminal-commit.js";
 import { MainSessionPersistenceFacade } from "../../src-electron/main-session-persistence-facade.js";
 

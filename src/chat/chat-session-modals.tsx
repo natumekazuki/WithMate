@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 
-import type { DiffPreviewPayload } from "../app-state.js";
+import type { DiffPreviewPayload } from "../../src-shared/session/session-state.js";
 import {
   SessionAuditLogModal,
   SessionDiffModal,

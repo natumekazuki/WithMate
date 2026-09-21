@@ -5,9 +5,10 @@ import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { buildNewSession, type MessageArtifact, type Session } from "../../src/app-state.js";
-import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { MessageArtifact, Session } from "../../src-shared/session/session-state.js";
+import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import {
   CREATE_V3_SCHEMA_SQL,
   V3_SUMMARY_JSON_MAX_LENGTH,

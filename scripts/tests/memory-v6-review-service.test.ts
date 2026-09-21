@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 
-import type { NormalizedMemoryTag } from "../../src/memory-v6/memory-contract.js";
-import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src/provider-settings-state.js";
+import type { NormalizedMemoryTag } from "../../src-shared/memory/memory-contract.js";
+import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src-shared/settings/provider-settings-state.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { MemoryV6ReviewService, type MemoryV6ReviewServiceDeps } from "../../src-electron/memory-v6-review-service.js";
 import type { MemoryV6StorageAccess } from "../../src-electron/memory-v6-service.js";

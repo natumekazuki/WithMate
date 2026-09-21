@@ -1,7 +1,7 @@
 import type {
   WorkspaceDirectoryValidationFailureReason,
   WorkspaceDirectoryValidationResult,
-} from "./workspace-directory-validation.js";
+} from "../src-shared/window/workspace-directory-validation.js";
 
 export type SessionWorkspaceAvailabilityState =
   | { status: "idle" }

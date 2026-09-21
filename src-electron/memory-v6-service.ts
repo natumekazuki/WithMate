@@ -30,10 +30,10 @@ import {
   type MemoryTargetInventoryItem,
   type MemoryMoveEntryResponse,
   type MemorySearchResponse,
-} from "../src/memory-v6/memory-response-contract.js";
-import type { CharacterCatalogEntry } from "../src/character/character-catalog.js";
-import type { MemoryAppendFileInput, MemoryAppendRequest, MemoryError, MemoryForgetRequest, MemoryMoveEntryRequest, MemoryTargetSelector } from "../src/memory-v6/memory-contract.js";
-import { MEMORY_FILE_QUOTA_DEFAULT_BYTES, normalizeMemoryFileQuotaBytes } from "../src/provider-settings-state.js";
+} from "../src-shared/memory/memory-response-contract.js";
+import type { CharacterCatalogEntry } from "../src-shared/character/character-catalog.js";
+import type { MemoryAppendFileInput, MemoryAppendRequest, MemoryError, MemoryForgetRequest, MemoryMoveEntryRequest, MemoryTargetSelector } from "../src-shared/memory/memory-contract.js";
+import { MEMORY_FILE_QUOTA_DEFAULT_BYTES, normalizeMemoryFileQuotaBytes } from "../src-shared/settings/provider-settings-state.js";
 import {
   validateMemoryAppendRequest,
   validateMemoryAuditRequest,
@@ -47,7 +47,7 @@ import {
   validateMemoryMoveEntryRequest,
   validateMemorySearchRequest,
 } from "../src/memory-v6/memory-validation.js";
-import { toMemoryEntrySummary, type MemoryEntryDetail } from "../src/memory-v6/memory-state.js";
+import { toMemoryEntrySummary, type MemoryEntryDetail } from "../src-shared/memory/memory-state.js";
 import { buildMemoryTargetAudit } from "./memory-v6-audit.js";
 import { resolveMemoryV6Target, type MemoryV6TargetResolverDeps } from "./memory-v6-context-resolver.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";

@@ -1,8 +1,9 @@
 import type { CSSProperties, KeyboardEventHandler, PointerEventHandler, ReactNode, RefObject, UIEventHandler } from "react";
 
-import type { CharacterProfile, DiffPreviewPayload, Message, MessageArtifact } from "../app-state.js";
+import type { CharacterProfile } from "../../src-shared/character/character-state.js";
+import type { DiffPreviewPayload, Message, MessageArtifact } from "../../src-shared/session/session-state.js";
 import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
-import type { Session } from "../session-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
 import {
   type SessionActionDockCompactRowProps,
   type SessionAuditLogModalProps,

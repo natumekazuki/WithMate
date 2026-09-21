@@ -9,7 +9,7 @@ import {
   AFFECT_SCHEMA_VERSION,
   type AffectEventInput,
   type AffectEvaluator,
-} from "../../src/character-affect/affect-contract.js";
+} from "../../src-shared/character-affect/affect-contract.js";
 import {
   MemoryV6CharacterAffectEpisodeWriter,
   createCharacterAffectServiceWithMemory,

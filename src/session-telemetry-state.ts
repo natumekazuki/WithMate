@@ -1,4 +1,4 @@
-import type { ProviderQuotaTelemetry, SessionContextTelemetry } from "./app-state.js";
+import type { ProviderQuotaTelemetry, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
 
 export type ProviderOwnedQuotaTelemetry = {
   ownerProviderId: string | null;

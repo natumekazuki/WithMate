@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { ProjectScopeType } from "../src/app-state.js";
+import type { ProjectScopeType } from "../src-shared/memory/session-memory-state.js";
 
 export type ResolvedProjectScopeInput = {
   projectType: ProjectScopeType;

@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { buildNewSession } from "../../src/app-state.js";
-import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
-import { createDefaultSessionMemory, type ProjectMemoryEntry } from "../../src/memory/memory-state.js";
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
+import { createDefaultSessionMemory, type ProjectMemoryEntry } from "../../src-shared/memory/session-memory-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import { composeProviderPrompt } from "../../src-electron/provider-prompt.js";
 
 const providerCatalog: ModelCatalogProvider = {

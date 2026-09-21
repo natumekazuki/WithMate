@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
+import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
 import {
   encodeMemoryListTagsCursor,
   validateMemoryAppendRequest,

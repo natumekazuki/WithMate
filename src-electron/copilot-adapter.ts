@@ -15,31 +15,16 @@ import {
   type Tool,
 } from "@github/copilot-sdk";
 
-import type {
-  AuditLogOperation,
-  AuditLogProviderMetadata,
-  AuditLogUsage,
-  AuditTransportPayload,
-  LiveApprovalRequest,
-  LiveBackgroundTask,
-  LiveElicitationField,
-  LiveElicitationRequest,
-  LiveElicitationResponse,
-  LiveRunStep,
-  MessageArtifact,
-  ProviderQuotaSnapshot,
-  ProviderQuotaTelemetry,
-  Session,
-  SessionContextTelemetry,
-  SessionMemoryDelta,
-} from "../src/app-state.js";
-import { getProviderAppSettings } from "../src/provider-settings-state.js";
-import { normalizeApprovalMode } from "../src/approval-mode.js";
+import type { AuditLogOperation, AuditLogProviderMetadata, AuditLogUsage, AuditTransportPayload, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationField, LiveElicitationRequest, LiveElicitationResponse, LiveRunStep, ProviderQuotaSnapshot, ProviderQuotaTelemetry, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import type { MessageArtifact, Session } from "../src-shared/session/session-state.js";
+import type { SessionMemoryDelta } from "../src-shared/memory/session-memory-state.js";
+import { getProviderAppSettings } from "../src-shared/settings/provider-settings-state.js";
+import { normalizeApprovalMode } from "../src-shared/settings/approval-mode.js";
 import {
   resolveModelSelection,
   type ModelReasoningEffort,
   type ResolvedModelSelection,
-} from "../src/model-catalog.js";
+} from "../src-shared/settings/model-catalog.js";
 import { buildArtifactFromOperations } from "./provider-artifact.js";
 import {
   createDisabledWorkspaceSnapshotCapture,

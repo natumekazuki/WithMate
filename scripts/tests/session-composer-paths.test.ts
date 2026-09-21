@@ -95,8 +95,8 @@ test("buildSelectedPathReferenceInsertionState は選択 path を解決して挿
 
 // @test-value v2
 // kind = "contract"
-// claim = "composer attachment表示はsource/kind/locationを保持し正規化済みremove targetsを生成する"
-// oracle = { type = "contract", ref = "composer attachment path handling" }
+// claim = "composer attachment表示はkind/locationを保持し正規化済みremove targetsを生成する"
+// oracle = { type = "contract", ref = "src/session-composer-paths.ts" }
 // fault = "添付表示または削除対象pathが欠落し別添付を削除する"
 // observable = "attachment display items and removal targets"
 // observation_boundary = "public-boundary"

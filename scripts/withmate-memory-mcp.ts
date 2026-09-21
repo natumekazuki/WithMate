@@ -8,7 +8,7 @@ import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
   createCharacterContextError,
   isCharacterContextError,
-} from "../src/character-context/character-context-contract.js";
+} from "../src-shared/character-context/character-context-contract.js";
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   callWithMateMemoryRuntime,

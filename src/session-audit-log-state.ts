@@ -1,17 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type {
-  AuditLogDetailFragment,
-  AuditLogDetailSection,
-  AuditLogOperationDetailFragment,
-  AuditLogSummary,
-  LiveSessionRunState,
-} from "./app-state.js";
+import type { AuditLogDetailFragment, AuditLogDetailSection, AuditLogOperationDetailFragment, AuditLogSummary, LiveSessionRunState } from "../src-shared/session/runtime-state.js";
 import { summarizeAuditLogDetailFragment } from "./audit-log-detail-metrics.js";
 import { buildAuditLogRefreshSignature, buildDisplayedAuditLogs } from "./audit-log-refresh.js";
-import type { RendererLogInput } from "./app-log-types.js";
-import type { Session } from "./session-state.js";
-import type { WithMateWindowApi } from "./withmate-window-api.js";
+import type { RendererLogInput } from "../src-shared/window/app-log-types.js";
+import type { Session } from "../src-shared/session/session-state.js";
+import type { WithMateWindowApi } from "../src-shared/ipc/withmate-window-api.js";
 
 type SessionOwnedAuditLogs = {
   ownerSessionId: string | null;

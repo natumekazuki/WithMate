@@ -1,4 +1,4 @@
-import type { AuditLogSummary } from "./runtime-state.js";
+import type { AuditLogSummary } from "../src-shared/session/runtime-state.js";
 
 const terminalAuditLogPhases: readonly AuditLogSummary["phase"][] = [
   "completed",

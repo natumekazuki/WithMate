@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { CREATE_V2_SCHEMA_SQL } from "../src-electron/database-schema-v2.js";
 import { AuditLogStorageV2 } from "../src-electron/audit-log-storage-v2.js";
 import { SessionStorageV2 } from "../src-electron/session-storage-v2.js";
-import type { Session } from "../src/session-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
 
 export type BenchmarkProfileName = "small" | "medium" | "large";
 

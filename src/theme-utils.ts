@@ -4,7 +4,7 @@ import {
   DEFAULT_CHARACTER_THEME_COLORS,
   normalizeCharacterThemeColors,
   type CharacterThemeColors,
-} from "./character-state.js";
+} from "../src-shared/character/character-state.js";
 
 const DEFAULT_HEX_FALLBACK = DEFAULT_CHARACTER_THEME_COLORS.main;
 const DEFAULT_DARK_INK = "#0f172a";

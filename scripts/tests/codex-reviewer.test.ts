@@ -7,7 +7,7 @@ import {
   mapCodexReviewerToApprovalsReviewer,
   normalizeCodexReviewer,
   resolveCodexReviewerUpdate,
-} from "../../src/codex-reviewer.js";
+} from "../../src-shared/settings/codex-reviewer.js";
 import { buildSessionWithApprovalMode } from "../../src/runtime-option-state.js";
 
 // @test-value v1

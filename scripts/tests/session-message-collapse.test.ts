@@ -11,7 +11,7 @@ import {
   toggleMessageCollapseState,
 } from "../../src/session-message-collapse.js";
 import { buildMessageListProjection, type MessageListSource } from "../../src/auxiliary-session-message-projection.js";
-import type { Message } from "../../src/session-state.js";
+import type { Message } from "../../src-shared/session/session-state.js";
 
 function sessionSource(messageIndex: number): MessageListSource {
   return { kind: "session", messageIndex };

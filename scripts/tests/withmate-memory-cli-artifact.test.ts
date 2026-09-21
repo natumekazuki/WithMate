@@ -15,7 +15,7 @@ import {
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
-} from "../../src/agent-runtime/agent-runtime-binding-contract.js";
+} from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import {
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,

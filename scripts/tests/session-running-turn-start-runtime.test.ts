@@ -1,19 +1,15 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 
-import {
-  buildNewSession,
-  currentTimestampLabel,
-  type AuditLogEntry,
-  type ComposerPreview,
-  type LiveApprovalDecision,
-  type Session,
-  type SessionMemory,
-} from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
-import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { currentTimestampLabel } from "../../src-shared/time-state.js";
+import type { AuditLogEntry, ComposerPreview, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import type { SessionMemory } from "../../src-shared/memory/session-memory-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { ProviderCodingAdapter, RunSessionTurnInput } from "../../src-electron/provider-runtime.js";
 import {
   SessionRuntimeService,

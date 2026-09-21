@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { getSessionIncarnationId, type Session } from "../src/session-state.js";
+import { getSessionIncarnationId, type Session } from "../src-shared/session/session-state.js";
 
 import {
   assertValidAffectEvent,
   type AffectEventInput,
-} from "../src/character-affect/affect-contract.js";
+} from "../src-shared/character-affect/affect-contract.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 export type CharacterAffectTurnSettlementInput = {

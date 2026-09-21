@@ -9,7 +9,7 @@ import {
   resolveAdditionalDirectoryPickerBase,
   runAdditionalDirectoryRemovalOperation,
   runPickedAdditionalDirectoryOperation,
-} from "../../src/additional-directory-state.js";
+} from "../../src-shared/settings/additional-directory-state.js";
 
 test("resolveAdditionalDirectoryPickerBase は最初の non-empty path を返す", () => {
   assert.equal(resolveAdditionalDirectoryPickerBase("C:/picked", "C:/workspace"), "C:/picked");

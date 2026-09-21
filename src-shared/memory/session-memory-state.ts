@@ -1,5 +1,5 @@
 import { currentIsoTimestamp } from "../time-state.js";
-import type { Session } from "../session-state.js";
+import type { Session } from "../session/session-state.js";
 
 export type SessionBackgroundActivityKind = "memory-generation" | "monologue";
 

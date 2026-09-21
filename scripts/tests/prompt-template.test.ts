@@ -8,7 +8,7 @@ import {
   PROMPT_TEMPLATE_PROMPT_MAX_BYTES,
   normalizePromptTemplateName,
   normalizePromptTemplatePrompt,
-} from "../../src/prompt-template.js";
+} from "../../src-shared/prompt-template.js";
 import { PromptTemplateStorage } from "../../src-electron/prompt-template-storage.js";
 
 describe("prompt template contract", () => {

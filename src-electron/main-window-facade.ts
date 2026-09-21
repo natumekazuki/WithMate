@@ -1,10 +1,10 @@
 import type { BrowserWindow } from "electron";
 
-import type { DiffPreviewPayload } from "../src/session-state.js";
+import type { DiffPreviewPayload } from "../src-shared/session/session-state.js";
 import type {
   SessionFilePreviewWindowPayload,
   SessionFilePreviewResourceRequest,
-} from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import type { AuxWindowService } from "./aux-window-service.js";
 import type { SessionWindowBridge } from "./session-window-bridge.js";
 

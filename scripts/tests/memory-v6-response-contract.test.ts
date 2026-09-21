@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
+import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
 import {
   createMemoryAppendResponse,
   createMemoryFileUsageResponse,
@@ -13,12 +13,12 @@ import {
   type MemoryAppendResponse,
   type MemoryGetEntryResponse,
   type MemorySearchResponse,
-} from "../../src/memory-v6/memory-response-contract.js";
+} from "../../src-shared/memory/memory-response-contract.js";
 import {
   toMemorySearchHit,
   type ActiveMemoryEntryDetail,
   type MemoryEntryDetail,
-} from "../../src/memory-v6/memory-state.js";
+} from "../../src-shared/memory/memory-state.js";
 
 const baseEntry = {
   id: "mem_1",

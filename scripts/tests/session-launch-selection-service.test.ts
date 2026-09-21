@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import type { SessionSummary } from "../../src/session-state.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { SessionSummary } from "../../src-shared/session/session-state.js";
 import { SessionLaunchSelectionService } from "../../src-electron/session-launch-selection-service.js";
 
 function createModelCatalogSnapshot(): ModelCatalogSnapshot {

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import { ProviderTurnError, type ProviderCodingAdapter } from "../../src-electron/provider-runtime.js";
 import { SessionRuntimeService } from "../../src-electron/session-runtime-service.js";
-import type { Session } from "../../src/app-state.js";
-import { buildNewSession } from "../../src/app-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

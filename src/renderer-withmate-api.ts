@@ -1,4 +1,4 @@
-import type { WithMateWindowApi } from "./withmate-window-api.js";
+import type { WithMateWindowApi } from "../src-shared/ipc/withmate-window-api.js";
 
 export function getWithMateApi(): WithMateWindowApi | null {
   if (typeof window === "undefined") {

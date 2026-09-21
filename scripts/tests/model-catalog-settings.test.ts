@@ -7,14 +7,14 @@ import {
   getProviderAppSettings,
   getResolvedProviderSettingsBundle,
   normalizeAppSettings,
-} from "../../src/provider-settings-state.js";
+} from "../../src-shared/settings/provider-settings-state.js";
 import {
   coerceModelSelection,
   parseModelCatalogDocument,
   reasoningEffortOptions,
   resolveModelChangeSelection,
   type ModelCatalogProvider,
-} from "../../src/model-catalog.js";
+} from "../../src-shared/settings/model-catalog.js";
 
 const providerCatalog: ModelCatalogProvider = {
   id: "codex",

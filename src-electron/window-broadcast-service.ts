@@ -1,14 +1,9 @@
-import type {
-  AppSettings,
-  LiveSessionRunState,
-  ProviderQuotaTelemetry,
-  SessionBackgroundActivityKind,
-  SessionBackgroundActivityState,
-  SessionContextTelemetry,
-  SessionSummaryInvalidation,
-} from "../src/app-state.js";
-import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { PromptTemplate } from "../src/prompt-template.js";
+import type { AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
+import type { SessionSummaryInvalidation } from "../src-shared/session/session-state.js";
+import type { ModelCatalogSnapshot } from "../src-shared/settings/model-catalog.js";
+import type { PromptTemplate } from "../src-shared/prompt-template.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
@@ -21,11 +16,11 @@ import {
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
-} from "../src/withmate-ipc-channels.js";
+} from "../src-shared/ipc/withmate-ipc-channels.js";
 import {
   OPEN_SESSION_WINDOW_IDS_BROADCAST_MAX,
   type OpenSessionWindowIdsChangedPayload,
-} from "../src/withmate-window-types.js";
+} from "../src-shared/window/withmate-window-types.js";
 
 type WindowLike = {
   isDestroyed(): boolean;

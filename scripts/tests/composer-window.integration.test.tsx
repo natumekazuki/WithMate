@@ -4,8 +4,8 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 import React, { act } from "react";
 import { JSDOM } from "jsdom";
-import type { WithMateWindowApi } from "../../src/withmate-window-api.js";
-import type { AuxiliaryDraftRecord } from "../../src/auxiliary-draft-contract.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-draft-contract.js";
 
 // @test-value v2
 // kind = "contract"

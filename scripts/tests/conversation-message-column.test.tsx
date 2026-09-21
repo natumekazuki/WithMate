@@ -10,7 +10,7 @@ import {
   type ConversationMessageColumnApi,
 } from "../../src/chat/conversation-message-column.js";
 import type { SessionMessageColumnProps } from "../../src/session-components.js";
-import type { LiveSessionRunState } from "../../src/runtime-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {

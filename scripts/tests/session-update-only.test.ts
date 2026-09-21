@@ -5,9 +5,9 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { buildNewSession, type Session } from "../../src/session-state.js";
-import { normalizeAppSettings } from "../../src/provider-settings-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
 import { createSessionStorageCommandAdapter } from "../../src-electron/session-storage-command-adapter.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";

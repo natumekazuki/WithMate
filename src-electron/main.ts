@@ -21,70 +21,48 @@ import {
   type NativeImage,
 } from "electron";
 
-import type { RendererLogInput } from "../src/app-log-types.js";
+import type { RendererLogInput } from "../src-shared/window/app-log-types.js";
 import { summarizeAuditLogDetailFragment } from "../src/audit-log-detail-metrics.js";
-import {
-  type AuditLogDetail,
-  type AuditLogDetailFragment,
-  type AuditLogDetailSection,
-  type AuditLogEntry,
-  type AuditLogOperationDetailFragment,
-  type AuditLogSummary,
-  type AuditLogSummaryPageRequest,
-  type AuditLogSummaryPageResult,
-  currentTimestampLabel,
-  createDefaultSessionMemory,
-  type DiscoveredCustomAgent,
-  type DiscoveredSkill,
-  type LiveApprovalDecision,
-  type LiveApprovalRequest,
-  type LiveElicitationRequest,
-  type LiveElicitationResponse,
-  type LiveSessionRunState,
-  type ProviderQuotaTelemetry,
-  type RunSessionTurnRequest,
-  type SessionBackgroundActivityKind,
-  type SessionBackgroundActivityState,
-  type SessionContextTelemetry,
-  type SessionCharacterUsage,
-  type SessionSummaryPageRequest,
-  type HomeSessionSummaryPageResult,
-} from "../src/app-state.js";
+import type { AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogOperationDetailFragment, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import { currentTimestampLabel } from "../src-shared/time-state.js";
+import { createDefaultSessionMemory } from "../src-shared/memory/session-memory-state.js";
+import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
+import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult } from "../src-shared/session/session-state.js";
 import {
   type DiffPreviewPayload,
   getSessionIncarnationId,
   type MessageArtifact,
   type Session,
-} from "../src/session-state.js";
+} from "../src-shared/session/session-state.js";
 import type {
   CharacterAuthoringSessionStartResult,
   StartCharacterAuthoringSessionInput,
-} from "../src/character/character-authoring.js";
+} from "../src-shared/character/character-authoring.js";
 import {
   type ModelCatalogDocument,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
-} from "../src/model-catalog.js";
+} from "../src-shared/settings/model-catalog.js";
 import {
   buildOpenSessionWindowIdsPage,
-} from "../src/withmate-window-types.js";
+} from "../src-shared/window/withmate-window-types.js";
 import type {
   OpenPathOptions,
   OpenPathResult,
   OpenSessionWindowIdsPageRequest,
   OpenSessionWindowIdsPageResult,
   SavePastedSessionFileRequest,
-} from "../src/withmate-window-types.js";
+} from "../src-shared/window/withmate-window-types.js";
 import type {
   SessionFileHistoryDiffWindowPayload,
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
-} from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileGitCommitResource,
   resolveSessionFileGitCommitPreviewWindowTitle,
   resolveSessionFilePreviewWindowTitle,
-} from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
@@ -95,7 +73,7 @@ import type {
   CreatePromptTemplateInput,
   PromptTemplate,
   UpdatePromptTemplateInput,
-} from "../src/prompt-template.js";
+} from "../src-shared/prompt-template.js";
 import { resolveAuxiliaryParentSession } from "./auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "./auxiliary-session-service.js";
 import { admitSessionTurn } from "./session-turn-admission.js";
@@ -210,26 +188,26 @@ import {
 } from "./managed-skill-distribution-service.js";
 import { MemoryCliShimService } from "./memory-cli-shim-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
-import type { AppSettings } from "../src/provider-settings-state.js";
-import type { ChatLayoutPreferenceUpdate } from "../src/chat/chat-layout-preference.js";
+import type { AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import type { ChatLayoutPreferenceUpdate } from "../src-shared/settings/chat-layout-preference.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { AppLogService } from "./app-log-service.js";
-import type { AppBootStatus } from "../src/app-boot-state.js";
-import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type { AppBootStatus } from "../src-shared/window/app-boot-state.js";
+import type { AppDatabaseDiagnostics } from "../src-shared/window/app-database-diagnostics-state.js";
 import type {
   MemoryV6DiagnosticEvent,
   MemoryV6Diagnostics,
-} from "../src/memory-v6/memory-diagnostics-state.js";
-import { projectMemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
-import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
+} from "../src-shared/memory/memory-diagnostics-state.js";
+import { projectMemoryV6Diagnostics } from "../src-shared/memory/memory-diagnostics-state.js";
+import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src-shared/memory/memory-contract.js";
 import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
   isCharacterContextError,
-} from "../src/character-context/character-context-contract.js";
-import type { MemoryV6ProtectedObjectGcRequest } from "../src/memory-v6/memory-review-state.js";
+} from "../src-shared/character-context/character-context-contract.js";
+import type { MemoryV6ProtectedObjectGcRequest } from "../src-shared/memory/memory-review-state.js";
 import {
   assertPersistentStoreOwnerActive,
   capturePersistentStoreOwner,
@@ -266,7 +244,7 @@ import {
   WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT,
   WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
-} from "../src/withmate-ipc-channels.js";
+} from "../src-shared/ipc/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { isValidV4Database } from "./database-schema-v4.js";

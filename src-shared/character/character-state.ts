@@ -157,4 +157,4 @@ export function cloneCharacterProfiles(characters: CharacterProfile[]): Characte
 export function getCharacterById(characters: CharacterProfile[], characterId: string): CharacterProfile | null {
   return cloneCharacterProfiles(characters).find((character) => character.id === characterId) ?? null;
 }
-import { BUILT_IN_MICROCOPY_CATALOG } from "./microcopy-state.js";
+import { BUILT_IN_MICROCOPY_CATALOG } from "../settings/microcopy-state.js";

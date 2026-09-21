@@ -1,5 +1,5 @@
 import { loadMateStatusSnapshot, type MateStatusLoadApi } from "./mate-status-load-operation.js";
-import type { MateProfile, MateStorageState } from "./mate-state.js";
+import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
 
 type MateStatusRefreshersContext = {
   setMateState: (state: MateStorageState) => void;

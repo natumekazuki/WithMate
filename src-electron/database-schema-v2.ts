@@ -1,8 +1,8 @@
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
-import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
-import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../src-shared/settings/codex-sandbox-mode.js";
+import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src-shared/settings/model-catalog.js";
 import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
 export const APP_DATABASE_V2_FILENAME = "withmate-v2.db";

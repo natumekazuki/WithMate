@@ -1,4 +1,4 @@
-import { getProviderAppSettings, type AppSettings } from "../provider-settings-state.js";
+import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
   deleteOldSessions,
@@ -7,8 +7,8 @@ import {
   saveHomeSettings,
 } from "./settings-actions.js";
 import { resolveProviderRelativePathFromSelection } from "./settings-view-model.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
-import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
 
 type SettingsCommandHandlersContext = {
   getApi: () => WithMateWindowApi | null;

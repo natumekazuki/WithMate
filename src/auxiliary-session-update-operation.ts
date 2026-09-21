@@ -1,5 +1,5 @@
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
-import { resolveEditableActiveAuxiliarySession } from "./auxiliary-session-state.js";
+import type { AuxiliarySession } from "../src-shared/auxiliary/auxiliary-session-state.js";
+import { resolveEditableActiveAuxiliarySession } from "../src-shared/auxiliary/auxiliary-session-state.js";
 
 export type AuxiliarySessionUpdateOperationResult = {
   nextSession: AuxiliarySession;

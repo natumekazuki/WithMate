@@ -1,5 +1,5 @@
-import type { AffectEvaluator } from "../src/character-affect/affect-contract.js";
-import { MEMORY_V6_SCHEMA_VERSION } from "../src/memory-v6/memory-contract.js";
+import type { AffectEvaluator } from "../src-shared/character-affect/affect-contract.js";
+import { MEMORY_V6_SCHEMA_VERSION } from "../src-shared/memory/memory-contract.js";
 import { validateMemoryAppendRequest } from "../src/memory-v6/memory-validation.js";
 import {
   CharacterAffectService,

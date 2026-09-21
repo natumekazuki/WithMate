@@ -1,14 +1,14 @@
-import type { DiffPreviewPayload } from "../src/session-state.js";
+import type { DiffPreviewPayload } from "../src-shared/session/session-state.js";
 import type {
   FileRootGitHistoryDiffRequest,
   SessionFilePreviewWindowPayload,
   SessionFilePreviewResourceRequest,
-} from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileAbsoluteResource,
   isSessionFileGitCommitResource,
   resolveSessionFilePreviewWindowTitle,
-} from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
   CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,

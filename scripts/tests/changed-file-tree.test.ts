@@ -5,7 +5,7 @@ import {
   buildChangedFileTree,
   changedFileDisplayName,
 } from "../../src/file-explorer/changed-file-tree.js";
-import type { FileRootGitChangeEntry } from "../../src/file-explorer/file-explorer-contract.js";
+import type { FileRootGitChangeEntry } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 const entries: FileRootGitChangeEntry[] = [
   {

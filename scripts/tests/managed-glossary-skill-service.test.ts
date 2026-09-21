@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   ManagedSkillDistributionService,
   WITHMATE_GLOSSARY_SKILL_NAME,

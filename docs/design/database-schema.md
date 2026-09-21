@@ -426,7 +426,7 @@ app 共通設定の key-value table。
 | `updated_at` | `TEXT` | 更新時刻 |
 
 current key と永続化処理は `src-electron/app-settings-storage.ts`、型・既定値・正規化は
-`src/provider-settings-state.ts` を正本とする。この文書では key の網羅的な一覧を複製しない。
+`src-shared/settings/provider-settings-state.ts` を正本とする。この文書では key の網羅的な一覧を複製しない。
 
 補足:
 

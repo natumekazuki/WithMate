@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ModelCatalogDocument } from "../../src/model-catalog.js";
+import type { ModelCatalogDocument } from "../../src-shared/settings/model-catalog.js";
 import { WindowDialogService } from "../../src-electron/window-dialog-service.js";
 
 // @test-value v2

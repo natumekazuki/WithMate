@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { SessionApprovalService } from "../../src-electron/session-approval-service.js";
-import type { LiveSessionRunState } from "../../src/app-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 
 function createLiveRunState(): LiveSessionRunState {
   return {

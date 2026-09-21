@@ -1,12 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  projectHomeSessionSummary,
-  type Session,
-  type SessionSummary,
-} from "../../src/app-state.js";
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+import { projectHomeSessionSummary } from "../../src-shared/session/session-state.js";
+import type { Session, SessionSummary } from "../../src-shared/session/session-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { MainQueryService } from "../../src-electron/main-query-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {

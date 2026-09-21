@@ -13,13 +13,13 @@ import {
   mergeRejectedSessionDraft,
   recoverRejectedSessionSnapshot,
 } from "../../src/session-submit-coordinator.js";
-import type { LiveSessionRunState } from "../../src/runtime-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import {
   normalizeSessionTurnClientRequestId,
   normalizeSessionTurnCorrelation,
   normalizeSessionTurnSubmitSource,
-} from "../../src/runtime-state.js";
-import type { Session } from "../../src/session-state.js";
+} from "../../src-shared/session/runtime-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
 
 function createSession(overrides: Partial<Session> = {}): Session {
   return {

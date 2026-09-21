@@ -1,7 +1,7 @@
 import type { BrowserWindow, OpenDialogOptions, OpenDialogReturnValue, SaveDialogOptions, SaveDialogReturnValue } from "electron";
 
-import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { ImageFilePickerPurpose } from "../src/withmate-window-types.js";
+import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src-shared/settings/model-catalog.js";
+import type { ImageFilePickerPurpose } from "../src-shared/window/withmate-window-types.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 const MODEL_CATALOG_JSON_FILTER = [{ name: "JSON", extensions: ["json"] }];

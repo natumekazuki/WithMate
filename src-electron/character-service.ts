@@ -6,7 +6,7 @@ import type {
   ResolveLaunchCharacterInput,
   UpdateCharacterDefinitionInput,
   UpdateCharacterMetadataInput,
-} from "../src/character/character-catalog.js";
+} from "../src-shared/character/character-catalog.js";
 import {
   CharacterWorkspaceOperationCoordinator,
   type RunCharacterWorkspaceOperationExclusive,

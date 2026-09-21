@@ -2,7 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
+import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src-shared/memory/memory-response-contract.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
 import {
@@ -17,16 +17,16 @@ import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_HEADER,
   type AgentRuntimeBindingPolicy,
   type ProviderAgentRuntimeAuthoritySnapshot,
-} from "../src/agent-runtime/agent-runtime-binding-contract.js";
+} from "../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import type {
   MemoryTargetSelector,
   ProjectTargetRef,
-} from "../src/memory-v6/memory-contract.js";
+} from "../src-shared/memory/memory-contract.js";
 import { MEMORY_ABSOLUTE_PATH_PATTERN } from "../src/memory-v6/memory-validation.js";
 import {
   createCharacterContextError,
   isCharacterContextError,
-} from "../src/character-context/character-context-contract.js";
+} from "../src-shared/character-context/character-context-contract.js";
 import type {
   CharacterContextApplicationService,
   CharacterContextTransport,

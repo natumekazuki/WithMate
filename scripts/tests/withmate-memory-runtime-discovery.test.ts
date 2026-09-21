@@ -12,7 +12,7 @@ import {
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
-} from "../../src/agent-runtime/agent-runtime-binding-contract.js";
+} from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import {
   buildWithMateMemoryDiscoveryGenerationFileName,
   WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION,
@@ -100,11 +100,13 @@ function statusFetch(applicationInstanceId: string, runtimeGenerationId: string,
   }) as typeof fetch;
 }
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
-  // claim = "operator resolverは複数active候補から暗黙選択しない"
-  // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-  // failure_mode = "2件のactive runtimeがあるとき後発候補へ誤接続する"
+  // claim = "operator resolverは複数active候補を全identity付きで保持し、暗黙選択しない"
+  // oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
+  // fault = "2件のactive runtimeを後発候補へ暗黙接続する、または候補identityを欠落させる"
+  // observable = "runtime_ambiguous errorとactive候補のapplication/generation identity集合"
+  // observation_boundary = "public-boundary"
   // scope = "memory-runtime-resolver"
   // lifecycle = "permanent"
   // @end-test-value
@@ -115,15 +117,27 @@ function statusFetch(applicationInstanceId: string, runtimeGenerationId: string,
     try {
       const result = await resolveWithMateMemoryApi({ adapter: "cli", registryRootDirectoryPath: root, env: unboundEnv });
       assert.equal(result.kind, "error");
-      if (result.kind === "error") assert.equal(result.code, "runtime_ambiguous");
+      if (result.kind === "error") {
+        assert.equal(result.code, "runtime_ambiguous");
+        assert.deepEqual(
+          result.candidates
+            .filter((candidate) => candidate.active)
+            .map((candidate) => [candidate.applicationInstanceId, candidate.runtimeGenerationId])
+            .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+          [a, b].map((runtime) => [runtime.identity.applicationInstanceId, runtime.identity.runtimeGenerationId])
+            .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+        );
+      }
     } finally { await a.publication.unpublish(); await b.publication.unpublish(); await rm(root, { recursive: true, force: true }); }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "credentialを解決できないactive entryもunbound resolverの選択集合へ残り、active候補が複数ならambiguousになる"
-// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "一方のcredential欠損を理由にactive候補を除外し、別instanceへ暗黙接続する"
+// oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
+// fault = "一方のcredential欠損を理由にactive候補とidentityを除外し、別instanceへ暗黙接続する"
+// observable = "missing_credential issue、runtime_ambiguous error、active候補のidentity集合"
+// observation_boundary = "public-boundary"
 // scope = "memory-runtime-resolver"
 // lifecycle = "permanent"
 // distinction = "両credentialが利用可能な通常の複数候補ではなく、一方のcredentialだけが解決不能なactive集合を扱う"
@@ -163,6 +177,14 @@ it("credential欠損のactive候補があっても別instanceを暗黙選択し�
     if (result.kind === "error") {
       assert.equal(result.code, "runtime_ambiguous");
       assert.equal(result.candidates.filter((candidate) => candidate.active).length, 2);
+      assert.deepEqual(
+        result.candidates
+          .filter((candidate) => candidate.active)
+          .map((candidate) => [candidate.applicationInstanceId, candidate.runtimeGenerationId])
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+        [a, b].map((runtime) => [runtime.identity.applicationInstanceId, runtime.identity.runtimeGenerationId])
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+      );
     }
   } finally {
     await a.publication.unpublish();
@@ -317,6 +339,7 @@ it("legacy pointerの同一runtimeは重複計上せず、別runtimeならambigu
       if (registryCredentialInvalid.kind === "selected") {
         assert.equal(registryCredentialInvalid.candidates.length, 1);
         assert.equal(registryCredentialInvalid.candidate.applicationInstanceId, runtime.identity.applicationInstanceId);
+        assert.equal(registryCredentialInvalid.candidate.runtimeGenerationId, runtime.identity.runtimeGenerationId);
       }
       const other = await publishMemory(root, ids(), "http://127.0.0.1:39002");
       try { const ambiguous = await resolveWithMateMemoryApi({ adapter: "cli", registryRootDirectoryPath: root, env: unboundEnv, legacyDiscoveryFilePath: pointerPath, fetch: statusFetch(runtime.identity.applicationInstanceId, runtime.identity.runtimeGenerationId) }); assert.equal(ambiguous.kind, "error"); if (ambiguous.kind === "error") assert.equal(ambiguous.code, "runtime_ambiguous"); } finally { await other.publication.unpublish(); }

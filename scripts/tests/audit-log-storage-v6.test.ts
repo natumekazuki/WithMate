@@ -5,7 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import type { AuditLogEntry } from "../../src/runtime-state.js";
+import type { AuditLogEntry } from "../../src-shared/session/runtime-state.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { AuditLogStorageV6, deleteAuditEventsForSessionTargets } from "../../src-electron/audit-log-storage-v6.js";
 import { AuditLogService } from "../../src-electron/audit-log-service.js";

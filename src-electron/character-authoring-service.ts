@@ -3,21 +3,21 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
-import { DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
-import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
+import { DEFAULT_APPROVAL_MODE } from "../src-shared/settings/approval-mode.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../src-shared/settings/codex-sandbox-mode.js";
 import type {
   CharacterDetail,
   CharacterRuntimeSnapshot,
-} from "../src/character/character-catalog.js";
+} from "../src-shared/character/character-catalog.js";
 import {
   isUnknownCharacterOwnerId,
   normalizeCharacterOwnerId,
-} from "../src/character/character-owner.js";
+} from "../src-shared/character/character-owner.js";
 import {
   type CharacterAuthoringSessionStartResult,
   type StartCharacterAuthoringSessionInput,
-} from "../src/character/character-authoring.js";
-import type { CreateSessionInput, Session } from "../src/session-state.js";
+} from "../src-shared/character/character-authoring.js";
+import type { CreateSessionInput, Session } from "../src-shared/session/session-state.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
 import type { RunCharacterWorkspaceOperationExclusive } from "./character-workspace-operation-coordinator.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";

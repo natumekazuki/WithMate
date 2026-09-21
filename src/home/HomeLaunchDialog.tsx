@@ -5,8 +5,8 @@ import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-s
 import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
 import { CharacterAvatar } from "../ui-utils.js";
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import { DEFAULT_CHARACTER_THEME_COLORS } from "../character-state.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
+import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
 import type { HomeLaunchWorkspaceValidationState } from "./home-launch-state.js";
 
 export type HomeLaunchDialogProps = {

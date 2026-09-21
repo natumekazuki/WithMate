@@ -1,5 +1,5 @@
-import type { Session } from "../src/app-state.js";
-import type { AuxiliarySessionNavigationPayload } from "../src/withmate-window-types.js";
+import type { Session } from "../src-shared/session/session-state.js";
+import type { AuxiliarySessionNavigationPayload } from "../src-shared/window/withmate-window-types.js";
 import type { ChatEntryMode } from "./window-entry-loader.js";
 import {
   DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS,

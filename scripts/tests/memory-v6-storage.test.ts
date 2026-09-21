@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import type { NormalizedMemoryTag } from "../../src/memory-v6/memory-contract.js";
+import type { NormalizedMemoryTag } from "../../src-shared/memory/memory-contract.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import type { MemoryV6ResolvedTarget } from "../../src-electron/memory-v6-schema.js";
 import {
@@ -119,6 +119,7 @@ function insertProtectedObject(dbPath: string, input: {
   entryId: string;
   state: "active" | "delete_pending" | "deleted";
   role?: "evidence" | "source" | "snapshot" | "artifact" | "reference" | "other";
+  displayName?: string;
   summary: string;
   originalBytes: number;
   storedBytes: number;
@@ -135,18 +136,20 @@ function insertProtectedObject(dbPath: string, input: {
         state,
         role,
         media_kind,
+        display_name,
         summary,
         original_bytes,
         stored_bytes,
         created_at,
         updated_at,
         deleted_at
-      ) VALUES (?, ?, ?, ?, 'source', ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, 'source', ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.objectId,
       input.entryId,
       input.state,
       input.role ?? "source",
+      input.displayName ?? "",
       input.summary,
       input.originalBytes,
       input.storedBytes,
@@ -1085,6 +1088,7 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-outdated-private",
         state: "active",
         summary: "late protected object",
+        displayName: "late-private.png",
         originalBytes: 10,
         storedBytes: 12,
       });

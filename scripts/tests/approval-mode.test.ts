@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildNewSession, normalizeSession } from "../../src/app-state.js";
+import { buildNewSession, normalizeSession } from "../../src-shared/session/session-state.js";
 import {
   approvalModeLabel,
   DEFAULT_APPROVAL_MODE,
   mapApprovalModeToCodexPolicy,
   normalizeApprovalMode,
-} from "../../src/approval-mode.js";
-import { createDefaultAppSettings, getProviderAppSettings, normalizeAppSettings } from "../../src/provider-settings-state.js";
+} from "../../src-shared/settings/approval-mode.js";
+import { createDefaultAppSettings, getProviderAppSettings, normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
 describe("approval mode helpers", () => {
   // @test-value v1

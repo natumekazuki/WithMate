@@ -4,7 +4,7 @@ import {
   GLOSSARY_RUNTIME_SCHEMA_VERSION,
   type GlossaryOperationError,
   type GlossaryRuntimeEnvelope,
-} from "../src/glossary-contract.js";
+} from "../src-shared/glossary/glossary-contract.js";
 import type { GlossaryRuntimeOperation } from "../src/glossary-operation-schema.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../src/memory-v6/memory-runtime-exchange.js";
 import type { RuntimeDiscoveryClock } from "../src/runtime-discovery/runtime-discovery-contract.js";

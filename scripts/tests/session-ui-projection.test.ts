@@ -1,13 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type {
-  AuditLogOperation,
-  LiveBackgroundTask,
-  LiveRunStep,
-  ProviderQuotaTelemetry,
-} from "../../src/app-state.js";
-import type { GlossaryProjectionState, SessionGlossaryProjection } from "../../src/glossary-contract.js";
+import type { AuditLogOperation, LiveBackgroundTask, LiveRunStep, ProviderQuotaTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { GlossaryProjectionState, SessionGlossaryProjection } from "../../src-shared/glossary/glossary-contract.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,

@@ -3,7 +3,7 @@ import type { BrowserWindow, Menu, MenuItemConstructorOptions } from "electron";
 import type {
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
-} from "../src/withmate-window-types.js";
+} from "../src-shared/window/withmate-window-types.js";
 
 type SessionMonitorContextMenu = Pick<Menu, "popup">;
 

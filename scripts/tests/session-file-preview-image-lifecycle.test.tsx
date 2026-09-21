@@ -11,7 +11,7 @@ import type {
   SessionFileGitCommitResourceRequest,
   SessionFileRootResourceRequest,
   SessionFileResourceRequest,
-} from "../../src/file-explorer/file-explorer-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { STRUCTURED_TEXT_PREVIEW_MAX_BYTES } from "../../src/file-explorer/structured-text-preview.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

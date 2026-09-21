@@ -6,7 +6,7 @@ import {
   getCodexSpeedOptions,
   mapCodexSpeedToServiceTier,
   normalizeCodexSpeed,
-} from "../../src/codex-speed.js";
+} from "../../src-shared/settings/codex-speed.js";
 import { buildRuntimeSelectionOptions } from "../../src/runtime-selection-options.js";
 
 describe("Codex speed runtime option", () => {

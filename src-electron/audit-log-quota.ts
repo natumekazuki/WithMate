@@ -1,8 +1,4 @@
-import type {
-  AuditTransportPayload,
-  ProviderQuotaSnapshot,
-  ProviderQuotaTelemetry,
-} from "../src/app-state.js";
+import type { AuditTransportPayload, ProviderQuotaSnapshot, ProviderQuotaTelemetry } from "../src-shared/session/runtime-state.js";
 
 function selectPrimaryQuotaSnapshot(telemetry: ProviderQuotaTelemetry | null): ProviderQuotaSnapshot | null {
   if (!telemetry || telemetry.snapshots.length === 0) {

@@ -7,7 +7,7 @@ import {
   fetchHomeSessionSummarySnapshot,
   mergeSessionSummaryEntries,
 } from "../../src/home/home-session-summary-query.js";
-import type { SessionSummary, SessionSummaryPageRequest } from "../../src/session-state.js";
+import type { SessionSummary, SessionSummaryPageRequest } from "../../src-shared/session/session-state.js";
 
 function summary(id: string): SessionSummary {
   return { id } as SessionSummary;

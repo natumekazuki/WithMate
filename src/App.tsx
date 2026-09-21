@@ -9,25 +9,16 @@ import {
   type SetStateAction,
 } from "react";
 
-import {
-  currentTimestampLabel,
-  getAuxiliarySessionIdFromLocation,
-  type DiscoveredCustomAgent,
-  type DiscoveredSkill,
-  getSessionIdFromLocation,
-  type LiveApprovalRequest,
-  type LiveElicitationRequest,
-  type LiveElicitationResponse,
-  type LiveSessionRunState,
-  type RunSessionTurnRequest,
-} from "./app-state.js";
+import { currentTimestampLabel } from "../src-shared/time-state.js";
+import type { DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, RunSessionTurnRequest } from "../src-shared/session/runtime-state.js";
+import { getAuxiliarySessionIdFromLocation, getSessionIdFromLocation } from "./app/session-location.js";
 import {
   buildSessionWithAddedAdditionalDirectory,
   buildSessionWithRemovedAdditionalDirectory,
   resolveAdditionalDirectoryPickerBase,
   runAdditionalDirectoryRemovalOperation,
   runPickedAdditionalDirectoryOperation,
-} from "./additional-directory-state.js";
+} from "../src-shared/settings/additional-directory-state.js";
 import {
   buildSessionWithApprovalMode,
   buildSessionWithCodexSandboxMode,
@@ -36,14 +27,14 @@ import {
   buildSessionWithModelChange,
   buildSessionWithReasoningEffort,
 } from "./runtime-option-state.js";
-import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
+import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "../src-shared/character/character-state.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
   type AppSettings,
-} from "./provider-settings-state.js";
-import { resolveMicrocopy, type MicrocopySlot } from "./microcopy-state.js";
+} from "../src-shared/settings/provider-settings-state.js";
+import { resolveMicrocopy, type MicrocopySlot } from "../src-shared/settings/microcopy-state.js";
 import {
   type DiffPreviewPayload,
   type Message,
@@ -51,13 +42,13 @@ import {
   isReadOnlySession,
   setMessageBookmarked,
   type Session,
-} from "./session-state.js";
+} from "../src-shared/session/session-state.js";
 import type { MessageCollapseTarget } from "./session-message-collapse.js";
 import {
   getProviderCatalog,
   getReasoningEffortOptionsForModel,
   type ModelCatalogSnapshot,
-} from "./model-catalog.js";
+} from "../src-shared/settings/model-catalog.js";
 import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
@@ -160,7 +151,7 @@ import {
   useSessionVerticalDockResize,
 } from "./session-chat-layout-hooks.js";
 import { persistChatLayoutPreference } from "./chat/chat-layout-preference.js";
-import type { SessionSidePane } from "./session-side-pane.js";
+import type { SessionSidePane } from "../src-shared/settings/session-side-pane.js";
 import { SessionFileExplorerPane } from "./file-explorer/SessionFileExplorerPane.js";
 import { SessionDiffPreview, SessionFilePreview } from "./file-explorer/SessionFilePreview.js";
 import { PromptTemplateWorkspace } from "./prompt-templates/PromptTemplateWorkspace.js";
@@ -174,18 +165,18 @@ import type {
   FileRootGitHistoryDiffRequest,
   SessionFileGitCommitResourceRequest,
   SessionFileRootResourceRequest,
-} from "./file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import {
   GLOSSARY_RELATIVE_PATH,
   type GlossaryEntry,
   type SessionGlossaryProjection,
-} from "./glossary-contract.js";
+} from "../src-shared/glossary/glossary-contract.js";
 import { createGlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
 import {
   buildFileRootDiffPreviewWindowRequest,
   buildSessionFileExplorerRootsRevision,
   isFileRootGitHistoryComparisonDiffRequest,
-} from "./file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
   acknowledgePreviewChatMessageCount,
@@ -228,7 +219,7 @@ import {
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   type AuxiliarySession,
-} from "./auxiliary-session-state.js";
+} from "../src-shared/auxiliary/auxiliary-session-state.js";
 import {
   runAuxiliaryApprovalModeChangeOperation,
   runAuxiliaryCodexSpeedChangeOperation,

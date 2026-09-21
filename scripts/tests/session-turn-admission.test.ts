@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { describe, it } from "node:test";
 
-import { buildNewSession, type Session } from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { normalizeAppSettings } from "../../src/provider-settings-state.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   SessionRuntimeService,
   type SessionRuntimeServiceDeps,

@@ -2,22 +2,9 @@ import { Component, Fragment, createContext, useCallback, useContext, useEffect,
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
-import type {
-  AuditLogDetailFragment,
-  AuditLogDetailSection,
-  ChangedFile,
-  CharacterProfile,
-  LiveApprovalRequest,
-  LiveBackgroundTask,
-  LiveElicitationField,
-  LiveElicitationRequest,
-  LiveElicitationResponse,
-  Message,
-  MessageArtifact,
-  DiffPreviewPayload,
-  SessionContextTelemetry,
-  AuditLogSummary,
-} from "./app-state.js";
+import type { AuditLogDetailFragment, AuditLogDetailSection, ChangedFile, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationField, LiveElicitationRequest, LiveElicitationResponse, SessionContextTelemetry, AuditLogSummary } from "../src-shared/session/runtime-state.js";
+import type { CharacterProfile } from "../src-shared/character/character-state.js";
+import type { Message, MessageArtifact, DiffPreviewPayload } from "../src-shared/session/session-state.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { MessageRichText, type MessageViewMode } from "./MessageRichText.js";
 import type { GlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
@@ -29,11 +16,11 @@ import {
   operationTypeLabel,
 } from "./ui-utils.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
-import type { ApprovalMode } from "./approval-mode.js";
+import type { ApprovalMode } from "../src-shared/settings/approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
-import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
-import type { CodexSpeed } from "./codex-speed.js";
-import { isCodexReviewerControlDisabled, type CodexReviewer } from "./codex-reviewer.js";
+import type { CodexSandboxMode } from "../src-shared/settings/codex-sandbox-mode.js";
+import type { CodexSpeed } from "../src-shared/settings/codex-speed.js";
+import { isCodexReviewerControlDisabled, type CodexReviewer } from "../src-shared/settings/codex-reviewer.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,

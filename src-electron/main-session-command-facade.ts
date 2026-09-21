@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { ProviderQuotaTelemetry, RunSessionTurnRequest } from "../src/runtime-state.js";
+import type { ProviderQuotaTelemetry, RunSessionTurnRequest } from "../src-shared/session/runtime-state.js";
 import {
   parseSetSessionPinnedRequest,
   type CreateSessionInput,
@@ -7,19 +7,19 @@ import {
   type Session,
   type SessionSummary,
   type SetSessionPinnedRequest,
-} from "../src/session-state.js";
+} from "../src-shared/session/session-state.js";
 import {
   resolveDeleteSessionsLastActiveBeforeCutoff,
   type DeleteSessionsLastActiveBeforeRequest,
   type DeleteSessionsResult,
-} from "../src/withmate-window-types.js";
+} from "../src-shared/window/withmate-window-types.js";
 import type { SessionPersistenceService } from "./session-persistence-service.js";
 import type { SessionRuntimeService } from "./session-runtime-service.js";
 import { parseCreateSessionRequest } from "./create-session-request.js";
 import type { SessionLaunchSelection } from "./session-launch-selection-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
-import type { WorkspaceDirectoryValidationResult } from "../src/workspace-directory-validation.js";
-import { resolveWorkspaceDirectoryValidationMessage } from "../src/workspace-directory-validation.js";
+import type { WorkspaceDirectoryValidationResult } from "../src-shared/window/workspace-directory-validation.js";
+import { resolveWorkspaceDirectoryValidationMessage } from "../src-shared/window/workspace-directory-validation.js";
 
 type MainSessionCommandFacadeDeps = {
   getSession(sessionId: string): Session | null;

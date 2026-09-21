@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { AuditLogSummary } from "../../src/runtime-state.js";
+import type { AuditLogSummary } from "../../src-shared/session/runtime-state.js";
 import { isTerminalAuditLogPhase } from "../../src/audit-log-phase.js";
 
 describe("isTerminalAuditLogPhase", () => {

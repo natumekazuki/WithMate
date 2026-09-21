@@ -3,8 +3,8 @@ import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
-import type { AuditLogEntry } from "../src/app-state.js";
-import type { Session } from "../src/session-state.js";
+import type { AuditLogEntry } from "../src-shared/session/runtime-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL, CREATE_MODEL_CATALOG_TABLES_SQL } from "../src-electron/database-schema-v1.js";
 import { APP_DATABASE_V3_FILENAME, isValidV3Database } from "../src-electron/database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME, CREATE_V4_SCHEMA_SQL } from "../src-electron/database-schema-v4.js";

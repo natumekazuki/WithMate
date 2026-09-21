@@ -9,11 +9,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { normalizeSessionSidePane, type SessionSidePane } from "./session-side-pane.js";
+import { normalizeSessionSidePane, type SessionSidePane } from "../src-shared/settings/session-side-pane.js";
 import type {
   ChatActionDockMode,
   ChatHeaderVisibility,
-} from "./chat/chat-layout-preference.js";
+} from "../src-shared/settings/chat-layout-preference.js";
 
 const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
 const SESSION_FILE_EXPLORER_DEFAULT_WIDTH = 320;

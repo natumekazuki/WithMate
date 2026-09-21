@@ -4,7 +4,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { SessionAuditLogModal, shouldLoadAuditLogDetailForFold } from "../../src/session-components.js";
-import type { AuditLogSummary } from "../../src/runtime-state.js";
+import type { AuditLogSummary } from "../../src-shared/session/runtime-state.js";
 
 function createAuditLogSummary(id: number, overrides?: Partial<AuditLogSummary>): AuditLogSummary {
   return {

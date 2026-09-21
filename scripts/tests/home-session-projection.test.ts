@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { Session } from "../../src/app-state.js";
-import type { AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import {
   buildHomeSessionProjection,
   getHomeSessionState,

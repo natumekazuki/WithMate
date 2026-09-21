@@ -1,4 +1,4 @@
-import type { ProviderQuotaTelemetry, SessionContextTelemetry } from "./app-state.js";
+import type { ProviderQuotaTelemetry, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
 import type { ProviderOwnedQuotaTelemetry, SessionOwnedContextTelemetry } from "./session-telemetry-state.js";
 
 export type ProviderQuotaTelemetrySubscriptionApi = {

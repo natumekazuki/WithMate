@@ -2,8 +2,8 @@ import type {
   MemoryEntryKind,
   MemoryForgetReason,
   MemoryV6ReviewSearchRequest,
-} from "../src/memory-v6/memory-contract.js";
-import type { MemoryEntryDetail, MemoryFileSummary } from "../src/memory-v6/memory-state.js";
+} from "../src-shared/memory/memory-contract.js";
+import type { MemoryEntryDetail, MemoryFileSummary } from "../src-shared/memory/memory-state.js";
 import type {
   MemoryV6ReviewEntryDetail,
   MemoryV6ReviewFileSummary,
@@ -12,13 +12,13 @@ import type {
   MemoryV6ProtectedObjectGcRequest,
   MemoryV6ProtectedObjectGcResponse,
   MemoryV6ReviewSearchResult,
-} from "../src/memory-v6/memory-review-state.js";
-import { MEMORY_V6_SCHEMA_VERSION } from "../src/memory-v6/memory-contract.js";
+} from "../src-shared/memory/memory-review-state.js";
+import { MEMORY_V6_SCHEMA_VERSION } from "../src-shared/memory/memory-contract.js";
 import {
   createMemoryFileUsageResponse,
   type MemoryFileUsageResponse,
-} from "../src/memory-v6/memory-response-contract.js";
-import { MEMORY_FILE_QUOTA_DEFAULT_BYTES, normalizeMemoryFileQuotaBytes } from "../src/provider-settings-state.js";
+} from "../src-shared/memory/memory-response-contract.js";
+import { MEMORY_FILE_QUOTA_DEFAULT_BYTES, normalizeMemoryFileQuotaBytes } from "../src-shared/settings/provider-settings-state.js";
 import type { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import type { MemoryV6ProtectedObjectExporter, MemoryV6StorageAccess } from "./memory-v6-service.js";
 import { MemoryV6Storage } from "./memory-v6-storage.js";

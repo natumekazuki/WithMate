@@ -1,7 +1,7 @@
-import type { ApprovalMode } from "../approval-mode.js";
-import type { CodexSandboxMode } from "../codex-sandbox-mode.js";
-import type { ModelReasoningEffort } from "../model-catalog.js";
-import type { Session } from "../session-state.js";
+import type { ApprovalMode } from "../settings/approval-mode.js";
+import type { CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
+import type { ModelReasoningEffort } from "../settings/model-catalog.js";
+import type { Session } from "../session/session-state.js";
 
 export type CharacterAuthoringMode = "create" | "improve";
 

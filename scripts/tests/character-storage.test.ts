@@ -6,11 +6,11 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { CharacterStorage } from "../../src-electron/character-storage.js";
-import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
+import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src-shared/character/character-owner.js";
 import {
   CHARACTER_DEFINITION_MAX_CHARACTERS,
   CHARACTER_DEFINITION_SCHEMA,
-} from "../../src/character/character-definition.js";
+} from "../../src-shared/character/character-definition.js";
 
 function validDefinition(name: string): string {
   return `---

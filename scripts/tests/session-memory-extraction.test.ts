@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import {
-  buildNewSession,
-  createDefaultSessionMemory,
-} from "../../src/app-state.js";
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import {
   SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA,
   buildSessionMemoryExtractionPrompt,

@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { MEMORY_V6_SCHEMA_VERSION, type NormalizedMemoryTag } from "../../src/memory-v6/memory-contract.js";
-import type { MemoryErrorResponse } from "../../src/memory-v6/memory-response-contract.js";
-import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src/provider-settings-state.js";
+import { MEMORY_V6_SCHEMA_VERSION, type NormalizedMemoryTag } from "../../src-shared/memory/memory-contract.js";
+import type { MemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
+import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src-shared/settings/provider-settings-state.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { MemoryProtectedObjectImportError } from "../../src-electron/memory-protected-object-importer.js";
 import { createMemoryV6ProjectResolver, listMemoryV6ProjectScopes } from "../../src-electron/memory-v6-project-resolver.js";
@@ -620,9 +620,9 @@ describe("MemoryV6Service", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "file付きappendはquota確認後にimporter metadataを一度だけ登録し、同一keyの再送をreplayする"
+  // claim = "file付きappendはimporter metadataを一度だけ登録し、同一keyの再送をreplayする"
   // oracle = { type = "contract", ref = "docs/plans/20260812-general-memory-mcp/plan.md#GMCP-FILE" }
-  // fault = "quota前にimport/prepareする、またはreplayで再度inspectしてfile usageを二重計上する"
+  // fault = "replayで再度inspectしてfile usageを二重計上する、またはcanonical entryと異なるentry IDへprepareする"
   // observable = "append/replayのentry identity、inspect回数、prepare entry ID、file usage"
   // observation_boundary = "public-boundary"
   // scope = "memory-v6-service.file-append"
@@ -630,7 +630,7 @@ describe("MemoryV6Service", () => {
   // impact = "quotaとidempotent appendの永続file metadataが一致する"
   // distinction = "serviceからstorageのquota・importer・replay連携を同時に確認する"
   // @end-test-value
-  it("file付きappendはquota preflight後にimporter metadataをstorageへ登録する", async () => {
+  it("file付きappendはimporter metadataを一度だけstorageへ登録する", async () => {
     const protectedObject = {
       objectId: "a".repeat(32),
       role: "evidence",
@@ -1524,6 +1524,11 @@ describe("MemoryV6Service", () => {
       assert.deepEqual(exported.files.map((file) => file.objectId), protectedObjects.map((object) => object.objectId));
       assert.equal(exportInput?.metadata.length, 2);
       assert.equal(exportInput?.metadata[0]?.entryId, append.entry.id);
+      assert.equal(exportInput?.metadata.every((metadata) => metadata.entryId === append.entry.id), true);
+      assert.deepEqual(
+        exportInput?.metadata.map((metadata) => metadata.objectId),
+        protectedObjects.map((object) => object.objectId),
+      );
       assert.equal(exportInput?.outputDirectoryPath, "C:/exports");
 
       const mismatch = await service.exportFiles(principal, {

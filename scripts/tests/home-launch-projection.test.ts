@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { buildHomeLaunchProjection, inferWorkspaceFromPath } from "../../src/home/home-launch-projection.js";
 
 function createCatalog(): ModelCatalogSnapshot {

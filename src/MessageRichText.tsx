@@ -34,8 +34,8 @@ import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-resul
 import type {
   MarkdownLinkContextMenuRequest,
   MarkdownLinkContextMenuResult,
-} from "./markdown-link-context-menu.js";
-import { getSessionFileObjectCopyFeedbackTone } from "./file-explorer/session-file-object-copy-contract.js";
+} from "../src-shared/window/markdown-link-context-menu.js";
+import { getSessionFileObjectCopyFeedbackTone } from "../src-shared/file-explorer/session-file-object-copy-contract.js";
 import { useDialogA11y } from "./a11y.js";
 import { ImageViewport, ImageZoomControls, useImageViewport } from "./image-viewport.js";
 import type { GlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";

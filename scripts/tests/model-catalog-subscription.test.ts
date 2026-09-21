@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import {
   startModelCatalogSubscription,
   type ModelCatalogSubscriptionApi,
@@ -67,7 +67,7 @@ test("startModelCatalogSubscription は disabled なら fetch / subscribe しな
 // @test-value v2
 // kind = "contract"
 // claim = "model catalog subscriptionは初回snapshotと購読更新を順序通り反映する"
-// oracle = { type = "contract", ref = "model catalog subscription" }
+// oracle = { type = "contract", ref = "src/model-catalog-subscription.ts" }
 // fault = "初回取得または購読更新が欠落し古いcatalogを表示する"
 // observable = "applied catalog snapshots and unsubscribe count"
 // observation_boundary = "public-boundary"
@@ -109,7 +109,7 @@ test("startModelCatalogSubscription は初回取得と購読更新を反映す�
 // @test-value v2
 // kind = "invariant"
 // claim = "購読更新後の遅い初回取得は新しいcatalog revisionを巻き戻さない"
-// oracle = { type = "contract", ref = "model catalog subscription ordering" }
+// oracle = { type = "contract", ref = "src/model-catalog-subscription.ts" }
 // fault = "遅い初回取得が新しい購読snapshotを上書きする"
 // observable = "applied snapshot sequence"
 // observation_boundary = "public-boundary"
@@ -149,7 +149,7 @@ test("startModelCatalogSubscription は購読更新後に遅い初回取得で�
 // @test-value v2
 // kind = "invariant"
 // claim = "購読更新後の遅い初回nullは有効なcatalogを消去しない"
-// oracle = { type = "contract", ref = "model catalog subscription ordering" }
+// oracle = { type = "contract", ref = "src/model-catalog-subscription.ts" }
 // fault = "初回nullが購読済みcatalogを空状態へ戻す"
 // observable = "applied catalog state after null initial result"
 // observation_boundary = "public-boundary"
@@ -189,7 +189,7 @@ test("startModelCatalogSubscription は購読更新後に遅い初回 null で c
 // @test-value v2
 // kind = "invariant"
 // claim = "購読更新後の遅い初回取得失敗は新しいcatalogをfallbackへ戻さない"
-// oracle = { type = "contract", ref = "model catalog subscription ordering" }
+// oracle = { type = "contract", ref = "src/model-catalog-subscription.ts" }
 // fault = "初回取得失敗が購読済みsnapshotをfallbackで上書きする"
 // observable = "applied catalog and fallback invocation count"
 // observation_boundary = "public-boundary"
@@ -251,9 +251,19 @@ test("startModelCatalogSubscription は subscribe 無効なら初回取得だけ
   assert.deepEqual(updates, [modelCatalogSnapshot]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "model catalogの初回取得失敗はfallback error callbackへ通知する"
+// oracle = { type = "contract", ref = "src/model-catalog-subscription.ts" }
+// fault = "初回取得失敗を握り潰し、fallback処理へ通知しない"
+// observable = "initial load error callback count and error"
+// observation_boundary = "public-boundary"
+// scope = "model-catalog-initial-load-error"
+// lifecycle = "permanent"
+// @end-test-value
 test("startModelCatalogSubscription は初回取得失敗時に fallback callback を呼ぶ", async () => {
-  const updates: Array<ModelCatalogSnapshot | null> = [];
   let errorCount = 0;
+  let receivedError: unknown;
   const api: ModelCatalogSubscriptionApi = {
     getModelCatalog: async () => {
       throw new Error("failed");
@@ -264,17 +274,18 @@ test("startModelCatalogSubscription は初回取得失敗時に fallback callbac
     api,
     enabled: true,
     subscribe: false,
-    applyModelCatalog: (snapshot) => updates.push(snapshot),
-    onInitialLoadError: () => {
+    applyModelCatalog: () => undefined,
+    onInitialLoadError: (error) => {
       errorCount += 1;
-      updates.push(null);
+      receivedError = error;
     },
   });
   await flushPromises();
   cleanup();
 
   assert.equal(errorCount, 1);
-  assert.deepEqual(updates, [null]);
+  assert.ok(receivedError instanceof Error);
+  assert.equal((receivedError as Error).message, "failed");
 });
 
 test("startModelCatalogSubscription は cleanup 後の初回取得結果を反映しない", async () => {

@@ -1,4 +1,4 @@
-import type { AuditLogicalPrompt } from "../src/app-state.js";
+import type { AuditLogicalPrompt } from "../src-shared/session/runtime-state.js";
 
 export type PromptTokenEstimate = {
   charCount: number;

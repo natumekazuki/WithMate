@@ -1,10 +1,5 @@
-import {
-  type LiveSessionRunState,
-  type ProviderQuotaTelemetry,
-  type SessionBackgroundActivityKind,
-  type SessionBackgroundActivityState,
-  type SessionContextTelemetry,
-} from "../src/app-state.js";
+import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
 
 type SessionObservabilityServiceOptions = {
   onProviderQuotaTelemetryChanged: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void;

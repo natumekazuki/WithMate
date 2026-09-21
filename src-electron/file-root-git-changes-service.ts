@@ -44,12 +44,12 @@ import type {
   SessionFileChunkResult,
   SessionFileDescriptor,
   SessionFileGitCommitResourceRequest,
-} from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import {
   detectSessionFileEncoding,
   detectSessionFileResourceKind,
-} from "../src/file-explorer/file-content-detection.js";
-import { isFileRootGitHistoryComparisonDiffRequest } from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-content-detection.js";
+import { isFileRootGitHistoryComparisonDiffRequest } from "../src-shared/file-explorer/file-explorer-contract.js";
 
 export type FileRootGitContext = {
   rootPath: string;

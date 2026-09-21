@@ -6,7 +6,7 @@ import type {
   WithMateWindowApi,
   WithMateWindowSessionApi,
   WithMateWindowSettingsApi,
-} from "../../src/withmate-window-api.js";
+} from "../../src-shared/ipc/withmate-window-api.js";
 
 type Listener = (...args: unknown[]) => void;
 

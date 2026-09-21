@@ -1,5 +1,5 @@
-import type { MemorySearchHit, MemoryEntrySummary } from "../memory-v6/memory-state.js";
-import type { MemoryForgetReason, MemoryTag, ProjectTargetRef } from "../memory-v6/memory-contract.js";
+import type { MemorySearchHit, MemoryEntrySummary } from "../memory/memory-state.js";
+import type { MemoryForgetReason, MemoryTag, ProjectTargetRef } from "../memory/memory-contract.js";
 import type {
   AffectEventInput,
   AffectLayer,

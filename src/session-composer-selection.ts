@@ -1,4 +1,4 @@
-import type { DiscoveredCustomAgent, DiscoveredSkill } from "./runtime-state.js";
+import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src-shared/session/runtime-state.js";
 
 type AgentSelectionSession = {
   provider: string;

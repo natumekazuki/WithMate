@@ -5,10 +5,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import type { Session } from "../../src/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { Session } from "../../src-shared/session/session-state.js";
 import {
   APP_DATABASE_V2_FILENAME,
   CREATE_V2_SCHEMA_SQL,
@@ -403,10 +403,10 @@ test("PersistentStoreLifecycleService は起動時に Mate projection を復元�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "V4 DB の initialize は Mate schema hook を一度だけ呼ぶ"
+// claim = "V4 DB の initialize は Mate schema を作成して再利用可能にする"
 // oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
 // fault = "V4 DB 起動で Mate schema を初期化しない、または重複初期化する"
-// observable = "ensureMateSchema の呼出し回数と db path"
+// observable = "初期化後のMate schemaの存在とdb path"
 // observation_boundary = "public-boundary"
 // scope = "persistent-store-v4-schema"
 // lifecycle = "permanent"
@@ -462,10 +462,10 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "legacy DB の initialize は V4 専用の Mate schema hook を呼ばない"
+// claim = "legacy DB の initialize は V4 専用の Mate schemaを追加作成しない"
 // oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
 // fault = "legacy DB 起動時に V4 schema を追加作成する"
-// observable = "ensureMateSchema の呼出し回数"
+// observable = "初期化後にV4専用Mate schemaが存在しないこと"
 // observation_boundary = "public-boundary"
 // scope = "persistent-store-legacy-schema"
 // lifecycle = "permanent"
@@ -520,10 +520,10 @@ test("PersistentStoreLifecycleService は legacy DB 起動時に Mate schema を
 
 // @test-value v2
 // kind = "invariant"
-// claim = "V3 legacy DB の initialize は V4 専用の Mate schema hook を呼ばない"
+// claim = "V3 legacy DB の initialize は V4 専用の Mate schemaを追加作成しない"
 // oracle = { type = "contract", ref = "src-electron/persistent-store-lifecycle-service.ts#initialize" }
 // fault = "V3 DB 起動時に V4 schema を追加作成する"
-// observable = "ensureMateSchema の呼出し回数"
+// observable = "初期化後にV4専用Mate schemaが存在しないこと"
 // observation_boundary = "public-boundary"
 // scope = "persistent-store-v3-schema"
 // lifecycle = "permanent"
@@ -624,12 +624,15 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を
     });
 
     const firstBundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    let firstProfile: Awaited<ReturnType<MateStorage["getMateProfile"]>> | null = null;
     try {
       await firstBundle.mateStorage.createMate({ displayName: "Mika" });
       await firstBundle.mateStorage.applyProfileFiles({
         summary: "seed core",
         files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n- Stable\n" }],
       });
+      firstProfile = await firstBundle.mateStorage.getMateProfile();
+      assert.ok(firstProfile?.activeRevisionId);
     } finally {
       service.close(firstBundle, dbPath);
     }
@@ -641,9 +644,11 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を
     try {
       const restoredCore = await readFile(corePath, "utf8");
       const mismatches = await secondBundle.mateStorage.verifyMateProfileFiles();
+      const restoredProfile = await secondBundle.mateStorage.getMateProfile();
 
       assert.equal(restoredCore, "# Core\n- Stable\n");
       assert.deepEqual(mismatches, []);
+      assert.equal(restoredProfile?.activeRevisionId, firstProfile?.activeRevisionId);
     } finally {
       service.close(secondBundle, dbPath);
     }

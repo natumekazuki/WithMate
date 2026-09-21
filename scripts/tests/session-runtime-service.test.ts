@@ -4,25 +4,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it, mock } from "node:test";
 
-import {
-  buildNewSession,
-  currentTimestampLabel,
-  type AuditLogEntry,
-  type CharacterProfile,
-  type ComposerPreview,
-  type LiveApprovalDecision,
-  type LiveApprovalRequest,
-  type LiveElicitationRequest,
-  type LiveSessionRunState,
-  type ProviderQuotaTelemetry,
-  type ProjectMemoryEntry,
-  type Session,
-  type SessionContextTelemetry,
-  type SessionMemory,
-} from "../../src/app-state.js";
-import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { type ModelCatalogProvider } from "../../src/model-catalog.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { currentTimestampLabel } from "../../src-shared/time-state.js";
+import type { AuditLogEntry, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { CharacterProfile } from "../../src-shared/character/character-state.js";
+import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { type ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import {
   ProviderTurnError,
   type ProviderCodingAdapter,
@@ -36,7 +26,7 @@ import {
   type SessionRuntimeServiceDeps,
 } from "../../src-electron/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/conversation-timing.js";
-import type { CharacterContextResponse } from "../../src/character-context/character-context-contract.js";
+import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
 import type { SessionTurnTerminalCommit } from "../../src-electron/session-turn-terminal-commit.js";
 import { SessionWindowBridge } from "../../src-electron/session-window-bridge.js";

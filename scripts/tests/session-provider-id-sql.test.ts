@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { normalizeProviderId } from "../../src/model-catalog.js";
+import { normalizeProviderId } from "../../src-shared/settings/model-catalog.js";
 import {
   registerSessionProviderIdNormalizer,
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,

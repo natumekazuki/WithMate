@@ -3,24 +3,24 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createDefaultAppSettings,
   type AppSettings,
-} from "./provider-settings-state.js";
+} from "../src-shared/settings/provider-settings-state.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import {
   projectHomeSessionSummary,
   type HomeSessionSummary,
   type SessionCharacterUsage,
-} from "./session-state.js";
+} from "../src-shared/session/session-state.js";
 import {
   startSessionSummaryInvalidationSubscription,
   type SessionSummariesLoadStatus,
 } from "./session-summary-subscription.js";
 import {
   type AuxiliarySessionSummary,
-} from "./auxiliary-session-state.js";
-import { type ModelCatalogSnapshot } from "./model-catalog.js";
+} from "../src-shared/auxiliary/auxiliary-session-state.js";
+import { type ModelCatalogSnapshot } from "../src-shared/settings/model-catalog.js";
 import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import type { OpenSessionWindowIdsState } from "./open-session-window-subscription.js";
-import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
+import type { MemoryV6Diagnostics } from "../src-shared/memory/memory-diagnostics-state.js";
 import {
   buildHomeLaunchProjection,
 } from "./home/home-launch-projection.js";
@@ -49,7 +49,7 @@ import {
   buildPersistedAppSettingsFromRows,
   type HomeProviderSettingRow,
 } from "./settings/settings-view-model.js";
-import type { CharacterCatalogEntry } from "./character/character-catalog.js";
+import type { CharacterCatalogEntry } from "../src-shared/character/character-catalog.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
 import { buildHomeRecentSessionsPanelProps } from "./home/home-recent-sessions-panel-props.js";
@@ -88,7 +88,7 @@ import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-wi
 import {
   type MateProfile,
   type MateStorageState,
-} from "./mate/mate-state.js";
+} from "../src-shared/mate/mate-state.js";
 import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js";
 import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
@@ -101,7 +101,7 @@ import { runSessionMonitorContextMenu } from "./home/home-session-monitor-feedba
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
-} from "./withmate-window-types.js";
+} from "../src-shared/window/withmate-window-types.js";
 import {
   createHomeAuxiliarySessionRefresher,
   resolveHomeAuxiliarySessionSummariesState,

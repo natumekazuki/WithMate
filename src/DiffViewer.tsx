@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 
-import type { ChangedFile } from "./app-state.js";
+import type { ChangedFile } from "../src-shared/session/runtime-state.js";
 
 type DiffViewerProps = {
   file: ChangedFile;

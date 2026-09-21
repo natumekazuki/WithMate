@@ -7,7 +7,7 @@ import {
   type MateStatusLoadApi,
 } from "../../src/mate/mate-status-load-operation.js";
 import { buildMateStatusRefreshers } from "../../src/mate/mate-status-refreshers.js";
-import type { MateProfile } from "../../src/mate/mate-state.js";
+import type { MateProfile } from "../../src-shared/mate/mate-state.js";
 
 const createMateProfile = (displayName: string): MateProfile => ({
   id: "mate-1",

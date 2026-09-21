@@ -10,7 +10,7 @@ import {
   type SessionContextPaneProps,
 } from "../../src/session-components.js";
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
-import type { CharacterProfile } from "../../src/app-state.js";
+import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

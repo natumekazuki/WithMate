@@ -1,4 +1,4 @@
-import type { LiveSessionRunState } from "./app-state.js";
+import type { LiveSessionRunState } from "../src-shared/session/runtime-state.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 

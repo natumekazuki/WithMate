@@ -1,21 +1,21 @@
-import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "./approval-mode.js";
+import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../settings/approval-mode.js";
 import {
   DEFAULT_CODEX_SANDBOX_MODE,
   normalizeCodexSandboxMode,
   type CodexSandboxMode,
-} from "./codex-sandbox-mode.js";
-import { DEFAULT_CODEX_SPEED, normalizeCodexSpeed, type CodexSpeed } from "./codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER, normalizeCodexReviewer, type CodexReviewer } from "./codex-reviewer.js";
-import { normalizeCharacterThemeColors, type CharacterThemeColors } from "./character-state.js";
-import type { CharacterRuntimeSnapshot } from "./character/character-catalog.js";
+} from "../settings/codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED, normalizeCodexSpeed, type CodexSpeed } from "../settings/codex-speed.js";
+import { DEFAULT_CODEX_REVIEWER, normalizeCodexReviewer, type CodexReviewer } from "../settings/codex-reviewer.js";
+import { normalizeCharacterThemeColors, type CharacterThemeColors } from "../character/character-state.js";
+import type { CharacterRuntimeSnapshot } from "../character/character-catalog.js";
 import {
   isUnknownCharacterOwnerId,
   recoverStoredCharacterOwnerId,
   requireCharacterOwnerId,
-} from "./character/character-owner.js";
+} from "../character/character-owner.js";
 import {
   normalizeCharacterRuntimeSnapshot,
-} from "./character/character-runtime-snapshot.js";
+} from "../character/character-runtime-snapshot.js";
 import {
   DEFAULT_CATALOG_REVISION,
   DEFAULT_MODEL_ID,
@@ -25,14 +25,14 @@ import {
   normalizeProviderId,
   type ModelReasoningEffort,
   type ResolvedModelSelection,
-} from "./model-catalog.js";
+} from "../settings/model-catalog.js";
 import {
   type AuditLogOperation,
   type ChangedFile,
   type DiffRow,
   type RunCheck,
 } from "./runtime-state.js";
-import { currentTimestampLabel } from "./time-state.js";
+import { currentTimestampLabel } from "../time-state.js";
 
 export type MessageArtifact = {
   title: string;
@@ -234,15 +234,6 @@ export function isReadOnlySession(
   session: Pick<Session, "accessMode" | "sourceSchemaVersion"> | Pick<SessionSummary, "accessMode" | "sourceSchemaVersion">,
 ): boolean {
   return isLegacyReadOnlySession(session) || session.sourceSchemaVersion < CURRENT_SESSION_SCHEMA_VERSION;
-}
-
-function getLocationSearch(): string {
-  const browserWindow = (globalThis as typeof globalThis & { window?: { location?: { search?: string } } }).window;
-  if (!browserWindow?.location?.search) {
-    return "";
-  }
-
-  return browserWindow.location.search;
 }
 
 function normalizeDiffRow(value: unknown): DiffRow | null {
@@ -710,18 +701,6 @@ export function applyCopilotCustomAgentSelection(
     threadId: session.threadId,
     updatedAt,
   };
-}
-
-export function getSessionIdFromLocation(): string | null {
-  return new URLSearchParams(getLocationSearch()).get("sessionId");
-}
-
-export function getAuxiliarySessionIdFromLocation(): string | null {
-  return new URLSearchParams(getLocationSearch()).get("auxiliarySessionId");
-}
-
-export function getDiffTokenFromLocation(): string | null {
-  return new URLSearchParams(getLocationSearch()).get("token");
 }
 
 /**

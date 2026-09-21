@@ -4,7 +4,7 @@ import test from "node:test";
 import type { IpcMain } from "electron";
 
 import { registerMainIpcHandlers } from "../../src-electron/main-ipc-registration.js";
-import { WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL } from "../../src/withmate-ipc-channels.js";
+import { WITHMATE_SHOW_SESSION_MONITOR_CONTEXT_MENU_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 type Handler = (...args: unknown[]) => unknown;
 

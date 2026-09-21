@@ -1,4 +1,4 @@
-import type { OpenPathResult } from "./withmate-window-types.js";
+import type { OpenPathResult } from "../src-shared/window/withmate-window-types.js";
 
 export async function resolveOpenPathFeedback(
   operation: () => Promise<OpenPathResult>,

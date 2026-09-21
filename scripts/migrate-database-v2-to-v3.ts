@@ -3,19 +3,12 @@ import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
-import type {
-  AuditLogEntry,
-  AuditLogicalPrompt,
-  AuditLogOperation,
-  AuditLogPhase,
-  AuditLogUsage,
-  AuditTransportPayload,
-  Session,
-} from "../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
-import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode } from "../src/codex-sandbox-mode.js";
-import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
-import { normalizeSession } from "../src/session-state.js";
+import type { AuditLogEntry, AuditLogicalPrompt, AuditLogOperation, AuditLogPhase, AuditLogUsage, AuditTransportPayload } from "../src-shared/session/runtime-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
+import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src-shared/settings/approval-mode.js";
+import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode } from "../src-shared/settings/codex-sandbox-mode.js";
+import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../src-shared/settings/model-catalog.js";
+import { normalizeSession } from "../src-shared/session/session-state.js";
 import { AuditLogStorageV3 } from "../src-electron/audit-log-storage-v3.js";
 import { CREATE_V3_SCHEMA_SQL } from "../src-electron/database-schema-v3.js";
 import { SessionStorageV3 } from "../src-electron/session-storage-v3.js";

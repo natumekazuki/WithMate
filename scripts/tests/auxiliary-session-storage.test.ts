@@ -5,16 +5,16 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import { buildNewSession } from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../../src/approval-mode.js";
-import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
-import type { AuxiliaryDraftRecord } from "../../src/auxiliary-draft-contract.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../../src-shared/settings/approval-mode.js";
+import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-draft-contract.js";
 import {
   DEFAULT_CODEX_SANDBOX_MODE,
   type CodexSandboxMode,
-} from "../../src/codex-sandbox-mode.js";
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
+} from "../../src-shared/settings/codex-sandbox-mode.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import {
   resolveAuxiliaryParentSession,
 } from "../../src-electron/auxiliary-parent-session.js";

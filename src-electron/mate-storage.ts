@@ -17,8 +17,8 @@ import {
   type MateGrowthSettings,
   type UpdateMateGrowthModelPreferenceInput,
   type UpdateMateGrowthSettingsInput,
-} from "../src/mate/mate-state.js";
-import { MODEL_REASONING_EFFORTS } from "../src/model-catalog.js";
+} from "../src-shared/mate/mate-state.js";
+import { MODEL_REASONING_EFFORTS } from "../src-shared/settings/model-catalog.js";
 
 const MATE_ID = "current";
 const MATE_DIRECTORY_NAME = "mate";

@@ -7,8 +7,8 @@ import {
   buildAuxiliaryPreview,
   type AuxiliarySession,
   type AuxiliarySessionSummary,
-} from "../src/auxiliary-session-state.js";
-import { CURRENT_SESSION_SCHEMA_VERSION, isReadOnlySession } from "../src/session-state.js";
+} from "../src-shared/auxiliary/auxiliary-session-state.js";
+import { CURRENT_SESSION_SCHEMA_VERSION, isReadOnlySession } from "../src-shared/session/session-state.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import type { ProviderRuntimeMetadataPatch } from "./provider-runtime-metadata-patch.js";
 import type {
@@ -19,7 +19,7 @@ import type {
   AuxiliaryDraftSaveInput,
   AuxiliaryDraftSaveResult,
   AuxiliarySessionStatus,
-} from "../src/auxiliary-draft-contract.js";
+} from "../src-shared/auxiliary/auxiliary-draft-contract.js";
 
 type LegacyAuxiliaryPreviewResolver = (auxiliarySessionId: string) => string | null;
 

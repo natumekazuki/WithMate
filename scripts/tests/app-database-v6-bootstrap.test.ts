@@ -127,6 +127,22 @@ describe("createOrVerifyV6FreshDatabase", () => {
 
       assert.deepEqual(verified, { dbPath: v6Path, created: false });
       assert.equal(isValidV6Database(v6Path), true);
+      const verifiedDb = new DatabaseSync(v6Path, { readOnly: true });
+      try {
+        const tables = new Set(
+          (verifiedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
+            .map(({ name }) => name),
+        );
+        for (const tableName of [
+          "session_turns_v6",
+          "session_turn_interims_v6",
+          "session_turn_provider_outputs_v6",
+        ]) {
+          assert.equal(tables.has(tableName), true, `missing table: ${tableName}`);
+        }
+      } finally {
+        verifiedDb.close();
+      }
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

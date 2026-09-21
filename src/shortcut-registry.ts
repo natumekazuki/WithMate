@@ -14,16 +14,16 @@ import {
   type ShortcutAccelerator,
   type ShortcutBindingKind,
   type ShortcutPlatform,
-} from "./keyboard-shortcut-state.js";
+} from "../src-shared/settings/keyboard-shortcut-state.js";
 
 export type ShortcutCommandKind = "standard" | "withmate";
 export type ShortcutAssignment = "existing" | "new";
-export type { KeyboardShortcutSettings, ShortcutAccelerator, ShortcutPlatform } from "./keyboard-shortcut-state.js";
+export type { KeyboardShortcutSettings, ShortcutAccelerator, ShortcutPlatform } from "../src-shared/settings/keyboard-shortcut-state.js";
 export {
   captureShortcutAccelerator,
   DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
   normalizeKeyboardShortcutSettings,
-} from "./keyboard-shortcut-state.js";
+} from "../src-shared/settings/keyboard-shortcut-state.js";
 
 export const SHORTCUT_COMMAND_IDS = {
   messageFind: "session.message.find",

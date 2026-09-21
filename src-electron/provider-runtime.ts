@@ -1,31 +1,14 @@
-import type {
-  AppSettings,
-  AuditLogicalPrompt,
-  AuditLogOperation,
-  AuditLogProviderMetadata,
-  AuditLogUsage,
-  AuditTransportPayload,
-  CharacterProfile,
-  ComposerAttachment,
-  LiveApprovalDecision,
-  LiveApprovalRequest,
-  LiveElicitationRequest,
-  LiveElicitationResponse,
-  LiveSessionRunState,
-  MessageArtifact,
-  ProjectMemoryEntry,
-  ProviderQuotaTelemetry,
-  SessionContextTelemetry,
-  Session,
-  SessionMemory,
-  SessionMemoryDelta,
-} from "../src/app-state.js";
-import type { ModelReasoningEffort, ModelCatalogProvider } from "../src/model-catalog.js";
-import type { ApprovalMode } from "../src/approval-mode.js";
-import type { CodexSandboxMode } from "../src/codex-sandbox-mode.js";
+import type { AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import type { AuditLogicalPrompt, AuditLogOperation, AuditLogProviderMetadata, AuditLogUsage, AuditTransportPayload, ComposerAttachment, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import type { CharacterProfile } from "../src-shared/character/character-state.js";
+import type { MessageArtifact, Session } from "../src-shared/session/session-state.js";
+import type { ProjectMemoryEntry, SessionMemory, SessionMemoryDelta } from "../src-shared/memory/session-memory-state.js";
+import type { ModelReasoningEffort, ModelCatalogProvider } from "../src-shared/settings/model-catalog.js";
+import type { ApprovalMode } from "../src-shared/settings/approval-mode.js";
+import type { CodexSandboxMode } from "../src-shared/settings/codex-sandbox-mode.js";
 import type { SessionMemoryExtractionPrompt } from "./session-memory-extraction.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
-import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
+import type { CharacterContextResponse } from "../src-shared/character-context/character-context-contract.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 
 export type ProviderPromptComposition = {

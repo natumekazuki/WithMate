@@ -1,13 +1,5 @@
-import type {
-  AuditLogOperation,
-  AuditLogPhase,
-  LiveBackgroundTask,
-  LiveRunStep,
-  ProviderQuotaSnapshot,
-  ProviderQuotaTelemetry,
-  SessionContextTelemetry,
-} from "./app-state.js";
-import type { SessionGlossaryProjection } from "./glossary-contract.js";
+import type { AuditLogOperation, AuditLogPhase, LiveBackgroundTask, LiveRunStep, ProviderQuotaSnapshot, ProviderQuotaTelemetry, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import type { SessionGlossaryProjection } from "../src-shared/glossary/glossary-contract.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
 
 export type ContextPaneTabKey = "latest-command" | "messages" | "glossary" | "reasoning" | "tasks";

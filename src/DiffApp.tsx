@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { getDiffTokenFromLocation, type DiffPreviewPayload } from "./session-state.js";
+import type { DiffPreviewPayload } from "../src-shared/session/session-state.js";
+import { getDiffTokenFromLocation } from "./app/session-location.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";

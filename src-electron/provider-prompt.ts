@@ -4,7 +4,7 @@ import {
   type RunSessionTurnInput,
 } from "./provider-runtime.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
-import { buildCharacterRuntimePromptSection } from "../src/character/character-runtime-snapshot.js";
+import { buildCharacterRuntimePromptSection } from "../src-shared/character/character-runtime-snapshot.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
 
 function formatTimingDuration(durationMs: number): string {

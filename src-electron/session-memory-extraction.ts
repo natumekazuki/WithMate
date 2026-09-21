@@ -1,19 +1,12 @@
-import type {
-  AuditLogicalPrompt,
-  AuditLogUsage,
-  AuditTransportPayload,
-  Session,
-  SessionMemory,
-  SessionMemoryDelta,
-} from "../src/app-state.js";
-import {
-  normalizeSessionMemoryDelta,
-} from "../src/app-state.js";
+import type { AuditLogicalPrompt, AuditLogUsage, AuditTransportPayload } from "../src-shared/session/runtime-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
+import type { SessionMemory, SessionMemoryDelta } from "../src-shared/memory/session-memory-state.js";
+import { normalizeSessionMemoryDelta } from "../src-shared/memory/session-memory-state.js";
 import {
   getMemoryExtractionProviderSettings,
   type AppSettings,
-} from "../src/provider-settings-state.js";
-import type { ModelReasoningEffort } from "../src/model-catalog.js";
+} from "../src-shared/settings/provider-settings-state.js";
+import type { ModelReasoningEffort } from "../src-shared/settings/model-catalog.js";
 
 export const SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA = {
   type: "object",

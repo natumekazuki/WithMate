@@ -5,8 +5,8 @@ import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { buildNewSession } from "../../src/app-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
 import { SessionStorageV2 } from "../../src-electron/session-storage-v2.js";
 

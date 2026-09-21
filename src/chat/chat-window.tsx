@@ -103,8 +103,8 @@ export type ConcurrentChatWindowProps = {
   mainSession?: ConversationColumnSession | null;
   auxiliarySession?: ConversationColumnSession | null;
   api?: ConversationMessageColumnApi;
-  mainLiveRun?: import("../runtime-state.js").LiveSessionRunState | null;
-  auxiliaryLiveRun?: import("../runtime-state.js").LiveSessionRunState | null;
+  mainLiveRun?: import("../../src-shared/session/runtime-state.js").LiveSessionRunState | null;
+  auxiliaryLiveRun?: import("../../src-shared/session/runtime-state.js").LiveSessionRunState | null;
   selectedAuxiliaryId: string | null;
   auxiliaryItems: readonly SessionSwitcherOption[];
   target: "main" | "auxiliary";

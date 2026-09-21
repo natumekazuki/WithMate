@@ -2,8 +2,8 @@ import type {
   MemoryAuditCandidate,
   MemoryTargetAudit,
   MemoryTargetInventoryItem,
-} from "../src/memory-v6/memory-response-contract.js";
-import type { MemoryEntryDetail } from "../src/memory-v6/memory-state.js";
+} from "../src-shared/memory/memory-response-contract.js";
+import type { MemoryEntryDetail } from "../src-shared/memory/memory-state.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 import type { MemoryV6TagStatistic } from "./memory-v6-storage.js";
 

@@ -1,4 +1,4 @@
-import type { Session } from "../src/session-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import type { SessionStorageWrite } from "./persistent-store-lifecycle-service.js";
 

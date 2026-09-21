@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import {
   cloneCharacterProfiles,
   type CharacterProfile,
-} from "../../src/character-state.js";
+} from "../../src-shared/character/character-state.js";
 
 function createCharacter(partial?: Partial<CharacterProfile>): CharacterProfile {
   return {

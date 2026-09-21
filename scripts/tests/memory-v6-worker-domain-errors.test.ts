@@ -8,7 +8,7 @@ import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v
 import { MemoryV6WorkerClient } from "../../src-electron/memory-v6-worker-client.js";
 import { MemoryV6FileQuotaExceededError, MemoryV6IdempotencyConflictError, type MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 import { CharacterAffectIdempotencyConflictError, CharacterAffectVersionConflictError } from "../../src-electron/character-affect-storage.js";
-import type { AffectEventInput } from "../../src/character-affect/affect-contract.js";
+import type { AffectEventInput } from "../../src-shared/character-affect/affect-contract.js";
 
 // @test-value v2
 // kind = "regression"

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { buildNewSession, type Session } from "../../src/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
 import {
   assertPersistentStoreOwnerActive,

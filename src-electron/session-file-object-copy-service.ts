@@ -5,14 +5,14 @@ import type {
   SessionFileObjectCopyContextMenuResult,
   SessionFileObjectCopyLinkRequest,
   SessionFileObjectCopyResult,
-} from "../src/file-explorer/session-file-object-copy-contract.js";
+} from "../src-shared/file-explorer/session-file-object-copy-contract.js";
 import type {
   SessionFilePreviewTargetResolution,
   SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRootResourceRequest,
-} from "../src/file-explorer/file-explorer-contract.js";
-import { isSessionFileRootResource } from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
+import { isSessionFileRootResource } from "../src-shared/file-explorer/file-explorer-contract.js";
 import type { AuthorizedSessionFileOperationResult } from "./session-file-explorer-service.js";
 import type { NativeFileDropWriteResult } from "./windows-file-drop-clipboard-writer.js";
 

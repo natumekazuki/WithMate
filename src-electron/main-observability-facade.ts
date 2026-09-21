@@ -1,11 +1,6 @@
-import type {
-  LiveSessionRunState,
-  ProviderQuotaTelemetry,
-  SessionBackgroundActivityKind,
-  SessionBackgroundActivityState,
-  SessionContextTelemetry,
-} from "../src/app-state.js";
-import type { AppSettings } from "../src/provider-settings-state.js";
+import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
+import type { AppSettings } from "../src-shared/settings/provider-settings-state.js";
 import type { ProviderCodingAdapter } from "./provider-runtime.js";
 import { fetchProviderQuotaTelemetry } from "./provider-support.js";
 import { SessionObservabilityService } from "./session-observability-service.js";

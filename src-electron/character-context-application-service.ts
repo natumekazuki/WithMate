@@ -2,8 +2,8 @@ import {
   CHARACTER_AFFECT_FAMILIES,
   assertValidAffectEvent,
   type CharacterAffectFamily,
-} from "../src/character-affect/affect-contract.js";
-import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
+} from "../src-shared/character-affect/affect-contract.js";
+import type { CharacterRuntimeSnapshot } from "../src-shared/character/character-catalog.js";
 import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
   createCharacterContextError,
@@ -15,7 +15,7 @@ import {
   type CharacterMemoryMutationResponse,
   type CharacterMemorySearchResponse,
   type CharacterOperationAuthority,
-} from "../src/character-context/character-context-contract.js";
+} from "../src-shared/character-context/character-context-contract.js";
 import {
   CharacterContextValidationError,
   validateCharacterAffectAppraiseRequest,
@@ -28,9 +28,9 @@ import {
   validateCharacterMemoryForgetRequest,
   validateCharacterMemorySearchRequest,
 } from "../src/character-context/character-context-validation.js";
-import { MEMORY_V6_SCHEMA_VERSION, type MemoryTargetSelector } from "../src/memory-v6/memory-contract.js";
-import type { MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
-import type { MemoryEntrySummary } from "../src/memory-v6/memory-state.js";
+import { MEMORY_V6_SCHEMA_VERSION, type MemoryTargetSelector } from "../src-shared/memory/memory-contract.js";
+import type { MemoryErrorResponse } from "../src-shared/memory/memory-response-contract.js";
+import type { MemoryEntrySummary } from "../src-shared/memory/memory-state.js";
 import {
   CharacterAffectEpisodePersistenceError,
   CharacterAffectService,

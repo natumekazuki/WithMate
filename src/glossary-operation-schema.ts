@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   GLOSSARY_LIMITS,
   GLOSSARY_RUNTIME_SCHEMA_VERSION,
-} from "./glossary-contract.js";
+} from "../src-shared/glossary/glossary-contract.js";
 
 export const glossaryCheckoutSelectorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("primary") }).strict(),

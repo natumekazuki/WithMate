@@ -1,5 +1,5 @@
-import type { LiveSessionRunState } from "./runtime-state.js";
-import type { Message } from "./session-state.js";
+import type { LiveSessionRunState } from "../src-shared/session/runtime-state.js";
+import type { Message } from "../src-shared/session/session-state.js";
 
 export type PendingLiveRunSessionIdentity = {
   id: string;

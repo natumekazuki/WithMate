@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import type { AuxiliaryCreationRequest, AuxiliarySession } from "../../src/auxiliary-session-state.js";
+import type { AuxiliaryCreationRequest, AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { useAuxiliaryCreation } from "../../src/chat/use-auxiliary-creation.js";
 import { AuxiliaryLaunchProviderDialog } from "../../src/chat/AuxiliaryLaunchProviderDialog.js";
 

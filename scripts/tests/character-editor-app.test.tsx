@@ -6,12 +6,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import CharacterEditorApp from "../../src/CharacterEditorApp.js";
-import type { StartCharacterAuthoringSessionInput } from "../../src/character/character-authoring.js";
-import { DEFAULT_CHARACTER_THEME, type CharacterDetail } from "../../src/character/character-catalog.js";
-import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
-import { buildNewSession } from "../../src/session-state.js";
-import type { WithMateWindowApi } from "../../src/withmate-window-api.js";
+import type { StartCharacterAuthoringSessionInput } from "../../src-shared/character/character-authoring.js";
+import { DEFAULT_CHARACTER_THEME, type CharacterDetail } from "../../src-shared/character/character-catalog.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

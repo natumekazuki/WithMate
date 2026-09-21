@@ -9,7 +9,7 @@ import {
   type GlossaryProjectionState,
   type GlossarySearchRequest,
   type SessionGlossaryProjection,
-} from "../src/glossary-contract.js";
+} from "../src-shared/glossary/glossary-contract.js";
 import {
   areResolvedGlossaryCheckoutsEqual,
   GlossaryApplicationService,

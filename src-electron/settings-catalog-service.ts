@@ -1,29 +1,27 @@
-import {
-  currentTimestampLabel,
-} from "../src/app-state.js";
+import { currentTimestampLabel } from "../src-shared/time-state.js";
 import {
   getProviderAppSettings,
   normalizeAppSettings,
   type AppSettings,
-} from "../src/provider-settings-state.js";
-import { getSessionIncarnationId, type Session } from "../src/session-state.js";
+} from "../src-shared/settings/provider-settings-state.js";
+import { getSessionIncarnationId, type Session } from "../src-shared/session/session-state.js";
 import {
   coerceModelSelection,
   getProviderCatalog,
   parseModelCatalogDocument,
   type ModelCatalogDocument,
   type ModelCatalogSnapshot,
-} from "../src/model-catalog.js";
+} from "../src-shared/settings/model-catalog.js";
 import {
   areAllResetAppDatabaseTargetsSelected,
   normalizeResetAppDatabaseTargets,
-} from "../src/withmate-window-types.js";
+} from "../src-shared/window/withmate-window-types.js";
 import type {
   ResetAppDatabaseRequest,
   ResetAppDatabaseResult,
   ResetAppDatabaseTarget,
-} from "../src/withmate-window-types.js";
-import type { AuxiliarySession } from "../src/auxiliary-session-state.js";
+} from "../src-shared/window/withmate-window-types.js";
+import type { AuxiliarySession } from "../src-shared/auxiliary/auxiliary-session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
 import type { SessionThreadPatchInput } from "./session-storage-v6.js";

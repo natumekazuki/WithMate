@@ -1,4 +1,4 @@
-import type { AuditLogDetailFragment } from "./runtime-state.js";
+import type { AuditLogDetailFragment } from "../src-shared/session/runtime-state.js";
 
 export type AuditLogDetailMetrics = {
   hasFragment: boolean;

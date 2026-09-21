@@ -1,16 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import {
-  buildNewSession,
-  type AuditLogEntry,
-  type AuditLogSummary,
-  type LiveApprovalRequest,
-  type LiveElicitationRequest,
-  type LiveSessionRunState,
-  type SessionBackgroundActivityState,
-} from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../../src/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { AuditLogEntry, AuditLogSummary, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
+import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../../src-shared/settings/approval-mode.js";
 import { buildAuditLogRefreshSignature, buildDisplayedAuditLogs } from "../../src/audit-log-refresh.js";
 
 function makeBackgroundActivity(

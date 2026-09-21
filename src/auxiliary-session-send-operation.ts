@@ -5,7 +5,7 @@ import {
   type AuxiliarySession,
   type AuxiliarySessionSendPreflightResult,
   type AuxiliarySessionSendTargetResolution,
-} from "./auxiliary-session-state.js";
+} from "../src-shared/auxiliary/auxiliary-session-state.js";
 import {
   applyActiveAuxiliarySessionUpdate,
   createActiveAuxiliarySessionUpdateApplier,

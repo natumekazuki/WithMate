@@ -12,8 +12,8 @@ import {
 import {
   buildMainAuxiliaryRuntimeSession,
 } from "../../src/auxiliary-runtime-projection.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
-import type { Session } from "../../src/session-state.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
 
 function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
   return {

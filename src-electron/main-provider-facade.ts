@@ -1,4 +1,4 @@
-import { DEFAULT_PROVIDER_ID, type ModelCatalogProvider, type ModelCatalogSnapshot } from "../src/model-catalog.js";
+import { DEFAULT_PROVIDER_ID, type ModelCatalogProvider, type ModelCatalogSnapshot } from "../src-shared/settings/model-catalog.js";
 import type { ProviderBackgroundAdapter, ProviderCodingAdapter, ProviderTurnAdapter } from "./provider-runtime.js";
 import {
   getProviderRuntimeCapabilities,

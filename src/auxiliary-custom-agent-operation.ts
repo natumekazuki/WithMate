@@ -1,7 +1,7 @@
 import {
   applyAuxiliarySessionCustomAgentPatch,
   type AuxiliarySession,
-} from "./auxiliary-session-state.js";
+} from "../src-shared/auxiliary/auxiliary-session-state.js";
 
 type UpdateActiveAuxiliarySession = (
   recipe: (current: AuxiliarySession) => AuxiliarySession,

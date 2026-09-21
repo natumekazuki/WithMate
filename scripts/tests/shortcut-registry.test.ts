@@ -22,7 +22,7 @@ import {
 import {
   isAllowedShortcutAccelerator,
   normalizeKeyboardShortcutSettings,
-} from "../../src/keyboard-shortcut-state.js";
+} from "../../src-shared/settings/keyboard-shortcut-state.js";
 
 function createEntry(overrides: Partial<ShortcutEntry> = {}): ShortcutEntry {
   return {

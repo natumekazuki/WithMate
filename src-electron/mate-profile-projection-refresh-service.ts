@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { MateProfile } from "../src/mate/mate-state.js";
+import type { MateProfile } from "../src-shared/mate/mate-state.js";
 import type { ListProfileItemsRequest, MateProfileItem, MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { renderMateProfileFiles } from "./mate-profile-file-renderer.js";
 import type { ApplyMateProfileFilesInput } from "./mate-storage.js";

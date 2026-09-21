@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import type { AppBootStatus, AppBootStage } from "./app-boot-state.js";
+import type { AppBootStatus, AppBootStage } from "../src-shared/window/app-boot-state.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 
 const STAGES: AppBootStage[] = [

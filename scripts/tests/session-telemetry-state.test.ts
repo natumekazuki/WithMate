@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src/app-state.js";
+import type { ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import {
   resolveOwnedProviderQuotaTelemetry,
   resolveOwnedSessionContextTelemetry,

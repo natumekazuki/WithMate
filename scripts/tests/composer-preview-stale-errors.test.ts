@@ -4,7 +4,7 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { useConversationComposerState } from "../../src/chat/use-conversation-composer-state.js";
-import type { ComposerPreview } from "../../src/app-state.js";
+import type { ComposerPreview } from "../../src-shared/session/runtime-state.js";
 
 const attachmentPreview: ComposerPreview = {
   attachments: [{

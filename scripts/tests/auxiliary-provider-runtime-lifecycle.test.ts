@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "../../src-electron/auxiliary-provider-runtime-lifecycle.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 
 function createAuxiliarySession(provider: string): AuxiliarySession {
   return {

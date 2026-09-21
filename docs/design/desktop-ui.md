@@ -403,13 +403,15 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 ## Deliverables
 
 - `src/HomeApp.tsx`
-- `src/withmate-window.ts`
+- `src-shared/ipc/withmate-window.ts`
 - `src/App.tsx`
 - `src/MessageRichText.tsx`
 - `src/CharacterEditorApp.tsx`
 - `src/DiffApp.tsx`
 - `src/DiffViewer.tsx`
-- `src/app-state.ts`
+- `src-shared/session/session-state.ts`
+- `src-shared/settings/provider-settings-state.ts`
+- `src-shared/window/withmate-window-types.ts`
 - `src/ui-utils.tsx`
 - `docs/design/message-rich-text.md`
 - `src-electron/main.ts`

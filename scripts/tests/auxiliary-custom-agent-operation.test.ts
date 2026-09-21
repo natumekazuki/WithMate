@@ -5,7 +5,7 @@ import {
   runAuxiliaryCustomAgentPatchOperation,
   runAuxiliaryCustomAgentSelectionOperation,
 } from "../../src/auxiliary-custom-agent-operation.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 
 function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
   return {

@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
-import type { AffectEventInput } from "../../src/character-affect/affect-contract.js";
+import type { AffectEventInput } from "../../src-shared/character-affect/affect-contract.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
 import { settleCharacterAffectTurnWithRetry } from "../../src-electron/character-affect-turn-settler.js";

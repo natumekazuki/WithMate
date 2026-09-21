@@ -1,9 +1,11 @@
 import { useState, type CSSProperties } from "react";
 
-import type { CharacterVisual, ChangedFile, Session } from "./app-state.js";
-import { reasoningEffortLabel, type ModelCatalogItem, type ModelCatalogProvider, type ModelReasoningEffort } from "./model-catalog.js";
+import type { CharacterVisual } from "../src-shared/character/character-state.js";
+import type { ChangedFile } from "../src-shared/session/runtime-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
+import { reasoningEffortLabel, type ModelCatalogItem, type ModelCatalogProvider, type ModelReasoningEffort } from "../src-shared/settings/model-catalog.js";
 import { buildThemeInkPalette, toRgba } from "./theme-utils.js";
-export { approvalModeLabel, approvalModeOptions } from "./approval-mode.js";
+export { approvalModeLabel, approvalModeOptions } from "../src-shared/settings/approval-mode.js";
 
 function toFileUrl(filePath: string): string {
   const normalized = filePath.replace(/\\/g, "/");

@@ -7,7 +7,7 @@ import type {
   AppDatabaseDiagnostics,
   AppDatabaseFileDiagnostics,
   AppDatabaseFileStatus,
-} from "../src/app-database-diagnostics-state.js";
+} from "../src-shared/window/app-database-diagnostics-state.js";
 import { APP_DATABASE_V1_FILENAME, APP_DATABASE_V1_SCHEMA_VERSION } from "./database-schema-v1.js";
 import { APP_DATABASE_V2_FILENAME, APP_DATABASE_V2_SCHEMA_VERSION, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, APP_DATABASE_V3_SCHEMA_VERSION, isValidV3Database } from "./database-schema-v3.js";

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { SessionSummary } from "../../src/session-state.js";
+import type { SessionSummary } from "../../src-shared/session/session-state.js";
 import { mergePinnedSessionSummary } from "../../src/home/session-pinning.js";
 
 function createSessionSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-import { GLOSSARY_RUNTIME_SCHEMA_VERSION } from "../src/glossary-contract.js";
+import { GLOSSARY_RUNTIME_SCHEMA_VERSION } from "../src-shared/glossary/glossary-contract.js";
 import {
   GLOSSARY_RUNTIME_OPERATION_PATHS,
   type GlossaryRuntimeOperation,

@@ -1,4 +1,4 @@
-import type { ModelCatalogSnapshot } from "./model-catalog.js";
+import type { ModelCatalogSnapshot } from "../src-shared/settings/model-catalog.js";
 
 export type ModelCatalogSubscriptionApi = {
   getModelCatalog: (revision?: number | null) => Promise<ModelCatalogSnapshot | null>;

@@ -1,5 +1,5 @@
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
-import type { Message } from "./session-state.js";
+import type { AuxiliarySession } from "../src-shared/auxiliary/auxiliary-session-state.js";
+import type { Message } from "../src-shared/session/session-state.js";
 
 export type MessageListSource =
   | {

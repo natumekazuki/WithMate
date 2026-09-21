@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
-import type { ProviderAgentRuntimeAuthoritySnapshot } from "../src/agent-runtime/agent-runtime-binding-contract.js";
+import type { ProviderAgentRuntimeAuthoritySnapshot } from "../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
-} from "../src/agent-runtime/agent-runtime-binding-contract.js";
+} from "../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 
 export {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
@@ -16,7 +16,7 @@ export {
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
-} from "../src/agent-runtime/agent-runtime-binding-contract.js";
+} from "../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 
 export type ProviderAgentRuntimeBindingCapability = {
   providerId: string;

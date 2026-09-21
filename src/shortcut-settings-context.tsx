@@ -4,7 +4,7 @@ import {
   createDefaultKeyboardShortcutSettings,
   normalizeKeyboardShortcutSettings,
   type KeyboardShortcutSettings,
-} from "./keyboard-shortcut-state.js";
+} from "../src-shared/settings/keyboard-shortcut-state.js";
 
 const DEFAULT_SETTINGS = createDefaultKeyboardShortcutSettings();
 const ShortcutSettingsContext = createContext<KeyboardShortcutSettings>(DEFAULT_SETTINGS);

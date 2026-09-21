@@ -19,7 +19,7 @@ import {
   GLOSSARY_RUNTIME_OPERATION_PATHS,
   getGlossaryAgentRuntimeOperations,
 } from "../../src/glossary-operation-schema.js";
-import { GLOSSARY_RUNTIME_SCHEMA_VERSION } from "../../src/glossary-contract.js";
+import { GLOSSARY_RUNTIME_SCHEMA_VERSION } from "../../src-shared/glossary/glossary-contract.js";
 import { callWithMateMemoryRuntime } from "../withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src/memory-v6/memory-runtime-exchange.js";
 

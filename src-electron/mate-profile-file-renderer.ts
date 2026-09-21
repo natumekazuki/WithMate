@@ -1,4 +1,4 @@
-import type { MateProfile, MateProfileSectionState } from "../src/mate/mate-state.js";
+import type { MateProfile, MateProfileSectionState } from "../src-shared/mate/mate-state.js";
 import {
   getMateProfileSectionRule,
   isMateProfileRuntimeSectionKey,

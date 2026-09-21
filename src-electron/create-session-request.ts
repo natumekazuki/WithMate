@@ -1,13 +1,13 @@
 import {
   isUnknownCharacterOwnerId,
   normalizeCharacterOwnerId,
-} from "../src/character/character-owner.js";
-import { normalizeCharacterRuntimeSnapshot } from "../src/character/character-runtime-snapshot.js";
+} from "../src-shared/character/character-owner.js";
+import { normalizeCharacterRuntimeSnapshot } from "../src-shared/character/character-runtime-snapshot.js";
 import type {
   CreateSessionInput,
   CreateSessionWorkspaceRequest,
   SessionKind,
-} from "../src/session-state.js";
+} from "../src-shared/session/session-state.js";
 
 type CreateSessionMetadataInput = Omit<
   CreateSessionInput,

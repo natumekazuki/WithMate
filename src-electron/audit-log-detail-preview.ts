@@ -1,4 +1,4 @@
-import type { AuditLogicalPrompt } from "../src/app-state.js";
+import type { AuditLogicalPrompt } from "../src-shared/session/runtime-state.js";
 
 export const AUDIT_LOG_LOGICAL_PROMPT_PREVIEW_HEAD_CHARS = 10000;
 export const AUDIT_LOG_LOGICAL_PROMPT_PREVIEW_TAIL_CHARS = 10000;

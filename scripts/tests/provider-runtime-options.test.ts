@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   getSandboxOptionsForProvider,
   getSandboxOptionsForProviderSelection,
-} from "../../src/provider-runtime-options.js";
+} from "../../src-shared/settings/provider-runtime-options.js";
 
 test("getSandboxOptionsForProvider は Codex provider に Sandbox 選択肢を返す", () => {
   const codexOptions = getSandboxOptionsForProvider("codex");

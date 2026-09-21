@@ -1,4 +1,4 @@
-import type { AuxiliaryDraftRecord } from "../auxiliary-draft-contract.js";
+import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-draft-contract.js";
 
 export type AuxiliaryDraftPersistenceRecord = AuxiliaryDraftRecord;
 

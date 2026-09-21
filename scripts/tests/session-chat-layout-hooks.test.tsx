@@ -13,11 +13,8 @@ import {
   useSessionSidePanes,
   useSessionVerticalDockResize,
 } from "../../src/session-chat-layout-hooks.js";
-import type {
-  ChatActionDockMode,
-  ChatHeaderVisibility,
-} from "../../src/chat/chat-layout-preference.js";
-import type { SessionSidePane } from "../../src/session-side-pane.js";
+import type { ChatActionDockMode, ChatHeaderVisibility } from "../../src-shared/settings/chat-layout-preference.js";
+import type { SessionSidePane } from "../../src-shared/settings/session-side-pane.js";
 
 // @test-value v2
 // kind = "invariant"

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import type { LiveSessionRunState } from "../../src/app-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import {
   startLiveSessionRunSubscription,
   type LiveSessionRunStateUpdate,

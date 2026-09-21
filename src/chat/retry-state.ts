@@ -1,5 +1,5 @@
-import type { AuditLogSummary } from "../runtime-state.js";
-import type { Message } from "../session-state.js";
+import type { AuditLogSummary } from "../../src-shared/session/runtime-state.js";
+import type { Message } from "../../src-shared/session/session-state.js";
 import { isTerminalAuditLogPhase } from "../audit-log-phase.js";
 import { applyComposerDraftChangeCommand } from "./composer-draft-handlers.js";
 

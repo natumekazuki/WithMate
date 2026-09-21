@@ -1,35 +1,16 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
 
-import type {
-  AuditLogDetail,
-  AuditLogDetailFragment,
-  AuditLogDetailSection,
-  AuditLogEntry,
-  AuditLogOperationDetailFragment,
-  AuditLogSummary,
-  AuditLogSummaryPageRequest,
-  AuditLogSummaryPageResult,
-  LiveApprovalDecision,
-  LiveElicitationResponse,
-  LiveSessionRunState,
-  ProviderQuotaTelemetry,
-  RunSessionTurnRequest,
-  SessionBackgroundActivityKind,
-  SessionBackgroundActivityState,
-  SessionContextTelemetry,
-  SessionCharacterUsage,
-  SessionSummaryPageRequest,
-  HomeSessionSummaryPageResult,
-  SessionSummary,
-} from "../src/app-state.js";
-import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type { AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogOperationDetailFragment, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
+import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
+import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary } from "../src-shared/session/session-state.js";
+import type { AppDatabaseDiagnostics } from "../src-shared/window/app-database-diagnostics-state.js";
 import type {
   MarkdownLinkContextMenuRequest,
   MarkdownLinkContextMenuResult,
-} from "../src/markdown-link-context-menu.js";
-import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
-import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
-import type { MemoryFileUsageResponse } from "../src/memory-v6/memory-response-contract.js";
+} from "../src-shared/window/markdown-link-context-menu.js";
+import type { MemoryV6Diagnostics } from "../src-shared/memory/memory-diagnostics-state.js";
+import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src-shared/memory/memory-contract.js";
+import type { MemoryFileUsageResponse } from "../src-shared/memory/memory-response-contract.js";
 import type {
   MemoryV6ReviewEntryDetail,
   MemoryV6ReviewExportFilesResult,
@@ -37,16 +18,16 @@ import type {
   MemoryV6ProtectedObjectGcRequest,
   MemoryV6ProtectedObjectGcResponse,
   MemoryV6ReviewSearchResult,
-} from "../src/memory-v6/memory-review-state.js";
+} from "../src-shared/memory/memory-review-state.js";
 import type {
   AuxiliarySession,
   AuxiliarySessionSummary,
   CreateAuxiliarySessionInput,
-} from "../src/auxiliary-session-state.js";
+} from "../src-shared/auxiliary/auxiliary-session-state.js";
 import type {
   CharacterAuthoringSessionStartResult,
   StartCharacterAuthoringSessionInput,
-} from "../src/character/character-authoring.js";
+} from "../src-shared/character/character-authoring.js";
 import type {
   CharacterCatalogEntry,
   CharacterDetail,
@@ -54,10 +35,10 @@ import type {
   ResolveLaunchCharacterInput,
   UpdateCharacterDefinitionInput,
   UpdateCharacterMetadataInput,
-} from "../src/character/character-catalog.js";
-import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { ChatLayoutPreferenceUpdate } from "../src/chat/chat-layout-preference.js";
-import type { AppSettings } from "../src/provider-settings-state.js";
+} from "../src-shared/character/character-catalog.js";
+import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src-shared/settings/model-catalog.js";
+import type { ChatLayoutPreferenceUpdate } from "../src-shared/settings/chat-layout-preference.js";
+import type { AppSettings } from "../src-shared/settings/provider-settings-state.js";
 import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
@@ -92,27 +73,27 @@ import type {
   FileRootGitHistoryDiffResult,
   FileRootGitHistoryRepositoriesRequest,
   FileRootGitHistoryRepositoriesResult,
-} from "../src/file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import type {
   SessionFileObjectCopyContextMenuRequest,
   SessionFileObjectCopyContextMenuResult,
   SessionFileObjectCopyRequest,
   SessionFileObjectCopyResult,
-} from "../src/file-explorer/session-file-object-copy-contract.js";
+} from "../src-shared/file-explorer/session-file-object-copy-contract.js";
 import type {
   GlossaryListResult,
   GlossaryOperationResult,
   GlossarySearchRequest,
   SessionGlossaryProjection,
-} from "../src/glossary-contract.js";
-import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
+} from "../src-shared/glossary/glossary-contract.js";
+import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src-shared/session/runtime-state.js";
 import type {
   CreateSessionRequest,
   DiffPreviewPayload,
   MessageArtifact,
   Session,
   SetSessionPinnedRequest,
-} from "../src/session-state.js";
+} from "../src-shared/session/session-state.js";
 import type {
   ImageFilePickerPurpose,
   OpenPathOptions,
@@ -125,23 +106,23 @@ import type {
   OpenSessionWindowIdsPageResult,
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
-} from "../src/withmate-window-types.js";
+} from "../src-shared/window/withmate-window-types.js";
 import type {
   CreateMateInput,
   MateProfile,
   MateStorageState,
   SetMateAvatarInput,
   UpdateMateInput,
-} from "../src/mate/mate-state.js";
+} from "../src-shared/mate/mate-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
-import type { WorkspaceDirectoryValidationResult } from "../src/workspace-directory-validation.js";
+import type { WorkspaceDirectoryValidationResult } from "../src-shared/window/workspace-directory-validation.js";
 import type {
   CreatePromptTemplateInput,
   PromptTemplate,
   UpdatePromptTemplateInput,
-} from "../src/prompt-template.js";
+} from "../src-shared/prompt-template.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
-import type { SessionWindowRestoreResult } from "../src/session-window-restore.js";
+import type { SessionWindowRestoreResult } from "../src-shared/window/session-window-restore.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 
@@ -326,13 +307,13 @@ export type MainIpcAuxiliaryDepsArgs = {
   listOpenAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
-  getAuxiliaryDraft(auxiliarySessionId: string): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftRecord | null>;
-  saveAuxiliaryDraft(input: import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveInput): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliaryDraftSaveResult>;
-  getAuxiliarySessionStatus(auxiliarySessionId: string): Awaitable<import("../src/auxiliary-draft-contract.js").AuxiliarySessionStatus | null>;
+  getAuxiliaryDraft(auxiliarySessionId: string): Awaitable<import("../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliaryDraftRecord | null>;
+  saveAuxiliaryDraft(input: import("../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliaryDraftSaveInput): Awaitable<import("../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliaryDraftSaveResult>;
+  getAuxiliarySessionStatus(auxiliarySessionId: string): Awaitable<import("../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliarySessionStatus | null>;
   createAuxiliarySession(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
-  getAuxiliaryCreationContext(parentSessionId: string): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationContext>;
-  cancelAuxiliaryCreation(request: import("../src/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationResult>;
-  getAuxiliaryCreation(request: import("../src/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../src/auxiliary-session-state.js").AuxiliaryCreationResult>;
+  getAuxiliaryCreationContext(parentSessionId: string): Awaitable<import("../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationContext>;
+  cancelAuxiliaryCreation(request: import("../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
+  getAuxiliaryCreation(request: import("../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Awaitable<import("../src-shared/auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
   updateAuxiliarySession(session: AuxiliarySession): Awaitable<AuxiliarySession>;
   closeAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;

@@ -1,5 +1,5 @@
-import type { HomeSessionSummary } from "../app-state.js";
-import type { AuxiliarySessionSummary } from "../auxiliary-session-state.js";
+import type { HomeSessionSummary } from "../../src-shared/session/session-state.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { sessionStateLabel } from "../ui-utils.js";
 
 export type HomeSessionState = { kind: "running" | "interrupted" | "error" | "neutral"; label: string };

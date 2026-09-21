@@ -1,8 +1,6 @@
-import {
-  createDefaultSessionMemory,
-  type Session,
-  type SessionMemory,
-} from "../src/app-state.js";
+import { createDefaultSessionMemory } from "../src-shared/memory/session-memory-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
+import type { SessionMemory } from "../src-shared/memory/session-memory-state.js";
 import { resolveProjectScope, type ResolvedProjectScopeInput } from "./project-scope.js";
 
 export type SessionMemorySupportServiceDeps = {

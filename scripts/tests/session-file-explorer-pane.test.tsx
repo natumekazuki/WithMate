@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import {
   buildSessionFileExplorerRootsRevision,
   type SessionDirectoryEntry,
-} from "../../src/file-explorer/file-explorer-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 type Deferred<T> = {
   promise: Promise<T>;

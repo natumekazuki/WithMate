@@ -1,27 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import {
-  type AuditLogDetail,
-  type AuditLogDetailFragment,
-  type AuditLogDetailSection,
-  type AuditLogEntry,
-  type AuditLogicalPrompt,
-  type AuditLogOperationDetailFragment,
-  type AuditLogOperation,
-  type AuditLogPhase,
-  type AuditLogSummary,
-  type AuditLogSummaryPageRequest,
-  type AuditLogSummaryPageResult,
-  type AuditLogUsage,
-  type AuditTransportPayload,
-} from "../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
+import type { AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogicalPrompt, AuditLogOperationDetailFragment, AuditLogOperation, AuditLogPhase, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult, AuditLogUsage, AuditTransportPayload } from "../src-shared/session/runtime-state.js";
+import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src-shared/settings/approval-mode.js";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER_ID,
   DEFAULT_REASONING_EFFORT,
   isModelReasoningEffort,
-} from "../src/model-catalog.js";
+} from "../src-shared/settings/model-catalog.js";
 import { previewAuditLogicalPrompt } from "./audit-log-detail-preview.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 

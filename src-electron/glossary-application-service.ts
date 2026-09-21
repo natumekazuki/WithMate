@@ -39,7 +39,7 @@ import {
   type GlossaryUpdateRequest,
   type GlossaryValidationIssue,
   type GlossaryValidationResult,
-} from "../src/glossary-contract.js";
+} from "../src-shared/glossary/glossary-contract.js";
 
 const execFileAsync = promisify(execFile);
 const NORMALIZED_REVISION_PATTERN = /^[a-f0-9]{64}$/;

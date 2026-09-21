@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises";
 import { cp, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { resolveProviderSkillRootPath, type AppSettings } from "../src/provider-settings-state.js";
+import { resolveProviderSkillRootPath, type AppSettings } from "../src-shared/settings/provider-settings-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export const WITHMATE_GLOSSARY_SKILL_NAME = "withmate-glossary";

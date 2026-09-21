@@ -8,13 +8,13 @@ import type {
   FileRootGitHistoryDiffRequest,
   FileRootGitDiffScope,
   SessionFilePreviewWindowPayload,
-} from "./file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 import {
   areSessionFileResourcesEqual,
   getSessionFileResourceDisplayPath,
   isFileRootGitHistoryComparisonDiffRequest,
   isSessionFileRootResource,
-} from "./file-explorer/file-explorer-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
 
 type DiffState = {
   scope: FileRootGitDiffScope;

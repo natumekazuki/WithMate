@@ -7,7 +7,7 @@ import {
   createCharacterContextError,
   isCharacterContextError,
   type CharacterContextErrorCode,
-} from "../src/character-context/character-context-contract.js";
+} from "../src-shared/character-context/character-context-contract.js";
 import {
   buildWithMateMemoryDiscoveryGenerationFileName,
   normalizeWithMateMemoryApiBaseUrl,
@@ -21,7 +21,7 @@ import {
 import {
   createMemoryErrorResponse,
   type MemoryErrorResponse,
-} from "../src/memory-v6/memory-response-contract.js";
+} from "../src-shared/memory/memory-response-contract.js";
 import {
   createWithMateMemoryRuntimeChallenge,
   createWithMateMemoryRuntimeOwnerChallenge,
@@ -39,7 +39,7 @@ import {
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
-} from "../src/agent-runtime/agent-runtime-binding-contract.js";
+} from "../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import {
   getRuntimeDiscoveryLeaseState,
   isUuid,

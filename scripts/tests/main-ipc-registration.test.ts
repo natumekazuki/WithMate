@@ -82,7 +82,7 @@ import {
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
-} from "../../src/withmate-ipc-channels.js";
+} from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 type Handler = (...args: unknown[]) => unknown;
 

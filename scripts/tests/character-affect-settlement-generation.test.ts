@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import type { CharacterContextResponse } from "../../src/character-context/character-context-contract.js";
+import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
 import { settleCharacterAffectTurnWithRetry } from "../../src-electron/character-affect-turn-settler.js";
 

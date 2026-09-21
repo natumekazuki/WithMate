@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useDialogA11y } from "../a11y.js";
-import type { MemoryEntryKind, MemoryForgetReason } from "./memory-contract.js";
+import type { MemoryEntryKind, MemoryForgetReason } from "../../src-shared/memory/memory-contract.js";
 import type {
   MemoryV6ReviewApi,
   MemoryV6ReviewEntryDetail,
   MemoryV6ProtectedObjectGcResponse,
   MemoryV6ReviewSearchHit,
-} from "./memory-review-state.js";
-import type { MemoryFileUsageResponse } from "./memory-response-contract.js";
+} from "../../src-shared/memory/memory-review-state.js";
+import type { MemoryFileUsageResponse } from "../../src-shared/memory/memory-response-contract.js";
 
 type MemoryV6ReviewScreenProps = {
   homePageClassName: string;

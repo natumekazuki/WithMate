@@ -1,23 +1,23 @@
-import { normalizeApprovalMode, type ApprovalMode } from "./approval-mode.js";
+import { normalizeApprovalMode, type ApprovalMode } from "../settings/approval-mode.js";
 import {
   addAllowedAdditionalDirectory,
   removeAllowedAdditionalDirectory,
-} from "./additional-directory-state.js";
-import { normalizeCodexSandboxMode, type CodexSandboxMode } from "./codex-sandbox-mode.js";
-import { normalizeCodexSpeed, type CodexSpeed } from "./codex-speed.js";
-import { normalizeCodexReviewer, type CodexReviewer } from "./codex-reviewer.js";
+} from "../settings/additional-directory-state.js";
+import { normalizeCodexSandboxMode, type CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
+import { normalizeCodexSpeed, type CodexSpeed } from "../settings/codex-speed.js";
+import { normalizeCodexReviewer, type CodexReviewer } from "../settings/codex-reviewer.js";
 import {
   isModelReasoningEffort,
   resolveModelChangeSelection,
   resolveModelSelection,
   type ModelCatalogProvider,
   type ModelReasoningEffort,
-} from "./model-catalog.js";
-import { normalizeMessage, type Message } from "./session-state.js";
+} from "../settings/model-catalog.js";
+import { normalizeMessage, type Message } from "../session/session-state.js";
 import {
   normalizeCharacterRuntimeSnapshot,
-} from "./character/character-runtime-snapshot.js";
-import type { CharacterRuntimeSnapshot } from "./character/character-catalog.js";
+} from "../character/character-runtime-snapshot.js";
+import type { CharacterRuntimeSnapshot } from "../character/character-catalog.js";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";

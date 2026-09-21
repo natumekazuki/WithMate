@@ -10,7 +10,7 @@ import {
   type ModelCatalogItem,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
-} from "../src/model-catalog.js";
+} from "../src-shared/settings/model-catalog.js";
 import { CREATE_MODEL_CATALOG_TABLES_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 

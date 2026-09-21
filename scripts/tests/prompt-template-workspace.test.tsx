@@ -5,9 +5,9 @@ import React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import type { PromptTemplate } from "../../src/prompt-template.js";
+import type { PromptTemplate } from "../../src-shared/prompt-template.js";
 import { PromptTemplateWorkspace } from "../../src/prompt-templates/PromptTemplateWorkspace.js";
-import type { WithMateWindowPromptTemplateApi } from "../../src/withmate-window-api.js";
+import type { WithMateWindowPromptTemplateApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 const FIRST_TEMPLATE: PromptTemplate = {
   id: "template-1",

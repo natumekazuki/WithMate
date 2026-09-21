@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AuditLogService } from "../../src-electron/audit-log-service.js";
-import type { AuditLogEntry } from "../../src/app-state.js";
+import type { AuditLogEntry } from "../../src-shared/session/runtime-state.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -42,33 +42,46 @@ function createInput(overrides: Partial<CreateAuditLogInput> = {}): CreateAuditL
 // lifecycle = "permanent"
 // @end-test-value
 test("AuditLogService は storage の CRUD を委譲する", async () => {
-  const calls: Array<{ type: string; payload: unknown }> = [];
+  const calls: Array<
+    | { type: "list"; payload: string }
+    | { type: "create"; payload: CreateAuditLogInput }
+    | { type: "update"; payload: { id: number; input: CreateAuditLogInput } }
+    | { type: "clear"; payload: null }
+  > = [];
   const createdEntry: AuditLogEntry = { id: 1, ...createInput() };
   const updatedEntry: AuditLogEntry = { id: 1, ...createInput({ phase: "completed" }) };
 
-  const service = new AuditLogService({
-    listSessionAuditLogs: (sessionId: string) => {
+  const storage: ConstructorParameters<typeof AuditLogService>[0] = {
+    async listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
       calls.push({ type: "list", payload: sessionId });
       return [createdEntry];
     },
-    createAuditLog: (input: CreateAuditLogInput) => {
+    async createAuditLog(input: CreateAuditLogInput): Promise<AuditLogEntry> {
       calls.push({ type: "create", payload: input });
       return createdEntry;
     },
-    updateAuditLog: (id: number, input: CreateAuditLogInput) => {
+    async updateAuditLog(id: number, input: CreateAuditLogInput): Promise<AuditLogEntry> {
       calls.push({ type: "update", payload: { id, input } });
       return updatedEntry;
     },
-    clearAuditLogs: () => {
+    async clearAuditLogs(): Promise<void> {
       calls.push({ type: "clear", payload: null });
     },
-  } as unknown as { listSessionAuditLogs(sessionId: string): AuditLogEntry[]; createAuditLog(input: CreateAuditLogInput): AuditLogEntry; updateAuditLog(id: number, input: CreateAuditLogInput): AuditLogEntry; clearAuditLogs(): void });
+  };
+  const service = new AuditLogService(storage);
 
   assert.deepEqual(await service.listSessionAuditLogs("session-1"), [createdEntry]);
-  assert.equal((await service.createAuditLog(createInput())).id, 1);
-  assert.equal((await service.updateAuditLog(1, createInput({ phase: "completed" }))).phase, "completed");
-  service.clearAuditLogs();
+  const createInputValue = createInput();
+  assert.equal((await service.createAuditLog(createInputValue)).id, 1);
+  const updateInputValue = createInput({ phase: "completed" });
+  assert.equal((await service.updateAuditLog(1, updateInputValue)).phase, "completed");
+  await service.clearAuditLogs();
 
-  assert.deepEqual(calls.map((call) => call.type), ["list", "create", "update", "clear"]);
+  assert.deepEqual(calls, [
+    { type: "list", payload: "session-1" },
+    { type: "create", payload: createInputValue },
+    { type: "update", payload: { id: 1, input: updateInputValue } },
+    { type: "clear", payload: null },
+  ]);
 });
 

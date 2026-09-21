@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { AFFECT_SCHEMA_VERSION, type AffectEventInput } from "../../src/character-affect/affect-contract.js";
+import { AFFECT_SCHEMA_VERSION, type AffectEventInput } from "../../src-shared/character-affect/affect-contract.js";
 import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
   isCharacterContextError,
-} from "../../src/character-context/character-context-contract.js";
+} from "../../src-shared/character-context/character-context-contract.js";
 import {
   CharacterContextApplicationService,
   type CharacterContextUnexpectedErrorDiagnostic,

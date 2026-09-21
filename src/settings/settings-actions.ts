@@ -1,4 +1,4 @@
-import type { AppSettings } from "../app-state.js";
+import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   buildDeleteOldSessionsConfirmMessage,
   buildDeleteOldSessionsSuccessMessage,
@@ -12,7 +12,7 @@ import {
   type ResetAppDatabaseResult,
   type ResetAppDatabaseRequest,
   type ResetAppDatabaseTarget,
-} from "../withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 export type HomeSettingsApi = {
   importModelCatalogFile: () => Promise<{ revision: number } | null>;

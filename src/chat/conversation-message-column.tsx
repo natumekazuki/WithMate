@@ -5,10 +5,10 @@ import { useSessionMessageListFollowing } from "../session-chat-layout-hooks.js"
 import { StableSessionMessageColumn } from "./stable-session-message-column.js";
 import { buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "../auxiliary-session-message-projection.js";
 import { buildMessageCollapseTargets, buildMessageNavigatorEntries, type MessageCollapseStateEntry, type MessageJumpRequest, type MessageNavigatorEntry } from "../session-message-collapse.js";
-import { DEFAULT_CHARACTER_SESSION_COPY } from "../character-state.js";
-import type { LiveSessionRunState } from "../runtime-state.js";
-import type { Session } from "../session-state.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+import { DEFAULT_CHARACTER_SESSION_COPY } from "../../src-shared/character/character-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,

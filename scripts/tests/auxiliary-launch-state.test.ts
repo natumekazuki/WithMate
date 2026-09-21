@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import {
   applyAuxiliaryLaunchDialogState,
   canCancelAuxiliaryLaunchCreation,

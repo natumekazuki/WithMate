@@ -1,4 +1,4 @@
-import type { ComposerAttachment } from "./runtime-state.js";
+import type { ComposerAttachment } from "../src-shared/session/runtime-state.js";
 import {
   formatMarkdownImageReference,
   removeLocalMarkdownImageReferences,

@@ -10,46 +10,34 @@ import {
   type Usage,
 } from "@openai/codex-sdk";
 
-import type {
-  AppSettings,
-  AuditLogOperation,
-  AuditLogProviderMetadata,
-  AuditTransportPayload,
-  AuditLogUsage,
-  ChangedFile,
-  CharacterProfile,
-  ProviderQuotaTelemetry,
-  DiffRow,
-  LiveRunStep,
-  LiveSessionRunState,
-  MessageArtifact,
-  RunCheck,
-  Session,
-  SessionMemoryDelta,
-} from "../src/app-state.js";
-import { getProviderAppSettings } from "../src/provider-settings-state.js";
-import { mapApprovalModeToCodexPolicy, type ApprovalMode } from "../src/approval-mode.js";
+import type { AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import type { AuditLogOperation, AuditLogProviderMetadata, AuditTransportPayload, AuditLogUsage, ChangedFile, ProviderQuotaTelemetry, DiffRow, LiveRunStep, LiveSessionRunState, RunCheck } from "../src-shared/session/runtime-state.js";
+import type { CharacterProfile } from "../src-shared/character/character-state.js";
+import type { MessageArtifact, Session } from "../src-shared/session/session-state.js";
+import type { SessionMemoryDelta } from "../src-shared/memory/session-memory-state.js";
+import { getProviderAppSettings } from "../src-shared/settings/provider-settings-state.js";
+import { mapApprovalModeToCodexPolicy, type ApprovalMode } from "../src-shared/settings/approval-mode.js";
 import {
   resolveCodexSandboxThreadOptions,
   type CodexSdkSandboxMode,
-} from "../src/codex-sandbox-mode.js";
+} from "../src-shared/settings/codex-sandbox-mode.js";
 import {
   DEFAULT_CODEX_SPEED,
   mapCodexSpeedToServiceTier,
   type CodexServiceTier,
-} from "../src/codex-speed.js";
+} from "../src-shared/settings/codex-speed.js";
 import {
   DEFAULT_CODEX_REVIEWER,
   mapCodexReviewerToApprovalsReviewer,
   type CodexApprovalsReviewer,
-} from "../src/codex-reviewer.js";
+} from "../src-shared/settings/codex-reviewer.js";
 import {
   reasoningEffortLabel,
   resolveModelSelection,
   type ModelCatalogProvider,
   type ModelReasoningEffort,
   type ResolvedModelSelection,
-} from "../src/model-catalog.js";
+} from "../src-shared/settings/model-catalog.js";
 import {
   createWorkspaceSnapshotIndex,
   refreshWorkspaceSnapshotIndex,

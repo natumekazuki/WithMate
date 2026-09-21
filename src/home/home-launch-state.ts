@@ -1,6 +1,6 @@
-import type { CreateSessionRequest, HomeSessionSummary } from "../app-state.js";
-import { DEFAULT_CHARACTER_THEME_COLORS, type CharacterThemeColors } from "../character-state.js";
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
+import type { CreateSessionRequest, HomeSessionSummary } from "../../src-shared/session/session-state.js";
+import { DEFAULT_CHARACTER_THEME_COLORS, type CharacterThemeColors } from "../../src-shared/character/character-state.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import {
   inferWorkspaceFromPath,
   isSessionFolderLaunchWorkspace,
@@ -8,11 +8,11 @@ import {
   type LaunchWorkspaceSelection,
 } from "./home-launch-workspace.js";
 import { LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
-import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
+import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
 import {
   resolveWorkspaceDirectoryValidationMessage,
   type WorkspaceDirectoryValidationResult,
-} from "../workspace-directory-validation.js";
+} from "../../src-shared/window/workspace-directory-validation.js";
 
 const NEUTRAL_CHARACTER_ID = "withmate-neutral-character";
 const NEUTRAL_CHARACTER_NAME = "WithMate";

@@ -5,7 +5,7 @@ import {
   GLOSSARY_ANNOTATION_LIMITS,
   createGlossaryAnnotationMatcher,
 } from "../../src/glossary/glossary-annotation-projection.js";
-import type { GlossaryEntry } from "../../src/glossary-contract.js";
+import type { GlossaryEntry } from "../../src-shared/glossary/glossary-contract.js";
 
 function entry(term: string, definition = `${term} definition`, aliases: string[] = []): GlossaryEntry {
   return { term, aliases, definition };

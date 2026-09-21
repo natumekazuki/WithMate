@@ -4,7 +4,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { SessionGlossaryPane } from "../../src/glossary/SessionGlossaryPane.js";
-import type { SessionGlossaryProjection } from "../../src/glossary-contract.js";
+import type { SessionGlossaryProjection } from "../../src-shared/glossary/glossary-contract.js";
 
 const validProjection: SessionGlossaryProjection = {
   sessionId: "session-1",

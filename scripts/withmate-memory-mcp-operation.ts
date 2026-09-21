@@ -1,7 +1,7 @@
 import path from "node:path";
 
-import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../src/character-context/character-context-contract.js";
-import { MEMORY_V6_SCHEMA_VERSION } from "../src/memory-v6/memory-contract.js";
+import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../src-shared/character-context/character-context-contract.js";
+import { MEMORY_V6_SCHEMA_VERSION } from "../src-shared/memory/memory-contract.js";
 
 export type WithMateMemoryMcpCommand =
   | "file_usage"

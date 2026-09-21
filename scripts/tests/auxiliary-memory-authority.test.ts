@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, it } from "node:test";
 
-import { buildNewSession } from "../../src/app-state.js";
-import { normalizeAuxiliarySession } from "../../src/auxiliary-session-state.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { normalizeAuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { buildProviderAgentRuntimeAuthoritySnapshot } from "../../src-electron/provider-agent-runtime-binding.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
 import { AuxiliarySessionService } from "../../src-electron/auxiliary-session-service.js";

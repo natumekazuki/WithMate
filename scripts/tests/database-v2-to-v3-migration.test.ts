@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { buildNewSession, type MessageArtifact } from "../../src/app-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { MessageArtifact } from "../../src-shared/session/session-state.js";
 import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";

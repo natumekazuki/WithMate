@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { startHomeLaunch } from "../../src/home/home-launch-actions.js";
 import {
   createClosedLaunchDraft,
@@ -9,8 +9,8 @@ import {
   setLaunchWorkspaceToSessionFolder,
   type HomeLaunchDraft,
 } from "../../src/home/home-launch-state.js";
-import type { MateProfile } from "../../src/mate/mate-state.js";
-import type { HomeSessionSummary, SessionSummary } from "../../src/session-state.js";
+import type { MateProfile } from "../../src-shared/mate/mate-state.js";
+import type { HomeSessionSummary, SessionSummary } from "../../src-shared/session/session-state.js";
 
 function createMateProfile(): MateProfile {
   return {

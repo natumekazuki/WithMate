@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { GLOSSARY_RUNTIME_SCHEMA_VERSION } from "../src/glossary-contract.js";
+import { GLOSSARY_RUNTIME_SCHEMA_VERSION } from "../src-shared/glossary/glossary-contract.js";
 import {
   GLOSSARY_RUNTIME_OPERATION_PATHS,
   glossaryCheckoutSelectorSchema,

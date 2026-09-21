@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { buildNewSession, projectSessionSummary, type Session } from "../../src/session-state.js";
-import { normalizeAppSettings } from "../../src/provider-settings-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { buildNewSession, projectSessionSummary, type Session } from "../../src-shared/session/session-state.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {

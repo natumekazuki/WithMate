@@ -4,9 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
-import { buildNewSession, type Session } from "../../src/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary-session-storage.js";
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";

@@ -4,7 +4,7 @@ import {
   normalizeResetAppDatabaseTargets,
   type DeleteSessionsResult,
   type ResetAppDatabaseTarget,
-} from "../withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 export const SETTINGS_SKILL_ROOT_LABEL = "Skill Root";
 export const SETTINGS_SKILL_ROOT_PLACEHOLDER = "skill folder の親ディレクトリを入力";

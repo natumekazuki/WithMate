@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { AuditLogOperation, AuditLogUsage, Session } from "../../src/app-state.js";
-import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src/model-catalog.js";
+import type { AuditLogOperation, AuditLogUsage } from "../../src-shared/session/runtime-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
 import { buildArtifactFromOperations } from "../../src-electron/provider-artifact.js";
 import type { SnapshotCaptureStats, WorkspaceSnapshot } from "../../src-electron/snapshot-ignore.js";
 

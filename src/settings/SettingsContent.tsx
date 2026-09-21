@@ -1,11 +1,11 @@
-import type { AppSettings } from "../app-state.js";
+import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
   GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN,
-} from "../provider-settings-state.js";
-import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
-import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
-import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
+} from "../../src-shared/settings/provider-settings-state.js";
+import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
+import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
+import { MICROCOPY_SLOTS, type MicrocopySlot } from "../../src-shared/settings/microcopy-state.js";
 import {
   getMemoryFileQuotaMegabytes,
   getMemoryFileQuotaMegabytesInputBounds,

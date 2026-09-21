@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
-import type { CodexSandboxMode } from "../../src/codex-sandbox-mode.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+import type { CodexSandboxMode } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { buildRuntimeSelectionOptions } from "../../src/runtime-selection-options.js";
 
 const providerCatalog: ModelCatalogProvider = {

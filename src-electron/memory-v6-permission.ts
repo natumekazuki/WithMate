@@ -1,4 +1,4 @@
-import type { MemoryError, MemoryPermission } from "../src/memory-v6/memory-contract.js";
+import type { MemoryError, MemoryPermission } from "../src-shared/memory/memory-contract.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 
 export type MemoryV6LocalUserPrincipal = {

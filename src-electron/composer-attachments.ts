@@ -1,7 +1,8 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
-import type { ComposerAttachment, ComposerAttachmentInput, ComposerAttachmentKind, ComposerPreview, Session } from "../src/app-state.js";
+import type { ComposerAttachment, ComposerAttachmentInput, ComposerAttachmentKind, ComposerPreview } from "../src-shared/session/runtime-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
 import { extractComposerAttachmentReferenceCandidates } from "../src/path-reference.js";
 import { isPathWithinAnyDirectory, normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 

@@ -1,10 +1,10 @@
-import type { AffectEventInput } from "../src/character-affect/affect-contract.js";
+import type { AffectEventInput } from "../src-shared/character-affect/affect-contract.js";
 import type {
   CharacterAffectAppraiseResponse,
   CharacterContextErrorResponse,
   CharacterContextResponse,
-} from "../src/character-context/character-context-contract.js";
-import { isCharacterContextError } from "../src/character-context/character-context-contract.js";
+} from "../src-shared/character-context/character-context-contract.js";
+import { isCharacterContextError } from "../src-shared/character-context/character-context-contract.js";
 import type {
   CharacterAffectTurnAppraisalEffect,
   PendingCharacterAffectTurnSettlement,

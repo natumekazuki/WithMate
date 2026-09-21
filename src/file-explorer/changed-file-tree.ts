@@ -1,7 +1,7 @@
 import type {
   FileRootGitChangeEntry,
   FileRootGitChangeScope,
-} from "./file-explorer-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 export type ChangedFileTreeDirectory = {
   type: "directory";

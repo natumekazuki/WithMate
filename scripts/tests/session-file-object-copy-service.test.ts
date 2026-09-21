@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { SessionFileObjectCopyService } from "../../src-electron/session-file-object-copy-service.js";
-import type { SessionFileResourceRequest } from "../../src/file-explorer/file-explorer-contract.js";
+import type { SessionFileResourceRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import type { NativeFileDropWriteResult } from "../../src-electron/windows-file-drop-clipboard-writer.js";
 
 const RESOURCE: SessionFileResourceRequest = {

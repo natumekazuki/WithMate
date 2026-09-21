@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { buildNewSession } from "../../src/session-state.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { CharacterAffectTurnSettlementStorage, hasSettlementSessionOwner } from "../../src-electron/character-affect-turn-settlement-storage.js";
 

@@ -5,7 +5,7 @@ import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { AUDIT_LOG_LOGICAL_PROMPT_PREVIEW_MAX_CHARS } from "../../src-electron/audit-log-detail-preview.js";
 import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
 import {

@@ -1,4 +1,4 @@
-import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
+import { getProviderAppSettings, type AppSettings } from "../src-shared/settings/provider-settings-state.js";
 import {
   buildNewSession,
   cloneSessions,
@@ -8,24 +8,24 @@ import {
   type CreateSessionInput,
   type Session,
   type SessionSummary,
-} from "../src/session-state.js";
+} from "../src-shared/session/session-state.js";
 import {
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,
   resolveModelSelection,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
-} from "../src/model-catalog.js";
+} from "../src-shared/settings/model-catalog.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
-import { resolveCodexReviewerUpdate } from "../src/codex-reviewer.js";
+import { resolveCodexReviewerUpdate } from "../src-shared/settings/codex-reviewer.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
-import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
-import { hasSameCharacterRuntimeIdentity } from "../src/character/character-runtime-snapshot.js";
+import type { CharacterRuntimeSnapshot } from "../src-shared/character/character-catalog.js";
+import { hasSameCharacterRuntimeIdentity } from "../src-shared/character/character-runtime-snapshot.js";
 import type {
   DeleteSessionsLastActiveBeforeCutoff,
   DeleteSessionsResult,
-} from "../src/withmate-window-types.js";
+} from "../src-shared/window/withmate-window-types.js";
 import { SessionIdCollisionError, SessionNotFoundError } from "./session-storage-errors.js";
 import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";

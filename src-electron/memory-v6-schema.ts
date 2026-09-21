@@ -1,12 +1,12 @@
 import type { SQLInputValue } from "node:sqlite";
 
-import type { NormalizedMemoryTag } from "../src/memory-v6/memory-contract.js";
+import type { NormalizedMemoryTag } from "../src-shared/memory/memory-contract.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 import type {
   MemoryOwnerRef,
   MemoryScopeRef,
   MemorySource,
-} from "../src/memory-v6/memory-state.js";
+} from "../src-shared/memory/memory-state.js";
 
 export type MemoryV6ResolvedTarget = {
   owner: MemoryOwnerRef;

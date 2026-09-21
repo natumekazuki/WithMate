@@ -1,4 +1,4 @@
-import type { MateProfile } from "../src/mate/mate-state.js";
+import type { MateProfile } from "../src-shared/mate/mate-state.js";
 import { isProviderInstructionProfileSectionKey } from "../src/mate/mate-profile-sections.js";
 import { upsertManagedBlock } from "./managed-instruction-block.js";
 

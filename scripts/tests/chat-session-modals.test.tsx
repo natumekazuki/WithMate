@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { AuxiliaryLaunchProviderDialog } from "../../src/chat/AuxiliaryLaunchProviderDialog.js";
 import { ChatSessionModals } from "../../src/chat/chat-session-modals.js";
-import type { AuditLogSummary } from "../../src/runtime-state.js";
+import type { AuditLogSummary } from "../../src-shared/session/runtime-state.js";
 
 function createAuditLogSummary(): AuditLogSummary {
   return {

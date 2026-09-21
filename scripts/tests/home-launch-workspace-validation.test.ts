@@ -9,7 +9,7 @@ import {
   markLaunchWorkspacePathValidationPending,
   setLaunchWorkspaceToSessionFolder,
 } from "../../src/home/home-launch-state.js";
-import type { WorkspaceDirectoryValidationResult } from "../../src/workspace-directory-validation.js";
+import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window/workspace-directory-validation.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

@@ -6,7 +6,7 @@ import {
   type GlossaryCheckoutTarget,
   type GlossaryOperationError,
   type GlossaryRuntimeEnvelope,
-} from "../src/glossary-contract.js";
+} from "../src-shared/glossary/glossary-contract.js";
 import {
   glossaryAgentRuntimeOperation,
   glossaryCheckoutSelectorSchema,

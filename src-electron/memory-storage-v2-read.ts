@@ -1,15 +1,6 @@
-import {
-  createDefaultSessionMemory,
-  normalizeProjectMemoryEntry,
-  normalizeProjectScope,
-  type ProjectMemoryEntry,
-  type ProjectScope,
-  type ManagedProjectMemoryGroup,
-  type ManagedSessionMemoryItem,
-  type MemoryPageRequest,
-  type Session,
-  type SessionMemory,
-} from "../src/app-state.js";
+import { createDefaultSessionMemory, normalizeProjectMemoryEntry, normalizeProjectScope } from "../src-shared/memory/session-memory-state.js";
+import type { ProjectMemoryEntry, ProjectScope, ManagedProjectMemoryGroup, ManagedSessionMemoryItem, MemoryPageRequest, SessionMemory } from "../src-shared/memory/session-memory-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 
 function currentIsoTimestamp(): string {

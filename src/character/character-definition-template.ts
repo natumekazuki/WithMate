@@ -1,4 +1,4 @@
-import { CHARACTER_DEFINITION_SCHEMA } from "./character-definition.js";
+import { CHARACTER_DEFINITION_SCHEMA } from "../../src-shared/character/character-definition.js";
 
 function quoteFrontmatterValue(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}"`;

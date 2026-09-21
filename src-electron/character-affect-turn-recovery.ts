@@ -1,4 +1,4 @@
-import type { CharacterContextErrorResponse } from "../src/character-context/character-context-contract.js";
+import type { CharacterContextErrorResponse } from "../src-shared/character-context/character-context-contract.js";
 import type {
   CharacterAffectTurnFailureDiagnostic,
   CharacterAffectTurnFailureStage,

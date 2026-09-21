@@ -1,6 +1,6 @@
-import type { AppSettings } from "./provider-settings-state.js";
-import type { ModelCatalogSnapshot } from "./model-catalog.js";
-import type { Session } from "./session-state.js";
+import type { AppSettings } from "../settings/provider-settings-state.js";
+import type { ModelCatalogSnapshot } from "../settings/model-catalog.js";
+import type { Session } from "../session/session-state.js";
 
 export const OPEN_SESSION_WINDOW_IDS_BROADCAST_MAX = 100;
 export const OPEN_SESSION_WINDOW_IDS_PAGE_MAX = 100;

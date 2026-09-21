@@ -44,7 +44,7 @@ import {
   type RuntimePathSecurity,
   type RuntimePathTargetKind,
 } from "../src/runtime-discovery/runtime-discovery-registry.js";
-import type { AppLogInput } from "../src/app-log-types.js";
+import type { AppLogInput } from "../src-shared/window/app-log-types.js";
 import { createAppDatabaseBootstrapWorker } from "./app-database-bootstrap-worker.js";
 import {
   createMemoryV6HttpServer,
@@ -64,7 +64,7 @@ import { MemoryProtectedObjectKeyStore, type MemoryProtectedObjectKeyProtector }
 import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6Service } from "./memory-v6-service.js";
 import { MemoryV6Storage } from "./memory-v6-storage.js";
-import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
+import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../src-shared/character/character-catalog.js";
 import { CharacterAffectStorage } from "./character-affect-storage.js";
 import type { StorageOperationDiagnosticSink } from "./storage-operation-diagnostics.js";
 import { createCharacterAffectServiceWithMemory } from "./character-affect-memory-adapter.js";

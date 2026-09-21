@@ -1,8 +1,8 @@
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type {
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
-} from "../withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 export function buildSessionMonitorContextMenuFeedback(result: SessionMonitorContextMenuResult): string {
   return result.status === "failed" ? result.message : "";

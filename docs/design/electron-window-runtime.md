@@ -112,7 +112,7 @@ current 実装の API surface は次の domain に分かれる。
 - `picker`
 - `subscription`
 
-型定義の正本は `src/withmate-window-api.ts` と `src/withmate-window-types.ts` に置く。
+型定義の正本は `src-shared/ipc/withmate-window-api.ts` と `src-shared/window/withmate-window-types.ts` に置く。Bridgeの実装は`src-electron/preload-api.ts`が担当し、rendererのURL queryからsession・auxiliary・diff tokenを読む処理は`src/app/session-location.ts`が担当する。
 
 ## URL Resolution
 

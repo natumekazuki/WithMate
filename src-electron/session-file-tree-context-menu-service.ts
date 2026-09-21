@@ -4,8 +4,8 @@ import type {
   SessionFileTreePathActionContextMenuResult,
   SessionFileTreePathActionRequest,
   SessionFileTreePathActionTargetRequest,
-} from "../src/file-explorer/file-explorer-contract.js";
-import type { SessionFileObjectCopyResult } from "../src/file-explorer/session-file-object-copy-contract.js";
+} from "../src-shared/file-explorer/file-explorer-contract.js";
+import type { SessionFileObjectCopyResult } from "../src-shared/file-explorer/session-file-object-copy-contract.js";
 
 type FileTreeContextMenu = Pick<Menu, "popup">;
 

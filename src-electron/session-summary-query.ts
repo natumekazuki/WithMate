@@ -5,7 +5,7 @@ import {
   type SessionSummaryInvalidation,
   type SessionSummaryPageRequest,
   type SessionSummaryPageScope,
-} from "../src/session-state.js";
+} from "../src-shared/session/session-state.js";
 
 export const SESSION_SUMMARY_PAGE_DEFAULT_LIMIT = 50;
 export const SESSION_SUMMARY_PAGE_MAX_LIMIT = 50;

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { buildHomeLaunchHandlers } from "../../src/home/home-launch-handlers.js";
 import { buildHomeLaunchProjection } from "../../src/home/home-launch-projection.js";
 import { createClosedLaunchDraft, type HomeLaunchDraft } from "../../src/home/home-launch-state.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
 function createCharacterEntry(partial: Partial<CharacterCatalogEntry> & Pick<CharacterCatalogEntry, "id" | "name">): CharacterCatalogEntry {
   return {

@@ -1,7 +1,7 @@
 import type {
   SessionFileObjectCopyLinkRequest,
   SessionFileObjectCopyResult,
-} from "./file-explorer/session-file-object-copy-contract.js";
+} from "../file-explorer/session-file-object-copy-contract.js";
 
 export type MarkdownLinkContextMenuPoint = {
   x: number;

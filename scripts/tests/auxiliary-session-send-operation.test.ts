@@ -9,7 +9,7 @@ import {
   runAuxiliarySessionSendOperation,
   runAuxiliarySessionSendOperationWithApi,
 } from "../../src/auxiliary-session-send-operation.js";
-import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { OwnedLiveSessionRunState } from "../../src/session-live-run-state.js";
 
 function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {

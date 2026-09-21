@@ -1,7 +1,7 @@
-import type { AppSettings } from "../src/provider-settings-state.js";
-import type { SessionSummaryInvalidation } from "../src/app-state.js";
-import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { PromptTemplate } from "../src/prompt-template.js";
+import type { AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import type { SessionSummaryInvalidation } from "../src-shared/session/session-state.js";
+import type { ModelCatalogSnapshot } from "../src-shared/settings/model-catalog.js";
+import type { PromptTemplate } from "../src-shared/prompt-template.js";
 import type { WindowBroadcastService } from "./window-broadcast-service.js";
 import { SESSION_SUMMARY_ID_MAX_LENGTH, SESSION_SUMMARY_INVALIDATION_ID_MAX } from "./session-summary-query.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";

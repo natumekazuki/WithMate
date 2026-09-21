@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  isChatLayoutPreferenceUpdate,
   persistChatLayoutPreference,
-  type ChatLayoutPreferenceUpdate,
 } from "../../src/chat/chat-layout-preference.js";
+import {
+  isChatLayoutPreferenceUpdate,
+  type ChatLayoutPreferenceUpdate,
+} from "../../src-shared/settings/chat-layout-preference.js";
 
 test("persistChatLayoutPreference は専用 API へ単一 target の更新を保存する", async () => {
   const saved: ChatLayoutPreferenceUpdate[] = [];

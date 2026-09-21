@@ -5,8 +5,8 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { buildNewSession, type MessageArtifact, type Session } from "../../src/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { buildNewSession, type MessageArtifact, type Session } from "../../src-shared/session/session-state.js";
 import { CREATE_V3_SCHEMA_SQL } from "../../src-electron/database-schema-v3.js";
 import { SessionStorageV3 } from "../../src-electron/session-storage-v3.js";
 import { TextBlobStore } from "../../src-electron/text-blob-store.js";

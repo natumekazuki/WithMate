@@ -5,7 +5,7 @@ import type {
   ProviderCodingAdapter,
   ProviderTurnAdapter,
 } from "../../src-electron/provider-runtime.js";
-import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
+import { createDefaultAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   fetchProviderQuotaTelemetry,
   getProviderRuntimeCapabilities,

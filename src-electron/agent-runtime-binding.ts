@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import type { MemoryRuntimeOwnerSelector } from "../src/agent-runtime/agent-runtime-binding-contract.js";
+import type { MemoryRuntimeOwnerSelector } from "../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import { getProviderAgentRuntimeBindingCapability } from "./provider-agent-runtime-binding.js";
 
 export type AgentRuntimeOperation = string;

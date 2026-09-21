@@ -4,7 +4,7 @@ import {
   startOpenSessionWindowIdsSubscription,
   type OpenSessionWindowIdsState,
 } from "../open-session-window-subscription.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 type UseHomeOpenWindowSubscriptionsInput = {
   getApi: () => WithMateWindowApi | null;

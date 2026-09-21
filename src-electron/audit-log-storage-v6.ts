@@ -1,15 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type {
-  AuditLogDetail,
-  AuditLogDetailFragment,
-  AuditLogDetailSection,
-  AuditLogEntry,
-  AuditLogOperationDetailFragment,
-  AuditLogSummary,
-  AuditLogSummaryPageRequest,
-  AuditLogSummaryPageResult,
-} from "../src/app-state.js";
+import type { AuditLogDetail, AuditLogDetailFragment, AuditLogDetailSection, AuditLogEntry, AuditLogOperationDetailFragment, AuditLogSummary, AuditLogSummaryPageRequest, AuditLogSummaryPageResult } from "../src-shared/session/runtime-state.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import type {

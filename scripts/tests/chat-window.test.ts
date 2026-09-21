@@ -1567,7 +1567,7 @@ test("ChatWindow はMain/Auxiliaryの末尾移動をメッセージ欄に表示�
 // @test-value v2
 // kind = "contract"
 // claim = "ChatWindowのMain/Auxiliary会話経路はcomposer入力による親更新後も表示済み画像のDOMとready状態を保持する"
-// oracle = { type = "contract", ref = "Issue #714: 入力中もMain/Auxiliaryの既存画像を保持する" }
+// oracle = { type = "contract", ref = "src/chat/chat-window.tsx" }
 // fault = "composer入力でConversationMessageColumnが既存画像を再mountし、画像DOMまたはready状態が失われてloadingへ戻る"
 // observable = "Main/Auxiliaryのmessage-image HTMLElement identity、画像buttonのdisabled状態、親draft state marker、message-image-loadingの不在"
 // observation_boundary = "component-behavior"

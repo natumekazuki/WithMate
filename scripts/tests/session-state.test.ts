@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { DEFAULT_CODEX_REVIEWER } from "../../src/codex-reviewer.js";
-import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
-import { DEFAULT_CODEX_SPEED } from "../../src/codex-speed.js";
-import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
-import { resolveModelSelection, type ModelCatalogProvider } from "../../src/model-catalog.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED } from "../../src-shared/settings/codex-speed.js";
+import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src-shared/character/character-owner.js";
+import { resolveModelSelection, type ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import {
   applyCopilotCustomAgentSelection,
   applySessionModelMetadataUpdate,
@@ -18,7 +18,7 @@ import {
   parseSetSessionPinnedRequest,
   selectHydrationTarget,
   type SessionSummary,
-} from "../../src/session-state.js";
+} from "../../src-shared/session/session-state.js";
 
 const COPILOT_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "copilot",

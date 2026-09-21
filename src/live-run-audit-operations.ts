@@ -1,11 +1,4 @@
-import type {
-  AuditLogEntry,
-  LiveApprovalRequest,
-  LiveBackgroundTask,
-  LiveElicitationRequest,
-  LiveRunStep,
-  LiveSessionRunState,
-} from "./app-state.js";
+import type { AuditLogEntry, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationRequest, LiveRunStep, LiveSessionRunState } from "../src-shared/session/runtime-state.js";
 
 type LiveRunAuditOperationSource = Pick<
   LiveSessionRunState,

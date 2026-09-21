@@ -1,9 +1,9 @@
-import { resolveAdditionalDirectoryPickerBase } from "./additional-directory-state.js";
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import { resolveAdditionalDirectoryPickerBase } from "../src-shared/settings/additional-directory-state.js";
+import type { AuxiliarySession } from "../src-shared/auxiliary/auxiliary-session-state.js";
 import {
   addAuxiliarySessionAdditionalDirectory,
   removeAuxiliarySessionAdditionalDirectory,
-} from "./auxiliary-session-state.js";
+} from "../src-shared/auxiliary/auxiliary-session-state.js";
 
 type UpdateAuxiliarySession = (
   recipe: (current: AuxiliarySession) => AuxiliarySession,

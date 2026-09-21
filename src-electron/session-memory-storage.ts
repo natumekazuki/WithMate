@@ -1,12 +1,9 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
-import {
-  createDefaultSessionMemory,
-  normalizeSessionMemory,
-  type Session,
-  type SessionMemory,
-} from "../src/app-state.js";
-import type { ManagedSessionMemoryItem, MemoryPageRequest } from "../src/memory/memory-state.js";
+import { createDefaultSessionMemory, normalizeSessionMemory } from "../src-shared/memory/session-memory-state.js";
+import type { Session } from "../src-shared/session/session-state.js";
+import type { SessionMemory } from "../src-shared/memory/session-memory-state.js";
+import type { ManagedSessionMemoryItem, MemoryPageRequest } from "../src-shared/memory/session-memory-state.js";
 import { CREATE_SESSION_MEMORIES_TABLE_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 

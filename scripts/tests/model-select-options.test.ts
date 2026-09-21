@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ModelCatalogItem, ModelCatalogProvider } from "../../src/model-catalog.js";
+import type { ModelCatalogItem, ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import {
   buildModelSelectOptions,
   buildReasoningEffortSelectOptions,

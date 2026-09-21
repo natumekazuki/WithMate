@@ -10,9 +10,9 @@ import type {
   MemoryV6ReviewEntryDetail,
   MemoryV6ReviewSearchHit,
   MemoryV6ReviewSearchResult,
-} from "../../src/memory-v6/memory-review-state.js";
-import { MEMORY_V6_SCHEMA_VERSION, type MemoryV6ReviewSearchRequest } from "../../src/memory-v6/memory-contract.js";
-import type { MemoryFileUsageResponse } from "../../src/memory-v6/memory-response-contract.js";
+} from "../../src-shared/memory/memory-review-state.js";
+import { MEMORY_V6_SCHEMA_VERSION, type MemoryV6ReviewSearchRequest } from "../../src-shared/memory/memory-contract.js";
+import type { MemoryFileUsageResponse } from "../../src-shared/memory/memory-response-contract.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

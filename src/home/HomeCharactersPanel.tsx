@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
 import { renderHomeSearchIcon } from "./home-icons.js";
 

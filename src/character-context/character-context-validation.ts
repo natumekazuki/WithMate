@@ -11,7 +11,7 @@ import {
   type CharacterMemoryForgetRequest,
   type CharacterMemorySearchRequest,
   type CharacterOperationAuthority,
-} from "./character-context-contract.js";
+} from "../../src-shared/character-context/character-context-contract.js";
 
 export class CharacterContextValidationError extends Error {
   constructor(message: string, readonly field: string) {
